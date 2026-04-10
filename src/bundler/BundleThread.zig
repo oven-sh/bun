@@ -117,6 +117,12 @@ pub fn BundleThread(CompletionStruct: type) type {
 
             transpiler.resolver.generation = generation;
 
+            // Phase 2 of the bake v2 plan: every top-level build is owned
+            // by a `BuildPipeline`. The JS-API path is one-shot — the
+            // pipeline is dropped at the end of the build via the
+            // `pipeline.deinit()` deferred below.
+            const pipeline = try bundler.BuildPipeline.createOneshot();
+
             const this = try BundleV2.init(
                 transpiler,
                 null, // TODO: Kit
@@ -126,6 +132,7 @@ pub fn BundleThread(CompletionStruct: type) type {
                 jsc.WorkPool.get(),
                 heap,
             );
+            this.pipeline = pipeline;
 
             this.plugins = completion.plugins;
             this.completion = switch (CompletionStruct) {
@@ -149,6 +156,7 @@ pub fn BundleThread(CompletionStruct: type) type {
             defer {
                 ast_memory_allocator.pop();
                 this.deinitWithoutFreeingArena();
+                pipeline.deinit();
             }
 
             errdefer {

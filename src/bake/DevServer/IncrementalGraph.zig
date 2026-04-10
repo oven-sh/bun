@@ -493,7 +493,17 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             dev.graph_safety_lock.assertLocked();
 
             const path = ctx.sources[index.get()].path;
-            const key = path.keyForIncrementalGraph();
+            const base_key = path.keyForIncrementalGraph();
+            // `.bundle` sources (lazy export ASTs created for `?bundle` imports)
+            // share their `path.text` with the entry-point source for the same
+            // file. Without disambiguation they would collide in `bundled_files`
+            // and the lazy-export stub `{}` would clobber the real entry's code.
+            // Append `?bundle` so each gets its own slot.
+            var bundle_key_buf: [bun.MAX_PATH_BYTES + 8]u8 = undefined;
+            const key: []const u8 = if (ctx.loaders[index.get()] == .bundle)
+                std.fmt.bufPrint(&bundle_key_buf, "{s}?bundle", .{base_key}) catch base_key
+            else
+                base_key;
 
             const log = bun.Output.scoped(.IncrementalGraphReceiveChunk, .visible);
             log("receiveChunk({s}, {s})", .{ @tagName(side), key });
@@ -1696,21 +1706,30 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             },
         };
 
+        pub const BundleResult = struct {
+            bytes: []u8,
+            /// Newlines in the trailing runtime-config block emitted AFTER
+            /// the per-file chunks (e.g. `}, { main: ..., sourceMappingURL=... })`).
+            /// Callers that build a sourcemap for this bundle use this to
+            /// pad the mappings out to the bundle's last line.
+            tail_line_count: u32,
+        };
+
         pub fn takeJSBundle(
             g: *Self,
             options: *const TakeJSBundleOptions,
-        ) ![]u8 {
+        ) !BundleResult {
             var chunk = std.array_list.Managed(u8).init(g.allocator());
-            try g.takeJSBundleToList(&chunk, options);
+            const tail_line_count = try g.takeJSBundleToList(&chunk, options);
             bun.assert(chunk.items.len == chunk.capacity);
-            return chunk.items;
+            return .{ .bytes = chunk.items, .tail_line_count = tail_line_count };
         }
 
         pub fn takeJSBundleToList(
             g: *Self,
             list: *std.array_list.Managed(u8),
             options: *const TakeJSBundleOptions,
-        ) !void {
+        ) !u32 {
             const kind = options.kind;
             g.owner().graph_safety_lock.assertLocked();
             // initial bundle needs at least the entry point
@@ -1846,6 +1865,8 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                     Output.warn("Could not dump bundle: {}", .{err});
                 };
             };
+
+            return @intCast(bun.strings.countChar(end, '\n'));
         }
 
         pub const SourceMapGeneration = struct {

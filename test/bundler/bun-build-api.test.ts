@@ -1316,4 +1316,337 @@ console.log(JSON.stringify({
       expect(exitCode).toBe(0);
     }
   });
+
+  // Regression guard: the plan explicitly calls this "the single most important
+  // invariant" of the bake v2 refactor. Every ?bundle import must get its own
+  // Transpiler so that per-import `env: "PREFIX_*"` configuration cannot leak
+  // between siblings, regardless of the order they are built in.
+  test("env isolation between sibling ?bundle imports", async () => {
+    const dir = tempDirWithFiles("bundle-env-isolation", {
+      // Each source file references all three env vars so the resulting bundle
+      // text will literally contain the secret value if and only if the bundler
+      // actually inlined that specific var.
+      "frontend.ts": `
+        export const FRONTEND_KEY = process.env.MYAPP_FRONTEND_KEY ?? "";
+        export const WORKER_KEY = process.env.MYAPP_WORKER_KEY ?? "";
+        export const SHARED_KEY = process.env.MYAPP_SHARED_KEY ?? "";
+      `,
+      "worker.ts": `
+        export const FRONTEND_KEY = process.env.MYAPP_FRONTEND_KEY ?? "";
+        export const WORKER_KEY = process.env.MYAPP_WORKER_KEY ?? "";
+        export const SHARED_KEY = process.env.MYAPP_SHARED_KEY ?? "";
+      `,
+      "neutral.ts": `
+        export const FRONTEND_KEY = process.env.MYAPP_FRONTEND_KEY ?? "";
+        export const WORKER_KEY = process.env.MYAPP_WORKER_KEY ?? "";
+        export const SHARED_KEY = process.env.MYAPP_SHARED_KEY ?? "";
+      `,
+      "server.ts": `
+        import frontend from "./frontend.ts" with { type: "bundle", env: "MYAPP_FRONTEND_*" };
+        import worker from "./worker.ts" with { type: "bundle", env: "MYAPP_WORKER_*" };
+        import neutral from "./neutral.ts" with { type: "bundle" };
+
+        const frontendText = await frontend.entrypoint.file().text();
+        const workerText = await worker.entrypoint.file().text();
+        const neutralText = await neutral.entrypoint.file().text();
+
+        console.log("RESULT:" + JSON.stringify({
+          frontend_inlines_frontend: frontendText.includes("frontend-secret-value"),
+          frontend_inlines_worker: frontendText.includes("worker-secret-value"),
+          frontend_inlines_shared: frontendText.includes("shared-secret-value"),
+          worker_inlines_frontend: workerText.includes("frontend-secret-value"),
+          worker_inlines_worker: workerText.includes("worker-secret-value"),
+          worker_inlines_shared: workerText.includes("shared-secret-value"),
+          neutral_inlines_frontend: neutralText.includes("frontend-secret-value"),
+          neutral_inlines_worker: neutralText.includes("worker-secret-value"),
+          neutral_inlines_shared: neutralText.includes("shared-secret-value"),
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "server.ts")],
+      env: {
+        ...bunEnv,
+        MYAPP_FRONTEND_KEY: "frontend-secret-value",
+        MYAPP_WORKER_KEY: "worker-secret-value",
+        MYAPP_SHARED_KEY: "shared-secret-value",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const resultLine = stdout.split("\n").find(l => l.startsWith("RESULT:"));
+    expect(resultLine, `expected RESULT: line in stdout.\nstdout=${stdout}\nstderr=${stderr}`).toBeDefined();
+    const result = JSON.parse(resultLine!.slice("RESULT:".length));
+
+    expect(result).toEqual({
+      // frontend: only MYAPP_FRONTEND_* is inlined
+      frontend_inlines_frontend: true,
+      frontend_inlines_worker: false,
+      frontend_inlines_shared: false,
+      // worker: only MYAPP_WORKER_* is inlined
+      worker_inlines_frontend: false,
+      worker_inlines_worker: true,
+      worker_inlines_shared: false,
+      // neutral: no env attribute → nothing inlined
+      neutral_inlines_frontend: false,
+      neutral_inlines_worker: false,
+      neutral_inlines_shared: false,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Phase 0 SubBuildCache regression guard: when one parent build's graph
+  // contains the same nested ?bundle entry point twice (with identical config),
+  // the result must be behaviorally indistinguishable from a single import.
+  // Both manifests must reference the same set of files, both must inline the
+  // configured env vars, and the parent's `.files` must not contain duplicate
+  // entries for the same dest path. The cache makes this faster but the
+  // observable output is identical either way — this test ensures the cache
+  // path doesn't introduce divergence.
+  test("nested ?bundle imported twice in one parent build produces consistent output", async () => {
+    const dir = tempDirWithFiles("bundle-nested-dedup", {
+      "frontend.ts": `
+        export const VALUE = process.env.MYAPP_NESTED_KEY ?? "";
+      `,
+      "worker.ts": `
+        import a from "./frontend.ts" with { type: "bundle", env: "MYAPP_NESTED_*" };
+        import b from "./frontend.ts" with { type: "bundle", env: "MYAPP_NESTED_*" };
+        export default { a, b };
+      `,
+      "server.ts": `
+        import worker from "./worker.ts" with { type: "bundle" };
+        const workerText = await worker.entrypoint.file().text();
+
+        // Read the actual frontend bundle file via the manifest's file accessor.
+        // The worker bundle's .files contains both worker.js and the nested
+        // frontend bundle. Find the frontend file and verify it inlines the env.
+        const frontendFile = worker.files.find(f => f.name.includes("frontend"));
+        const frontendText = frontendFile ? await frontendFile.file().text() : "";
+
+        const frontendNames = new Set(
+          (workerText.match(/frontend-[a-z0-9]+\\.js/gi) ?? [])
+        );
+
+        console.log("RESULT:" + JSON.stringify({
+          // Both manifests reference the SAME frontend file name (one underlying bundle)
+          uniqueFrontendNames: frontendNames.size,
+          // The frontend bundle inlines the env var
+          frontendInlinesSecret: frontendText.includes("nested-secret-value"),
+          // Worker text references frontend (proves both manifests are populated)
+          workerReferencesFrontend: frontendNames.size > 0,
+          // The parent's .files array doesn't have duplicate frontend entries
+          frontendFileCountInParent: worker.files.filter(f => f.name.includes("frontend")).length,
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "server.ts")],
+      env: {
+        ...bunEnv,
+        MYAPP_NESTED_KEY: "nested-secret-value",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const resultLine = stdout.split("\n").find(l => l.startsWith("RESULT:"));
+    expect(resultLine, `expected RESULT: line in stdout.\nstdout=${stdout}\nstderr=${stderr}`).toBeDefined();
+    const result = JSON.parse(resultLine!.slice("RESULT:".length));
+
+    expect(result).toEqual({
+      uniqueFrontendNames: 1,
+      frontendInlinesSecret: true,
+      workerReferencesFrontend: true,
+      frontendFileCountInParent: 1,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Same-parent sibling dedup: importing the exact same (path, config) twice
+  // should not cause duplicate work. With SubBuildCache this becomes one build
+  // instead of two, but the observable output must be identical either way.
+  test("same ?bundle imported twice in one parent produces identical output", async () => {
+    const dir = tempDirWithFiles("bundle-same-twice", {
+      "shared.ts": `
+        export const VALUE = process.env.MYAPP_SAME_TWICE_KEY ?? "";
+      `,
+      "server.ts": `
+        import a from "./shared.ts" with { type: "bundle", env: "MYAPP_SAME_TWICE_*" };
+        import b from "./shared.ts" with { type: "bundle", env: "MYAPP_SAME_TWICE_*" };
+
+        const aText = await a.entrypoint.file().text();
+        const bText = await b.entrypoint.file().text();
+
+        console.log("RESULT:" + JSON.stringify({
+          bothInlineValue: aText.includes("same-twice-value") && bText.includes("same-twice-value"),
+          outputsMatch: aText === bText,
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "server.ts")],
+      env: {
+        ...bunEnv,
+        MYAPP_SAME_TWICE_KEY: "same-twice-value",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const resultLine = stdout.split("\n").find(l => l.startsWith("RESULT:"));
+    expect(resultLine, `expected RESULT: line in stdout.\nstdout=${stdout}\nstderr=${stderr}`).toBeDefined();
+    const result = JSON.parse(resultLine!.slice("RESULT:".length));
+    expect(result).toEqual({ bothInlineValue: true, outputsMatch: true });
+    expect(exitCode).toBe(0);
+  });
+
+  // Phase 1 SubBuildCache regression guard: when two *distinct* top-level
+  // `?bundle` parents each contain a nested `?bundle` import of the same
+  // entry point with the same config, the VM-wide sub-build cache should
+  // make the second parent's nested build reuse the first parent's result.
+  // This test does NOT measure cache hits directly (no debug counters in
+  // release builds); instead it asserts the observable invariant the cache
+  // enables: both nested results contain byte-identical output for the
+  // shared entry point, and both inline the configured env var. If the
+  // cache regresses to a fresh build per parent, the test still passes
+  // (the bundles are deterministic) — but if the cache returns *stale* or
+  // *cross-config-leaked* output, this test will catch it.
+  test("same ?bundle nested in two distinct parent bundles produces identical output", async () => {
+    const dir = tempDirWithFiles("bundle-cross-parent-cache", {
+      "frontend.ts": `
+        export const VALUE = process.env.MYAPP_CROSS_KEY ?? "";
+      `,
+      "parent_a.ts": `
+        import nested from "./frontend.ts" with { type: "bundle", env: "MYAPP_CROSS_*" };
+        export default { nested };
+      `,
+      "parent_b.ts": `
+        import nested from "./frontend.ts" with { type: "bundle", env: "MYAPP_CROSS_*" };
+        export default { nested };
+      `,
+      "server.ts": `
+        import a from "./parent_a.ts" with { type: "bundle" };
+        import b from "./parent_b.ts" with { type: "bundle" };
+
+        // Each parent manifest contains the parent file plus the nested
+        // frontend bundle file. Find the frontend file in each parent.
+        const aFrontend = a.files.find(f => f.name.includes("frontend"));
+        const bFrontend = b.files.find(f => f.name.includes("frontend"));
+
+        const aFrontendText = aFrontend ? await aFrontend.file().text() : "";
+        const bFrontendText = bFrontend ? await bFrontend.file().text() : "";
+
+        console.log("RESULT:" + JSON.stringify({
+          // Both parents have a nested frontend bundle file
+          bothHaveFrontend: !!aFrontend && !!bFrontend,
+          // Both nested bundles inline the env var (no cross-config leakage)
+          bothInlineSecret:
+            aFrontendText.includes("cross-secret-value") &&
+            bFrontendText.includes("cross-secret-value"),
+          // Both nested bundles produce byte-identical output (the cache
+          // returns the same canonical snapshot to both parents)
+          frontendsMatch: aFrontendText === bFrontendText,
+          // No accidental duplicate frontend entries within either parent
+          aFrontendCount: a.files.filter(f => f.name.includes("frontend")).length,
+          bFrontendCount: b.files.filter(f => f.name.includes("frontend")).length,
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "server.ts")],
+      env: {
+        ...bunEnv,
+        MYAPP_CROSS_KEY: "cross-secret-value",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const resultLine = stdout.split("\n").find(l => l.startsWith("RESULT:"));
+    expect(resultLine, `expected RESULT: line in stdout.\nstdout=${stdout}\nstderr=${stderr}`).toBeDefined();
+    const result = JSON.parse(resultLine!.slice("RESULT:".length));
+
+    expect(result).toEqual({
+      bothHaveFrontend: true,
+      bothInlineSecret: true,
+      frontendsMatch: true,
+      aFrontendCount: 1,
+      bFrontendCount: 1,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Phase 1 cross-config isolation guard: the VM-wide sub-build cache MUST
+  // key on the full BundleImportConfig (not just the path). Two parents that
+  // import the same nested entry point with *different* env_prefix patterns
+  // must each get their own substituted output — neither should poison the
+  // other via the cache.
+  test("same ?bundle nested in two parents with different env configs is not cache-poisoned", async () => {
+    const dir = tempDirWithFiles("bundle-cross-parent-cache-keys", {
+      "frontend.ts": `
+        export const A = process.env.MYAPP_AAA_KEY ?? "";
+        export const B = process.env.MYAPP_BBB_KEY ?? "";
+      `,
+      "parent_a.ts": `
+        import nested from "./frontend.ts" with { type: "bundle", env: "MYAPP_AAA_*" };
+        export default { nested };
+      `,
+      "parent_b.ts": `
+        import nested from "./frontend.ts" with { type: "bundle", env: "MYAPP_BBB_*" };
+        export default { nested };
+      `,
+      "server.ts": `
+        import a from "./parent_a.ts" with { type: "bundle" };
+        import b from "./parent_b.ts" with { type: "bundle" };
+
+        const aFrontend = a.files.find(f => f.name.includes("frontend"));
+        const bFrontend = b.files.find(f => f.name.includes("frontend"));
+        const aFrontendText = aFrontend ? await aFrontend.file().text() : "";
+        const bFrontendText = bFrontend ? await bFrontend.file().text() : "";
+
+        console.log("RESULT:" + JSON.stringify({
+          // parent_a uses MYAPP_AAA_*: only AAA inlined
+          a_inlines_aaa: aFrontendText.includes("aaa-secret-value"),
+          a_inlines_bbb: aFrontendText.includes("bbb-secret-value"),
+          // parent_b uses MYAPP_BBB_*: only BBB inlined
+          b_inlines_aaa: bFrontendText.includes("aaa-secret-value"),
+          b_inlines_bbb: bFrontendText.includes("bbb-secret-value"),
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "server.ts")],
+      env: {
+        ...bunEnv,
+        MYAPP_AAA_KEY: "aaa-secret-value",
+        MYAPP_BBB_KEY: "bbb-secret-value",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const resultLine = stdout.split("\n").find(l => l.startsWith("RESULT:"));
+    expect(resultLine, `expected RESULT: line in stdout.\nstdout=${stdout}\nstderr=${stderr}`).toBeDefined();
+    const result = JSON.parse(resultLine!.slice("RESULT:".length));
+
+    expect(result).toEqual({
+      a_inlines_aaa: true,
+      a_inlines_bbb: false,
+      b_inlines_aaa: false,
+      b_inlines_bbb: true,
+    });
+    expect(exitCode).toBe(0);
+  });
 });

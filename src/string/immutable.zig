@@ -827,7 +827,12 @@ pub fn countChar(self: string, char: u8) usize {
 
     while (remaining.len >= 16) {
         const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-        const cmp = @popCount(@as(@Vector(ascii_vector_size, u1), @bitCast(vec == splatted)));
+        // `vec == splatted` gives a vector of booleans. `@intFromBool` widens
+        // each lane to u8 (0 or 1). Reducing u8 lanes (rather than u1 lanes)
+        // avoids overflow: summing up to 16 u8 values fits in u8. If the
+        // element type were u1 the `@reduce(.Add, ...)` would wrap and the
+        // final total would be the parity per chunk instead of the count.
+        const cmp: @Vector(ascii_vector_size, u8) = @intFromBool(vec == splatted);
         total += @as(usize, @reduce(.Add, cmp));
         remaining = remaining[ascii_vector_size..];
     }

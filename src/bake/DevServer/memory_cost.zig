@@ -27,6 +27,10 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
     useAllFields(DevServer, .{
         // does not contain pointers
         .assume_perfect_incremental_bundling = {},
+        // Small heap allocation holding only the pipeline `Mode`.
+        .pipeline = {
+            other_bytes += @sizeOf(bun.bundle_v2.BuildPipeline);
+        },
         .bun_watcher = {},
         .bundles_since_last_error = {},
         .configuration_hash_key = {},

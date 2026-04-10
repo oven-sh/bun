@@ -138,13 +138,6 @@ pub const BundleV2 = struct {
 
     drain_defer_task: DeferredBatchTask = .{},
 
-    /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
-    /// and `bun build` cli) runs at the top of an event loop. When this is
-    /// true, a callback is executed after all work is complete.
-    ///
-    /// You can find which callbacks are run by looking at the
-    /// `finishFromBakeDevServer(...)` function here
-    asynchronous: bool = false,
     thread_lock: bun.safety.ThreadLock,
 
     // if false we can skip TLA validation and propagation
@@ -156,6 +149,36 @@ pub const BundleV2 = struct {
     /// Persists across calls to scheduleBarrelDeferredImports so cross-file
     /// deduplication is free.
     requested_exports: std.AutoArrayHashMapUnmanaged(u32, barrel_imports.RequestedExports) = .{},
+
+    /// Per-top-level-build cache for `with { type: "bundle" }` sub-builds.
+    /// Keyed by `(absolute_entry_point, normalized BundleImportConfig)`.
+    /// Lives for the duration of one top-level build and is freed in
+    /// `deinitWithoutFreeingArena`. The cached `SubBuildResult` references
+    /// memory in the sub-build's intentionally-leaked arena, so entries stay
+    /// valid until the parent build completes.
+    ///
+    /// This is the structural fix for the "fake-jazz three frontend builds"
+    /// problem: when a parent build collects multiple sub-builds that share
+    /// the exact same `(path, config)`, only the first runs the bundler and
+    /// the rest reuse the result. Distinct configs (e.g. different `env`
+    /// prefixes) are never deduplicated, which preserves env isolation as
+    /// a structural guarantee rather than a convention.
+    sub_build_cache: std.array_list.Managed(SubBuildCacheEntry) =
+        std.array_list.Managed(SubBuildCacheEntry).init(bun.default_allocator),
+
+    /// Backref to the `BuildPipeline` that owns this build invocation.
+    /// Set by the top-level entry point that allocates the pipeline
+    /// (`generateFromCLI`, the JS-API bundle thread, `DevServer`). Sub-builds
+    /// inherit the parent's pointer; ownership stays with the top-level
+    /// entry point.
+    ///
+    /// `null` for the legacy `generateFromBakeProductionCLI` path, which
+    /// Phase 6 folds into the pipeline alongside the rest of bake. New code
+    /// should never see a null pipeline, and `mode()` conservatively treats
+    /// a null pipeline as `.oneshot` so legacy paths behave as today.
+    ///
+    /// Phase 2 of the bake v2 plan.
+    pipeline: ?*BuildPipeline = null,
 
     const barrel_imports = @import("./barrel_imports.zig");
 
@@ -1006,6 +1029,13 @@ pub const BundleV2 = struct {
         return this.graph.heap.allocator();
     }
 
+    /// Reads the pipeline mode. Phase 4: legacy code paths with a null
+    /// pipeline (currently only `generateFromBakeProductionCLI`) are
+    /// treated as `.oneshot` to preserve existing behavior.
+    pub fn mode(this: *const BundleV2) BuildPipeline.Mode {
+        return if (this.pipeline) |p| p.mode else .oneshot;
+    }
+
     const logScanCounter = bun.Output.scoped(.scan_counter, .visible);
 
     pub fn incrementScanCounter(this: *BundleV2) void {
@@ -1022,9 +1052,9 @@ pub const BundleV2 = struct {
     }
 
     pub fn onAfterDecrementScanCounter(this: *BundleV2) void {
-        if (this.asynchronous and this.isDone()) {
+        if (this.mode() == .incremental and this.isDone()) {
             this.finishFromBakeDevServer(this.transpiler.options.dev_server orelse
-                @panic("No dev server attached in asynchronous bundle job")) catch
+                @panic("No dev server attached in incremental bundle job")) catch
                 bun.outOfMemory();
         }
     }
@@ -1551,6 +1581,14 @@ pub const BundleV2 = struct {
         source_code_size: *u64,
         fetcher: ?*DependenciesScanner,
     ) !BuildResult {
+        // Phase 2 of the bake v2 plan: every top-level build is owned by
+        // a `BuildPipeline`. CLI builds are always one-shot — the
+        // pipeline is dropped at the end of `generateFromCLI`. The
+        // pipeline pointer is propagated to nested sub-builds via the
+        // `BundleV2.pipeline` backref.
+        const pipeline = try BuildPipeline.createOneshot();
+        defer pipeline.deinit();
+
         var this = try BundleV2.init(
             transpiler,
             null,
@@ -1560,6 +1598,7 @@ pub const BundleV2 = struct {
             null,
             .init(),
         );
+        this.pipeline = pipeline;
         this.unique_key = generateUniqueKey();
 
         if (this.transpiler.log.hasErrors()) {
@@ -2818,6 +2857,10 @@ pub const BundleV2 = struct {
             on_parse_finalizers.deinit(bun.default_allocator);
         }
 
+        // The cache itself only owns the spine ArrayList allocation; the entries
+        // borrow from the sub-build's leaked arena (see `runSingleSubBuild`).
+        this.sub_build_cache.deinit();
+
         defer {
             this.graph.ast.deinit(this.allocator());
             this.graph.input_files.deinit(this.allocator());
@@ -3092,6 +3135,50 @@ pub const BundleV2 = struct {
         direct_file_count: u32,
     };
 
+    /// One entry in `BundleV2.sub_build_cache`. The entry owns no memory of its
+    /// own — `entry_point` is borrowed from the parent build's AST and the
+    /// `result.output_files` items live in the sub-build's leaked arena.
+    pub const SubBuildCacheEntry = struct {
+        entry_point: []const u8,
+        config: ImportRecord.BundleImportConfig,
+        result: SubBuildResult,
+    };
+
+    /// Equality of two `BundleImportConfig` values for cache lookup. Slice
+    /// fields are compared by content (`std.meta.eql` compares slice headers
+    /// only, which would mistakenly treat two equal strings at different
+    /// addresses as different).
+    fn bundleConfigEql(
+        a: ImportRecord.BundleImportConfig,
+        b: ImportRecord.BundleImportConfig,
+    ) bool {
+        if (!std.meta.eql(a.splitting, b.splitting)) return false;
+        if (!std.meta.eql(a.minify, b.minify)) return false;
+        if (!std.meta.eql(a.sourcemap, b.sourcemap)) return false;
+        if (!std.meta.eql(a.target, b.target)) return false;
+        if (!std.meta.eql(a.format, b.format)) return false;
+        if (!std.meta.eql(a.env_behavior, b.env_behavior)) return false;
+        if ((a.naming == null) != (b.naming == null)) return false;
+        if (a.naming) |an| if (!bun.strings.eql(an, b.naming.?)) return false;
+        if ((a.env_prefix == null) != (b.env_prefix == null)) return false;
+        if (a.env_prefix) |ap| if (!bun.strings.eql(ap, b.env_prefix.?)) return false;
+        return true;
+    }
+
+    /// Linear-search lookup in the per-build sub-build cache. Sub-builds within
+    /// a single top-level build are usually 1-10 in count, so a hashmap would
+    /// be overkill (and forces awkward Context plumbing for the struct key).
+    fn lookupSubBuildCache(this: *BundleV2, sb: SubBuild) ?SubBuildResult {
+        for (this.sub_build_cache.items) |entry| {
+            if (bun.strings.eql(entry.entry_point, sb.entry_point) and
+                bundleConfigEql(entry.config, sb.config))
+            {
+                return entry.result;
+            }
+        }
+        return null;
+    }
+
     const sub_build_log = bun.Output.scoped(.sub_build, .hidden);
 
     /// Scans the link-phase graph for `.bundle` imports and returns descriptors.
@@ -3169,17 +3256,105 @@ pub const BundleV2 = struct {
         return list.toOwnedSlice();
     }
 
+    /// Returns the VM-wide sub-build cache for cross-`BundleV2` dedup, if
+    /// this build is reachable from a JS-driven JSBundleCompletionTask
+    /// (the only path where a `VirtualMachine` is available). Returns null
+    /// for paths without a VM (CLI build, certain DevServer-internal
+    /// builds), in which case sub-builds fall back to the per-top-level
+    /// `sub_build_cache` only.
+    fn vmSubBuildCache(this: *BundleV2) ?*SubBuildCache {
+        const completion = this.completion orelse return null;
+        // Called from the bundle worker thread, so use the concurrent
+        // accessor that doesn't assert thread-local VM presence.
+        return &completion.globalThis.bunVMConcurrently().bundle_sub_build_cache;
+    }
+
     /// Runs sub-builds sequentially on the current thread and returns results.
-    /// Each sub-build creates a fresh Transpiler + BundleV2 with browser target.
+    /// Each sub-build creates a fresh Transpiler + BundleV2 with browser target,
+    /// which is what makes per-import config isolation a structural property
+    /// instead of a convention.
+    ///
+    /// Cache lookup order:
+    /// 1. Per-top-level-build `sub_build_cache` (Phase 0): catches duplicate
+    ///    sub-builds within a single parent.
+    /// 2. VM-wide `bundle_sub_build_cache` (Phase 1): catches duplicate
+    ///    sub-builds across different parent `BundleV2` instances in the
+    ///    same VM. On hit, the snapshot is materialized into a fresh
+    ///    `SubBuildResult` whose `OutputFile`s are owned independently and
+    ///    can be safely consumed by the parent build.
     fn runSubBuilds(
         this: *BundleV2,
         sub_builds: []const SubBuild,
     ) ![]SubBuildResult {
         if (sub_builds.len == 0) return &.{};
 
+        const vm_cache = this.vmSubBuildCache();
+
         var results = try bun.default_allocator.alloc(SubBuildResult, sub_builds.len);
         for (sub_builds, 0..) |sb, i| {
-            results[i] = try this.runSingleSubBuild(sb);
+            if (this.lookupSubBuildCache(sb)) |cached| {
+                sub_build_log("sub_build_cache(local) HIT for {s}", .{sb.entry_point});
+                results[i] = cached;
+                continue;
+            }
+
+            if (vm_cache) |cache| {
+                if (cache.lookup(sb.entry_point, sb.config)) |snap| {
+                    defer snap.deref();
+                    sub_build_log("sub_build_cache(vm) HIT for {s}", .{sb.entry_point});
+
+                    // Materialize fresh OutputFiles owned by bun.default_allocator
+                    // so the parent build can mutate/consume them independently.
+                    const owned_files = try snap.materialize();
+                    const owned_list = std.array_list.Managed(options.OutputFile).fromOwnedSlice(
+                        bun.default_allocator,
+                        owned_files,
+                    );
+                    const result: SubBuildResult = .{
+                        .output_files = owned_list,
+                        .entry_point_index = snap.entry_point_index,
+                        .direct_file_count = snap.direct_file_count,
+                    };
+                    results[i] = result;
+
+                    // Also seed the per-top-level cache so subsequent
+                    // siblings within this parent build hit the cheaper
+                    // local cache instead of going back through the VM.
+                    try this.sub_build_cache.append(.{
+                        .entry_point = sb.entry_point,
+                        .config = sb.config,
+                        .result = result,
+                    });
+                    continue;
+                }
+            }
+
+            sub_build_log("sub_build_cache MISS for {s}", .{sb.entry_point});
+            const result = try this.runSingleSubBuild(sb);
+            results[i] = result;
+            try this.sub_build_cache.append(.{
+                .entry_point = sb.entry_point,
+                .config = sb.config,
+                .result = result,
+            });
+
+            // Publish to the VM cache so other parent builds (and future
+            // top-level rebuilds) in this VM can reuse the result.
+            if (vm_cache) |cache| {
+                const snap = cache.insert(
+                    sb.entry_point,
+                    sb.config,
+                    result.output_files.items,
+                    result.entry_point_index,
+                    result.direct_file_count,
+                ) catch |err| blk: {
+                    // OOM in the cache layer is non-fatal — we still have
+                    // a valid local result. Skip publishing.
+                    sub_build_log("vm cache insert failed for {s}: {s}", .{ sb.entry_point, @errorName(err) });
+                    break :blk null;
+                };
+                if (snap) |s| s.deref();
+            }
         }
         return results;
     }
@@ -3274,6 +3449,11 @@ pub const BundleV2 = struct {
             jsc.WorkPool.get(),
             heap,
         );
+        // Phase 2 of the bake v2 plan: sub-builds inherit the parent
+        // pipeline so they can read/write the same parse cache
+        // (Phase 3) and participate in incremental rebuilds (Phase 4).
+        // Ownership stays with the parent's top-level entry point.
+        sub_bundler.pipeline = this.pipeline;
         defer sub_bundler.deinitWithoutFreeingArena();
 
         // Run the sub-build
@@ -5583,6 +5763,8 @@ pub const ParseTask = @import("./ParseTask.zig").ParseTask;
 pub const LinkerContext = @import("./LinkerContext.zig").LinkerContext;
 pub const LinkerGraph = @import("./LinkerGraph.zig").LinkerGraph;
 pub const Graph = @import("./Graph.zig");
+pub const SubBuildCache = @import("./SubBuildCache.zig");
+pub const BuildPipeline = @import("./BuildPipeline.zig");
 
 const string = []const u8;
 

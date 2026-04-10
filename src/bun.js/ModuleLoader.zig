@@ -776,12 +776,15 @@ pub fn transpileSourceCode(
             const bundle_config = jsc_vm.bundle_import_configs.get(path.text);
             const js_bundle = try jsc.API.JSBundle.init(globalObject.?, path.text, bundle_config);
 
-            // Always use full BundleV2 builds for ?bundle imports.
-            // The DevServer's incremental graph can't properly handle files that
-            // are both entry points and ?bundle targets of other entry points —
-            // the ?bundle import creates a lazy-export stub that shadows the real
-            // module content, preventing dependencies from being traced.
-            try js_bundle.build();
+            if (jsc_vm.hot_reload == .hot) {
+                // --hot: register with shared DevServer for incremental rebuilds + HMR.
+                // Bundle output uses .internal_bake_dev format which prepends an HMR
+                // runtime that auto-detects its WebSocket origin from import.meta.url.
+                try js_bundle.attachToSharedDevServer(jsc_vm);
+            } else {
+                // Oneshot: full BundleV2 build at import time.
+                try js_bundle.build();
+            }
 
             return ResolvedSource{
                 .allocator = &jsc_vm.allocator,

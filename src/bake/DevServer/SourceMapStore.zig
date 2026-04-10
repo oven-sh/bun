@@ -68,6 +68,12 @@ pub const Entry = struct {
     /// So this is only used for eviction logic, to pretend this was the only
     /// entry. To compute the memory cost of DevServer, this cannot be used.
     overlapping_memory_cost: u32,
+    /// Lines emitted by `takeJSBundle` AFTER all the per-file chunks (the
+    /// runtime config object + sourceMappingURL comment for initial_response
+    /// bundles). Set by the caller after generating the bundle so `joinVLQ`
+    /// can pad the mappings string out to the bundle's true line count and
+    /// avoid leaving the tail of the file unmapped.
+    tail_line_count: u32 = 0,
 
     pub fn sourceContents(entry: Entry) []const bun.StringPointer {
         return entry.source_contents[0..entry.file_paths.len];
@@ -280,6 +286,19 @@ pub const Entry = struct {
                 }
             },
         };
+
+        // Trailing `.line_count` files (and the runtime header in the
+        // degenerate case where there are no `.some` files at all) leave
+        // pending lines in `lines_between` that no later `.some` chunk
+        // consumes. Without this final flush, the rendered mappings end
+        // earlier than the actual generated bundle and DevTools shows
+        // the bundle's tail (often hundreds of lines of user code) as
+        // unmapped JS. Emit the leftover newline separators directly,
+        // plus the trailing runtime-config block emitted by `takeJSBundle`.
+        const trailing = lines_between + map.tail_line_count;
+        if (trailing > 0) {
+            j.push(try strings.repeatingAlloc(arena, trailing, ';'), arena);
+        }
     }
 
     pub fn deinit(entry: *Entry) void {
@@ -287,6 +306,7 @@ pub const Entry = struct {
             .dev_allocator = {},
             .ref_count = assert(entry.ref_count == 0),
             .overlapping_memory_cost = {},
+            .tail_line_count = {},
             .files = {
                 const files = entry.files.slice();
                 for (0..files.len) |i| {
@@ -552,6 +572,7 @@ const SourceMap = bun.SourceMap;
 const StringJoiner = bun.StringJoiner;
 const assert = bun.assert;
 const bake = bun.bake;
+const strings = bun.strings;
 const useAllFields = bun.meta.useAllFields;
 const EventLoopTimer = bun.api.Timer.EventLoopTimer;
 

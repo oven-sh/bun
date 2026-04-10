@@ -143,6 +143,12 @@ has_tailwind_plugin_hack: ?bun.StringArrayHashMapUnmanaged(void) = null,
 server_fetch_function_callback: jsc.Strong.Optional,
 server_register_update_callback: jsc.Strong.Optional,
 
+// Persistent `BuildPipeline` shared by every `BundleV2` this DevServer
+// spawns. Allocated in `init`, freed in `deinit`. Carries the
+// `.incremental` mode flag so `BundleV2.mode()` routes async
+// dev-server dispatch through `finishFromBakeDevServer`.
+pipeline: *bun.bundle_v2.BuildPipeline,
+
 // Watching
 bun_watcher: *bun.Watcher,
 directory_watchers: DirectoryWatchStore,
@@ -341,11 +347,19 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 
     const separate_ssr_graph = if (options.framework.server_components) |sc| sc.separate_ssr_graph else false;
 
+    // Phase 4: every DevServer owns a long-lived incremental pipeline.
+    // It persists across rebuilds and every `BundleV2` we spawn inherits
+    // the pointer. Allocated first so the `errdefer` cleans it up on
+    // init failure.
+    const pipeline = try bun.bundle_v2.BuildPipeline.createIncremental();
+    errdefer pipeline.deinit();
+
     const dev = bun.new(DevServer, .{
         .allocation_scope = .initDefault(),
         .root = options.root,
         .vm = options.vm,
         .server = null,
+        .pipeline = pipeline,
         .directory_watchers = .empty,
         .server_fetch_function_callback = .empty,
         .server_register_update_callback = .empty,
@@ -626,11 +640,16 @@ pub fn initStandalone(opts: StandaloneOptions) bun.JSOOM!*DevServer {
     else
         opts.root;
 
+    // Phase 4: every DevServer owns a long-lived incremental pipeline.
+    const pipeline = try bun.bundle_v2.BuildPipeline.createIncremental();
+    errdefer pipeline.deinit();
+
     const dev = bun.new(DevServer, .{
         .allocation_scope = .initDefault(),
         .root = root,
         .vm = opts.vm,
         .server = null,
+        .pipeline = pipeline,
         .directory_watchers = .empty,
         .server_fetch_function_callback = .empty,
         .server_register_update_callback = .empty,
@@ -985,7 +1004,7 @@ pub fn generateStandaloneClientBundle(dev: *DevServer, script_id: SourceMapStore
         .shared => {},
     }
 
-    return dev.client_graph.takeJSBundle(&.{
+    const result = try dev.client_graph.takeJSBundle(&.{
         .kind = .initial_response,
         .initial_response_entry_point = entry_point_name,
         .react_refresh_entry_point = react_fast_refresh_id,
@@ -993,6 +1012,10 @@ pub fn generateStandaloneClientBundle(dev: *DevServer, script_id: SourceMapStore
         .script_id = script_id,
         .console_log = false,
     });
+    if (dev.source_maps.entries.getPtr(script_id)) |entry_ptr| {
+        entry_ptr.tail_line_count = result.tail_line_count;
+    }
+    return result.bytes;
 }
 
 /// Generate a client bundle for a single standalone entry point.
@@ -1059,7 +1082,7 @@ pub fn generateStandaloneClientBundleForEntryPoint(
         .shared => {},
     }
 
-    return dev.client_graph.takeJSBundle(&.{
+    const result = try dev.client_graph.takeJSBundle(&.{
         .kind = .initial_response,
         .initial_response_entry_point = entry_point_name,
         .react_refresh_entry_point = react_fast_refresh_id,
@@ -1067,6 +1090,15 @@ pub fn generateStandaloneClientBundleForEntryPoint(
         .script_id = script_id,
         .console_log = false,
     });
+    // The bundle's trailing config block (emitted by `takeJSBundle` after
+    // the per-file chunks) has no source mappings. Pass its newline count
+    // to the source map entry so `joinVLQ` can pad the rendered mappings
+    // out to the bundle's last line and DevTools doesn't show the tail
+    // as unmapped.
+    if (dev.source_maps.entries.getPtr(script_id)) |entry_ptr| {
+        entry_ptr.tail_line_count = result.tail_line_count;
+    }
+    return result.bytes;
 }
 
 /// Handle GET /_bun/client/:route in standalone mode.
@@ -1187,6 +1219,7 @@ pub fn deinit(dev: *DevServer) void {
         .memory_visualizer_timer = if (dev.memory_visualizer_timer.state == .ACTIVE)
             dev.vm.timer.remove(&dev.memory_visualizer_timer),
         .graph_safety_lock = dev.graph_safety_lock.lock(),
+        .pipeline = dev.pipeline.deinit(),
         .bun_watcher = dev.bun_watcher.deinit(true),
         .dump_dir = if (bun.FeatureFlags.bake_debugging_features) if (dev.dump_dir) |*dir| dir.close(),
         .log = dev.log.deinit(),
@@ -1488,6 +1521,11 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
             .server = dev.server,
             .mime_type = &.json,
         });
+        // In standalone mode the JS bundle is loaded from the user's
+        // Bun.serve on a different port, so the browser fetches the
+        // sourcemap cross-origin. Without this header browsers silently
+        // drop the sourcemap and DevTools shows no source mapping.
+        bun.handleOom(response.headers.append("Access-Control-Allow-Origin", "*"));
         defer response.deref();
         response.onRequest(req, resp);
         return;
@@ -2481,7 +2519,10 @@ pub fn startAsyncBundle(
         heap,
     );
     bv2.bun_watcher = dev.bun_watcher;
-    bv2.asynchronous = true;
+    // Every DevServer bundle runs in the persistent incremental pipeline,
+    // so `BundleV2.mode()` correctly routes async-completion dispatch to
+    // `finishFromBakeDevServer`.
+    bv2.pipeline = dev.pipeline;
 
     {
         dev.graph_safety_lock.lock();
@@ -2659,7 +2700,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
         .shared => {},
     }
 
-    const client_bundle = dev.client_graph.takeJSBundle(&.{
+    const result = try dev.client_graph.takeJSBundle(&.{
         .kind = .initial_response,
         .initial_response_entry_point = if (client_file) |index|
             dev.client_graph.bundled_files.keys()[index.get()]
@@ -2669,8 +2710,10 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
         .script_id = script_id,
         .console_log = dev.shouldReceiveConsoleLogFromBrowser(),
     });
-
-    return client_bundle;
+    if (dev.source_maps.entries.getPtr(script_id)) |entry_ptr| {
+        entry_ptr.tail_line_count = result.tail_line_count;
+    }
+    return result.bytes;
 }
 
 fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.JSError!jsc.JSValue {
@@ -3121,10 +3164,11 @@ pub fn finalizeBundle(
         } else null;
         defer if (source_map_json) |json| dev.allocator().free(json);
 
-        const server_bundle = try dev.server_graph.takeJSBundle(&.{
+        const server_result = try dev.server_graph.takeJSBundle(&.{
             .kind = .hmr_chunk,
             .script_id = server_script_id,
         });
+        const server_bundle = server_result.bytes;
         defer dev.allocator().free(server_bundle);
 
         const server_modules = if (bun.take(&source_map_json)) |json| blk: {
@@ -3385,8 +3429,10 @@ pub fn finalizeBundle(
                 };
                 try w.writeInt(u32, entry.overlapping_memory_cost, .little);
 
-                // Build and send the source chunk
-                try dev.client_graph.takeJSBundleToList(&hot_update_payload, &.{
+                // Build and send the source chunk. HMR chunks have no
+                // runtime config tail, so the returned line count is
+                // always 0 and we discard it.
+                _ = try dev.client_graph.takeJSBundleToList(&hot_update_payload, &.{
                     .kind = .hmr_chunk,
                     .script_id = script_id,
                     .console_log = dev.shouldReceiveConsoleLogFromBrowser(),

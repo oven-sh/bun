@@ -89,6 +89,11 @@ had_errors: bool = false,
 /// Keyed by resolved absolute path. Written after linking, read when creating JSBundle.
 bundle_import_configs: std.StringHashMapUnmanaged(bun.ImportRecord.BundleImportConfig) = .empty,
 
+/// VM-wide cache for `with { type: "bundle" }` sub-build results, shared
+/// across all parent `BundleV2` instances in this VM. See `SubBuildCache.zig`.
+/// Phase 1 of the bake v2 plan.
+bundle_sub_build_cache: bun.bundle_v2.SubBuildCache = .{},
+
 macros: MacroMap,
 macro_entry_points: std.AutoArrayHashMap(i32, *MacroEntryPoint),
 macro_mode: bool = false,

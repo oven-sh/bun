@@ -370,7 +370,7 @@ pub const Chunk = struct {
 
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
-                                    if (from_chunk_dir.len == 0 or force_absolute_path)
+                                    if (from_chunk_dir.len == 0 or force_absolute_path or import_prefix.len > 0)
                                         file_path
                                     else
                                         bun.path.relativePlatformBuf(relative_platform_buf, from_chunk_dir, file_path, .posix, false),
@@ -493,7 +493,7 @@ pub const Chunk = struct {
                                 bun.path.platformToPosixInPlace(u8, @constCast(file_path));
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
-                                    if (from_chunk_dir.len == 0 or force_absolute_path)
+                                    if (from_chunk_dir.len == 0 or force_absolute_path or import_prefix.len > 0)
                                         file_path
                                     else
                                         bun.path.relativePlatformBuf(relative_platform_buf, from_chunk_dir, file_path, .posix, false),

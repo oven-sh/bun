@@ -86,14 +86,18 @@ pub fn build(this: *JSBundle) !void {
     errdefer config.deinit(bun.default_allocator);
     try config.entry_points.insert(this.path);
 
+    // Default to empty public_path so chunk-to-chunk imports use paths
+    // relative to the entry point's dir. This lets the user mount `.files`
+    // under any URL prefix (e.g. "/assets/") and the browser resolves
+    // relative chunk URLs against the entry's served URL naturally.
+    //
+    // A non-empty public_path forces chunks to absolute URLs prefixed with
+    // public_path — only correct when the user mounts under exactly that
+    // prefix.
     if (vm.transpiler.options.transform_options.serve_public_path) |public_path| {
         if (public_path.len > 0) {
             try config.public_path.appendSlice(public_path);
-        } else {
-            try config.public_path.appendChar('/');
         }
-    } else {
-        try config.public_path.appendChar('/');
     }
 
     if (vm.transpiler.options.transform_options.serve_env_behavior != ._none) {
@@ -389,13 +393,68 @@ pub fn sourceMapId(this: *const JSBundle) bun.bake.DevServer.SourceMapStore.Key 
     return .init(@as(u64, this.source_map_generation) << 32);
 }
 
+/// Register this JSBundle with the VM's shared incremental DevServer so it
+/// participates in HMR rebuilds. Triggers an initial build and blocks the
+/// event loop until that build completes.
+///
+/// Used by ModuleLoader for `?bundle` imports when running with `--hot`.
+pub fn attachToSharedDevServer(this: *JSBundle, vm: *bun.jsc.VirtualMachine) !void {
+    const dev = try vm.getOrCreateSharedDevServer();
+
+    // Idempotent — same fn pointer for every JSBundle.
+    dev.standalone_callback_fn = onDevServerBuildComplete;
+
+    // Register this bundle as a callback context. The DevServer fires
+    // `onDevServerBuildComplete` for every registered ctx after each build,
+    // and the per-bundle `getFileIndex` check skips bundles whose entry
+    // wasn't in the current build's graph.
+    try dev.standalone_callback_ctxs.append(bun.default_allocator, @ptrCast(this));
+    this.dev_server = dev;
+
+    // Add the entry point. `addStandaloneEntryPoint` dedupes.
+    _ = try dev.addStandaloneEntryPoint(this.path, this.config);
+
+    this.build_state = .building;
+
+    // If a build is already in flight, queue a follow-up via
+    // `needs_standalone_rebuild` — `startNextBundleIfPresent` runs it after
+    // the current bundle finalizes. Starting a new build here would trip
+    // `assert(current_bundle == null)` in `startAsyncBundle`.
+    //
+    // Re-entry happens when a prior `?bundle` import is still in its spin
+    // loop: ticking the event loop drives JSC microtasks that resolve more
+    // ESM imports, which call back into us synchronously.
+    if (dev.current_bundle == null) {
+        try dev.startStandaloneBuild();
+    } else {
+        dev.needs_standalone_rebuild = true;
+    }
+
+    // Spin the event loop until the build completes (or fails). The build
+    // dispatch is async — `finishFromBakeDevServer` calls
+    // `invokeStandaloneCallback` which fires `onDevServerBuildComplete`
+    // which transitions `build_state` to `.complete` or `.failed`.
+    while (this.build_state == .building) {
+        vm.eventLoop().tick();
+    }
+}
+
 /// Called by DevServer after a build completes in standalone mode.
 /// This is invoked for ALL registered JSBundles, even those whose entry
 /// points may not be in the current build (e.g. during re-entrant loading
 /// where multiple ?bundle imports trigger sequential builds).
 pub fn onDevServerBuildComplete(ctx: *anyopaque, dev: *bun.bake.DevServer, success: bool) void {
     const this: *JSBundle = @ptrCast(@alignCast(ctx));
-    if (!success) return;
+    if (!success) {
+        // If a caller is currently waiting on `attachToSharedDevServer`'s
+        // initial build, mark it failed so the spin loop exits. Subsequent
+        // (post-initial) failures leave `.complete` alone — `.files` keeps
+        // the previous good output until the next successful build.
+        if (this.build_state == .building) {
+            this.build_state = .failed;
+        }
+        return;
+    }
 
     // Skip if our entry point wasn't in this build's graph. This happens
     // during re-entrant module loading when multiple ?bundle imports trigger

@@ -66,10 +66,7 @@ pub fn replacePath(
             prev.deref();
 
             slice.items(.key)[entry_index.get()] = content_hash;
-            slice.items(.value)[entry_index.get()] = StaticRoute.initFromAnyBlob(contents, .{
-                .mime_type = mime_type,
-                .server = assets.owner().server,
-            });
+            slice.items(.value)[entry_index.get()] = try makeAssetRoute(contents, mime_type, assets.owner().server);
             comptime assert(@TypeOf(slice.items(.hash)[0]) == void);
             assets.needs_reindex = true;
             return entry_index;
@@ -83,10 +80,7 @@ pub fn replacePath(
     const file_index_gop = try assets.files.getOrPut(alloc, content_hash);
     if (!file_index_gop.found_existing) {
         try assets.refs.append(alloc, 1);
-        file_index_gop.value_ptr.* = StaticRoute.initFromAnyBlob(contents, .{
-            .mime_type = mime_type,
-            .server = assets.owner().server,
-        });
+        file_index_gop.value_ptr.* = try makeAssetRoute(contents, mime_type, assets.owner().server);
     } else {
         assets.refs.items[file_index_gop.index] += 1;
         var contents_mut = contents.*;
@@ -94,6 +88,19 @@ pub fn replacePath(
     }
     gop.value_ptr.* = .init(@intCast(file_index_gop.index));
     return gop.value_ptr.*;
+}
+
+/// Create a `StaticRoute` for an asset and attach `Access-Control-Allow-Origin: *`.
+/// Assets are always fetched cross-origin in standalone dev mode (the JS is
+/// served from the user's `Bun.serve`, the asset from the DevServer's own
+/// uws app on a different port), so CORS must be allowed.
+fn makeAssetRoute(contents: *const AnyBlob, mime_type: *const MimeType, server: ?bun.jsc.API.AnyServer) !*StaticRoute {
+    const route = StaticRoute.initFromAnyBlob(contents, .{
+        .mime_type = mime_type,
+        .server = server,
+    });
+    try route.headers.append("Access-Control-Allow-Origin", "*");
+    return route;
 }
 
 /// Returns a pointer to insert the *StaticRoute. If `null` is returned, then it

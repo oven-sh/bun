@@ -12,10 +12,14 @@
 
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isMusl } from "harness";
+import { isMusl, isWindows } from "harness";
+import { writeSync } from "node:fs";
 import tty from "node:tty";
 
-const describePosix = process.platform === "win32" ? describe.skip : describe;
+// `describe.skipIf` — *not* `describe.skip` — because `bun:test` still executes
+// the suite callback for `describe.skip` to register the nested tests, and we
+// must not touch `dlopen("libc.so.6")` on Windows.
+const describePosix = describe.skipIf(isWindows);
 
 // Resolve the libraries node-pty's native addon touches. On Darwin everything
 // is in libc.dylib. On glibc Linux, openpty(3) historically lived in libutil
@@ -91,8 +95,9 @@ describePosix("issue #29112 — tty.ReadStream on non-blocking PTY fd", () => {
 
       const closed = new Promise<void>(resolve => rs.once("close", () => resolve()));
       const errors: Error[] = [];
+      const chunks: Buffer[] = [];
       rs.on("error", err => errors.push(err));
-      rs.on("data", () => {});
+      rs.on("data", chunk => chunks.push(Buffer.from(chunk)));
 
       // The bug path runs entirely off-main: _read schedules a threadpool
       // fs.read, the worker calls pread(), pread returns EAGAIN, the
@@ -101,11 +106,11 @@ describePosix("issue #29112 — tty.ReadStream on non-blocking PTY fd", () => {
       // the threadpool to actually close(fd). Two `setImmediate` turns
       // isn't enough to guarantee that whole chain has run. Instead,
       // actively probe both outcomes: either the stream ends (bug) or we
-      // complete ~50 polls with the fd still valid (fix). Any poll that
-      // sees the stream dead, or that sees ioctl fail with EBADF, is an
-      // immediate regression signal — we don't need to wait the full
-      // budget. We also race against the "close" event to exit as soon
-      // as the buggy build tears down.
+      // complete enough polls that the initial EAGAIN has definitely
+      // been handled (fix). Any poll that sees the stream dead, or that
+      // sees ioctl fail with EBADF, is an immediate regression signal —
+      // we don't need to wait the full budget. We also race against the
+      // "close" event to exit as soon as the buggy build tears down.
       const deadline = Date.now() + 1000;
       let raceWinner: "poll" | "close" = "poll";
       for (;;) {
@@ -132,6 +137,24 @@ describePosix("issue #29112 — tty.ReadStream on non-blocking PTY fd", () => {
       // does. If Bun closed the fd behind node-pty's back, this returns -1
       // with errno == EBADF.
       expect(setWinsize(parent, 120, 40)).toBe(0);
+
+      // Reads must actually resume after the initial EAGAIN — not just
+      // "the stream stays alive". This is what #25822 observed: `onData`
+      // never firing even though the fd was technically still open. Push
+      // bytes through the slave side and wait for them to arrive on the
+      // master ReadStream.
+      const gotChunk = new Promise<Buffer>(resolve => {
+        if (chunks.length > 0) return resolve(chunks[chunks.length - 1]);
+        rs.once("data", chunk => resolve(Buffer.from(chunk)));
+      });
+      writeSync(child, "hello-29112\n");
+      const chunk = await Promise.race([
+        gotChunk,
+        new Promise<Buffer>((_, reject) =>
+          setTimeout(() => reject(new Error("tty.ReadStream never delivered data after EAGAIN")), 2000),
+        ),
+      ]);
+      expect(chunk.toString()).toContain("hello-29112");
 
       // No stream 'error' event should have surfaced from EAGAIN — the
       // fix retries the read inside the custom fs wrapper instead of

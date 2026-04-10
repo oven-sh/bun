@@ -163,7 +163,7 @@ pub fn writeBind(
                 // back to the legacy text path — the fallback would just
                 // re-emit the same broken locale string.
                 if (value.isDate()) {
-                    var iso_buf: [64]u8 = undefined;
+                    var iso_buf: JSValue.ISOStringBuffer = undefined;
                     const iso = value.toISOString(globalObject, &iso_buf);
                     if (iso.len == 0) return error.InvalidQueryBinding;
                     const l = try writer.length();

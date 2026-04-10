@@ -347,7 +347,7 @@ pub const S3Credentials = struct {
 
     fn getAMZDate(allocator: std.mem.Allocator) DateResult {
         // We can also use Date.now() but would be slower and would add jsc dependency
-        // var buffer: [28]u8 = undefined;
+        // var buffer: jsc.JSValue.ISOStringBuffer = undefined;
         // the code bellow is the same as new Date(Date.now()).toISOString()
         // jsc.JSValue.getDateNowISOString(globalObject, &buffer);
 

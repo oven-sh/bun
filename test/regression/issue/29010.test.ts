@@ -120,15 +120,25 @@ describe("issue #29010 — Date parameters serialize as ISO 8601", async () => {
   });
 
   // Sanity check: the default (prepared) path was already correct, make
-  // sure we didn't regress it.
-  describe("prepare: true (binary format)", () => {
+  // sure we didn't regress it. On the *first* execution of a prepared
+  // statement, `statement.parameters` is still empty (the server hasn't
+  // sent a ParameterDescription yet) so `writeBind` uses the ISO text
+  // path added in this change. On the *second* execution the cached OID
+  // (`timestamptz` = 1184) is present and `writeBind` takes the binary
+  // `types.date.fromJS` path. Exercise both.
+  describe("prepare: true", () => {
     const options = { ...baseOptions, prepare: true };
     const t = new Date("2024-01-15T12:30:45.000Z");
 
-    test("Date round-trips via binary format", async () => {
+    test("Date round-trips on first and subsequent executions", async () => {
       await using db = new SQL(options);
-      const [{ x }] = await db`SELECT ${t}::timestamptz AS x`;
-      expect(x).toEqual(t);
+      // First execution: OID 0 (server-decided) → text-format ISO 8601.
+      const [{ x: first }] = await db`SELECT ${t}::timestamptz AS x`;
+      expect(first).toEqual(t);
+      // Second execution of the same prepared statement: OID 1184 →
+      // binary microseconds-since-2000 via `types.date.fromJS`.
+      const [{ x: second }] = await db`SELECT ${t}::timestamptz AS x`;
+      expect(second).toEqual(t);
     });
   });
 });

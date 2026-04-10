@@ -18,7 +18,7 @@
 const expected_version = 18;
 
 const debug = Output.scoped(.cache, .visible);
-const MINIMUM_CACHE_SIZE = 50 * 1024;
+const MINIMUM_CACHE_SIZE = 4 * 1024;
 
 // When making parser changes, it gets extremely confusing.
 var bun_debug_restore_from_cache = false;

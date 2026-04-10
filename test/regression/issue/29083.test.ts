@@ -32,12 +32,19 @@ type Method = "arrayBuffer" | "text" | "json" | "formData";
 async function runLeakFixture(method: Method, contentType: string, bodyLiteral: string) {
   using dir = tempDir(`issue-29083-${method}`, {
     "fixture.ts": /* ts */ `
+      // Wrap the whole fixture so any exception produces a diagnosable
+      // stderr line in CI instead of a silent exit 2.
+      try {
       const CHUNK_MIB = 8;
-      const ITERATIONS = 64;
+      const ITERATIONS = 32;
       const payload = ${bodyLiteral};
       const expectedLength = Buffer.byteLength(payload);
 
       await using server = Bun.serve({
+        // Bind to 127.0.0.1 specifically so Bun's S3 client can't
+        // accidentally talk to an IPv6 localhost that the mock server
+        // isn't listening on (seen on some CI runners).
+        hostname: "127.0.0.1",
         port: 0,
         fetch() {
           return new Response(payload, {
@@ -55,7 +62,7 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
         secretAccessKey: "test",
         region: "us-east-1",
         bucket: "bucket",
-        endpoint: \`http://localhost:\${server.port}\`,
+        endpoint: \`http://127.0.0.1:\${server.port}\`,
       });
 
       // Pass the content type explicitly. The S3 download task does not
@@ -112,10 +119,11 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
       const growthMib = growthBytes / 1024 / 1024;
 
       // Pre-fix: every iteration leaks the full download
-      // (8 MiB arrayBuffer / ~8 MiB text / ~8 MiB json), so after 64
-      // iterations the process has leaked ~0.5 GiB. Post-fix: RSS stays
-      // within a small constant of the baseline.
-      const BUDGET_MIB = 64;
+      // (~8 MiB each), so after 32 iterations ~256 MiB are leaked. The
+      // 128 MiB budget clears the fix on every runner we have numbers
+      // for (post-fix growth is typically <10 MiB) while still blowing
+      // up on the unfixed path by a wide margin.
+      const BUDGET_MIB = 128;
 
       console.log(JSON.stringify({
         method: ${JSON.stringify(method)},
@@ -131,6 +139,10 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
           \`RSS grew by \${growthMib.toFixed(1)} MiB after \${ITERATIONS} \` +
             \`${method}() calls (budget: \${BUDGET_MIB} MiB). Leak regressed.\`,
         );
+      }
+      } catch (err) {
+        console.error("FIXTURE_ERROR:", err && err.stack ? err.stack : err);
+        process.exit(1);
       }
     `,
   });

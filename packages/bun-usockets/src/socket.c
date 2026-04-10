@@ -160,10 +160,21 @@ int us_socket_is_established(int ssl, struct us_socket_t *s) {
 void us_connecting_socket_free(int ssl, struct us_connecting_socket_t *c) {
     // we can't just free c immediately, as it may be enqueued in the dns_ready_head list
     // instead, we move it to a close list and free it after the iteration
+    if (c->scheduled_for_free) {
+        /* Already on closed_connecting_head. Re-enqueueing would unlink from
+         * the context a second time (stale prev_pending/next_pending) and —
+         * if another node was pushed in between — turn the close list into a
+         * cycle, making us_internal_free_closed_sockets a double-free loop. */
+        return;
+    }
+    c->scheduled_for_free = 1;
     struct us_loop_t *loop = c->context->loop;
     us_internal_socket_context_unlink_connecting_socket(ssl, c->context, c);
 
-    c->next = loop->data.closed_connecting_head;
+    /* Use the dedicated close-list link, NOT c->next — that field belongs to
+     * dns_ready_head and may still be the only pointer to the rest of an
+     * in-progress drain snapshot. */
+    c->next_closed = loop->data.closed_connecting_head;
     loop->data.closed_connecting_head = c;
 }
 

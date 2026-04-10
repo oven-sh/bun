@@ -247,7 +247,15 @@ void us_internal_dns_callback_threadsafe(struct us_connecting_socket_t *c, void*
 void us_internal_drain_pending_dns_resolve(struct us_loop_t *loop, struct us_connecting_socket_t *s) {
     while (s) {
         struct us_connecting_socket_t *next = s->next;
-        us_internal_socket_after_resolve(s);
+        /* s may already be on closed_connecting_head (scheduled_for_free)
+         * if a prior after_resolve in this same batch released it via a
+         * re-entrant callback, or if the pending_resolve_callback invariant
+         * was violated by a new caller. Its memory is still valid (deferred
+         * free hasn't run yet), but its context/addrinfo_req are no longer
+         * owned — just skip it instead of crashing in after_resolve. */
+        if (!s->scheduled_for_free) {
+            us_internal_socket_after_resolve(s);
+        }
         s = next;
     }
 }
@@ -280,7 +288,7 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     loop->data.closed_udp_head = NULL;
 
     for (struct us_connecting_socket_t *s = loop->data.closed_connecting_head; s; ) {
-        struct us_connecting_socket_t *next = s->next;
+        struct us_connecting_socket_t *next = s->next_closed;
         us_free(s);
         s = next;
     }

@@ -197,12 +197,20 @@ struct us_socket_t {
 struct us_connecting_socket_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct addrinfo_request *addrinfo_req;
     struct us_socket_context_t *context;
-    // this is used to track all dns resolutions in this connection
+    /* dns_ready_head singly-linked list — written under loop->data.mutex by
+     * us_internal_dns_callback (main thread or DNS worker), read by
+     * us_internal_drain_pending_dns_resolve after snapshotting the head. */
     struct us_connecting_socket_t *next;
     struct us_socket_t *connecting_head;
     int options;
     int socket_ext_size;
-    unsigned int closed : 1, shutdown : 1, ssl : 1, shutdown_read : 1, pending_resolve_callback : 1;
+    /* scheduled_for_free: set by us_connecting_socket_free when c is placed on
+     * closed_connecting_head. Guards against double-enqueue (double unlink +
+     * corrupted close list) and lets after_resolve detect a c that has already
+     * been released but whose memory is not yet reclaimed by
+     * us_internal_free_closed_sockets — which would otherwise deref a freed
+     * context and manifest as the loop.c:238 SIGSEGV @ 0x0. */
+    unsigned int closed : 1, shutdown : 1, ssl : 1, shutdown_read : 1, pending_resolve_callback : 1, scheduled_for_free : 1;
     unsigned char timeout;
     unsigned char long_timeout;
     uint16_t port;
@@ -211,6 +219,13 @@ struct us_connecting_socket_t {
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;
     struct us_connecting_socket_t* prev_pending;
+    /* closed_connecting_head singly-linked list — main-thread-only, no lock.
+     * Separate from `next` so that a c which is (or might still be) reachable
+     * via a dns_ready_head snapshot cannot have its chain corrupted when it is
+     * queued for deferred free. The two lists previously shared `next`, which
+     * meant the deferred-free enqueue silently spliced whatever followed c in
+     * the DNS drain list onto the close list. */
+    struct us_connecting_socket_t* next_closed;
 };
 
 struct us_wrapped_socket_context_t {

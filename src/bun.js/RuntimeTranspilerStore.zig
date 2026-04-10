@@ -237,8 +237,9 @@ pub const RuntimeTranspilerStore = struct {
         threadlocal var source_code_printer: ?*js_printer.BufferPrinter = null;
 
         pub fn dispatchToMainThread(this: *TranspilerJob) void {
-            this.vm.transpiler_store.queue.push(this);
-            this.vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.createFrom(&this.vm.transpiler_store));
+            const vm = this.vm;
+            vm.transpiler_store.queue.push(this);
+            vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.createFrom(&vm.transpiler_store));
         }
 
         pub fn runFromJSThread(this: *TranspilerJob) bun.JSError!void {

@@ -333,12 +333,22 @@ fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
 }
 
 /// Walks up from `start_dir` looking for a `bunfig.toml`. Returns the path
-/// written into `buf`, or null if none was found up to the filesystem root.
+/// written into `buf`, or null if none was found.
 ///
-/// This enables monorepos to define a single `bunfig.toml` at the repo root
-/// and have it inherited by subprojects that don't have their own.
+/// Stop conditions, in order:
+///   1. A directory containing `bunfig.toml` — return it.
+///   2. A directory containing `.git` (typical project/monorepo root) —
+///      check that directory's `bunfig.toml` one last time and stop.
+///   3. The filesystem root.
+///
+/// Scoping the walk to the `.git` boundary prevents picking up an
+/// unrelated `bunfig.toml` from the user's home directory or an
+/// ancestor of an ad-hoc scratch directory, which would change how
+/// Bun runs in ways the user didn't intend.
 pub fn findAutoBunfig(start_dir: []const u8, buf: *bun.PathBuffer) ?[:0]const u8 {
     if (start_dir.len == 0) return null;
+
+    var probe_buf: bun.PathBuffer = undefined;
 
     var dir = start_dir;
     while (true) {
@@ -346,6 +356,15 @@ pub fn findAutoBunfig(start_dir: []const u8, buf: *bun.PathBuffer) ?[:0]const u8
         const candidate = resolve_path.joinAbsStringBufZ(dir, buf, &parts, .auto);
         if (bun.sys.existsZ(candidate)) {
             return candidate;
+        }
+
+        // Stop at the first `.git` we see — that's the project root.
+        // Use a scratch buffer so we don't stomp on the bunfig candidate
+        // written into `buf`.
+        var git_parts = [_]string{ dir, ".git" };
+        const git_path = resolve_path.joinAbsStringBufZ(dir, &probe_buf, &git_parts, .auto);
+        if (bun.sys.existsZ(git_path)) {
+            return null;
         }
 
         const parent = resolve_path.dirname(dir, .auto);

@@ -165,6 +165,7 @@ export default {
   once,
   getLazy,
 
+  owner_symbol: Symbol("owner_symbol"),
   kHandle: Symbol("kHandle"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kResistStopPropagation: Symbol("kResistStopPropagation"),

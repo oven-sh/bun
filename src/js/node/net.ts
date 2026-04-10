@@ -57,7 +57,7 @@ const getBufferedAmount = $newZigFunction("socket.zig", "jsGetBufferedAmount", 1
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
-const owner_symbol = Symbol("owner_symbol");
+const { owner_symbol } = require("internal/shared");
 
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
@@ -730,6 +730,12 @@ function Socket(options?) {
     validateInt32(fd, "fd", 0);
   }
 
+  if (options?.handle != null) {
+    this._handle = options.handle;
+    initSocketHandle(this);
+    if (options.readable !== false && !options.manualStart) this.read(0);
+  }
+
   if (socket instanceof Socket) {
     this[ksocket] = socket;
   }
@@ -787,7 +793,7 @@ Socket.prototype._onTimeout = function () {
   const handle = this._handle;
   // if there is a handle, and it has pending data,
   // we suppress the timeout because a write is in progress
-  if (handle && getBufferedAmount(handle) > 0) {
+  if (handle && !$isCallable(handle.readStart) && getBufferedAmount(handle) > 0) {
     return;
   }
   this.emit("timeout");
@@ -1224,8 +1230,10 @@ Socket.prototype._read = function _read(size) {
   const socket = this._handle;
   if (this.connecting || !socket) {
     this.once("connect", () => this._read(size));
+  } else if ($isCallable(socket.readStart)) {
+    if (!socket.reading) tryReadStart(this);
   } else {
-    socket?.resume();
+    socket.resume();
   }
 };
 
@@ -2577,6 +2585,45 @@ function initSocketHandle(self) {
   // Handle creation may be deferred to bind() or connect() time.
   if (self._handle) {
     self._handle[owner_symbol] = self;
+    if ($isCallable(self._handle.readStart)) {
+      self._handle.onread = onStreamRead;
+      self._handle.ondrain = onHandleDrain;
+    }
+  }
+}
+
+// Node lib/internal/stream_base_commons.js onStreamRead, adapted to the
+// (buf | null | Error) encoding the Zig TTY handle uses.
+function onStreamRead(buf) {
+  const self = this[owner_symbol];
+  if (buf === null) {
+    self.push(null);
+    self.read(0);
+    return;
+  }
+  if (buf instanceof Error) {
+    self.destroy(buf);
+    return;
+  }
+  self.bytesRead += buf.length;
+  if (!self.push(buf)) {
+    this.reading = false;
+    this.readStop();
+  }
+}
+
+function tryReadStart(socket) {
+  socket._handle.reading = true;
+  const err = socket._handle.readStart();
+  if (err) socket.destroy(new Error("read failed: " + err));
+}
+
+function onHandleDrain() {
+  const self = this[owner_symbol];
+  const cb = self[kwriteCallback];
+  if (cb) {
+    self[kwriteCallback] = undefined;
+    cb();
   }
 }
 

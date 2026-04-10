@@ -48,7 +48,9 @@ test("process.binding('tty_wrap')", () => {
       expect(array[1]).toBe(-1);
     }
   } else {
-    expect(() => new tty(0)).toThrow();
+    // Node's TTY binding accepts non-tty fds (uv_tty_init reports via ctx
+    // out-param, not throw). The handle just won't deliver tty-specific data.
+    expect(() => new tty(0)).not.toThrow();
     console.warn("warn: Skipping tty tests because stdin is not a tty");
   }
 });

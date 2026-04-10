@@ -117,6 +117,32 @@ export function getStdinStream(
   fdType: BunProcessStdinFdType,
 ) {
   $assert(fd === 0);
+
+  if (isTTY) {
+    // Node lib/internal/bootstrap/switches/is_main_thread.js getStdin():
+    // tty.ReadStream extends net.Socket with a native TTY _handle. Socket's
+    // own _read → readStart() and onStreamRead's push()===false → readStop()
+    // drive backpressure-based fd-release with no listener tracking.
+    const tty = require("node:tty");
+    const stdin = new tty.ReadStream(fd);
+
+    // Start paused (Node does the same).
+    if (stdin._handle?.readStop) {
+      stdin._handle.reading = false;
+      stdin._handle.readStop();
+    }
+    stdin._readableState.reading = false;
+
+    stdin.on("pause", () => {
+      if (stdin._handle) {
+        stdin._handle.reading = false;
+        stdin._handle.readStop();
+      }
+    });
+
+    return stdin;
+  }
+
   const native = Bun.stdin.stream();
   const source = native.$bunNativePtr;
 
@@ -163,7 +189,7 @@ export function getStdinStream(
     }
   }
 
-  const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
+  const ReadStream = require("node:fs").ReadStream;
   const stream = new ReadStream(null, { fd, autoClose: false });
 
   const originalOn = stream.on;
@@ -187,10 +213,13 @@ export function getStdinStream(
   };
 
   stream.fd = fd;
+  // c10: fs.ReadStream's `end` is the numeric `Infinity` (the read-range
+  // option), so process.stdin.end() would throw. Shadow it with a no-op.
+  stream.end = function () {
+    return this;
+  };
 
-  // tty.ReadStream is supposed to extend from net.Socket.
-  // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
-  if (isTTY || fdType !== BunProcessStdinFdType.file) {
+  if (fdType !== BunProcessStdinFdType.file) {
     stream.ref = function () {
       forceUnref = false;
       own();
@@ -222,9 +251,13 @@ export function getStdinStream(
       const { value } = await reader.read();
 
       if (value) {
-        stream.push(value);
-
-        if (shouldDisown) disown();
+        // Node's onStreamRead: `if (!stream.push(buf)) handle.readStop()`.
+        // With highWaterMark 0 (TTY), push() returns false on every chunk so
+        // we release fd 0 after each one; _read() (triggerRead) re-owns when a
+        // consumer pulls. If nothing is consuming, fd 0 stays released and a
+        // stdio:'inherit' child reads it exclusively.
+        const more = stream.push(value);
+        if (shouldDisown || !more) disown();
       } else {
         if (!stream_endEmitted) {
           stream_endEmitted = true;
@@ -238,10 +271,11 @@ export function getStdinStream(
       }
     } catch (err) {
       if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
-        // The stream was unref()ed. It may be ref()ed again in the future,
-        // or maybe it has already been ref()ed again and we just need to
-        // restart the internalRead() function. triggerRead() will figure that out.
-        triggerRead.$call(stream, undefined);
+        // disown() released the reader while a read was pending. Don't
+        // re-enter triggerRead (which would own() again); the next legitimate
+        // _read() from Readable.prototype.read() will own() when a consumer
+        // actually wants data.
+        needsInternalReadRefresh = true;
         return;
       }
       stream.destroy(err);
@@ -254,9 +288,14 @@ export function getStdinStream(
     if (reader && !shouldDisown) {
       internalRead(this);
     } else {
-      // The stream has not been ref()ed yet. If it is ever ref()ed,
-      // run internalRead()
+      // Node's Socket.prototype._read → tryReadStart() → handle.readStart().
+      // own() will start internalRead via needsInternalReadRefresh. Skip when
+      // explicitly paused (kPaused) so a stray _read() from maybeReadMore_
+      // (scheduled before the 'pause' handler ran) doesn't re-acquire fd 0.
       needsInternalReadRefresh = true;
+      if (!stream._readableState.paused) {
+        own();
+      }
     }
   }
   stream._read = triggerRead;

@@ -1615,15 +1615,15 @@ describe("Bun.cron.parse", () => {
       ["fri-sun", "5-7"],
       ["Friday-Sunday", "5-7"],
     ] as const) {
-      const namedResults = nextN(`0 0 * * ${named}`, from, 7);
-      const numericResults = nextN(`0 0 * * ${numeric}`, from, 7);
-      expect({ expr: named, days: namedResults.map(t => new Date(t).getUTCDay()) }).toEqual({
+      expect({ expr: named, results: nextN(`0 0 * * ${named}`, from, 7) }).toEqual({
         expr: named,
-        days: numericResults.map(t => new Date(t).getUTCDay()),
+        results: nextN(`0 0 * * ${numeric}`, from, 7),
       });
     }
     // Spot-check FRI-SUN hits exactly Fri(5), Sat(6), Sun(0)
     expect(nextN("0 0 * * FRI-SUN", from, 6).map(t => new Date(t).getUTCDay())).toEqual([5, 6, 0, 5, 6, 0]);
+    // Numeric `5-0` is still rejected — promotion is gated on named tokens.
+    expect(() => Bun.cron.parse("0 0 * * 5-0", from)).toThrow(/range must be ascending/i);
   });
 
   test("day 7 and SUN both schedule on Sundays", () => {

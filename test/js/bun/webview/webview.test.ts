@@ -73,38 +73,81 @@ test("backend: 'webkit' throws on non-darwin", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/29102
-// Chrome backend has no Windows implementation yet — the POSIX
-// socketpair + --remote-debugging-pipe plumbing in ChromeProcess.zig
-// needs a named-pipes/libuv port. Bun__Chrome__ensure short-circuits
-// before BUN_CHROME_PATH / backend.path are consulted, so the
-// constructor must throw a clean "not implemented" error instead of
-// the old misleading ERR_DLOPEN_FAILED that told users to set a path.
-test.skipIf(!isWindows)("backend: 'chrome' throws on Windows", () => {
+// Chrome backend's SPAWN path has no Windows implementation yet — the
+// POSIX socketpair + --remote-debugging-pipe plumbing in
+// ChromeProcess.zig needs a named-pipes/libuv port. Bun__Chrome__ensure
+// short-circuits before BUN_CHROME_PATH / backend.path are consulted,
+// so constructor calls that would have needed spawn must throw a clean
+// "not implemented" error instead of the old misleading
+// ERR_DLOPEN_FAILED that told users to set a path. The WebSocket
+// connect path (backend.url: "ws://...") is unaffected — see
+// test/regression/issue/29102.test.ts for that coverage.
+test.skipIf(!isWindows)("backend: 'chrome' spawn throws on Windows", () => {
   const cases: Array<object> = [
+    // Default (implicit chrome, no running Chrome to auto-detect).
     {},
     { backend: "chrome" },
+    // Explicit path forces spawn-mode.
     {
       backend: {
         type: "chrome",
         path: "C:/Program Files/Google/Chrome/Application/chrome.exe",
       },
     },
+    // url:false also forces spawn-mode (documented knob).
+    { backend: { type: "chrome", url: false } },
   ];
   for (const opts of cases) {
     let err: any;
+    let view: any;
     try {
-      new (Bun as any).WebView(opts);
+      view = new (Bun as any).WebView(opts);
     } catch (e) {
       err = e;
     }
+    if (view) {
+      // Unexpected success — close and fail loudly rather than leave
+      // a live view that could hang the suite.
+      try {
+        view.close();
+      } catch {}
+      throw new Error(`UNEXPECTED_SUCCESS for opts=${JSON.stringify(opts)}: expected ERR_METHOD_NOT_IMPLEMENTED`);
+    }
     expect(err).toBeDefined();
     expect(err.code).toBe("ERR_METHOD_NOT_IMPLEMENTED");
-    expect(err.message).toMatch(/chrome.*not.*yet.*implemented.*windows/i);
-    // Must not mention BUN_CHROME_PATH / backend.path — those knobs
-    // are inert on Windows and the old message's hint at them is
-    // exactly what confused the bug reporter.
+    expect(err.message).toMatch(/chrome.*spawn.*not.*yet.*implemented.*windows/i);
+    // Must not mention BUN_CHROME_PATH / set...backend.path — those
+    // knobs are inert on the Windows spawn path and the old message's
+    // hint at them is exactly what confused the bug reporter.
     expect(err.message).not.toMatch(/BUN_CHROME_PATH/);
+    expect(err.message).not.toMatch(/set.*backend\.path/);
   }
+});
+
+// Companion: `backend: 'webkit'` on Windows must not suggest "use
+// backend: chrome" (which is now also spawn-gated on Windows), or the
+// user would hit a second not-implemented error.
+test.skipIf(!isWindows)("backend: 'webkit' on Windows does not point at a broken chrome fallback", () => {
+  let err: any;
+  let view: any;
+  try {
+    view = new (Bun as any).WebView({ width: 100, height: 100, backend: "webkit" });
+  } catch (e) {
+    err = e;
+  }
+  if (view) {
+    try {
+      view.close();
+    } catch {}
+    throw new Error("UNEXPECTED_SUCCESS: webkit should not work on Windows");
+  }
+  expect(err).toBeDefined();
+  expect(err.code).toBe("ERR_METHOD_NOT_IMPLEMENTED");
+  expect(err.message).toMatch(/only available on macOS/i);
+  // The bare "use backend: chrome" hint was misleading on Windows —
+  // chrome's spawn path is also not implemented. If we mention chrome
+  // at all, it must be as the ws:// connect workaround.
+  expect(err.message).toMatch(/ws:\/\//i);
 });
 
 test("calling without new throws", () => {

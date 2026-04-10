@@ -221,29 +221,25 @@ fn ensureWriterStarted(this: *Pipe) i32 {
     if (this.flags.writer_started) return 0;
     if (this.fd == bun.invalid_fd) return -@as(i32, @intCast(bun.sys.UV_E.BADF));
 
-    // StreamingWriter closes its fd on end(); the Pipe doesn't own this.fd, so
-    // give the writer a dup it can close.
-    const writer_fd = switch (bun.sys.dup(this.fd)) {
-        .result => |d| d,
-        .err => |err| return toUVErrno(err),
-    };
-
     this.writer.setParent(this);
-    switch (this.writer.start(writer_fd, true)) {
+    // The Pipe doesn't own this.fd (caller-provided via open()).
+    if (comptime Environment.isPosix) {
+        this.writer.close_fd = false;
+        // Node's writeBuffer is one uv_write per call; the Socket's
+        // _writableState handles buffering. PosixStreamingWriter's userland
+        // chunk buffer would otherwise drop bytes on end().
+        this.writer.force_sync = true;
+    } else {
+        this.writer.owns_fd = false;
+    }
+    switch (this.writer.start(this.fd, true)) {
         .result => {
-            // Node's writeBuffer is one uv_write per call; the Socket's
-            // _writableState handles buffering. PosixStreamingWriter's userland
-            // chunk buffer would otherwise drop bytes on end().
-            if (comptime Environment.isPosix) this.writer.force_sync = true;
             this.flags.writer_started = true;
             this.ref();
             if (this.flags.unreffed) this.writer.updateRef(this.event_loop_handle, false);
             return 0;
         },
-        .err => |err| {
-            writer_fd.close();
-            return toUVErrno(err);
-        },
+        .err => |err| return toUVErrno(err),
     }
 }
 

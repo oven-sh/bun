@@ -390,6 +390,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
         is_done: bool = false,
         closed_without_reporting: bool = false,
         force_sync: bool = false,
+        close_fd: bool = true,
 
         const internals = PosixPipeWriter(@This(), getFd, getBuffer, _onWrite, registerPoll, _onError, _onWritable, getFileType);
         pub const onPoll = internals.onPoll;
@@ -491,7 +492,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
             if (this.getFd() != bun.invalid_fd) {
                 bun.assert(!this.closed_without_reporting);
                 this.closed_without_reporting = true;
-                this.handle.close(null, {});
+                this.handle.closeImpl(null, {}, this.close_fd);
             }
         }
 
@@ -740,7 +741,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
                 return;
             }
 
-            this.handle.close(this.parent, onClose);
+            this.handle.closeImpl(this.parent, onClose, this.close_fd);
         }
 
         pub fn start(this: *PosixWriter, fd: bun.FD, is_pollable: bool) bun.sys.Maybe(void) {

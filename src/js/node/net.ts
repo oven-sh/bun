@@ -1525,12 +1525,16 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   }
   this._unrefTimer();
   if ($isCallable(socket.readStart)) {
-    // Stream-wrap handle (Pipe/TTY). Node lib/net.js writeGeneric.
+    // Stream-wrap handle (Pipe/TTY). Node lib/net.js writeGeneric → handleWriteReq.
     const req = { handle: socket, oncomplete: afterWrite, async: false, cb: callback };
-    const err =
-      typeof chunk === "string" && $isCallable(socket.writeUtf8String)
-        ? socket.writeUtf8String(req, chunk)
-        : socket.writeBuffer(req, chunk);
+    let err;
+    if (typeof chunk !== "string") {
+      err = socket.writeBuffer(req, chunk);
+    } else if ((encoding === "utf8" || encoding === "utf-8") && $isCallable(socket.writeUtf8String)) {
+      err = socket.writeUtf8String(req, chunk);
+    } else {
+      err = socket.writeBuffer(req, Buffer.from(chunk, encoding));
+    }
     if (err) {
       callback(new ErrnoException(err, "write"));
       return false;

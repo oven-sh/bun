@@ -231,6 +231,10 @@ fn ensureWriterStarted(this: *Pipe) i32 {
     this.writer.setParent(this);
     switch (this.writer.start(writer_fd, true)) {
         .result => {
+            // Node's writeBuffer is one uv_write per call; the Socket's
+            // _writableState handles buffering. PosixStreamingWriter's userland
+            // chunk buffer would otherwise drop bytes on end().
+            if (comptime Environment.isPosix) this.writer.force_sync = true;
             this.flags.writer_started = true;
             this.ref();
             if (this.flags.unreffed) this.writer.updateRef(this.event_loop_handle, false);

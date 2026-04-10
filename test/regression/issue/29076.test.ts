@@ -126,19 +126,23 @@ describe.concurrent("URL imports at runtime are rejected (not silently stubbed)"
     expect(exitCode).toBe(0);
   });
 
-  // Regression for https://github.com/oven-sh/bun/issues/22743: the first
-  // `await import("https://...")` used to resolve to the bogus stub, and the
-  // second `await import()` of the SAME URL hung forever in Bun 1.2.21+.
-  // With the stub gone, the first rejects and the module cache stays clean,
-  // so the second rejects too.
+  // Regression for https://github.com/oven-sh/bun/issues/22743: a second
+  // `await import("https://...")` of the SAME URL that had already failed
+  // once used to hang forever in Bun 1.2.21+ — the module cache ended up
+  // in a wedged "pending" state. The test imports URL 1, then URL 2, then
+  // URL 1 again: pre-fix the third iteration (the repeat of URL 1) hits
+  // the poisoned cache entry and never returns, so the loop never reaches
+  // "done" and the test-runner timeout fires.
+  //
+  // `.invalid` hostnames keep the test entirely local (no DNS on slow CI
+  // runners). The `.js` extension is intentional: it sends the pre-fix
+  // runtime loader through the .js/.jsx path, which ENOENTs on each
+  // import and is what wedges the module cache on the repeat visit.
+  // Extensionless URLs would instead hit the `.file` loader and return
+  // the `{ __esModule, default: "<url>" }` stub; repeat imports of that
+  // stub resolve cleanly without hanging, so they wouldn't reproduce the
+  // #22743 signature.
   test("repeated dynamic import() of https:// does not hang", async () => {
-    // Use .invalid hostnames so the test never touches DNS on slow CI
-    // runners. The `.js` extension is intentional: it sends the pre-fix
-    // runtime loader through the .js/.jsx path, which ENOENTs on the
-    // first import and then wedges the module cache on the third (repeat)
-    // import — the exact #22743 hang signature. Extensionless URLs
-    // produce stubs that all "LOAD" sequentially without hanging and so
-    // wouldn't reproduce the bug.
     const { stdout, exitCode } = await runCode(`
       for (const url of [
         "https://bun-issue-22743.invalid/bundle.js",
@@ -154,9 +158,9 @@ describe.concurrent("URL imports at runtime are rejected (not silently stubbed)"
       }
       console.log("done");
     `);
-    // All three imports must reject and the final "done" must print. If the
-    // second iteration hung (the #22743 regression) the loop would never
-    // reach "done".
+    // All three imports must reject and the final "done" must print. If
+    // the third iteration (the second visit to URL 1) wedged on the
+    // poisoned cache entry the loop would never reach "done".
     expect(stdout.trim().split("\n")).toEqual(["rejected", "rejected", "rejected", "done"]);
     expect(exitCode).toBe(0);
   });

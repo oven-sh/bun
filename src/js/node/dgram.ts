@@ -115,17 +115,31 @@ function EINVAL(syscall) {
 //
 // Match Node.js behavior by suppressing ICMP-class `recv` errors on
 // unconnected sockets while letting them through on connected ones.
-// Every errno in the kernel's icmp_err_convert[] table (net/ipv4/icmp.c):
-//   ENETUNREACH   (ICMP_NET_UNREACH, ICMP_NET_UNKNOWN, ICMP_NET_ANO, ICMP_NET_UNR_TOS)
-//   EHOSTUNREACH  (ICMP_HOST_UNREACH, ICMP_HOST_ANO, ICMP_HOST_UNR_TOS,
-//                  ICMP_PKT_FILTERED, ICMP_PREC_VIOLATION, ICMP_PREC_CUTOFF)
-//   ENOPROTOOPT   (ICMP_PROT_UNREACH)
-//   ECONNREFUSED  (ICMP_PORT_UNREACH)
-//   EMSGSIZE      (ICMP_FRAG_NEEDED)
-//   EOPNOTSUPP    (ICMP_SR_FAILED)
-//   EHOSTDOWN     (ICMP_HOST_UNKNOWN)
-//   ENONET        (ICMP_HOST_ISOLATED)
-// Plus ENETDOWN, which isn't in the ICMP table but is a legitimate
+// Kernel errno mappings for every ICMP/ICMPv6 code that can reach us via
+// IP_RECVERR / IPV6_RECVERR (uSockets enables both unconditionally on Linux).
+//
+// IPv4 — net/ipv4/icmp.c `icmp_err_convert[]`:
+//   ENETUNREACH   NET_UNREACH, NET_UNKNOWN, NET_ANO, NET_UNR_TOS
+//   EHOSTUNREACH  HOST_UNREACH, HOST_ANO, HOST_UNR_TOS, PKT_FILTERED,
+//                 PREC_VIOLATION, PREC_CUTOFF
+//   ENOPROTOOPT   PROT_UNREACH
+//   ECONNREFUSED  PORT_UNREACH
+//   EMSGSIZE      FRAG_NEEDED
+//   EOPNOTSUPP    SR_FAILED
+//   EHOSTDOWN     HOST_UNKNOWN
+//   ENONET        HOST_ISOLATED
+//
+// IPv6 — net/ipv6/icmp.c `icmpv6_err_convert` + `tab_unreach[]`:
+//   ENETUNREACH   DEST_UNREACH/NOROUTE
+//   EACCES        DEST_UNREACH/ADM_PROHIBITED, POLICY_FAIL, REJECT_ROUTE
+//                 (`ip6tables -j REJECT --reject-with icmp6-adm-prohibited`,
+//                  the firewalld default on Fedora/RHEL, hits this path)
+//   EHOSTUNREACH  DEST_UNREACH/ADDR_UNREACH, TIME_EXCEED
+//   ECONNREFUSED  DEST_UNREACH/PORT_UNREACH
+//   EMSGSIZE      PKT_TOOBIG
+//   EPROTO        PARAMPROB, and the fallthrough default
+//
+// Plus ENETDOWN, which isn't in either table but is a legitimate
 // IP-stack-down errno the kernel can surface on the same async path.
 function isSuppressibleRecvError(error, connectState) {
   if (connectState === CONNECT_STATE_CONNECTED) return false;
@@ -140,6 +154,8 @@ function isSuppressibleRecvError(error, connectState) {
     case "ENOPROTOOPT":
     case "EMSGSIZE":
     case "EOPNOTSUPP":
+    case "EACCES":
+    case "EPROTO":
       return true;
     default:
       return false;

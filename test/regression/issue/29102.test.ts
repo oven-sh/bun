@@ -11,6 +11,11 @@ const expectNotImplementedError = (err: any) => {
   expect(err).toBeDefined();
   expect(err.code).toBe("ERR_METHOD_NOT_IMPLEMENTED");
   expect(err.message).toMatch(/chrome.*spawn.*not.*yet.*implemented.*windows/i);
+  // Positive: the message must point users at the ws:// connect
+  // workaround — that's the actionable guidance the user needs and
+  // the whole point of the fix (issue #29102). Without this check a
+  // regression that strips the hint would silently pass.
+  expect(err.message).toMatch(/ws:\/\//);
   // Old misleading hints — the ones the bug reporter followed.
   // BUN_CHROME_PATH / backend.path are inert on the Windows spawn
   // path, so the message must not suggest setting them.
@@ -65,6 +70,9 @@ const expectChildStdoutNotImplemented = (stdout: string) => {
   expect(stdout).not.toContain("UNEXPECTED_SUCCESS");
   expect(stdout).toContain("ERR_METHOD_NOT_IMPLEMENTED");
   expect(stdout).toMatch(/chrome.*spawn.*not.*yet.*implemented.*windows/i);
+  // Positive: mirror of the ws:// hint assertion in
+  // expectNotImplementedError — see the comment there.
+  expect(stdout).toMatch(/ws:\/\//);
   expect(stdout).not.toContain("BUN_CHROME_PATH");
   expect(stdout).not.toMatch(/set.*backend\.path/);
   expect(stdout).not.toContain("ERR_DLOPEN_FAILED");

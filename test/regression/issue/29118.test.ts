@@ -237,10 +237,11 @@ test("image inside a heading doesn't emit the URL-parens fallback", () => {
   // Same layout concern as tables: headings buffer their content and
   // re-measure visible width for the underline row, so the URL string
   // must not get written into heading_buf.
-  const out = Bun.markdown.ansi(
-    "# Title ![logo](https://cdn.example.com/very-long-url-that-breaks-headings.jpg)\n",
-    { colors: true, hyperlinks: false, columns: 40 },
-  );
+  const out = Bun.markdown.ansi("# Title ![logo](https://cdn.example.com/very-long-url-that-breaks-headings.jpg)\n", {
+    colors: true,
+    hyperlinks: false,
+    columns: 40,
+  });
   expect(out).not.toContain("very-long-url-that-breaks-headings.jpg");
   expect(out).toContain("Title");
   expect(out).toContain("logo");

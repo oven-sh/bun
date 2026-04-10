@@ -386,7 +386,10 @@ pub const Async = struct {
                     if (bun.otel.TracerProvider.getIfEnabled(vm, .fs) != null) {
                         const parent = bun.otel.instrument.getActiveSpanContext(globalObject);
                         if (bun.otel.NativeSpan.start(vm, .fs, .fs, .internal, name, parent)) |span| {
-                            if (otelPath(&task.args)) |path| span.setAttrStr(.@"fs.path", path);
+                            if (otelPath(&task.args)) |path| {
+                                const st = span.stash();
+                                st.s[0] = st.push(path);
+                            }
                             task.otel_span = span;
                         }
                     }
@@ -438,7 +441,13 @@ pub const Async = struct {
                     if (this.otel_span) |span| {
                         this.otel_span = null;
                         if (!success) span.setStatus(.err, "");
-                        span.end();
+                        var buf: [1]bun.otel.instrument.Attribute = undefined;
+                        var a: []bun.otel.instrument.Attribute = &buf;
+                        if (span.stash_) |st| if (st.s[0].len > 0) {
+                            a[0] = .semconv(.@"fs.path", .string(st.s[0]));
+                            a = a[1..];
+                        };
+                        span.end(buf[0 .. buf.len - a.len]);
                     }
                 }
                 var promise_value = this.promise.value();

@@ -694,20 +694,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (this.otel_span) |span| {
                 this.otel_span = null;
-                if (this.response_ptr) |resp| {
-                    const code: u16 = resp.statusCode();
-                    span.setAttrInt(.@"http.response.status_code", @intCast(code));
-                    if (code >= 500) {
-                        span.setStatus(.err, "");
-                        var buf: [3]u8 = undefined;
-                        span.setAttrStr(.@"error.type", std.fmt.bufPrint(&buf, "{d}", .{code}) catch "5xx");
-                    }
-                }
-                if (this.flags.aborted) {
-                    span.setStatus(.err, "aborted");
-                    span.setAttrStatic(.@"error.type", "aborted");
-                }
-                span.end();
+                const status: u16 = if (this.response_ptr) |r| r.statusCode() else 0;
+                bun.otel.instrument.endHttpServerSpan(span, if (ssl_enabled) "https" else "http", status, this.flags.aborted);
             }
 
             if (this.response_jsvalue != .zero) {

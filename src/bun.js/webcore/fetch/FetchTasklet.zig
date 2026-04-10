@@ -40,6 +40,7 @@ pub const FetchTasklet = struct {
     signals: http.Signals = .{},
 
     otel_span: ?*bun.otel.NativeSpan = null,
+
     signal_store: http.Signals.Store = .{},
     has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
@@ -60,6 +61,43 @@ pub const FetchTasklet = struct {
     tracker: jsc.Debugger.AsyncTaskTracker,
 
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+
+    /// Build the client-span attr set on the stack from stash + end-time scalars.
+    fn endOtelClientSpan(span: *bun.otel.NativeSpan, status_code: u32, fail: ?[]const u8) void {
+        var buf: [6]bun.otel.instrument.Attribute = undefined;
+        var a: []bun.otel.instrument.Attribute = &buf;
+        a[0] = .semconv(.@"http.request.method", .string(span.name));
+        a = a[1..];
+        if (span.stash_) |st| {
+            if (st.s[0].len > 0) {
+                a[0] = .semconv(.@"url.full", .string(st.s[0]));
+                a = a[1..];
+            }
+            if (st.s[1].len > 0) {
+                a[0] = .semconv(.@"server.address", .string(st.s[1]));
+                a = a[1..];
+            }
+            if (st.i != 0) {
+                a[0] = .semconv(.@"server.port", .int(st.i));
+                a = a[1..];
+            }
+        }
+        var ebuf: [4]u8 = undefined;
+        if (fail) |e| {
+            span.setStatus(.err, e);
+            a[0] = .semconv(.@"error.type", .string(e));
+            a = a[1..];
+        } else if (status_code != 0) {
+            a[0] = .semconv(.@"http.response.status_code", .int(@intCast(status_code)));
+            a = a[1..];
+            if (status_code >= 500) {
+                span.setStatus(.err, "");
+                a[0] = .semconv(.@"error.type", .string(std.fmt.bufPrint(&ebuf, "{d}", .{status_code}) catch "5xx"));
+                a = a[1..];
+            }
+        }
+        span.end(buf[0 .. buf.len - a.len]);
+    }
 
     pub fn ref(this: *FetchTasklet) void {
         const count = this.ref_count.fetchAdd(1, .monotonic);
@@ -202,11 +240,8 @@ pub const FetchTasklet = struct {
         log("clearData ", .{});
         if (this.otel_span) |span| {
             this.otel_span = null;
-            if (this.result.fail) |e| {
-                span.setStatus(.err, @errorName(e));
-                span.setAttrStatic(.@"error.type", @errorName(e));
-            }
-            span.end();
+            const fail: ?[]const u8 = if (this.result.fail) |e| @errorName(e) else null;
+            endOtelClientSpan(span, 0, fail);
         }
         const allocator = bun.default_allocator;
         if (this.url_proxy_buffer.len > 0) {
@@ -979,16 +1014,9 @@ pub const FetchTasklet = struct {
         this.is_waiting_body = this.result.has_more;
         if (this.otel_span) |span| {
             this.otel_span = null;
-            const code = http_response.status_code;
-            span.setAttrInt(.@"http.response.status_code", @intCast(code));
-            if (code >= 500) {
-                span.setStatus(.err, "");
-                var buf: [3]u8 = undefined;
-                span.setAttrStr(.@"error.type", std.fmt.bufPrint(&buf, "{d}", .{code}) catch "5xx");
-            }
             // TODO(otel): network.protocol.version — http.HTTPClientResult does
             // not currently surface negotiated HTTP version.
-            span.end();
+            endOtelClientSpan(span, http_response.status_code, null);
         }
         return Response.init(
             .{
@@ -1160,10 +1188,11 @@ pub const FetchTasklet = struct {
         if (bun.otel.TracerProvider.getIfEnabled(jsc_vm, .fetch) != null) {
             const parent = bun.otel.instrument.getActiveSpanContext(globalThis);
             if (bun.otel.NativeSpan.start(jsc_vm, .fetch, .fetch, .client, @tagName(fetch_options.method), parent)) |span| {
-                span.setAttrStatic(.@"http.request.method", @tagName(fetch_options.method));
-                span.setAttrStr(.@"server.address", url.hostname);
-                span.setAttrInt(.@"server.port", @intCast(url.getPortAuto()));
-                span.setAttrStr(.@"url.full", url.href);
+                // Stash slots: s[0]=url.full, s[1]=server.address, i=server.port. Method is span.name (static).
+                const st = span.stash();
+                st.s[0] = st.push(url.href);
+                st.s[1] = st.push(url.hostname);
+                st.i = @intCast(url.getPortAuto());
                 fetch_tasklet.otel_span = span;
                 if (fetch_tasklet.request_headers.get("traceparent") == null) {
                     var tp_buf: [bun.otel.propagation.traceparent_len]u8 = undefined;

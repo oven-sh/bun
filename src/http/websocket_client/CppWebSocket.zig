@@ -34,10 +34,7 @@ pub const CppWebSocket = opaque {
         loop.enter();
         defer loop.exit();
         var otel = bun.otel.instrument.WSGuard.begin(vm, vm.global, .websocket_client, "ws close", null);
-        if (otel.span) |s| {
-            s.setStatus(.err, @tagName(reason));
-            s.setAttrStatic(.@"error.type", @tagName(reason));
-        }
+        otel.setError(@tagName(reason));
         defer otel.end();
         WebSocket__didAbruptClose(this, reason);
     }

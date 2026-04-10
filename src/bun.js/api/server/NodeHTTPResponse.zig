@@ -42,19 +42,8 @@ otel_status_code: u16 = 0,
 /// (async-complete) and from `server.zig` directly when the handler completed
 /// synchronously before the span could be parked here.
 pub fn endOtelSpan(this: *NodeHTTPResponse, span: *bun.otel.NativeSpan) void {
-    if (this.otel_status_code != 0) {
-        span.setAttrInt(.@"http.response.status_code", @intCast(this.otel_status_code));
-        if (this.otel_status_code >= 500) {
-            span.setStatus(.err, "");
-            var buf: [3]u8 = undefined;
-            span.setAttrStr(.@"error.type", std.fmt.bufPrint(&buf, "{d}", .{this.otel_status_code}) catch "5xx");
-        }
-    }
-    if (this.flags.socket_closed and !this.flags.ended) {
-        span.setStatus(.err, "aborted");
-        span.setAttrStatic(.@"error.type", "aborted");
-    }
-    span.end();
+    const aborted = this.flags.socket_closed and !this.flags.ended;
+    bun.otel.instrument.endHttpServerSpan(span, "http", this.otel_status_code, aborted);
 }
 
 pub const Flags = packed struct(u8) {
@@ -1241,7 +1230,7 @@ fn deinit(this: *NodeHTTPResponse) void {
 
     if (this.otel_span) |span| {
         this.otel_span = null;
-        span.end();
+        bun.otel.instrument.endHttpServerSpan(span, "http", 0, false);
     }
     this.buffered_request_body_data_during_pause.deinit(bun.default_allocator);
     this.poll_ref.unref(jsc.VirtualMachine.get());

@@ -30,21 +30,35 @@ pub const Sampler = union(enum) {
     }
 };
 
-pub fn generateTraceId() model.TraceId {
+/// UUIDv7-style: high 6 bytes = unix-ms (big-endian, sortable), low 10 bytes
+/// from `RareData.entropy_cache` (no per-span syscall). The low 8 bytes stay
+/// fully random so `TraceIdRatioBased` sampling — which reads `id[8..16]` —
+/// is unbiased.
+pub fn generateTraceId(vm: *jsc.VirtualMachine, start_ns: u64) model.TraceId {
     var id: model.TraceId = undefined;
+    const ms = start_ns / std.time.ns_per_ms;
+    id[0] = @truncate(ms >> 40);
+    id[1] = @truncate(ms >> 32);
+    id[2] = @truncate(ms >> 24);
+    id[3] = @truncate(ms >> 16);
+    id[4] = @truncate(ms >> 8);
+    id[5] = @truncate(ms);
     while (true) {
-        bun.csprng(&id);
-        if (!std.mem.eql(u8, &id, &model.zero_trace_id)) return id;
+        @memcpy(id[6..16], vm.rareData().entropySlice(10));
+        if (!std.mem.eql(u8, id[8..16], &model.zero_span_id)) return id;
     }
 }
 
-pub fn generateSpanId() model.SpanId {
+pub fn generateSpanId(vm: *jsc.VirtualMachine) model.SpanId {
     var id: model.SpanId = undefined;
     while (true) {
-        bun.csprng(&id);
+        @memcpy(&id, vm.rareData().entropySlice(8));
         if (!std.mem.eql(u8, &id, &model.zero_span_id)) return id;
     }
 }
+
+pub const NativeSpanPool = bun.HiveArray(instrument.NativeSpan, if (bun.heap_breakdown.enabled) 0 else 64).Fallback;
+pub const StrStashPool = bun.HiveArray(instrument.StrStash, if (bun.heap_breakdown.enabled) 0 else 32).Fallback;
 
 /// Per-hook auto-instrumentation toggles. One bool load after the existing
 /// `TracerProvider.get(vm)` null-check; default-on for the wire-level surfaces
@@ -108,6 +122,9 @@ pub const TracerProvider = struct {
     exporter: ?*OtlpHttpExporter,
     instrument: InstrumentFlags,
 
+    span_pool: NativeSpanPool,
+    stash_pool: StrStashPool,
+
     pub const new = bun.TrivialNew(@This());
 
     pub fn init(vm: *jsc.VirtualMachine, cfg: Config) !*TracerProvider {
@@ -126,6 +143,8 @@ pub const TracerProvider = struct {
             .resource_storage = std.heap.ArenaAllocator.init(allocator),
             .processor = undefined,
             .exporter = exporter,
+            .span_pool = NativeSpanPool.init(allocator),
+            .stash_pool = StrStashPool.init(allocator),
         });
 
         try self.buildResource(cfg.resource_attributes);
@@ -354,8 +373,9 @@ pub const OtelTracer = struct {
         }
         if (!explicit_parent) parent = instrument.getActiveSpanContext(global);
 
-        const trace_id: model.TraceId = if (parent) |p| p.trace_id else generateTraceId();
-        const span_id = generateSpanId();
+        const vm = global.bunVM();
+        const trace_id: model.TraceId = if (parent) |p| p.trace_id else generateTraceId(vm, if (start_ns > 0) start_ns else nowUnixNanos());
+        const span_id = generateSpanId(vm);
 
         const provider = this.provider;
         const sampled = if (provider) |p| p.sampler.shouldSample(trace_id) else false;

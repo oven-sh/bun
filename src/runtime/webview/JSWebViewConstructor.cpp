@@ -364,6 +364,14 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
             case JSWebView::ChromeCreateFailure::ConnectFailed:
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
                     "Failed to connect to Chrome (check backend.url is a valid ws:// debugger endpoint)"_s);
+            case JSWebView::ChromeCreateFailure::AutoDetectConnectFailed:
+                // Distinct from ConnectFailed: the user never set
+                // backend.url, so the error must not hint at it. The
+                // auto-detected URL came from DevToolsActivePort in
+                // Chrome's profile dir and was malformed enough for
+                // WebCore::WebSocket::create to fail synchronously.
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
+                    "Failed to connect to auto-detected Chrome (malformed DevToolsActivePort file)"_s);
             case JSWebView::ChromeCreateFailure::SpawnFailed:
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
                     "Failed to spawn Chrome (set BUN_CHROME_PATH, backend.path, or install Chrome/Chromium)"_s);

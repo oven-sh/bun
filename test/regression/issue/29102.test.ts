@@ -2,25 +2,6 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/29102
-//
-// On Windows, `new Bun.WebView({})` (which defaults to backend: "chrome"
-// off-Darwin) and `new Bun.WebView({ backend: { type: "chrome", path } })`
-// both produced a misleading "Failed to spawn Chrome (set BUN_CHROME_PATH,
-// backend.path, or install Chrome/Chromium)" ERR_DLOPEN_FAILED.
-//
-// The hint was false advice: ChromeProcess.zig's Bun__Chrome__ensure and
-// spawn helper both short-circuit on Windows before BUN_CHROME_PATH /
-// backend.path / findChrome are consulted. The chrome backend's
-// socketpair + --remote-debugging-pipe fd plumbing has no direct Windows
-// equivalent yet.
-//
-// Fix scope: the Windows guard is narrowed to the SPAWN path only.
-// `backend: { url: "ws://..." }` and auto-detect-a-running-Chrome go
-// through WebSocket (WebCore::WebSocket) and Bun__Chrome__autoDetect
-// (which has a Windows branch reading DevToolsActivePort from
-// %LOCALAPPDATA%), so those paths still work. Only when spawn is
-// actually required do we throw ERR_METHOD_NOT_IMPLEMENTED with a
-// clear platform-status message pointing users at the ws:// workaround.
 const it = isWindows ? test : test.skip;
 
 // Common assertions for the "Windows spawn not implemented" error.
@@ -40,31 +21,20 @@ const expectNotImplementedError = (err: any) => {
   expect(err.code).not.toBe("ERR_DLOPEN_FAILED");
 };
 
-// `{}` and `{ backend: "chrome" }` hit the spawn guard only if
-// Bun__Chrome__autoDetect fails to find a running Chrome, which it
-// does by reading `%LOCALAPPDATA%\<vendor>\<channel>\User Data\DevToolsActivePort`.
-// On a dev or CI machine that has Chrome running with
-// `--remote-debugging-port`, those files exist and the constructor
-// would take the WebSocket connect path instead — so testing them
-// in-process is non-deterministic.
-//
-// Spawn the child with LOCALAPPDATA pointing at an empty temp dir
-// (and scrub the other Chrome profile vars for good measure); no
-// DevToolsActivePort file exists there, autoDetect returns 0, and
-// the constructor falls through to the spawn path deterministically.
-async function runInScrubbedChild(script: string, extraEnv: Record<string, string> = {}) {
+// Spawn a child with LOCALAPPDATA pointed at an empty temp dir so
+// Bun__Chrome__autoDetect can't find a DevToolsActivePort file (it
+// joins LOCALAPPDATA with Google\Chrome\User Data\... et al). That
+// makes the default and `backend: "chrome"` cases deterministically
+// fall through to the spawn path regardless of what's running on
+// the host. BUN_CHROME_PATH is wiped too — the env-var override
+// test below re-sets it explicitly.
+async function runInScrubbedChild(script: string) {
   using dir = tempDir("bun-webview-win-29102-", {});
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
     env: {
       ...bunEnv,
-      // Point Chrome's profile root at an empty dir — readDevToolsActivePort
-      // in ChromeProcess.zig joins LOCALAPPDATA with
-      // "Google\Chrome\User Data\DevToolsActivePort" et al, all of which
-      // resolve to non-existent paths here.
       LOCALAPPDATA: String(dir),
-      // Just in case: wipe the optional overrides so they can't
-      // accidentally point the test at a real running browser.
       BUN_CHROME_PATH: "",
     },
     stdout: "pipe",

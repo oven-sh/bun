@@ -196,12 +196,26 @@ public:
     // ChromeCreateFailure distinguishes the nullptr reasons so the
     // constructor can throw an accurate error. Default (SpawnFailed)
     // is the old pre-Windows-fix behavior: "failed to spawn Chrome".
-    // ConnectFailed: the user passed an explicit ws:// url that didn't
-    // connect. NotImplementedOnWindows: the call would have needed the
-    // POSIX-only spawn path; `Bun__Chrome__ensure` has no Windows port.
+    //
+    // ConnectFailed: sync failure constructing a WebSocket for a user-
+    // supplied `backend.url`. The URL was structurally bad enough for
+    // WebCore::WebSocket::create to throw (malformed scheme, etc.).
+    // Async handshake failures (stale port, Chrome down) flow through
+    // wsOnClose and surface as later promise rejections, not here.
+    //
+    // AutoDetectConnectFailed: same sync failure but for the URL we
+    // read from DevToolsActivePort ourselves — the user never set
+    // backend.url, so the error message must not hint at setting it.
+    // Only fires if the file contains a syntactically malformed URL
+    // (readDevToolsActivePort validates port/path but not the full
+    // ws:// form); normal stale-file cases flow through wsOnClose.
+    //
+    // NotImplementedOnWindows: the call would have needed the POSIX-only
+    // spawn path; `Bun__Chrome__ensure` has no Windows port.
     enum class ChromeCreateFailure : uint8_t {
         SpawnFailed = 0,
         ConnectFailed,
+        AutoDetectConnectFailed,
         NotImplementedOnWindows,
     };
     static JSWebView* createChrome(JSC::JSGlobalObject*, JSC::Structure*,

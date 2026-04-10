@@ -17,13 +17,24 @@ import tty from "node:tty";
 const describePosix = process.platform === "win32" ? describe.skip : describe;
 
 describePosix("issue #29112 — tty.ReadStream on non-blocking PTY fd", () => {
-  // Resolve the libc symbols we need to open a PTY and drive ioctl()
-  // directly. This mirrors exactly what node-pty's native addon does.
-  const libc = dlopen(`libc.${process.platform === "darwin" ? "dylib" : "so.6"}`, {
-    openpty: { args: ["ptr", "ptr", "ptr", "ptr", "ptr"], returns: "int" },
+  // Resolve the libc symbols we need to open a PTY and drive ioctl() directly.
+  // This mirrors exactly what node-pty's native addon does.
+  //
+  // On Darwin `openpty` lives in libc itself. On Linux it lived in libutil for
+  // ages and only moved into libc in glibc 2.34, so always load it from
+  // libutil.so.1 there — that symlink/SONAME is stable across distros.
+  const isDarwin = process.platform === "darwin";
+  const libcPath = isDarwin ? "libc.dylib" : "libc.so.6";
+  const openptyLibPath = isDarwin ? libcPath : "libutil.so.1";
+
+  const libc = dlopen(libcPath, {
     close: { args: ["int"], returns: "int" },
     fcntl: { args: ["int", "int", "int"], returns: "int" },
     ioctl: { args: ["int", FFIType.u64, "ptr"], returns: "int" },
+  }).symbols;
+
+  const libutil = dlopen(openptyLibPath, {
+    openpty: { args: ["ptr", "ptr", "ptr", "ptr", "ptr"], returns: "int" },
   }).symbols;
 
   const F_SETFL = 4;
@@ -34,7 +45,7 @@ describePosix("issue #29112 — tty.ReadStream on non-blocking PTY fd", () => {
   function openPty(): { parent: number; child: number } {
     const parent = new Int32Array(1);
     const child = new Int32Array(1);
-    const r = libc.openpty(parent, child, null, null, null);
+    const r = libutil.openpty(parent, child, null, null, null);
     if (r !== 0) throw new Error("openpty failed");
     return { parent: parent[0], child: child[0] };
   }

@@ -135,36 +135,41 @@ describe("URL imports at runtime are rejected (not silently stubbed)", () => {
   // once used to hang forever in Bun 1.2.21+ — the module cache ended up
   // in a wedged "pending" state. The test imports URL 1, then URL 2, then
   // URL 1 again: pre-fix the third iteration (the repeat of URL 1) hits
-  // the poisoned cache entry and never returns, so the loop never reaches
-  // "done" and the test-runner timeout fires.
+  // the poisoned cache entry and never returns.
   //
   // `.invalid` hostnames keep the test entirely local (no DNS on slow CI
   // runners). The `.js` extension is intentional: it sends the pre-fix
   // runtime loader through the .js/.jsx path, which ENOENTs on each
   // import and is what wedges the module cache on the repeat visit.
-  // Extensionless URLs would instead hit the `.file` loader and return
-  // the `{ __esModule, default: "<url>" }` stub; repeat imports of that
-  // stub resolve cleanly without hanging, so they wouldn't reproduce the
-  // #22743 signature.
+  //
+  // The child script detects the hang itself via `Promise.race` with a
+  // 2s sentinel and prints "HUNG" + exits non-zero, rather than relying
+  // on the test runner's default timeout to fire. That makes the
+  // pass/fail explicit and avoids false positives from slow CI runners
+  // that can't hit the test-runner timeout window reliably.
   test("repeated dynamic import() of https:// does not hang", async () => {
     const { stdout, exitCode } = await runCode(`
-      for (const url of [
+      const urls = [
         "https://bun-issue-22743.invalid/bundle.js",
         "https://bun-issue-22743-v2.invalid/bundle.js",
         "https://bun-issue-22743.invalid/bundle.js",
-      ]) {
-        try {
-          await import(url);
-          console.log("LOADED");
-        } catch (err) {
-          console.log("rejected");
+      ];
+      const HUNG = Symbol("HUNG");
+      const sleep = ms => new Promise(r => setTimeout(r, ms).unref?.());
+      for (const url of urls) {
+        const raced = await Promise.race([
+          import(url).then(() => "loaded", () => "rejected"),
+          sleep(2000).then(() => HUNG),
+        ]);
+        if (raced === HUNG) {
+          console.log("HUNG");
+          process.exit(1);
         }
+        console.log(raced);
       }
       console.log("done");
     `);
-    // All three imports must reject and the final "done" must print. If
-    // the third iteration (the second visit to URL 1) wedged on the
-    // poisoned cache entry the loop would never reach "done".
+    expect(stdout).not.toContain("HUNG");
     expect(stdout.trim().split("\n")).toEqual(["rejected", "rejected", "rejected", "done"]);
     expect(exitCode).toBe(0);
   });

@@ -275,8 +275,10 @@ it("invalid utf-8 at end of stream can sometimes produce more than one replaceme
 // Previously, Bun__encoding__toString would throw and return an empty JSValue,
 // and JSStringDecoder::write would call .toString() on it before checking for
 // an exception, dereferencing nullptr->m_type (segfault at address 0x5).
-it("write() with a buffer larger than String::MaxLength throws instead of crashing", async () => {
-  const src = `
+it(
+  "write() with a buffer larger than String::MaxLength throws instead of crashing",
+  async () => {
+    const src = `
     const { StringDecoder } = require("string_decoder");
     // Larger than JSC's String::MaxLength (2^31 - 1). allocUnsafe is lazily
     // committed so this stays cheap until the ASCII scan touches pages.
@@ -291,21 +293,23 @@ it("write() with a buffer larger than String::MaxLength throws instead of crashi
       }
     }
   `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // ASAN builds unconditionally print "WARNING: ASAN interferes with JSC
-  // signal handlers..." to stderr from WebKit's Options.cpp; filter it out.
-  const stderrFiltered = stderr
-    .split(/\r?\n/)
-    .filter(s => !s.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  expect(stderrFiltered).toBe("");
-  expect(stdout).toBe("write ERR_STRING_TOO_LONG\nend ERR_STRING_TOO_LONG\n");
-  expect(exitCode).toBe(0);
-  // The 2 GiB ASCII scan takes ~15s under debug/ASAN vs ~1s in release.
-}, isDebug || isASAN ? 60_000 : undefined);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // ASAN builds unconditionally print "WARNING: ASAN interferes with JSC
+    // signal handlers..." to stderr from WebKit's Options.cpp; filter it out.
+    const stderrFiltered = stderr
+      .split(/\r?\n/)
+      .filter(s => !s.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(stderrFiltered).toBe("");
+    expect(stdout).toBe("write ERR_STRING_TOO_LONG\nend ERR_STRING_TOO_LONG\n");
+    expect(exitCode).toBe(0);
+    // The 2 GiB ASCII scan takes ~15s under debug/ASAN vs ~1s in release.
+  },
+  isDebug || isASAN ? 60_000 : undefined,
+);

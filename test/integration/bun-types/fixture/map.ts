@@ -36,6 +36,9 @@ import { expectType } from "./utilities";
 
   // @ts-expect-error - value type must match V
   weak.getOrInsert(key, 123);
+
+  // @ts-expect-error - callback return type must match V
+  weak.getOrInsertComputed(key, () => 123);
 }
 
 export {};

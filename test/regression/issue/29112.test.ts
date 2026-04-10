@@ -141,20 +141,15 @@ describePosix("issue #29112 — tty.ReadStream on non-blocking PTY fd", () => {
       // Reads must actually resume after the initial EAGAIN — not just
       // "the stream stays alive". This is what #25822 observed: `onData`
       // never firing even though the fd was technically still open. Push
-      // bytes through the slave side and wait for them to arrive on the
-      // master ReadStream.
-      const gotChunk = new Promise<Buffer>(resolve => {
-        if (chunks.length > 0) return resolve(chunks[chunks.length - 1]);
-        rs.once("data", chunk => resolve(Buffer.from(chunk)));
-      });
+      // bytes through the slave side and poll the event loop until they
+      // arrive on the master ReadStream.
       writeSync(child, "hello-29112\n");
-      const chunk = await Promise.race([
-        gotChunk,
-        new Promise<Buffer>((_, reject) =>
-          setTimeout(() => reject(new Error("tty.ReadStream never delivered data after EAGAIN")), 2000),
-        ),
-      ]);
-      expect(chunk.toString()).toContain("hello-29112");
+      const chunksDeadline = Date.now() + 2000;
+      while (chunks.length === 0 && Date.now() < chunksDeadline) {
+        await new Promise<void>(r => setImmediate(r));
+      }
+      expect(chunks.length).toBeGreaterThan(0);
+      expect(Buffer.concat(chunks).toString()).toContain("hello-29112");
 
       // No stream 'error' event should have surfaced from EAGAIN — the
       // fix retries the read inside the custom fs wrapper instead of

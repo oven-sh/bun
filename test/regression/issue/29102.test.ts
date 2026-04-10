@@ -70,11 +70,7 @@ async function runInScrubbedChild(script: string, extraEnv: Record<string, strin
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
@@ -232,11 +228,7 @@ it("BUN_CHROME_PATH env var does not change the spawn outcome", async () => {
   // piped stderr unread can deadlock the child when its buffer
   // fills (ASAN's JSC signal-handler warning fits easily, but
   // the pattern is the gotcha). Discard the value.
-  const [stdout, , exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expectChildStdoutNotImplemented(stdout);
   expect(exitCode).toBe(0);
 });

@@ -112,12 +112,27 @@ test("bun build --compile --target=bun-darwin-arm64 produces a valid code signat
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   void stdout;
 
-  // If the cross-compile target can't be downloaded (e.g. offline CI),
-  // skip rather than fail — this test is about the mach-o writer, not the
+  // If the cross-compile target can't be downloaded (e.g. this PR's build
+  // hasn't been published to npm yet, or the CI runner is offline), skip
+  // rather than fail — this test is about the mach-o writer, not the
   // fetcher. A successful build is a prerequisite.
+  //
+  // The error strings below match the `error.TargetNotFound` / `NetworkError`
+  // / `UnsupportedTarget` paths in `src/StandaloneModuleGraph.zig` and
+  // `src/compile_target.zig`. On macOS hosts the target is usually the local
+  // bun binary (no download) so the test runs inline; on Linux/Windows PR
+  // builds, the download 404s and we skip.
   if (exitCode !== 0) {
-    if (/Failed to download|ENOTFOUND|ETIMEDOUT|TargetNotFound|network/i.test(stderr)) {
-      console.warn(`[29120] cross-compile download failed, skipping test:\n${stderr}`);
+    const looksLikeDownloadFailure =
+      /Does this target and version of Bun exist/i.test(stderr) ||
+      /is not available for download/i.test(stderr) ||
+      /is not supported/i.test(stderr) ||
+      /Failed to download/i.test(stderr) ||
+      /Network error downloading/i.test(stderr) ||
+      /404 downloading/i.test(stderr) ||
+      /ENOTFOUND|ETIMEDOUT|ECONNREFUSED/i.test(stderr);
+    if (looksLikeDownloadFailure) {
+      console.warn(`[29120] cross-compile target unavailable, skipping test:\n${stderr}`);
       return;
     }
     console.error(`[29120] build failed:\n${stderr}`);

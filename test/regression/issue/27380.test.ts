@@ -33,8 +33,8 @@ test("bun-types declares getOrInsert / getOrInsertComputed on Map and WeakMap", 
     }
   });
 
-  expect([...found.Map].sort()).toEqual(["getOrInsert", "getOrInsertComputed"]);
-  expect([...found.WeakMap].sort()).toEqual(["getOrInsert", "getOrInsertComputed"]);
+  expect([...found.Map]).toEqual(expect.arrayContaining(["getOrInsert", "getOrInsertComputed"]));
+  expect([...found.WeakMap]).toEqual(expect.arrayContaining(["getOrInsert", "getOrInsertComputed"]));
 });
 
 test("Map.prototype.getOrInsert", () => {

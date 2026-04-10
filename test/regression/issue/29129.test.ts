@@ -225,10 +225,10 @@ test("os.availableParallelism() under taskset reports the restricted count (#291
 
   // navigator.hardwareConcurrency is a web-platform global that bun
   // exposes on the main thread but node does not (it's only on
-  // Worker scopes). Assert it matches the affinity count ONLY when
-  // the runtime exposes it — otherwise this check would spuriously
-  // fail under `node --test`.
-  if (hardwareStr !== "" && hardwareStr !== "undefined") {
+  // Worker scopes). The subprocess script uses `?? ""`, so an absent
+  // navigator produces an empty string — assert the value only when
+  // the runtime actually exposed it.
+  if (hardwareStr !== "") {
     assert.strictEqual(Number(hardwareStr), 1);
   }
 });

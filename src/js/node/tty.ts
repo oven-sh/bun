@@ -3,11 +3,7 @@
 // Note: please keep this module's loading constrants light, as some users
 // import it just to call `isatty`. In that case, `node:stream` is not needed.
 
-const {
-  setRawMode: ttySetMode,
-  isatty,
-  getWindowSize: _getWindowSize,
-} = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
+const { isatty, getWindowSize: _getWindowSize } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 const { validateInteger } = require("internal/validators");
 const fs = require("internal/fs/streams");

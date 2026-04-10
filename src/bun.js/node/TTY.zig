@@ -92,7 +92,7 @@ pub fn constructor(
     }
     const fd: bun.FD = .fromUV(fd_int);
 
-    // g5: do NOT throw on !isatty — Node accepts pipe/socket fds in
+    // Do NOT throw on !isatty — Node accepts pipe/socket fds in
     // tty.ReadStream and reports failures via the ctx out-param. We only
     // populate ctx.code on a hard syscall error below.
 
@@ -101,12 +101,10 @@ pub fn constructor(
     var owns_fd = false;
 
     if (comptime Environment.isPosix) {
-        // c1/c5: reopen with the original access mode (not hardcoded RDONLY) so
-        // writes don't EBADF. Fall back to the original fd on -1 (FileReader
-        // pattern).
-        const O_ACCMODE: u32 = 0o3;
+        // Reopen with the original access mode (not hardcoded RDONLY) so writes
+        // don't EBADF. Fall back to the original fd on -1 (FileReader pattern).
         const accmode: i32 = switch (fd.getFcntlFlags()) {
-            .result => |fl| @intCast(fl & O_ACCMODE),
+            .result => |fl| @intCast(fl & 0o3), // O_ACCMODE
             .err => bun.O.RDWR,
         };
         const rc = open_as_nonblocking_tty(fd_int, accmode);
@@ -115,8 +113,8 @@ pub fn constructor(
             nonblocking = true;
             owns_fd = true;
         }
-        // c1: intentionally NOT dup2(newfd, 0) — children with stdio:'inherit'
-        // get the original blocking fd, which is the desired UX. Documented
+        // Intentionally NOT dup2(newfd, 0) — children with stdio:'inherit' get
+        // the original blocking fd, which is the desired UX. Documented
         // divergence from libuv.
     }
 
@@ -146,7 +144,7 @@ pub fn constructor(
 }
 
 pub fn readStart(this: *TTY, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
-    log("readStart (started={}, hasPendingRead={}, isDone={}, paused={})", .{ this.flags.reader_started, if (this.flags.reader_started) this.reader.hasPendingRead() else false, if (this.flags.reader_started) this.reader.isDone() else false, if (this.flags.reader_started) this.reader.flags.is_paused else false });
+    log("readStart (started={})", .{this.flags.reader_started});
     if (this.flags.closed) return JSValue.jsNumber(0);
 
     this.flags.reading = true;
@@ -169,7 +167,7 @@ pub fn readStart(this: *TTY, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSEr
             .err => |err| return JSValue.jsNumber(toUVErrno(err)),
         }
     } else {
-        // c2: unpause() only clears the flag. registerPoll (via watch()) re-arms
+        // unpause() only clears the flag. registerPoll (via watch()) re-arms
         // the kevent; updateRef re-activates the loop's keepalive that pause()'s
         // unregister→deactivate dropped (unless the user explicitly unref'd).
         this.reader.unpause();
@@ -204,9 +202,8 @@ pub fn doUnref(this: *TTY, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSErro
     return .js_undefined;
 }
 
-pub fn setRawMode(this: *TTY, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+pub fn setRawMode(this: *TTY, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const args = callframe.argumentsAsArray(1);
-    _ = globalObject;
     const flag: i32 = if (args[0].toBoolean()) 1 else 0;
 
     if (comptime Environment.isWindows) {
@@ -288,14 +285,14 @@ pub fn onReadChunk(this: *TTY, chunk: []const u8, has_more: bun.io.ReadState) bo
     _ = has_more;
     log("onReadChunk: {} bytes", .{chunk.len});
 
-    // c4: drop zero-length reads (Node's onStreamRead skips nread == 0).
+    // Drop zero-length reads (Node's onStreamRead skips nread == 0).
     if (chunk.len == 0) return this.flags.reading;
 
     const this_jsvalue = this.this_value.tryGet() orelse return this.flags.reading;
     const callback = js.gc.get(.onread, this_jsvalue) orelse return this.flags.reading;
 
     const globalThis = this.globalThis;
-    // g6: dupe — the reader buffer is reused across reads.
+    // dupe — the reader buffer is reused across reads.
     const duped = bun.default_allocator.dupe(u8, chunk) catch return this.flags.reading;
     const buf = jsc.ArrayBuffer.createBuffer(globalThis, duped) catch return this.flags.reading;
 
@@ -308,7 +305,7 @@ pub fn onReadChunk(this: *TTY, chunk: []const u8, has_more: bun.io.ReadState) bo
         &.{ JSValue.jsNumber(@as(i32, @intCast(chunk.len))), buf },
     );
 
-    // g6: honor readStop set during JS re-entry — don't hardcode true.
+    // Honor readStop set during JS re-entry — don't hardcode true.
     return this.flags.reading;
 }
 

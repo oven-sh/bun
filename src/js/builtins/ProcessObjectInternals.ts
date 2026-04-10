@@ -125,7 +125,6 @@ export function getStdinStream(
     // _read() re-owns only when a consumer pulls.
     const tty = require("node:tty");
     const stdin = new tty.ReadStream(fd);
-    stdin.fd = fd;
 
     if (stdin._handle && stdin._handle.readStop) {
       stdin._handle.reading = false;

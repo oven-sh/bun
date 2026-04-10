@@ -16,7 +16,10 @@ function ReadStream(fd): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd);
   }
-  fs.ReadStream.$apply(this, ["", { fd }]);
+  // Node's tty.ReadStream sets readableHighWaterMark: 0 so push() returns
+  // false on every chunk and onStreamRead's backpressure path can readStop()
+  // between reads.
+  fs.ReadStream.$apply(this, ["", { fd, highWaterMark: 0 }]);
   this.isRaw = false;
   // Only set isTTY to true if the fd is actually a TTY
   this.isTTY = isatty(fd);

@@ -77,22 +77,14 @@ it("BUN_CHROME_PATH env var does not change the outcome", async () => {
   // spawn Chrome" ERR_DLOPEN_FAILED that told users to set this
   // env var.
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      "try { new Bun.WebView({}); } catch (e) { console.log(e.code); console.log(e.message); }",
-    ],
+    cmd: [bunExe(), "-e", "try { new Bun.WebView({}); } catch (e) { console.log(e.code); console.log(e.message); }"],
     env: {
       ...bunEnv,
       BUN_CHROME_PATH: "C:/Program Files/Google/Chrome/Application/chrome.exe",
     },
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toContain("ERR_METHOD_NOT_IMPLEMENTED");
   expect(stdout).toMatch(/chrome.*not.*yet.*implemented.*windows/i);
   expect(stdout).not.toContain("BUN_CHROME_PATH");

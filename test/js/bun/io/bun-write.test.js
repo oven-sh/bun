@@ -339,6 +339,66 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(Buffer.from(await Bun.file(out).arrayBuffer()).equals(body)).toBe(true);
   });
 
+  it("fetch Response (body accessed) -> file truncates existing larger file", async () => {
+    using tmpbase = tempDir("bun-write-body-accessed-trunc", {});
+    const body = Buffer.alloc(128 * 1024, "a");
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(c) {
+              for (let off = 0; off < body.length; off += 4096) {
+                c.write(body.subarray(off, off + 4096));
+                await c.flush();
+              }
+              await c.end();
+            },
+          }),
+          { headers: { "content-length": String(body.length) } },
+        ),
+    });
+
+    const out = path.join(String(tmpbase), "out.bin");
+    await Bun.write(out, Buffer.alloc(256 * 1024, "z"));
+    expect((await Bun.file(out).stat()).size).toBe(256 * 1024);
+
+    const res = await fetch(server.url);
+    expect(res.body).not.toBeNull();
+    expect(await Bun.write(out, res)).toBe(body.length);
+    expect((await Bun.file(out).stat()).size).toBe(body.length);
+    expect(Buffer.from(await Bun.file(out).arrayBuffer()).equals(body)).toBe(true);
+  });
+
+  it("fetch Response (body accessed) -> file with createPath", async () => {
+    using tmpbase = tempDir("bun-write-body-accessed-mkdirp", {});
+    const body = Buffer.alloc(128 * 1024, "a");
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(c) {
+              for (let off = 0; off < body.length; off += 4096) {
+                c.write(body.subarray(off, off + 4096));
+                await c.flush();
+              }
+              await c.end();
+            },
+          }),
+          { headers: { "content-length": String(body.length) } },
+        ),
+    });
+
+    const res = await fetch(server.url);
+    expect(res.body).not.toBeNull();
+    const out = path.join(String(tmpbase), "nested", "dir", "out.bin");
+    expect(await Bun.write(out, res)).toBe(body.length);
+    expect(Buffer.from(await Bun.file(out).arrayBuffer()).equals(body)).toBe(true);
+  });
+
   it("Response -> Bun.file -> Response -> text", async () => {
     await gcTick();
     const file = path.join(import.meta.dir, "fetch.js.txt");

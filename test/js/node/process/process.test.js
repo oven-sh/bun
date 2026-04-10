@@ -279,7 +279,7 @@ it("process.versions", () => {
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
     zlib: "886098f3f339617b4243b286f5ed364b9989e245",
     tinycc: "12882eee073cfe5c7621bcfadf679e1372d4537b",
-    lolhtml: "e3aa54798602dd27250fafde1b5a66f080046252",
+    lolhtml: "77127cd2b8545998756e8d64e36ee2313c4bb312",
     ares: "3ac47ee46edd8ea40370222f91613fc16c434853",
     libdeflate: "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
     zstd: "f8745da6ff1ad1e7bab384bd1f9d742439278e99",

@@ -2404,12 +2404,21 @@ const S3BlobDownloadTask = struct {
         switch (result) {
             .success => |response| {
                 // Take ownership of the response MutableString's buffer as a
-                // plain default_allocator slice (toOwnedSlice shrinks capacity
-                // to length so default_allocator.free works) and hand it to
-                // the handler with `.temporary` lifetime. Each handler then
-                // transfers ownership to JSC via a mimalloc-backed external
-                // string / ArrayBuffer (zero-copy) or frees the slice after
-                // synchronous consumption (JSON.parse, FormData). See #29083.
+                // plain `bun.default_allocator` slice (`toOwnedSlice` shrinks
+                // capacity to length so `default_allocator.free` works) and
+                // hand it to the handler with `.temporary` lifetime. Each
+                // handler then transfers ownership to JSC via a mimalloc-
+                // backed external string / ArrayBuffer (zero-copy) or frees
+                // the slice after synchronous consumption (JSON.parse,
+                // FormData). See #29083.
+                //
+                // The buffer MUST be backed by `bun.default_allocator`
+                // (plain mimalloc) and NOT by `bun.http.default_allocator`
+                // (the per-HTTP-thread `MimallocArena`), because its
+                // `ThreadLock` panics on main-thread realloc/free under
+                // `ci_assert`. `S3SimpleRequestOptions` pre-allocates the
+                // response buffer with the right allocator so that
+                // `AsyncHTTP` does not clobber it later.
                 var body = response.body;
                 const owned = body.toOwnedSlice();
                 if (this.blob.size == Blob.max_size) {

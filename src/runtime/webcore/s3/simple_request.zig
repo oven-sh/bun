@@ -418,6 +418,13 @@ pub fn executeSimpleS3Request(
     });
     task.poll_ref.ref(task.vm);
 
+    // Pre-allocate the response buffer with `bun.default_allocator` and a
+    // non-zero capacity so `AsyncHTTP.zig` does not clobber its allocator
+    // with the per-HTTP-thread arena. That arena has a `ThreadLock` which
+    // panics on main-thread realloc/free under `ci_assert`, and after
+    // #29083 we need to be able to free the body on the main thread.
+    task.response_buffer = bun.handleOom(bun.MutableString.init(bun.default_allocator, 16));
+
     const url = bun.URL.parse(result.url);
     const proxy = options.proxy_url orelse "";
     task.proxy_url = if (proxy.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, proxy)) else "";

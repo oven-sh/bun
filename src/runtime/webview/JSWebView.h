@@ -192,11 +192,23 @@ public:
     // if Chrome spawn failed.
     // wsUrl: connect to an existing Chrome's WebSocket debugger endpoint
     // instead of spawning. Empty → spawn with --remote-debugging-pipe.
+    //
+    // ChromeCreateFailure distinguishes the nullptr reasons so the
+    // constructor can throw an accurate error. Default (SpawnFailed)
+    // is the old pre-Windows-fix behavior: "failed to spawn Chrome".
+    // ConnectFailed: the user passed an explicit ws:// url that didn't
+    // connect. NotImplementedOnWindows: the call would have needed the
+    // POSIX-only spawn path; `Bun__Chrome__ensure` has no Windows port.
+    enum class ChromeCreateFailure : uint8_t {
+        SpawnFailed = 0,
+        ConnectFailed,
+        NotImplementedOnWindows,
+    };
     static JSWebView* createChrome(JSC::JSGlobalObject*, JSC::Structure*,
         uint32_t width, uint32_t height, const WTF::String& userDataDir,
         const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
         bool stdoutInherit, bool stderrInherit, const WTF::String& wsUrl = {},
-        bool skipAutoDetect = false);
+        bool skipAutoDetect = false, ChromeCreateFailure* outFailure = nullptr);
 
     void finishCreation(JSC::VM&);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);

@@ -236,19 +236,16 @@ export function transformStreamDefaultControllerError(controller, e) {
 }
 
 export function transformStreamDefaultControllerPerformTransform(controller, chunk) {
-  const promiseCapability = $newPromiseCapability(Promise);
-
   const transformPromise = $getByIdDirectPrivate(controller, "transformAlgorithm").$call(undefined, chunk);
-  transformPromise.$then(
-    () => {
-      promiseCapability.resolve();
-    },
-    r => {
-      $transformStreamError($getByIdDirectPrivate(controller, "stream"), r);
-      promiseCapability.reject.$call(undefined, r);
-    },
-  );
-  return promiseCapability.promise;
+  // Match the WHATWG spec: return the transform promise directly with an error handler
+  // chained on it. The previous implementation wrapped this in a fresh promise capability,
+  // adding an unnecessary microtask hop between transform completion and the write
+  // promise resolving. That extra hop could let a queued close sentinel race ahead of
+  // the transform's completion observers.
+  return transformPromise.$then(undefined, r => {
+    $transformStreamError($getByIdDirectPrivate(controller, "stream"), r);
+    throw r;
+  });
 }
 
 export function transformStreamDefaultControllerTerminate(controller) {
@@ -271,34 +268,23 @@ export function transformStreamDefaultSinkWriteAlgorithm(stream, chunk) {
   const controller = $getByIdDirectPrivate(stream, "controller");
 
   if ($getByIdDirectPrivate(stream, "backpressure")) {
-    const promiseCapability = $newPromiseCapability(Promise);
-
     const backpressureChangePromise = $getByIdDirectPrivate(stream, "backpressureChangePromise");
     $assert(backpressureChangePromise !== undefined);
-    backpressureChangePromise.promise.$then(
-      () => {
-        const state = $getByIdDirectPrivate(writable, "state");
-        if (state === "erroring") {
-          promiseCapability.reject.$call(undefined, $getByIdDirectPrivate(writable, "storedError"));
-          return;
-        }
 
-        $assert(state === "writable");
-        $transformStreamDefaultControllerPerformTransform(controller, chunk).$then(
-          () => {
-            promiseCapability.resolve();
-          },
-          e => {
-            promiseCapability.reject.$call(undefined, e);
-          },
-        );
-      },
-      e => {
-        promiseCapability.reject.$call(undefined, e);
-      },
-    );
+    // Match the WHATWG spec: react to backpressureChangePromise with the fulfillment
+    // steps returning the transform promise. Using a direct `.then()` chain lets the
+    // returned promise adopt the transform's state rather than hopping through an
+    // extra promise capability. This ensures the writable's write promise waits for
+    // the transform to fully resolve before the close sentinel can be processed.
+    return backpressureChangePromise.promise.$then(() => {
+      const state = $getByIdDirectPrivate(writable, "state");
+      if (state === "erroring") {
+        throw $getByIdDirectPrivate(writable, "storedError");
+      }
 
-    return promiseCapability.promise;
+      $assert(state === "writable");
+      return $transformStreamDefaultControllerPerformTransform(controller, chunk);
+    });
   }
   return $transformStreamDefaultControllerPerformTransform(controller, chunk);
 }

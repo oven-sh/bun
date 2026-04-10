@@ -17,6 +17,12 @@ test("process.binding('tty_wrap')", () => {
 
   expect(tty_prototype).toHaveProperty("getWindowSize");
   expect(tty_prototype).toHaveProperty("setRawMode");
+  // Stream-handle surface (Node's LibuvStreamWrap interface). Exercising these
+  // proves the Zig handle compiles and is wired on every platform — the PTY
+  // tests can't run on Windows.
+  for (const m of ["readStart", "readStop", "ref", "unref", "close"]) {
+    expect(typeof tty_prototype[m]).toBe("function");
+  }
 
   const tty_isTTY = tty_wrap.isTTY;
 
@@ -28,13 +34,25 @@ test("process.binding('tty_wrap')", () => {
 
   expect(() => tty()).toThrow(TypeError);
 
-  if (isatty(0)) {
-    expect(() => new tty(0)).not.toThrow();
+  // Find a tty fd to construct a real handle; CI on each platform runs at
+  // least one job with a tty attached to one of these.
+  const ttyFd = [0, 1, 2].find(fd => isatty(fd));
+
+  if (ttyFd !== undefined) {
+    expect(() => new tty(ttyFd)).not.toThrow();
+
+    const handle = new tty(ttyFd);
+    // Exercise the readStart/readStop native paths — return 0 on success.
+    expect(handle.readStart()).toBe(0);
+    expect(handle.readStop()).toBe(0);
+    handle.unref();
+    handle.ref();
+    expect(() => handle.close()).not.toThrow();
 
     const array = [-1, -1];
 
     expect(() => tty_prototype.getWindowSize.call(array, 0)).toThrow(TypeError);
-    const ttywrapper = new tty(0);
+    const ttywrapper = new tty(ttyFd);
 
     expect(ttywrapper.getWindowSize(array)).toBeBoolean();
 
@@ -51,6 +69,6 @@ test("process.binding('tty_wrap')", () => {
     // Node's TTY binding accepts non-tty fds (uv_tty_init reports via ctx
     // out-param, not throw). The handle just won't deliver tty-specific data.
     expect(() => new tty(0)).not.toThrow();
-    console.warn("warn: Skipping tty tests because stdin is not a tty");
+    console.warn("warn: Skipping tty handle tests because no fd in [0,1,2] is a tty");
   }
 });

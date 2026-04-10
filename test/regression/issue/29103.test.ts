@@ -36,10 +36,7 @@ async function createHttpProxy() {
         [host, port] = rawPath.split(":");
       }
 
-      const destinationPort = Number.parseInt(
-        (port || (method === "CONNECT" ? "443" : "80")).toString(),
-        10,
-      );
+      const destinationPort = Number.parseInt((port || (method === "CONNECT" ? "443" : "80")).toString(), 10);
       log.push(`${method} ${host}:${port}${requestPath}`);
 
       const upstream = net.connect(destinationPort, host, () => {

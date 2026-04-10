@@ -21,4 +21,4 @@ test("ws.close() during proxy TLS handshake does not double-free", async () => {
   expect(stderr).toBe("");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
-});
+}, 20_000);

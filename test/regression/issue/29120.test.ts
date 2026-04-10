@@ -67,7 +67,10 @@ function linkeditCoversSignature(buf: Buffer, sig: CodeSig): boolean {
     if (cmd === LC_SEGMENT_64) {
       // segment_command_64 layout: cmd(4) cmdsize(4) segname(16)
       //   vmaddr(8) vmsize(8) fileoff(8) filesize(8) ...
-      const segname = buf.subarray(p + 8, p + 8 + 16).toString("ascii").replace(/\0+$/, "");
+      const segname = buf
+        .subarray(p + 8, p + 8 + 16)
+        .toString("ascii")
+        .replace(/\0+$/, "");
       if (segname === "__LINKEDIT") {
         const fileoff = Number(buf.readBigUInt64LE(p + 32));
         const filesize = Number(buf.readBigUInt64LE(p + 40));
@@ -87,39 +90,21 @@ test("bun build --compile --target=bun-darwin-arm64 produces a valid code signat
   const out = join(cwd, "app-darwin-arm64");
 
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "build",
-      "--compile",
-      "--target=bun-darwin-arm64",
-      join(cwd, "app.ts"),
-      "--outfile",
-      out,
-    ],
+    cmd: [bunExe(), "build", "--compile", "--target=bun-darwin-arm64", join(cwd, "app.ts"), "--outfile", out],
     env: bunEnv,
     cwd,
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   void stdout;
 
   // If the cross-compile target can't be downloaded (e.g. offline CI),
   // skip rather than fail — this test is about the mach-o writer, not the
   // fetcher. A successful build is a prerequisite.
   if (exitCode !== 0) {
-    if (
-      /Failed to download|ENOTFOUND|ETIMEDOUT|TargetNotFound|network/i.test(
-        stderr,
-      )
-    ) {
-      console.warn(
-        `[29120] cross-compile download failed, skipping test:\n${stderr}`,
-      );
+    if (/Failed to download|ENOTFOUND|ETIMEDOUT|TargetNotFound|network/i.test(stderr)) {
+      console.warn(`[29120] cross-compile download failed, skipping test:\n${stderr}`);
       return;
     }
   }

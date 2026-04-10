@@ -51,6 +51,7 @@
 
 #include <webcore/SerializedScriptValue.h>
 #include "ProcessBindingTTYWrap.h"
+#include "ProcessBindingPipeWrap.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/StringToIntegerConversion.h"
 #include "wtf/text/OrdinalNumber.h"
@@ -2942,7 +2943,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "js_stream"_s) PROCESS_BINDING_NOT_IMPLEMENTED("js_stream");
     if (moduleName == "natives"_s) return JSValue::encode(process->bindingNatives());
     if (moduleName == "os"_s) PROCESS_BINDING_NOT_IMPLEMENTED("os");
-    if (moduleName == "pipe_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("pipe_wrap");
+    if (moduleName == "pipe_wrap"_s) return JSValue::encode(Bun::createNodePipeWrapObject(globalObject));
     if (moduleName == "process_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("process_wrap");
     if (moduleName == "signal_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("signal_wrap");
     if (moduleName == "spawn_sync"_s) PROCESS_BINDING_NOT_IMPLEMENTED("spawn_sync");

@@ -113,13 +113,16 @@ async function runBoth(test: Test): Promise<RunResult> {
 }
 
 describe("stdin", () => {
-  it("pause allows process to exit", async () => {
-    // in node, raw stdin behaves differently than pty. run this test in bun only for now.
-    expect(await run(bunExe(), { file: "pause.fixture.js", stdin: ["abc\n", "pause\n", "def\n"], end: false }))
-      .toMatchInlineSnapshot(`
+  it("pause without end matches Node (does not exit)", async () => {
+    // pause() alone does not allow the process to exit on pipe stdin in
+    // Node.js — Readable's maybeReadMore re-calls _read() → readStart().
+    // This asserts Bun matches Node.
+    expect(
+      await runBoth({ file: "pause.fixture.js", stdin: ["abc\n", "pause\n", "def\n"], end: false }),
+    ).toMatchInlineSnapshot(`
       {
-        "autoKilled": false,
-        "exitCode": 0,
+        "autoKilled": true,
+        "exitCode": null,
         "stderr": "",
         "stdout": 
       "%READY%
@@ -127,8 +130,6 @@ describe("stdin", () => {
       %READY%
       got stdin "pause"
       %READY%
-      beforeExit with code 0
-      exit with code 0
       "
       ,
       }

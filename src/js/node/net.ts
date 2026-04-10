@@ -59,6 +59,23 @@ const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const { owner_symbol } = require("internal/shared");
 
+const guessHandleType = $newZigFunction("node_util_binding.zig", "guessHandleType", 1);
+const handleTypes = ["TCP", "TTY", "UDP", "FILE", "PIPE", "UNKNOWN"];
+const { Pipe, constants: PipeConstants } = process.binding("pipe_wrap");
+const UV_EOF = -4095;
+const kBuffer = Symbol("kBuffer");
+const kBufferCb = Symbol("kBufferCb");
+const kBufferGen = Symbol("kBufferGen");
+
+function createHandle(fd, isServer) {
+  validateInt32(fd, "fd", 0);
+  const type = handleTypes[guessHandleType(fd)];
+  if (type === "PIPE" || type === "TCP") {
+    return new Pipe(isServer ? PipeConstants.SERVER : PipeConstants.SOCKET);
+  }
+  throw $ERR_INVALID_FD_TYPE(type);
+}
+
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
@@ -81,7 +98,7 @@ const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
 function endNT(socket, callback, err) {
-  socket.$end();
+  socket.$end?.();
   callback(err);
 }
 function emitCloseNT(self, hasError) {
@@ -682,8 +699,6 @@ function Socket(options?) {
   Duplex.$call(this, {
     ...opts,
     allowHalfOpen,
-    readable: true,
-    writable: true,
     //For node.js compat do not emit close on destroy.
     emitClose: false,
     autoDestroy: true,
@@ -725,15 +740,26 @@ function Socket(options?) {
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
-  if (options?.fd !== undefined) {
-    const { fd } = options;
-    validateInt32(fd, "fd", 0);
-  }
-
   if (options?.handle != null) {
     this._handle = options.handle;
     initSocketHandle(this);
-    if (options.readable !== false && !options.manualStart) this.read(0);
+  } else if (options?.fd !== undefined) {
+    this._handle = createHandle(options.fd, false);
+    const err = this._handle.open(options.fd);
+    if (err) throw new ErrnoException(err, "open");
+    initSocketHandle(this);
+    this.readable = options.readable !== false;
+    this.writable = options.writable !== false;
+  }
+
+  if (this._handle && $isCallable(this._handle.readStart) && options.readable !== false) {
+    if (options.pauseOnCreate) {
+      this._handle.reading = false;
+      this._handle.readStop();
+      this._readableState.flowing = false;
+    } else if (!options.manualStart) {
+      this.read(0);
+    }
   }
 
   if (socket instanceof Socket) {
@@ -746,6 +772,9 @@ function Socket(options?) {
     if (typeof onread.callback !== "function") {
       throw new TypeError("onread.callback must be a function");
     }
+    this[kBuffer] = true;
+    this[kBufferCb] = onread.callback;
+    this[kBufferGen] = typeof onread.buffer === "function" ? onread.buffer : () => onread.buffer;
     // when the onread option is specified we use a different handlers object
     this[khandlers] = {
       ...SocketHandlers2,
@@ -1205,23 +1234,39 @@ Object.defineProperty(Socket.prototype, "pending", {
   },
 });
 
-Socket.prototype.resume = function resume() {
-  if (!this.connecting) {
-    this._handle?.resume();
-  }
-  return Duplex.prototype.resume.$call(this);
-};
-
 Socket.prototype.pause = function pause() {
-  if (!this.destroyed) {
-    this._handle?.pause();
+  if (this[kBuffer] && !this.connecting && this._handle && $isCallable(this._handle.readStop) && this._handle.reading) {
+    this._handle.reading = false;
+    if (!this.destroyed) {
+      const err = this._handle.readStop();
+      if (err) this.destroy(new ErrnoException(err, "read"));
+    }
   }
   return Duplex.prototype.pause.$call(this);
 };
 
+Socket.prototype.resume = function resume() {
+  if (
+    this[kBuffer] &&
+    !this.connecting &&
+    this._handle &&
+    $isCallable(this._handle.readStart) &&
+    !this._handle.reading
+  ) {
+    tryReadStart(this);
+  }
+  return Duplex.prototype.resume.$call(this);
+};
+
 Socket.prototype.read = function read(size) {
-  if (!this.connecting) {
-    this._handle?.resume();
+  if (
+    this[kBuffer] &&
+    !this.connecting &&
+    this._handle &&
+    $isCallable(this._handle.readStart) &&
+    !this._handle.reading
+  ) {
+    tryReadStart(this);
   }
   return Duplex.prototype.read.$call(this, size);
 };
@@ -1233,7 +1278,7 @@ Socket.prototype._read = function _read(size) {
   } else if ($isCallable(socket.readStart)) {
     if (!socket.reading) tryReadStart(this);
   } else {
-    socket.resume();
+    socket?.resume?.();
   }
 };
 
@@ -1466,6 +1511,13 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     return false;
   }
   this._unrefTimer();
+  if ($isCallable(socket.readStart)) {
+    // Stream-wrap handle (TTY/Pipe). Full writeBuffer/req plumbing is a
+    // follow-up; reachable only for duplex net.Socket({fd}), never for
+    // process.stdin which is constructed with writable:false.
+    callback($ERR_METHOD_NOT_IMPLEMENTED("_write on stream-wrap handle"));
+    return false;
+  }
   const success = socket.$write(chunk, encoding);
   this[kBytesWritten] = socket.bytesWritten;
   if (success) {
@@ -2587,44 +2639,40 @@ function initSocketHandle(self) {
     self._handle[owner_symbol] = self;
     if ($isCallable(self._handle.readStart)) {
       self._handle.onread = onStreamRead;
-      self._handle.ondrain = onHandleDrain;
     }
   }
 }
 
-// Node lib/internal/stream_base_commons.js onStreamRead, adapted to the
-// (buf | null | Error) encoding the Zig TTY handle uses.
-function onStreamRead(buf) {
+// Node lib/internal/stream_base_commons.js onStreamRead.
+function onStreamRead(nread, arrayBuffer) {
   const self = this[owner_symbol];
-  if (buf === null) {
-    self.push(null);
-    self.read(0);
+  if (nread > 0) {
+    self.bytesRead += nread;
+    let ret;
+    if (self[kBuffer]) {
+      ret = self[kBufferCb](nread, arrayBuffer);
+    } else {
+      ret = self.push(arrayBuffer);
+    }
+    if (ret === false && this.reading) {
+      this.reading = false;
+      this.readStop();
+    }
     return;
   }
-  if (buf instanceof Error) {
-    self.destroy(buf);
+  if (nread === 0) return;
+  if (nread !== UV_EOF) {
+    self.destroy(new ErrnoException(nread, "read"));
     return;
   }
-  self.bytesRead += buf.length;
-  if (!self.push(buf)) {
-    this.reading = false;
-    this.readStop();
-  }
+  self.push(null);
+  self.read(0);
 }
 
 function tryReadStart(socket) {
   socket._handle.reading = true;
   const err = socket._handle.readStart();
-  if (err) socket.destroy(new Error("read failed: " + err));
-}
-
-function onHandleDrain() {
-  const self = this[owner_symbol];
-  const cb = self[kwriteCallback];
-  if (cb) {
-    self[kwriteCallback] = undefined;
-    cb();
-  }
+  if (err) socket.destroy(new ErrnoException(err, "read"));
 }
 
 function closeSocketHandle(self, isException, isCleanupPending = false) {

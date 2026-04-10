@@ -118,219 +118,68 @@ export function getStdinStream(
 ) {
   $assert(fd === 0);
 
-  if (isTTY) {
-    // Node lib/internal/bootstrap/switches/is_main_thread.js getStdin():
-    // tty.ReadStream extends net.Socket with a native TTY _handle. Socket's
-    // own _read → readStart() and onStreamRead's push()===false → readStop()
-    // drive backpressure-based fd-release with no listener tracking.
-    const tty = require("node:tty");
-    const stdin = new tty.ReadStream(fd);
+  // Node lib/internal/bootstrap/switches/is_main_thread.js getStdin().
+  const guessHandleType = $newZigFunction("node_util_binding.zig", "guessHandleType", 1);
+  const handleTypes = ["TCP", "TTY", "UDP", "FILE", "PIPE", "UNKNOWN"];
+  const type = handleTypes[guessHandleType(fd)];
 
-    // Start paused (Node does the same).
-    if (stdin._handle?.readStop) {
-      stdin._handle.reading = false;
-      stdin._handle.readStop();
+  let stdin;
+
+  switch (type) {
+    case "TTY": {
+      const tty = require("node:tty");
+      stdin = new tty.ReadStream(fd);
+      break;
     }
-    stdin._readableState.reading = false;
 
-    stdin.on("pause", () => {
-      if (stdin._handle) {
-        stdin._handle.reading = false;
-        stdin._handle.readStop();
-      }
-    });
-
-    return stdin;
-  }
-
-  const native = Bun.stdin.stream();
-  const source = native.$bunNativePtr;
-
-  var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-
-  var shouldDisown = false;
-  let needsInternalReadRefresh = false;
-  // if true, while the stream is own()ed it will not
-  let forceUnref = false;
-
-  function own() {
-    $debug("ref();", reader ? "already has reader" : "getting reader");
-    reader ??= native.getReader();
-    source.updateRef(forceUnref ? false : true);
-    source?.setFlowing?.(true);
-
-    shouldDisown = false;
-    if (needsInternalReadRefresh) {
-      needsInternalReadRefresh = false;
-      internalRead(stream);
+    case "FILE": {
+      const fs = require("node:fs");
+      stdin = new fs.ReadStream(null, { fd, autoClose: false });
+      break;
     }
-  }
 
-  function disown() {
-    $debug("unref();");
-    source?.setFlowing?.(false);
-
-    if (reader) {
-      try {
-        reader.releaseLock();
-        reader = undefined;
-        $debug("released reader");
-      } catch (e: any) {
-        $debug("reader lock cannot be released, waiting");
-        $assert(e.message === "There are still pending read requests, cannot release the lock");
-
-        // Releasing the lock is not possible as there are active reads
-        // we will instead pretend we are unref'd, and release the lock once the reads are finished.
-        shouldDisown = true;
-        source?.updateRef?.(false);
-      }
-    } else if (source) {
-      source.updateRef(false);
-    }
-  }
-
-  const ReadStream = require("node:fs").ReadStream;
-  const stream = new ReadStream(null, { fd, autoClose: false });
-
-  const originalOn = stream.on;
-
-  let stream_destroyed = false;
-  let stream_endEmitted = false;
-  stream.addListener = stream.on = function (event, listener) {
-    // Streams don't generally required to present any data when only
-    // `readable` events are present, i.e. `readableFlowing === false`
-    //
-    // However, Node.js has a this quirk whereby `process.stdin.read()`
-    // blocks under TTY mode, thus looping `.read()` in this particular
-    // case would not result in truncation.
-    //
-    // Therefore the following hack is only specific to `process.stdin`
-    // and does not apply to the underlying Stream implementation.
-    if (event === "readable") {
-      own();
-    }
-    return originalOn.$call(this, event, listener);
-  };
-
-  stream.fd = fd;
-  // c10: fs.ReadStream's `end` is the numeric `Infinity` (the read-range
-  // option), so process.stdin.end() would throw. Shadow it with a no-op.
-  stream.end = function () {
-    return this;
-  };
-
-  if (fdType !== BunProcessStdinFdType.file) {
-    stream.ref = function () {
-      forceUnref = false;
-      own();
-      return this;
-    };
-
-    stream.unref = function () {
-      forceUnref = true;
-      source?.updateRef?.(false);
-      return this;
-    };
-  }
-
-  const originalPause = stream.pause;
-  stream.pause = function () {
-    return originalPause.$call(this);
-  };
-
-  const originalResume = stream.resume;
-  stream.resume = function () {
-    own();
-    return originalResume.$call(this);
-  };
-
-  async function internalRead(stream) {
-    $debug("internalRead();");
-    try {
-      $assert(reader);
-      const { value } = await reader.read();
-
-      if (value) {
-        // Node's onStreamRead: `if (!stream.push(buf)) handle.readStop()`.
-        // With highWaterMark 0 (TTY), push() returns false on every chunk so
-        // we release fd 0 after each one; _read() (triggerRead) re-owns when a
-        // consumer pulls. If nothing is consuming, fd 0 stays released and a
-        // stdio:'inherit' child reads it exclusively.
-        const more = stream.push(value);
-        if (shouldDisown || !more) disown();
-      } else {
-        if (!stream_endEmitted) {
-          stream_endEmitted = true;
-          stream.emit("end");
-        }
-        if (!stream_destroyed) {
-          stream_destroyed = true;
-          stream.destroy();
-          disown();
-        }
-      }
-    } catch (err) {
-      if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
-        // disown() released the reader while a read was pending. Don't
-        // re-enter triggerRead (which would own() again); the next legitimate
-        // _read() from Readable.prototype.read() will own() when a consumer
-        // actually wants data.
-        needsInternalReadRefresh = true;
-        return;
-      }
-      stream.destroy(err);
-    }
-  }
-
-  function triggerRead(_size) {
-    $debug("_read();", reader);
-
-    if (reader && !shouldDisown) {
-      internalRead(this);
-    } else {
-      // Node's Socket.prototype._read → tryReadStart() → handle.readStart().
-      // own() will start internalRead via needsInternalReadRefresh. Skip when
-      // explicitly paused (kPaused) so a stray _read() from maybeReadMore_
-      // (scheduled before the 'pause' handler ran) doesn't re-acquire fd 0.
-      needsInternalReadRefresh = true;
-      if (!stream._readableState.paused) {
-        own();
-      }
-    }
-  }
-  stream._read = triggerRead;
-
-  stream.on("resume", () => {
-    if (stream.isPaused()) return; // fake resume
-    $debug('on("resume");');
-    own();
-    stream._undestroy();
-    stream_destroyed = false;
-  });
-
-  stream._readableState.reading = false;
-
-  stream.on("pause", () => {
-    process.nextTick(() => {
-      // Only disown if the stream is still paused (not resumed in the meantime)
-      if (!stream.readableFlowing) {
-        stream._readableState.reading = false;
-        disown();
-      }
-    });
-  });
-
-  stream.on("close", () => {
-    if (!stream_destroyed) {
-      stream_destroyed = true;
-      process.nextTick(() => {
-        stream.destroy();
-        disown();
+    case "PIPE":
+    case "TCP": {
+      const net = require("node:net");
+      stdin = new net.Socket({
+        fd,
+        readable: true,
+        writable: false,
+        manualStart: true,
       });
+      stdin._writableState.ended = true;
+      break;
     }
+
+    default: {
+      const { Readable } = require("node:stream");
+      stdin = new Readable({ read() {} });
+      stdin.push(null);
+    }
+  }
+
+  stdin.fd = fd;
+
+  // `stdin` starts out life in a paused state. Explicitly readStop() it to put
+  // it in the right state, since we may have already triggered a readStart()
+  // via the Socket constructor's read(0).
+  if (stdin._handle && stdin._handle.readStop) {
+    stdin._handle.reading = false;
+    stdin._readableState.reading = false;
+    stdin._handle.readStop();
+  }
+
+  // If the user calls stdin.pause(), stop reading so the process may exit.
+  stdin.on("pause", () => {
+    process.nextTick(() => {
+      if (!stdin._handle) return;
+      stdin._handle.reading = false;
+      stdin._readableState.reading = false;
+      stdin._handle.readStop();
+    });
   });
 
-  return stream;
+  return stdin;
 }
 export function initializeNextTickQueue(
   process: typeof globalThis.process,

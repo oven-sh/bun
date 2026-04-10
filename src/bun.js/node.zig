@@ -17,6 +17,7 @@ pub const os = @import("./node/node_os.zig");
 pub const process = @import("./node/node_process.zig");
 /// process.binding('tty_wrap').TTY
 pub const TTY = @import("./node/TTY.zig");
+pub const Pipe = @import("./node/Pipe.zig");
 pub const validators = @import("./node/util/validators.zig");
 pub const ErrorCode = @import("./node/nodejs_error_code.zig").Code;
 

@@ -19,25 +19,18 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
 pub const IOReader = bun.io.BufferedReader;
-pub const IOWriter = bun.io.StreamingWriter(@This(), struct {
-    pub const onClose = TTY.onWriterClose;
-    pub const onWritable = TTY.onWriterReady;
-    pub const onError = TTY.onWriterError;
-    pub const onWrite = TTY.onWrite;
-});
-/// FilePoll Owner registration (see posix_event_loop.zig).
-pub const Poll = IOWriter;
 
-/// Original fd (e.g. 0). Used for setRawMode/getWindowSize and as fallback when
-/// the nonblocking reopen fails.
+/// Original fd as passed from JS (e.g. 0). Used for setRawMode/getWindowSize
+/// (which take a C int on both platforms) and as fallback when the nonblocking
+/// reopen fails.
 fd: bun.FD,
+fd_int: i32,
 
 /// On POSIX this is the reopened nonblocking fd from open_as_nonblocking_tty,
 /// or `fd` itself when reopen fails. On Windows it's always `fd`.
 owned_fd: bun.FD,
 
 reader: IOReader,
-writer: IOWriter = .{},
 
 this_value: jsc.JSRef = jsc.JSRef.empty(),
 event_loop_handle: jsc.EventLoopHandle,
@@ -53,17 +46,25 @@ pub const Flags = packed struct(u8) {
     closed: bool = false,
     finalized: bool = false,
     reader_started: bool = false,
-    writer_started: bool = false,
     /// owned_fd != fd; we close owned_fd on close()
     owns_fd: bool = false,
     /// user called handle.unref(); readStart must not re-ref
     unreffed: bool = false,
-    _: u1 = 0,
+    _: u2 = 0,
 };
 
 extern "c" fn open_as_nonblocking_tty(i32, i32) i32;
 extern "c" fn Bun__ttySetMode(i32, i32) i32;
 extern "c" fn Bun__getTTYWindowSize(i32, *usize, *usize) bool;
+
+const UV_EOF: i32 = -4095;
+
+inline fn toUVErrno(err: bun.sys.Error) i32 {
+    if (comptime Environment.isWindows) {
+        return @intCast(err.errno);
+    }
+    return -@as(i32, @intCast(err.errno));
+}
 
 pub fn constructor(
     globalObject: *jsc.JSGlobalObject,
@@ -80,7 +81,7 @@ pub fn constructor(
     if (fd_int < 0) {
         return globalObject.throw("fd must be a non-negative integer", .{});
     }
-    const fd: bun.FD = .fromNative(fd_int);
+    const fd: bun.FD = .fromUV(fd_int);
 
     // g5: do NOT throw on !isatty — Node accepts pipe/socket fds in
     // tty.ReadStream and reports failures via the ctx out-param. We only
@@ -94,11 +95,12 @@ pub fn constructor(
         // c1/c5: reopen with the original access mode (not hardcoded RDONLY) so
         // writes don't EBADF. Fall back to the original fd on -1 (FileReader
         // pattern).
+        const O_ACCMODE: u32 = 0o3;
         const accmode: i32 = switch (fd.getFcntlFlags()) {
-            .result => |fl| @intCast(fl & bun.O.ACCMODE),
+            .result => |fl| @intCast(fl & O_ACCMODE),
             .err => bun.O.RDWR,
         };
-        const rc = open_as_nonblocking_tty(fd.native(), accmode);
+        const rc = open_as_nonblocking_tty(fd_int, accmode);
         if (rc > -1) {
             owned_fd = .fromNative(rc);
             nonblocking = true;
@@ -111,6 +113,7 @@ pub fn constructor(
 
     const tty = bun.new(TTY, .{
         .fd = fd,
+        .fd_int = fd_int,
         .owned_fd = owned_fd,
         .reader = IOReader.init(TTY),
         .event_loop_handle = jsc.EventLoopHandle.init(globalObject.bunVM().eventLoop()),
@@ -122,8 +125,6 @@ pub fn constructor(
     tty.reader.flags.nonblocking = nonblocking;
     tty.reader.flags.pollable = true;
     tty.reader.flags.close_handle = false;
-
-    tty.writer.setParent(tty);
 
     tty.this_value = jsc.JSRef.initWeak(this_value);
 
@@ -150,8 +151,9 @@ pub fn readStart(this: *TTY, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSEr
                         this.reader.handle.poll.flags.insert(.nonblocking);
                     }
                 }
+                if (this.flags.unreffed) this.reader.updateRef(false);
             },
-            .err => |err| return JSValue.jsNumber(@as(i32, @intCast(err.errno))),
+            .err => |err| return JSValue.jsNumber(toUVErrno(err)),
         }
     } else {
         // c2: unpause() only clears the flag. registerPoll (via watch()) re-arms
@@ -180,14 +182,12 @@ pub fn readStop(this: *TTY, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSErr
 pub fn doRef(this: *TTY, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     this.flags.unreffed = false;
     this.reader.updateRef(true);
-    if (this.flags.writer_started) this.writer.updateRef(this.event_loop_handle, true);
     return .js_undefined;
 }
 
 pub fn doUnref(this: *TTY, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     this.flags.unreffed = true;
     this.reader.updateRef(false);
-    if (this.flags.writer_started) this.writer.updateRef(this.event_loop_handle, false);
     return .js_undefined;
 }
 
@@ -197,14 +197,14 @@ pub fn setRawMode(this: *TTY, globalObject: *jsc.JSGlobalObject, callframe: *jsc
     const flag: i32 = if (args[0].toBoolean()) 1 else 0;
 
     if (comptime Environment.isWindows) {
-        if (this.fd.native() == 0) {
+        if (this.fd_int == 0) {
             return JSValue.jsNumber(Source__setRawModeStdin(flag != 0));
         }
         // Non-stdin TTY on Windows: no per-handle raw-mode path yet.
         return JSValue.jsNumber(0);
     }
 
-    return JSValue.jsNumber(Bun__ttySetMode(this.fd.native(), flag));
+    return JSValue.jsNumber(Bun__ttySetMode(this.fd_int, flag));
 }
 
 pub fn getWindowSize(this: *TTY, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -216,7 +216,7 @@ pub fn getWindowSize(this: *TTY, globalObject: *jsc.JSGlobalObject, callframe: *
 
     var width: usize = 0;
     var height: usize = 0;
-    if (!Bun__getTTYWindowSize(this.fd.native(), &width, &height)) {
+    if (!Bun__getTTYWindowSize(this.fd_int, &width, &height)) {
         return JSValue.jsBoolean(false);
     }
 
@@ -238,64 +238,11 @@ fn closeInternal(this: *TTY) void {
     if (this.flags.reader_started) {
         this.reader.close();
     }
-    if (this.flags.writer_started) {
-        this.writer.close();
-    }
     if (this.flags.owns_fd and this.owned_fd != bun.invalid_fd) {
         this.owned_fd.close();
         this.owned_fd = bun.invalid_fd;
     }
     if (!this.flags.finalized) this.this_value.downgrade();
-}
-
-/// net.ts `_write` calls this via the `$write` private symbol. Return `true`
-/// when the write is fully drained, `false` when buffered (net.ts then stashes
-/// kwriteCallback and waits for ondrain).
-pub fn write(this: *TTY, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.flags.closed) return JSValue.jsBoolean(true);
-
-    const args = callframe.argumentsAsArray(2);
-    const data = args[0];
-
-    const string_or_buffer = try jsc.Node.StringOrBuffer.fromJSWithEncodingValue(
-        globalObject,
-        bun.default_allocator,
-        data,
-        args[1],
-    ) orelse {
-        return globalObject.throw("write() expects a string or Buffer", .{});
-    };
-    defer string_or_buffer.deinit();
-    const bytes = string_or_buffer.slice();
-    if (bytes.len == 0) return JSValue.jsBoolean(true);
-
-    if (!this.flags.writer_started) {
-        switch (this.writer.start(this.owned_fd, true)) {
-            .result => this.flags.writer_started = true,
-            .err => |err| return globalObject.throwValue(try err.toJS(globalObject)),
-        }
-    }
-
-    return switch (this.writer.write(bytes)) {
-        .done => |amt| {
-            this.bytes_written += amt;
-            return JSValue.jsBoolean(true);
-        },
-        .wrote => |amt| {
-            this.bytes_written += amt;
-            return JSValue.jsBoolean(true);
-        },
-        .pending => |amt| {
-            this.bytes_written += amt;
-            return JSValue.jsBoolean(false);
-        },
-        .err => |err| globalObject.throwValue(try err.toJS(globalObject)),
-    };
-}
-
-pub fn end(this: *TTY, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
-    if (this.flags.writer_started) this.writer.end();
-    return .js_undefined;
 }
 
 pub fn getOnRead(_: *TTY, thisValue: jsc.JSValue, _: *jsc.JSGlobalObject) JSValue {
@@ -304,14 +251,6 @@ pub fn getOnRead(_: *TTY, thisValue: jsc.JSValue, _: *jsc.JSGlobalObject) JSValu
 
 pub fn setOnRead(_: *TTY, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: JSValue) void {
     js.gc.set(.onread, thisValue, globalObject, value);
-}
-
-pub fn getOnDrain(_: *TTY, thisValue: jsc.JSValue, _: *jsc.JSGlobalObject) JSValue {
-    return js.gc.get(.ondrain, thisValue) orelse .js_undefined;
-}
-
-pub fn setOnDrain(_: *TTY, thisValue: jsc.JSValue, globalObject: *jsc.JSGlobalObject, value: JSValue) void {
-    js.gc.set(.ondrain, thisValue, globalObject, value);
 }
 
 pub fn getBytesRead(this: *TTY, _: *jsc.JSGlobalObject) JSValue {
@@ -323,7 +262,7 @@ pub fn getBytesWritten(this: *TTY, _: *jsc.JSGlobalObject) JSValue {
 }
 
 pub fn getFd(this: *TTY, _: *jsc.JSGlobalObject) JSValue {
-    return JSValue.jsNumber(this.fd.native());
+    return JSValue.jsNumber(this.fd_int);
 }
 
 pub fn getExternalStream(_: *TTY, _: *jsc.JSGlobalObject) JSValue {
@@ -346,11 +285,7 @@ pub fn onReadChunk(this: *TTY, chunk: []const u8, has_more: bun.io.ReadState) bo
     const globalThis = this.globalThis;
     // g6: dupe — the reader buffer is reused across reads.
     const duped = bun.default_allocator.dupe(u8, chunk) catch return this.flags.reading;
-    const buf = jsc.MarkedArrayBuffer.fromBytes(
-        duped,
-        bun.default_allocator,
-        .Uint8Array,
-    ).toNodeBuffer(globalThis);
+    const buf = jsc.ArrayBuffer.createBuffer(globalThis, duped) catch return this.flags.reading;
 
     this.bytes_read += chunk.len;
 
@@ -358,7 +293,7 @@ pub fn onReadChunk(this: *TTY, chunk: []const u8, has_more: bun.io.ReadState) bo
         callback,
         globalThis,
         this_jsvalue,
-        &.{buf},
+        &.{ JSValue.jsNumber(@as(i32, @intCast(chunk.len))), buf },
     );
 
     // g6: honor readStop set during JS re-entry — don't hardcode true.
@@ -368,67 +303,44 @@ pub fn onReadChunk(this: *TTY, chunk: []const u8, has_more: bun.io.ReadState) bo
 pub fn onReaderDone(this: *TTY) void {
     log("onReaderDone", .{});
     if (this.flags.finalized) return;
-    this.callOnRead(.jsNull());
+    this.flags.reading = false;
+    this.reader.pause();
+    this.reader.updateRef(false);
+    this.callOnRead(JSValue.jsNumber(UV_EOF), .js_undefined);
     this.this_value.downgrade();
 }
 
 pub fn onReaderError(this: *TTY, err: bun.sys.Error) void {
     log("onReaderError: {any}", .{err});
     if (this.flags.finalized) return;
-    const globalThis = this.globalThis;
-    const err_value = err.toJS(globalThis) catch .js_undefined;
-    this.callOnRead(err_value);
+    this.flags.reading = false;
+    this.reader.pause();
+    this.reader.updateRef(false);
+    this.callOnRead(JSValue.jsNumber(toUVErrno(err)), .js_undefined);
     this.this_value.downgrade();
 }
 
-fn callOnRead(this: *TTY, arg: JSValue) void {
+fn callOnRead(this: *TTY, nread: JSValue, buf: JSValue) void {
     const this_jsvalue = this.this_value.tryGet() orelse return;
     const callback = js.gc.get(.onread, this_jsvalue) orelse return;
     this.globalThis.bunVM().eventLoop().runCallback(
         callback,
         this.globalThis,
         this_jsvalue,
-        &.{arg},
+        &.{ nread, buf },
     );
 }
 
-// Writer vtable callbacks ----------------------------------------------------
-
-fn onWriterReady(this: *TTY) void {
-    log("onWriterReady", .{});
-    if (this.flags.finalized) return;
-    const this_jsvalue = this.this_value.tryGet() orelse return;
-    const callback = js.gc.get(.ondrain, this_jsvalue) orelse return;
-    this.globalThis.bunVM().eventLoop().runCallback(
-        callback,
-        this.globalThis,
-        this_jsvalue,
-        &.{},
-    );
-}
-
-fn onWriterClose(this: *TTY) void {
-    _ = this;
-    log("onWriterClose", .{});
-}
-
-fn onWriterError(this: *TTY, err: bun.sys.Error) void {
-    log("onWriterError: {any}", .{err});
-    _ = this;
-}
-
-fn onWrite(this: *TTY, amount: usize, status: bun.io.WriteStatus) void {
-    log("onWrite: {} bytes, {any}", .{ amount, status });
-    _ = this;
-}
-
-// EventLoop hooks for IOReader/IOWriter --------------------------------------
+// EventLoop hooks for IOReader -----------------------------------------------
 
 pub fn eventLoop(this: *TTY) jsc.EventLoopHandle {
     return this.event_loop_handle;
 }
 
 pub fn loop(this: *TTY) *bun.Async.Loop {
+    if (comptime Environment.isWindows) {
+        return this.event_loop_handle.loop().uv_loop;
+    }
     return this.event_loop_handle.loop();
 }
 
@@ -439,7 +351,6 @@ pub fn finalize(this: *TTY) callconv(.c) void {
     this.flags.finalized = true;
     this.closeInternal();
     this.reader.deinit();
-    this.writer.deinit();
     bun.destroy(this);
 }
 

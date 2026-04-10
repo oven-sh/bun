@@ -340,16 +340,23 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     // The WebSocket connect path is fine on Windows — WebCore::WebSocket
     // works, and Bun__Chrome__autoDetect reads DevToolsActivePort from
     // %LOCALAPPDATA%. We only refuse when spawn is unavoidable.
+    //
+    // Call ensureSpawned unconditionally: it short-circuits with true
+    // when m_mode != None && !m_dead (singleton already alive — e.g.
+    // an earlier view connected via backend.url). Only translate an
+    // actual spawn failure into NotImplementedOnWindows — otherwise a
+    // second view with backend.url:false or backend.path on a process
+    // that's already got a live WebSocket transport would wrongly
+    // refuse even though no spawn is needed.
     auto trySpawn = [&]() -> bool {
-#if OS(WINDOWS)
-        setFailure(ChromeCreateFailure::NotImplementedOnWindows);
-        return false;
-#else
         if (t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit))
             return true;
+#if OS(WINDOWS)
+        setFailure(ChromeCreateFailure::NotImplementedOnWindows);
+#else
         setFailure(ChromeCreateFailure::SpawnFailed);
-        return false;
 #endif
+        return false;
     };
 
     // Transport selection, in priority order:

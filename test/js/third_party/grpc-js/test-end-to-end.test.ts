@@ -83,8 +83,8 @@ describe("Client should successfully communicate with server", () => {
     server.bindAsync("localhost:0", serverCreds, (error, port) => {
       assert.ifError(error);
       client = new EchoService(`localhost:${port}`, clientCreds, {
-        "grpc.ssl_target_name_override": "foo.test.google.fr",
-        "grpc.default_authority": "foo.test.google.fr",
+        "grpc.ssl_target_name_override": "localhost",
+        "grpc.default_authority": "localhost",
       });
       const metadata = new Metadata({ waitForReady: true });
       const deadline = new Date();

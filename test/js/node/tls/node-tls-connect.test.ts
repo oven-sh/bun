@@ -120,6 +120,53 @@ it("should have checkServerIdentity", async () => {
   expect(tls.checkServerIdentity).toBeFunction();
 });
 
+describe("checkServerIdentity hostname derivation", () => {
+  async function runScenario(connectOpts: Record<string, unknown>) {
+    const server = tls.createServer({ key: COMMON_CERT_.key, cert: COMMON_CERT_.cert }, socket => {
+      socket.end("ok");
+    });
+    try {
+      await once(server.listen(0), "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const { promise, resolve, reject } = Promise.withResolvers<string | null | undefined>();
+      let hostnameSeen: string | null | undefined = null;
+      const sock = tls.connect(
+        {
+          port,
+          ca: [COMMON_CERT_.cert],
+          rejectUnauthorized: false,
+          ...connectOpts,
+          checkServerIdentity(hostname: string) {
+            hostnameSeen = hostname;
+            return undefined;
+          },
+        } as tls.ConnectionOptions,
+        () => {
+          sock.destroy();
+          resolve(hostnameSeen);
+        },
+      );
+      sock.on("error", reject);
+      return await promise;
+    } finally {
+      server.close();
+    }
+  }
+
+  it("uses options.host when servername is absent", async () => {
+    expect(await runScenario({ host: "127.0.0.1" })).toBe("127.0.0.1");
+  });
+
+  it("uses options.servername when provided", async () => {
+    expect(await runScenario({ host: "127.0.0.1", servername: "localhost" })).toBe("localhost");
+  });
+
+  it('falls back to "localhost" when neither servername nor host is set', async () => {
+    expect(await runScenario({})).toBe("localhost");
+  });
+});
+
 it("should thow ECONNRESET if FIN is received before handshake", async () => {
   await using server = net.createServer(c => {
     c.end();

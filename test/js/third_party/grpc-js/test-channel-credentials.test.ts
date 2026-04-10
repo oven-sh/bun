@@ -133,7 +133,7 @@ describe("ChannelCredentials usage", () => {
   let server: grpc.Server;
   let portNum: number;
   let caCert: Buffer;
-  const hostnameOverride = "foo.test.google.fr";
+  const hostnameOverride = "localhost";
   beforeEach(async () => {
     const { ca, key, cert } = await pFixtures;
     caCert = ca;

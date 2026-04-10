@@ -5,6 +5,7 @@ tls
     {
       host: "localhost",
       port: Number(process.env.SERVER_PORT),
+      servername: "agent10.example.com",
       rejectUnauthorized: true,
     },
     () => {

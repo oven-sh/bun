@@ -142,6 +142,17 @@ function onConnectEnd() {
   }
 }
 
+function deriveCheckServerIdentityHostname(self) {
+  const connectOptions = self[kConnectOptions];
+  return (
+    self.servername ||
+    connectOptions?.servername ||
+    connectOptions?.host ||
+    connectOptions?.socket?._host ||
+    "localhost"
+  );
+}
+
 const SocketHandlers: SocketHandler = {
   close(socket, err) {
     const self = socket.data;
@@ -251,10 +262,11 @@ const SocketHandlers: SocketHandler = {
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
+    if (!verifyError && typeof checkServerIdentity === "function") {
+      const hostname = deriveCheckServerIdentityHostname(self);
       const cert = self.getPeerCertificate(true);
       if (cert) {
-        verifyError = checkServerIdentity(self.servername, cert);
+        verifyError = checkServerIdentity(hostname, cert);
       }
     }
     if (self._requestCert || self._rejectUnauthorized) {
@@ -563,10 +575,11 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
+    if (!verifyError && typeof checkServerIdentity === "function") {
+      const hostname = deriveCheckServerIdentityHostname(self);
       const cert = self.getPeerCertificate(true);
       if (cert) {
-        verifyError = checkServerIdentity(self.servername, cert);
+        verifyError = checkServerIdentity(hostname, cert);
       }
     }
     if (self._requestCert || self._rejectUnauthorized) {

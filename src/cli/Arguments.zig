@@ -269,25 +269,6 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
         };
     }
 
-    // For callers that pass a relative/cwd-local "bunfig.toml" while
-    // auto-loading, resolve it via the cwd and walk up parent directories
-    // if it doesn't exist. This matches the behavior of `loadConfig` and
-    // lets monorepo subprojects pick up a root `bunfig.toml` via
-    // `bun run` and `bun repl`.
-    if (auto_loaded and !resolve_path.Platform.auto.isAbsolute(config_path)) walkup: {
-        var cwd_buf: bun.PathBuffer = undefined;
-        const cwd = bun.getcwd(&cwd_buf) catch break :walkup;
-        var walkup_buf: bun.PathBuffer = undefined;
-        if (findAutoBunfig(cwd, &walkup_buf)) |found| {
-            return loadBunfig(allocator, auto_loaded, found, ctx, cmd);
-        }
-        // Nothing found up the chain. Mark the auto-load attempt as
-        // done so secondary callers in `bun.js.zig`, `run_command.zig`,
-        // and `repl_command.zig` don't repeat the full walk.
-        ctx.debug.loaded_bunfig = true;
-        return;
-    }
-
     try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);
 }
 

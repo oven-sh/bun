@@ -360,10 +360,16 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.hostname = "";
             }
 
-            // Clean up proxy state
-            if (this.proxy) |*p| {
-                p.deinit();
+            // Clean up proxy state. Null the field and detach the tunnel's
+            // back-reference before deinit so that SSLWrapper shutdown callbacks
+            // cannot re-enter clearData() while the proxy is still reachable.
+            if (this.proxy != null) {
+                var proxy = this.proxy.?;
                 this.proxy = null;
+                if (proxy.getTunnel()) |tunnel| {
+                    tunnel.detachUpgradeClient();
+                }
+                proxy.deinit();
             }
             if (this.ssl_config) |config| {
                 config.deinit();

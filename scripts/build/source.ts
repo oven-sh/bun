@@ -1223,7 +1223,7 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   const lib = resolve(targetDir, outSubdir, `${cfg.libPrefix}${spec.libName}${cfg.libSuffix}`);
 
   // ─── Build args ───
-  const args: string[] = ["--target-dir", targetDir];
+  const args: string[] = ["--locked", "--target-dir", targetDir];
   if (cfg.release) args.push("--release");
   if (spec.rustTarget) args.push("--target", spec.rustTarget);
 

@@ -5023,6 +5023,78 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("should resolve updated git tag without clearing cache", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+      // First install: v3.14.1
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "Foo",
+          version: "0.0.1",
+          dependencies: {
+            uglify: "git+https://git@github.com/mishoo/UglifyJS.git#v3.14.1",
+          },
+        }),
+      );
+      const { stdout: stdout1, stderr: stderr1, exited: exited1 } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      expect(await stderr1.text()).toContain("Saved lockfile");
+      expect(await stdout1.text().then(o => o.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/))).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "+ uglify@git+https://git@github.com/mishoo/UglifyJS.git#e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
+        "",
+        "1 package installed",
+      ]);
+      expect(await exited1).toBe(0);
+
+      // Update to a different tag (v3.13.0) WITHOUT clearing the cache
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "Foo",
+          version: "0.0.1",
+          dependencies: {
+            uglify: "git+https://git@github.com/mishoo/UglifyJS.git#v3.13.0",
+          },
+        }),
+      );
+      const { stdout: stdout2, stderr: stderr2, exited: exited2 } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err2 = await stderr2.text();
+      expect(err2).not.toContain("no commit matching");
+      expect(err2).toContain("Saved lockfile");
+      const out2 = await stdout2.text();
+      expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        expect.stringContaining("+ uglify@git+https://git@github.com/mishoo/UglifyJS.git#"),
+        "",
+        "1 package installed",
+      ]);
+      expect(await exited2).toBe(0);
+      // The resolved hash for v3.13.0 must differ from v3.14.1's hash
+      expect(out2).not.toContain("e219a9a78a0d2251e4dcbd4bb9034207eb484fe8");
+      const package_json = await file(join(ctx.package_dir, "node_modules", "uglify", "package.json")).json();
+      expect(package_json.name).toBe("uglify-js");
+      expect(package_json.version).toBe("3.13.0");
+    });
+  });
+
   it("should fail on invalid Git URL", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

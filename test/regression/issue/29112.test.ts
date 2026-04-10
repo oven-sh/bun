@@ -81,6 +81,7 @@ describePosix("issue #29112 — tty.ReadStream on non-blocking PTY fd", () => {
 
   test("EAGAIN on non-blocking PTY read does not destroy the stream or close the fd", async () => {
     const { parent, child } = openPty();
+    let rs: ReturnType<typeof tty.ReadStream> | undefined;
     try {
       // node-pty's native addon sets O_NONBLOCK on the master fd. This is
       // what makes fs.read return EAGAIN when no data is buffered.
@@ -91,7 +92,7 @@ describePosix("issue #29112 — tty.ReadStream on non-blocking PTY fd", () => {
       // the stream, and close the fd — exactly what node-pty's JS
       // wrapper tries to recover from in its 'error' handler but can't,
       // because the fd is already gone.
-      const rs = new tty.ReadStream(parent);
+      rs = new tty.ReadStream(parent);
 
       const closed = new Promise<void>(resolve => rs.once("close", () => resolve()));
       const errors: Error[] = [];
@@ -155,9 +156,12 @@ describePosix("issue #29112 — tty.ReadStream on non-blocking PTY fd", () => {
       // fix retries the read inside the custom fs wrapper instead of
       // calling errorOrDestroy.
       expect(errors).toEqual([]);
-
-      rs.destroy();
     } finally {
+      // Destroy the stream before closing the fds so the custom `fs`
+      // wrapper's retry loop sees `stream.destroyed` and stops — otherwise
+      // a pending `setTimeout(retry)` could fire against an already-closed
+      // fd and produce noisy EBADF output that obscures the real failure.
+      rs?.destroy();
       libc.close(parent);
       libc.close(child);
     }

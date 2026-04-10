@@ -341,6 +341,17 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     }
 
     if (backend == WebViewBackend::Chrome) {
+#if OS(WINDOWS)
+        // ChromeProcess.zig's spawn path uses POSIX socketpair + extra_fds
+        // for --remote-debugging-pipe; fd.cast() is a HANDLE on Windows and
+        // there's no direct equivalent. Bun__Chrome__ensure short-circuits
+        // with -1 before any of BUN_CHROME_PATH / backend.path / findChrome
+        // runs, so the user's "set the path" fix doesn't apply — surface
+        // the not-implemented status cleanly instead of hinting at a knob
+        // that has no effect here.
+        return Bun::throwError(globalObject, scope, ErrorCode::ERR_METHOD_NOT_IMPLEMENTED,
+            "Bun.WebView chrome backend is not yet implemented on Windows"_s);
+#else
         Bun__Feature__webview_chrome += 1;
         JSWebView* view = JSWebView::createChrome(globalObject, structure, width, height,
             persistDir, chromePath, chromeArgv, stdoutInherit, stderrInherit, chromeWsUrl,
@@ -355,6 +366,7 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
         if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
         if (!initialUrl.isEmpty()) view->navigate(globalObject, initialUrl);
         return JSValue::encode(view);
+#endif
     }
 
 #if !OS(DARWIN)

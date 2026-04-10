@@ -1,6 +1,6 @@
 import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 
 // FFI shm access for encoding:"shmem" tests. In real use Kitty (or
 // whoever opens the segment) does this — shm_open + mmap + read + unlink.
@@ -69,6 +69,41 @@ test("backend: 'webkit' throws on non-darwin", () => {
     expect(() => new Bun.WebView({ width: 100, height: 100, backend: "webkit" })).toThrow(
       /only available on macOS.*backend.*chrome/i,
     );
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/29102
+// Chrome backend has no Windows implementation yet — the POSIX
+// socketpair + --remote-debugging-pipe plumbing in ChromeProcess.zig
+// needs a named-pipes/libuv port. Bun__Chrome__ensure short-circuits
+// before BUN_CHROME_PATH / backend.path are consulted, so the
+// constructor must throw a clean "not implemented" error instead of
+// the old misleading ERR_DLOPEN_FAILED that told users to set a path.
+test.skipIf(!isWindows)("backend: 'chrome' throws on Windows", () => {
+  const cases: Array<object> = [
+    {},
+    { backend: "chrome" },
+    {
+      backend: {
+        type: "chrome",
+        path: "C:/Program Files/Google/Chrome/Application/chrome.exe",
+      },
+    },
+  ];
+  for (const opts of cases) {
+    let err: any;
+    try {
+      new (Bun as any).WebView(opts);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err.code).toBe("ERR_METHOD_NOT_IMPLEMENTED");
+    expect(err.message).toMatch(/chrome.*not.*yet.*implemented.*windows/i);
+    // Must not mention BUN_CHROME_PATH / backend.path — those knobs
+    // are inert on Windows and the old message's hint at them is
+    // exactly what confused the bug reporter.
+    expect(err.message).not.toMatch(/BUN_CHROME_PATH/);
   }
 });
 

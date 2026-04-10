@@ -15,7 +15,7 @@
 // us_connecting_socket_free against double-enqueue with a scheduled_for_free
 // bit, so even if a future change violates the pending_resolve_callback
 // invariant the list can't be corrupted.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 
 // Without ASAN this either passes cleanly (no observable effect) or segfaults

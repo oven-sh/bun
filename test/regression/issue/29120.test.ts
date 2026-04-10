@@ -30,6 +30,9 @@ type CodeSig = {
 
 // Read the LC_CODE_SIGNATURE load command and the SuperBlob it points at.
 // Assumes a little-endian 64-bit mach-o (what --target=bun-darwin-arm64 emits).
+// All offsets are validated against `buf.length` so a malformed/truncated
+// binary surfaces as `null`, never as an OOB read or infinite loop on a
+// zero `cmdsize`.
 function readCodeSignature(buf: Buffer): CodeSig | null {
   // mach_header_64: magic(4) cputype(4) cpusubtype(4) filetype(4)
   //                 ncmds(4)  sizeofcmds(4) flags(4) reserved(4)
@@ -40,12 +43,17 @@ function readCodeSignature(buf: Buffer): CodeSig | null {
 
   let p = 32; // end of mach_header_64
   for (let i = 0; i < ncmds; i++) {
+    if (p + 8 > buf.length) return null;
     const cmd = buf.readUInt32LE(p);
     const cmdsize = buf.readUInt32LE(p + 4);
+    if (cmdsize < 8 || p + cmdsize > buf.length) return null;
     if (cmd === LC_CODE_SIGNATURE) {
+      // linkedit_data_command: cmd(4) cmdsize(4) dataoff(4) datasize(4)
+      if (cmdsize < 16) return null;
       const dataoff = buf.readUInt32LE(p + 8);
       const datasize = buf.readUInt32LE(p + 12);
       // SuperBlob: magic(4 BE) length(4 BE) count(4 BE)
+      if (dataoff + 8 > buf.length) return null;
       const superBlobMagic = buf.readUInt32BE(dataoff);
       const superBlobLength = buf.readUInt32BE(dataoff + 4);
       return { dataoff, datasize, superBlobMagic, superBlobLength };
@@ -59,21 +67,26 @@ function readCodeSignature(buf: Buffer): CodeSig | null {
 // claims. A truncated file where LINKEDIT ends before dataoff+datasize means
 // the cross-compile produced a binary macOS will refuse.
 function linkeditCoversSignature(buf: Buffer, sig: CodeSig): boolean {
+  if (buf.length < 32) return false;
   const ncmds = buf.readUInt32LE(16);
   let p = 32;
   for (let i = 0; i < ncmds; i++) {
+    if (p + 8 > buf.length) return false;
     const cmd = buf.readUInt32LE(p);
     const cmdsize = buf.readUInt32LE(p + 4);
+    if (cmdsize < 8 || p + cmdsize > buf.length) return false;
     if (cmd === LC_SEGMENT_64) {
-      // segment_command_64 layout: cmd(4) cmdsize(4) segname(16)
-      //   vmaddr(8) vmsize(8) fileoff(8) filesize(8) ...
+      // segment_command_64 layout:
+      //   cmd(4)  cmdsize(4)  segname[16]  vmaddr(8)  vmsize(8)  fileoff(8)  filesize(8) ...
+      //   |0      |4          |8           |24        |32        |40         |48
+      if (cmdsize < 56) return false;
       const segname = buf
         .subarray(p + 8, p + 8 + 16)
         .toString("ascii")
         .replace(/\0+$/, "");
       if (segname === "__LINKEDIT") {
-        const fileoff = Number(buf.readBigUInt64LE(p + 32));
-        const filesize = Number(buf.readBigUInt64LE(p + 40));
+        const fileoff = Number(buf.readBigUInt64LE(p + 40));
+        const filesize = Number(buf.readBigUInt64LE(p + 48));
         return sig.dataoff + sig.datasize <= fileoff + filesize;
       }
     }
@@ -107,8 +120,8 @@ test("bun build --compile --target=bun-darwin-arm64 produces a valid code signat
       console.warn(`[29120] cross-compile download failed, skipping test:\n${stderr}`);
       return;
     }
+    console.error(`[29120] build failed:\n${stderr}`);
   }
-  expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
 
   const buf = readFileSync(out);

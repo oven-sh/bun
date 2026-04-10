@@ -11,9 +11,14 @@ import assert from "node:assert";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { test } from "node:test";
+import nodeTest from "node:test";
 
-const isLinux = process.platform === "linux";
+// `test()` on Linux, `test.skip()` elsewhere. The `{ skip: !isLinux }`
+// option-object form isn't honored by bun's `node:test` shim (the
+// module-level helper passes its 3rd arg as a timeout, not an options
+// object), so gate via the skip alias directly — that works under both
+// bun and node.
+const test = process.platform === "linux" ? nodeTest : nodeTest.skip;
 
 // Parse the process's CPU affinity mask from /proc/self/status's
 // `Cpus_allowed_list` field (range list like "0-3,8-11"). Faster than
@@ -132,7 +137,7 @@ function expectedAvailableParallelism(): number {
   return Math.min(allowed.length, Number.isFinite(quota) ? quota : allowed.length);
 }
 
-test("os.availableParallelism() matches sched_getaffinity + cgroup quota (#29129)", { skip: !isLinux }, () => {
+test("os.availableParallelism() matches sched_getaffinity + cgroup quota (#29129)", () => {
   const expected = expectedAvailableParallelism();
   assert.ok(expected > 0, `expected > 0, got ${expected}`);
 
@@ -144,7 +149,7 @@ test("os.availableParallelism() matches sched_getaffinity + cgroup quota (#29129
   assert.strictEqual(availableParallelism(), expected);
 });
 
-test("os.availableParallelism() under taskset reports the restricted count (#29129)", { skip: !isLinux }, () => {
+test("os.availableParallelism() under taskset reports the restricted count (#29129)", () => {
   const allowed = parseCpusAllowedList();
   if (allowed.length < 2) {
     // Need at least 2 CPUs in the current mask so we can taskset

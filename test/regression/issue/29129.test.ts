@@ -204,7 +204,4 @@ test.skipIf(!isLinux)(
     expect(available).toBe(1);
     expect(hardware).toBe(1);
   },
-  // Debug+ASAN bun startup on a single CPU can be slow; 60s is
-  // generous but prevents flake without masking real hangs.
-  60_000,
 );

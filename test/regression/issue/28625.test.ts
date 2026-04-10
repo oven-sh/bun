@@ -56,13 +56,11 @@ test.concurrent("onResolve plugin can append query string to file namespace path
 
 // '#' is a valid filename character on POSIX; stripping a plugin-appended
 // '?query' must not truncate inside the basename when it contains '#'.
-test.concurrent.skipIf(isWindows)(
-  "onResolve plugin can append query string when filename contains '#'",
-  async () => {
-    using dir = tempDir("issue-28625-sharp", {
-      "entry.js": `import txt from './C#.txt'; console.log(txt);`,
-      "C#.txt": `hello sharp`,
-      "build.js": `
+test.concurrent.skipIf(isWindows)("onResolve plugin can append query string when filename contains '#'", async () => {
+  using dir = tempDir("issue-28625-sharp", {
+    "entry.js": `import txt from './C#.txt'; console.log(txt);`,
+    "C#.txt": `hello sharp`,
+    "build.js": `
       import path from 'path';
 
       const result = await Bun.build({
@@ -86,23 +84,22 @@ test.concurrent.skipIf(isWindows)(
       }
       console.log("BUILD_OK");
     `,
-    });
+  });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(filterAsanWarning(stderr)).toBe("");
-    expect(stdout).toContain("BUILD_OK");
-    expect(exitCode).toBe(0);
-  },
-);
+  expect(filterAsanWarning(stderr)).toBe("");
+  expect(stdout).toContain("BUILD_OK");
+  expect(exitCode).toBe(0);
+});
 
 test.concurrent("onResolve plugin can append hash fragment to file namespace path", async () => {
   using dir = tempDir("issue-28625-hash", {

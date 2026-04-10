@@ -50,14 +50,17 @@ function readCgroupCpuQuota(): number {
     }
   };
 
-  // cgroup v2: "0::/my/path\n". Walk upwards, each level can further
-  // constrain cpu.max — the binding takes the min of every populated
-  // quota in the ancestry chain.
-  if (cgroup.startsWith("0::/")) {
-    let rel = cgroup.slice("0::/".length);
-    const nl = rel.indexOf("\n");
-    if (nl >= 0) rel = rel.slice(0, nl);
+  let result = Infinity;
 
+  // cgroup v2: look for a `0::/...` entry anywhere in the file, not
+  // just at line 0 — hybrid v1+v2 hosts (Ubuntu 22.04 with legacy
+  // Docker, Kubernetes nodes mid-migration) intersperse v1 controller
+  // lines before the v2 entry. Walk up the hierarchy and take the min
+  // of every populated cpu.max, matching libuv's
+  // uv__get_cgroupv2_constrained_cpu().
+  const v2Match = cgroup.match(/^0::(\/[^\n]*)/m);
+  if (v2Match) {
+    const rel = v2Match[1]!.replace(/^\/+/, "");
     let min = Infinity;
     let path = `/sys/fs/cgroup/${rel}`;
     const mount = "/sys/fs/cgroup";
@@ -77,13 +80,16 @@ function readCgroupCpuQuota(): number {
       if (lastSlash < 0) break;
       path = path.slice(0, lastSlash);
     }
-    return min;
+    if (min < result) result = min;
   }
 
   // cgroup v1: each line is "<id>:<controllers>:<path>" where
   // controllers is a comma-separated list. We need the line whose
   // controller list contains "cpu" (order-independent: both
-  // "cpu,cpuacct" and "cpuacct,cpu" are valid).
+  // "cpu,cpuacct" and "cpuacct,cpu" are valid). On hybrid hosts this
+  // runs in addition to the v2 block above; we take the min so
+  // whichever hierarchy has a tighter quota wins — same shape as the
+  // runtime, which also honors both.
   for (const line of cgroup.split("\n")) {
     const firstColon = line.indexOf(":");
     if (firstColon < 0) continue;
@@ -101,13 +107,16 @@ function readCgroupCpuQuota(): number {
       const period = Number(slurp(`${base}/cpu.cfs_period_us`)?.trim());
       // cgroup v1 encodes "no limit" as quota=-1.
       if (quota < 0 || !Number.isFinite(quota) || !Number.isFinite(period) || period <= 0) {
-        return Infinity;
+        break;
       }
-      return Math.max(1, Math.floor(quota / period));
+      const v1 = Math.max(1, Math.floor(quota / period));
+      if (v1 < result) result = v1;
+      break;
     }
+    break;
   }
 
-  return Infinity;
+  return result;
 }
 
 // The fix clamps by both affinity AND cgroup quota (matching libuv's

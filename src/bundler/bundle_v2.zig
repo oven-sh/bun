@@ -2644,9 +2644,12 @@ pub const BundleV2 = struct {
                     // (mirroring the fallback approach in resolver.zig for CSS).
                     // Search only the filename portion so that ? or # in
                     // directory names (e.g. /projects/C#/main.js) are preserved.
+                    // Prefer '?' over '#' so a file literally named C#.ts with an
+                    // appended ?query strips at the query, not inside the name.
                     const path_to_use = if (is_file_namespace) blk: {
                         const basename_start = if (bun.path.lastIndexOfSep(result.path)) |sep| sep + 1 else 0;
-                        if (bun.strings.indexOfAny(result.path[basename_start..], "?#")) |offset| {
+                        const basename = result.path[basename_start..];
+                        if (bun.strings.indexOfChar(basename, '?') orelse bun.strings.indexOfChar(basename, '#')) |offset| {
                             break :blk if (bun.sys.exists(result.path))
                                 result.path
                             else

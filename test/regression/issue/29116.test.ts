@@ -70,7 +70,12 @@ test.skipIf(!isLinux)("#29116 connected dgram socket still surfaces recv-side EC
     // 'error' event so we see ECONNREFUSED on stderr.
     socket.send(Buffer.from("x"));
 
+    // If ICMP is filtered in the CI network namespace the error never
+    // arrives; close the socket so the event loop drains and the
+    // subprocess exits cleanly, which turns a would-be hang into a
+    // meaningful 'stderr did not contain ECONNREFUSED' assertion fail.
     await Bun.sleep(500);
+    await new Promise(resolve => socket.close(resolve));
   `);
 
   expect(stderr).toContain("ECONNREFUSED");

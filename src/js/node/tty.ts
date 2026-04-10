@@ -11,12 +11,44 @@ const {
 
 const { validateInteger } = require("internal/validators");
 const fs = require("internal/fs/streams");
+const realFs = require("node:fs");
+
+// Custom `fs` implementation used by `tty.ReadStream`. It wraps `fs.read` to
+// transparently retry EAGAIN/EWOULDBLOCK (expected on non-blocking fds such as
+// a PTY master) and turns `close` into a no-op so that the fd — which is
+// externally owned — is never closed when the stream is destroyed. In Node,
+// `tty.ReadStream` extends `net.Socket` and uses libuv polling, so it never
+// sees EAGAIN and never owns the fd; this wrapper gives Bun's `fs.ReadStream`-
+// backed `tty.ReadStream` the same externally-visible behaviour.
+// See https://github.com/oven-sh/bun/issues/29112.
+const ttyReadStreamFs = {
+  open: realFs.open,
+  close(fd, cb) {
+    // The fd was provided by the caller; it is not ours to close.
+    if (typeof cb === "function") process.nextTick(cb, null);
+  },
+  read(fd, buf, offset, length, position, cb) {
+    const retry = () => {
+      realFs.read(fd, buf, offset, length, position, (er, bytesRead, buffer) => {
+        if (er && (er.code === "EAGAIN" || er.code === "EWOULDBLOCK")) {
+          // No data ready yet on this non-blocking fd. Back off briefly and
+          // try again rather than destroying the stream (which would close
+          // the fd and break callers that still hold the integer).
+          setTimeout(retry, 10);
+          return;
+        }
+        cb(er, bytesRead, buffer);
+      });
+    };
+    retry();
+  },
+};
 
 function ReadStream(fd): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd);
   }
-  fs.ReadStream.$apply(this, ["", { fd }]);
+  fs.ReadStream.$apply(this, ["", { fd, fs: ttyReadStreamFs, autoClose: false }]);
   this.isRaw = false;
   // Only set isTTY to true if the fd is actually a TTY
   this.isTTY = isatty(fd);

@@ -221,7 +221,10 @@ fn parseField(comptime T: type, field: []const u8, min: u7, max: u7, kind: NameK
         } else {
             if (splitRange(base)) |range_parts| {
                 const lo = parseValue(range_parts[0], min, max, kind) catch return error.InvalidNumber;
-                const hi = parseValue(range_parts[1], min, max, kind) catch return error.InvalidNumber;
+                var hi = parseValue(range_parts[1], min, max, kind) catch return error.InvalidNumber;
+                // Named SUN/Sunday maps to 0; promote to 7 at the end of a range so
+                // FRI-SUN behaves like 5-7 (folded to {0,5,6} below).
+                if (kind == .weekday and hi == 0 and lo > 0) hi = 7;
                 if (lo > hi) return error.InvalidRange;
                 range_min = lo;
                 range_max = hi;

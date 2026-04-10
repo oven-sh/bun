@@ -42,7 +42,11 @@ async function runCode(src: string): Promise<{ stdout: string; stderr: string; e
 // strings on stderr because that phrasing varies across platforms and
 // between ESM-loader and CJS-loader paths.
 
-describe.concurrent("URL imports at runtime are rejected (not silently stubbed)", () => {
+// Not `describe.concurrent` — spawning seven bun subprocesses at once was
+// pushing slower CI runners (darwin-aarch64) past their per-job time
+// budget and getting jobs killed with an "Expired" status. Serial runs
+// are only a few seconds slower overall and are far more stable.
+describe("URL imports at runtime are rejected (not silently stubbed)", () => {
   test("import * as ns from https:// does not produce a { default: <url> } stub", async () => {
     const { stdout, exitCode } = await runCode(`
       import * as ns from "https://esm.sh/d3@7.9.0";
@@ -69,7 +73,7 @@ describe.concurrent("URL imports at runtime are rejected (not silently stubbed)"
   // empty-stdout + non-zero-exit outcome as the post-fix behaviour and so
   // wouldn't distinguish the regression. No extension hits the .file
   // loader and produces the { __esModule, default: "<url>" } stub pre-fix.
-  test("import from http:// errors at load time", async () => {
+  test("import * as ns from http:// errors at load time", async () => {
     const { stdout, exitCode } = await runCode(`
       import * as ns from "http://bun-issue-29076-nonexistent.invalid";
       console.log("keys=" + JSON.stringify(Object.keys(ns)));
@@ -90,7 +94,7 @@ describe.concurrent("URL imports at runtime are rejected (not silently stubbed)"
   // would instead fall through to filesystem resolution (ENOENT) which
   // isn't a reliable regression signal. Use a nonsense host that can't
   // exist anywhere on any filesystem.
-  test("import * from // (protocol-relative) errors at load time", async () => {
+  test("import * as ns from // (protocol-relative) errors at load time", async () => {
     const { stdout, exitCode } = await runCode(`
       import * as ns from "//bun-issue-29076-nonexistent.invalid";
       console.log("keys=" + JSON.stringify(Object.keys(ns)));

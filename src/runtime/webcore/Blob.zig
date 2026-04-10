@@ -4044,6 +4044,18 @@ pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u
                 return global.throwOutOfMemory();
             }
 
+            // Zero-length buffers: `ArrayBuffer.fromBytes(buf).toJS()`
+            // takes an early return via `ArrayBuffer.create(global, "", ...)`
+            // which allocates a fresh empty view and does NOT register a
+            // deallocator for `buf.ptr`. Free the owned zero-length
+            // allocation explicitly — e.g. `toOwnedSlice()` on an empty
+            // `MutableString` with non-zero capacity returns a valid
+            // `{ptr, len: 0}` slice (see #29083).
+            if (buf.len == 0) {
+                bun.default_allocator.free(buf);
+                return jsc.ArrayBuffer.create(global, "", TypedArrayView);
+            }
+
             return jsc.ArrayBuffer.fromBytes(buf, TypedArrayView).toJS(global);
         },
     }

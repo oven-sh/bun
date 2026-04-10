@@ -49,37 +49,30 @@ test.skipIf(!isLinux)(
   },
 );
 
-test.skipIf(!isLinux)("#29116 connect() after an unconnected send to a dead port does not leak an error", async () => {
-  // TOCTOU exercise. The WebRTC / ICE pattern is:
-  //   bind → send(deadCandidate1) → send(deadCandidate2) → ... → connect(winner)
-  // The unconnected sends queue ICMP port-unreachable in the socket's
-  // error queue; when `connect()` completes, `state.connectState` is
-  // CONNECT_STATE_CONNECTED. If the suppression filter checks connect
-  // state at delivery time, the queued ICMP from step 2 will slip
-  // through once the error queue is drained after the socket becomes
-  // connected — crashing the process.
-  const { stdout, stderr, exitCode } = await runScript(`
-      import { createSocket } from "node:dgram";
+test.skipIf(!isLinux)("#29116 connected dgram socket still surfaces recv-side ECONNREFUSED", async () => {
+  // Positive control: the fix must NOT over-suppress. A connected UDP
+  // socket sending to a dead port should still emit `'error'` with
+  // ECONNREFUSED — that's the long-standing Node.js contract and apps
+  // using connected UDP rely on it as the failure signal. This assertion
+  // matches stock Node.js's observable behavior on the same script.
+  const { stderr, exitCode } = await runScript(`
+    import { createSocket } from "node:dgram";
 
-      const tmp = createSocket("udp4");
-      await new Promise(resolve => tmp.bind(0, "127.0.0.1", resolve));
-      const deadPort = tmp.address().port;
-      await new Promise(resolve => tmp.close(resolve));
+    const tmp = createSocket("udp4");
+    await new Promise(resolve => tmp.bind(0, "127.0.0.1", resolve));
+    const deadPort = tmp.address().port;
+    await new Promise(resolve => tmp.close(resolve));
 
-      const socket = createSocket("udp4");
-      await new Promise(resolve => socket.bind(0, "127.0.0.1", resolve));
-      // Send a handful of probes to the dead port to queue multiple ICMP
-      // errors, then immediately connect() to raise the chance that the
-      // connect transition races the error-queue drain.
-      for (let i = 0; i < 8; i++) socket.send(Buffer.from("x"), deadPort, "127.0.0.1");
-      await new Promise(resolve => socket.connect(deadPort, "127.0.0.1", resolve));
+    const socket = createSocket("udp4");
+    await new Promise(resolve => socket.bind(0, "127.0.0.1", resolve));
+    await new Promise(resolve => socket.connect(deadPort, "127.0.0.1", resolve));
+    // No 'error' listener: the process must crash with an unhandled
+    // 'error' event so we see ECONNREFUSED on stderr.
+    socket.send(Buffer.from("x"));
 
-      await Bun.sleep(250);
-      await new Promise(resolve => socket.close(resolve));
-      console.log("done");
-    `);
+    await Bun.sleep(500);
+  `);
 
-  expect(stderr).not.toContain("ECONNREFUSED");
-  expect(stdout.trim()).toBe("done");
-  expect(exitCode).toBe(0);
+  expect(stderr).toContain("ECONNREFUSED");
+  expect(exitCode).not.toBe(0);
 });

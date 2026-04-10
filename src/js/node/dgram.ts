@@ -95,31 +95,42 @@ function EINVAL(syscall) {
   });
 }
 
-// ICMP-class recv errors that Linux's IP_RECVERR surfaces on UDP sockets.
+// ICMP-class recv errors from Linux's IP_RECVERR error-queue drain.
 //
-// Node.js / libuv do NOT enable IP_RECVERR on UDP sockets in the default
-// path (it's opt-in via UV_UDP_LINUX_RECVERR, which lib/dgram.js never
-// passes), so the Linux kernel silently drops ICMP errors on unconnected
-// sockets. The ECONNREFUSED an app sees on a connected socket in Node.js
-// comes from the *synchronous* send path (sendmsg returning -1) and is
-// delivered via the send callback, not through an async recv-side error.
+// Background: on a connected UDP socket, Linux records ICMP errors
+// (port unreachable, host unreachable, …) in the socket's sk_err so the
+// next recvmsg returns errno=ECONNREFUSED. Node.js (and Bun ≤ 1.3.11)
+// surface that through dgram's `'error'` event, and apps using connected
+// UDP are expected to handle it. On an UNconnected socket, the kernel
+// silently drops those ICMP errors by default — libuv does not enable
+// IP_RECVERR (it's opt-in via UV_UDP_LINUX_RECVERR, which lib/dgram.js
+// never passes), so Node.js dgram apps never observe them.
 //
-// Bun enables IP_RECVERR unconditionally in uSockets (#28827), so the
-// Linux kernel queues ICMP errors on the socket's error queue even for
-// unconnected sockets. uSockets drains that queue and surfaces each errno
-// through the `on_recv_error` → `Bun.udpSocket` `error:` callback — a
-// purely async, recv-side path with `syscall === "recv"`. No code path in
-// stock Node.js / libuv-via-Node delivers UDP errors through this channel,
-// so to match Node.js's observable dgram behavior we drop every error
-// that came through it, regardless of the socket's current connect state.
+// After #28827, Bun enables IP_RECVERR unconditionally in uSockets. That
+// causes the kernel to populate sk_err on *unconnected* sockets too, and
+// uSockets' recvmmsg drain surfaces the errno through `on_recv_error`,
+// which becomes a `'error'` event on the dgram socket — breaking any
+// program that sends a best-effort UDP packet without a defensive
+// listener (the #29116 repro).
 //
-// This intentionally suppresses recv-side ICMP errors on connected sockets
-// too: the send-side path (socket.send() throwing / rejecting) still works
-// and that's what Node.js apps actually observe. It also closes a TOCTOU
-// window where an ICMP error queued before connect() would otherwise leak
-// out with the socket in the CONNECTED state.
-function isSuppressibleRecvError(error) {
-  return error?.syscall === "recv";
+// Match Node.js behavior by suppressing ICMP-class `recv` errors on
+// unconnected sockets while letting them through on connected ones.
+function isSuppressibleRecvError(error, connectState) {
+  if (connectState === CONNECT_STATE_CONNECTED) return false;
+  if (error?.syscall !== "recv") return false;
+  switch (error?.code) {
+    case "ECONNREFUSED":
+    case "EHOSTUNREACH":
+    case "ENETUNREACH":
+    case "EHOSTDOWN":
+    case "ENETDOWN":
+    case "ENONET":
+    case "ENOPROTOOPT":
+    case "EMSGSIZE":
+      return true;
+    default:
+      return false;
+  }
 }
 
 let dns;
@@ -358,7 +369,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
             });
           },
           error: error => {
-            if (isSuppressibleRecvError(error)) return;
+            if (isSuppressibleRecvError(error, state.connectState)) return;
             this.emit("error", error);
           },
         },

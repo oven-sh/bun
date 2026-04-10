@@ -125,11 +125,24 @@ test("TransformStream: transform errors still propagate through write", async ()
   });
 
   const writer = ts.writable.getWriter();
+  const reader = ts.readable.getReader();
+
+  // TransformStream starts with backpressure=true, so writer.write() can't
+  // even reach the transform until a reader pulls. Drain concurrently.
+  const readDone = (async () => {
+    try {
+      while (!(await reader.read()).done) {}
+    } catch {
+      // Reader surfaces the errored readable side; that's expected.
+    }
+  })();
 
   // The write promise should reject with the thrown error.
   await expect(async () => {
     await writer.write("x");
   }).toThrow(err);
+
+  await readDone;
 });
 
 test("TransformStream: flush does not run if transform throws", async () => {
@@ -147,6 +160,16 @@ test("TransformStream: flush does not run if transform throws", async () => {
   });
 
   const writer = ts.writable.getWriter();
+  const reader = ts.readable.getReader();
+
+  // See test above — concurrent reader drains so the write isn't blocked on
+  // backpressure.
+  const readDone = (async () => {
+    try {
+      while (!(await reader.read()).done) {}
+    } catch {}
+  })();
+
   await expect(async () => {
     await writer.write("x");
   }).toThrow(err);
@@ -154,5 +177,7 @@ test("TransformStream: flush does not run if transform throws", async () => {
   await expect(async () => {
     await writer.close();
   }).toThrow();
+
+  await readDone;
   expect(flushRan).toBe(false);
 });

@@ -1,25 +1,7 @@
-// https://github.com/oven-sh/bun/issues/29129
-//
-// os.availableParallelism() (and navigator.hardwareConcurrency) ignored
-// sched_getaffinity / cgroup cpu.max on Linux. On a host with more
-// logical CPUs than the process was allowed to use (taskset, cpuset,
-// docker --cpus, kubernetes limits, …) bun returned the host count,
-// not the effective count — unlike Node.js and libuv's
-// uv_available_parallelism().
-//
-// Anything sizing a worker pool off availableParallelism()
-// over-subscribed inside containers: bun's own `bun bd` spawned
-// llvm_codegen_threads equal to the host core count regardless of the
-// cpuset, producing sustained loadavg >> core-count on shared hosts.
-//
-// Fix: WTF::numberOfProcessorCores() now popcounts sched_getaffinity()
-// and clamps by cgroup cpu.max quota, matching libuv. That value feeds
-// navigator.hardwareConcurrency → os.availableParallelism() and also
-// JSC's own thread pools.
-//
-// NOTE: os.cpus().length still returns the host count — that matches
-// Node.js (libuv's uv_cpu_info() populates per-CPU stats for every
-// logical CPU, it doesn't filter by the affinity mask).
+// Regression test for https://github.com/oven-sh/bun/issues/29129 —
+// os.availableParallelism() / navigator.hardwareConcurrency must honor
+// sched_getaffinity and cgroup cpu.max on Linux, matching libuv's
+// uv_available_parallelism() (and therefore Node.js).
 
 import { spawn, spawnSync } from "bun";
 import { expect, test } from "bun:test";

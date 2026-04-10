@@ -94,11 +94,7 @@ test.skipIf(!isLinux)(
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Surface stderr in the failure message instead of a bare exit
     // code — much easier to debug.

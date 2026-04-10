@@ -76,8 +76,22 @@ it("BUN_CHROME_PATH env var does not change the outcome", async () => {
   // ERR_METHOD_NOT_IMPLEMENTED surfaces — not the old "Failed to
   // spawn Chrome" ERR_DLOPEN_FAILED that told users to set this
   // env var.
+  //
+  // If the constructor ever stops throwing, log UNEXPECTED_SUCCESS
+  // and exit non-zero so the test fails fast instead of hanging
+  // on a live view the child never closes.
+  const script =
+    "try {" +
+    "  const v = new Bun.WebView({});" +
+    "  v.close();" +
+    '  console.log("UNEXPECTED_SUCCESS");' +
+    "  process.exit(2);" +
+    "} catch (e) {" +
+    "  console.log(e.code);" +
+    "  console.log(e.message);" +
+    "}";
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", "try { new Bun.WebView({}); } catch (e) { console.log(e.code); console.log(e.message); }"],
+    cmd: [bunExe(), "-e", script],
     env: {
       ...bunEnv,
       BUN_CHROME_PATH: "C:/Program Files/Google/Chrome/Application/chrome.exe",
@@ -85,6 +99,7 @@ it("BUN_CHROME_PATH env var does not change the outcome", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).not.toContain("UNEXPECTED_SUCCESS");
   expect(stdout).toContain("ERR_METHOD_NOT_IMPLEMENTED");
   expect(stdout).toMatch(/chrome.*not.*yet.*implemented.*windows/i);
   expect(stdout).not.toContain("BUN_CHROME_PATH");

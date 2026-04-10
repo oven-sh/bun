@@ -115,6 +115,18 @@ function EINVAL(syscall) {
 //
 // Match Node.js behavior by suppressing ICMP-class `recv` errors on
 // unconnected sockets while letting them through on connected ones.
+// Every errno in the kernel's icmp_err_convert[] table (net/ipv4/icmp.c):
+//   ENETUNREACH   (ICMP_NET_UNREACH, ICMP_NET_UNKNOWN, ICMP_NET_ANO, ICMP_NET_UNR_TOS)
+//   EHOSTUNREACH  (ICMP_HOST_UNREACH, ICMP_HOST_ANO, ICMP_HOST_UNR_TOS,
+//                  ICMP_PKT_FILTERED, ICMP_PREC_VIOLATION, ICMP_PREC_CUTOFF)
+//   ENOPROTOOPT   (ICMP_PROT_UNREACH)
+//   ECONNREFUSED  (ICMP_PORT_UNREACH)
+//   EMSGSIZE      (ICMP_FRAG_NEEDED)
+//   EOPNOTSUPP    (ICMP_SR_FAILED)
+//   EHOSTDOWN     (ICMP_HOST_UNKNOWN)
+//   ENONET        (ICMP_HOST_ISOLATED)
+// Plus ENETDOWN, which isn't in the ICMP table but is a legitimate
+// IP-stack-down errno the kernel can surface on the same async path.
 function isSuppressibleRecvError(error, connectState) {
   if (connectState === CONNECT_STATE_CONNECTED) return false;
   if (error?.syscall !== "recv") return false;
@@ -127,6 +139,7 @@ function isSuppressibleRecvError(error, connectState) {
     case "ENONET":
     case "ENOPROTOOPT":
     case "EMSGSIZE":
+    case "EOPNOTSUPP":
       return true;
     default:
       return false;

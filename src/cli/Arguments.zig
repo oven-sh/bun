@@ -274,7 +274,7 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
     // if it doesn't exist. This matches the behavior of `loadConfig` and
     // lets monorepo subprojects pick up a root `bunfig.toml` via
     // `bun run` and `bun repl`.
-    if (auto_loaded and !std.fs.path.isAbsolute(config_path)) walkup: {
+    if (auto_loaded and !resolve_path.Platform.auto.isAbsolute(config_path)) walkup: {
         var cwd_buf: bun.PathBuffer = undefined;
         const cwd = bun.getcwd(&cwd_buf) catch break :walkup;
         var walkup_buf: bun.PathBuffer = undefined;

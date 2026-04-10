@@ -1,15 +1,4 @@
 // https://github.com/oven-sh/bun/issues/29109
-//
-// In a monorepo, settings in a root `bunfig.toml` were not inherited by
-// subprojects because `bun` only looked for `bunfig.toml` in the current
-// working directory. A common concrete symptom: `[test] onlyFailures = true`
-// set at the repo root had no effect when running `bun test` from
-// `packages/<x>/` because the subproject had no `bunfig.toml` of its own.
-//
-// Fix: when auto-loading `bunfig.toml` and none is present in the cwd,
-// walk up parent directories until one is found or the filesystem root
-// is reached. Explicit `--config <path>` is untouched; only the auto-load
-// path walks up.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -29,9 +18,18 @@ test("inherited-failing", () => expect(1).toBe(2));
 `,
   });
 
+  // Point HOME at an empty dir so a user-global ~/.bunfig.toml can't
+  // accidentally affect the assertions.
+  using homeDir = tempDir("29109-inherit-home", {});
+  const env = {
+    ...bunEnv,
+    HOME: String(homeDir),
+    XDG_CONFIG_HOME: String(homeDir),
+  };
+
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "sample.test.ts"],
-    env: bunEnv,
+    env,
     cwd: join(String(dir), "packages", "api"),
     stdout: "pipe",
     stderr: "pipe",
@@ -69,9 +67,16 @@ test("local-wins-failing", () => expect(1).toBe(2));
 `,
   });
 
+  using homeDir = tempDir("29109-local-wins-home", {});
+  const env = {
+    ...bunEnv,
+    HOME: String(homeDir),
+    XDG_CONFIG_HOME: String(homeDir),
+  };
+
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "sample.test.ts"],
-    env: bunEnv,
+    env,
     cwd: join(String(dir), "packages", "api"),
     stdout: "pipe",
     stderr: "pipe",
@@ -95,8 +100,6 @@ test("plain-failing", () => expect(1).toBe(2));
 `,
   });
 
-  // Point HOME at an empty dir so a user-global ~/.bunfig.toml can't
-  // accidentally affect the test.
   using homeDir = tempDir("29109-none-home", {});
   const env = {
     ...bunEnv,

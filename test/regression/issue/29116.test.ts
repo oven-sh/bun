@@ -54,18 +54,16 @@ test.skipIf(!isLinux)(
   },
 );
 
-test.skipIf(!isLinux)(
-  "#29116 connect() after an unconnected send to a dead port does not leak an error",
-  async () => {
-    // TOCTOU exercise. The WebRTC / ICE pattern is:
-    //   bind → send(deadCandidate1) → send(deadCandidate2) → ... → connect(winner)
-    // The unconnected sends queue ICMP port-unreachable in the socket's
-    // error queue; when `connect()` completes, `state.connectState` is
-    // CONNECT_STATE_CONNECTED. If the suppression filter checks connect
-    // state at delivery time, the queued ICMP from step 2 will slip
-    // through once the error queue is drained after the socket becomes
-    // connected — crashing the process.
-    const { stdout, stderr, exitCode } = await runScript(`
+test.skipIf(!isLinux)("#29116 connect() after an unconnected send to a dead port does not leak an error", async () => {
+  // TOCTOU exercise. The WebRTC / ICE pattern is:
+  //   bind → send(deadCandidate1) → send(deadCandidate2) → ... → connect(winner)
+  // The unconnected sends queue ICMP port-unreachable in the socket's
+  // error queue; when `connect()` completes, `state.connectState` is
+  // CONNECT_STATE_CONNECTED. If the suppression filter checks connect
+  // state at delivery time, the queued ICMP from step 2 will slip
+  // through once the error queue is drained after the socket becomes
+  // connected — crashing the process.
+  const { stdout, stderr, exitCode } = await runScript(`
       import { createSocket } from "node:dgram";
 
       const tmp = createSocket("udp4");
@@ -86,8 +84,7 @@ test.skipIf(!isLinux)(
       console.log("done");
     `);
 
-    expect(stderr).not.toContain("ECONNREFUSED");
-    expect(stdout.trim()).toBe("done");
-    expect(exitCode).toBe(0);
-  },
-);
+  expect(stderr).not.toContain("ECONNREFUSED");
+  expect(stdout.trim()).toBe("done");
+  expect(exitCode).toBe(0);
+});

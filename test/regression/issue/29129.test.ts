@@ -105,10 +105,7 @@ function readCgroupCpuQuota(): number {
     const match = idx >= 0 ? line.slice(idx + ":cpu,".length) : line.match(/:cpu:(.*)$/)?.[1];
     if (!match) continue;
     const cpuPath = typeof match === "string" ? match : "";
-    const candidates = [
-      `/sys/fs/cgroup/cpu,cpuacct/${cpuPath}`,
-      `/sys/fs/cgroup/cpu/${cpuPath}`,
-    ];
+    const candidates = [`/sys/fs/cgroup/cpu,cpuacct/${cpuPath}`, `/sys/fs/cgroup/cpu/${cpuPath}`];
     for (const base of candidates) {
       if (!existsSync(`${base}/cpu.cfs_quota_us`)) continue;
       const quota = Number(slurp(`${base}/cpu.cfs_quota_us`)?.trim());
@@ -146,62 +143,59 @@ test.skipIf(!isLinux)("os.availableParallelism() matches sched_getaffinity + cgr
   expect(availableParallelism()).toBe(expected);
 });
 
-test.skipIf(!isLinux)(
-  "os.availableParallelism() under taskset reports the restricted count (#29129)",
-  async () => {
-    const allowed = parseCpusAllowedList();
-    if (allowed.length < 2) {
-      // Need at least 2 CPUs in the current mask so we can taskset
-      // down to a strict subset. Don't fail — the in-process check
-      // above already covers the unrestricted case.
-      return;
-    }
+test.skipIf(!isLinux)("os.availableParallelism() under taskset reports the restricted count (#29129)", async () => {
+  const allowed = parseCpusAllowedList();
+  if (allowed.length < 2) {
+    // Need at least 2 CPUs in the current mask so we can taskset
+    // down to a strict subset. Don't fail — the in-process check
+    // above already covers the unrestricted case.
+    return;
+  }
 
-    // Use taskset if present. Not every CI image ships it (e.g. some
-    // minimal alpine variants), so skip gracefully in that case — the
-    // cross-process path is extra coverage on top of the in-process
-    // assertion above.
-    const which = spawnSync({ cmd: ["sh", "-c", "command -v taskset || true"], env: bunEnv });
-    const tasksetPath = which.stdout.toString().trim();
-    if (!tasksetPath) return;
+  // Use taskset if present. Not every CI image ships it (e.g. some
+  // minimal alpine variants), so skip gracefully in that case — the
+  // cross-process path is extra coverage on top of the in-process
+  // assertion above.
+  const which = spawnSync({ cmd: ["sh", "-c", "command -v taskset || true"], env: bunEnv });
+  const tasksetPath = which.stdout.toString().trim();
+  if (!tasksetPath) return;
 
-    // Pin to the first CPU in the current allowed set. Using an
-    // index from the mask (rather than "0") avoids "Invalid
-    // argument" inside a cpuset that doesn't include CPU 0.
-    const pinCpu = allowed[0]!;
+  // Pin to the first CPU in the current allowed set. Using an
+  // index from the mask (rather than "0") avoids "Invalid
+  // argument" inside a cpuset that doesn't include CPU 0.
+  const pinCpu = allowed[0]!;
 
-    await using proc = spawn({
-      cmd: [
-        tasksetPath,
-        "-c",
-        String(pinCpu),
-        bunExe(),
-        "-e",
-        "console.log(require('os').availableParallelism() + '|' + navigator.hardwareConcurrency)",
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  await using proc = spawn({
+    cmd: [
+      tasksetPath,
+      "-c",
+      String(pinCpu),
+      bunExe(),
+      "-e",
+      "console.log(require('os').availableParallelism() + '|' + navigator.hardwareConcurrency)",
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Surface stderr in the failure message instead of a bare exit
-    // code — much easier to debug.
-    if (exitCode !== 0) {
-      throw new Error(`bun exited with ${exitCode}\nstderr:\n${stderr}`);
-    }
+  // Surface stderr in the failure message instead of a bare exit
+  // code — much easier to debug.
+  if (exitCode !== 0) {
+    throw new Error(`bun exited with ${exitCode}\nstderr:\n${stderr}`);
+  }
 
-    const [availableStr, hardwareStr] = stdout.trim().split("|");
-    const available = Number(availableStr);
-    const hardware = Number(hardwareStr);
+  const [availableStr, hardwareStr] = stdout.trim().split("|");
+  const available = Number(availableStr);
+  const hardware = Number(hardwareStr);
 
-    // Pinned to exactly one CPU → both must report 1 regardless of
-    // the surrounding cgroup quota (taskset trumps: the mask is a
-    // strict subset of what the cgroup allows). Pre-fix bun returned
-    // the host count (32 on a 32-core host with an 8-core cpuset),
-    // which was the whole bug.
-    expect(available).toBe(1);
-    expect(hardware).toBe(1);
-  },
-);
+  // Pinned to exactly one CPU → both must report 1 regardless of
+  // the surrounding cgroup quota (taskset trumps: the mask is a
+  // strict subset of what the cgroup allows). Pre-fix bun returned
+  // the host count (32 on a 32-core host with an 8-core cpuset),
+  // which was the whole bug.
+  expect(available).toBe(1);
+  expect(hardware).toBe(1);
+});

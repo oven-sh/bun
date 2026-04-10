@@ -1055,17 +1055,20 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
     }
   });
 
-  test("plist declares StandardOutPath and StandardErrorPath (docs L231-232)", async () => {
+  test("plist log paths are under ~/Library/Logs/bun/cron, not world-writable /tmp", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
     try {
       await Bun.cron(`${dir}/job.ts`, "0 0 * * *", "test-mac-logpaths");
       const plist = await Bun.file(plistPath("test-mac-logpaths")).text();
+      const logDir = `${process.env.HOME}/Library/Logs/bun/cron`;
       expect(plist).toContain("<key>StandardOutPath</key>");
-      expect(plist).toContain("<string>/tmp/bun.cron.test-mac-logpaths.stdout.log</string>");
+      expect(plist).toContain(`<string>${logDir}/bun.cron.test-mac-logpaths.stdout.log</string>`);
       expect(plist).toContain("<key>StandardErrorPath</key>");
-      expect(plist).toContain("<string>/tmp/bun.cron.test-mac-logpaths.stderr.log</string>");
+      expect(plist).toContain(`<string>${logDir}/bun.cron.test-mac-logpaths.stderr.log</string>`);
+      expect(plist).not.toContain("<string>/tmp/");
+      expect(existsSync(logDir)).toBe(true);
     } finally {
       removeLaunchdJob("test-mac-logpaths");
     }
@@ -1189,11 +1192,12 @@ describe.skipIf(!hasLaunchctl)("cron end-to-end (macOS)", () => {
       try {
         unlinkSync(markerPath);
       } catch {}
+      const logDir = `${process.env.HOME}/Library/Logs/bun/cron`;
       try {
-        unlinkSync("/tmp/bun.cron.test-mac-e2e.stdout.log");
+        unlinkSync(`${logDir}/bun.cron.test-mac-e2e.stdout.log`);
       } catch {}
       try {
-        unlinkSync("/tmp/bun.cron.test-mac-e2e.stderr.log");
+        unlinkSync(`${logDir}/bun.cron.test-mac-e2e.stderr.log`);
       } catch {}
     }
   });

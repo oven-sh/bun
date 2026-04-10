@@ -132,11 +132,18 @@ describe.concurrent("URL imports at runtime are rejected (not silently stubbed)"
   // With the stub gone, the first rejects and the module cache stays clean,
   // so the second rejects too.
   test("repeated dynamic import() of https:// does not hang", async () => {
+    // Use .invalid hostnames so the test never touches DNS on slow CI
+    // runners. The `.js` extension is intentional: it sends the pre-fix
+    // runtime loader through the .js/.jsx path, which ENOENTs on the
+    // first import and then wedges the module cache on the third (repeat)
+    // import — the exact #22743 hang signature. Extensionless URLs
+    // produce stubs that all "LOAD" sequentially without hanging and so
+    // wouldn't reproduce the bug.
     const { stdout, exitCode } = await runCode(`
       for (const url of [
-        "https://unpkg.com/@flowscripter/example-plugin/dist/bundle.js",
-        "https://unpkg.com/@flowscripter/example-plugin@1.0.13/dist/bundle.js",
-        "https://unpkg.com/@flowscripter/example-plugin/dist/bundle.js",
+        "https://bun-issue-22743.invalid/bundle.js",
+        "https://bun-issue-22743-v2.invalid/bundle.js",
+        "https://bun-issue-22743.invalid/bundle.js",
       ]) {
         try {
           await import(url);

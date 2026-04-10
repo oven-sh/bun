@@ -21,7 +21,9 @@ test.skipIf(isWindows)("ws.close() during proxy TLS handshake does not double-fr
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
   expect(stdout).toBe("");
+  // The fixture crashes with SIGSEGV/SIGABRT on unfixed builds. Don't assert on
+  // stderr: ASAN builds emit benign warnings there even on a clean exit.
+  if (exitCode !== 0) console.error(stderr);
   expect(exitCode).toBe(0);
 });

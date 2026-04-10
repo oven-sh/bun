@@ -1879,15 +1879,19 @@ pub const AnsiRenderer = struct {
         self.reapplyStyles();
         if (link_ok) {
             self.writeRawNoColor("\x1b]8;;\x1b\\");
-        } else if (has_src and !is_data_url and self.link_depth == 0) {
+        } else if (has_src and !is_data_url and self.link_depth == 0 and
+            !self.in_cell and self.heading_level == 0)
+        {
             // OSC 8 isn't being emitted — either hyperlinks are off, or
             // colors are off, or the terminal wouldn't honour them. Show
             // the URL in dim parens after the alt text so the user can
             // still see where the image lives, matching the link-fallback
             // format from leaveSpan(.a). Skipped for data: URIs (megabyte
-            // base64 payloads would dominate the output) and when we're
+            // base64 payloads would dominate the output), for images
             // inside an enclosing link span (the outer link already shows
-            // its own URL).
+            // its own URL), and inside table cells / headings where the
+            // structural width machinery would count the URL in the
+            // cell/underline size and blow out the layout.
             self.writeStyled(color(.dim), " (");
             self.writeStyled("", src.?);
             self.writeStyled(color(.dim), ")");
@@ -1901,15 +1905,23 @@ pub const AnsiRenderer = struct {
     /// Returns the number of terminal cells the image is allowed to
     /// occupy, or 0 when wrapping is disabled (theme.columns == 0) —
     /// in which case emitKittyImage* omits `c=` and lets the terminal
-    /// render at the image's native size. In a deeply-indented layout
-    /// where the indent already consumes the full column budget, we
-    /// still cap at 1 cell so the terminal scales the image down to a
-    /// single column rather than falling back to native size and
-    /// blowing out the screen.
+    /// render at the image's native size.
+    ///
+    /// Uses `max(self.col, indent)` rather than just the block indent so
+    /// an inline image preceded by text on the same line
+    /// (`prefix ![](./img.png)`) gets scaled to the REMAINING line width,
+    /// not the full indent-relative budget. self.col already accounts for
+    /// the active indent because writeIndent() advances col past it, and
+    /// the max() keeps us safe for standalone images at col == 0.
+    ///
+    /// In a deeply-indented layout where the cursor already sits at the
+    /// terminal's right edge, we still cap at 1 cell so the terminal
+    /// scales the image down to a single column rather than falling back
+    /// to native size and blowing out the screen.
     fn kittyColumnBudget(self: *AnsiRenderer) u32 {
         if (self.theme.columns == 0) return 0;
-        const indent = self.currentIndent();
-        const budget = @as(u32, self.theme.columns) -| indent;
+        const used = @max(self.col, self.currentIndent());
+        const budget = @as(u32, self.theme.columns) -| used;
         return @max(@as(u32, 1), budget);
     }
 

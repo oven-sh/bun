@@ -298,8 +298,13 @@ it("write() with a buffer larger than String::MaxLength throws instead of crashi
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({
-    stdout: "write ERR_STRING_TOO_LONG\nend ERR_STRING_TOO_LONG\n",
-    exitCode: 0,
-  });
+  // ASAN builds unconditionally print "WARNING: ASAN interferes with JSC
+  // signal handlers..." to stderr from WebKit's Options.cpp; filter it out.
+  const stderrFiltered = stderr
+    .split(/\r?\n/)
+    .filter(s => !s.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrFiltered).toBe("");
+  expect(stdout).toBe("write ERR_STRING_TOO_LONG\nend ERR_STRING_TOO_LONG\n");
+  expect(exitCode).toBe(0);
 }, 60000);

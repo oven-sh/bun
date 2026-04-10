@@ -188,3 +188,62 @@ test("image without a src still works (doesn't crash, doesn't print URL)", () =>
   // so a regression emitting an empty URL pair in any form fails here.
   expect(out).not.toContain("()");
 });
+
+test("inline image after text caps Kitty c= to the remaining line width", async () => {
+  // Paragraph like `prefix ![](./img.png)` puts the image mid-line, so the
+  // Kitty cap must be (columns - visible prefix width), not (columns -
+  // block indent) or the image overflows to the right of the terminal.
+  using dir = tempDir("md-kitty-inline-", {});
+  writeFileSync(join(String(dir), "pic.png"), PNG_8x8);
+
+  const out = Bun.markdown.ansi("Check out ![](./pic.png) here.\n", {
+    colors: true,
+    kittyGraphics: true,
+    columns: 40,
+    cwd: String(dir),
+  });
+  // "Check out " is 10 visible columns, so the remaining budget is 30.
+  expect(out).toContain("\x1b_Ga=T,t=f,f=100,q=2,c=30;");
+  // And the original full-width cap MUST NOT appear — it'd overflow.
+  expect(out).not.toContain("\x1b_Ga=T,t=f,f=100,q=2,c=40;");
+});
+
+test("image inside a table cell doesn't emit the URL-parens fallback", () => {
+  // `| ![alt](https://example.com/img.jpg) |` — the URL string must not
+  // end up inside the cell buffer or flushTable will count it against the
+  // column width and blow the table layout past the terminal width.
+  const source = [
+    "| Col |",
+    "|:---:|",
+    "| ![logo](https://cdn.example.com/long-image-url-that-would-wreck-layout.jpg) |",
+    "",
+  ].join("\n");
+  const out = Bun.markdown.ansi(source, {
+    colors: true,
+    hyperlinks: false,
+    columns: 40,
+  });
+  // The URL must NOT appear anywhere in the cell rendering — the fallback
+  // path has to stay inert inside in_cell.
+  expect(out).not.toContain("long-image-url-that-would-wreck-layout.jpg");
+  // Alt text still visible.
+  expect(out).toContain("logo");
+  // Every rendered line stays within the column budget.
+  const maxLineWidth = Math.max(0, ...out.split("\n").map(l => Bun.stringWidth(l)));
+  expect(maxLineWidth).toBeLessThanOrEqual(40);
+});
+
+test("image inside a heading doesn't emit the URL-parens fallback", () => {
+  // Same layout concern as tables: headings buffer their content and
+  // re-measure visible width for the underline row, so the URL string
+  // must not get written into heading_buf.
+  const out = Bun.markdown.ansi(
+    "# Title ![logo](https://cdn.example.com/very-long-url-that-breaks-headings.jpg)\n",
+    { colors: true, hyperlinks: false, columns: 40 },
+  );
+  expect(out).not.toContain("very-long-url-that-breaks-headings.jpg");
+  expect(out).toContain("Title");
+  expect(out).toContain("logo");
+  const maxLineWidth = Math.max(0, ...out.split("\n").map(l => Bun.stringWidth(l)));
+  expect(maxLineWidth).toBeLessThanOrEqual(40);
+});

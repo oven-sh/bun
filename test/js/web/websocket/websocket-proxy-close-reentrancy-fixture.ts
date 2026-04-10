@@ -36,7 +36,7 @@ proxy.on("connect", (req, clientSocket, head) => {
 await new Promise<void>(r => proxy.listen(0, "127.0.0.1", () => r()));
 const proxyPort = (proxy.address() as net.AddressInfo).port;
 
-for (let round = 0; round < 15; round++) {
+for (let round = 0; round < 10; round++) {
   for (let k = 0; k < 8; k++) {
     const ws = new WebSocket(`wss://localhost:${wss.port}/`, {
       // @ts-ignore

@@ -173,37 +173,39 @@ pub const MachoFile = struct {
             sig_size = cs.datasize;
         }
 
-        // Only update offsets if the size actually changed
         if (size_diff != 0) {
             // We move the offsets of the LINKEDIT segment ahead by `size_diff`
             linkedit_seg.fileoff += @as(usize, @intCast(size_diff));
             linkedit_seg.vmaddr += @as(usize, @intCast(size_diff));
+        }
 
-            if (code_sign_cmd) |cs| {
-                if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.feature_flag.BUN_NO_CODESIGN_MACHO_BINARY.get()) {
-                    // `buildAndSign` is going to replace the existing signature with
-                    // one built by `MachoSigner`, whose exact size depends on the
-                    // (shifted) `cs.dataoff`. Compute that size here and resize
-                    // __LINKEDIT + `LC_CODE_SIGNATURE.datasize` to match exactly.
-                    //
-                    // Under-sizing truncates the signature (issue #29120: macOS kills
-                    // the binary with "code object is not signed at all"); over-sizing
-                    // leaves junk trailing bytes inside __LINKEDIT.
-                    const new_sig_dataoff: u64 = cs.dataoff + @as(u64, @intCast(size_diff));
-                    const new_sig_size = MachoSigner.computeSignatureSize(new_sig_dataoff);
+        if (code_sign_cmd) |cs| {
+            if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.feature_flag.BUN_NO_CODESIGN_MACHO_BINARY.get()) {
+                // `buildAndSign` replaces the template's signature with one built by
+                // `MachoSigner`, whose size depends only on the (possibly-shifted)
+                // `cs.dataoff` — not on the template signature's shape. Resize
+                // __LINKEDIT and `LC_CODE_SIGNATURE.datasize` to that exact size.
+                //
+                // This must run even when `size_diff == 0` (bundle fits in the
+                // template's existing __BUN slot): the template may have been signed
+                // with a different page size / identifier / blob set, so its
+                // `cs.datasize` can be smaller than what `sign()` will produce, which
+                // the trailing truncation in `sign()` then chops (issue #29120).
+                const new_sig_dataoff: u64 = cs.dataoff + @as(u64, @intCast(size_diff));
+                const new_sig_size = MachoSigner.computeSignatureSize(new_sig_dataoff);
 
-                    // The old signature sat at the tail of __LINKEDIT and occupied
-                    // `sig_size` bytes. Swap it out for the new signature's footprint.
-                    linkedit_seg.filesize = linkedit_seg.filesize - sig_size + new_sig_size;
-                    linkedit_seg.vmsize = linkedit_seg.vmsize - sig_size + new_sig_size;
+                // The template signature is the tail of __LINKEDIT; swap its footprint.
+                linkedit_seg.filesize = linkedit_seg.filesize - sig_size + new_sig_size;
+                linkedit_seg.vmsize = alignSize(linkedit_seg.vmsize - sig_size + new_sig_size, PAGE_SIZE);
 
-                    // vmsize of an executable segment must be page-aligned.
-                    linkedit_seg.vmsize = alignSize(linkedit_seg.vmsize, PAGE_SIZE);
-
-                    sig_size = new_sig_size;
-                }
+                // Stamp datasize directly so the `size_diff == 0` path — which skips
+                // `updateLoadCommandOffsets` below — still records the new size.
+                cs.datasize = @intCast(new_sig_size);
+                sig_size = new_sig_size;
             }
+        }
 
+        if (size_diff != 0) {
             try self.updateLoadCommandOffsets(original_fileoff, @intCast(size_diff), linkedit_seg.fileoff, linkedit_seg.filesize, sig_size);
         }
 

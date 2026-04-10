@@ -95,68 +95,80 @@ function linkeditCoversSignature(buf: Buffer, sig: CodeSig): boolean {
   return false;
 }
 
-test("bun build --compile --target=bun-darwin-arm64 produces a valid code signature (#29120)", async () => {
-  using dir = tempDir("issue-29120", {
-    "app.ts": `console.log("hi from cross-compiled bun");`,
-  });
-  const cwd = String(dir);
-  const out = join(cwd, "app-darwin-arm64");
+// Two bundle sizes:
+//  - "tiny"  fits inside the template's 16 KiB __BUN slot → size_diff == 0 in
+//    macho.zig (the linkedit/datasize resize must not be gated on size_diff)
+//  - "large" exceeds 16 KiB → size_diff > 0, exercises the offset-shift path
+const bundles = {
+  tiny: `console.log("hi from cross-compiled bun");`,
+  large: `console.log("${Buffer.alloc(32 * 1024, "a").toString()}");`,
+};
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--target=bun-darwin-arm64", join(cwd, "app.ts"), "--outfile", out],
-    env: bunEnv,
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  void stdout;
+test.each(Object.entries(bundles))(
+  "bun build --compile --target=bun-darwin-arm64 produces a valid code signature (%s bundle) (#29120)",
+  async (label, source) => {
+    using dir = tempDir(`issue-29120-${label}`, {
+      "app.ts": source,
+    });
+    const cwd = String(dir);
+    const out = join(cwd, "app-darwin-arm64");
 
-  // If the cross-compile target can't be downloaded (e.g. this PR's build
-  // hasn't been published to npm yet, or the CI runner is offline), skip
-  // rather than fail — this test is about the mach-o writer, not the
-  // fetcher. A successful build is a prerequisite.
-  //
-  // The error strings below match the `error.TargetNotFound` / `NetworkError`
-  // / `UnsupportedTarget` paths in `src/StandaloneModuleGraph.zig` and
-  // `src/compile_target.zig`. On macOS hosts the target is usually the local
-  // bun binary (no download) so the test runs inline; on Linux/Windows PR
-  // builds, the download 404s and we skip.
-  if (exitCode !== 0) {
-    const looksLikeDownloadFailure =
-      /Does this target and version of Bun exist/i.test(stderr) ||
-      /is not available for download/i.test(stderr) ||
-      /is not supported/i.test(stderr) ||
-      /Failed to download/i.test(stderr) ||
-      /Network error downloading/i.test(stderr) ||
-      /404 downloading/i.test(stderr) ||
-      /ENOTFOUND|ETIMEDOUT|ECONNREFUSED/i.test(stderr);
-    if (looksLikeDownloadFailure) {
-      console.warn(`[29120] cross-compile target unavailable, skipping test:\n${stderr}`);
-      return;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--target=bun-darwin-arm64", join(cwd, "app.ts"), "--outfile", out],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void stdout;
+
+    // If the cross-compile target can't be downloaded (e.g. this PR's build
+    // hasn't been published to npm yet, or the CI runner is offline), skip
+    // rather than fail — this test is about the mach-o writer, not the
+    // fetcher. A successful build is a prerequisite.
+    //
+    // The error strings below match the `error.TargetNotFound` / `NetworkError`
+    // / `UnsupportedTarget` paths in `src/StandaloneModuleGraph.zig` and
+    // `src/compile_target.zig`. On macOS hosts the target is usually the local
+    // bun binary (no download) so the test runs inline; on Linux/Windows PR
+    // builds, the download 404s and we skip.
+    if (exitCode !== 0) {
+      const looksLikeDownloadFailure =
+        /Does this target and version of Bun exist/i.test(stderr) ||
+        /is not available for download/i.test(stderr) ||
+        /is not supported/i.test(stderr) ||
+        /Failed to download/i.test(stderr) ||
+        /Network error downloading/i.test(stderr) ||
+        /404 downloading/i.test(stderr) ||
+        /ENOTFOUND|ETIMEDOUT|ECONNREFUSED/i.test(stderr);
+      if (looksLikeDownloadFailure) {
+        console.warn(`[29120] cross-compile target unavailable, skipping test:\n${stderr}`);
+        return;
+      }
+      console.error(`[29120] build failed:\n${stderr}`);
     }
-    console.error(`[29120] build failed:\n${stderr}`);
-  }
-  expect(exitCode).toBe(0);
+    expect(exitCode).toBe(0);
 
-  const buf = readFileSync(out);
-  const sig = readCodeSignature(buf);
-  expect(sig).not.toBeNull();
-  if (!sig) return;
+    const buf = readFileSync(out);
+    const sig = readCodeSignature(buf);
+    expect(sig).not.toBeNull();
+    if (!sig) return;
 
-  // 1. The magic at `dataoff` must be a valid embedded-signature SuperBlob.
-  //    If signing was skipped or the wrong bytes ended up there, this won't
-  //    match and macOS would reject the binary outright.
-  expect(sig.superBlobMagic).toBe(CSMAGIC_EMBEDDED_SIGNATURE);
+    // 1. The magic at `dataoff` must be a valid embedded-signature SuperBlob.
+    //    If signing was skipped or the wrong bytes ended up there, this won't
+    //    match and macOS would reject the binary outright.
+    expect(sig.superBlobMagic).toBe(CSMAGIC_EMBEDDED_SIGNATURE);
 
-  // 2. The size the header advertises must be at least as big as the actual
-  //    SuperBlob — otherwise the signature is truncated on disk. This is the
-  //    exact failure mode from #29120 where `LC_CODE_SIGNATURE.datasize`
-  //    (197,488) was smaller than `SuperBlob.length` (537,138) and macOS
-  //    killed the process with SIGKILL on startup.
-  expect(sig.datasize).toBeGreaterThanOrEqual(sig.superBlobLength);
+    // 2. The size the header advertises must be at least as big as the actual
+    //    SuperBlob — otherwise the signature is truncated on disk. This is the
+    //    exact failure mode from #29120 where `LC_CODE_SIGNATURE.datasize`
+    //    (197,488) was smaller than `SuperBlob.length` (537,138) and macOS
+    //    killed the process with SIGKILL on startup.
+    expect(sig.datasize).toBeGreaterThanOrEqual(sig.superBlobLength);
 
-  // 3. And the signature must actually fit inside the __LINKEDIT segment.
-  //    Otherwise `MachoSigner.sign`'s final truncation chops trailing hashes.
-  expect(linkeditCoversSignature(buf, sig)).toBe(true);
-});
+    // 3. And the signature must actually fit inside the __LINKEDIT segment.
+    //    Otherwise `MachoSigner.sign`'s final truncation chops trailing hashes.
+    expect(linkeditCoversSignature(buf, sig)).toBe(true);
+  },
+);

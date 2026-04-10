@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/29102
 //
@@ -40,53 +40,93 @@ const expectNotImplementedError = (err: any) => {
   expect(err.code).not.toBe("ERR_DLOPEN_FAILED");
 };
 
-it("default (implicit chrome, no running browser) throws ERR_METHOD_NOT_IMPLEMENTED", () => {
-  // Default backend off-Darwin is Chrome. With no running Chrome
-  // reachable via DevToolsActivePort (CI Windows agents have no
-  // pre-started browser), the constructor falls through to the spawn
-  // path — which is what we're testing the Windows guard on.
-  let err: any;
-  let view: any;
-  try {
-    view = new (Bun as any).WebView({});
-  } catch (e) {
-    err = e;
-  }
-  // Fail-fast: if the constructor unexpectedly succeeds (e.g. a CI
-  // runner has Chrome running with --remote-debugging-port), close
-  // the view and fail with a distinct marker rather than leaving a
-  // live view that could hang the suite.
-  if (view) {
-    try {
-      view.close();
-    } catch {}
-    throw new Error("UNEXPECTED_SUCCESS: expected ERR_METHOD_NOT_IMPLEMENTED");
-  }
-  expectNotImplementedError(err);
+// `{}` and `{ backend: "chrome" }` hit the spawn guard only if
+// Bun__Chrome__autoDetect fails to find a running Chrome, which it
+// does by reading `%LOCALAPPDATA%\<vendor>\<channel>\User Data\DevToolsActivePort`.
+// On a dev or CI machine that has Chrome running with
+// `--remote-debugging-port`, those files exist and the constructor
+// would take the WebSocket connect path instead — so testing them
+// in-process is non-deterministic.
+//
+// Spawn the child with LOCALAPPDATA pointing at an empty temp dir
+// (and scrub the other Chrome profile vars for good measure); no
+// DevToolsActivePort file exists there, autoDetect returns 0, and
+// the constructor falls through to the spawn path deterministically.
+async function runInScrubbedChild(script: string, extraEnv: Record<string, string> = {}) {
+  using dir = tempDir("bun-webview-win-29102-", {});
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: {
+      ...bunEnv,
+      // Point Chrome's profile root at an empty dir — readDevToolsActivePort
+      // in ChromeProcess.zig joins LOCALAPPDATA with
+      // "Google\Chrome\User Data\DevToolsActivePort" et al, all of which
+      // resolve to non-existent paths here.
+      LOCALAPPDATA: String(dir),
+      // Just in case: wipe the optional overrides so they can't
+      // accidentally point the test at a real running browser.
+      BUN_CHROME_PATH: "",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+  return { stdout, stderr, exitCode };
+}
+
+// Child script that tries a given constructor arg, prints the
+// resulting error code + message, or UNEXPECTED_SUCCESS + non-zero
+// exit if it unexpectedly succeeds (so the parent sees a clean
+// failure instead of hanging on a live view).
+const childScript = (optsLiteral: string) =>
+  "try {" +
+  `  const v = new Bun.WebView(${optsLiteral});` +
+  "  try { v.close(); } catch {}" +
+  '  console.log("UNEXPECTED_SUCCESS");' +
+  "  process.exit(2);" +
+  "} catch (e) {" +
+  "  console.log(e.code);" +
+  "  console.log(e.message);" +
+  "}";
+
+// Matches the shape produced by expectNotImplementedError but on
+// stdout from a spawned child. Keep the two in sync.
+const expectChildStdoutNotImplemented = (stdout: string) => {
+  expect(stdout).not.toContain("UNEXPECTED_SUCCESS");
+  expect(stdout).toContain("ERR_METHOD_NOT_IMPLEMENTED");
+  expect(stdout).toMatch(/chrome.*spawn.*not.*yet.*implemented.*windows/i);
+  expect(stdout).not.toContain("BUN_CHROME_PATH");
+  expect(stdout).not.toMatch(/set.*backend\.path/);
+  expect(stdout).not.toContain("ERR_DLOPEN_FAILED");
+};
+
+it("default (implicit chrome) throws ERR_METHOD_NOT_IMPLEMENTED when no running Chrome", async () => {
+  // The exact shape from the bug report. Run in a scrubbed child so
+  // auto-detect is guaranteed to miss regardless of what's running on
+  // the host.
+  const { stdout, exitCode } = await runInScrubbedChild(childScript("{}"));
+  expectChildStdoutNotImplemented(stdout);
+  // stderr intentionally NOT asserted — ASAN-enabled builds emit a
+  // "WARNING: ASAN interferes with JSC signal handlers" line there
+  // even on successful runs, which would make this test brittle.
+  expect(exitCode).toBe(0);
 });
 
-it("explicit backend:'chrome' throws ERR_METHOD_NOT_IMPLEMENTED", () => {
-  let err: any;
-  let view: any;
-  try {
-    view = new (Bun as any).WebView({ backend: "chrome" });
-  } catch (e) {
-    err = e;
-  }
-  if (view) {
-    try {
-      view.close();
-    } catch {}
-    throw new Error("UNEXPECTED_SUCCESS: expected ERR_METHOD_NOT_IMPLEMENTED");
-  }
-  expectNotImplementedError(err);
+it("explicit backend:'chrome' throws ERR_METHOD_NOT_IMPLEMENTED when no running Chrome", async () => {
+  const { stdout, exitCode } = await runInScrubbedChild(childScript('{ backend: "chrome" }'));
+  expectChildStdoutNotImplemented(stdout);
+  expect(exitCode).toBe(0);
 });
 
-it("backend.path override also throws ERR_METHOD_NOT_IMPLEMENTED", () => {
-  // The user's original workaround in the bug report: setting an
-  // explicit path. backend.path forces the spawn path, which is
-  // inert on Windows — must throw the not-implemented error rather
-  // than the misleading "failed to spawn" one.
+it("backend.path override throws ERR_METHOD_NOT_IMPLEMENTED", () => {
+  // The user's original workaround in the bug report. backend.path
+  // forces the spawn path unconditionally (no auto-detect), so this
+  // is deterministic even without scrubbing the environment — safe
+  // to run in-process.
   let err: any;
   let view: any;
   try {
@@ -110,8 +150,8 @@ it("backend.path override also throws ERR_METHOD_NOT_IMPLEMENTED", () => {
 
 it("backend.url:false forces spawn and throws ERR_METHOD_NOT_IMPLEMENTED", () => {
   // `url: false` is the documented knob to skip auto-detect and go
-  // straight to spawn. It must hit the same Windows guard as the
-  // other spawn-intended calls.
+  // straight to spawn. Deterministic in-process — no auto-detect,
+  // no environment dependency.
   let err: any;
   let view: any;
   try {
@@ -138,12 +178,10 @@ it("backend.url:'ws://...' is NOT blocked by the Windows guard", () => {
   // doesn't regress.
   //
   // The URL points at a port we know isn't listening, so the WebSocket
-  // handshake will fail — but with ERR_DLOPEN_FAILED ("Failed to
-  // connect to Chrome"), not ERR_METHOD_NOT_IMPLEMENTED. (The
-  // constructor is synchronous; the WebSocket `create` either succeeds
-  // in handing off to the native callback layer — in which case the
-  // view is returned and the failure surfaces later — or returns a
-  // sync error.) Either way we don't want the not-implemented branch.
+  // handshake will fail — but that surfaces as a CDP error later, not
+  // as a constructor-level ERR_METHOD_NOT_IMPLEMENTED. Either the
+  // constructor returns a view (WS handshake still pending) or it
+  // throws a ConnectFailed — neither is the spawn guard.
   let err: any;
   let view: any;
   try {
@@ -158,9 +196,8 @@ it("backend.url:'ws://...' is NOT blocked by the Windows guard", () => {
       view.close();
     } catch {}
     // Sync construction succeeded — that's the happy case for this
-    // test. The view's navigate() would reject asynchronously once
-    // the WS handshake fails, but the point here is that construction
-    // was NOT blocked by the Windows guard.
+    // test. The point is that construction was NOT blocked by the
+    // Windows guard.
     return;
   }
   // If it threw, it must NOT be the not-implemented error.
@@ -170,43 +207,36 @@ it("backend.url:'ws://...' is NOT blocked by the Windows guard", () => {
 });
 
 it("BUN_CHROME_PATH env var does not change the spawn outcome", async () => {
-  // Mirror of the bug report's second workaround. Spawn a child with
-  // BUN_CHROME_PATH set and a backend that forces the spawn path,
-  // and confirm the same ERR_METHOD_NOT_IMPLEMENTED surfaces — not
-  // the old "Failed to spawn Chrome" ERR_DLOPEN_FAILED that told
-  // users to set this env var.
+  // Mirror of the bug report's second workaround: setting
+  // BUN_CHROME_PATH and hoping it dodges the error. The env var is
+  // inert on the Windows spawn path (ChromeProcess.zig's short-circuit
+  // beats findChrome to the decision), so the same
+  // ERR_METHOD_NOT_IMPLEMENTED must surface — not the old "Failed to
+  // spawn Chrome" ERR_DLOPEN_FAILED that told users to set this env
+  // var.
   //
-  // backend.url:false forces spawn deterministically — the default
-  // {} could auto-detect-and-connect if Chrome happens to be running
-  // on the test machine, making this test flaky by environment.
-  //
-  // If the constructor ever stops throwing, log UNEXPECTED_SUCCESS
-  // and exit non-zero so the test fails fast instead of hanging on
-  // a live view the child never closes.
-  const script =
-    "try {" +
-    '  const v = new Bun.WebView({ backend: { type: "chrome", url: false } });' +
-    "  v.close();" +
-    '  console.log("UNEXPECTED_SUCCESS");' +
-    "  process.exit(2);" +
-    "} catch (e) {" +
-    "  console.log(e.code);" +
-    "  console.log(e.message);" +
-    "}";
+  // Forces spawn via `backend.url: false`, in a scrubbed child so
+  // auto-detect can't accidentally find a running Chrome.
+  using dir = tempDir("bun-webview-win-29102-env-", {});
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
+    cmd: [bunExe(), "-e", childScript('{ backend: { type: "chrome", url: false } }')],
     env: {
       ...bunEnv,
+      LOCALAPPDATA: String(dir),
       BUN_CHROME_PATH: "C:/Program Files/Google/Chrome/Application/chrome.exe",
     },
+    stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).not.toContain("UNEXPECTED_SUCCESS");
-  expect(stdout).toContain("ERR_METHOD_NOT_IMPLEMENTED");
-  expect(stdout).toMatch(/chrome.*spawn.*not.*yet.*implemented.*windows/i);
-  expect(stdout).not.toContain("BUN_CHROME_PATH");
-  expect(stdout).not.toContain("ERR_DLOPEN_FAILED");
-  expect(stderr).toBe("");
+  // Drain stderr even though we don't assert on it — leaving a
+  // piped stderr unread can deadlock the child when its buffer
+  // fills (ASAN's JSC signal-handler warning fits easily, but
+  // the pattern is the gotcha). Discard the value.
+  const [stdout, , exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+  expectChildStdoutNotImplemented(stdout);
   expect(exitCode).toBe(0);
 });

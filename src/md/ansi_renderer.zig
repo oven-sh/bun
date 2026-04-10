@@ -2207,10 +2207,12 @@ fn resolveLocalImagePath(src: []const u8, allocator: Allocator, base_dir: ?[]con
     // Reject remote schemes. A renderer-level prefetch pass can feed
     // http(s) URLs into the renderer via a lookup table as local paths.
     // data: URIs are handled separately in emitImage via direct Kitty
-    // transmission (t=d) to avoid creating temp files.
-    if (bun.strings.startsWith(src, "http://") or
-        bun.strings.startsWith(src, "https://") or
-        bun.strings.startsWith(src, "data:"))
+    // transmission (t=d) to avoid creating temp files. URI schemes are
+    // case-insensitive per RFC 3986 §3.1 — a case-sensitive check would
+    // let `DATA:`/`HTTP:` fall through and waste the decode+stat path.
+    if (bun.strings.startsWithCaseInsensitiveAscii(src, "http://") or
+        bun.strings.startsWithCaseInsensitiveAscii(src, "https://") or
+        bun.strings.startsWithCaseInsensitiveAscii(src, "data:"))
     {
         return null;
     }
@@ -2279,7 +2281,9 @@ fn resolveLocalImagePath(src: []const u8, allocator: Allocator, base_dir: ?[]con
 /// Kitty's format codes (`f=100` PNG, `f=24` RGB, `f=32` RGBA) don't
 /// cover JPEG/GIF/WebP binary input.
 fn extractPngDataUrlBase64(src: []const u8) ?[]const u8 {
-    if (!bun.strings.startsWith(src, "data:")) return null;
+    // Scheme match is case-insensitive per RFC 3986 §3.1 so `DATA:`
+    // and `Data:` are also picked up for direct Kitty transmit.
+    if (!bun.strings.startsWithCaseInsensitiveAscii(src, "data:")) return null;
     const comma = bun.strings.indexOfChar(src, ',') orelse return null;
     const header = src[0..comma];
     const payload = src[comma + 1 ..];
@@ -2295,7 +2299,11 @@ fn extractPngDataUrlBase64(src: []const u8) ?[]const u8 {
 /// the URL-label fallback. `abs_path` does NOT need to be null-
 /// terminated — this copies into a stack buffer before opening.
 fn isPngFile(abs_path: []const u8) bool {
-    if (abs_path.len == 0 or abs_path.len > bun.MAX_PATH_BYTES) return false;
+    // `>=` because `bun.path.z` writes a trailing NUL at `output[len]`,
+    // so a path of exactly MAX_PATH_BYTES would overflow the stack
+    // buffer. Linux PATH_MAX includes the NUL so real paths are always
+    // ≤ MAX_PATH_BYTES-1, but guard defensively here.
+    if (abs_path.len == 0 or abs_path.len >= bun.MAX_PATH_BYTES) return false;
     var path_buf: bun.PathBuffer = undefined;
     const path_z = bun.path.z(abs_path, &path_buf);
     const file = switch (bun.sys.File.open(path_z, bun.O.RDONLY, 0)) {

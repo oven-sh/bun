@@ -1,4 +1,4 @@
-// This is Bun's JavaScript/TypeScript transpiler
+// This is Bun's JavaScript/TypeScript bundler
 //
 // A lot of the implementation is based on the Go implementation of esbuild. Thank you Evan Wallace.
 //
@@ -4873,7 +4873,7 @@ pub const BundleV2 = struct {
             }
         }
 
-        // To minimize contention, watchers are appended by the transpiler thread.
+        // To minimize contention, watchers are appended on the bundle thread.
         if (this.bun_watcher) |watcher| {
             if (parse_result.watcher_data.fd != bun.invalid_fd) {
                 const source = switch (parse_result.value) {

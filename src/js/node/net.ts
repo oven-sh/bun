@@ -57,7 +57,12 @@ const getBufferedAmount = $newZigFunction("socket.zig", "jsGetBufferedAmount", 1
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
-const owner_symbol = Symbol("owner_symbol");
+const { owner_symbol } = require("internal/shared");
+
+const UV_EOF = -4095;
+const kBuffer = Symbol("kBuffer");
+const kBufferCb = Symbol("kBufferCb");
+const kBufferGen = Symbol("kBufferGen");
 
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
@@ -81,7 +86,7 @@ const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
 function endNT(socket, callback, err) {
-  socket.$end();
+  socket.$end?.();
   callback(err);
 }
 function emitCloseNT(self, hasError) {
@@ -682,8 +687,6 @@ function Socket(options?) {
   Duplex.$call(this, {
     ...opts,
     allowHalfOpen,
-    readable: true,
-    writable: true,
     //For node.js compat do not emit close on destroy.
     emitClose: false,
     autoDestroy: true,
@@ -725,9 +728,22 @@ function Socket(options?) {
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
-  if (options?.fd !== undefined) {
+  if (options?.handle != null) {
+    this._handle = options.handle;
+    initSocketHandle(this);
+  } else if (options?.fd !== undefined) {
     const { fd } = options;
     validateInt32(fd, "fd", 0);
+  }
+
+  if (this._handle && $isCallable(this._handle.readStart) && options.readable !== false) {
+    if (options.pauseOnCreate) {
+      this._handle.reading = false;
+      this._handle.readStop();
+      this._readableState.flowing = false;
+    } else if (!options.manualStart) {
+      this.read(0);
+    }
   }
 
   if (socket instanceof Socket) {
@@ -740,6 +756,9 @@ function Socket(options?) {
     if (typeof onread.callback !== "function") {
       throw new TypeError("onread.callback must be a function");
     }
+    this[kBuffer] = true;
+    this[kBufferCb] = onread.callback;
+    this[kBufferGen] = typeof onread.buffer === "function" ? onread.buffer : () => onread.buffer;
     // when the onread option is specified we use a different handlers object
     this[khandlers] = {
       ...SocketHandlers2,
@@ -787,7 +806,7 @@ Socket.prototype._onTimeout = function () {
   const handle = this._handle;
   // if there is a handle, and it has pending data,
   // we suppress the timeout because a write is in progress
-  if (handle && getBufferedAmount(handle) > 0) {
+  if (handle && !$isCallable(handle.readStart) && getBufferedAmount(handle) > 0) {
     return;
   }
   this.emit("timeout");
@@ -1199,23 +1218,39 @@ Object.defineProperty(Socket.prototype, "pending", {
   },
 });
 
-Socket.prototype.resume = function resume() {
-  if (!this.connecting) {
-    this._handle?.resume();
-  }
-  return Duplex.prototype.resume.$call(this);
-};
-
 Socket.prototype.pause = function pause() {
-  if (!this.destroyed) {
-    this._handle?.pause();
+  if (this[kBuffer] && !this.connecting && this._handle && $isCallable(this._handle.readStop) && this._handle.reading) {
+    this._handle.reading = false;
+    if (!this.destroyed) {
+      const err = this._handle.readStop();
+      if (err) this.destroy(new ErrnoException(err, "read"));
+    }
   }
   return Duplex.prototype.pause.$call(this);
 };
 
+Socket.prototype.resume = function resume() {
+  if (
+    this[kBuffer] &&
+    !this.connecting &&
+    this._handle &&
+    $isCallable(this._handle.readStart) &&
+    !this._handle.reading
+  ) {
+    tryReadStart(this);
+  }
+  return Duplex.prototype.resume.$call(this);
+};
+
 Socket.prototype.read = function read(size) {
-  if (!this.connecting) {
-    this._handle?.resume();
+  if (
+    this[kBuffer] &&
+    !this.connecting &&
+    this._handle &&
+    $isCallable(this._handle.readStart) &&
+    !this._handle.reading
+  ) {
+    tryReadStart(this);
   }
   return Duplex.prototype.read.$call(this, size);
 };
@@ -1224,8 +1259,10 @@ Socket.prototype._read = function _read(size) {
   const socket = this._handle;
   if (this.connecting || !socket) {
     this.once("connect", () => this._read(size));
+  } else if ($isCallable(socket.readStart)) {
+    if (!socket.reading) tryReadStart(this);
   } else {
-    socket?.resume();
+    socket?.resume?.();
   }
 };
 
@@ -1458,6 +1495,13 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     return false;
   }
   this._unrefTimer();
+  if ($isCallable(socket.readStart)) {
+    // Stream-wrap handle (TTY/Pipe). Full writeBuffer/req plumbing is a
+    // follow-up; reachable only for duplex net.Socket({fd}), never for
+    // process.stdin which is constructed with writable:false.
+    callback($ERR_METHOD_NOT_IMPLEMENTED("_write on stream-wrap handle"));
+    return false;
+  }
   const success = socket.$write(chunk, encoding);
   this[kBytesWritten] = socket.bytesWritten;
   if (success) {
@@ -2577,7 +2621,42 @@ function initSocketHandle(self) {
   // Handle creation may be deferred to bind() or connect() time.
   if (self._handle) {
     self._handle[owner_symbol] = self;
+    if ($isCallable(self._handle.readStart)) {
+      self._handle.onread = onStreamRead;
+    }
   }
+}
+
+// Node lib/internal/stream_base_commons.js onStreamRead.
+function onStreamRead(nread, arrayBuffer) {
+  const self = this[owner_symbol];
+  if (nread > 0) {
+    self.bytesRead += nread;
+    let ret;
+    if (self[kBuffer]) {
+      ret = self[kBufferCb](nread, arrayBuffer);
+    } else {
+      ret = self.push(arrayBuffer);
+    }
+    if (ret === false && this.reading) {
+      this.reading = false;
+      this.readStop();
+    }
+    return;
+  }
+  if (nread === 0) return;
+  if (nread !== UV_EOF) {
+    self.destroy(new ErrnoException(nread, "read"));
+    return;
+  }
+  self.push(null);
+  self.read(0);
+}
+
+function tryReadStart(socket) {
+  socket._handle.reading = true;
+  const err = socket._handle.readStart();
+  if (err) socket.destroy(new ErrnoException(err, "read"));
 }
 
 function closeSocketHandle(self, isException, isCleanupPending = false) {

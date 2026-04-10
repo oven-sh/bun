@@ -2221,13 +2221,14 @@ fn resolveLocalImagePath(src: []const u8, allocator: Allocator, base_dir: ?[]con
     // percent-decode. RFC 8089 allows `file://localhost/path`
     // (equivalent to `file:///path`) and real-world file URLs
     // contain %XX escapes for spaces and other reserved chars.
+    // Scheme + authority are ASCII case-insensitive per RFC 3986 §3.1.
     var path: []const u8 = src;
-    if (bun.strings.startsWith(src, "file://")) {
+    if (bun.strings.startsWithCaseInsensitiveAscii(src, "file://")) {
         path = src["file://".len..];
         // Drop `localhost` authority — RFC 8089 treats it as identity.
-        if (bun.strings.startsWith(path, "localhost/")) {
+        if (bun.strings.startsWithCaseInsensitiveAscii(path, "localhost/")) {
             path = path["localhost".len..];
-        } else if (bun.strings.eqlComptime(path, "localhost")) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII(path, "localhost", true)) {
             return null;
         }
     }

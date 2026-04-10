@@ -358,13 +358,19 @@ pub fn findAutoBunfig(start_dir: []const u8, buf: *bun.PathBuffer) ?[:0]const u8
             return candidate;
         }
 
-        // Stop at the first `.git` we see — that's the project root.
+        // Stop at the first `.git` directory we see — that's the project
+        // root. Must check for a DIRECTORY specifically: git submodules
+        // and worktrees use a plain-text `.git` file that points at the
+        // outer repo, and we want the walk to continue through them up
+        // to the real monorepo root.
+        //
         // Use a scratch buffer so we don't stomp on the bunfig candidate
         // written into `buf`.
         var git_parts = [_]string{ dir, ".git" };
         const git_path = resolve_path.joinAbsStringBufZ(dir, &probe_buf, &git_parts, .auto);
-        if (bun.sys.existsZ(git_path)) {
-            return null;
+        switch (bun.sys.stat(git_path)) {
+            .result => |st| if (bun.S.ISDIR(@intCast(st.mode))) return null,
+            .err => {},
         }
 
         const parent = resolve_path.dirname(dir, .auto);
@@ -452,23 +458,21 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
         // monorepo's root `bunfig.toml` apply to subprojects that don't
         // ship their own — e.g. `onlyFailures = true` at the repo root
         // is inherited by `packages/<x>/` when running `bun test`.
+        //
+        // Start the walk at the cwd itself (not its parent): the
+        // `.git`-boundary check inside `findAutoBunfig` lives at the
+        // same level as the `bunfig.toml` check, so skipping the cwd
+        // would also skip the cwd's own `.git` and let the walk cross
+        // the repo root.
         if (auto_loaded and !bun.sys.existsZ(config_path)) {
-            // Start the walk at the parent: the cwd was just ruled out
-            // by the `existsZ` guard above, no need to re-stat it.
-            const parent = resolve_path.dirname(ctx.args.absolute_working_dir.?, .auto);
             var walkup_buf: bun.PathBuffer = undefined;
-            if (parent.len > 0) {
-                if (findAutoBunfig(parent, &walkup_buf)) |found| {
-                    @memcpy(config_buf[0..found.len], found);
-                    config_buf[found.len] = 0;
-                    config_path = config_buf[0..found.len :0];
-                } else {
-                    // Exhausted the chain. Mark as tried so secondary
-                    // callers in bun.js.zig/run/repl skip re-walking.
-                    ctx.debug.loaded_bunfig = true;
-                    return;
-                }
+            if (findAutoBunfig(ctx.args.absolute_working_dir.?, &walkup_buf)) |found| {
+                @memcpy(config_buf[0..found.len], found);
+                config_buf[found.len] = 0;
+                config_path = config_buf[0..found.len :0];
             } else {
+                // Exhausted the chain. Mark as tried so secondary
+                // callers in bun.js.zig/run/repl skip re-walking.
                 ctx.debug.loaded_bunfig = true;
                 return;
             }

@@ -2,7 +2,7 @@
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 test("bunfig.toml in parent directory is inherited by subprojects", async () => {
@@ -130,6 +130,51 @@ test("`bun run` from a subproject inherits a parent `bunfig.toml`", async () => 
   expect(stdout).toContain("from-preload");
   expect(stdout).toContain("from-script");
   expect(exitCode).toBe(0);
+});
+
+test("`.git` directory stops walk-up at the project root", async () => {
+  // A repo root has `.git` but no `bunfig.toml` of its own. An unrelated
+  // `bunfig.toml` sits one level above. The walk must stop at `.git`
+  // and NOT inherit the unrelated ancestor config.
+  using dir = tempDir("29109-git-boundary", {
+    // This ancestor bunfig must NOT be picked up.
+    "bunfig.toml": `
+[test]
+onlyFailures = true
+`,
+    // Project root inside the ancestor — has .git but no bunfig.
+    "project/sample.test.ts": `
+import { test, expect } from "bun:test";
+test("boundary-passing", () => expect(1).toBe(1));
+test("boundary-failing", () => expect(1).toBe(2));
+`,
+  });
+  // Create a `.git` DIRECTORY at the project root.
+  mkdirSync(join(String(dir), "project", ".git"));
+
+  using homeDir = tempDir("29109-git-boundary-home", {});
+  const env = {
+    ...bunEnv,
+    HOME: String(homeDir),
+    XDG_CONFIG_HOME: String(homeDir),
+  };
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "sample.test.ts"],
+    env,
+    cwd: join(String(dir), "project"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The ancestor `onlyFailures = true` was NOT inherited — both tests
+  // are printed, the passing one included. If the walk had crossed
+  // `.git`, the passing test would be suppressed.
+  expect(stderr).toContain("boundary-passing");
+  expect(stderr).toContain("boundary-failing");
+  expect(exitCode).not.toBe(0);
 });
 
 test("no bunfig.toml anywhere up the chain behaves as before", async () => {

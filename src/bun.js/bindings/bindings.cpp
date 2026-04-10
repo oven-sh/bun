@@ -6492,6 +6492,8 @@ extern "C" bool Bun__JSArray__contiguousVectorIsStillValid(
     JSC::IndexingType indexing = array->indexingType();
     if (!hasInt32(indexing) && !hasContiguous(indexing)) [[unlikely]]
         return false;
+    if (!array->canDoFastIndexedAccess()) [[unlikely]]
+        return false;
     JSC::Butterfly* butterfly = array->butterfly();
     if (butterfly->publicLength() != expectedLength) [[unlikely]]
         return false;

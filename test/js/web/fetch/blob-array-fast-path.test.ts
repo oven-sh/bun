@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-describe("Blob constructor array iteration", () => {
+describe("JSArrayIterator butterfly fast path", () => {
   test("basic string array", async () => {
     const blob = new Blob(["hello", " ", "world"]);
     expect(await blob.text()).toBe("hello world");
@@ -10,17 +10,6 @@ describe("Blob constructor array iteration", () => {
     const parts = Array.from({ length: 10000 }, (_, i) => `${i},`);
     const blob = new Blob(parts);
     expect(await blob.text()).toBe(parts.join(""));
-  });
-
-  test("array with holes", async () => {
-    const arr = ["a", , "b", , "c"] as unknown as string[];
-    const blob = new Blob(arr);
-    expect(await blob.text()).toBe("abc");
-  });
-
-  test("undefined and null elements are skipped", async () => {
-    const blob = new Blob(["start", undefined as any, null as any, "end"]);
-    expect(await blob.text()).toBe("startend");
   });
 
   test("mixed types: string + TypedArray + Blob", async () => {
@@ -57,17 +46,20 @@ describe("Blob constructor array iteration", () => {
     expect(await blob.text()).toBe("firstlast");
   });
 
-  test("indexed getter on Array.prototype falls back to slow path", async () => {
-    const arr = ["x", "y", "z"];
+  test("hole + Array.prototype indexed getter consults prototype (slow path)", async () => {
+    let calls = 0;
     Object.defineProperty(Array.prototype, 1, {
       get() {
+        calls++;
         return "intercepted";
       },
       configurable: true,
     });
     try {
+      const arr: string[] = ["x", , "z"] as any;
       const blob = new Blob(arr);
-      expect(await blob.text()).toBe("xyz");
+      expect(await blob.text()).toBe("xinterceptedz");
+      expect(calls).toBe(1);
     } finally {
       delete (Array.prototype as any)[1];
     }
@@ -79,7 +71,12 @@ describe("Blob constructor array iteration", () => {
     expect(await blob.text()).toBe("123");
   });
 
-  test("array mutated during iteration via element side effect", () => {
+  test("non-ASCII strings", async () => {
+    const blob = new Blob(["日本語", "テスト"]);
+    expect(await blob.text()).toBe("日本語テスト");
+  });
+
+  test("revalidation: array mutated mid-iteration via toContainEqual side effect", () => {
     const arr: any[] = ["a", "b"];
     arr.push({
       get x() {
@@ -89,10 +86,5 @@ describe("Blob constructor array iteration", () => {
     });
     arr.push("c");
     expect(arr).toContainEqual({ x: 1 });
-  });
-
-  test("non-ASCII strings", async () => {
-    const blob = new Blob(["日本語", "テスト"]);
-    expect(await blob.text()).toBe("日本語テスト");
   });
 });

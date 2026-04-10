@@ -22,9 +22,10 @@ import path from "node:path";
 // times against a local Bun.serve() mock, and fails if RSS growth
 // exceeds the budget.
 
-// Child builds ~512 MiB of cumulative traffic over localhost (64 × 8
-// MiB). Well under a debug ASAN build's 2-minute budget in practice
-// but far above the 5-second bun:test default.
+// Child builds ~288 MiB of cumulative traffic over localhost (36 × 8
+// MiB — 4 warmup + 32 measured). Well under a debug ASAN build's
+// 2-minute budget in practice but far above the 5-second bun:test
+// default.
 setDefaultTimeout(120_000);
 
 type Method = "arrayBuffer" | "text" | "json" | "formData";
@@ -35,7 +36,6 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
       // Wrap the whole fixture so any exception produces a diagnosable
       // stderr line in CI instead of a silent exit 2.
       try {
-      const CHUNK_MIB = 8;
       const ITERATIONS = 32;
       const payload = ${bodyLiteral};
       const expectedLength = Buffer.byteLength(payload);

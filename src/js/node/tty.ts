@@ -12,91 +12,59 @@ const {
 const { validateInteger } = require("internal/validators");
 const fs = require("internal/fs/streams");
 
-function ReadStream(fd): void {
+const { TTY } = process.binding("tty_wrap");
+
+// Node lib/tty.js: tty.ReadStream extends net.Socket with a native TTY handle.
+// readableHighWaterMark: 0 makes push() return false on every chunk so
+// onStreamRead's backpressure path readStop()s between reads, and _read()
+// readStart()s again only when a consumer pulls.
+function ReadStream(fd, options): void {
   if (!(this instanceof ReadStream)) {
-    return new ReadStream(fd);
+    return new ReadStream(fd, options);
   }
-  fs.ReadStream.$apply(this, ["", { fd }]);
+  if (fd >> 0 !== fd || fd < 0) {
+    throw $ERR_OUT_OF_RANGE("fd", "a non-negative integer", fd);
+  }
+
+  const ctx: { code?: string } = {};
+  const tty = new TTY(fd, ctx);
+  if (ctx.code !== undefined) {
+    const err = new Error("TTY initialization failed: " + ctx.code);
+    (err as any).code = "ERR_TTY_INIT_FAILED";
+    throw err;
+  }
+
+  const { Socket } = require("node:net");
+  Socket.$call(this, {
+    readableHighWaterMark: 0,
+    handle: tty,
+    manualStart: true,
+    ...options,
+  });
+
+  this.fd = fd;
   this.isRaw = false;
-  // Only set isTTY to true if the fd is actually a TTY
-  this.isTTY = isatty(fd);
+  this.isTTY = true;
 }
-$toClass(ReadStream, "ReadStream", fs.ReadStream);
 
 Object.defineProperty(ReadStream, "prototype", {
   get() {
-    const Prototype = Object.create(fs.ReadStream.prototype);
-
-    // Add ref/unref methods to make tty.ReadStream behave like Node.js
-    // where TTY streams have socket-like behavior
-    Prototype.ref = function () {
-      // Get the underlying native stream source if available
-      const source = this.$bunNativePtr;
-      if (source?.updateRef) {
-        source.updateRef(true);
-      }
-      return this;
-    };
-
-    Prototype.unref = function () {
-      // Get the underlying native stream source if available
-      const source = this.$bunNativePtr;
-      if (source?.updateRef) {
-        source.updateRef(false);
-      }
-      return this;
-    };
+    const { Socket } = require("node:net");
+    const Prototype = Object.create(Socket.prototype);
 
     Prototype.setRawMode = function (flag) {
       flag = !!flag;
-
-      // On windows, this goes through the stream handle itself, as it must call
-      // uv_tty_set_mode on the uv_tty_t.
-      //
-      // On POSIX, I tried to use the same approach, but it didn't work reliably,
-      // so we just use the file descriptor and use termios APIs directly.
-      if (process.platform === "win32") {
-        // Special case for stdin, as it has a shared uv_tty handle
-        // and it's stream is constructed differently
-        if (this.fd === 0) {
-          const err = ttySetMode(flag);
-          if (err) {
-            this.emit("error", new Error("setRawMode failed with errno: " + err));
-          }
-          return this;
-        }
-
-        const handle = this.$bunNativePtr;
-        if (!handle) {
-          this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
-          return this;
-        }
-
-        // If you call setRawMode before you call on('data'), the stream will
-        // not be constructed, leading to EBADF
-        // This corresponds to the `ensureConstructed` function in `native-readable.ts`
-        this.$start();
-
-        const err = handle.setRawMode(flag);
-        if (err) {
-          this.emit("error", err);
-          return this;
-        }
-      } else {
-        const err = ttySetMode(this.fd, flag);
-        if (err) {
-          this.emit("error", new Error("setRawMode failed with errno: " + err));
-          return this;
-        }
+      const err = this._handle?.setRawMode(flag);
+      if (err) {
+        this.emit("error", new Error("setRawMode failed with errno: " + err));
+        return this;
       }
-
       this.isRaw = flag;
-
       return this;
     };
 
     Object.defineProperty(ReadStream, "prototype", { value: Prototype });
-
+    Object.setPrototypeOf(ReadStream, Socket);
     return Prototype;
   },
   enumerable: true,

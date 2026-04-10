@@ -281,8 +281,11 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
         if (findAutoBunfig(cwd, &walkup_buf)) |found| {
             return loadBunfig(allocator, auto_loaded, found, ctx, cmd);
         }
-        // Nothing found — fall through. `loadBunfig` will try the
-        // original relative path and silently return since auto_loaded.
+        // Nothing found up the chain. Mark the auto-load attempt as
+        // done so secondary callers in `bun.js.zig`, `run_command.zig`,
+        // and `repl_command.zig` don't repeat the full walk.
+        ctx.debug.loaded_bunfig = true;
+        return;
     }
 
     try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);
@@ -431,11 +434,24 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
         // ship their own — e.g. `onlyFailures = true` at the repo root
         // is inherited by `packages/<x>/` when running `bun test`.
         if (auto_loaded and !bun.sys.existsZ(config_path)) {
+            // Start the walk at the parent: the cwd was just ruled out
+            // by the `existsZ` guard above, no need to re-stat it.
+            const parent = resolve_path.dirname(ctx.args.absolute_working_dir.?, .auto);
             var walkup_buf: bun.PathBuffer = undefined;
-            if (findAutoBunfig(ctx.args.absolute_working_dir.?, &walkup_buf)) |found| {
-                @memcpy(config_buf[0..found.len], found);
-                config_buf[found.len] = 0;
-                config_path = config_buf[0..found.len :0];
+            if (parent.len > 0) {
+                if (findAutoBunfig(parent, &walkup_buf)) |found| {
+                    @memcpy(config_buf[0..found.len], found);
+                    config_buf[found.len] = 0;
+                    config_path = config_buf[0..found.len :0];
+                } else {
+                    // Exhausted the chain. Mark as tried so secondary
+                    // callers in bun.js.zig/run/repl skip re-walking.
+                    ctx.debug.loaded_bunfig = true;
+                    return;
+                }
+            } else {
+                ctx.debug.loaded_bunfig = true;
+                return;
             }
         }
     }

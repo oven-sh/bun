@@ -91,6 +91,43 @@ test("local-wins-failing", () => expect(1).toBe(2));
   expect(exitCode).not.toBe(0);
 });
 
+test("`bun run` from a subproject inherits a parent `bunfig.toml`", async () => {
+  // Exercises the walk-up branch in `loadConfigPath` (not `loadConfig`),
+  // which is what `bun run` / `bun repl` / `bun <file>` go through.
+  using dir = tempDir("29109-run-inherit", {
+    "bunfig.toml": `
+preload = ["./preload.js"]
+`,
+    // Preload lives in the subproject: preload paths are resolved
+    // relative to cwd (where \`bun run\` is invoked), not to the bunfig.
+    "packages/api/preload.js": `console.log("from-preload");`,
+    "packages/api/script.ts": `console.log("from-script");`,
+  });
+
+  using homeDir = tempDir("29109-run-inherit-home", {});
+  const env = {
+    ...bunEnv,
+    HOME: String(homeDir),
+    XDG_CONFIG_HOME: String(homeDir),
+  };
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "script.ts"],
+    env,
+    cwd: join(String(dir), "packages", "api"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The preload fired (bunfig was inherited from the parent) AND the
+  // script ran after it.
+  expect(stdout).toContain("from-preload");
+  expect(stdout).toContain("from-script");
+  expect(exitCode).toBe(0);
+});
+
 test("no bunfig.toml anywhere up the chain behaves as before", async () => {
   using dir = tempDir("29109-none", {
     "packages/api/sample.test.ts": `

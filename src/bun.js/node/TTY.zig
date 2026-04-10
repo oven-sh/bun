@@ -445,8 +445,6 @@ pub fn finalize(this: *TTY) callconv(.c) void {
 
 extern "c" fn Source__setRawModeStdin(bool) i32;
 
-const std = @import("std");
-
 const bun = @import("bun");
 const Environment = bun.Environment;
 

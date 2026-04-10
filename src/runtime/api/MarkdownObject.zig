@@ -25,8 +25,10 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
 
 /// `Bun.markdown.ansi(text, theme?)` — render markdown to an ANSI-colored
 /// terminal string. `theme` is an optional object: `{ colors?, hyperlinks?,
-/// light?, columns? }`. By default colors are enabled, hyperlinks are
-/// disabled (the caller doesn't know if stdout is a TTY), and columns is 80.
+/// kittyGraphics?, light?, columns?, cwd? }`. By default colors are enabled,
+/// hyperlinks are disabled (the caller doesn't know if stdout is a TTY), and
+/// columns is 80. `cwd` is the base directory used to resolve relative image
+/// `src` paths when rendering Kitty graphics — defaults to the process cwd.
 pub fn renderToAnsi(
     globalThis: *jsc.JSGlobalObject,
     callframe: *jsc.CallFrame,
@@ -62,6 +64,19 @@ pub fn renderToAnsi(
             if (cols.isNumber()) {
                 const n = cols.toInt32();
                 theme.columns = if (n <= 0) 0 else @intCast(@min(n, std.math.maxInt(u16)));
+            }
+        }
+        // `cwd` is the base directory used to resolve relative image
+        // `src` paths when kittyGraphics is on. Lives in the arena so
+        // the slice handed to theme.image_base_dir stays valid until
+        // rendering finishes (arena is deinit'd at function exit).
+        if (try theme_value.get(globalThis, "cwd")) |cwd_val| {
+            if (cwd_val.isString()) {
+                var cwd_str = try cwd_val.toSlice(globalThis, arena.allocator());
+                const cwd_owned = try cwd_str.intoOwnedSlice(arena.allocator());
+                if (cwd_owned.len > 0) {
+                    theme.image_base_dir = cwd_owned;
+                }
             }
         }
     }

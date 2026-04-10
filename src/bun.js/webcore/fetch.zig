@@ -668,51 +668,54 @@ fn fetchImpl(
                         allocator.free(url_proxy_buffer);
                         break :extract_proxy buffer;
                     }
-                    // Handle object format: proxy: { url: "http://proxy.example.com:8080", headers?: Headers }
-                    // If the proxy object doesn't have a 'url' property, ignore it.
-                    // This handles cases like passing a URL object directly as proxy (which has 'href' not 'url').
+                    // Handle object format: proxy: { url: string | URL, headers?: Headers }
+                    // `url` may be a string or any value accepted by `new URL()` (e.g. a WHATWG
+                    // `URL` object, as produced by `@npmcli/agent`'s proxy getter).
                     if (proxy_arg.isObject()) {
                         // Get the URL from the proxy object
                         if (try proxy_arg.get(globalThis, "url")) |proxy_url_arg| {
                             if (!proxy_url_arg.isUndefinedOrNull()) {
-                                if (proxy_url_arg.isString() and try proxy_url_arg.getLength(ctx) > 0) {
-                                    var href = try jsc.URL.hrefFromJS(proxy_url_arg, globalThis);
-                                    if (href.tag == .Dead) {
-                                        const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{});
-                                        is_error = true;
-                                        return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
-                                    }
-                                    defer href.deref();
-                                    const buffer = try std.fmt.allocPrint(allocator, "{s}{f}", .{ url_proxy_buffer, href });
-                                    url = ZigURL.parse(buffer[0..url.href.len]);
-                                    if (url.isFile()) {
-                                        url_type = URLType.file;
-                                    } else if (url.isBlob()) {
-                                        url_type = URLType.blob;
-                                    }
-
-                                    proxy = ZigURL.parse(buffer[url.href.len..]);
-                                    allocator.free(url_proxy_buffer);
-                                    url_proxy_buffer = buffer;
-
-                                    // Get the headers from the proxy object (optional)
-                                    if (try proxy_arg.get(globalThis, "headers")) |headers_value| {
-                                        if (!headers_value.isUndefinedOrNull()) {
-                                            if (headers_value.as(FetchHeaders)) |fetch_hdrs| {
-                                                proxy_headers = Headers.from(fetch_hdrs, allocator, .{}) catch |err| bun.handleOom(err);
-                                            } else if (try FetchHeaders.createFromJS(ctx, headers_value)) |fetch_hdrs| {
-                                                defer fetch_hdrs.deref();
-                                                proxy_headers = Headers.from(fetch_hdrs, allocator, .{}) catch |err| bun.handleOom(err);
-                                            }
-                                        }
-                                    }
-
-                                    break :extract_proxy url_proxy_buffer;
-                                } else {
+                                // Reject an explicit empty string with the legacy message.
+                                // Any other value (including `URL` objects) goes through
+                                // `hrefFromJS`, matching the top-level `proxy: string | URL` path.
+                                if (proxy_url_arg.isString() and (try proxy_url_arg.getLength(ctx)) == 0) {
                                     const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy.url must be a non-empty string", .{});
                                     is_error = true;
                                     return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
                                 }
+
+                                var href = try jsc.URL.hrefFromJS(proxy_url_arg, globalThis);
+                                if (href.tag == .Dead) {
+                                    const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy URL is invalid", .{});
+                                    is_error = true;
+                                    return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
+                                }
+                                defer href.deref();
+                                const buffer = try std.fmt.allocPrint(allocator, "{s}{f}", .{ url_proxy_buffer, href });
+                                url = ZigURL.parse(buffer[0..url.href.len]);
+                                if (url.isFile()) {
+                                    url_type = URLType.file;
+                                } else if (url.isBlob()) {
+                                    url_type = URLType.blob;
+                                }
+
+                                proxy = ZigURL.parse(buffer[url.href.len..]);
+                                allocator.free(url_proxy_buffer);
+                                url_proxy_buffer = buffer;
+
+                                // Get the headers from the proxy object (optional)
+                                if (try proxy_arg.get(globalThis, "headers")) |headers_value| {
+                                    if (!headers_value.isUndefinedOrNull()) {
+                                        if (headers_value.as(FetchHeaders)) |fetch_hdrs| {
+                                            proxy_headers = Headers.from(fetch_hdrs, allocator, .{}) catch |err| bun.handleOom(err);
+                                        } else if (try FetchHeaders.createFromJS(ctx, headers_value)) |fetch_hdrs| {
+                                            defer fetch_hdrs.deref();
+                                            proxy_headers = Headers.from(fetch_hdrs, allocator, .{}) catch |err| bun.handleOom(err);
+                                        }
+                                    }
+                                }
+
+                                break :extract_proxy url_proxy_buffer;
                             }
                         }
                     }

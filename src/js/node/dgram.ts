@@ -95,28 +95,31 @@ function EINVAL(syscall) {
   });
 }
 
-// ICMP-class recv errors that Linux's IP_RECVERR surfaces on unconnected UDP
-// sockets. Node.js/libuv don't enable IP_RECVERR in the default path, so the
-// kernel silently drops these on unconnected sockets and only reports them
-// synchronously via send/recv when the socket has been .connect()-ed. Bun
-// enables IP_RECVERR unconditionally in uSockets, so we match Node.js's
-// observable behavior by dropping these on unconnected sockets and letting
-// them through on connected ones.
-function isSuppressibleRecvError(error, connectState) {
-  if (connectState === CONNECT_STATE_CONNECTED) return false;
-  if (error?.syscall !== "recv") return false;
-  switch (error?.code) {
-    case "ECONNREFUSED":
-    case "EHOSTUNREACH":
-    case "ENETUNREACH":
-    case "EHOSTDOWN":
-    case "ENETDOWN":
-    case "ENONET":
-    case "ENOPROTOOPT":
-      return true;
-    default:
-      return false;
-  }
+// ICMP-class recv errors that Linux's IP_RECVERR surfaces on UDP sockets.
+//
+// Node.js / libuv do NOT enable IP_RECVERR on UDP sockets in the default
+// path (it's opt-in via UV_UDP_LINUX_RECVERR, which lib/dgram.js never
+// passes), so the Linux kernel silently drops ICMP errors on unconnected
+// sockets. The ECONNREFUSED an app sees on a connected socket in Node.js
+// comes from the *synchronous* send path (sendmsg returning -1) and is
+// delivered via the send callback, not through an async recv-side error.
+//
+// Bun enables IP_RECVERR unconditionally in uSockets (#28827), so the
+// Linux kernel queues ICMP errors on the socket's error queue even for
+// unconnected sockets. uSockets drains that queue and surfaces each errno
+// through the `on_recv_error` → `Bun.udpSocket` `error:` callback — a
+// purely async, recv-side path with `syscall === "recv"`. No code path in
+// stock Node.js / libuv-via-Node delivers UDP errors through this channel,
+// so to match Node.js's observable dgram behavior we drop every error
+// that came through it, regardless of the socket's current connect state.
+//
+// This intentionally suppresses recv-side ICMP errors on connected sockets
+// too: the send-side path (socket.send() throwing / rejecting) still works
+// and that's what Node.js apps actually observe. It also closes a TOCTOU
+// window where an ICMP error queued before connect() would otherwise leak
+// out with the socket in the CONNECTED state.
+function isSuppressibleRecvError(error) {
+  return error?.syscall === "recv";
 }
 
 let dns;
@@ -355,7 +358,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
             });
           },
           error: error => {
-            if (isSuppressibleRecvError(error, state.connectState)) return;
+            if (isSuppressibleRecvError(error)) return;
             this.emit("error", error);
           },
         },

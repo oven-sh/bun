@@ -184,14 +184,12 @@ test.skipIf(!isLinux)("os.availableParallelism() under taskset reports the restr
     // sched_setaffinity is blocked by a seccomp profile (GKE
     // Autopilot, Fargate, restrictive pod security) — the stderr
     // looks like "taskset: failed to set pid ...'s affinity:
-    // Operation not permitted". Treat that as a graceful skip in the
-    // same spirit as the missing-binary guard above: this sub-test is
-    // extra coverage, not the primary assertion.
-    if (
-      stderr.includes("Operation not permitted") ||
-      stderr.includes("Permission denied") ||
-      stderr.includes("failed to set") // covers taskset's canonical error prefix
-    ) {
+    // Operation not permitted". Treat permission denials as a
+    // graceful skip in the same spirit as the missing-binary guard
+    // above: this sub-test is extra coverage, not the primary
+    // assertion. Any OTHER non-zero exit is a real failure worth
+    // surfacing.
+    if (stderr.includes("Operation not permitted") || stderr.includes("Permission denied")) {
       return;
     }
     throw new Error(`taskset subprocess exited with ${exitCode}\nstderr:\n${stderr}`);

@@ -98,13 +98,20 @@ function readCgroupCpuQuota(): number {
     return min;
   }
 
-  // cgroup v1: find the `:cpu,` or `:cpu:` controller line and read
-  // cpu.cfs_quota_us / cpu.cfs_period_us.
+  // cgroup v1: each line is "<id>:<controllers>:<path>" where
+  // controllers is a comma-separated list. We need the line whose
+  // controller list contains "cpu" (order-independent: both
+  // "cpu,cpuacct" and "cpuacct,cpu" are valid).
   for (const line of cgroup.split("\n")) {
-    const idx = line.indexOf(":cpu,");
-    const match = idx >= 0 ? line.slice(idx + ":cpu,".length) : line.match(/:cpu:(.*)$/)?.[1];
-    if (!match) continue;
-    const cpuPath = typeof match === "string" ? match : "";
+    const firstColon = line.indexOf(":");
+    if (firstColon < 0) continue;
+    const secondColon = line.indexOf(":", firstColon + 1);
+    if (secondColon < 0) continue;
+    const controllers = line.slice(firstColon + 1, secondColon).split(",");
+    if (!controllers.includes("cpu")) continue;
+    // Path starts with a leading "/"; strip it so the template below
+    // doesn't produce a double slash.
+    const cpuPath = line.slice(secondColon + 1).replace(/^\/+/, "");
     const candidates = [`/sys/fs/cgroup/cpu,cpuacct/${cpuPath}`, `/sys/fs/cgroup/cpu/${cpuPath}`];
     for (const base of candidates) {
       if (!existsSync(`${base}/cpu.cfs_quota_us`)) continue;
@@ -181,10 +188,22 @@ test.skipIf(!isLinux)("os.availableParallelism() under taskset reports the restr
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Surface stderr in the failure message instead of a bare exit
-  // code — much easier to debug.
   if (exitCode !== 0) {
-    throw new Error(`bun exited with ${exitCode}\nstderr:\n${stderr}`);
+    // taskset itself can fail before the subprocess starts when
+    // sched_setaffinity is blocked by a seccomp profile (GKE
+    // Autopilot, Fargate, restrictive pod security) — the stderr
+    // looks like "taskset: failed to set pid ...'s affinity:
+    // Operation not permitted". Treat that as a graceful skip in the
+    // same spirit as the missing-binary guard above: this sub-test is
+    // extra coverage, not the primary assertion.
+    if (
+      stderr.includes("Operation not permitted") ||
+      stderr.includes("Permission denied") ||
+      stderr.includes("failed to set") // covers taskset's canonical error prefix
+    ) {
+      return;
+    }
+    throw new Error(`taskset subprocess exited with ${exitCode}\nstderr:\n${stderr}`);
   }
 
   const [availableStr, hardwareStr] = stdout.trim().split("|");

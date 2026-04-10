@@ -61,13 +61,20 @@ const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 test("backend: 'webkit' throws on non-darwin", () => {
   // Default backend is platform-dependent (WebKit on Darwin, Chrome
   // elsewhere). Explicitly requesting WebKit off-Darwin should throw.
+  // On Windows the message differs (points at the ws:// connect
+  // workaround instead of "use backend: chrome" because chrome's
+  // spawn path is also not implemented there) — that's covered by
+  // the Windows-specific test below. The regex here is narrowed to
+  // require "use backend" so it doesn't incidentally match the
+  // Windows message's `backend: { type: "chrome", url: "ws://..." }`
+  // example text.
   if (isMacOS) {
     const view = new Bun.WebView({ width: 100, height: 100, backend: "webkit" });
     expect(view).toBeInstanceOf(Bun.WebView);
     view.close();
-  } else {
+  } else if (!isWindows) {
     expect(() => new Bun.WebView({ width: 100, height: 100, backend: "webkit" })).toThrow(
-      /only available on macOS.*backend.*chrome/i,
+      /only available on macOS.*use backend.*chrome/i,
     );
   }
 });
@@ -111,6 +118,10 @@ test.skipIf(!isWindows)("backend: 'chrome' spawn throws on Windows", () => {
     expect(err).toBeDefined();
     expect(err.code).toBe("ERR_METHOD_NOT_IMPLEMENTED");
     expect(err.message).toMatch(/chrome.*spawn.*not.*yet.*implemented.*windows/i);
+    // Positive: the message must point users at the ws:// connect
+    // workaround. Mirrors the pattern in 29102.test.ts's helpers —
+    // stripping the hint would otherwise pass silently.
+    expect(err.message).toMatch(/ws:\/\//i);
     // Must not mention BUN_CHROME_PATH / set...backend.path — those
     // knobs are inert on the Windows spawn path and the old message's
     // hint at them is exactly what confused the bug reporter.

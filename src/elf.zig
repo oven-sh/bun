@@ -43,6 +43,101 @@ pub const ElfFile = struct {
         self.allocator.destroy(self);
     }
 
+    /// If PT_INTERP points into a Nix/Guix store path, rewrite it to the
+    /// standard FHS path so `bun build --compile` output stays portable when
+    /// the bun binary itself was patchelf'd (NixOS autoPatchelfHook). See #24742.
+    ///
+    /// Store paths are always longer than the FHS path, so this is an in-place
+    /// shrink — no segment moves. No-op for any other interpreter.
+    pub fn normalizeInterpreter(self: *ElfFile) void {
+        const ehdr = readEhdr(self.data.items);
+        const phdr_size = @sizeOf(Elf64_Phdr);
+
+        // Bounds-check the program header table up-front; --compile-executable-path
+        // accepts arbitrary files, so a corrupt e_phoff/e_phnum must not panic.
+        const phdr_table_end = @as(u64, ehdr.e_phoff) +| @as(u64, ehdr.e_phnum) *| @as(u64, phdr_size);
+        if (phdr_table_end > self.data.items.len) return;
+
+        for (0..ehdr.e_phnum) |i| {
+            const phdr_offset = @as(usize, @intCast(ehdr.e_phoff)) + i * phdr_size;
+            const phdr = std.mem.bytesAsValue(Elf64_Phdr, self.data.items[phdr_offset..][0..phdr_size]).*;
+            if (phdr.p_type != elf.PT_INTERP) continue;
+
+            const interp_offset: usize = @intCast(phdr.p_offset);
+            const interp_filesz: usize = @intCast(phdr.p_filesz);
+            if (interp_offset + interp_filesz > self.data.items.len) return;
+
+            const interp_region = self.data.items[interp_offset..][0..interp_filesz];
+            const current = std.mem.sliceTo(interp_region, 0);
+
+            if (!bun.strings.hasPrefixComptime(current, "/nix/store/") and
+                !bun.strings.hasPrefixComptime(current, "/gnu/store/"))
+            {
+                return;
+            }
+
+            const last_slash = std.mem.lastIndexOfScalar(u8, current, '/') orelse return;
+            const basename = current[last_slash + 1 ..];
+
+            const replacement: []const u8 = inline for (interp_map) |entry| {
+                if (bun.strings.eqlComptime(basename, entry[0])) break entry[1];
+            } else return;
+
+            // FHS path + NUL must fit in the existing segment (always true for
+            // store paths: 32-char hash + pname + "/lib/" alone exceeds any FHS path).
+            if (replacement.len + 1 > interp_filesz) return;
+
+            log("rewriting PT_INTERP {s} -> {s}", .{ current, replacement });
+
+            @memcpy(interp_region[0..replacement.len], replacement);
+            @memset(interp_region[replacement.len..], 0);
+
+            const new_size: u64 = replacement.len + 1;
+            // p_filesz @ +32, p_memsz @ +40 in Elf64_Phdr
+            std.mem.writeInt(u64, self.data.items[phdr_offset + 32 ..][0..8], new_size, .little);
+            std.mem.writeInt(u64, self.data.items[phdr_offset + 40 ..][0..8], new_size, .little);
+
+            self.updateInterpSectionSize(ehdr, new_size);
+            return;
+        }
+    }
+
+    /// Best-effort: keep the `.interp` section header's `sh_size` consistent with
+    /// the rewritten PT_INTERP so `readelf -S` shows accurate metadata. The kernel
+    /// only consults PT_INTERP, so any failure here is silently ignored.
+    fn updateInterpSectionSize(self: *ElfFile, ehdr: Elf64_Ehdr, new_size: u64) void {
+        const shdr_size = @sizeOf(Elf64_Shdr);
+        const shnum = ehdr.e_shnum;
+        if (shnum == 0 or ehdr.e_shstrndx >= shnum) return;
+
+        const shdr_table_end = @as(u64, ehdr.e_shoff) +| @as(u64, shnum) *| @as(u64, shdr_size);
+        if (shdr_table_end > self.data.items.len) return;
+
+        const strtab_shdr = self.readShdr(ehdr.e_shoff, ehdr.e_shstrndx);
+        const strtab_end = strtab_shdr.sh_offset +| strtab_shdr.sh_size;
+        if (strtab_end > self.data.items.len) return;
+        const strtab = self.data.items[@intCast(strtab_shdr.sh_offset)..][0..@intCast(strtab_shdr.sh_size)];
+
+        for (0..shnum) |i| {
+            const shdr = self.readShdr(ehdr.e_shoff, @intCast(i));
+            if (shdr.sh_name >= strtab.len) continue;
+            const name = std.mem.sliceTo(strtab[shdr.sh_name..], 0);
+            if (!bun.strings.eqlComptime(name, ".interp")) continue;
+
+            // sh_size @ +32 in Elf64_Shdr
+            const shdr_offset = @as(usize, @intCast(ehdr.e_shoff)) + i * shdr_size;
+            std.mem.writeInt(u64, self.data.items[shdr_offset + 32 ..][0..8], new_size, .little);
+            return;
+        }
+    }
+
+    const interp_map = .{
+        .{ "ld-linux-x86-64.so.2", "/lib64/ld-linux-x86-64.so.2" },
+        .{ "ld-linux-aarch64.so.1", "/lib/ld-linux-aarch64.so.1" },
+        .{ "ld-musl-x86_64.so.1", "/lib/ld-musl-x86_64.so.1" },
+        .{ "ld-musl-aarch64.so.1", "/lib/ld-musl-aarch64.so.1" },
+    };
+
     /// Find the `.bun` section and write `payload` to the end of the ELF file,
     /// creating a new PT_LOAD segment (from PT_GNU_STACK) to map it. Stores the
     /// new segment's vaddr at the original BUN_COMPILED location so the runtime
@@ -242,6 +337,8 @@ fn alignUp(value: u64, alignment: u64) u64 {
     const mask = alignment - 1;
     return (value + mask) & ~mask;
 }
+
+const log = bun.Output.scoped(.elf, .visible);
 
 const bun = @import("bun");
 

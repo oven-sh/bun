@@ -52,6 +52,18 @@ pub const Options = struct {
         .tag_filter = true,
     };
 
+    pub const terminal: Options = .{
+        .tables = true,
+        .strikethrough = true,
+        .tasklists = true,
+        .permissive_url_autolinks = true,
+        .permissive_www_autolinks = true,
+        .permissive_email_autolinks = true,
+        .wiki_links = true,
+        .underline = true,
+        .latex_math = true,
+    };
+
     pub fn toFlags(self: Options) Flags {
         return .{
             .tables = self.tables,
@@ -99,6 +111,14 @@ const Flags = types.Flags;
 
 pub const entity = @import("./entity.zig");
 pub const helpers = @import("./helpers.zig");
+
+pub const ansi = @import("./ansi_renderer.zig");
+pub const AnsiRenderer = ansi.AnsiRenderer;
+pub const AnsiTheme = ansi.Theme;
+pub const ImageUrlCollector = ansi.ImageUrlCollector;
+pub const renderToAnsi = ansi.renderToAnsi;
+pub const detectLightBackground = ansi.detectLightBackground;
+pub const detectKittyGraphics = ansi.detectKittyGraphics;
 
 const parser = @import("./parser.zig");
 const std = @import("std");

@@ -544,17 +544,25 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (!protocols.isEmpty())
         protocolString = joinStrings(protocols, subprotocolSeparator());
 
-    ZigString host = Zig::toZigString(m_url.host());
+    // Materialize host/path as WTF::String so the BunString wrappers hold a
+    // stable WTFStringImpl backing (preserving 8-bit vs UTF-16 encoding).
+    // ZigString wrappers over non-ASCII Latin1/UTF-16 data lose the encoding
+    // tag and corrupt the HTTP upgrade request build in Zig.
+    String hostString = m_url.host().toString();
     auto resource = resourceName(m_url);
-    ZigString path = Zig::toZigString(resource);
-    ZigString clientProtocolString = Zig::toZigString(protocolString);
+    BunString host = Bun::toString(hostString);
+    BunString path = Bun::toString(resource);
+    BunString clientProtocolString = Bun::toString(protocolString);
     uint16_t port = is_secure ? 443 : 80;
     if (auto userPort = m_url.port()) {
         port = userPort.value();
     }
 
-    Vector<ZigString, 8> headerNames;
-    Vector<ZigString, 8> headerValues;
+    // Hold WTF::Strings so the BunString wrappers stay valid for the Zig call.
+    Vector<String, 8> headerNameStrings;
+    Vector<String, 8> headerValueStrings;
+    Vector<BunString, 8> headerNames;
+    Vector<BunString, 8> headerValues;
 
     auto headersOrException = FetchHeaders::create(WTF::move(headersInit));
     if (headersOrException.hasException()) [[unlikely]] {
@@ -564,13 +572,19 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     }
 
     auto headers = headersOrException.releaseReturnValue();
+    headerNameStrings.reserveInitialCapacity(headers.get().internalHeaders().size());
+    headerValueStrings.reserveInitialCapacity(headers.get().internalHeaders().size());
     headerNames.reserveInitialCapacity(headers.get().internalHeaders().size());
     headerValues.reserveInitialCapacity(headers.get().internalHeaders().size());
     // lowerCaseKeys = false so we dont touch the keys casing
     auto iterator = headers.get().createIterator(false);
     while (auto value = iterator.next()) {
-        headerNames.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->key));
-        headerValues.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->value));
+        headerNameStrings.append(value->key);
+        headerValueStrings.append(value->value);
+    }
+    for (size_t i = 0; i < headerNameStrings.size(); ++i) {
+        headerNames.unsafeAppendWithoutCapacityCheck(Bun::toString(headerNameStrings[i]));
+        headerValues.unsafeAppendWithoutCapacityCheck(Bun::toString(headerValueStrings[i]));
     }
 
     // Determine connection type based on proxy usage and TLS requirements
@@ -601,19 +615,21 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
 
     this->incPendingActivityCount();
 
-    // Prepare proxy parameters (use local variables, not member fields)
-    ZigString proxyHost = hasProxy ? Zig::toZigString(proxyConfig->host) : ZigString {};
-    ZigString proxyAuth = hasProxy ? Zig::toZigString(proxyConfig->authorization) : ZigString {};
+    // Prepare proxy parameters (use local variables, not member fields).
+    // The BunString wrappers reference the underlying WTF::Strings in proxyConfig
+    // and remain valid for the duration of the connect() call.
+    BunString proxyHost = hasProxy ? Bun::toString(proxyConfig->host) : BunString { BunStringTag::Empty };
+    BunString proxyAuth = hasProxy ? Bun::toString(proxyConfig->authorization) : BunString { BunStringTag::Empty };
     uint16_t proxyPort = hasProxy ? proxyConfig->port : 0;
 
-    Vector<ZigString, 8> proxyHeaderNames;
-    Vector<ZigString, 8> proxyHeaderValues;
+    Vector<BunString, 8> proxyHeaderNames;
+    Vector<BunString, 8> proxyHeaderValues;
     if (hasProxy) {
         proxyHeaderNames.reserveInitialCapacity(proxyConfig->headers.size());
         proxyHeaderValues.reserveInitialCapacity(proxyConfig->headers.size());
         for (const auto& header : proxyConfig->headers) {
-            proxyHeaderNames.unsafeAppendWithoutCapacityCheck(Zig::toZigString(header.first));
-            proxyHeaderValues.unsafeAppendWithoutCapacityCheck(Zig::toZigString(header.second));
+            proxyHeaderNames.unsafeAppendWithoutCapacityCheck(Bun::toString(header.first));
+            proxyHeaderValues.unsafeAppendWithoutCapacityCheck(Bun::toString(header.second));
         }
     }
 
@@ -625,7 +641,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         auto encoded = base64EncodeToString(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()));
         targetAuthorization = makeString("Basic "_s, encoded);
     }
-    ZigString targetAuth = Zig::toZigString(targetAuthorization);
+    BunString targetAuth = Bun::toString(targetAuthorization);
 
     // Pass SSLConfig pointer to Zig (ownership transferred - Zig will deinit when connection closes)
     // After this call, m_sslConfig should not be used by C++ anymore

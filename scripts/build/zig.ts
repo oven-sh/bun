@@ -39,7 +39,7 @@ import { streamPath } from "./stream.ts";
  * is trusted, collapse both back to one constant.
  */
 export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
-export const ZIG_COMMIT_PARALLEL = "6093f9372660953a6b95532e45373037174fa76c";
+export const ZIG_COMMIT_PARALLEL = "7d3c0c9b3698d6ce57ef632833e71cab05b783b6";
 
 /**
  * The one place that picks which compiler to use. Everything coupled to
@@ -47,11 +47,11 @@ export const ZIG_COMMIT_PARALLEL = "6093f9372660953a6b95532e45373037174fa76c";
  * on the resolved cfg.zigCommit via usingParallelCompiler(), so changing
  * this — or passing --zigCommit=<hash> — is sufficient.
  *
- * Parallel compiler is macOS-local only for now; CI and linux/windows
- * local builds stay on the stable compiler until it's proven there.
+ * Parallel compiler is enabled for local builds; CI stays on the stable
+ * compiler until release builds are proven correct under parallel sema.
  */
 export function defaultZigCommit(ci: boolean, hostOs: OS): string {
-  if (ci || hostOs !== "darwin") return ZIG_COMMIT;
+  if (ci || hostOs === "windows") return ZIG_COMMIT;
   return ZIG_COMMIT_PARALLEL;
 }
 

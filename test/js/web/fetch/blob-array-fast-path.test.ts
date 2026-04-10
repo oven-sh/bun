@@ -79,6 +79,18 @@ describe("Blob constructor array iteration", () => {
     expect(await blob.text()).toBe("123");
   });
 
+  test("array mutated during iteration via element side effect", () => {
+    const arr: any[] = ["a", "b"];
+    arr.push({
+      get x() {
+        for (let i = 0; i < 10000; i++) arr.push("pad");
+        return 1;
+      },
+    });
+    arr.push("c");
+    expect(arr).toContainEqual({ x: 1 });
+  });
+
   test("non-ASCII strings", async () => {
     const blob = new Blob(["日本語", "テスト"]);
     expect(await blob.text()).toBe("日本語テスト");

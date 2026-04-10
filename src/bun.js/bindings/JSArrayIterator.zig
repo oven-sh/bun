@@ -31,13 +31,17 @@ pub const JSArrayIterator = struct {
         const i = this.i;
         this.i += 1;
         if (this.fast) |elements| {
-            const val = elements[i];
-            return if (val == .zero) .js_undefined else val;
+            if (Bun__JSArray__contiguousVectorIsStillValid(this.array, elements, this.len)) {
+                const val = elements[i];
+                return if (val == .zero) .js_undefined else val;
+            }
+            this.fast = null;
         }
         return try JSObject.getIndex(this.array, this.global, i);
     }
 
     extern fn Bun__JSArray__getContiguousVector(JSValue, *u32) ?[*]const JSValue;
+    extern fn Bun__JSArray__contiguousVectorIsStillValid(JSValue, [*]const JSValue, u32) bool;
 };
 
 const bun = @import("bun");

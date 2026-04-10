@@ -6479,6 +6479,25 @@ extern "C" const JSC::EncodedJSValue* Bun__JSArray__getContiguousVector(
     return reinterpret_cast<const JSC::EncodedJSValue*>(butterfly->contiguous().data());
 }
 
+// Revalidates that the array's butterfly storage has not changed since
+// getContiguousVector was called. Mirrors the check in JSC's fastArrayJoin
+// (ArrayPrototypeInlines.h) which bails to the generic path when a
+// side-effecting toString reallocated or transitioned the butterfly.
+extern "C" bool Bun__JSArray__contiguousVectorIsStillValid(
+    JSC::EncodedJSValue encodedValue,
+    const JSC::EncodedJSValue* expected,
+    uint32_t expectedLength)
+{
+    JSC::JSArray* array = JSC::jsCast<JSC::JSArray*>(JSC::JSValue::decode(encodedValue).asCell());
+    JSC::IndexingType indexing = array->indexingType();
+    if (!hasInt32(indexing) && !hasContiguous(indexing)) [[unlikely]]
+        return false;
+    JSC::Butterfly* butterfly = array->butterfly();
+    if (butterfly->publicLength() != expectedLength) [[unlikely]]
+        return false;
+    return reinterpret_cast<const JSC::EncodedJSValue*>(butterfly->contiguous().data()) == expected;
+}
+
 extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }
 extern "C" void JSC__ArrayBuffer__deref(JSC::ArrayBuffer* self) { self->deref(); }
 extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__ArrayBuffer* out)

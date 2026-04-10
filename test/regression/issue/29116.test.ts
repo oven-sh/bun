@@ -1,12 +1,7 @@
-// Regression test for https://github.com/oven-sh/bun/issues/29116
-//
-// `node:dgram` emits an `ECONNREFUSED ... recv` error and crashes the process
-// when sending a UDP datagram to a closed port on Linux, starting in Bun
-// 1.3.12 (#28827). Node.js and Bun ≤ 1.3.11 do not fire `'error'` in this
-// case because libuv does not enable `IP_RECVERR` by default — the Linux
-// kernel silently drops ICMP port-unreachable on unconnected sockets.
-//
-// Regression exercise is Linux-only — `IP_RECVERR` only exists on Linux.
+// https://github.com/oven-sh/bun/issues/29116
+// `node:dgram` emitted `ECONNREFUSED ... recv` and crashed the process when
+// sending a UDP datagram to a closed port on Linux after #28827 enabled
+// IP_RECVERR unconditionally. Linux-only: IP_RECVERR only exists on Linux.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 

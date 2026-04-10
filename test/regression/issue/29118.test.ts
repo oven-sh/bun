@@ -152,6 +152,20 @@ test("Kitty APC for data:image/png payload also carries c=<cols>", () => {
   expect(out).toContain("\x1b_Ga=T,t=d,f=100,q=2,c=50;");
 });
 
+test("Kitty APC path is taken for DATA:image/PNG;BASE64 (case-insensitive MIME)", () => {
+  // MIME type + parameters are case-insensitive per RFC 2045 §5.1 /
+  // RFC 2046 §5.1. Previously the scheme check was case-insensitive
+  // but the `image/png` and `;base64` checks were byte-exact, so an
+  // uppercase MIME URI would silently fall through to alt-text.
+  const dataUrl = "DATA:image/PNG;BASE64," + PNG_8x8.toString("base64");
+  const out = Bun.markdown.ansi(`![](${dataUrl})\n`, {
+    colors: true,
+    kittyGraphics: true,
+    columns: 50,
+  });
+  expect(out).toContain("\x1b_Ga=T,t=d,f=100,q=2,c=50;");
+});
+
 test("non-PNG file does NOT get sent to Kitty — falls through to URL label", async () => {
   // A JPEG file on disk — the current code happily base64'd the path
   // and handed it to Kitty under f=100 (PNG), so the terminal showed

@@ -2287,10 +2287,23 @@ fn extractPngDataUrlBase64(src: []const u8) ?[]const u8 {
     const comma = bun.strings.indexOfChar(src, ',') orelse return null;
     const header = src[0..comma];
     const payload = src[comma + 1 ..];
-    if (!bun.strings.endsWith(header, ";base64")) return null;
+    // MIME type and its parameters are ASCII case-insensitive per
+    // RFC 2045 §5.1 / RFC 2046 §5.1, so `image/PNG` and `;BASE64`
+    // are equivalent spellings.
+    if (!endsWithCaseInsensitiveAscii(header, ";base64")) return null;
     // Only PNG is losslessly transmittable via t=d,f=100.
-    if (!bun.strings.contains(header, "image/png")) return null;
+    if (!bun.strings.containsCaseInsensitiveASCII(header, "image/png")) return null;
     return payload;
+}
+
+/// ASCII case-insensitive tail match. `bun.strings` has a case-
+/// insensitive `startsWith` and `contains` but no `endsWith` variant,
+/// so inline a one-shot check here rather than extend the general
+/// string helpers for a single caller.
+fn endsWithCaseInsensitiveAscii(haystack: []const u8, suffix: []const u8) bool {
+    if (haystack.len < suffix.len) return false;
+    const tail = haystack[haystack.len - suffix.len ..];
+    return bun.strings.eqlCaseInsensitiveASCII(tail, suffix, false);
 }
 
 /// Check whether the file at `abs_path` starts with the PNG signature

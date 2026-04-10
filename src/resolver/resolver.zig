@@ -708,35 +708,49 @@ pub const Resolver = struct {
         // no URL-fetching module loader, so silently marking a JS URL import
         // external previously caused `import * as x from "https://..."` to
         // produce a bogus `{ default: "<url>" }` namespace instead of an error
-        // (see #29076). With the flag off, the runtime falls through to normal
-        // resolution and surfaces a proper module-not-found error.
-        if (kind != .entry_point_build and kind != .entry_point_run and
-            (r.isExternalPattern(import_path) or
+        // (see #29076).
+        if (kind != .entry_point_build and kind != .entry_point_run) {
+            const looks_like_url =
+                strings.startsWith(import_path, "http://") or
+                strings.startsWith(import_path, "https://") or
+                strings.startsWith(import_path, "//");
+
+            if (r.isExternalPattern(import_path) or
                 // "fill: url(#filter);"
                 (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
-                (r.opts.allow_url_externals and
-                    // "background: url(http://example.com/images/image.png);"
-                    (strings.startsWith(import_path, "http://") or
-                        // "background: url(https://example.com/images/image.png);"
-                        strings.startsWith(import_path, "https://") or
-                        // "background: url(//example.com/images/image.png);"
-                        strings.startsWith(import_path, "//")))))
-        {
-            if (r.debug_logs) |*debug| {
-                debug.addNote("Marking this path as implicitly external");
-                r.flushDebugLogs(.success) catch {};
+                (r.opts.allow_url_externals and looks_like_url))
+            {
+                if (r.debug_logs) |*debug| {
+                    debug.addNote("Marking this path as implicitly external");
+                    r.flushDebugLogs(.success) catch {};
+                }
+
+                return .{
+                    .success = Result{
+                        .import_kind = kind,
+                        .path_pair = PathPair{
+                            .primary = Path.init(import_path),
+                        },
+                        .module_type = if (!kind.isFromCSS()) .esm else .unknown,
+                        .flags = .{ .is_external = true },
+                    },
+                };
             }
 
-            return .{
-                .success = Result{
-                    .import_kind = kind,
-                    .path_pair = PathPair{
-                        .primary = Path.init(import_path),
-                    },
-                    .module_type = if (!kind.isFromCSS()) .esm else .unknown,
-                    .flags = .{ .is_external = true },
-                },
-            };
+            // URL imports with `allow_url_externals` off (the runtime VM): we
+            // must NOT fall through to the normal resolution path, otherwise
+            // `isPackagePath("https://esm.sh/d3@7.9.0")` returns true and the
+            // auto-install block below would parse a bogus package name
+            // ("https://esm.sh/d3" with version "7.9.0") and fire a spurious
+            // npm registry lookup when run with `-i`/`install.auto=fallback`.
+            // Surface a clean module-not-found instead.
+            if (looks_like_url) {
+                if (r.debug_logs) |*debug| {
+                    debug.addNote("URL imports are not supported at runtime");
+                    r.flushDebugLogs(.fail) catch {};
+                }
+                return .{ .not_found = {} };
+            }
         }
 
         if (DataURL.parse(import_path) catch {

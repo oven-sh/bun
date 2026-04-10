@@ -37,11 +37,7 @@ test("inherited-failing", () => expect(1).toBe(2));
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // The failing test still reports as a fail.
   expect(stderr).toContain("inherited-failing");
@@ -81,11 +77,7 @@ test("local-wins-failing", () => expect(1).toBe(2));
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // With the local bunfig disabling onlyFailures, the passing test
   // IS visible in the output.
@@ -120,11 +112,7 @@ test("plain-failing", () => expect(1).toBe(2));
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Without any bunfig, default behavior prints both tests.
   expect(stderr).toContain("plain-passing");

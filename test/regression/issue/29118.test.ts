@@ -12,9 +12,9 @@
 //      scale to fit the terminal instead of overflowing the screen.
 
 import { expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tempDir } from "harness";
 
 const PNG_8x8 = Buffer.from(
   // Minimal 8x8 RGB PNG — smallest valid encoding this test cares about.
@@ -79,10 +79,10 @@ test("image inside a link keeps the enclosing link URL (no nested parens)", () =
   // `[![alt](img.jpg)](https://outer.example.com/)` — the outer link's
   // URL is already shown in parens via the link-fallback path. The inner
   // image must NOT also emit its own `(img.jpg)` or we get nested noise.
-  const out = Bun.markdown.ansi(
-    "[![inner](https://cdn.example.com/img.jpg)](https://outer.example.com/page)\n",
-    { colors: true, hyperlinks: false },
-  );
+  const out = Bun.markdown.ansi("[![inner](https://cdn.example.com/img.jpg)](https://outer.example.com/page)\n", {
+    colors: true,
+    hyperlinks: false,
+  });
   expect(out).toContain("inner");
   expect(out).toContain("https://outer.example.com/page");
   // The inner image URL must not appear in a second paren pair.

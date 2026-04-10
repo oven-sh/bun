@@ -12,7 +12,12 @@ test("TransformStream: flush runs after async transform resolves (minimal)", asy
 
   const ts = new TransformStream({
     async transform(chunk, controller) {
-      await new Promise(r => setTimeout(r, 1));
+      // Multiple microtask boundaries — no wall-clock timer so the test
+      // doesn't become flaky under load. Each await gives the close
+      // sentinel a chance to race ahead of the transform's completion.
+      await Promise.resolve();
+      await new Promise<void>(r => queueMicrotask(r));
+      await Promise.resolve();
       transformComplete = true;
       controller.enqueue(chunk);
     },
@@ -122,7 +127,9 @@ test("TransformStream: transform errors still propagate through write", async ()
   const writer = ts.writable.getWriter();
 
   // The write promise should reject with the thrown error.
-  await expect(writer.write("x")).rejects.toBe(err);
+  await expect(async () => {
+    await writer.write("x");
+  }).toThrow(err);
 });
 
 test("TransformStream: flush does not run if transform throws", async () => {
@@ -140,8 +147,12 @@ test("TransformStream: flush does not run if transform throws", async () => {
   });
 
   const writer = ts.writable.getWriter();
-  await expect(writer.write("x")).rejects.toBe(err);
+  await expect(async () => {
+    await writer.write("x");
+  }).toThrow(err);
   // Closing an errored stream should reject, and flush should not run.
-  await expect(writer.close()).rejects.toBeDefined();
+  await expect(async () => {
+    await writer.close();
+  }).toThrow();
   expect(flushRan).toBe(false);
 });

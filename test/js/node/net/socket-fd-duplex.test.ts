@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
-import { openSync, closeSync } from "node:fs";
+import { closeSync, openSync } from "node:fs";
 import { Socket } from "node:net";
 import { join } from "node:path";
 

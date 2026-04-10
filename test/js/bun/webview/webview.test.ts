@@ -72,22 +72,17 @@ test("backend: 'webkit' throws on non-darwin", () => {
   }
 });
 
-// https://github.com/oven-sh/bun/issues/29102
-// Chrome backend's SPAWN path has no Windows implementation yet — the
-// POSIX socketpair + --remote-debugging-pipe plumbing in
-// ChromeProcess.zig needs a named-pipes/libuv port. Bun__Chrome__ensure
-// short-circuits before BUN_CHROME_PATH / backend.path are consulted,
-// so constructor calls that would have needed spawn must throw a clean
-// "not implemented" error instead of the old misleading
-// ERR_DLOPEN_FAILED that told users to set a path. The WebSocket
-// connect path (backend.url: "ws://...") is unaffected — see
-// test/regression/issue/29102.test.ts for that coverage.
+// https://github.com/oven-sh/bun/issues/29102 — Chrome backend's spawn
+// path has no Windows implementation yet. Only test shapes that force
+// spawn without consulting Bun__Chrome__autoDetect, so the test is
+// deterministic regardless of whether Chrome is running on the host
+// with --remote-debugging-port. Default `{}` and `backend: "chrome"`
+// go through auto-detect and their spawn-path coverage lives in
+// test/regression/issue/29102.test.ts where LOCALAPPDATA is scrubbed
+// to guarantee the auto-detect branch misses.
 test.skipIf(!isWindows)("backend: 'chrome' spawn throws on Windows", () => {
   const cases: Array<object> = [
-    // Default (implicit chrome, no running Chrome to auto-detect).
-    {},
-    { backend: "chrome" },
-    // Explicit path forces spawn-mode.
+    // Explicit path forces spawn-mode (skips auto-detect).
     {
       backend: {
         type: "chrome",

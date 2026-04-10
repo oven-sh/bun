@@ -269,6 +269,22 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
         };
     }
 
+    // For callers that pass a relative/cwd-local "bunfig.toml" while
+    // auto-loading, resolve it via the cwd and walk up parent directories
+    // if it doesn't exist. This matches the behavior of `loadConfig` and
+    // lets monorepo subprojects pick up a root `bunfig.toml` via
+    // `bun run` and `bun repl`.
+    if (auto_loaded and !std.fs.path.isAbsolute(config_path)) walkup: {
+        var cwd_buf: bun.PathBuffer = undefined;
+        const cwd = bun.getcwd(&cwd_buf) catch break :walkup;
+        var walkup_buf: bun.PathBuffer = undefined;
+        if (findAutoBunfig(cwd, &walkup_buf)) |found| {
+            return loadBunfig(allocator, auto_loaded, found, ctx, cmd);
+        }
+        // Nothing found — fall through. `loadBunfig` will try the
+        // original relative path and silently return since auto_loaded.
+    }
+
     try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);
 }
 
@@ -311,6 +327,33 @@ fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
     }
 
     return null;
+}
+
+/// Walks up from `start_dir` looking for a `bunfig.toml`. Returns the path
+/// written into `buf`, or null if none was found up to the filesystem root.
+///
+/// This enables monorepos to define a single `bunfig.toml` at the repo root
+/// and have it inherited by subprojects that don't have their own.
+pub fn findAutoBunfig(start_dir: []const u8, buf: *bun.PathBuffer) ?[:0]const u8 {
+    if (start_dir.len == 0) return null;
+
+    var dir = start_dir;
+    while (true) {
+        var parts = [_]string{ dir, "bunfig.toml" };
+        const candidate = resolve_path.joinAbsStringBufZ(dir, buf, &parts, .auto);
+        if (bun.sys.existsZ(candidate)) {
+            return candidate;
+        }
+
+        const parent = resolve_path.dirname(dir, .auto);
+        // dirname returns "" for unrooted paths and the input itself when
+        // already at the filesystem root (e.g. "/" on posix, "C:\" on
+        // windows). Either way, stop.
+        if (parent.len == 0 or parent.len >= dir.len) {
+            return null;
+        }
+        dir = parent;
+    }
 }
 pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) OOM!void {
     // If running as a standalone executable with autoloadBunfig disabled, skip config loading
@@ -381,6 +424,20 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
         );
         config_buf[config_path_.len] = 0;
         config_path = config_buf[0..config_path_.len :0];
+
+        // If auto-loading from the cwd and no `bunfig.toml` exists there,
+        // walk up the directory tree looking for one. This lets a
+        // monorepo's root `bunfig.toml` apply to subprojects that don't
+        // ship their own — e.g. `onlyFailures = true` at the repo root
+        // is inherited by `packages/<x>/` when running `bun test`.
+        if (auto_loaded and !bun.sys.existsZ(config_path)) {
+            var walkup_buf: bun.PathBuffer = undefined;
+            if (findAutoBunfig(ctx.args.absolute_working_dir.?, &walkup_buf)) |found| {
+                @memcpy(config_buf[0..found.len], found);
+                config_buf[found.len] = 0;
+                config_path = config_buf[0..found.len :0];
+            }
+        }
     }
 
     loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd) catch |err| {

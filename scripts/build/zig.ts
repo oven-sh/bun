@@ -47,11 +47,15 @@ export const ZIG_COMMIT_PARALLEL = "445fc0cbba4eea579e5c846f2b8be7c9bdc4e1cc";
  * on the resolved cfg.zigCommit via usingParallelCompiler(), so changing
  * this — or passing --zigCommit=<hash> — is sufficient.
  *
- * Parallel compiler is enabled for local builds; CI stays on the stable
- * compiler until release builds are proven correct under parallel sema.
+ * Parallel compiler is darwin-local only for now. Linux is gated off
+ * because oven-sh/zig's self-hosted ELF `-r` merge (used to combine
+ * sharded codegen output when no_link_obj=true) currently emits an
+ * incomplete bun-zig.o — link fails with every Zig symbol undefined on
+ * a fresh build. macOS's Mach-O merge path works. See #29132. CI and
+ * Windows stay on the stable compiler regardless.
  */
 export function defaultZigCommit(ci: boolean, hostOs: OS): string {
-  if (ci || hostOs === "windows") return ZIG_COMMIT;
+  if (ci || hostOs !== "darwin") return ZIG_COMMIT;
   return ZIG_COMMIT_PARALLEL;
 }
 

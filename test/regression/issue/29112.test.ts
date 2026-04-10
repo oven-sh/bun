@@ -12,20 +12,32 @@
 
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
+import { isMusl } from "harness";
 import tty from "node:tty";
 
 const describePosix = process.platform === "win32" ? describe.skip : describe;
 
+// Resolve the libraries node-pty's native addon touches. On Darwin everything
+// is in libc.dylib. On glibc Linux, openpty(3) historically lived in libutil
+// (it moved into libc only in glibc 2.34), so load it from libutil.so.1 to
+// support older distros too. On musl Linux (e.g. Alpine) there is no separate
+// libutil — openpty is in musl libc — and the SONAME is
+// `libc.musl-<arch>.so.1` rather than `libc.so.6`.
+function resolveLibPaths(): { libcPath: string; openptyLibPath: string } {
+  if (process.platform === "darwin") {
+    return { libcPath: "libc.dylib", openptyLibPath: "libc.dylib" };
+  }
+  if (isMusl) {
+    const muslArch =
+      process.arch === "x64" ? "x86_64" : process.arch === "arm64" ? "aarch64" : (process.arch as string);
+    const muslLibc = `libc.musl-${muslArch}.so.1`;
+    return { libcPath: muslLibc, openptyLibPath: muslLibc };
+  }
+  return { libcPath: "libc.so.6", openptyLibPath: "libutil.so.1" };
+}
+
 describePosix("issue #29112 — tty.ReadStream on non-blocking PTY fd", () => {
-  // Resolve the libc symbols we need to open a PTY and drive ioctl() directly.
-  // This mirrors exactly what node-pty's native addon does.
-  //
-  // On Darwin `openpty` lives in libc itself. On Linux it lived in libutil for
-  // ages and only moved into libc in glibc 2.34, so always load it from
-  // libutil.so.1 there — that symlink/SONAME is stable across distros.
-  const isDarwin = process.platform === "darwin";
-  const libcPath = isDarwin ? "libc.dylib" : "libc.so.6";
-  const openptyLibPath = isDarwin ? libcPath : "libutil.so.1";
+  const { libcPath, openptyLibPath } = resolveLibPaths();
 
   const libc = dlopen(libcPath, {
     close: { args: ["int"], returns: "int" },
@@ -70,10 +82,11 @@ describePosix("issue #29112 — tty.ReadStream on non-blocking PTY fd", () => {
       // what makes fs.read return EAGAIN when no data is buffered.
       setNonblock(parent);
 
-      // Before the fix, the first `_read` on this fd would get EAGAIN,
-      // bubble up to `errorOrDestroy`, destroy the stream, and close the
-      // fd — exactly what node-pty's JS wrapper tries to recover from in
-      // its 'error' handler but can't, because the fd is already gone.
+      // Before the fix, the first `_read` on this fd would go to the
+      // threadpool, get EAGAIN, bubble up to `errorOrDestroy`, destroy
+      // the stream, and close the fd — exactly what node-pty's JS
+      // wrapper tries to recover from in its 'error' handler but can't,
+      // because the fd is already gone.
       const rs = new tty.ReadStream(parent);
 
       const closed = new Promise<void>(resolve => rs.once("close", () => resolve()));
@@ -81,21 +94,48 @@ describePosix("issue #29112 — tty.ReadStream on non-blocking PTY fd", () => {
       rs.on("error", err => errors.push(err));
       rs.on("data", () => {});
 
-      // Give the read loop a few event-loop turns to hit EAGAIN. Racing
-      // against `close` means: if the bug is present, the stream will
-      // close quickly and we observe it; if it isn't, the timeout wins.
-      await Promise.race([closed, new Promise<void>(r => setImmediate(() => setImmediate(r)))]);
+      // The bug path runs entirely off-main: _read schedules a threadpool
+      // fs.read, the worker calls pread(), pread returns EAGAIN, the
+      // worker posts the callback back to the main thread, the callback
+      // invokes errorOrDestroy → destroy → close, and close goes back to
+      // the threadpool to actually close(fd). Two `setImmediate` turns
+      // isn't enough to guarantee that whole chain has run. Instead,
+      // actively probe both outcomes: either the stream ends (bug) or we
+      // complete ~50 polls with the fd still valid (fix). Any poll that
+      // sees the stream dead, or that sees ioctl fail with EBADF, is an
+      // immediate regression signal — we don't need to wait the full
+      // budget. We also race against the "close" event to exit as soon
+      // as the buggy build tears down.
+      const deadline = Date.now() + 1000;
+      let raceWinner: "poll" | "close" = "poll";
+      for (;;) {
+        const winner = await Promise.race([
+          closed.then(() => "close" as const),
+          new Promise<"poll">(r => setImmediate(() => r("poll"))),
+        ]);
+        if (winner === "close") {
+          raceWinner = "close";
+          break;
+        }
+        // Probe: is the stream destroyed? Did the fd go bad under us?
+        if (rs.destroyed) break;
+        if (setWinsize(parent, 80, 24) !== 0) break;
+        if (Date.now() >= deadline) break;
+      }
 
-      // The fd must still be open — this is what node-pty's
-      // `pty.resize(this._fd, cols, rows, ...)` call does. If Bun closed
-      // the fd behind node-pty's back, this ioctl returns -1 / EBADF.
-      const ioctlResult = setWinsize(parent, 120, 40);
-      expect(ioctlResult).toBe(0);
-
-      // And the stream itself must still be alive.
+      // After the probe loop, the fix should leave the stream alive and
+      // the fd valid. The buggy build tears both down inside the loop.
+      expect(raceWinner).toBe("poll");
       expect(rs.destroyed).toBe(false);
+
+      // This is exactly what node-pty's `pty.resize(this._fd, cols, rows, ...)`
+      // does. If Bun closed the fd behind node-pty's back, this returns -1
+      // with errno == EBADF.
+      expect(setWinsize(parent, 120, 40)).toBe(0);
+
       // No stream 'error' event should have surfaced from EAGAIN — the
-      // fix retries the read internally instead of calling errorOrDestroy.
+      // fix retries the read inside the custom fs wrapper instead of
+      // calling errorOrDestroy.
       expect(errors).toEqual([]);
 
       rs.destroy();

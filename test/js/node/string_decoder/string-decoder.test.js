@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, withoutAggressiveGC } from "harness";
 
 const RealStringDecoder = require("string_decoder").StringDecoder;
 
@@ -307,4 +307,5 @@ it("write() with a buffer larger than String::MaxLength throws instead of crashi
   expect(stderrFiltered).toBe("");
   expect(stdout).toBe("write ERR_STRING_TOO_LONG\nend ERR_STRING_TOO_LONG\n");
   expect(exitCode).toBe(0);
-}, 60000);
+  // The 2 GiB ASCII scan takes ~15s under debug/ASAN vs ~1s in release.
+}, isDebug || isASAN ? 60_000 : undefined);

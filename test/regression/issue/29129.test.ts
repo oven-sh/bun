@@ -144,80 +144,76 @@ test("os.availableParallelism() matches sched_getaffinity + cgroup quota (#29129
   assert.strictEqual(availableParallelism(), expected);
 });
 
-test(
-  "os.availableParallelism() under taskset reports the restricted count (#29129)",
-  { skip: !isLinux },
-  () => {
-    const allowed = parseCpusAllowedList();
-    if (allowed.length < 2) {
-      // Need at least 2 CPUs in the current mask so we can taskset
-      // down to a strict subset. Don't fail — the in-process check
-      // above already covers the unrestricted case.
+test("os.availableParallelism() under taskset reports the restricted count (#29129)", { skip: !isLinux }, () => {
+  const allowed = parseCpusAllowedList();
+  if (allowed.length < 2) {
+    // Need at least 2 CPUs in the current mask so we can taskset
+    // down to a strict subset. Don't fail — the in-process check
+    // above already covers the unrestricted case.
+    return;
+  }
+
+  // Use taskset if present. Not every CI image ships it (e.g. some
+  // minimal alpine variants), so skip gracefully in that case — the
+  // cross-process path is extra coverage on top of the in-process
+  // assertion above.
+  const which = spawnSync("sh", ["-c", "command -v taskset || true"], { encoding: "utf8" });
+  const tasksetPath = (which.stdout || "").trim();
+  if (!tasksetPath) return;
+
+  // Pin to the first CPU in the current allowed set. Using an
+  // index from the mask (rather than "0") avoids "Invalid
+  // argument" inside a cpuset that doesn't include CPU 0.
+  const pinCpu = allowed[0]!;
+
+  // Run the same runtime that's executing this file (bun under
+  // `bun test`, node under `node --test`) so the subprocess
+  // actually exercises the binary under test.
+  const result = spawnSync(
+    tasksetPath,
+    [
+      "-c",
+      String(pinCpu),
+      process.execPath,
+      "-e",
+      "console.log(require('os').availableParallelism() + '|' + (globalThis.navigator?.hardwareConcurrency ?? ''))",
+    ],
+    { encoding: "utf8" },
+  );
+
+  if (result.status !== 0) {
+    const stderr = result.stderr || "";
+    // taskset itself can fail before the subprocess starts when
+    // sched_setaffinity is blocked by a seccomp profile (GKE
+    // Autopilot, Fargate, restrictive pod security) — the stderr
+    // looks like "taskset: failed to set pid ...'s affinity:
+    // Operation not permitted". Treat permission denials as a
+    // graceful skip in the same spirit as the missing-binary guard
+    // above: this sub-test is extra coverage, not the primary
+    // assertion. Any OTHER non-zero exit is a real failure worth
+    // surfacing.
+    if (stderr.includes("Operation not permitted") || stderr.includes("Permission denied")) {
       return;
     }
+    throw new Error(`taskset subprocess exited with ${result.status}\nstderr:\n${stderr}`);
+  }
 
-    // Use taskset if present. Not every CI image ships it (e.g. some
-    // minimal alpine variants), so skip gracefully in that case — the
-    // cross-process path is extra coverage on top of the in-process
-    // assertion above.
-    const which = spawnSync("sh", ["-c", "command -v taskset || true"], { encoding: "utf8" });
-    const tasksetPath = (which.stdout || "").trim();
-    if (!tasksetPath) return;
+  const [availableStr, hardwareStr] = (result.stdout || "").trim().split("|");
+  const available = Number(availableStr);
 
-    // Pin to the first CPU in the current allowed set. Using an
-    // index from the mask (rather than "0") avoids "Invalid
-    // argument" inside a cpuset that doesn't include CPU 0.
-    const pinCpu = allowed[0]!;
+  // Pinned to exactly one CPU → availableParallelism must report 1
+  // regardless of the surrounding cgroup quota (taskset trumps: the
+  // mask is a strict subset of what the cgroup allows). Pre-fix bun
+  // returned the host count (32 on a 32-core host with an 8-core
+  // cpuset), which was the whole bug.
+  assert.strictEqual(available, 1);
 
-    // Run the same runtime that's executing this file (bun under
-    // `bun test`, node under `node --test`) so the subprocess
-    // actually exercises the binary under test.
-    const result = spawnSync(
-      tasksetPath,
-      [
-        "-c",
-        String(pinCpu),
-        process.execPath,
-        "-e",
-        "console.log(require('os').availableParallelism() + '|' + (globalThis.navigator?.hardwareConcurrency ?? ''))",
-      ],
-      { encoding: "utf8" },
-    );
-
-    if (result.status !== 0) {
-      const stderr = result.stderr || "";
-      // taskset itself can fail before the subprocess starts when
-      // sched_setaffinity is blocked by a seccomp profile (GKE
-      // Autopilot, Fargate, restrictive pod security) — the stderr
-      // looks like "taskset: failed to set pid ...'s affinity:
-      // Operation not permitted". Treat permission denials as a
-      // graceful skip in the same spirit as the missing-binary guard
-      // above: this sub-test is extra coverage, not the primary
-      // assertion. Any OTHER non-zero exit is a real failure worth
-      // surfacing.
-      if (stderr.includes("Operation not permitted") || stderr.includes("Permission denied")) {
-        return;
-      }
-      throw new Error(`taskset subprocess exited with ${result.status}\nstderr:\n${stderr}`);
-    }
-
-    const [availableStr, hardwareStr] = (result.stdout || "").trim().split("|");
-    const available = Number(availableStr);
-
-    // Pinned to exactly one CPU → availableParallelism must report 1
-    // regardless of the surrounding cgroup quota (taskset trumps: the
-    // mask is a strict subset of what the cgroup allows). Pre-fix bun
-    // returned the host count (32 on a 32-core host with an 8-core
-    // cpuset), which was the whole bug.
-    assert.strictEqual(available, 1);
-
-    // navigator.hardwareConcurrency is a web-platform global that bun
-    // exposes on the main thread but node does not (it's only on
-    // Worker scopes). Assert it matches the affinity count ONLY when
-    // the runtime exposes it — otherwise this check would spuriously
-    // fail under `node --test`.
-    if (hardwareStr !== "" && hardwareStr !== "undefined") {
-      assert.strictEqual(Number(hardwareStr), 1);
-    }
-  },
-);
+  // navigator.hardwareConcurrency is a web-platform global that bun
+  // exposes on the main thread but node does not (it's only on
+  // Worker scopes). Assert it matches the affinity count ONLY when
+  // the runtime exposes it — otherwise this check would spuriously
+  // fail under `node --test`.
+  if (hardwareStr !== "" && hardwareStr !== "undefined") {
+    assert.strictEqual(Number(hardwareStr), 1);
+  }
+});

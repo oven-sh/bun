@@ -1,15 +1,4 @@
 // https://github.com/oven-sh/bun/issues/29118
-//
-// Bun.markdown.ansi() image-rendering improvements:
-//   1. Show the image URL in dim parens after the alt text when the
-//      image can't be rendered inline (OSC 8 hyperlinks off, kitty
-//      graphics off, unsupported format, etc.) — previously the user
-//      only saw a camera icon with no way to reach the source.
-//   2. Verify the PNG signature before transmitting a file to Kitty so
-//      JPEG / GIF / WebP fall through to the URL-label fallback instead
-//      of sending non-PNG bytes under Kitty's `f=100` format code.
-//   3. Include `c=<cols>` in the Kitty APC so large-dimension images
-//      scale to fit the terminal instead of overflowing the screen.
 
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
@@ -195,6 +184,7 @@ test("image without a src still works (doesn't crash, doesn't print URL)", () =>
   // Edge case: empty src.
   const out = Bun.markdown.ansi("![alt]()\n", { colors: true, hyperlinks: false });
   expect(out).toContain("alt");
-  // No parens suffix.
-  expect(out).not.toContain(" ()");
+  // No parens suffix — covers both " ()" (dim-space variant) and bare "()"
+  // so a regression emitting an empty URL pair in any form fails here.
+  expect(out).not.toContain("()");
 });

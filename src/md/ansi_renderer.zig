@@ -1901,12 +1901,16 @@ pub const AnsiRenderer = struct {
     /// Returns the number of terminal cells the image is allowed to
     /// occupy, or 0 when wrapping is disabled (theme.columns == 0) —
     /// in which case emitKittyImage* omits `c=` and lets the terminal
-    /// render at the image's native size.
+    /// render at the image's native size. In a deeply-indented layout
+    /// where the indent already consumes the full column budget, we
+    /// still cap at 1 cell so the terminal scales the image down to a
+    /// single column rather than falling back to native size and
+    /// blowing out the screen.
     fn kittyColumnBudget(self: *AnsiRenderer) u32 {
         if (self.theme.columns == 0) return 0;
         const indent = self.currentIndent();
-        if (indent >= self.theme.columns) return 0;
-        return self.theme.columns - indent;
+        const budget = @as(u32, self.theme.columns) -| indent;
+        return @max(@as(u32, 1), budget);
     }
 
     /// Emit a Kitty Graphics Protocol transmit-and-display sequence for

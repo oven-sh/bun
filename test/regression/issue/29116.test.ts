@@ -7,7 +7,7 @@
 // Linux kernel silently drops ICMP port-unreachable errors there.
 //
 // The regression exercise is Linux-only — `IP_RECVERR` only exists on Linux.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 
 test.skipIf(!isLinux)(
@@ -44,11 +44,7 @@ test.skipIf(!isLinux)(
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Script must print 'done' and exit cleanly. Prior to the fix, Bun
     // 1.3.12 crashed after printing 'done' with:

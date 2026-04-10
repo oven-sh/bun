@@ -4,7 +4,7 @@
 // performTransform and sinkWriteAlgorithm added microtask hops that could let
 // a queued close sentinel race ahead of the transform's completion.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("TransformStream: flush runs after async transform resolves (minimal)", async () => {
   let transformComplete = false;

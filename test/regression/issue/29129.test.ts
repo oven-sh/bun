@@ -24,15 +24,12 @@
 import { spawn, spawnSync } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 
-// Pick a subset of the current affinity mask that's strictly smaller
-// than the full mask, so the test is meaningful: there must be at
-// least 2 CPUs available to the runner for us to taskset down to 1.
-//
-// We use /proc/self/status `Cpus_allowed_list` (range list like
-// "0-3,8-11") rather than sched_getaffinity(3) — no syscall needed.
+// Parse the process's CPU affinity mask from /proc/self/status's
+// `Cpus_allowed_list` field (range list like "0-3,8-11"). Faster than
+// spawning `taskset -p` and avoids a syscall for sched_getaffinity(3).
 function parseCpusAllowedList(): number[] {
   const text = readFileSync("/proc/self/status", "utf8");
   const match = text.match(/^Cpus_allowed_list:\s*(.+)$/m);
@@ -45,15 +42,108 @@ function parseCpusAllowedList(): number[] {
   return out;
 }
 
-test.skipIf(!isLinux)("os.availableParallelism() matches sched_getaffinity (#29129)", () => {
-  const allowed = parseCpusAllowedList();
-  expect(allowed.length).toBeGreaterThan(0);
+// Read the cgroup CPU quota for the current process, walking the
+// hierarchy the same way libuv's uv__get_constrained_cpu() does. Returns
+// `Infinity` when no limit is set (typical bare-metal / unrestricted
+// containers) or when /proc/self/cgroup can't be read. Otherwise returns
+// the floor of cpu.max's `limit / period` (so the caller can take a min
+// against the affinity count).
+//
+// This is meant to mirror Bun's own clamping logic: the test passes when
+// `availableParallelism() === min(affinity, cgroupQuota)`, the same
+// invariant libuv enforces via uv_available_parallelism().
+function readCgroupCpuQuota(): number {
+  let cgroup: string;
+  try {
+    cgroup = readFileSync("/proc/self/cgroup", "utf8");
+  } catch {
+    return Infinity;
+  }
 
-  // With the fix, availableParallelism() should match the affinity
-  // count, not sysconf(_SC_NPROCESSORS_ONLN). Both may be the same on
-  // an unrestricted host — the assertion below is still a valid
-  // sanity check in that case.
-  expect(availableParallelism()).toBe(allowed.length);
+  const slurp = (path: string): string | null => {
+    try {
+      return readFileSync(path, "utf8");
+    } catch {
+      return null;
+    }
+  };
+
+  // cgroup v2: "0::/my/path\n". Walk upwards, each level can further
+  // constrain cpu.max — the binding takes the min of every populated
+  // quota in the ancestry chain.
+  if (cgroup.startsWith("0::/")) {
+    let rel = cgroup.slice("0::/".length);
+    const nl = rel.indexOf("\n");
+    if (nl >= 0) rel = rel.slice(0, nl);
+
+    let min = Infinity;
+    let path = `/sys/fs/cgroup/${rel}`;
+    const mount = "/sys/fs/cgroup";
+    while (path.startsWith(mount)) {
+      const buf = slurp(`${path}/cpu.max`);
+      if (buf !== null && !buf.startsWith("max")) {
+        const parts = buf.trim().split(/\s+/);
+        const limit = Number(parts[0]);
+        const period = Number(parts[1]);
+        if (Number.isFinite(limit) && Number.isFinite(period) && period > 0) {
+          const q = Math.max(1, Math.floor(limit / period));
+          if (q < min) min = q;
+        }
+      }
+      if (path === mount) break;
+      const lastSlash = path.lastIndexOf("/");
+      if (lastSlash < 0) break;
+      path = path.slice(0, lastSlash);
+    }
+    return min;
+  }
+
+  // cgroup v1: find the `:cpu,` or `:cpu:` controller line and read
+  // cpu.cfs_quota_us / cpu.cfs_period_us.
+  for (const line of cgroup.split("\n")) {
+    const idx = line.indexOf(":cpu,");
+    const match = idx >= 0 ? line.slice(idx + ":cpu,".length) : line.match(/:cpu:(.*)$/)?.[1];
+    if (!match) continue;
+    const cpuPath = typeof match === "string" ? match : "";
+    const candidates = [
+      `/sys/fs/cgroup/cpu,cpuacct/${cpuPath}`,
+      `/sys/fs/cgroup/cpu/${cpuPath}`,
+    ];
+    for (const base of candidates) {
+      if (!existsSync(`${base}/cpu.cfs_quota_us`)) continue;
+      const quota = Number(slurp(`${base}/cpu.cfs_quota_us`)?.trim());
+      const period = Number(slurp(`${base}/cpu.cfs_period_us`)?.trim());
+      // cgroup v1 encodes "no limit" as quota=-1.
+      if (quota < 0 || !Number.isFinite(quota) || !Number.isFinite(period) || period <= 0) {
+        return Infinity;
+      }
+      return Math.max(1, Math.floor(quota / period));
+    }
+  }
+
+  return Infinity;
+}
+
+// The fix clamps by both affinity AND cgroup quota (matching libuv's
+// uv_available_parallelism()). Test environments may have either or both
+// in play — the expected value is the min.
+function expectedAvailableParallelism(): number {
+  const allowed = parseCpusAllowedList();
+  if (allowed.length === 0) return 1;
+  const quota = readCgroupCpuQuota();
+  return Math.min(allowed.length, Number.isFinite(quota) ? quota : allowed.length);
+}
+
+test.skipIf(!isLinux)("os.availableParallelism() matches sched_getaffinity + cgroup quota (#29129)", () => {
+  const expected = expectedAvailableParallelism();
+  expect(expected).toBeGreaterThan(0);
+
+  // Pre-fix bun returned sysconf(_SC_NPROCESSORS_ONLN) (host online
+  // count). The fix clamps by min(affinity, cgroup cpu.max), which is
+  // what Node reports via libuv. Compute the expected value here from
+  // the same inputs libuv reads so the test is valid inside any
+  // cpuset/cgroup CI environment, not just the author's machine.
+  expect(availableParallelism()).toBe(expected);
 });
 
 test.skipIf(!isLinux)(
@@ -62,15 +152,15 @@ test.skipIf(!isLinux)(
     const allowed = parseCpusAllowedList();
     if (allowed.length < 2) {
       // Need at least 2 CPUs in the current mask so we can taskset
-      // down to a strict subset. Don't fail; the other assertion
-      // already covers the unrestricted case.
+      // down to a strict subset. Don't fail — the in-process check
+      // above already covers the unrestricted case.
       return;
     }
 
     // Use taskset if present. Not every CI image ships it (e.g. some
-    // minimal alpine variants), so skip gracefully in that case —
-    // the cross-process boundary is extra belt-and-braces on top of
-    // the in-process assertion above.
+    // minimal alpine variants), so skip gracefully in that case — the
+    // cross-process path is extra coverage on top of the in-process
+    // assertion above.
     const which = spawnSync({ cmd: ["sh", "-c", "command -v taskset || true"], env: bunEnv });
     const tasksetPath = which.stdout.toString().trim();
     if (!tasksetPath) return;
@@ -106,9 +196,11 @@ test.skipIf(!isLinux)(
     const available = Number(availableStr);
     const hardware = Number(hardwareStr);
 
-    // Pinned to exactly one CPU → both must report 1. Pre-fix bun
-    // returned the host count (32 on a 32-core host with an 8-core
-    // cpuset), which was the whole bug.
+    // Pinned to exactly one CPU → both must report 1 regardless of
+    // the surrounding cgroup quota (taskset trumps: the mask is a
+    // strict subset of what the cgroup allows). Pre-fix bun returned
+    // the host count (32 on a 32-core host with an 8-core cpuset),
+    // which was the whole bug.
     expect(available).toBe(1);
     expect(hardware).toBe(1);
   },

@@ -149,9 +149,9 @@ fn guessHandleTypeFromFd(fd_int: i32) u32 {
         .err => return UNKNOWN,
     };
     const mode = st.mode;
-    if (std.posix.S.ISREG(mode) or std.posix.S.ISCHR(mode)) return FILE_TYPE;
-    if (std.posix.S.ISFIFO(mode)) return PIPE_TYPE;
-    if (!std.posix.S.ISSOCK(mode)) return UNKNOWN;
+    if (bun.S.ISREG(mode) or bun.S.ISCHR(mode)) return FILE_TYPE;
+    if (bun.S.ISFIFO(mode)) return PIPE_TYPE;
+    if (!bun.S.ISSOCK(mode)) return UNKNOWN;
 
     var ss: std.posix.sockaddr.storage = undefined;
     var ss_len: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.storage);

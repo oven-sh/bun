@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("Blob constructor array iteration", () => {
   test("basic string array", async () => {

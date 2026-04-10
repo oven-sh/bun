@@ -1815,20 +1815,26 @@ pub const AnsiRenderer = struct {
             }
             // http(s) URL that the CLI pre-scan pass already downloaded
             // to a temp file → send via Kitty's t=f against that path.
+            // Check the file signature because URL extensions aren't
+            // trustworthy — and so JPEG/GIF/WebP fall through to the
+            // URL-label fallback instead of getting sent to Kitty as
+            // f=100 (PNG), which shows as a broken image indicator.
             if (self.theme.remote_image_paths) |map| {
                 if ((bun.strings.startsWith(src.?, "http://") or
                     bun.strings.startsWith(src.?, "https://")))
                 {
-                    if (map.get(src.?)) |local_path| {
+                    if (map.get(src.?)) |local_path| if (isPngFile(local_path)) {
                         self.emitKittyImageFile(local_path);
                         return;
-                    }
+                    };
                 }
             }
             if (resolveLocalImagePath(src.?, self.allocator, self.theme.image_base_dir)) |abs_path| {
                 defer self.allocator.free(abs_path);
-                self.emitKittyImageFile(abs_path);
-                return;
+                if (isPngFile(abs_path)) {
+                    self.emitKittyImageFile(abs_path);
+                    return;
+                }
             }
         }
 
@@ -1846,9 +1852,9 @@ pub const AnsiRenderer = struct {
         // Also skip when we're inside an enclosing link span
         // (`[![alt](img)](url)`) — emitting our own OSC 8 would overwrite
         // the outer link destination for subsequent text on that line.
+        const is_data_url = has_src and bun.strings.startsWith(src.?, "data:");
         const link_ok = self.theme.colors and self.theme.hyperlinks and has_src and
-            self.link_depth == 0 and
-            !bun.strings.startsWith(src.?, "data:");
+            self.link_depth == 0 and !is_data_url;
         if (link_ok) {
             self.writeRawNoColor("\x1b]8;;");
             self.writeRawNoColor(src.?);
@@ -1873,7 +1879,34 @@ pub const AnsiRenderer = struct {
         self.reapplyStyles();
         if (link_ok) {
             self.writeRawNoColor("\x1b]8;;\x1b\\");
+        } else if (has_src and !is_data_url and self.link_depth == 0) {
+            // OSC 8 isn't being emitted — either hyperlinks are off, or
+            // colors are off, or the terminal wouldn't honour them. Show
+            // the URL in dim parens after the alt text so the user can
+            // still see where the image lives, matching the link-fallback
+            // format from leaveSpan(.a). Skipped for data: URIs (megabyte
+            // base64 payloads would dominate the output) and when we're
+            // inside an enclosing link span (the outer link already shows
+            // its own URL).
+            self.writeStyled(color(.dim), " (");
+            self.writeStyled("", src.?);
+            self.writeStyled(color(.dim), ")");
+            self.writeStyled("\x1b[39m\x1b[22m", "");
+            self.reapplyStyles();
         }
+    }
+
+    /// Cap the column budget we hand Kitty so a large image gets scaled
+    /// to the current terminal width instead of overflowing the screen.
+    /// Returns the number of terminal cells the image is allowed to
+    /// occupy, or 0 when wrapping is disabled (theme.columns == 0) —
+    /// in which case emitKittyImage* omits `c=` and lets the terminal
+    /// render at the image's native size.
+    fn kittyColumnBudget(self: *AnsiRenderer) u32 {
+        if (self.theme.columns == 0) return 0;
+        const indent = self.currentIndent();
+        if (indent >= self.theme.columns) return 0;
+        return self.theme.columns - indent;
     }
 
     /// Emit a Kitty Graphics Protocol transmit-and-display sequence for
@@ -1889,7 +1922,7 @@ pub const AnsiRenderer = struct {
         };
         defer self.allocator.free(encoded);
         _ = bun.base64.encode(encoded, path);
-        self.writeRawNoColor("\x1b_Ga=T,t=f,f=100,q=2;");
+        self.writeKittyApcHeader("t=f");
         self.writeRawNoColor(encoded);
         self.writeRawNoColor("\x1b\\");
         self.writeRaw("\n");
@@ -1905,13 +1938,33 @@ pub const AnsiRenderer = struct {
     /// `base64_payload` is already the base64 body of a `data:image/png`
     /// URL, so we forward it as-is — no temp file, no re-encoding.
     fn emitKittyImageDirect(self: *AnsiRenderer, base64_payload: []const u8) void {
-        self.writeRawNoColor("\x1b_Ga=T,t=d,f=100,q=2;");
+        self.writeKittyApcHeader("t=d");
         self.writeRawNoColor(base64_payload);
         self.writeRawNoColor("\x1b\\");
         self.writeRaw("\n");
         self.col = 0;
         self.last_was_newline = true;
         self.writeIndent();
+    }
+
+    /// Write the opening chunk of a Kitty Graphics APC sequence:
+    /// `ESC _ G a=T,<transmit>,f=100,q=2[,c=<cols>] ;`. The column
+    /// cap (`c=<cols>`) tells the terminal to display the image in at
+    /// most N cells across, scaling it down and preserving aspect ratio
+    /// — without this, large-dimension images overflow the screen.
+    /// When wrapping is disabled (theme.columns == 0) the `c=` field is
+    /// omitted and the terminal renders at native size.
+    fn writeKittyApcHeader(self: *AnsiRenderer, transmit: []const u8) void {
+        self.writeRawNoColor("\x1b_Ga=T,");
+        self.writeRawNoColor(transmit);
+        self.writeRawNoColor(",f=100,q=2");
+        const cols = self.kittyColumnBudget();
+        if (cols > 0) {
+            var buf: [16]u8 = undefined;
+            const slice = std.fmt.bufPrint(&buf, ",c={d}", .{cols}) catch return;
+            self.writeRawNoColor(slice);
+        }
+        self.writeRawNoColor(";");
     }
 };
 
@@ -2214,6 +2267,30 @@ fn extractPngDataUrlBase64(src: []const u8) ?[]const u8 {
     // Only PNG is losslessly transmittable via t=d,f=100.
     if (!bun.strings.contains(header, "image/png")) return null;
     return payload;
+}
+
+/// Check whether the file at `abs_path` starts with the PNG signature
+/// (8 bytes: 89 50 4E 47 0D 0A 1A 0A). Kitty's `f=100` format code
+/// expects PNG bytes; JPEG/GIF/WebP get rejected and fall through to
+/// the URL-label fallback. `abs_path` does NOT need to be null-
+/// terminated — this copies into a stack buffer before opening.
+fn isPngFile(abs_path: []const u8) bool {
+    if (abs_path.len == 0 or abs_path.len > bun.MAX_PATH_BYTES) return false;
+    var path_buf: bun.PathBuffer = undefined;
+    const path_z = bun.path.z(abs_path, &path_buf);
+    const file = switch (bun.sys.File.open(path_z, bun.O.RDONLY, 0)) {
+        .result => |f| f,
+        .err => return false,
+    };
+    defer file.close();
+    var sig: [8]u8 = undefined;
+    const n = switch (file.read(&sig)) {
+        .result => |amt| amt,
+        .err => return false,
+    };
+    if (n < 8) return false;
+    const png_magic = [_]u8{ 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+    return bun.strings.eql(&sig, &png_magic);
 }
 
 /// Render markdown text to ANSI. Caller owns the returned bytes.

@@ -95,6 +95,30 @@ function EINVAL(syscall) {
   });
 }
 
+// ICMP-class recv errors that Linux's IP_RECVERR surfaces on unconnected UDP
+// sockets. Node.js/libuv don't enable IP_RECVERR in the default path, so the
+// kernel silently drops these on unconnected sockets and only reports them
+// synchronously via send/recv when the socket has been .connect()-ed. Bun
+// enables IP_RECVERR unconditionally in uSockets, so we match Node.js's
+// observable behavior by dropping these on unconnected sockets and letting
+// them through on connected ones.
+function isSuppressibleRecvError(error, connectState) {
+  if (connectState === CONNECT_STATE_CONNECTED) return false;
+  if (error?.syscall !== "recv") return false;
+  switch (error?.code) {
+    case "ECONNREFUSED":
+    case "EHOSTUNREACH":
+    case "ENETUNREACH":
+    case "EHOSTDOWN":
+    case "ENETDOWN":
+    case "ENONET":
+    case "ENOPROTOOPT":
+      return true;
+    default:
+      return false;
+  }
+}
+
 let dns;
 
 function newHandle(type, lookup) {
@@ -331,6 +355,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
             });
           },
           error: error => {
+            if (isSuppressibleRecvError(error, state.connectState)) return;
             this.emit("error", error);
           },
         },

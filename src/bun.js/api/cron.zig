@@ -275,8 +275,12 @@ pub const CronRegisterJob = struct {
     fn startMac(this: *CronRegisterJob) void {
         this.state = .writing_plist;
 
-        const calendar_xml = cronToCalendarInterval(this.schedule) catch {
-            this.setErr("Invalid cron expression", .{});
+        const calendar_xml = cronToCalendarInterval(this.schedule) catch |err| {
+            if (err == error.TooManyTriggers) {
+                this.setErr("This cron expression expands to too many launchd calendar intervals (max 256). Use wildcards (*) for fields that don't need restricting, or simplify the expression.", .{});
+            } else {
+                this.setErr("Invalid cron expression", .{});
+            }
             this.finish();
             return;
         };
@@ -1426,6 +1430,9 @@ fn emitCalendarDicts(result: *std.array_list.Managed(u8), field_values: [5]?[]co
     const iter_days: []const i32 = if (effective[2]) |v| v else &.{0};
     const iter_mons: []const i32 = if (effective[3]) |v| v else &.{0};
     const iter_wdays: []const i32 = if (effective[4]) |v| v else &.{0};
+
+    const product: u64 = @as(u64, iter_mins.len) * iter_hrs.len * iter_days.len * iter_mons.len * iter_wdays.len;
+    if (product > 256) return error.TooManyTriggers;
 
     for (iter_mins) |m| {
         for (iter_hrs) |h| {

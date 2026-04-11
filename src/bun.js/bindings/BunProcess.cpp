@@ -287,6 +287,12 @@ static void callProcessEmit(JSC::JSGlobalObject* globalObject, Process* process,
         JSC::MarkedArgumentBuffer fallbackArgs;
         fallbackArgs.append(exitCodeArg);
         process->wrapped().emit(JSC::Identifier::fromString(vm, eventName), fallbackArgs);
+        if (auto* exception = scope.exception()) {
+            if (!vm.isTerminationException(exception)) {
+                Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            }
+            (void)scope.tryClearException();
+        }
         return;
     }
 

@@ -47,10 +47,7 @@ test("self.close() terminates the worker after the current task finishes", async
   });
 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(JSON.parse(stdout.trim())).toEqual([
-    { type: "message", data: "message" },
-    { type: "close" },
-  ]);
+  expect(JSON.parse(stdout.trim())).toEqual([{ type: "message", data: "message" }, { type: "close" }]);
   expect(exitCode).toBe(0);
 });
 

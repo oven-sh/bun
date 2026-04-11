@@ -230,8 +230,8 @@ describe("issue #29162 — fetch().body BYOB reader", () => {
       await expect(reader.read(new Uint16Array(128) as any)).rejects.toThrow(
         "Close requested while there remain pending bytes",
       );
-      // Give the controller any trailing microtask a chance to fire.
-      await Bun.sleep(20);
+      // `await` above already drains the microtask queue, so any
+      // `callClose` → `globalThis.reportError` would have fired by now.
       expect(uncaught).toHaveLength(0);
     } finally {
       process.off("uncaughtException", handler);

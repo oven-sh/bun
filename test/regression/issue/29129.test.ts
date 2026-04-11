@@ -134,12 +134,12 @@ function expectedAvailableParallelism(): number {
 }
 
 // The fix under test is Linux-only (sched_getaffinity / cgroup cpu.max
-// don't exist elsewhere). On non-Linux, register a single explicitly
-// skipped placeholder via `test.skip` so the file still reports a
-// result to the runner without ever entering the helper functions.
-if (process.platform !== "linux") {
-  test.skip("os.availableParallelism() cpuset + cgroup quota (#29129)", () => {});
-} else {
+// don't exist elsewhere). Register zero tests on non-Linux rather than
+// going through `test.skip` — bun's `node:test` shim forwards options
+// as the third positional arg to `bun:test`'s `test(name, fn, timeout)`,
+// which can trip the runner on some Windows builds. Empty test file =
+// 0 tests, exit 0.
+if (process.platform === "linux") {
   test("os.availableParallelism() matches sched_getaffinity + cgroup quota (#29129)", () => {
     const expected = expectedAvailableParallelism();
     assert.ok(expected > 0, `expected > 0, got ${expected}`);

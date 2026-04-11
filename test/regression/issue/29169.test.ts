@@ -16,6 +16,15 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 
+// Explicit timeout: the test spawns `setsid bash` which in turn
+// spawns a bun child, then kills the parent and waits for the
+// child to observe reparenting and write one stdout line. Cold
+// process-spawn + reparenting overhead on slow CI hosts can push
+// past bun's default 5 s test timeout (failed on
+// debian-13-x64-test-bun in the initial CI run for #29171). 30 s
+// gives comfortable headroom without hiding real regressions —
+// if the fix regresses, the child never emits its line and the
+// test fails on readLine() pipe close well before the timeout.
 test.skipIf(!isLinux)("process.ppid is live after parent death (#29169)", async () => {
   using dir = tempDir("issue-29169", {
     // The child is itself the code under test. It:
@@ -187,4 +196,4 @@ test.skipIf(!isLinux)("process.ppid is live after parent death (#29169)", async 
   // entirely.
   expect(await parent.exited).toBe(128 + 9); // SIGKILL
   expect(parent.signalCode).toBe("SIGKILL");
-});
+}, 30_000);

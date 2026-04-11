@@ -16,6 +16,13 @@ describe("fileURLToPath rejects malformed percent encoding (#29174)", () => {
     "file:///tmp/%.txt", // % followed by non-hex
     "file:///tmp/%", // lone trailing %
     "file:///%", // lone % at root
+    // Percent-encodings that are syntactically valid but decode to
+    // invalid UTF-8. Node's decodeURIComponent throws URIError on these,
+    // and we match that behavior.
+    "file:///tmp/%E0%A4", // truncated multi-byte sequence
+    "file:///tmp/%C0%80", // overlong encoding of NUL
+    "file:///tmp/%80", // lone continuation byte
+    "file:///tmp/%FE", // invalid start byte
   ];
 
   for (const input of malformed) {
@@ -57,6 +64,9 @@ describe("fileURLToPath rejects malformed percent encoding (#29174)", () => {
     expect(fileURLToPath("file:///tmp/%20space.txt")).toBe("/tmp/ space.txt");
     expect(fileURLToPath("file:///tmp/a%7Eb.txt")).toBe("/tmp/a~b.txt");
     expect(fileURLToPath("file:///tmp/%7e.txt")).toBe("/tmp/~.txt");
+    // Valid multi-byte UTF-8 sequences should decode fine.
+    expect(fileURLToPath("file:///tmp/%E0%A4%AD")).toBe("/tmp/भ");
+    expect(fileURLToPath("file:///tmp/%C3%A9")).toBe("/tmp/é");
   });
 
   test.skipIf(isWindows)("paths with no percent encoding are untouched (posix)", () => {

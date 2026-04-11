@@ -5,6 +5,7 @@
 // followed by a space. Node.js throws `URIError: URI malformed` for any `%`
 // that is not followed by two hex digits, via `decodeURIComponent`.
 import { describe, expect, test } from "bun:test";
+import { isWindows } from "harness";
 import { fileURLToPath } from "node:url";
 
 describe("fileURLToPath rejects malformed percent encoding (#29174)", () => {
@@ -49,14 +50,27 @@ describe("fileURLToPath rejects malformed percent encoding (#29174)", () => {
     );
   });
 
-  test("valid percent encoding still works", () => {
+  // These use POSIX-shaped paths (`/tmp/...`). On Windows `fileURLToPath`
+  // rejects those as non-absolute (`ERR_INVALID_FILE_URL_PATH`), so the
+  // decoding assertions only make sense on posix platforms.
+  test.skipIf(isWindows)("valid percent encoding still works (posix)", () => {
     expect(fileURLToPath("file:///tmp/%20space.txt")).toBe("/tmp/ space.txt");
     expect(fileURLToPath("file:///tmp/a%7Eb.txt")).toBe("/tmp/a~b.txt");
     expect(fileURLToPath("file:///tmp/%7e.txt")).toBe("/tmp/~.txt");
   });
 
-  test("paths with no percent encoding are untouched", () => {
+  test.skipIf(isWindows)("paths with no percent encoding are untouched (posix)", () => {
     expect(fileURLToPath("file:///tmp/plain.txt")).toBe("/tmp/plain.txt");
+  });
+
+  test.if(isWindows)("valid percent encoding still works (windows)", () => {
+    expect(fileURLToPath("file:///C:/%20space.txt")).toBe("C:\\ space.txt");
+    expect(fileURLToPath("file:///C:/a%7Eb.txt")).toBe("C:\\a~b.txt");
+    expect(fileURLToPath("file:///C:/%7e.txt")).toBe("C:\\~.txt");
+  });
+
+  test.if(isWindows)("paths with no percent encoding are untouched (windows)", () => {
+    expect(fileURLToPath("file:///C:/plain.txt")).toBe("C:\\plain.txt");
   });
 
   test("encoded slash still throws ERR_INVALID_FILE_URL_PATH (unchanged)", () => {

@@ -156,8 +156,10 @@ describe("guessHandleType stdio matrix (child fd 0)", { timeout: 60_000 }, () =>
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const parsed = JSON.parse(stdout.trim()) as string[];
+    expect(parsed).toHaveLength(1);
     expect(exitCode).toBe(0);
-    return JSON.parse(stdout.trim()) as string[];
+    return parsed;
   }
 
   const node = nodeExe();
@@ -169,9 +171,12 @@ describe("guessHandleType stdio matrix (child fd 0)", { timeout: 60_000 }, () =>
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const parsed = JSON.parse(stdout.trim()) as string[];
+    expect(parsed).toHaveLength(1);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    return JSON.parse(stdout.trim()) as string[];
+    return parsed;
   }
 
   test('stdin: "pipe" → PIPE', async () => {

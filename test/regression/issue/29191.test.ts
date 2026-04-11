@@ -1,12 +1,4 @@
 // https://github.com/oven-sh/bun/issues/29191
-//
-// `bun-types/ffi.d.ts` used to declare alias enum members (e.g. `i8` for
-// `int8_t`, `pointer` for `ptr`) as separate computed property keys on
-// `FFITypeToArgsType` / `FFITypeToReturnsType`. Because the alias members
-// share the same numeric enum value, `tsgo` (the TypeScript native preview)
-// reports every pair as a duplicate identifier. This regression test
-// guarantees no `FFIType.*` computed key maps to an already-used numeric
-// enum value inside the two affected interfaces.
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";

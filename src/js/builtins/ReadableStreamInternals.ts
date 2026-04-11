@@ -2190,15 +2190,6 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       if ($isPromise(result)) {
         return result.$then(
           result => {
-            // If the native transport closed out-of-band while this pull
-            // was in flight (#onClose fires synchronously and enqueues a
-            // callClose microtask ahead of us), the controller has already
-            // been closed. Skip the enqueue — calling it now would throw
-            // on a closed byte controller and trip debug assertions.
-            if (this.#closed) {
-              this.$data = undefined;
-              return;
-            }
             this.$data = this.#onNativeReadableStreamResult(result, view, closer[0], controller);
             if (this.#closed) {
               this.$data = undefined;

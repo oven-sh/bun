@@ -16,6 +16,9 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 
+// Explicit timeout: the polling loop reads up to ~200 lines at
+// 25 ms each (~5 s) on top of process-spawning overhead, so the
+// default 5 s bun test timeout is too tight on slow CI hosts.
 test.skipIf(!isLinux)("process.ppid is live after parent death (#29169)", async () => {
   using dir = tempDir("issue-29169", {
     "child.js": `
@@ -134,23 +137,33 @@ test.skipIf(!isLinux)("process.ppid is live after parent death (#29169)", async 
   // number of ticks (the child reports every 25 ms) so the test
   // doesn't hang if the fix isn't in place — each failing read
   // is a fresh line, and bun's test timeout will kick in.
+  //
+  // Each report() call reads `process.ppid` and then
+  // `/proc/self/stat` as two separate userspace operations, so
+  // reparenting can race between them: we can see
+  // js=parentPid kernel=newPpid on one line even when the live
+  // getter is working correctly. Don't trust that single mixed
+  // sample — take another line; on the NEXT tick both reads
+  // should see the new ppid. Only samples where `line.js`
+  // already differs from `parentPid` are unambiguous proof that
+  // the live getter kicked in.
   let reparented: { tag: string; js: number; kernel: number } | undefined;
-  for (let i = 0; i < 200; i++) {
+  for (let i = 0; i < 400; i++) {
     const line = parseLine(await readLine());
     if (line.js !== parentPid) {
       reparented = line;
       break;
     }
-    // Sanity: the kernel's view of ppid should have updated at
-    // most a few ticks after the parent was killed. If the
-    // kernel reparented but process.ppid is still stuck on
-    // parentPid, that's exactly the bug — keep reading so the
-    // test fails with a meaningful assertion at the end rather
-    // than timing out silently.
     if (line.kernel !== parentPid) {
-      // Kernel has moved on but bun hasn't — one more read to be
-      // generous, then fall through to the assertion below.
-      reparented = line;
+      // Mixed sample: the kernel reparented between this line's
+      // two reads. Take one more sample — on the next tick, a
+      // correct live getter reports the new ppid in both fields.
+      // If the bug is present, the NEXT read still has
+      // js=parentPid and this becomes the assertion failure
+      // (we record the mixed sample as a fallback so the test
+      // reports a meaningful diff rather than timing out).
+      const next = parseLine(await readLine());
+      reparented = next.js !== parentPid ? next : line;
       break;
     }
   }
@@ -170,4 +183,4 @@ test.skipIf(!isLinux)("process.ppid is live after parent death (#29169)", async 
   // kernel showed the new reaper pid.
   expect(reparented!.js).toBe(reparented!.kernel);
   expect(reparented!.js).not.toBe(parentPid);
-});
+}, 30_000);

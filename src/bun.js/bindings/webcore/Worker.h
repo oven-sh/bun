@@ -76,6 +76,7 @@ public:
     void dispatchEvent(Event&);
     void dispatchCloseEvent(Event&);
     void setKeepAlive(bool);
+    void clearZigImpl();
 
     void postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
 
@@ -119,6 +120,7 @@ private:
     // Tracks TerminateRequestedFlag and TerminatedFlag
     std::atomic<uint8_t> m_terminationFlags { 0 };
     const ScriptExecutionContextIdentifier m_clientIdentifier;
+    Lock m_implLock;
     void* impl_ { nullptr };
 };
 

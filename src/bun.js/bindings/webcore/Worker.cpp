@@ -133,12 +133,21 @@ extern "C" void WebWorker__setRef(
 
 void Worker::setKeepAlive(bool keepAlive)
 {
-    WebWorker__setRef(impl_, keepAlive);
+    Locker locker { m_implLock };
+    if (impl_)
+        WebWorker__setRef(impl_, keepAlive);
+}
+
+void Worker::clearZigImpl()
+{
+    Locker locker { m_implLock };
+    impl_ = nullptr;
 }
 
 bool Worker::updatePtr()
 {
     if (!WebWorker__updatePtr(impl_, this)) {
+        clearZigImpl();
         m_onlineClosingFlags = ClosingFlag;
         m_terminationFlags.fetch_or(TerminatedFlag);
         return false;
@@ -263,7 +272,9 @@ void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
-    WebWorker__notifyNeedTermination(impl_);
+    Locker locker { m_implLock };
+    if (impl_)
+        WebWorker__notifyNeedTermination(impl_);
 }
 
 // const char* Worker::activeDOMObjectName() const
@@ -468,6 +479,8 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
     worker->dispatchExit(exitCode);
+    // The Zig WebWorker is about to be freed; prevent terminate()/ref()/unref() from touching it.
+    worker->clearZigImpl();
     // no longer referenced by Zig
     worker->deref();
 

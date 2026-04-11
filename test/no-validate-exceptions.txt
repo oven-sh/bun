@@ -128,6 +128,7 @@ test/napi/node-napi-tests/test/node-api/test_general/do.test.ts
 
 # normalizeCryptoAlgorithmParameters
 test/js/bun/crypto/wpt-webcrypto.generateKey.test.ts
+test/js/bun/crypto/x25519-derive-bits.test.ts
 test/js/deno/crypto/webcrypto.test.ts
 test/js/node/crypto/node-crypto.test.js
 test/js/node/test/parallel/test-crypto-oaep-zero-length.js

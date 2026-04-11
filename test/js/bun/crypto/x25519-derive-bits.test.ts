@@ -82,10 +82,11 @@ test("X25519 deriveBits rejects when length exceeds output size", async () => {
 });
 
 test("X25519 deriveBits rejects when base key lacks deriveBits usage", async () => {
-  const { publicKey } = await importX25519Keys();
+  // Private key imported with only "deriveKey" usage; key type is valid for the base-key slot
+  // but the usages check should still reject it.
+  const { privateKey, publicKey } = await importX25519Keys(["deriveKey"]);
 
-  // publicKey was imported with usages=[], so it cannot be used as a base key for deriveBits.
-  await expect(crypto.subtle.deriveBits({ name: "X25519", public: publicKey }, publicKey, 256)).rejects.toThrow(
+  await expect(crypto.subtle.deriveBits({ name: "X25519", public: publicKey }, privateKey, 256)).rejects.toThrow(
     "CryptoKey doesn't support bits derivation",
   );
 });

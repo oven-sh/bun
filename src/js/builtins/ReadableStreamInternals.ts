@@ -1699,7 +1699,12 @@ export function readableStreamClose(stream) {
           );
           $fulfillPromise(request, { value: filledView, done: true });
         } else {
-          $fulfillPromise(request, { value: undefined, done: true });
+          // `pendingPullIntos` is kept 1:1 with `readIntoRequests` by the
+          // byte stream controller, so this branch is unreachable in
+          // practice. The spec still requires `value` to be a typed array
+          // (never `undefined`) when `done: true`, so fall back to an empty
+          // Uint8Array for defense in depth.
+          $fulfillPromise(request, { value: new Uint8Array(0), done: true });
         }
       }
     }

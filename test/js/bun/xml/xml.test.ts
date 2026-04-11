@@ -326,7 +326,8 @@ describe("Bun.XML.parse", () => {
     });
 
     test("svg-like", () => {
-      const xml = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect x="0" y="0" width="100" height="100" fill="red"/></svg>';
+      const xml =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect x="0" y="0" width="100" height="100" fill="red"/></svg>';
       expect(parse(xml)).toEqual({
         svg: {
           "@xmlns": "http://www.w3.org/2000/svg",
@@ -878,8 +879,9 @@ describe("Bun.XML.parse fuzzing", () => {
   });
 
   test("random byte mutations never crash", () => {
-    const base = '<?xml version="1.0"?><root a="1"><child>hello &amp; world</child><child/><x><![CDATA[data]]></x></root>';
-    const alphabet = '<>/="\'&;#![]?- \n\tabcxyz0129';
+    const base =
+      '<?xml version="1.0"?><root a="1"><child>hello &amp; world</child><child/><x><![CDATA[data]]></x></root>';
+    const alphabet = "<>/=\"'&;#![]?- \n\tabcxyz0129";
     for (let seed = 0; seed < 500; seed++) {
       const rand = rng(seed * 7919 + 17);
       const bytes = [...base];
@@ -913,7 +915,7 @@ describe("Bun.XML.parse fuzzing", () => {
   });
 
   test("random garbage never crashes", () => {
-    const alphabet = '<>/="\'&;#![]?- \n\tabcdefghijklmnopqrstuvwxyz0123456789';
+    const alphabet = "<>/=\"'&;#![]?- \n\tabcdefghijklmnopqrstuvwxyz0123456789";
     for (let seed = 0; seed < 500; seed++) {
       const rand = rng(seed * 31337 + 3);
       const len = 1 + Math.floor(rand() * 80);
@@ -930,7 +932,8 @@ describe("Bun.XML.parse fuzzing", () => {
   });
 
   test("truncated valid input never crashes", () => {
-    const xml = '<?xml version="1.0"?><root a="1" b="2"><child id="c">text &amp; more</child><!-- c --><![CDATA[x]]></root>';
+    const xml =
+      '<?xml version="1.0"?><root a="1" b="2"><child id="c">text &amp; more</child><!-- c --><![CDATA[x]]></root>';
     for (let i = 0; i <= xml.length; i++) {
       const prefix = xml.slice(0, i);
       try {

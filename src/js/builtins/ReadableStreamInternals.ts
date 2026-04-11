@@ -1959,9 +1959,15 @@ export function readableStreamFromAsyncIterator(target, fn) {
 export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultController {
   const closer = [false];
 
-  function callClose(controller: ReadableStreamDefaultController) {
+  function callClose(controller: ReadableStreamDefaultController | ReadableByteStreamController) {
     try {
-      var source = controller.$underlyingSource;
+      // Byte streams store the source under `underlyingByteSource`; default
+      // streams use `underlyingSource`. Without the fallback the cleanup
+      // below silently no-ops on native byte streams, leaking the native
+      // handle ($stream) and our internal pull buffer ($data) until GC.
+      var source =
+        $getByIdDirectPrivate(controller, "underlyingByteSource") ??
+        $getByIdDirectPrivate(controller, "underlyingSource");
       const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
       if (!stream) {
         return;

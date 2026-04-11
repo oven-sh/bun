@@ -1087,11 +1087,11 @@ const BoringSSL = bun.BoringSSL.c;
 const uv = bun.windows.libuv;
 
 const api = bun.api;
-const UnixSocketCleanup = bun.api.server.UnixSocketCleanup;
 const Handlers = bun.api.SocketHandlers;
 const TCPSocket = bun.api.TCPSocket;
 const TLSSocket = bun.api.TLSSocket;
 const SSLConfig = bun.api.ServerConfig.SSLConfig;
+const UnixSocketCleanup = bun.api.server.UnixSocketCleanup;
 
 const NewSocket = api.socket.NewSocket;
 const SocketConfig = api.socket.SocketConfig;

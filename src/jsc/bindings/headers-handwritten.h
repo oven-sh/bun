@@ -264,6 +264,7 @@ const BunLoaderType BunLoaderTypeWASM = 10;
 const BunLoaderType BunLoaderTypeNAPI = 11;
 const BunLoaderType BunLoaderTypeYAML = 19;
 const BunLoaderType BunLoaderTypeMD = 20;
+const BunLoaderType BunLoaderTypeXML = 22;
 
 #pragma mark - Stream
 

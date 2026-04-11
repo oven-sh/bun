@@ -89,6 +89,7 @@ pub const Features = struct {
     pub var yarn_migration: usize = 0;
     pub var pnpm_migration: usize = 0;
     pub var yaml_parse: usize = 0;
+    pub var xml_parse: usize = 0;
     pub var cpu_profile: usize = 0;
     pub var heap_snapshot: usize = 0;
     pub var webview_chrome: usize = 0;

@@ -5466,8 +5466,21 @@ fn NewPrinter(
                     // flush it).
                     p.printSemicolonIfNeeded();
                     p.printIndent();
-                    const name = p.renamer.nameForSymbol(ident.ref);
-                    p.printBundledExport(name, name);
+                    // The external export key is the source name (the module's
+                    // public contract), but the getter references the current
+                    // local name from the renamer — which, under
+                    // `--minify-identifiers`, may differ from the original.
+                    const symbol = p.symbols().get(p.symbols().follow(ident.ref)) orelse {
+                        // No symbol entry — fall back to the renamer (matches
+                        // pre-minify behavior for unbound refs).
+                        const name = p.renamer.nameForSymbol(ident.ref);
+                        p.printBundledExport(name, name);
+                        p.printSemicolonAfterStatement();
+                        return;
+                    };
+                    const key = symbol.original_name;
+                    const local = p.renamer.nameForSymbol(ident.ref);
+                    p.printBundledExport(key, local);
                     p.printSemicolonAfterStatement();
                 },
                 .b_object => |obj| {
@@ -6548,14 +6561,93 @@ pub fn printCommonJS(
     defer bun.crash_handler.current_action = prev_action;
     bun.crash_handler.current_action = .{ .print = source.path.text };
 
+    // Renamer setup mirrors `printAst` so that `--minify-identifiers`
+    // still renames locals on the no-bundle `--format cjs` path. Without
+    // this, `printCommonJS` used a `NoOpRenamer` and printed original
+    // source text verbatim, which broke the minify-identifiers contract.
+    var renamer: rename.Renamer = undefined;
+    var no_op_renamer: rename.NoOpRenamer = undefined;
+    var module_scope = tree.module_scope;
+    if (opts.minify_identifiers) {
+        const allocator = opts.allocator;
+        var reserved_names = try rename.computeInitialReservedNames(allocator, opts.module_type);
+        for (module_scope.children.slice()) |child| {
+            child.parent = &module_scope;
+        }
+
+        rename.computeReservedNamesForScope(&module_scope, &symbols, &reserved_names, allocator);
+        var minify_renamer = try rename.MinifyRenamer.init(allocator, symbols, tree.nested_scope_slot_counts, reserved_names);
+
+        var top_level_symbols = rename.StableSymbolCount.Array.init(allocator);
+        defer top_level_symbols.deinit();
+
+        const uses_exports_ref = tree.uses_exports_ref;
+        const uses_module_ref = tree.uses_module_ref;
+        const exports_ref = tree.exports_ref;
+        const module_ref = tree.module_ref;
+        const parts = tree.parts;
+
+        const dont_break_the_code = .{
+            tree.module_ref,
+            tree.exports_ref,
+            tree.require_ref,
+        };
+
+        inline for (dont_break_the_code) |ref| {
+            if (symbols.get(ref)) |symbol| {
+                symbol.must_not_be_renamed = true;
+            }
+        }
+
+        // The CJS rewrite exposes every named export on `module.exports`
+        // via `Object.defineProperty(..., "<original_name>", ...)`. The
+        // STRING key is the original name (we read it from the Symbol when
+        // emitting `printBundledExport`), but the local binding behind
+        // the getter can still be renamed. So we do NOT lock exported
+        // symbols here (unlike `printAst`, which has to preserve the
+        // ESM export contract).
+
+        if (uses_exports_ref) {
+            try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, exports_ref, 1, &.{source.index.value});
+        }
+
+        if (uses_module_ref) {
+            try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, module_ref, 1, &.{source.index.value});
+        }
+
+        for (parts.slice()) |part| {
+            try minify_renamer.accumulateSymbolUseCounts(&top_level_symbols, part.symbol_uses, &.{source.index.value});
+
+            for (part.declared_symbols.refs()) |declared_ref| {
+                try minify_renamer.accumulateSymbolUseCount(&top_level_symbols, declared_ref, 1, &.{source.index.value});
+            }
+        }
+
+        std.sort.pdq(rename.StableSymbolCount, top_level_symbols.items, {}, rename.StableSymbolCount.lessThan);
+
+        try minify_renamer.allocateTopLevelSymbolSlots(top_level_symbols);
+        var minifier = tree.char_freq.?.compile(allocator);
+        try minify_renamer.assignNamesByFrequency(&minifier);
+
+        renamer = minify_renamer.toRenamer();
+    } else {
+        no_op_renamer = rename.NoOpRenamer.init(symbols, source);
+        renamer = no_op_renamer.toRenamer();
+    }
+
+    defer {
+        if (opts.minify_identifiers) {
+            renamer.deinit(opts.allocator);
+        }
+    }
+
     const PrinterType = NewPrinter(ascii_only, Writer, true, false, false, generate_source_map);
     const writer = _writer;
-    var renamer = rename.NoOpRenamer.init(symbols, source);
     var printer = PrinterType.init(
         writer,
         tree.import_records.slice(),
         opts,
-        renamer.toRenamer(),
+        renamer,
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
     );
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);

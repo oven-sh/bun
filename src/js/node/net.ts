@@ -62,6 +62,7 @@ const { owner_symbol } = require("internal/shared");
 const UV_EOF = -4095;
 const kBuffer = Symbol("kBuffer");
 const kBufferCb = Symbol("kBufferCb");
+const kBufferGen = Symbol("kBufferGen");
 
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
@@ -757,6 +758,7 @@ function Socket(options?) {
     }
     this[kBuffer] = true;
     this[kBufferCb] = onread.callback;
+    this[kBufferGen] = typeof onread.buffer === "function" ? onread.buffer : () => onread.buffer;
     // when the onread option is specified we use a different handlers object
     this[khandlers] = {
       ...SocketHandlers2,
@@ -2637,7 +2639,19 @@ function onStreamRead(nread, arrayBuffer) {
     self.bytesRead += nread;
     let ret;
     if (self[kBuffer]) {
-      ret = self[kBufferCb](nread, arrayBuffer);
+      // onread: {buffer, callback}. Node's native layer writes directly into
+      // the user buffer; copy from the handle's buffer so the callback
+      // receives the caller's buffer as documented.
+      let userBuf = self[kBufferGen]();
+      if ($isTypedArrayView(userBuf)) {
+        if (userBuf !== arrayBuffer) {
+          const n = nread < userBuf.byteLength ? nread : userBuf.byteLength;
+          userBuf.set(arrayBuffer.subarray(0, n));
+        }
+      } else {
+        userBuf = arrayBuffer;
+      }
+      ret = self[kBufferCb](nread, userBuf);
     } else {
       ret = self.push(arrayBuffer);
     }

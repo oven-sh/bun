@@ -290,9 +290,18 @@ fn fetchImpl(
 
     const options_object: ?JSValue = brk: {
         if (args.nextEat()) |options| {
+            if (options.isUndefinedOrNull()) {
+                break :brk null;
+            }
             if (options.isObject() or options.jsType() == .DOMWrapper) {
                 break :brk options;
             }
+            // Per the Fetch spec, `init` is a dictionary type. Web IDL dictionary
+            // conversion throws TypeError when the value is a primitive other than
+            // undefined or null. https://fetch.spec.whatwg.org/#dom-request
+            is_error = true;
+            const err = ctx.toTypeError(.INVALID_ARG_TYPE, "The \"init\" argument must be of type object or undefined.", .{});
+            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
         }
 
         break :brk null;

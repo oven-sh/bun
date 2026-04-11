@@ -611,7 +611,6 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const path_ = bun.handleOom(allocator.dupeZ(u8, path));
             defer allocator.free(path_);
 
-            err.* = 0;
             const socket = socket_ctx.connectUnix(is_ssl, path_, if (allowHalfOpen) uws.LIBUS_SOCKET_ALLOW_HALF_OPEN else 0, 8, err) orelse
                 return error.FailedToOpenSocket;
 

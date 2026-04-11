@@ -113,7 +113,6 @@ pub fn NewSocket(comptime ssl: bool) type {
             this.ref();
             defer this.deref();
 
-            connect_errno.* = 0;
             switch (connection) {
                 .host => |c| {
                     this.socket = try This.Socket.connectAnon(

@@ -95,8 +95,6 @@ fn exprToJS(expr: Expr, global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     }
 }
 
-const std = @import("std");
-
 const bun = @import("bun");
 const logger = bun.logger;
 

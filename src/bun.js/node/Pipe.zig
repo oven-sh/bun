@@ -29,6 +29,15 @@ pub const deref = RefCount.deref;
 
 pub const IOReader = bun.io.BufferedReader;
 
+pub const IOWriter = bun.io.StreamingWriter(@This(), struct {
+    pub const onWrite = Pipe.onWriterWrite;
+    pub const onError = Pipe.onWriterError;
+    pub const onWritable = Pipe.onWriterReady;
+    pub const onClose = Pipe.onWriterClose;
+});
+/// Poll type alias for FilePoll Owner registration.
+pub const Poll = IOWriter;
+
 ref_count: RefCount,
 
 /// 0=SOCKET, 1=SERVER, 2=IPC
@@ -39,12 +48,14 @@ fd: bun.FD = bun.invalid_fd,
 fd_int: i32 = -1,
 
 reader: IOReader,
+writer: IOWriter = .{},
 
 this_value: jsc.JSRef = jsc.JSRef.empty(),
 event_loop_handle: jsc.EventLoopHandle,
 globalThis: *jsc.JSGlobalObject,
 
 bytes_read: u64 = 0,
+bytes_written: u64 = 0,
 
 flags: Flags = .{},
 
@@ -53,9 +64,11 @@ pub const Flags = packed struct(u8) {
     closed: bool = false,
     /// reader.start() succeeded (and the reader holds a ref on this struct)
     reader_started: bool = false,
+    /// writer.start() succeeded (and the writer holds a ref on this struct)
+    writer_started: bool = false,
     /// user called handle.unref(); readStart must not re-ref
     unreffed: bool = false,
-    _: u4 = 0,
+    _: u3 = 0,
 };
 
 const UV_EOF: i32 = -4095;
@@ -195,15 +208,139 @@ fn closeInternal(this: *Pipe) void {
     if (this.flags.reader_started) {
         this.reader.close();
     }
+    if (this.flags.writer_started) {
+        this.writer.end();
+    }
     // We never own the fd (caller-provided via open()).
     this.safeDowngrade();
 }
 
-/// writeBuffer/writeUtf8String/shutdown/bind/listen/connect/fchmod are not
-/// reachable for `process.stdin` (constructed with `writable: false`). Full
-/// duplex `net.Socket({fd})` is a follow-up.
+// Write side -----------------------------------------------------------------
+
+fn ensureWriterStarted(this: *Pipe) i32 {
+    if (this.flags.writer_started) return 0;
+    if (this.fd == bun.invalid_fd) return -@as(i32, @intCast(bun.sys.UV_E.BADF));
+
+    this.writer.setParent(this);
+    // The Pipe doesn't own this.fd (caller-provided via open()).
+    if (comptime Environment.isPosix) {
+        this.writer.close_fd = false;
+        // Node's writeBuffer is one uv_write per call; the Socket's
+        // _writableState handles buffering. PosixStreamingWriter's userland
+        // chunk buffer would otherwise drop bytes on end().
+        this.writer.force_sync = true;
+    } else {
+        this.writer.owns_fd = false;
+    }
+    switch (this.writer.start(this.fd, true)) {
+        .result => {
+            this.flags.writer_started = true;
+            this.ref();
+            if (this.flags.unreffed) this.writer.updateRef(this.event_loop_handle, false);
+            return 0;
+        },
+        .err => |err| return toUVErrno(err),
+    }
+}
+
+fn writeBytes(this: *Pipe, this_jsvalue: JSValue, req: JSValue, bytes: []const u8) i32 {
+    const start_err = this.ensureWriterStarted();
+    if (start_err != 0) return start_err;
+
+    return switch (this.writer.write(bytes)) {
+        .err => |err| toUVErrno(err),
+        .pending => |_| blk: {
+            // Only stash the req for the async path; for .wrote/.done JS handles
+            // the callback synchronously via !req.async.
+            js.gc.set(.writeReq, this_jsvalue, this.globalThis, req);
+            req.put(this.globalThis, jsc.ZigString.static("async"), JSValue.jsBoolean(true));
+            break :blk 0;
+        },
+        .wrote, .done => 0,
+    };
+}
+
+pub fn writeBuffer(this: *Pipe, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    const args = callframe.argumentsAsArray(2);
+    const req = args[0];
+    const buf = args[1].asArrayBuffer(globalObject) orelse {
+        return JSValue.jsNumber(-@as(i32, @intCast(bun.sys.UV_E.INVAL)));
+    };
+    return JSValue.jsNumber(this.writeBytes(callframe.this(), req, buf.slice()));
+}
+
+pub fn writeUtf8String(this: *Pipe, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    const args = callframe.argumentsAsArray(2);
+    const req = args[0];
+    const str = try args[1].toBunString(globalObject);
+    defer str.deref();
+    const utf8 = str.toUTF8(bun.default_allocator);
+    defer utf8.deinit();
+    return JSValue.jsNumber(this.writeBytes(callframe.this(), req, utf8.slice()));
+}
+
+pub fn shutdown(this: *Pipe, _: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+    const args = callframe.argumentsAsArray(1);
+    const req = args[0];
+    if (!this.flags.writer_started) {
+        // Nothing to flush — complete the req synchronously.
+        if (req.isObject()) {
+            req.put(this.globalThis, jsc.ZigString.static("async"), JSValue.jsBoolean(false));
+        }
+        return JSValue.jsNumber(0);
+    }
+    js.gc.set(.shutdownReq, callframe.this(), this.globalThis, req);
+    if (req.isObject()) {
+        req.put(this.globalThis, jsc.ZigString.static("async"), JSValue.jsBoolean(true));
+    }
+    this.writer.end();
+    return JSValue.jsNumber(0);
+}
+
+/// bind/listen/connect/fchmod are Unix-socket server/client; Bun routes those
+/// via usockets, not pipe_wrap.
 pub fn notsup(_: *Pipe, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     return JSValue.jsNumber(-@as(i32, @intCast(bun.sys.UV_E.NOTSUP)));
+}
+
+fn fireReqComplete(this: *Pipe, comptime slot: @TypeOf(.enum_literal), status: i32) void {
+    const this_jsvalue = this.this_value.tryGet() orelse return;
+    const req = js.gc.get(slot, this_jsvalue) orelse return;
+    js.gc.set(slot, this_jsvalue, this.globalThis, .js_undefined);
+    if (!req.isObject()) return;
+    const oncomplete = req.get(this.globalThis, "oncomplete") catch return orelse return;
+    if (!oncomplete.isCallable()) return;
+    this.globalThis.bunVM().eventLoop().runCallback(
+        oncomplete,
+        this.globalThis,
+        req,
+        &.{JSValue.jsNumber(status)},
+    );
+}
+
+pub fn onWriterWrite(this: *Pipe, amount: usize, status: bun.io.WriteStatus) void {
+    log("onWriterWrite: {} status={}", .{ amount, status });
+    this.bytes_written += amount;
+    if (status == .drained or status == .end_of_file) {
+        this.fireReqComplete(.writeReq, 0);
+    }
+}
+
+pub fn onWriterError(this: *Pipe, err: bun.sys.Error) void {
+    log("onWriterError: {any}", .{err});
+    this.fireReqComplete(.writeReq, toUVErrno(err));
+    this.fireReqComplete(.shutdownReq, toUVErrno(err));
+}
+
+pub fn onWriterReady(_: *Pipe) void {}
+
+pub fn onWriterClose(this: *Pipe) void {
+    log("onWriterClose", .{});
+    this.fireReqComplete(.shutdownReq, 0);
+    if (this.flags.writer_started) {
+        this.flags.writer_started = false;
+        this.deref();
+    }
 }
 
 pub fn getOnRead(_: *Pipe, thisValue: jsc.JSValue, _: *jsc.JSGlobalObject) JSValue {
@@ -218,8 +355,8 @@ pub fn getBytesRead(this: *Pipe, _: *jsc.JSGlobalObject) JSValue {
     return JSValue.jsNumber(this.bytes_read);
 }
 
-pub fn getBytesWritten(_: *Pipe, _: *jsc.JSGlobalObject) JSValue {
-    return JSValue.jsNumber(0);
+pub fn getBytesWritten(this: *Pipe, _: *jsc.JSGlobalObject) JSValue {
+    return JSValue.jsNumber(this.bytes_written);
 }
 
 pub fn getFd(this: *Pipe, _: *jsc.JSGlobalObject) JSValue {
@@ -327,6 +464,7 @@ pub fn finalize(this: *Pipe) callconv(.c) void {
 
 fn deinit(this: *Pipe) void {
     this.reader.deinit();
+    this.writer.deinit();
     bun.destroy(this);
 }
 

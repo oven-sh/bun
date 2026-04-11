@@ -1200,6 +1200,14 @@ Socket.prototype._final = function _final(callback) {
   // already closed call destroy
   if (!socket) return callback();
 
+  if ($isCallable(socket.shutdown)) {
+    const req = { handle: socket, oncomplete: afterWrite, async: false, cb: callback };
+    const err = socket.shutdown(req);
+    if (err) return callback(new ErrnoException(err, "shutdown"));
+    if (!req.async) callback();
+    return;
+  }
+
   // emit FIN allowHalfOpen only allow the readable side to close first
   process.nextTick(endNT, socket, callback);
 };
@@ -1517,11 +1525,23 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   }
   this._unrefTimer();
   if ($isCallable(socket.readStart)) {
-    // Stream-wrap handle (TTY/Pipe). Full writeBuffer/req plumbing is a
-    // follow-up; reachable only for duplex net.Socket({fd}), never for
-    // process.stdin which is constructed with writable:false.
-    callback($ERR_METHOD_NOT_IMPLEMENTED("_write on stream-wrap handle"));
-    return false;
+    // Stream-wrap handle (Pipe/TTY). Node lib/net.js writeGeneric → handleWriteReq.
+    const req = { handle: socket, oncomplete: afterWrite, async: false, cb: callback };
+    let err;
+    if (typeof chunk !== "string") {
+      err = socket.writeBuffer(req, chunk);
+    } else if ((encoding === "utf8" || encoding === "utf-8") && $isCallable(socket.writeUtf8String)) {
+      err = socket.writeUtf8String(req, chunk);
+    } else {
+      err = socket.writeBuffer(req, Buffer.from(chunk, encoding));
+    }
+    if (err) {
+      callback(new ErrnoException(err, "write"));
+      return false;
+    }
+    this[kBytesWritten] = socket.bytesWritten;
+    if (!req.async) callback();
+    return true;
   }
   const success = socket.$write(chunk, encoding);
   this[kBytesWritten] = socket.bytesWritten;
@@ -2690,6 +2710,12 @@ function tryReadStart(socket) {
   socket._handle.reading = true;
   const err = socket._handle.readStart();
   if (err) socket.destroy(new ErrnoException(err, "read"));
+}
+
+function afterWrite(status) {
+  const cb = this.cb;
+  if (status) cb(new ErrnoException(status, "write"));
+  else cb();
 }
 
 function closeSocketHandle(self, isException, isCleanupPending = false) {

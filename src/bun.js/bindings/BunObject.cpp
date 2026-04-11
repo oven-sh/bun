@@ -21,6 +21,7 @@
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSONObject.h>
 #include "wtf/SIMDUTF.h"
+#include <wtf/ASCIICType.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "headers.h"
 #include "BunObject.h"
@@ -928,6 +929,20 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
             return {};
         }
 #endif
+
+        // Node.js implements fileURLToPath via decodeURIComponent on the
+        // pathname, which throws URIError: URI malformed for any '%' not
+        // followed by two hex digits. WTF::URL::fileSystemPath uses a lenient
+        // decoder, so validate strictly here to match Node.
+        const size_t length = p.length();
+        for (size_t i = 0; i < length; ++i) {
+            if (p[i] != '%')
+                continue;
+            if (i + 2 >= length || !WTF::isASCIIHexDigit(p[i + 1]) || !WTF::isASCIIHexDigit(p[i + 2])) {
+                scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
+                return {};
+            }
+        }
     }
 
     auto fileSystemPath = url.fileSystemPath();

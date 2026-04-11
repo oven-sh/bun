@@ -36,19 +36,33 @@ const source = readFileSync(FFI_D_TS, "utf8");
 const enumValues = parseEnum(source);
 
 test("FFIType enum includes known alias pairs (sanity)", () => {
-  // If any of these drift, the test below is no longer meaningful.
-  expect(enumValues.get("int8_t")).toBe(enumValues.get("i8"));
-  expect(enumValues.get("uint8_t")).toBe(enumValues.get("u8"));
-  expect(enumValues.get("int16_t")).toBe(enumValues.get("i16"));
-  expect(enumValues.get("uint16_t")).toBe(enumValues.get("u16"));
-  expect(enumValues.get("int32_t")).toBe(enumValues.get("i32"));
-  expect(enumValues.get("int32_t")).toBe(enumValues.get("int"));
-  expect(enumValues.get("uint32_t")).toBe(enumValues.get("u32"));
-  expect(enumValues.get("int64_t")).toBe(enumValues.get("i64"));
-  expect(enumValues.get("uint64_t")).toBe(enumValues.get("u64"));
-  expect(enumValues.get("double")).toBe(enumValues.get("f64"));
-  expect(enumValues.get("float")).toBe(enumValues.get("f32"));
-  expect(enumValues.get("ptr")).toBe(enumValues.get("pointer"));
+  // Guard against a silently broken parse — `undefined === undefined` via
+  // toBe would make every alias pair vacuously pass below.
+  expect(enumValues.size).toBeGreaterThan(0);
+
+  // If any of these drift, the duplicate-key test below is no longer
+  // meaningful. Both sides must resolve to the same concrete number.
+  const pairs: Array<[string, string]> = [
+    ["int8_t", "i8"],
+    ["uint8_t", "u8"],
+    ["int16_t", "i16"],
+    ["uint16_t", "u16"],
+    ["int32_t", "i32"],
+    ["int32_t", "int"],
+    ["uint32_t", "u32"],
+    ["int64_t", "i64"],
+    ["uint64_t", "u64"],
+    ["double", "f64"],
+    ["float", "f32"],
+    ["ptr", "pointer"],
+  ];
+  for (const [canonical, alias] of pairs) {
+    const canonicalValue = enumValues.get(canonical);
+    const aliasValue = enumValues.get(alias);
+    expect(canonicalValue).toEqual(expect.any(Number));
+    expect(aliasValue).toEqual(expect.any(Number));
+    expect(canonicalValue).toBe(aliasValue);
+  }
 });
 
 for (const iface of ["FFITypeToArgsType", "FFITypeToReturnsType"] as const) {

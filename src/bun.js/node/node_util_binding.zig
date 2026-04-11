@@ -164,13 +164,15 @@ fn guessHandleTypeFromFd(fd_int: i32) u32 {
     }
 
     const family = ss.family;
+    // libuv checks AF_UNIX before SO_TYPE and returns UV_NAMED_PIPE for any
+    // AF_UNIX socket (STREAM/DGRAM/SEQPACKET).
+    if (family == std.posix.AF.UNIX) return PIPE_TYPE;
     if (so_type == std.posix.SOCK.DGRAM) {
         if (family == std.posix.AF.INET or family == std.posix.AF.INET6) return UDP;
         return UNKNOWN;
     }
     if (so_type == std.posix.SOCK.STREAM) {
         if (family == std.posix.AF.INET or family == std.posix.AF.INET6) return TCP;
-        if (family == std.posix.AF.UNIX) return PIPE_TYPE;
     }
     return UNKNOWN;
 }

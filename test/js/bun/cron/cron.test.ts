@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 const crontabPath = Bun.which("crontab");
 const hasCrontab = !!crontabPath && isLinux;
@@ -208,6 +209,29 @@ describe.skipIf(!hasAnyCronBackend)("cross-platform API consistency", () => {
     const result = await Bun.cron(`${dir}/job.ts`, "30 9 * * Monday", "test-xplat-named");
     expect(result).toBeUndefined();
     await Bun.cron.remove("test-xplat-named");
+  });
+
+  // https://github.com/oven-sh/bun/issues/28295
+  test("path argument accepts file:// URL string", async () => {
+    using dir = tempDir("bun-cron-file-url-str", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    const url = pathToFileURL(`${dir}/job.ts`).href;
+    expect(url).toStartWith("file://");
+    await Bun.cron(url, "@daily", "test-xplat-file-url-str");
+    await Bun.cron.remove("test-xplat-file-url-str");
+  });
+
+  test("path argument accepts URL object", async () => {
+    using dir = tempDir("bun-cron-file-url-obj", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    await Bun.cron(pathToFileURL(`${dir}/job.ts`), "@daily", "test-xplat-file-url-obj");
+    await Bun.cron.remove("test-xplat-file-url-obj");
+  });
+
+  test("non-file URL object throws ERR_INVALID_URL_SCHEME", () => {
+    expect(() => Bun.cron(new URL("https://example.com/job.ts"), "@daily", "test-xplat-https")).toThrow(/file: scheme/);
   });
 
   test("path with spaces works", async () => {

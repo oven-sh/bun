@@ -420,11 +420,23 @@ pub const CronRegisterJob = struct {
         if (args[0].isString() and args[2].isUndefined())
             return globalObject.throwInvalidArguments("Bun.cron(schedule, handler) expects a function handler as the second argument", .{});
 
-        if (!args[0].isString()) return globalObject.throwInvalidArguments("Bun.cron() expects a string path as the first argument", .{});
         if (!args[1].isString()) return globalObject.throwInvalidArguments("Bun.cron() expects a string schedule as the second argument", .{});
         if (!args[2].isString()) return globalObject.throwInvalidArguments("Bun.cron() expects a string title as the third argument", .{});
 
-        const path_str = try args[0].toBunString(globalObject);
+        const path_str: bun.String = blk: {
+            if (args[0].as(jsc.DOMURL)) |domurl| {
+                break :blk domurl.fileSystemPath() catch
+                    return globalObject.ERR(.INVALID_URL_SCHEME, "Bun.cron() path URL must use the file: scheme", .{}).throw();
+            }
+            if (!args[0].isString())
+                return globalObject.throwInvalidArguments("Bun.cron() expects a string or file URL path as the first argument", .{});
+            const raw = try args[0].toBunString(globalObject);
+            if (raw.hasPrefixComptime("file://")) {
+                defer raw.deref();
+                break :blk bun.jsc.URL.pathFromFileURL(raw);
+            }
+            break :blk raw;
+        };
         defer path_str.deref();
         const schedule_str = try args[1].toBunString(globalObject);
         defer schedule_str.deref();

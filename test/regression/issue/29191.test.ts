@@ -8,7 +8,7 @@
 // guarantees no `FFIType.*` computed key maps to an already-used numeric
 // enum value inside the two affected interfaces.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 

@@ -124,27 +124,32 @@ function throwDataCloneError(message = "Cannot transfer object of unsupported ty
   throw new DOMException(message, "DataCloneError");
 }
 
-function validateTransferList(transferList: unknown) {
+function validateTransferList(transferList: unknown): unknown[] | undefined {
   if (!transferList || !isObjectLike(transferList)) {
-    return;
+    return undefined;
   }
 
   const iterator = transferList[Symbol.iterator];
   if (typeof iterator !== "function") {
-    return;
+    return undefined;
   }
 
-  for (const transferable of transferList as Iterable<unknown>) {
+  const items = Array.isArray(transferList) ? transferList : Array.from(transferList as Iterable<unknown>);
+  for (const transferable of items) {
     if (isObjectLike(transferable) && untransferableObjects.has(transferable)) {
       throwDataCloneError();
     }
   }
+  return items;
 }
 
 const messagePortPostMessage = MessagePort.prototype.postMessage;
 const messagePortPostMessageDescriptor = Object.getOwnPropertyDescriptor(MessagePort.prototype, "postMessage");
 function postMessage(this: MessagePort, message: any, transfer: any) {
-  validateTransferList(transfer);
+  const normalized = validateTransferList(transfer);
+  if (normalized && normalized !== transfer) {
+    return messagePortPostMessage.$apply(this, [message, normalized]);
+  }
   return messagePortPostMessage.$apply(this, arguments);
 }
 Object.defineProperty(postMessage, "length", { value: messagePortPostMessage.length });
@@ -189,7 +194,10 @@ function fakeParentPort() {
   const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
     value(...args: [any, any]) {
-      validateTransferList(args[1]);
+      const normalized = validateTransferList(args[1]);
+      if (normalized && normalized !== args[1]) {
+        return postMessage.$apply(null, [args[0], normalized]);
+      }
       return postMessage.$apply(null, args);
     },
   });
@@ -276,7 +284,10 @@ class Worker extends EventEmitter {
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
 
-    validateTransferList(options?.transferList);
+    const normalizedTransferList = validateTransferList(options?.transferList);
+    if (normalizedTransferList && normalizedTransferList !== options.transferList) {
+      options = { ...options, transferList: normalizedTransferList as any };
+    }
 
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options && builtinsGeneratorHatesEval in options) {
@@ -384,7 +395,10 @@ class Worker extends EventEmitter {
   }
 
   postMessage(...args: [any, any]) {
-    validateTransferList(args[1]);
+    const normalized = validateTransferList(args[1]);
+    if (normalized && normalized !== args[1]) {
+      return this.#worker.postMessage.$apply(this.#worker, [args[0], normalized]);
+    }
     return this.#worker.postMessage.$apply(this.#worker, args);
   }
 

@@ -144,11 +144,13 @@ pub const Address = union(enum) {
                 const union_field = if (tls) "SocketTLS" else "SocketTCP";
                 switch (this.*) {
                     .unix => |path| {
+                        var connect_errno: c_int = 0;
                         return @unionInit(uws.AnySocket, union_field, try SocketType.connectUnixAnon(
                             path,
                             ctx,
                             client,
                             false,
+                            &connect_errno,
                         ));
                     },
                     .host => |h| {

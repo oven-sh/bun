@@ -108,11 +108,12 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
+        pub fn doConnect(this: *This, connection: Listener.UnixOrHost, connect_errno: *c_int) !void {
             bun.assert(this.socket_context != null);
             this.ref();
             defer this.deref();
 
+            connect_errno.* = 0;
             switch (connection) {
                 .host => |c| {
                     this.socket = try This.Socket.connectAnon(
@@ -129,6 +130,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                         this.socket_context.?,
                         this,
                         this.flags.allow_half_open,
+                        connect_errno,
                     );
                 },
                 .fd => |f| {
@@ -299,8 +301,13 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
 
             bun.assert(errno >= 0);
-            var errno_: c_int = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) @intFromEnum(bun.sys.SystemErrno.ENOENT) else @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED);
-            const code_ = if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED");
+            // Preserve the real errno/code (Node.js passes through e.g. EAGAIN
+            // for a full unix-socket backlog). Previously this flattened
+            // everything to ENOENT-or-ECONNREFUSED, which made EAGAIN surface
+            // as ENOENT. Fall back to ECONNREFUSED only for unrecognized values.
+            const sys_errno = bun.sys.SystemErrno.init(errno) orelse bun.sys.SystemErrno.ECONNREFUSED;
+            var errno_: c_int = @intFromEnum(sys_errno);
+            const code_ = bun.String.static(@tagName(sys_errno));
             if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ENOENT)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ENOENT);
             if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ECONNREFUSED)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ECONNREFUSED);
 

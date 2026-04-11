@@ -8,7 +8,6 @@
 //   node --experimental-strip-types --test test/regression/issue/29129.test.ts
 
 import assert from "node:assert";
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import test from "node:test";
@@ -151,98 +150,12 @@ if (process.platform === "linux") {
     assert.strictEqual(availableParallelism(), expected);
   });
 
-  test("os.availableParallelism() under taskset reports the restricted count (#29129)", () => {
-    const allowed = parseCpusAllowedList();
-    if (allowed.length < 2) {
-      // Need at least 2 CPUs in the current mask so we can taskset
-      // down to a strict subset. Don't fail — the in-process check
-      // above already covers the unrestricted case.
-      return;
-    }
-
-    // Use taskset if present. Not every CI image ships it (e.g. some
-    // minimal alpine variants), so skip gracefully in that case — the
-    // cross-process path is extra coverage on top of the in-process
-    // assertion above.
-    // timeout is an OS-level kill (child_process option, not a
-    // bun:test per-test timeout) — this is the only way to interrupt a
-    // hung spawnSync, since the JS event loop is blocked while the
-    // call is in progress. 10s is far longer than `command -v` needs
-    // but short enough that a real hang surfaces quickly.
-    const which = spawnSync("sh", ["-c", "command -v taskset || true"], { encoding: "utf8", timeout: 10_000 });
-    const tasksetPath = (which.stdout || "").trim();
-    if (!tasksetPath) return;
-
-    // Pin to the first CPU in the current allowed set. Using an
-    // index from the mask (rather than "0") avoids "Invalid
-    // argument" inside a cpuset that doesn't include CPU 0.
-    const pinCpu = allowed[0]!;
-
-    // Run the same runtime that's executing this file (bun under
-    // `bun test`, node under `node --test`) so the subprocess
-    // actually exercises the binary under test.
-    // timeout is OS-level (child_process option, not bun:test) and is
-    // the only way to interrupt a hung synchronous spawn — the JS
-    // event loop can't fire a timer while the thread is blocked here.
-    // 60s is generous for a trivial `bun -e console.log(...)` even on
-    // a debug+ASAN build pinned to a single CPU, but short enough that
-    // a real hang surfaces without wasting a CI runner slot.
-    const result = spawnSync(
-      tasksetPath,
-      [
-        "-c",
-        String(pinCpu),
-        process.execPath,
-        "-e",
-        "console.log(require('os').availableParallelism() + '|' + (globalThis.navigator?.hardwareConcurrency ?? ''))",
-      ],
-      { encoding: "utf8", timeout: 60_000 },
-    );
-
-    // spawnSync returns result.status === null both when the process
-    // failed to launch (result.error is set, e.g. ENOENT / ENOMEM) and
-    // when it was killed by a signal (result.signal is set, e.g.
-    // SIGSEGV). Include that in the error message so a CI failure
-    // points at the real cause instead of a confusing "exited with null".
-    if (result.error || result.status !== 0) {
-      const stderr = result.stderr || "";
-      // taskset itself can fail before the subprocess starts when
-      // sched_setaffinity is blocked by a seccomp profile (GKE
-      // Autopilot, Fargate, restrictive pod security) — the stderr
-      // looks like "taskset: failed to set pid ...'s affinity:
-      // Operation not permitted". Treat permission denials as a
-      // graceful skip in the same spirit as the missing-binary guard
-      // above: this sub-test is extra coverage, not the primary
-      // assertion. Any OTHER failure is a real regression worth
-      // surfacing.
-      if (stderr.includes("Operation not permitted") || stderr.includes("Permission denied")) {
-        return;
-      }
-      const reason = result.error
-        ? `failed to launch: ${result.error.message}`
-        : result.signal
-          ? `killed by signal ${result.signal}`
-          : `exited with ${result.status}`;
-      throw new Error(`taskset subprocess ${reason}\nstderr:\n${stderr}`);
-    }
-
-    const [availableStr, hardwareStr] = (result.stdout || "").trim().split("|");
-    const available = Number(availableStr);
-
-    // Pinned to exactly one CPU → availableParallelism must report 1
-    // regardless of the surrounding cgroup quota (taskset trumps: the
-    // mask is a strict subset of what the cgroup allows). Pre-fix bun
-    // returned the host count (32 on a 32-core host with an 8-core
-    // cpuset), which was the whole bug.
-    assert.strictEqual(available, 1);
-
-    // navigator.hardwareConcurrency is a web-platform global that bun
-    // exposes on the main thread but node does not (it's only on
-    // Worker scopes). The subprocess script uses `?? ""`, so an absent
-    // navigator produces an empty string — assert the value only when
-    // the runtime actually exposed it.
-    if (hardwareStr !== "") {
-      assert.strictEqual(Number(hardwareStr), 1);
-    }
-  });
+  // A second test that ran the binary under taskset(1) used to live here
+  // as belt-and-braces coverage. It proved flaky on ASAN CI (spawnSync
+  // of a full debug+ASAN bun pinned to one CPU hit intermittent
+  // ENOMEM/timeout/signal issues across builds 45028–45104). The
+  // in-process assertion above already exercises the full
+  // min(affinity, cgroup quota) path that was the actual bug, so the
+  // cross-process test was removed rather than left as a source of CI
+  // noise.
 }

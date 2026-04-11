@@ -3338,19 +3338,8 @@ fn printErrorInstance(
             continue;
         }
 
-        // BuildMessage / ResolveMessage paths inside printErrorFromMaybePrivateData
-        // already emit their own leading newline when `this.had_errors` is set,
-        // which it is by the time we get here (we set it at the top of
-        // printErrorInstance). Only add our own separator for entries that go
-        // through the generic Error path.
-        if (err.jsType() != .DOMWrapper) {
-            try writer.writeAll("\n");
-        }
-        // Go through printErrorFromMaybePrivateData so DOMWrapper children
-        // (BuildMessage / ResolveMessage from processFetchLog) are routed
-        // through their specialized formatters; everything else falls
-        // through to printErrorInstance.
-        _ = this.printErrorFromMaybePrivateData(err, exception_list, formatter, Writer, writer, allow_ansi_color, allow_side_effects);
+        try writer.writeAll("\n");
+        try this.printErrorInstance(.js, err, exception_list, formatter, Writer, writer, allow_ansi_color, allow_side_effects);
         _ = formatter.map.remove(err);
     }
 }

@@ -38,15 +38,22 @@ test("Promise.any rejection surfaces as an AggregateError, not a stray inner err
 
 test("uncaught AggregateError rejection still shows the wrapper", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `await Promise.any([Promise.reject(new Error("a")), Promise.reject(new Error("b"))]);`],
+    cmd: [
+      bunExe(),
+      "-e",
+      `await Promise.any([Promise.reject(new Error("child_aaa")), Promise.reject(new Error("child_bbb"))]);`,
+    ],
     env: bunEnv,
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain("AggregateError");
-  expect(stderr).toContain("a");
-  expect(stderr).toContain("b");
+  // Distinctive messages so the assertion can only pass when the inner
+  // errors are actually printed — single-char strings would match the
+  // wrapper name or stack-frame content even if the children were dropped.
+  expect(stderr).toContain("child_aaa");
+  expect(stderr).toContain("child_bbb");
   expect(exitCode).not.toBe(0);
 });
 

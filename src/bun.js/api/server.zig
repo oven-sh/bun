@@ -274,6 +274,7 @@ pub const AnyRoute = union(enum) {
 pub const ServerConfig = @import("./server/ServerConfig.zig");
 pub const ServerWebSocket = @import("./server/ServerWebSocket.zig");
 pub const NodeHTTPResponse = @import("./server/NodeHTTPResponse.zig");
+pub const UnixSocketCleanup = @import("./server/UnixSocketCleanup.zig");
 
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 const ServePlugins = struct {
@@ -532,6 +533,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub const App = uws.NewApp(ssl_enabled);
         app: ?*App = null,
         listener: ?*App.ListenSocket = null,
+        /// Registration in the process-global unix socket cleanup list. Non-null
+        /// only while a unix-socket listener is active — see UnixSocketCleanup.zig.
+        unix_cleanup_handle: ?UnixSocketCleanup.Handle = null,
         js_value: jsc.JSRef = jsc.JSRef.empty(),
         /// Potentially null before listen() is called, and once .destroy() is called.
         vm: *jsc.VirtualMachine,
@@ -1555,6 +1559,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 if (path.len > 0 and path[0] != 0) {
                     _ = bun.sys.unlink(path);
                 }
+                UnixSocketCleanup.unregister(this.unix_cleanup_handle);
+                this.unix_cleanup_handle = null;
             }
 
             if (!abrupt) {
@@ -1811,6 +1817,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.vm.event_loop_handle = Async.Loop.get();
             if (!ssl_enabled)
                 this.vm.addListeningSocketForWatchMode(socket.?.socket().fd());
+
+            // Register the unix socket path for cleanup if the process exits
+            // via a signal without reaching `stopListening()`.
+            if (this.config.address == .unix) {
+                this.unix_cleanup_handle = UnixSocketCleanup.register(this.config.address.unix);
+            }
         }
 
         pub fn ref(this: *ThisServer) void {

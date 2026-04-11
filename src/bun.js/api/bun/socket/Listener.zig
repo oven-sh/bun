@@ -14,6 +14,10 @@ protos: ?[]const u8 = null,
 strong_data: jsc.Strong.Optional = .empty,
 strong_self: jsc.Strong.Optional = .empty,
 
+/// Registration in the process-global unix socket cleanup list. Non-null
+/// only while a unix-socket listener is active — see UnixSocketCleanup.zig.
+unix_cleanup_handle: ?UnixSocketCleanup.Handle = null,
+
 pub const js = jsc.Codegen.JSListener;
 pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
@@ -317,6 +321,12 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     this.strong_self.set(globalObject, this_value);
     this.poll_ref.ref(handlers.vm);
 
+    // Register the unix socket path for cleanup if the process exits
+    // via a signal without reaching `doStop()`.
+    if (this.connection == .unix) {
+        this.unix_cleanup_handle = UnixSocketCleanup.register(this.connection.unix);
+    }
+
     return this_value;
 }
 
@@ -478,8 +488,13 @@ pub fn finalize(this: *Listener) callconv(.c) void {
 
 /// Match Node.js/libuv: unlink the unix socket file before closing the listening fd.
 /// Unlinking after close would race with another process creating a socket at the same path.
-fn unlinkUnixSocketPath(this: *const Listener) void {
+fn unlinkUnixSocketPath(this: *Listener) void {
     if (this.connection != .unix) return;
+    // Clear the cleanup registration first — this path is now handled by us,
+    // the signal/atexit hook should skip it.
+    UnixSocketCleanup.unregister(this.unix_cleanup_handle);
+    this.unix_cleanup_handle = null;
+
     const path = this.connection.unix;
     // Abstract sockets (Linux) start with a NUL byte and have no filesystem entry.
     if (path.len == 0 or path[0] == 0) return;
@@ -1072,6 +1087,7 @@ const BoringSSL = bun.BoringSSL.c;
 const uv = bun.windows.libuv;
 
 const api = bun.api;
+const UnixSocketCleanup = bun.api.server.UnixSocketCleanup;
 const Handlers = bun.api.SocketHandlers;
 const TCPSocket = bun.api.TCPSocket;
 const TLSSocket = bun.api.TLSSocket;

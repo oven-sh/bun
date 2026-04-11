@@ -397,6 +397,8 @@ extern "C" ssize_t pwritev2(int fd, const struct iovec* iov, int iovcnt,
 #endif
 
 extern "C" void Bun__onExit();
+extern "C" void Bun__cleanupUnixSocketPaths();
+extern "C" void Bun__atexit(void (*func)(void));
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];
@@ -432,6 +434,10 @@ extern "C" void bun_restore_stdio()
 #if !OS(WINDOWS)
 extern "C" void onExitSignal(int sig)
 {
+    // `unlink(2)` is on the POSIX async-signal-safe list, so it is safe to
+    // call from here. The cleanup walks a wait-free linked list and does not
+    // allocate or take locks.
+    Bun__cleanupUnixSocketPaths();
     bun_restore_stdio();
     signal(sig, SIG_DFL);
     raise(sig);
@@ -528,8 +534,13 @@ extern "C" void bun_initialize_process()
         close(devNullFd_);
     }
 
-    // Restore TTY state on exit
-    if (anyTTYs) {
+    // Install the exit signal handler for SIGTERM / SIGINT unconditionally.
+    // It restores TTY state (if any), unlinks any tracked unix-socket paths,
+    // and re-raises the signal with SIG_DFL so the process exits with the
+    // usual signal semantics. We want this even when stdin/stdout/stderr are
+    // not TTYs, so `Bun.serve({ unix: ... })` processes terminated by
+    // SIGTERM still clean up their socket file.
+    {
         struct sigaction sa;
         memset(&sa, 0, sizeof(sa));
         sigemptyset(&sa.sa_mask);
@@ -540,6 +551,7 @@ extern "C" void bun_initialize_process()
         sigaction(SIGTERM, &sa, nullptr);
         sigaction(SIGINT, &sa, nullptr);
     }
+    (void)anyTTYs;
 #elif OS(WINDOWS)
     for (int fd = 0; fd <= 2; ++fd) {
         auto handle = reinterpret_cast<HANDLE>(uv_get_osfhandle(fd));
@@ -583,6 +595,13 @@ extern "C" void bun_initialize_process()
     atexit(Bun__onExit);
 #elif !OS(WINDOWS)
     at_quick_exit(Bun__onExit);
+#endif
+
+#if !OS(WINDOWS)
+    // Ensure any unix-socket paths registered by `Bun.serve` / `Bun.listen`
+    // are removed on a normal `process.exit()` / `std.c.exit`, not just on
+    // a signal. `Bun__atexit` appends to the list walked by `Bun__onExit`.
+    Bun__atexit(Bun__cleanupUnixSocketPaths);
 #endif
 }
 

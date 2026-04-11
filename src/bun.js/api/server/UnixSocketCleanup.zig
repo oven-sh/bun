@@ -38,11 +38,12 @@ pub const Handle = *Node;
 pub fn register(path: []const u8) ?Handle {
     if (path.len == 0 or path[0] == 0) return null;
 
-    const node = bun.default_allocator.create(Node) catch return null;
-    const path_dup = bun.default_allocator.dupeZ(u8, path) catch {
-        bun.default_allocator.destroy(node);
-        return null;
-    };
+    // Allocator failures here are OOM-only — crash via `handleOom` rather
+    // than silently starting a listener that is missing from the cleanup
+    // registry (which would indistinguishable from the "abstract socket"
+    // early return above).
+    const node = bun.handleOom(bun.default_allocator.create(Node));
+    const path_dup = bun.handleOom(bun.default_allocator.dupeZ(u8, path));
 
     node.* = .{
         .path = path_dup,

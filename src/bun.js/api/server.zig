@@ -535,7 +535,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         listener: ?*App.ListenSocket = null,
         /// Registration in the process-global unix socket cleanup list. Non-null
         /// only while a unix-socket listener is active — see UnixSocketCleanup.zig.
-        unix_cleanup_handle: ?UnixSocketCleanup.Handle = null,
+        #unix_cleanup_handle: ?UnixSocketCleanup.Handle = null,
         js_value: jsc.JSRef = jsc.JSRef.empty(),
         /// Potentially null before listen() is called, and once .destroy() is called.
         vm: *jsc.VirtualMachine,
@@ -1555,12 +1555,17 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.notifyInspectorServerStopped();
 
             if (this.config.address == .unix) {
+                // Tombstone the cleanup registration BEFORE unlinking: a
+                // signal delivered between the two calls would otherwise
+                // see this node as still live and could re-unlink the path
+                // after another process races in and binds a new socket.
+                UnixSocketCleanup.unregister(this.#unix_cleanup_handle);
+                this.#unix_cleanup_handle = null;
+
                 const path = this.config.address.unix;
                 if (path.len > 0 and path[0] != 0) {
                     _ = bun.sys.unlink(path);
                 }
-                UnixSocketCleanup.unregister(this.unix_cleanup_handle);
-                this.unix_cleanup_handle = null;
             }
 
             if (!abrupt) {
@@ -1813,16 +1818,19 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 return this.onListenFailed();
             }
 
+            // Register the unix socket path for cleanup as the very first
+            // thing — a signal delivered between uSockets returning from
+            // bind(2) and this callback running would already be after the
+            // socket file exists on disk, so we want the registry entry
+            // installed before we do any other work.
+            if (this.config.address == .unix) {
+                this.#unix_cleanup_handle = UnixSocketCleanup.register(this.config.address.unix);
+            }
+
             this.listener = socket;
             this.vm.event_loop_handle = Async.Loop.get();
             if (!ssl_enabled)
                 this.vm.addListeningSocketForWatchMode(socket.?.socket().fd());
-
-            // Register the unix socket path for cleanup if the process exits
-            // via a signal without reaching `stopListening()`.
-            if (this.config.address == .unix) {
-                this.unix_cleanup_handle = UnixSocketCleanup.register(this.config.address.unix);
-            }
         }
 
         pub fn ref(this: *ThisServer) void {

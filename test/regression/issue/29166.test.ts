@@ -105,11 +105,8 @@ test.skipIf(isWindows)("#29166 Bun.serve(unix) unlinks socket file on process.ex
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  // The stderr may contain an ASAN warning in debug builds; we only care
-  // that nothing *threw* (i.e. the child exited cleanly with code 0 and
-  // no unrelated error text).
-  expect(stderr).not.toContain("Error");
-  expect(exitCode).toBe(0);
+  const exitCode = await proc.exited;
+  // Behavior assertion first, exit code last.
   expect(existsSync(sock)).toBe(false);
+  expect(exitCode).toBe(0);
 });

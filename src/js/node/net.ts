@@ -2648,18 +2648,20 @@ function onStreamRead(nread, arrayBuffer) {
     let ret;
     if (self[kBuffer]) {
       // onread: {buffer, callback}. Node's native layer writes directly into
-      // the user buffer; copy from the handle's buffer so the callback
-      // receives the caller's buffer as documented.
+      // the user buffer; we copy from the handle's buffer here, so the
+      // callback must receive the truncated count (bytes actually in
+      // userBuf), not the handle's nread.
       let userBuf = self[kBufferGen]();
+      let n = nread;
       if ($isTypedArrayView(userBuf)) {
         if (userBuf !== arrayBuffer) {
-          const n = nread < userBuf.byteLength ? nread : userBuf.byteLength;
+          n = nread < userBuf.byteLength ? nread : userBuf.byteLength;
           userBuf.set(arrayBuffer.subarray(0, n));
         }
       } else {
         userBuf = arrayBuffer;
       }
-      ret = self[kBufferCb](nread, userBuf);
+      ret = self[kBufferCb](n, userBuf);
     } else {
       ret = self.push(arrayBuffer);
     }

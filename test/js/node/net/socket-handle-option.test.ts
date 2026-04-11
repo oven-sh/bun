@@ -93,3 +93,52 @@ test("net.Socket({handle, onread}) passes user buffer to callback", async () => 
   expect(calls[0].buf).not.toBe(handleBuf);
   expect(userBuf.subarray(0, 5).toString()).toBe("hello");
 });
+
+// When the user buffer is smaller than the chunk, the copy truncates — the
+// callback must be told the truncated count, not the handle's full nread,
+// or buf.subarray(0, nread) overruns into stale data.
+test("net.Socket({handle, onread}) reports truncated nread for small buffer", async () => {
+  let onread;
+  const handle = {
+    readStart() {
+      return 0;
+    },
+    readStop() {
+      return 0;
+    },
+    close() {},
+    set onread(fn) {
+      onread = fn;
+    },
+    get onread() {
+      return onread;
+    },
+    reading: false,
+  };
+
+  const userBuf = Buffer.alloc(4);
+  const calls: { nread: number; buf: Buffer }[] = [];
+  const socket = new Socket({
+    handle,
+    manualStart: true,
+    writable: false,
+    onread: {
+      buffer: userBuf,
+      callback(nread, buf) {
+        calls.push({ nread, buf });
+      },
+    },
+  });
+  socket.read(0);
+
+  onread.call(handle, 10, Buffer.from("0123456789"));
+  onread.call(handle, -4095, undefined); // UV_EOF
+
+  await new Promise(resolve => socket.on("end", resolve));
+
+  expect(calls.length).toBe(1);
+  expect(calls[0].buf).toBe(userBuf);
+  expect(calls[0].nread).toBe(4); // truncated to userBuf.byteLength
+  expect(userBuf.toString()).toBe("0123");
+  expect(calls[0].buf.subarray(0, calls[0].nread).toString()).toBe("0123");
+});

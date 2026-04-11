@@ -114,6 +114,40 @@ const _MessagePort = globalThis.MessagePort;
 injectFakeEmitter(_MessagePort);
 
 const MessagePort = _MessagePort;
+const untransferableObjects = new WeakSet<object>();
+
+function isObjectLike(value: unknown): value is object {
+  return (typeof value === "object" && value !== null) || typeof value === "function";
+}
+
+function throwDataCloneError(message = "Cannot transfer object of unsupported type.") {
+  throw new DOMException(message, "DataCloneError");
+}
+
+function validateTransferList(transferList: unknown) {
+  if (!transferList || !isObjectLike(transferList)) {
+    return;
+  }
+
+  const iterator = transferList[Symbol.iterator];
+  if (typeof iterator !== "function") {
+    return;
+  }
+
+  for (const transferable of transferList as Iterable<unknown>) {
+    if (isObjectLike(transferable) && untransferableObjects.has(transferable)) {
+      throwDataCloneError();
+    }
+  }
+}
+
+const messagePortPostMessage = MessagePort.prototype.postMessage;
+Object.defineProperty(MessagePort.prototype, "postMessage", {
+  value(...args: [any, any]) {
+    validateTransferList(args[1]);
+    return messagePortPostMessage.$apply(this, args);
+  },
+});
 
 let resourceLimits = {};
 
@@ -151,6 +185,7 @@ function fakeParentPort() {
   const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
     value(...args: [any, any]) {
+      validateTransferList(args[1]);
       return postMessage.$apply(null, args);
     },
   });
@@ -215,8 +250,10 @@ function setEnvironmentData(key: unknown, value: unknown): void {
   }
 }
 
-function markAsUntransferable() {
-  throwNotImplemented("worker_threads.markAsUntransferable");
+function markAsUntransferable(object?: unknown) {
+  if (isObjectLike(object)) {
+    untransferableObjects.add(object);
+  }
 }
 
 function moveMessagePortToContext() {
@@ -234,6 +271,8 @@ class Worker extends EventEmitter {
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
+
+    validateTransferList(options.transferList);
 
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options && builtinsGeneratorHatesEval in options) {
@@ -341,6 +380,7 @@ class Worker extends EventEmitter {
   }
 
   postMessage(...args: [any, any]) {
+    validateTransferList(args[1]);
     return this.#worker.postMessage.$apply(this.#worker, args);
   }
 

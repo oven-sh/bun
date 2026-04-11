@@ -875,7 +875,7 @@ pub const PercentEncoding = struct {
                     i += 1;
 
                     // scan ahead assuming .writeAll is faster than .writeByte one at a time
-                    while (i < input.len and input[i] != '%') : (i += 1) {}
+                    i = std.mem.indexOfScalarPos(u8, input, i, '%') orelse input.len;
                     try writer.writeAll(input[start..i]);
                     written += @as(u32, @truncate(i - start));
                 },

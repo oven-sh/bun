@@ -178,4 +178,13 @@ test.skipIf(!isLinux)("process.ppid is live after parent death (#29169)", async 
   expect(reparented.tag).toBe("reparented");
   expect(reparented.js).toBe(reparented.kernel);
   expect(reparented.js).not.toBe(parentPid);
+
+  // Confirm the parent bash actually died from our SIGKILL.
+  // `wait $CHILD` would otherwise return the bun child's exit
+  // status (0), so checking this catches regressions where the
+  // test unintentionally lets the shell exit cleanly instead of
+  // being killed — which would break the reparenting scenario
+  // entirely.
+  expect(await parent.exited).toBe(128 + 9); // SIGKILL
+  expect(parent.signalCode).toBe("SIGKILL");
 });

@@ -134,11 +134,10 @@ function expectedAvailableParallelism(): number {
 }
 
 // The fix under test is Linux-only (sched_getaffinity / cgroup cpu.max
-// don't exist elsewhere). Register zero tests on non-Linux rather than
-// going through `test.skip` — bun's `node:test` shim forwards options
-// as the third positional arg to `bun:test`'s `test(name, fn, timeout)`,
-// which can trip the runner on some Windows builds. Empty test file =
-// 0 tests, exit 0.
+// don't exist elsewhere). Register zero tests on non-Linux — an empty
+// test file is treated as "0 tests ran, exit 0" by both bun and node
+// test runners, which is the correct outcome for a platform-gated
+// regression.
 if (process.platform === "linux") {
   test("os.availableParallelism() matches sched_getaffinity + cgroup quota (#29129)", () => {
     const expected = expectedAvailableParallelism();

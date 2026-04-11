@@ -24,10 +24,9 @@ describe("Worker", () => {
         w.unref();
         w.terminate();
       }
+      expect(workers.length).toBe(4);
     } finally {
       URL.revokeObjectURL(url);
     }
-
-    expect(true).toBe(true);
   });
 });

@@ -5185,53 +5185,46 @@ fn NewPrinter(
             p.printDecls(keyword, decls, ExprFlag.None(), tlm);
             p.printSemicolonAfterStatement();
             if (rewrite_esm_to_cjs and is_export and decls.len > 0) {
+                // Emit inline `Object.defineProperty(exports, "name", { get: ... })`
+                // for each declared name. This matches `export function` / `export
+                // class` (see `printBundledExport`) and avoids depending on the
+                // `__export` runtime symbol, which only gets populated by the
+                // bundler linker and is null in `--no-bundle` / `transform_only`
+                // mode. Supports identifier bindings and simple object/array
+                // destructuring; anything more exotic is skipped (the bundler
+                // path handles those on its own).
                 for (decls) |decl| {
-                    p.printIndent();
-                    p.printSymbol(p.options.runtime_imports.__export.?);
-                    p.print("(");
-                    p.printSpaceBeforeIdentifier();
-                    p.printModuleExportSymbol();
-                    p.print(",");
-                    p.printSpace();
-
                     switch (decl.binding.data) {
                         .b_identifier => |ident| {
-                            p.print("{");
-                            p.printSpace();
-                            p.printSymbol(ident.ref);
-                            if (p.options.minify_whitespace)
-                                p.print(":()=>(")
-                            else
-                                p.print(": () => (");
-                            p.printSymbol(ident.ref);
-                            p.print(") }");
+                            p.printIndent();
+                            const name = p.renamer.nameForSymbol(ident.ref);
+                            p.printBundledExport(name, name);
+                            p.printSemicolonAfterStatement();
                         },
                         .b_object => |obj| {
-                            p.print("{");
-                            p.printSpace();
                             for (obj.properties) |prop| {
-                                switch (prop.value.data) {
-                                    .b_identifier => |ident| {
-                                        p.printSymbol(ident.ref);
-                                        if (p.options.minify_whitespace)
-                                            p.print(":()=>(")
-                                        else
-                                            p.print(": () => (");
-                                        p.printSymbol(ident.ref);
-                                        p.print("),");
-                                        p.printNewline();
-                                    },
-                                    else => {},
+                                if (prop.value.data == .b_identifier) {
+                                    const ident = prop.value.data.b_identifier;
+                                    p.printIndent();
+                                    const name = p.renamer.nameForSymbol(ident.ref);
+                                    p.printBundledExport(name, name);
+                                    p.printSemicolonAfterStatement();
                                 }
                             }
-                            p.print("}");
                         },
-                        else => {
-                            p.printBinding(decl.binding, .{});
+                        .b_array => |arr| {
+                            for (arr.items) |item| {
+                                if (item.binding.data == .b_identifier) {
+                                    const ident = item.binding.data.b_identifier;
+                                    p.printIndent();
+                                    const name = p.renamer.nameForSymbol(ident.ref);
+                                    p.printBundledExport(name, name);
+                                    p.printSemicolonAfterStatement();
+                                }
+                            }
                         },
+                        else => {},
                     }
-                    p.print(")");
-                    p.printSemicolonAfterStatement();
                 }
             }
         }

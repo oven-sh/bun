@@ -41,6 +41,7 @@ describe("RedisClient: assigning null to onclose/onconnect (#29145)", () => {
     const c = new RedisClient("redis://localhost:6379");
     try {
       c.onclose = undefined;
+      expect(c.onclose).toBeUndefined();
       expect(() => c.close()).not.toThrow();
     } finally {
       c.close();
@@ -51,6 +52,7 @@ describe("RedisClient: assigning null to onclose/onconnect (#29145)", () => {
     const c = new RedisClient("redis://localhost:6379");
     try {
       c.onconnect = undefined;
+      expect(c.onconnect).toBeUndefined();
       expect(() => c.close()).not.toThrow();
     } finally {
       c.close();

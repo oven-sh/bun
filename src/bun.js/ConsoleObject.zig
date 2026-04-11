@@ -2429,9 +2429,20 @@ pub const Formatter = struct {
                     const prev_quote_strings = this.quote_strings;
                     this.quote_strings = true;
                     defer this.quote_strings = prev_quote_strings;
-                    var empty_start: ?u32 = null;
+
+                    // Array lengths larger than u32 max fall back to the slow
+                    // per-index path (findNextPopulatedIndex takes u32).
+                    const len_u32: u32 = if (len > std.math.maxInt(u32)) std.math.maxInt(u32) else @intCast(len);
+
+                    // Find the first populated index in O(1) for Undecided
+                    // arrays (e.g. `new Array(N)`), skipping leading holes
+                    // without walking every slot.
+                    const first_populated: u32 = value.findNextPopulatedIndex(0, len_u32);
+                    var empty_start: ?u32 = if (first_populated > 0) 0 else null;
+
                     first: {
-                        const element = value.getDirectIndex(this.globalThis, 0);
+                        const first_index: u32 = if (first_populated < len_u32) first_populated else 0;
+                        const element = value.getDirectIndex(this.globalThis, first_index);
 
                         const tag = try Tag.getAdvanced(element, this.globalThis, .{
                             .hide_global = true,
@@ -2452,8 +2463,36 @@ pub const Formatter = struct {
                         }
 
                         if (element == .zero) {
+                            // Either the whole array is holes, or the fast
+                            // scan disagreed with `getDirectIndex`. Mark
+                            // index 0 as the start of the hole run and let
+                            // the main loop (or the trailing summary) pick
+                            // up from there.
                             empty_start = 0;
                             break :first;
+                        }
+
+                        if (first_populated > 0) {
+                            // Emit the leading run of holes up to the first
+                            // populated index, matching the existing
+                            // `N x empty items, value, …` shape.
+                            const empty_count = first_populated;
+                            if (empty_count == 1) {
+                                writer.pretty("<r><d>empty item<r>", enable_ansi_colors, .{});
+                            } else {
+                                this.estimated_line_length += bun.fmt.fastDigitCount(empty_count);
+                                writer.pretty("<r><d>{d} x empty items<r>", enable_ansi_colors, .{empty_count});
+                            }
+                            empty_start = null;
+
+                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                            if (!this.single_line and (this.ordered_properties or this.goodTimeForANewLine())) {
+                                writer.writeAll("\n");
+                                was_good_time = true;
+                                this.writeIndent(Writer, writer_) catch unreachable;
+                            } else {
+                                writer.space();
+                            }
                         }
 
                         try this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
@@ -2465,17 +2504,33 @@ pub const Formatter = struct {
                         }
                     }
 
-                    var i: u32 = 1;
-                    var nonempty_count: u32 = 1;
+                    var i: u32 = if (first_populated < len_u32) first_populated + 1 else len_u32;
+                    var nonempty_count: u32 = if (first_populated < len_u32) 1 else 0;
 
-                    while (i < len) : (i += 1) {
-                        const element = value.getDirectIndex(this.globalThis, i);
-                        if (element == .zero) {
+                    while (i < len_u32) {
+                        // Jump straight to the next populated index, skipping
+                        // runs of holes in O(1) for undecided-shape arrays.
+                        const next_i = value.findNextPopulatedIndex(i, len_u32);
+                        if (next_i > i) {
                             if (empty_start == null) {
                                 empty_start = i;
                             }
+                            i = next_i;
+                            if (i >= len_u32) break;
+                        }
+
+                        const element = value.getDirectIndex(this.globalThis, i);
+                        if (element == .zero) {
+                            // Shape changed between the scan and the read, or
+                            // the indexing type couldn't be fast-scanned —
+                            // treat this slot as a hole and advance.
+                            if (empty_start == null) {
+                                empty_start = i;
+                            }
+                            i += 1;
                             continue;
                         }
+
                         if (nonempty_count >= 100) {
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             writer.writeAll("\n"); // we want the line break to be unconditional here
@@ -2528,6 +2583,8 @@ pub const Formatter = struct {
                                 writer.writeAll(comptime Output.prettyFmt("<r>", true));
                             }
                         }
+
+                        i += 1;
                     }
 
                     if (empty_start) |empty| {
@@ -2544,7 +2601,7 @@ pub const Formatter = struct {
 
                         empty_start = null;
 
-                        const empty_count = len - empty;
+                        const empty_count = len_u32 - empty;
                         if (empty_count == 1) {
                             writer.pretty("<r><d>empty item<r>", enable_ansi_colors, .{});
                         } else {

@@ -300,7 +300,7 @@ fn fetchImpl(
             // conversion throws TypeError when the value is a primitive other than
             // undefined or null. https://fetch.spec.whatwg.org/#dom-request
             is_error = true;
-            const err = ctx.toTypeError(.INVALID_ARG_TYPE, "The \"init\" argument must be of type object or undefined.", .{});
+            const err = ctx.toTypeError(.INVALID_ARG_TYPE, "The \"init\" argument must be of type object, undefined, or null.", .{});
             return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
         }
 

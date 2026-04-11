@@ -2,12 +2,12 @@
 // in src/bun.js/node/node_util_binding.zig. Exposed for testing via
 // `bun:internal-for-testing`. Node-compat is verified by running the same
 // fixture under `node --expose-internals` when node is available.
+import { createSocketPair, guessHandleType, guessHandleTypeNative, memfd_create } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { guessHandleType, guessHandleTypeNative, createSocketPair, memfd_create } from "bun:internal-for-testing";
-import { bunEnv, bunExe, isPosix, isWindows, isLinux, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, tempDir } from "harness";
+import { execFileSync } from "node:child_process";
 import { closeSync, constants as fsConstants, openSync, rmSync } from "node:fs";
 import { createServer as createTcpServer } from "node:net";
-import { execFileSync } from "node:child_process";
 import { devNull } from "node:os";
 import path from "node:path";
 

@@ -3859,7 +3859,13 @@ fn NewPrinter(
 
                     if (rewrite_esm_to_cjs and s.func.flags.contains(.is_export)) {
                         p.printIndent();
-                        p.printBundledExport(local_name, local_name);
+                        // External export key is the source name; the
+                        // getter references the (possibly renamed) local.
+                        const export_key = if (p.symbols().get(p.symbols().follow(nameRef))) |symbol|
+                            symbol.original_name
+                        else
+                            local_name;
+                        p.printBundledExport(export_key, local_name);
                         p.printSemicolonAfterStatement();
                     }
                 },
@@ -3904,7 +3910,13 @@ fn NewPrinter(
                     if (rewrite_esm_to_cjs) {
                         if (s.is_export) {
                             p.printIndent();
-                            p.printBundledExport(p.renamer.nameForSymbol(nameRef), p.renamer.nameForSymbol(nameRef));
+                            // External export key is the source name; the
+                            // getter references the (possibly renamed) local.
+                            const export_key = if (p.symbols().get(p.symbols().follow(nameRef))) |symbol|
+                                symbol.original_name
+                            else
+                                nameStr;
+                            p.printBundledExport(export_key, nameStr);
                             p.printSemicolonAfterStatement();
                         }
                     }
@@ -4166,7 +4178,7 @@ fn NewPrinter(
                             // If we have a lazy re-export and it's read-only...
                             // we have to overwrite it via Object.defineProperty
 
-                            // Object.assign(__export, {prop1, prop2, prop3});
+                            // Object.assign(module.exports, {prop1, prop2, prop3});
                             else => {
                                 p.print("Object.assign");
 
@@ -4179,13 +4191,18 @@ fn NewPrinter(
                                 const last = s.items.len - 1;
                                 for (s.items, 0..) |item, i| {
                                     const symbol = p.symbols().getWithLink(item.name.ref.?).?;
-                                    const name = symbol.original_name;
+                                    // The object-literal KEY is the public export
+                                    // name (`item.alias`). The VALUE identifier must
+                                    // be the renamed local, not `symbol.original_name`
+                                    // — the local binding may have been minified to
+                                    // something shorter.
+                                    const local = p.renamer.nameForSymbol(item.name.ref.?);
                                     var did_print = false;
 
                                     if (symbol.namespace_alias) |namespace| {
                                         const import_record = p.importRecord(namespace.import_record_index);
                                         if (namespace.was_originally_property_access) {
-                                            p.printIdentifier(name);
+                                            p.printClauseAlias(item.alias);
                                             p.print(": () => ");
                                             p.printNamespaceAlias(import_record.*, namespace);
                                             did_print = true;
@@ -4194,10 +4211,10 @@ fn NewPrinter(
 
                                     if (!did_print) {
                                         p.printClauseAlias(item.alias);
-                                        if (!strings.eql(name, item.alias)) {
+                                        if (!strings.eql(local, item.alias)) {
                                             p.print(":");
                                             p.printSpaceBeforeIdentifier();
-                                            p.printIdentifier(name);
+                                            p.printIdentifier(local);
                                         }
                                     }
 

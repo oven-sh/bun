@@ -63,7 +63,11 @@ function readCgroupCpuQuota(): number {
   if (v2Match) {
     const rel = v2Match[1]!.replace(/^\/+/, "");
     let min = Infinity;
-    let path = `/sys/fs/cgroup/${rel}`;
+    // Strip any trailing slash so the `path === mount` break fires on
+    // the first iteration when the process sits at the cgroup root
+    // (`rel === ""`). Without this, the loop would read
+    // /sys/fs/cgroup//cpu.max twice before stopping.
+    let path = `/sys/fs/cgroup/${rel}`.replace(/\/+$/, "");
     const mount = "/sys/fs/cgroup";
     while (path.startsWith(mount)) {
       const buf = slurp(`${path}/cpu.max`);

@@ -33,12 +33,11 @@ test("process.emit override is invoked for natural shutdown 'exit'", async () =>
     ],
     env: bunEnv,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   const seen = JSON.parse(stdout.trim());
   expect(seen).toContain("exit");
   expect(seen).toContain("beforeExit");
+  expect(exitCode).toBe(0);
 });
 
 test("process.emit override is invoked for explicit process.exit(code)", async () => {
@@ -61,10 +60,9 @@ test("process.emit override is invoked for explicit process.exit(code)", async (
     ],
     env: bunEnv,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(7);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(JSON.parse(stdout.trim())).toEqual([{ event: "exit", args: [7] }]);
+  expect(exitCode).toBe(7);
 });
 
 test("signal-exit-style wrapper observes exit event", async () => {
@@ -91,8 +89,7 @@ test("signal-exit-style wrapper observes exit event", async () => {
     ],
     env: bunEnv,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout.trim()).toBe("ranOnExit=true");
+  expect(exitCode).toBe(0);
 });

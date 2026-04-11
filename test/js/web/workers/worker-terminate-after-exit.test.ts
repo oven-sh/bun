@@ -5,18 +5,16 @@ describe("Worker", () => {
     const url = URL.createObjectURL(new Blob(["/* exits immediately */"], { type: "application/javascript" }));
     try {
       const workers: Worker[] = [];
+      const exited: Promise<void>[] = [];
       for (let i = 0; i < 4; i++) {
+        const { promise, resolve } = Promise.withResolvers<void>();
         const w = new Worker(url);
+        w.addEventListener("close", () => resolve(), { once: true });
         workers.push(w);
+        exited.push(promise);
       }
 
-      await Promise.all(
-        workers.map(w => {
-          const { promise, resolve } = Promise.withResolvers<void>();
-          w.addEventListener("close", () => resolve(), { once: true });
-          return promise;
-        }),
-      );
+      await Promise.all(exited);
 
       Bun.gc(true);
 

@@ -36,6 +36,13 @@ describe("mock() used as a constructor", () => {
     expect(r).toBe(obj);
   });
 
+  test("Reflect.construct with a custom newTarget honors its prototype", () => {
+    class Foo {}
+    const m = mock();
+    const r = Reflect.construct(m, [], Foo);
+    expect(r).toBeInstanceOf(Foo);
+  });
+
   test("calling without new still returns the implementation's value", () => {
     const m1 = mock();
     expect(m1()).toBeUndefined();

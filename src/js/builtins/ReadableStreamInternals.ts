@@ -1796,7 +1796,8 @@ export function readableStreamReaderGenericRelease(reader) {
     // streams use `underlyingSource`. Native-backed streams are now byte
     // streams, but user-constructed default streams can still reach here.
     const source =
-      $getByIdDirectPrivate(controller, "underlyingByteSource") ?? $getByIdDirectPrivate(controller, "underlyingSource");
+      $getByIdDirectPrivate(controller, "underlyingByteSource") ??
+      $getByIdDirectPrivate(controller, "underlyingSource");
     source?.$resume(false);
   }
   $putByIdDirectPrivate(stream, "reader", undefined);

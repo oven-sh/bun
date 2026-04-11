@@ -7,11 +7,21 @@
 // resulting file had `datasize < SuperBlob.length`, which macOS (SIP/dyld) then
 // rejects with "code object is not signed at all" and kills the process.
 //
+// This test runs only on macOS: on darwin-arm64 hosts the current bun binary
+// IS the cross-compile template (isDefault() in src/compile_target.zig), so
+// the real MachoSigner path executes without any network. On non-Darwin hosts
+// the template must be downloaded from npm for the canary version under test,
+// and whether that download 404s, fetches-from-cache, or fetches-from-network
+// depends on the CI runner's state — making the test flaky on Linux aarch64
+// (alpine/ubuntu skip silently via the 404 path, debian-13 occasionally hits
+// a stale cache and then trips on an unrelated download edge case). The
+// macOS lanes give us reliable coverage of the actual mach-o writer change.
+//
 // https://github.com/oven-sh/bun/issues/29120
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 import { join } from "path";
 
 // Mach-O load command IDs we care about.
@@ -104,7 +114,7 @@ const bundles = {
   large: `console.log("${Buffer.alloc(32 * 1024, "a").toString()}");`,
 };
 
-test.each(Object.entries(bundles))(
+test.skipIf(!isMacOS).each(Object.entries(bundles))(
   "bun build --compile --target=bun-darwin-arm64 produces a valid code signature (%s bundle) (#29120)",
   async (label, source) => {
     using dir = tempDir(`issue-29120-${label}`, {
@@ -123,29 +133,7 @@ test.each(Object.entries(bundles))(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     void stdout;
 
-    // If the cross-compile target can't be downloaded (e.g. this PR's build
-    // hasn't been published to npm yet, or the CI runner is offline), skip
-    // rather than fail — this test is about the mach-o writer, not the
-    // fetcher. A successful build is a prerequisite.
-    //
-    // The error strings below match the `error.TargetNotFound` / `NetworkError`
-    // / `UnsupportedTarget` paths in `src/StandaloneModuleGraph.zig` and
-    // `src/compile_target.zig`. On macOS hosts the target is usually the local
-    // bun binary (no download) so the test runs inline; on Linux/Windows PR
-    // builds, the download 404s and we skip.
     if (exitCode !== 0) {
-      const looksLikeDownloadFailure =
-        /Does this target and version of Bun exist/i.test(stderr) ||
-        /is not available for download/i.test(stderr) ||
-        /is not supported/i.test(stderr) ||
-        /Failed to download/i.test(stderr) ||
-        /Network error downloading/i.test(stderr) ||
-        /404 downloading/i.test(stderr) ||
-        /ENOTFOUND|ETIMEDOUT|ECONNREFUSED/i.test(stderr);
-      if (looksLikeDownloadFailure) {
-        console.warn(`[29120] cross-compile target unavailable, skipping test:\n${stderr}`);
-        return;
-      }
       console.error(`[29120] build failed:\n${stderr}`);
     }
     expect(exitCode).toBe(0);

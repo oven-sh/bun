@@ -367,6 +367,11 @@ void Worker::terminate()
     WebWorker__notifyNeedTermination(impl_);
 }
 
+void Worker::notifyNeedTermination()
+{
+    WebWorker__notifyNeedTermination(impl_);
+}
+
 void Worker::setKeepAlive(bool keepAlive)
 {
     // Once terminate() has been called or the close task has started, the
@@ -730,6 +735,31 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     scope.assertNoException();
 
     worker->enqueueToParent(MessageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() });
+
+    return JSValue::encode(jsUndefined());
+}
+
+// DedicatedWorkerGlobalScope#close() — https://html.spec.whatwg.org/multipage/workers.html#dom-dedicatedworkerglobalscope-close
+// Inside a Worker this requests termination of the worker: any task already
+// queued (e.g. an immediately-preceding postMessage) still runs to completion,
+// but no further JS is scheduled on the worker thread. On the main thread it
+// is a no-op, matching how we handle `postMessage` in that context.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSelfClose,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    if (!globalObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    Worker* worker = WebWorker__getParentWorker(globalObject->bunVM());
+    if (worker == nullptr)
+        return JSValue::encode(jsUndefined());
+
+    // Tell the worker event loop to stop on its next tick. The task currently
+    // running on the worker (which called `close()`) still finishes normally;
+    // the closing flag is set from the main thread inside `dispatchExit` as
+    // the worker tears down.
+    worker->notifyNeedTermination();
 
     return JSValue::encode(jsUndefined());
 }

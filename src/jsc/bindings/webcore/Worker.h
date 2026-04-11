@@ -109,6 +109,11 @@ public:
 
     // -- Parent-thread API (called from JS on the owning thread) -------------
     void terminate();
+    // Request that the worker's event loop stop on its next tick. The task
+    // currently running still finishes; unlike `terminate()`, this does not
+    // set the TerminateRequested flag. Used by `self.close()` from inside the
+    // worker.
+    void notifyNeedTermination();
     void setKeepAlive(bool);
     void dispatchEvent(Event&);
     // Returns true if the task was accepted (queued to Pending or posted to
@@ -194,5 +199,6 @@ private:
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSelfClose);
 
 } // namespace WebCore

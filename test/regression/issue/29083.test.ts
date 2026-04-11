@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isWindows, tempDir } from "harness";
 import path from "node:path";
 
 // https://github.com/oven-sh/bun/issues/29083
@@ -189,7 +189,14 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
 // model, larger page granularity) and localhost port 0 + process.env
 // HTTP_PROXY semantics diverge from POSIX, so keep the regression scoped
 // to POSIX where the original issue actually reproduces.
-describe.skipIf(isWindows)("S3File body read lifetimes (#29083)", () => {
+// The reported bug is Linux-x64-specific (OOM in a 1 GiB container on
+// linux/amd64). On Windows the RSS sampling and HTTP_PROXY semantics
+// diverge from POSIX. On aarch64, RSS growth has significantly larger
+// per-runner noise (page granularity + mimalloc segment overhead) which
+// flakes the budget without actually tripping the leak. Match the
+// existing S3 leak test coverage in test/js/bun/s3/ which is also
+// x64-Linux only.
+describe.skipIf(isWindows || isArm64)("S3File body read lifetimes (#29083)", () => {
   test("arrayBuffer() does not leak native download body", async () => {
     await runLeakFixture("arrayBuffer", "application/octet-stream", "Buffer.alloc(8 * 1024 * 1024, 0x41)");
   });

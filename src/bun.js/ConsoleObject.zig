@@ -2450,7 +2450,22 @@ pub const Formatter = struct {
                             .disable_inspect_custom = this.disable_inspect_custom,
                         });
 
-                        was_good_time = was_good_time or !tag.tag.isPrimitive() or this.goodTimeForANewLine();
+                        // The `was_good_time` element-type heuristic keys off
+                        // slot 0. Pre-fix the formatter always looked at
+                        // `getDirectIndex(0)`, which for a leading-hole array
+                        // returned `.zero` (primitive). Jumping the render
+                        // pointer to `first_populated` must not change that:
+                        // a small sparse array with an object at a non-zero
+                        // index should stay single-line, like `[ 3 x empty
+                        // items, { … }, empty item ]`. Only use the render
+                        // element's tag when `first_populated == 0` — for
+                        // any leading hole run, slot 0 is trivially a hole
+                        // (primitive) and we keep `was_good_time` unchanged.
+                        if (first_populated == 0) {
+                            was_good_time = was_good_time or !tag.tag.isPrimitive() or this.goodTimeForANewLine();
+                        } else {
+                            was_good_time = was_good_time or this.goodTimeForANewLine();
+                        }
 
                         if (!this.single_line and (this.ordered_properties or was_good_time)) {
                             this.resetLine();

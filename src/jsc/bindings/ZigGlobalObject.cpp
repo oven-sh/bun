@@ -535,6 +535,16 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         const auto initializeWorker = [&](WebCore::Worker& worker) -> void {
             auto& options = worker.options();
 
+            // `close` is the WHATWG DedicatedWorkerGlobalScope#close API. It's
+            // installed unconditionally by the LUT, but `node:worker_threads`
+            // workers must not expose it — Node.js has no such global there,
+            // so `typeof close` should be `"undefined"`. Drop the property
+            // from the global on Node workers to match.
+            if (options.kind == WebCore::WorkerOptions::Kind::Node) {
+                JSC::DeletePropertySlot slot;
+                JSC::JSObject::deleteProperty(globalObject, globalObject, JSC::Identifier::fromString(vm, "close"_s), slot);
+            }
+
             if (options.env.has_value()) {
                 HashMap<String, String> map = *std::exchange(options.env, std::nullopt);
                 auto size = map.size();

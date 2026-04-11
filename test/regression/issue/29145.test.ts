@@ -17,53 +17,18 @@ import { isDebug } from "harness";
  * properties, so assigning `null` must be a supported way to detach the
  * handler.
  *
- * The panic is a cleared-exception assertion which only surfaces on
- * debug/ASAN builds, so this file is gated on `isDebug` — release CI lanes
- * skip it and the gate (which runs `bun bd` with ASAN) still exercises it.
+ * The tests are split into two blocks:
+ *
+ * - Behavior tests (setter validation, getter readback, function storage)
+ *   run on every lane. A release regression in the setter/getter contract
+ *   still fails visibly.
+ * - Panic tests run only on debug/ASAN builds. The cleared-exception
+ *   assertion that made this bug observable only fires under ASAN; on
+ *   release builds the TypeError is silently swallowed during teardown
+ *   and the no-throw assertion would pass even on the buggy code, so
+ *   gating them prevents false greens.
  */
-describe.skipIf(!isDebug)("RedisClient: assigning null to onclose/onconnect (#29145)", () => {
-  test("onclose = null does not panic on close()", () => {
-    const c = new RedisClient("redis://localhost:6379");
-    try {
-      c.onclose = null;
-      expect(() => c.close()).not.toThrow();
-    } finally {
-      c.close();
-    }
-  });
-
-  test("onconnect = null does not panic on close()", () => {
-    const c = new RedisClient("redis://localhost:6379");
-    try {
-      c.onconnect = null;
-      expect(() => c.close()).not.toThrow();
-    } finally {
-      c.close();
-    }
-  });
-
-  test("onclose = undefined is also accepted", () => {
-    const c = new RedisClient("redis://localhost:6379");
-    try {
-      c.onclose = undefined;
-      expect(c.onclose).toBeUndefined();
-      expect(() => c.close()).not.toThrow();
-    } finally {
-      c.close();
-    }
-  });
-
-  test("onconnect = undefined is also accepted", () => {
-    const c = new RedisClient("redis://localhost:6379");
-    try {
-      c.onconnect = undefined;
-      expect(c.onconnect).toBeUndefined();
-      expect(() => c.close()).not.toThrow();
-    } finally {
-      c.close();
-    }
-  });
-
+describe("RedisClient: onclose/onconnect setter/getter contract (#29145)", () => {
   test("reading onclose after assigning null returns undefined", () => {
     const c = new RedisClient("redis://localhost:6379");
     try {
@@ -78,6 +43,26 @@ describe.skipIf(!isDebug)("RedisClient: assigning null to onclose/onconnect (#29
     const c = new RedisClient("redis://localhost:6379");
     try {
       c.onconnect = null;
+      expect(c.onconnect).toBeUndefined();
+    } finally {
+      c.close();
+    }
+  });
+
+  test("reading onclose after assigning undefined returns undefined", () => {
+    const c = new RedisClient("redis://localhost:6379");
+    try {
+      c.onclose = undefined;
+      expect(c.onclose).toBeUndefined();
+    } finally {
+      c.close();
+    }
+  });
+
+  test("reading onconnect after assigning undefined returns undefined", () => {
+    const c = new RedisClient("redis://localhost:6379");
+    try {
+      c.onconnect = undefined;
       expect(c.onconnect).toBeUndefined();
     } finally {
       c.close();
@@ -135,6 +120,28 @@ describe.skipIf(!isDebug)("RedisClient: assigning null to onclose/onconnect (#29
       expect(() => {
         (c as any).onconnect = {};
       }).toThrow(TypeError);
+    } finally {
+      c.close();
+    }
+  });
+});
+
+describe.skipIf(!isDebug)("RedisClient: no panic on null detach during teardown (#29145)", () => {
+  test("onclose = null does not panic on close()", () => {
+    const c = new RedisClient("redis://localhost:6379");
+    try {
+      c.onclose = null;
+      expect(() => c.close()).not.toThrow();
+    } finally {
+      c.close();
+    }
+  });
+
+  test("onconnect = null does not panic on close()", () => {
+    const c = new RedisClient("redis://localhost:6379");
+    try {
+      c.onconnect = null;
+      expect(() => c.close()).not.toThrow();
     } finally {
       c.close();
     }

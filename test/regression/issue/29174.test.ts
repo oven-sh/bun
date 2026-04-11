@@ -1,9 +1,4 @@
 // https://github.com/oven-sh/bun/issues/29174
-//
-// Bun's `fileURLToPath` was delegating to WebKit's lenient percent-decoder,
-// which silently interpreted malformed sequences like `%%20` as a literal `%`
-// followed by a space. Node.js throws `URIError: URI malformed` for any `%`
-// that is not followed by two hex digits, via `decodeURIComponent`.
 import { describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
 import { fileURLToPath } from "node:url";

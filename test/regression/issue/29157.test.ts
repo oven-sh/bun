@@ -3,7 +3,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("console.dir on AggregateError prints the wrapper, not just the inner errors", async () => {
+test.concurrent("console.dir on AggregateError prints the wrapper, not just the inner errors", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -23,7 +23,7 @@ test("console.dir on AggregateError prints the wrapper, not just the inner error
   expect(exitCode).toBe(0);
 });
 
-test("Promise.any rejection surfaces as an AggregateError, not a stray inner error", async () => {
+test.concurrent("Promise.any rejection surfaces as an AggregateError, not a stray inner error", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", `await Promise.any([Promise.reject(new Error("inner"))]).catch(console.dir);`],
     env: bunEnv,
@@ -36,7 +36,7 @@ test("Promise.any rejection surfaces as an AggregateError, not a stray inner err
   expect(exitCode).toBe(0);
 });
 
-test("uncaught AggregateError rejection still shows the wrapper", async () => {
+test.concurrent("uncaught AggregateError rejection still shows the wrapper", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -57,7 +57,7 @@ test("uncaught AggregateError rejection still shows the wrapper", async () => {
   expect(exitCode).not.toBe(0);
 });
 
-test("AggregateError with a cause chain prints wrapper + errors + cause", async () => {
+test.concurrent("AggregateError with a cause chain prints wrapper + errors + cause", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

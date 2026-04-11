@@ -195,8 +195,12 @@ pub const MachoFile = struct {
                 const new_sig_size = MachoSigner.computeSignatureSize(new_sig_dataoff);
 
                 // The template signature is the tail of __LINKEDIT; swap its footprint.
+                // vmsize must be page-aligned and >= filesize, so derive it from the
+                // freshly-computed filesize rather than the pre-update vmsize (otherwise
+                // an old vmsize that was already page-aligned to a wider page can leave
+                // the segment one page larger than necessary).
                 linkedit_seg.filesize = linkedit_seg.filesize - sig_size + new_sig_size;
-                linkedit_seg.vmsize = alignSize(linkedit_seg.vmsize - sig_size + new_sig_size, PAGE_SIZE);
+                linkedit_seg.vmsize = alignSize(linkedit_seg.filesize, PAGE_SIZE);
 
                 // Stamp datasize directly so the `size_diff == 0` path — which skips
                 // `updateLoadCommandOffsets` below — still records the new size.

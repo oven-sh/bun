@@ -7,21 +7,22 @@
 // resulting file had `datasize < SuperBlob.length`, which macOS (SIP/dyld) then
 // rejects with "code object is not signed at all" and kills the process.
 //
-// This test runs only on macOS: on darwin-arm64 hosts the current bun binary
+// This test runs only on darwin-arm64 hosts, where the current bun binary
 // IS the cross-compile template (isDefault() in src/compile_target.zig), so
-// the real MachoSigner path executes without any network. On non-Darwin hosts
-// the template must be downloaded from npm for the canary version under test,
-// and whether that download 404s, fetches-from-cache, or fetches-from-network
-// depends on the CI runner's state — making the test flaky on Linux aarch64
-// (alpine/ubuntu skip silently via the 404 path, debian-13 occasionally hits
-// a stale cache and then trips on an unrelated download edge case). The
-// macOS lanes give us reliable coverage of the actual mach-o writer change.
+// the real MachoSigner path executes without any network. On every other
+// host the template must be downloaded from npm for the canary version
+// under test, and whether that download 404s, fetches-from-cache, or
+// fetches-from-network depends on the CI runner's state — which made the
+// test flaky on Linux aarch64 (alpine/ubuntu skipped silently via the 404
+// path, debian-13 occasionally hit a stale cache and tripped on an
+// unrelated download edge case). The darwin-arm64 lanes give us reliable
+// regression coverage of the actual mach-o writer change.
 //
 // https://github.com/oven-sh/bun/issues/29120
 
 import { expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isMacOS, tempDir } from "harness";
 import { join } from "path";
 
 // Mach-O load command IDs we care about.
@@ -114,7 +115,10 @@ const bundles = {
   large: `console.log("${Buffer.alloc(32 * 1024, "a").toString()}");`,
 };
 
-test.skipIf(!isMacOS).each(Object.entries(bundles))(
+// darwin-arm64 only: on darwin-x64 the arm64 template must still be downloaded
+// from npm and canary builds don't have it published, bringing back the same
+// fetcher-flakiness the skip was supposed to eliminate.
+test.skipIf(!isMacOS || !isArm64).each(Object.entries(bundles))(
   "bun build --compile --target=bun-darwin-arm64 produces a valid code signature (%s bundle) (#29120)",
   async (label, source) => {
     using dir = tempDir(`issue-29120-${label}`, {

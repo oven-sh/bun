@@ -79,16 +79,22 @@ declare module "bun" {
     readonly bufferedAmount: number;
 
     /**
-     * Callback fired when the client connects to the Redis server
+     * Callback fired when the client connects to the Redis server.
+     *
+     * Assign `null` or `undefined` to detach the handler. Reading the
+     * property after detaching returns `undefined`.
      */
-    onconnect: ((this: RedisClient) => void) | null;
+    onconnect: ((this: RedisClient) => void) | null | undefined;
 
     /**
-     * Callback fired when the client disconnects from the Redis server
+     * Callback fired when the client disconnects from the Redis server.
+     *
+     * Assign `null` or `undefined` to detach the handler. Reading the
+     * property after detaching returns `undefined`.
      *
      * @param error The error that caused the disconnection
      */
-    onclose: ((this: RedisClient, error: Error) => void) | null;
+    onclose: ((this: RedisClient, error: Error) => void) | null | undefined;
 
     /**
      * Connect to the Redis server

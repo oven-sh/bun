@@ -7,145 +7,144 @@
 //   bun bd test test/regression/issue/29129.test.ts
 //   node --experimental-strip-types --test test/regression/issue/29129.test.ts
 
+import assert from "node:assert";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import test from "node:test";
 
-if (process.platform !== "linux") {
-  // The fix covered here (sched_getaffinity + cgroup cpu.max clamping)
-  // only applies to Linux, so register a single skip on other platforms
-  // and avoid loading any procfs/cgroup helpers at module scope.
-  test.skip("os.availableParallelism() cpuset + cgroup quota (#29129)", () => {});
-} else {
-  const assert = (await import("node:assert")).default;
-  const { spawnSync } = await import("node:child_process");
-  const { existsSync, readFileSync } = await import("node:fs");
-  const { availableParallelism } = await import("node:os");
+// Parse the process's CPU affinity mask from /proc/self/status's
+// `Cpus_allowed_list` field (range list like "0-3,8-11"). Faster than
+// spawning `taskset -p` and avoids a syscall for sched_getaffinity(3).
+function parseCpusAllowedList(): number[] {
+  const text = readFileSync("/proc/self/status", "utf8");
+  const match = text.match(/^Cpus_allowed_list:\s*(.+)$/m);
+  if (!match) return [];
+  const out: number[] = [];
+  for (const range of match[1]!.split(",")) {
+    const [lo, hi] = range.split("-").map(Number);
+    for (let i = lo!; i <= (hi ?? lo!); i++) out.push(i);
+  }
+  return out;
+}
 
-  // Parse the process's CPU affinity mask from /proc/self/status's
-  // `Cpus_allowed_list` field (range list like "0-3,8-11"). Faster
-  // than spawning `taskset -p` and avoids a syscall for
-  // sched_getaffinity(3).
-  const parseCpusAllowedList = (): number[] => {
-    const text = readFileSync("/proc/self/status", "utf8");
-    const match = text.match(/^Cpus_allowed_list:\s*(.+)$/m);
-    if (!match) return [];
-    const out: number[] = [];
-    for (const range of match[1]!.split(",")) {
-      const [lo, hi] = range.split("-").map(Number);
-      for (let i = lo!; i <= (hi ?? lo!); i++) out.push(i);
+// Read the cgroup CPU quota for the current process, mirroring libuv's
+// uv__get_constrained_cpu(). Returns `Infinity` when no limit is set
+// (typical bare-metal / unrestricted containers) or when the cgroup
+// files can't be read; otherwise returns floor(limit/period).
+//
+// The test passes when `availableParallelism() === min(affinity, quota)`,
+// the same invariant libuv enforces via uv_available_parallelism().
+function readCgroupCpuQuota(): number {
+  let cgroup: string;
+  try {
+    cgroup = readFileSync("/proc/self/cgroup", "utf8");
+  } catch {
+    return Infinity;
+  }
+
+  const slurp = (path: string): string | null => {
+    try {
+      return readFileSync(path, "utf8");
+    } catch {
+      return null;
     }
-    return out;
   };
 
-  // Read the cgroup CPU quota for the current process, mirroring
-  // libuv's uv__get_constrained_cpu(). Returns `Infinity` when no limit
-  // is set (typical bare-metal / unrestricted containers) or when the
-  // cgroup files can't be read; otherwise returns floor(limit/period).
-  //
-  // The test passes when `availableParallelism() === min(affinity, quota)`,
-  // the same invariant libuv enforces via uv_available_parallelism().
-  const readCgroupCpuQuota = (): number => {
-    let cgroup: string;
-    try {
-      cgroup = readFileSync("/proc/self/cgroup", "utf8");
-    } catch {
-      return Infinity;
-    }
+  let result = Infinity;
 
-    const slurp = (path: string): string | null => {
-      try {
-        return readFileSync(path, "utf8");
-      } catch {
-        return null;
-      }
-    };
-
-    let result = Infinity;
-
-    // cgroup v2: look for a `0::/...` entry anywhere in the file, not
-    // just at line 0 — hybrid v1+v2 hosts (Ubuntu 22.04 with legacy
-    // Docker, Kubernetes nodes mid-migration) intersperse v1 controller
-    // lines before the v2 entry. Walk up the hierarchy and take the
-    // min of every populated cpu.max, matching libuv's
-    // uv__get_cgroupv2_constrained_cpu().
-    const v2Match = cgroup.match(/^0::(\/[^\n]*)/m);
-    if (v2Match) {
-      const rel = v2Match[1]!.replace(/^\/+/, "");
-      let min = Infinity;
-      let path = `/sys/fs/cgroup/${rel}`;
-      const mount = "/sys/fs/cgroup";
-      while (path.startsWith(mount)) {
-        const buf = slurp(`${path}/cpu.max`);
-        if (buf !== null && !buf.startsWith("max")) {
-          const parts = buf.trim().split(/\s+/);
-          const limit = Number(parts[0]);
-          const period = Number(parts[1]);
-          if (Number.isFinite(limit) && Number.isFinite(period) && period > 0) {
-            const q = Math.max(1, Math.floor(limit / period));
-            if (q < min) min = q;
-          }
+  // cgroup v2: look for a `0::/...` entry anywhere in the file, not
+  // just at line 0 — hybrid v1+v2 hosts (Ubuntu 22.04 with legacy
+  // Docker, Kubernetes nodes mid-migration) intersperse v1 controller
+  // lines before the v2 entry. Walk up the hierarchy and take the min
+  // of every populated cpu.max, matching libuv's
+  // uv__get_cgroupv2_constrained_cpu().
+  const v2Match = cgroup.match(/^0::(\/[^\n]*)/m);
+  if (v2Match) {
+    const rel = v2Match[1]!.replace(/^\/+/, "");
+    let min = Infinity;
+    let path = `/sys/fs/cgroup/${rel}`;
+    const mount = "/sys/fs/cgroup";
+    while (path.startsWith(mount)) {
+      const buf = slurp(`${path}/cpu.max`);
+      if (buf !== null && !buf.startsWith("max")) {
+        const parts = buf.trim().split(/\s+/);
+        const limit = Number(parts[0]);
+        const period = Number(parts[1]);
+        if (Number.isFinite(limit) && Number.isFinite(period) && period > 0) {
+          const q = Math.max(1, Math.floor(limit / period));
+          if (q < min) min = q;
         }
-        if (path === mount) break;
-        const lastSlash = path.lastIndexOf("/");
-        if (lastSlash < 0) break;
-        path = path.slice(0, lastSlash);
       }
-      if (min < result) result = min;
+      if (path === mount) break;
+      const lastSlash = path.lastIndexOf("/");
+      if (lastSlash < 0) break;
+      path = path.slice(0, lastSlash);
     }
+    if (min < result) result = min;
+  }
 
-    // cgroup v1: each line is "<id>:<controllers>:<path>" where
-    // controllers is a comma-separated list. We need the line whose
-    // controller list contains "cpu" (order-independent: both
-    // "cpu,cpuacct" and "cpuacct,cpu" are valid). On hybrid hosts this
-    // runs in addition to the v2 block above; we take the min so
-    // whichever hierarchy has a tighter quota wins.
-    for (const line of cgroup.split("\n")) {
-      const firstColon = line.indexOf(":");
-      if (firstColon < 0) continue;
-      const secondColon = line.indexOf(":", firstColon + 1);
-      if (secondColon < 0) continue;
-      const controllers = line.slice(firstColon + 1, secondColon).split(",");
-      if (!controllers.includes("cpu")) continue;
-      // Path starts with a leading "/"; strip it so the template below
-      // doesn't produce a double slash.
-      const cpuPath = line.slice(secondColon + 1).replace(/^\/+/, "");
-      const candidates = [`/sys/fs/cgroup/cpu,cpuacct/${cpuPath}`, `/sys/fs/cgroup/cpu/${cpuPath}`];
-      for (const base of candidates) {
-        if (!existsSync(`${base}/cpu.cfs_quota_us`)) continue;
-        const quota = Number(slurp(`${base}/cpu.cfs_quota_us`)?.trim());
-        const period = Number(slurp(`${base}/cpu.cfs_period_us`)?.trim());
-        // cgroup v1 encodes "no limit" as quota=-1.
-        if (quota < 0 || !Number.isFinite(quota) || !Number.isFinite(period) || period <= 0) {
-          break;
-        }
-        const v1 = Math.max(1, Math.floor(quota / period));
-        if (v1 < result) result = v1;
+  // cgroup v1: each line is "<id>:<controllers>:<path>" where
+  // controllers is a comma-separated list. We need the line whose
+  // controller list contains "cpu" (order-independent: both
+  // "cpu,cpuacct" and "cpuacct,cpu" are valid). On hybrid hosts this
+  // runs in addition to the v2 block above; we take the min so
+  // whichever hierarchy has a tighter quota wins.
+  for (const line of cgroup.split("\n")) {
+    const firstColon = line.indexOf(":");
+    if (firstColon < 0) continue;
+    const secondColon = line.indexOf(":", firstColon + 1);
+    if (secondColon < 0) continue;
+    const controllers = line.slice(firstColon + 1, secondColon).split(",");
+    if (!controllers.includes("cpu")) continue;
+    // Path starts with a leading "/"; strip it so the template below
+    // doesn't produce a double slash.
+    const cpuPath = line.slice(secondColon + 1).replace(/^\/+/, "");
+    const candidates = [`/sys/fs/cgroup/cpu,cpuacct/${cpuPath}`, `/sys/fs/cgroup/cpu/${cpuPath}`];
+    for (const base of candidates) {
+      if (!existsSync(`${base}/cpu.cfs_quota_us`)) continue;
+      const quota = Number(slurp(`${base}/cpu.cfs_quota_us`)?.trim());
+      const period = Number(slurp(`${base}/cpu.cfs_period_us`)?.trim());
+      // cgroup v1 encodes "no limit" as quota=-1.
+      if (quota < 0 || !Number.isFinite(quota) || !Number.isFinite(period) || period <= 0) {
         break;
       }
+      const v1 = Math.max(1, Math.floor(quota / period));
+      if (v1 < result) result = v1;
       break;
     }
+    break;
+  }
 
-    return result;
-  };
+  return result;
+}
 
-  // The fix clamps by both affinity AND cgroup quota (matching libuv's
-  // uv_available_parallelism()). Test environments may have either or
-  // both in play — the expected value is the min.
-  const expectedAvailableParallelism = (): number => {
-    const allowed = parseCpusAllowedList();
-    if (allowed.length === 0) return 1;
-    const quota = readCgroupCpuQuota();
-    return Math.min(allowed.length, Number.isFinite(quota) ? quota : allowed.length);
-  };
+// The fix clamps by both affinity AND cgroup quota (matching libuv's
+// uv_available_parallelism()). Test environments may have either or both
+// in play — the expected value is the min.
+function expectedAvailableParallelism(): number {
+  const allowed = parseCpusAllowedList();
+  if (allowed.length === 0) return 1;
+  const quota = readCgroupCpuQuota();
+  return Math.min(allowed.length, Number.isFinite(quota) ? quota : allowed.length);
+}
 
+// The fix under test is Linux-only (sched_getaffinity / cgroup cpu.max
+// don't exist elsewhere). On non-Linux, register a single explicitly
+// skipped placeholder via `test.skip` so the file still reports a
+// result to the runner without ever entering the helper functions.
+if (process.platform !== "linux") {
+  test.skip("os.availableParallelism() cpuset + cgroup quota (#29129)", () => {});
+} else {
   test("os.availableParallelism() matches sched_getaffinity + cgroup quota (#29129)", () => {
     const expected = expectedAvailableParallelism();
     assert.ok(expected > 0, `expected > 0, got ${expected}`);
 
     // Pre-fix bun returned sysconf(_SC_NPROCESSORS_ONLN) (host online
-    // count). The fix clamps by min(affinity, cgroup cpu.max), which
-    // is what Node reports via libuv. Compute the expected value here
-    // from the same inputs libuv reads so the test is valid inside
-    // any cpuset/cgroup CI environment, not just the author's machine.
+    // count). The fix clamps by min(affinity, cgroup cpu.max), which is
+    // what Node reports via libuv. Compute the expected value here from
+    // the same inputs libuv reads so the test is valid inside any
+    // cpuset/cgroup CI environment, not just the author's machine.
     assert.strictEqual(availableParallelism(), expected);
   });
 
@@ -187,8 +186,8 @@ if (process.platform !== "linux") {
     );
 
     // spawnSync returns result.status === null both when the process
-    // failed to launch (result.error is set, e.g. ENOENT / ENOMEM)
-    // and when it was killed by a signal (result.signal is set, e.g.
+    // failed to launch (result.error is set, e.g. ENOENT / ENOMEM) and
+    // when it was killed by a signal (result.signal is set, e.g.
     // SIGSEGV). Include that in the error message so a CI failure
     // points at the real cause instead of a confusing "exited with null".
     if (result.error || result.status !== 0) {
@@ -225,9 +224,9 @@ if (process.platform !== "linux") {
 
     // navigator.hardwareConcurrency is a web-platform global that bun
     // exposes on the main thread but node does not (it's only on
-    // Worker scopes). The subprocess script uses `?? ""`, so an
-    // absent navigator produces an empty string — assert the value
-    // only when the runtime actually exposed it.
+    // Worker scopes). The subprocess script uses `?? ""`, so an absent
+    // navigator produces an empty string — assert the value only when
+    // the runtime actually exposed it.
     if (hardwareStr !== "") {
       assert.strictEqual(Number(hardwareStr), 1);
     }

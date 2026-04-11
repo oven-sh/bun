@@ -22,8 +22,8 @@
 // exactly the property the fix establishes: `process.ppid` is
 // a live accessor.
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { isLinux } from "harness";
+import { readFileSync } from "node:fs";
 
 test("process.ppid is a live accessor (#29169)", () => {
   // JSC's CustomAccessor appears in Object.getOwnPropertyDescriptor

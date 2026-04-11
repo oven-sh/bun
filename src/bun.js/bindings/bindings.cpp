@@ -3041,16 +3041,21 @@ extern "C" uint32_t JSC__JSValue__findNextPopulatedIndex(JSC::EncodedJSValue jsV
 
     case JSC::ArrayWithDouble:
     case JSC::CopyOnWriteArrayWithDouble: {
+        // Holes in a double array are stored as a NaN, but so is a user
+        // value like Number.NaN — the bits are indistinguishable. This
+        // fast-path can confidently identify a slot as *populated* only
+        // when the value is non-NaN; if the scan finishes without
+        // finding one, return `start` so the caller falls back to
+        // getDirectIndex per index to disambiguate the remainder.
         uint32_t vectorLength = butterfly->vectorLength();
         uint32_t limit = std::min(end, vectorLength);
         auto data = butterfly->contiguousDouble().data();
         for (uint32_t i = start; i < limit; ++i) {
             double d = data[i];
-            // Holes are stored as PNaN.
             if (d == d)
                 return i;
         }
-        return end;
+        return start;
     }
 
     case JSC::ArrayWithArrayStorage:

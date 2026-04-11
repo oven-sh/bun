@@ -2439,6 +2439,7 @@ pub const Formatter = struct {
                     // without walking every slot.
                     const first_populated: u32 = value.findNextPopulatedIndex(0, len_u32);
                     var empty_start: ?u32 = if (first_populated > 0) 0 else null;
+                    var emitted_first = false;
 
                     first: {
                         const first_index: u32 = if (first_populated < len_u32) first_populated else 0;
@@ -2464,10 +2465,11 @@ pub const Formatter = struct {
 
                         if (element == .zero) {
                             // Either the whole array is holes, or the fast
-                            // scan disagreed with `getDirectIndex`. Mark
-                            // index 0 as the start of the hole run and let
-                            // the main loop (or the trailing summary) pick
-                            // up from there.
+                            // scan disagreed with `getDirectIndex`. Extend
+                            // the hole run to cover this slot and let the
+                            // main loop (or the trailing summary) emit the
+                            // summary — we never printed an element, so
+                            // `emitted_first` stays false.
                             empty_start = 0;
                             break :first;
                         }
@@ -2496,6 +2498,7 @@ pub const Formatter = struct {
                         }
 
                         try this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
+                        emitted_first = true;
 
                         if (tag.cell.isStringLike()) {
                             if (comptime enable_ansi_colors) {
@@ -2504,8 +2507,13 @@ pub const Formatter = struct {
                         }
                     }
 
+                    // Advance past the slot we just inspected (whether it
+                    // was emitted or found to be a hole). `nonempty_count`
+                    // tracks only slots we actually printed — a mismatched
+                    // first slot must not inflate the "... N more items"
+                    // elision.
                     var i: u32 = if (first_populated < len_u32) first_populated + 1 else len_u32;
-                    var nonempty_count: u32 = if (first_populated < len_u32) 1 else 0;
+                    var nonempty_count: u32 = @intFromBool(emitted_first);
 
                     while (i < len_u32) {
                         // Jump straight to the next populated index, skipping

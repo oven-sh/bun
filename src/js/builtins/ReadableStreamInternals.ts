@@ -1963,8 +1963,6 @@ export function readableStreamFromAsyncIterator(target, fn) {
 }
 
 export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultController {
-  const closer = [false];
-
   function callClose(controller: ReadableStreamDefaultController | ReadableByteStreamController) {
     try {
       // Byte streams store the source under `underlyingByteSource`; default
@@ -2074,6 +2072,14 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     #chunkSize = 0;
     #closed = false;
 
+    // EOF signal array passed to `handle.pull(view, closer)`. Native code
+    // writes `closer[0] = true` on EOF and the async pull callback reads it
+    // back. MUST be per-instance: if this were a factory-scope constant it
+    // would be shared across every NativeReadableStreamSource backed by the
+    // same prototype (every fetch response body in the process), and
+    // concurrent fetches could clobber each other's EOF signal.
+    #closer: [boolean] = [false];
+
     $data?: Uint8Array;
 
     // @ts-ignore-next-line
@@ -2175,6 +2181,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
         this.#controller = new WeakRef(controller);
       }
 
+      const closer = this.#closer;
       closer[0] = false;
 
       if (this.$data) {

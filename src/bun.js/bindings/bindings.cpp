@@ -74,6 +74,7 @@
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
+#include "JavaScriptCore/WaiterListManager.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "JavaScriptCore/Watchdog.h"
 #include "ZigGlobalObject.h"
@@ -4916,8 +4917,7 @@ void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
 //
 // `WaiterListManager::waitSyncImpl` parks on `vm.syncWaiter()->condition()`
 // and loops while `syncWaiter->isOnList() && time.now() < time &&
-// !vm.hasTerminationRequest()`. Two things are needed to break that wait
-// from another thread:
+// !vm.hasTerminationRequest()`. To break that wait from another thread we:
 //
 //   1. Set `m_hasTerminationRequest` so the wait loop's predicate check
 //      returns on wakeup. `VMTraps::handleTraps()` normally sets this, but
@@ -4925,32 +4925,47 @@ void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
 //      — a thread parked inside a host function never reaches one, so we
 //      set the flag from the parent thread here.
 //
-//   2. Fire the NeedTermination trap via `notifyNeedTermination()`. This
-//      engages `VMTraps::SignalSender`, which runs on its own thread and
-//      repeatedly calls `vm.syncWaiter()->condition().notifyOne()` at 1ms
-//      intervals (see `VMTraps.cpp:SignalSender::work`) and delivers a
-//      POSIX signal to the target thread. The repeated signalling is what
-//      makes the wake robust against the classic missed-wakeup race — a
-//      single `notifyOne()` can be lost if the worker hasn't registered on
-//      the condition yet, but the sender keeps trying until the trap bit
-//      is cleared.
+//   2. Notify `vm.syncWaiter()->condition()` directly so the worker's
+//      `Condition::waitUntil` wakes and re-evaluates the loop predicate.
 //
-// Once the worker wakes from `waitSyncImpl`, it observes
-// `hasTerminationRequest`, returns `WaitSyncResult::Terminated`, and
-// `atomicsWaitImpl` throws a termination exception that unwinds back to
-// the worker's event loop, triggering the normal `exitAndDeinit` path.
+// We deliberately do NOT call `VM::notifyNeedTermination()` here. That
+// engages `VMTraps::SignalSender`, which runs on a background thread and
+// keeps delivering POSIX signals to the worker thread at 1ms intervals
+// until the `NeedTermination` trap bit is cleared — and the bit is only
+// cleared inside `VMTraps::handleTraps()` on the target VM's own thread.
+// When the worker wakes from `Atomics.wait` via a termination exception,
+// it unwinds straight back to Bun's `spin()` loop and then into
+// `exitAndDeinit()` / `bun.exitThread()` without re-entering a JS safepoint
+// that would run `handleTraps()`. With the trap bit still set after
+// `bun.exitThread()`, `SignalSender` would keep signalling the worker's
+// (now recycled) pthread ID, crashing unrelated threads with SIGILL or
+// segfaults — the symptom we hit on worker_destruction and
+// broadcast-channel-worker-gc tests. Direct signalling of the condition
+// avoids the SignalSender entirely.
+//
+// The two-step wake is race-free:
+//
+//   - If the worker is already parked in `waitSyncImpl`, `notifyOne()`
+//     wakes it, it re-evaluates the loop predicate, observes
+//     `hasTerminationRequest == true`, and returns
+//     `WaitSyncResult::Terminated`.
+//
+//   - If the worker has NOT yet entered `waitSyncImpl`, the `notifyOne()`
+//     is a no-op (no waiter registered) but when it later enters
+//     `waitSyncImpl` the very first predicate check (after acquiring
+//     `list->lock`) observes `hasTerminationRequest == true` and returns
+//     without ever parking. `setHasTerminationRequest` runs before
+//     `notifyOne`; the store is published across the API-lock
+//     unlock/lock pair around this body and the `list->lock` acquisition
+//     on the worker side.
 void JSC__VM__requestAndNotifyTermination(JSC::VM* arg0)
 {
     JSC::VM& vm = *arg0;
     bool didEnter = vm.currentThreadIsHoldingAPILock();
     if (didEnter)
         vm.apiLock().unlock();
-    // Order matters: set the flag before firing the trap so the very first
-    // SignalSender wake observes `hasTerminationRequest == true` in the
-    // waitSync loop's predicate check. `notifyNeedTermination` crosses the
-    // trap signaling lock, publishing the write.
     vm.setHasTerminationRequest();
-    vm.notifyNeedTermination();
+    vm.syncWaiter()->condition().notifyOne();
     if (didEnter)
         vm.apiLock().lock();
 }

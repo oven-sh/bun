@@ -262,27 +262,60 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     return release;
 }
 
+// Calls process.emit(eventName, exitCodeArg) by looking up `emit` on the
+// process object at call time, so user overrides of `process.emit`
+// (e.g. signal-exit's monkey-patch) are honored. Matches Node.js, which
+// dispatches lifecycle events through the user-visible emit method.
+static void callProcessEmit(JSC::JSGlobalObject* globalObject, Process* process, ASCIILiteral eventName, JSValue exitCodeArg)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    JSValue emitValue = process->get(globalObject, Identifier::fromString(vm, "emit"_s));
+    if (scope.exception()) [[unlikely]] {
+        auto* exception = scope.exception();
+        scope.clearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(zigGlobalObject, exception);
+        return;
+    }
+
+    auto callData = JSC::getCallData(emitValue);
+    if (callData.type == CallData::Type::None) {
+        // process.emit was replaced with a non-function; fall back to the
+        // internal emitter so we still dispatch lifecycle events.
+        MarkedArgumentBuffer fallbackArgs;
+        fallbackArgs.append(exitCodeArg);
+        process->wrapped().emit(Identifier::fromString(vm, eventName), fallbackArgs);
+        return;
+    }
+
+    MarkedArgumentBuffer callArgs;
+    callArgs.append(jsString(vm, String(eventName)));
+    callArgs.append(exitCodeArg);
+
+    JSC::call(globalObject, emitValue, callData, process, callArgs);
+    if (scope.exception()) [[unlikely]] {
+        auto* exception = scope.exception();
+        scope.clearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(zigGlobalObject, exception);
+    }
+}
+
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
     static bool processIsExiting = false;
     if (processIsExiting)
         return;
     processIsExiting = true;
-    auto& emitter = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
 
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
-    auto event = Identifier::fromString(vm, "exit"_s);
-    if (!emitter.hasEventListeners(event)) {
-        return;
-    }
     process->putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(true), 0);
 
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(exitCode));
-    emitter.emit(event, arguments);
+    callProcessEmit(globalObject, process, "exit"_s, jsNumber(exitCode));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -797,15 +830,11 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     }
     auto& vm = JSC::getVM(globalObject);
     auto* process = globalObject->processObject();
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(exitCode));
     Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
-    auto fired = process->wrapped().emit(Identifier::fromString(vm, "beforeExit"_s), arguments);
-    if (fired) {
-        if (globalObject->m_nextTickQueue) {
-            auto nextTickQueue = globalObject->m_nextTickQueue.get();
-            nextTickQueue->drain(vm, globalObject);
-        }
+    callProcessEmit(globalObject, process, "beforeExit"_s, jsNumber(exitCode));
+    if (globalObject->m_nextTickQueue) {
+        auto nextTickQueue = globalObject->m_nextTickQueue.get();
+        nextTickQueue->drain(vm, globalObject);
     }
 }
 

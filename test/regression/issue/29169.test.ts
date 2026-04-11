@@ -17,8 +17,8 @@
 // passive. No polling loops or wallclock assumptions inside the
 // child, no explicit test timeout needed.
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 
 // Read field 4 (ppid) of /proc/<pid>/stat. Field 2 (comm) can
 // contain spaces and parens, so split on the LAST ')' rather

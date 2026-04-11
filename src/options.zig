@@ -1061,6 +1061,28 @@ pub fn getLoaderAndVirtualSource(
     var loader: ?Loader = path.loader(&jsc_vm.transpiler.options.loaders);
     var virtual_source: ?*logger.Source = null;
 
+    // `data:` URLs are parsed as plain JavaScript (or JSON, etc.) based on
+    // the MIME type — never as TypeScript or JSX, regardless of the default
+    // loader Bun uses for on-disk files. This matches Node.js semantics:
+    // `import("data:application/javascript,export enum A{}")` must throw
+    // `SyntaxError`, since `export enum` is TypeScript.
+    //
+    // Parse from `specifier_str` (not `specifier`) because `normalizeSpecifier`
+    // splits on the first `?`, which would truncate a data URL whose payload
+    // contains a literal `?` before we can see the MIME type's semicolons.
+    if (strings.hasPrefixComptime(specifier_str, "data:")) {
+        if (DataURL.parseWithoutCheck(specifier_str)) |data_url| {
+            switch (data_url.decodeMimeType().category) {
+                .javascript => loader = .js,
+                .json => loader = .json,
+                .css => loader = .css,
+                .text => loader = .text,
+                .wasm => loader = .wasm,
+                else => {},
+            }
+        } else |_| {}
+    }
+
     if (jsc_vm.module_loader.eval_source) |eval_source| {
         if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
             virtual_source = eval_source;
@@ -2730,6 +2752,7 @@ const Fs = @import("./fs.zig");
 const resolver = @import("./resolver/resolver.zig");
 const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("./url.zig").URL;
+const DataURL = @import("./resolver/data_url.zig").DataURL;
 
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;

@@ -2055,7 +2055,10 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       }
     }
 
-    #controller?: WeakRef<ReadableByteStreamController>;
+    // Can be either kind of controller: default for plain native readers,
+    // byte for BYOB-initiated native streams. Only `.enqueue`, `.close` and
+    // `.error` are called on the deref'd value, which both types expose.
+    #controller?: WeakRef<ReadableStreamDefaultController | ReadableByteStreamController>;
 
     // eslint-disable-next-line no-unused-vars
     pull;

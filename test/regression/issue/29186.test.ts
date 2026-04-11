@@ -51,17 +51,10 @@ test("self.close() terminates the worker after the current task finishes", async
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(cleanStderr(stderr)).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual([
-    { type: "message", data: "message" },
-    { type: "close" },
-  ]);
+  expect(JSON.parse(stdout.trim())).toEqual([{ type: "message", data: "message" }, { type: "close" }]);
   expect(exitCode).toBe(0);
 });
 
@@ -91,11 +84,7 @@ test("self.close exists on the worker global scope", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(cleanStderr(stderr)).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual({
@@ -109,21 +98,13 @@ test("close() on the main thread is a no-op", async () => {
   // On main (non-window) contexts, `close()` should silently do nothing —
   // matching how `postMessage` is a no-op there today.
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `close(); console.log("ok");`,
-    ],
+    cmd: [bunExe(), "-e", `close(); console.log("ok");`],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(cleanStderr(stderr)).toBe("");
   expect(stdout).toBe("ok\n");

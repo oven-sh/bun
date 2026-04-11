@@ -4880,13 +4880,16 @@ pub const NodeFS = struct {
         // Worst-case output length per input byte:
         //   utf8/ascii/latin1  — 1 char per byte (all-ASCII)
         //   hex                — 2 chars per byte
-        //   base64/base64url   — ceil(4 * n / 3) chars
+        //   base64             — 4 * ceil(n / 3) chars (padded, per RFC 4648)
+        //   base64url          — ceil(4 * n / 3) chars (unpadded; matches
+        //                        `urlSafeEncodeLen` in `src/base64/base64.zig`)
         //   utf16le/ucs2       — n / 2 code units (fixed ratio)
         //   buffer             — n bytes (the result is a Uint8Array, not a string)
         const max_output_length: usize = switch (encoding) {
             .utf8, .ascii, .latin1 => size,
             .hex => size *| 2,
-            .base64, .base64url => (size *| 4 + 2) / 3,
+            .base64 => ((size +| 2) / 3) *| 4,
+            .base64url => (size *| 4 + 2) / 3,
             .utf16le, .ucs2 => size / 2,
             .buffer => size,
         };

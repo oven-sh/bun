@@ -120,10 +120,13 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
 
       // Pre-fix: every iteration leaks the full download
       // (~8 MiB each), so after 32 iterations ~256 MiB are leaked. The
-      // 128 MiB budget clears the fix on every runner we have numbers
-      // for (post-fix growth is typically <10 MiB) while still blowing
-      // up on the unfixed path by a wide margin.
-      const BUDGET_MIB = 128;
+      // 200 MiB budget clears the fix on every runner we have numbers
+      // for (post-fix growth is typically single-digit MiB) while still
+      // blowing up on the unfixed path by >50 MiB. The generous headroom
+      // absorbs measurement noise on aarch64 / ASAN runners that have
+      // larger page granularity and mimalloc segment overhead than the
+      // x64 Linux gate container.
+      const BUDGET_MIB = 200;
 
       console.log(JSON.stringify({
         method: ${JSON.stringify(method)},

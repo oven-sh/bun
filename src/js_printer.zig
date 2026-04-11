@@ -3924,8 +3924,12 @@ fn NewPrinter(
                                         if (func_name) |fn_name| {
                                             if (func.func.flags.contains(.is_async)) p.print("async ");
                                             p.print("function");
-                                            if (func.func.flags.contains(.is_generator)) p.print("*");
-                                            p.printSpace();
+                                            if (func.func.flags.contains(.is_generator)) {
+                                                p.print("*");
+                                                p.printSpace();
+                                            } else {
+                                                p.printSpaceBeforeIdentifier();
+                                            }
                                             p.printIdentifier(fn_name);
                                             p.printFunc(func.func);
                                             p.printNewline();
@@ -4078,10 +4082,11 @@ fn NewPrinter(
                         // CJS rewrite:
                         //   `export * from "x"`      → Object.assign(module.exports, require("x"));
                         //   `export * as ns from "x"`→ module.exports.ns = require("x");
+                        // For non-identifier aliases (ES2022 string-literal
+                        // export names) use bracket notation.
                         if (s.alias) |alias| {
                             p.printModuleExportSymbol();
-                            p.print(".");
-                            p.printClauseAlias(alias.original_name);
+                            p.printCjsMemberKey(alias.original_name);
                             p.@"print = "();
                             p.print("require(");
                             p.printImportRecordPath(p.importRecord(s.import_record_index));
@@ -4304,24 +4309,23 @@ fn NewPrinter(
 
                     if (rewrite_esm_to_cjs) {
                         // CJS rewrite: `export { a, b as c } from "x"` →
-                        //   const <tmp> = require("x");
-                        //   module.exports.a = <tmp>.a;
-                        //   module.exports.c = <tmp>.b;
+                        //   ((__m) => { module.exports.a = __m.a; ... })(require("x"));
                         //
-                        // Uses an inline IIFE so the temp binding doesn't
-                        // leak into the surrounding scope and we don't have
-                        // to invent a fresh identifier.
+                        // Uses an inline IIFE so the temp binding doesn't leak
+                        // into the surrounding scope and we don't have to invent
+                        // a fresh identifier. `printCjsMemberKey` switches to
+                        // bracket notation when the alias is not a valid
+                        // identifier (ES2022 string-literal exports).
                         p.print("((__m) => {");
                         p.printNewline();
                         p.indent();
                         for (s.items) |item| {
                             p.printIndent();
                             p.printModuleExportSymbol();
-                            p.print(".");
-                            p.printClauseAlias(item.alias);
+                            p.printCjsMemberKey(item.alias);
                             p.@"print = "();
-                            p.print("__m.");
-                            p.printClauseAlias(item.original_name);
+                            p.print("__m");
+                            p.printCjsMemberKey(item.original_name);
                             p.printSemicolonAfterStatement();
                         }
                         p.unindent();
@@ -5118,6 +5122,22 @@ fn NewPrinter(
             p.print(",{get: () => ");
             p.printIdentifier(identifier);
             p.print(", enumerable: true, configurable: true})");
+        }
+
+        /// Print `.name` or `["name"]` after a base expression, picking dot
+        /// notation when the name is a valid identifier and bracket notation
+        /// otherwise. Used by the CJS rewrite paths (`export *`, `export ...
+        /// from`) which need to access or assign arbitrary property names,
+        /// including ES2022 string-literal export names like `"hello-world"`.
+        fn printCjsMemberKey(p: *Printer, name: string) void {
+            if (!strings.containsNonBmpCodePointOrIsInvalidIdentifier(name)) {
+                p.print(".");
+                p.printIdentifier(name);
+            } else {
+                p.print("[");
+                p.printStringLiteralUTF8(name, false);
+                p.print("]");
+            }
         }
 
         pub fn printForLoopInit(p: *Printer, initSt: Stmt) void {

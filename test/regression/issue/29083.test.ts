@@ -99,47 +99,44 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
         }
       }
 
-      // Warm up so DNS / connection pool / JIT tier-up are folded into
-      // the baseline.
-      for (let i = 0; i < 4; i++) await pullOnce();
+      // Matches the measurement pattern in
+      // test/js/bun/s3/s3-text-leak-fixture.js — known to run reliably
+      // on every CI runner including aarch64 / ASAN. Take the baseline
+      // AFTER a first pass of ITERATIONS so one-time allocations
+      // (HTTP client pools, JIT caches, mimalloc segments) are already
+      // folded in, then measure growth over a second identical pass.
+      // If the downloaded body is freed per-call, growth should hug
+      // zero; if the body leaks, growth is proportional to ITERATIONS
+      // × chunk size.
+      for (let i = 0; i < ITERATIONS; i++) await pullOnce();
       Bun.gc(true);
       await Bun.sleep(10);
       Bun.gc(true);
 
-      const baseline = process.memoryUsage.rss();
+      const baselineMib = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+      // Allowed increment: max(32 MiB, 2 × chunk size). The pre-fix
+      // leak adds ITERATIONS × 8 MiB ≈ 256 MiB, far above the ceiling.
+      const BUDGET_MIB = baselineMib + 32;
 
       for (let i = 0; i < ITERATIONS; i++) await pullOnce();
-
       Bun.gc(true);
       await Bun.sleep(10);
       Bun.gc(true);
 
-      const final = process.memoryUsage.rss();
-      const growthBytes = final - baseline;
-      const growthMib = growthBytes / 1024 / 1024;
-
-      // Pre-fix: every iteration leaks the full download
-      // (~8 MiB each), so after 32 iterations ~256 MiB are leaked. The
-      // 200 MiB budget clears the fix on every runner we have numbers
-      // for (post-fix growth is typically single-digit MiB) while still
-      // blowing up on the unfixed path by >50 MiB. The generous headroom
-      // absorbs measurement noise on aarch64 / ASAN runners that have
-      // larger page granularity and mimalloc segment overhead than the
-      // x64 Linux gate container.
-      const BUDGET_MIB = 200;
+      const finalMib = (process.memoryUsage.rss() / 1024 / 1024) | 0;
 
       console.log(JSON.stringify({
         method: ${JSON.stringify(method)},
-        baseline,
-        final,
-        growthBytes,
-        growthMib,
+        baselineMib,
+        finalMib,
+        budgetMib: BUDGET_MIB,
+        growthMib: finalMib - baselineMib,
         iterations: ITERATIONS,
       }));
 
-      if (growthMib > BUDGET_MIB) {
+      if (finalMib > BUDGET_MIB) {
         throw new Error(
-          \`RSS grew by \${growthMib.toFixed(1)} MiB after \${ITERATIONS} \` +
+          \`RSS grew from \${baselineMib} → \${finalMib} MiB after \${ITERATIONS} \` +
             \`${method}() calls (budget: \${BUDGET_MIB} MiB). Leak regressed.\`,
         );
       }
@@ -179,11 +176,11 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
     console.log("stdout:", stdout);
     console.log("stderr:", stderr);
   }
-  // The fixture prints a JSON line with baseline/final/growth RSS on
-  // success — its presence is the actual "the loop finished within
+  // The fixture prints a JSON line with baselineMib/finalMib/budgetMib
+  // on success — its presence is the actual "the loop finished within
   // budget" signal. Don't assert stderr is empty because ASAN-enabled
   // debug builds can emit warnings there that aren't failures.
-  expect(stdout).toContain('"growthMib"');
+  expect(stdout).toContain('"finalMib"');
   expect(exitCode).toBe(0);
 }
 

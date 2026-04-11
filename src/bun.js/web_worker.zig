@@ -611,7 +611,17 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
 
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
-        // TODO(@190n) notifyNeedTermination
+        // Unblock a worker parked in `Atomics.wait`. We set
+        // `hasTerminationRequest` on the child VM and notify its syncWaiter
+        // condition so the wait loop wakes, observes the flag, and returns
+        // `WaitSyncResult::Terminated` — which throws a termination
+        // exception, unwinds back to the worker's event loop, and triggers
+        // the normal `exitAndDeinit` path. We can't go through the usual
+        // `handleTraps()` → `setHasTerminationRequest()` path because that
+        // only runs on the VM's own thread at a JS interrupt point, and a
+        // thread parked inside a host function never reaches one.
+        // See #29173.
+        vm.jsc_vm.requestAndNotifyTermination();
     }
 
     // TODO(@190n) delete

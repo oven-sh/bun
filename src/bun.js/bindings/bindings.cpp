@@ -74,6 +74,7 @@
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
+#include "JavaScriptCore/WaiterListManager.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "JavaScriptCore/Watchdog.h"
 #include "ZigGlobalObject.h"
@@ -4907,6 +4908,42 @@ void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
     if (didEnter)
         vm.apiLock().unlock();
     vm.notifyNeedTermination();
+    if (didEnter)
+        vm.apiLock().lock();
+}
+
+// Wake up a worker VM blocked in `Atomics.wait`.
+//
+// `WaiterListManager::waitSyncImpl` parks on `vm.syncWaiter()->condition()`
+// and loops while `syncWaiter->isOnList() && time.now() < time &&
+// !vm.hasTerminationRequest()`. To make the worker exit the wait on
+// termination, we need to:
+//
+//   1. Set `m_hasTerminationRequest` directly — the flag is normally only set
+//      from inside `VMTraps::handleTraps()` on the VM's own thread, but
+//      `handleTraps` cannot run while the thread is parked inside a host
+//      function, so we set it from the parent thread here.
+//
+//   2. Signal `syncWaiter->condition()` so the worker thread wakes out of
+//      `Condition::waitUntil`. It then re-evaluates the loop condition, sees
+//      `hasTerminationRequest` is true, falls through, and `atomicsWaitImpl`
+//      returns `WaitSyncResult::Terminated`. The worker's own JS code path
+//      then observes the termination via `throwTerminationException()` and
+//      unwinds back to its event loop, which triggers the normal
+//      `exitAndDeinit` path and dispatches the `close` event.
+//
+// We do NOT call `VM::notifyNeedTermination` here because that fires a JSC
+// trap through the signal-based path which can have side effects on other
+// VMs on this process — it's only needed to interrupt running JS code, not
+// to unblock a host-function wait.
+void JSC__VM__requestAndNotifyTermination(JSC::VM* arg0)
+{
+    JSC::VM& vm = *arg0;
+    bool didEnter = vm.currentThreadIsHoldingAPILock();
+    if (didEnter)
+        vm.apiLock().unlock();
+    vm.setHasTerminationRequest();
+    vm.syncWaiter()->condition().notifyOne();
     if (didEnter)
         vm.apiLock().lock();
 }

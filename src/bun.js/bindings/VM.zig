@@ -121,6 +121,21 @@ pub const VM = opaque {
         JSC__VM__notifyNeedTermination(vm);
     }
 
+    extern fn JSC__VM__requestAndNotifyTermination(vm: *VM) void;
+
+    /// Set `hasTerminationRequest` on the target VM and wake its syncWaiter.
+    /// Thread safe.
+    ///
+    /// Use this (instead of `notifyNeedTermination`) when the target VM may
+    /// be blocked in a host function like `Atomics.wait`: setting the flag
+    /// directly (rather than via the trap handler, which only runs on the
+    /// VM's own thread at a JS interrupt point) plus notifying the
+    /// syncWaiter condition lets the wait loop observe the flag on wakeup
+    /// and return `WaitSyncResult::Terminated`.
+    pub fn requestAndNotifyTermination(vm: *VM) void {
+        JSC__VM__requestAndNotifyTermination(vm);
+    }
+
     extern fn JSC__VM__notifyNeedWatchdogCheck(vm: *VM) void;
 
     /// Fires NeedWatchdogCheck Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.

@@ -7,11 +7,11 @@
 // fills); we need a raw listen(fd, 1) that never accept()s. Do it via a
 // child Bun process using the syscall ptr from dlopen.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { isLinux, tempDirWithFiles } from "harness";
-import { join } from "node:path";
 import { rmSync } from "node:fs";
 import net from "node:net";
+import { join } from "node:path";
 
 // Linux-only: the FFI sockaddr_un layout below is Linux's (no sun_len byte).
 // The fix itself is platform-agnostic; this just keeps the repro simple.
@@ -23,7 +23,8 @@ test.skipIf(!isLinux)("unix connect to full backlog reports EAGAIN, not ENOENT",
   // Uses dlsym to reach libc directly so we control the backlog.
   const child = Bun.spawn({
     cmd: [
-      process.execPath, "-e",
+      process.execPath,
+      "-e",
       `
       const { dlopen, ptr, CString, FFIType } = require("bun:ffi");
       const libc = dlopen(process.platform === "darwin" ? "libc.dylib" : "libc.so.6", {
@@ -62,8 +63,14 @@ test.skipIf(!isLinux)("unix connect to full backlog reports EAGAIN, not ENOENT",
     for (let i = 0; i < 32 && !code; i++) {
       await new Promise<void>(resolve => {
         const c = net.createConnection({ path: sock });
-        c.on("connect", () => { held.push(c); resolve(); });
-        c.on("error", (e: NodeJS.ErrnoException) => { code = e.code; resolve(); });
+        c.on("connect", () => {
+          held.push(c);
+          resolve();
+        });
+        c.on("error", (e: NodeJS.ErrnoException) => {
+          code = e.code;
+          resolve();
+        });
       });
     }
     for (const c of held) c.destroy();

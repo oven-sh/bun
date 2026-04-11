@@ -392,6 +392,12 @@ export function getReader(this, options) {
   }
   // String conversion is required by spec, hence double equals.
   if (mode == "byob") {
+    var start_ = $getByIdDirectPrivate(this, "start");
+    if (start_) {
+      $putByIdDirectPrivate(this, "start", undefined);
+      start_();
+    }
+
     return new ReadableStreamBYOBReader(this);
   }
 

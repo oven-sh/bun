@@ -1670,6 +1670,31 @@ export function readableStreamClose(stream) {
       for (var request = requests.shift(); request; request = requests.shift())
         $fulfillPromise(request, { value: undefined, done: true });
     }
+  } else if ($isReadableStreamBYOBReader(reader)) {
+    // Any BYOB reads still pending at close time must be resolved — otherwise
+    // `reader.read(buf)` on a natively-closed byte stream would hang forever
+    // waiting for a fulfillment that never arrives. Per spec, each pending
+    // read into request pairs with a pendingPullInto descriptor; the result
+    // is an empty typed array of the user-supplied view type over their
+    // original buffer, with `done: true`.
+    const readIntoRequests = $getByIdDirectPrivate(reader, "readIntoRequests");
+    if (readIntoRequests?.isNotEmpty()) {
+      $putByIdDirectPrivate(reader, "readIntoRequests", $createFIFO());
+
+      const controller = $getByIdDirectPrivate(stream, "readableStreamController");
+      const pendingPullIntos =
+        controller !== undefined ? $getByIdDirectPrivate(controller, "pendingPullIntos") : undefined;
+
+      for (var request = readIntoRequests.shift(); request; request = readIntoRequests.shift()) {
+        const descriptor = pendingPullIntos?.shift();
+        if (descriptor) {
+          const emptyView = new descriptor.ctor(descriptor.buffer, descriptor.byteOffset, 0);
+          $fulfillPromise(request, { value: emptyView, done: true });
+        } else {
+          $fulfillPromise(request, { value: undefined, done: true });
+        }
+      }
+    }
   }
 
   $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "closedPromiseCapability").resolve.$call();
@@ -1766,7 +1791,13 @@ export function readableStreamReaderGenericRelease(reader) {
 
   var stream = $getByIdDirectPrivate(reader, "ownerReadableStream");
   if (stream.$bunNativePtr) {
-    $getByIdDirectPrivate($getByIdDirectPrivate(stream, "readableStreamController"), "underlyingSource").$resume(false);
+    const controller = $getByIdDirectPrivate(stream, "readableStreamController");
+    // Byte streams store the source under `underlyingByteSource`; default
+    // streams use `underlyingSource`. Native-backed streams are now byte
+    // streams, but user-constructed default streams can still reach here.
+    const source =
+      $getByIdDirectPrivate(controller, "underlyingByteSource") ?? $getByIdDirectPrivate(controller, "underlyingSource");
+    source?.$resume(false);
   }
   $putByIdDirectPrivate(stream, "reader", undefined);
   $putByIdDirectPrivate(reader, "ownerReadableStream", undefined);
@@ -1942,24 +1973,28 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     }
   }
 
-  // This was a type: "bytes" until Bun v1.1.44, but pendingPullIntos was not really
-  // compatible with how we send data to the stream, and "mode: 'byob'" wasn't
-  // supported so changing it isn't an observable change.
+  // This is a `type: "bytes"` stream so `getReader({ mode: "byob" })` works.
+  // `autoAllocateChunkSize` is intentionally NOT exposed on the underlying
+  // source object (it lives on a private `#chunkSize` field instead), so the
+  // `ReadableByteStreamController` never creates auto-allocated pending pull
+  // descriptors. The controller's queue path is fine with BYOB readers: when
+  // we `controller.enqueue(view)`, `ReadableByteStreamController.enqueue`
+  // pushes to the internal queue and — if a BYOB read is waiting — fills its
+  // descriptor from the queue via `processPullDescriptorsUsingQueue`. The
+  // previous bug (up to Bun v1.1.44) was that `autoAllocateChunkSize` on the
+  // underlying source caused the controller's own pull path to create a
+  // pending pull descriptor per call that our native pull never satisfied;
+  // keeping it off the source avoids that.
   //
   // When we receive chunks of data from native code, we sometimes read more
   // than what the input buffer provided. When that happens, we return a typed
   // array instead of the number of bytes read.
-  //
-  // When that happens, the ReadableByteStreamController creates (byteLength / autoAllocateChunkSize) pending pull into descriptors.
-  // So if that number is something like 16 * 1024, and we actually read 2 MB, you're going to create 128 pending pull into descriptors.
-  //
-  // And those pendingPullIntos were often never actually drained.
   class NativeReadableStreamSource {
     constructor(handle, autoAllocateChunkSize, drainValue) {
       $putByIdDirectPrivate(this, "stream", handle);
       this.pull = this.#pull.bind(this);
       this.cancel = this.#cancel.bind(this);
-      this.autoAllocateChunkSize = autoAllocateChunkSize;
+      this.#chunkSize = autoAllocateChunkSize;
 
       if (drainValue !== undefined) {
         this.start = controller => {
@@ -1973,6 +2008,9 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       handle.onDrain = this.#onDrain.bind(this);
     }
 
+    // Mark this as a byte stream so `getReader({ mode: "byob" })` works.
+    type = "bytes";
+
     #onDrain(chunk) {
       var controller = this.#controller?.deref?.();
       if (controller) {
@@ -1983,14 +2021,14 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     #hasResized = false;
 
     #adjustHighWaterMark(result) {
-      const autoAllocateChunkSize = this.autoAllocateChunkSize;
-      if (result >= autoAllocateChunkSize && !this.#hasResized) {
+      const chunkSize = this.#chunkSize;
+      if (result >= chunkSize && !this.#hasResized) {
         this.#hasResized = true;
-        this.autoAllocateChunkSize = Math.min(autoAllocateChunkSize * 2, 1024 * 1024 * 2);
+        this.#chunkSize = Math.min(chunkSize * 2, 1024 * 1024 * 2);
       }
     }
 
-    #controller?: WeakRef<ReadableStreamDefaultController>;
+    #controller?: WeakRef<ReadableByteStreamController>;
 
     // eslint-disable-next-line no-unused-vars
     pull;
@@ -1999,7 +2037,11 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     // eslint-disable-next-line no-unused-vars
     start;
 
-    autoAllocateChunkSize = 0;
+    // Internal chunk size used when allocating our pull buffer. Kept in a
+    // private field (NOT as `autoAllocateChunkSize`) so that the byte stream
+    // controller does not create auto-allocated pending pull descriptors from
+    // it — see class comment above.
+    #chunkSize = 0;
     #closed = false;
 
     $data?: Uint8Array;
@@ -2106,7 +2148,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
         }
       }
 
-      const view = this.#getInternalBuffer(this.autoAllocateChunkSize);
+      const view = this.#getInternalBuffer(this.#chunkSize);
       const result = handle.pull(view, closer);
       if ($isPromise(result)) {
         return result.$then(
@@ -2181,6 +2223,7 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
   if (chunkSize === 0) {
     if ((drainValue?.byteLength ?? 0) > 0) {
       return {
+        type: "bytes",
         start(controller) {
           controller.enqueue(drainValue);
           controller.close();
@@ -2192,6 +2235,7 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
     }
 
     return {
+      type: "bytes",
       start(controller) {
         controller.close();
       },

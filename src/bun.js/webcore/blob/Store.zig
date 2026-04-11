@@ -541,7 +541,10 @@ pub const Bytes = struct {
     pub fn deinit(this: *Bytes) void {
         bun.default_allocator.free(this.stored_name.slice());
         if (this.ptr) |ptr| {
-            this.allocator.free(ptr[0..this.cap]);
+            // rawFree skips Allocator.free's @memset(ptr, undefined). For
+            // memfd/mmap-backed stores, writing to the mapping can SIGBUS if
+            // the backing file was truncated from under us.
+            this.allocator.rawFree(ptr[0..this.cap], .fromByteUnits(1), @returnAddress());
         }
         this.ptr = null;
         this.len = 0;

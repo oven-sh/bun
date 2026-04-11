@@ -46,9 +46,11 @@ test("self.close() terminates the worker after the current task finishes", async
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Check exit code first — if the worker threw (pre-fix), stdout is empty and
+  // the parse below would mask the real failure with a confusing JSON error.
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
   expect(JSON.parse(stdout.trim())).toEqual([{ type: "message", data: "message" }, { type: "close" }]);
-  expect(exitCode).toBe(0);
 });
 
 test("close and self.close exist on the Web Worker global scope", async () => {
@@ -77,12 +79,12 @@ test("close and self.close exist on the Web Worker global scope", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
   expect(JSON.parse(stdout.trim())).toEqual({
     selfClose: "function",
     globalClose: "function",
   });
-  expect(exitCode).toBe(0);
 });
 
 test("close is NOT defined on node:worker_threads Workers (matches Node.js)", async () => {
@@ -123,13 +125,13 @@ test("close is NOT defined on node:worker_threads Workers (matches Node.js)", as
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
   expect(JSON.parse(stdout.trim())).toEqual({
     globalClose: "undefined",
     globalThisClose: "undefined",
     referenceErrorThrown: true,
   });
-  expect(exitCode).toBe(0);
 });
 
 test("close() on the main thread is a no-op", async () => {
@@ -142,7 +144,7 @@ test("close() on the main thread is a no-op", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ exitCode, stdout, stderr }).toMatchObject({ exitCode: 0 });
   expect(stdout).toBe("ok\n");
-  expect(exitCode).toBe(0);
 });

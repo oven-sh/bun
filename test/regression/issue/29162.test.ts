@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { tempDirWithFiles } from "harness";
 
 // https://github.com/oven-sh/bun/issues/29162
 //
@@ -98,7 +99,6 @@ describe("issue #29162 — fetch().body BYOB reader", () => {
   });
 
   test("BYOB works on Bun.file() streams", async () => {
-    const { tempDirWithFiles } = await import("harness");
     const dir = tempDirWithFiles("issue-29162", {
       "payload.txt": "hello from Bun.file",
     });
@@ -124,6 +124,43 @@ describe("issue #29162 — fetch().body BYOB reader", () => {
 
     const second = await reader.read(new Uint8Array(1024));
     expect(second.done).toBe(true);
+  });
+
+  // https://github.com/oven-sh/bun/issues/6643 — Blob.stream() BYOB
+  test("BYOB works on Blob.stream()", async () => {
+    const blob = new Blob(["hello from blob"]);
+    const reader = blob.stream().getReader({ mode: "byob" });
+
+    const first = await reader.read(new Uint8Array(1024));
+    expect(first.done).toBe(false);
+    expect(Buffer.from(first.value!).toString("utf8")).toBe("hello from blob");
+
+    const second = await reader.read(new Uint8Array(1024));
+    expect(second.done).toBe(true);
+  });
+
+  // https://github.com/oven-sh/bun/issues/12908 — req.body BYOB on Bun.serve
+  test("BYOB works on request.body inside Bun.serve", async () => {
+    const clientBody = "client payload for byob";
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const reader = req.body!.getReader({ mode: "byob" });
+        const parts: Buffer[] = [];
+        while (true) {
+          const { done, value } = await reader.read(new Uint8Array(256));
+          if (done) break;
+          parts.push(Buffer.from(value!));
+        }
+        return new Response("echo:" + Buffer.concat(parts).toString("utf8"));
+      },
+    });
+
+    const res = await fetch(`http://${server.hostname}:${server.port}`, {
+      method: "POST",
+      body: clientBody,
+    });
+    expect(await res.text()).toBe("echo:" + clientBody);
   });
 
   test("default reader still works on fetch body (regression guard)", async () => {

@@ -1675,8 +1675,9 @@ export function readableStreamClose(stream) {
     // `reader.read(buf)` on a natively-closed byte stream would hang forever
     // waiting for a fulfillment that never arrives. Per spec, each pending
     // read into request pairs with a pendingPullInto descriptor; the result
-    // is an empty typed array of the user-supplied view type over their
-    // original buffer, with `done: true`.
+    // is a typed array of the user-supplied view type sized by the bytes
+    // already filled into the descriptor (zero-length for the common EOF
+    // case), with `done: true`.
     const readIntoRequests = $getByIdDirectPrivate(reader, "readIntoRequests");
     if (readIntoRequests?.isNotEmpty()) {
       $putByIdDirectPrivate(reader, "readIntoRequests", $createFIFO());
@@ -1688,8 +1689,15 @@ export function readableStreamClose(stream) {
       for (var request = readIntoRequests.shift(); request; request = readIntoRequests.shift()) {
         const descriptor = pendingPullIntos?.shift();
         if (descriptor) {
-          const emptyView = new descriptor.ctor(descriptor.buffer, descriptor.byteOffset, 0);
-          $fulfillPromise(request, { value: emptyView, done: true });
+          // Size by bytesFilled / elementSize so partially-filled descriptors
+          // at EOF still return the buffered bytes. See spec:
+          // `ReadableByteStreamControllerConvertPullIntoDescriptor`.
+          const filledView = new descriptor.ctor(
+            descriptor.buffer,
+            descriptor.byteOffset,
+            descriptor.bytesFilled / descriptor.elementSize,
+          );
+          $fulfillPromise(request, { value: filledView, done: true });
         } else {
           $fulfillPromise(request, { value: undefined, done: true });
         }

@@ -135,9 +135,13 @@ export function getStdinStream(
     stdin.on("pause", () => {
       process.nextTick(() => {
         if (!stdin._handle) return;
-        stdin._handle.reading = false;
-        stdin._readableState.reading = false;
-        stdin._handle.readStop();
+        // Only stop if still paused and a read is actually in flight —
+        // resume() may have run in the same tick (Node's onpause guard).
+        if (stdin._handle.reading && !stdin.readableFlowing) {
+          stdin._readableState.reading = false;
+          stdin._handle.reading = false;
+          stdin._handle.readStop();
+        }
       });
     });
 

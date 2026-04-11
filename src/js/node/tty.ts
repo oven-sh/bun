@@ -55,6 +55,7 @@ Object.defineProperty(ReadStream, "prototype", {
   get() {
     const Socket = net.Socket;
     const Prototype = Object.create(Socket.prototype);
+    Prototype.constructor = ReadStream;
 
     Prototype.setRawMode = function (flag) {
       flag = !!flag;

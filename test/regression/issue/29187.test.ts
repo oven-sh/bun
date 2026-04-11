@@ -101,7 +101,8 @@ export const { nested: { deep } } = { nested: { deep: 99 } };
     );
 
     expect(output).not.toMatch(/^\s*export\s+/m);
-    expect(output).toMatch(/Object\.assign\(module\.exports,\s*require\(["']\.\/other["']\)\)/);
+    // Windows may serialize the path with backslashes — accept either.
+    expect(output).toMatch(/Object\.assign\(module\.exports,\s*require\(["'][.\\\/]+other["']\)\)/);
   });
 
   test.concurrent(`--format cjs --no-bundle: export * as ns from (${target})`, async () => {
@@ -115,7 +116,7 @@ export const { nested: { deep } } = { nested: { deep: 99 } };
     );
 
     expect(output).not.toMatch(/^\s*export\s+/m);
-    expect(output).toMatch(/module\.exports\.ns\s*=\s*require\(["']\.\/other["']\)/);
+    expect(output).toMatch(/module\.exports\.ns\s*=\s*require\(["'][.\\\/]+other["']\)/);
   });
 
   test.concurrent(`--format cjs --no-bundle: export { a, b as c } from (${target})`, async () => {
@@ -129,8 +130,62 @@ export const { nested: { deep } } = { nested: { deep: 99 } };
     );
 
     expect(output).not.toMatch(/^\s*export\s+/m);
-    expect(output).toContain('require("./other")');
+    expect(output).toMatch(/require\(["'][.\\\/]+other["']\)/);
     expect(output).toMatch(/module\.exports\.foo\s*=/);
     expect(output).toMatch(/module\.exports\.baz\s*=/);
   });
+
+  test.concurrent(`--format cjs --no-bundle: string-literal export names (${target})`, async () => {
+    // ES2022 allows `export { "hello-world" as foo }` and
+    // `export * as "hello-world" from`. The CJS rewrite must use bracket
+    // notation for non-identifier names, not dot access.
+    const output = await buildCjs(
+      {
+        "index.ts": `export { "hello-world" as ok } from "./other";\n`,
+        "other.ts": `const hw = 1;\nexport { hw as "hello-world" };\n`,
+      },
+      "./index.ts",
+      target,
+    );
+
+    // LHS uses dot (`ok` is a valid identifier); RHS must use bracket
+    // because `hello-world` is not.
+    expect(output).toMatch(/module\.exports\.ok\s*=\s*__m\[["']hello-world["']\]/);
+    // Should not contain `__m."hello-world"` which would be invalid JS.
+    expect(output).not.toMatch(/__m\.["']/);
+  });
 }
+
+test.concurrent("--format cjs --no-bundle: minify-whitespace preserves function keyword boundary", async () => {
+  // Regression: `export default function greet` → must emit a space between
+  // `function` and `greet` even under --minify-whitespace, otherwise it
+  // collapses to `functiongreet` and is a syntax error.
+  using dir = tempDir("issue-29187-minify", {
+    "index.ts": `export default function greet() { return "hi"; }\n`,
+  });
+  const out = join(String(dir), "out.js");
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "build",
+      "./index.ts",
+      "--outfile",
+      out,
+      "--target",
+      "node",
+      "--format",
+      "cjs",
+      "--no-bundle",
+      "--minify-whitespace",
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+  });
+  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(exitCode).toBe(0);
+
+  const output = readFileSync(out, "utf8");
+  expect(output).not.toMatch(/functiongreet/);
+  expect(output).toMatch(/function\s+greet/);
+});

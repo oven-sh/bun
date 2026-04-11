@@ -26,11 +26,7 @@ test("console.dir on AggregateError prints the wrapper, not just the inner error
     env: bunEnv,
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   // The wrapper's name + message must be in the output. Pre-fix, this was
@@ -44,19 +40,11 @@ test("console.dir on AggregateError prints the wrapper, not just the inner error
 
 test("Promise.any rejection surfaces as an AggregateError, not a stray inner error", async () => {
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `await Promise.any([Promise.reject(new Error("inner"))]).catch(console.dir);`,
-    ],
+    cmd: [bunExe(), "-e", `await Promise.any([Promise.reject(new Error("inner"))]).catch(console.dir);`],
     env: bunEnv,
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   // Pre-fix Bun printed `Error:` with no mention of AggregateError at all —
@@ -67,19 +55,11 @@ test("Promise.any rejection surfaces as an AggregateError, not a stray inner err
 
 test("uncaught AggregateError rejection still shows the wrapper", async () => {
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `await Promise.any([Promise.reject(new Error("a")), Promise.reject(new Error("b"))]);`,
-    ],
+    cmd: [bunExe(), "-e", `await Promise.any([Promise.reject(new Error("a")), Promise.reject(new Error("b"))]);`],
     env: bunEnv,
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).not.toBe(0);
   // Uncaught rejection goes to stderr. The wrapper must appear there — the
@@ -102,11 +82,7 @@ test("AggregateError with a cause chain prints wrapper + errors + cause", async 
     env: bunEnv,
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("AggregateError");

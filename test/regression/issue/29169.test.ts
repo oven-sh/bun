@@ -16,9 +16,10 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 
-// Explicit timeout: the polling loop reads up to ~200 lines at
-// 25 ms each (~5 s) on top of process-spawning overhead, so the
-// default 5 s bun test timeout is too tight on slow CI hosts.
+// Explicit timeout: the polling loop reads up to ~400 lines at
+// 25 ms each (~10 s) on top of process-spawning overhead, so
+// the default 5 s bun test timeout is too tight on slow CI
+// hosts.
 test.skipIf(!isLinux)(
   "process.ppid is live after parent death (#29169)",
   async () => {

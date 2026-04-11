@@ -26,27 +26,12 @@ async function buildCjs(target: "node" | "bun"): Promise<string> {
   const out = join(String(dir), "out.js");
 
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "build",
-      "./index.ts",
-      "--outfile",
-      out,
-      "--target",
-      target,
-      "--format",
-      "cjs",
-      "--no-bundle",
-    ],
+    cmd: [bunExe(), "build", "./index.ts", "--outfile", out, "--target", target, "--format", "cjs", "--no-bundle"],
     cwd: String(dir),
     env: bunEnv,
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);

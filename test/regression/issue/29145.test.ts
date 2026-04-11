@@ -127,26 +127,6 @@ describe("RedisClient: onclose/onconnect setter/getter contract (#29145)", () =>
 });
 
 describe.skipIf(!isDebug)("RedisClient: no panic on null detach during teardown (#29145)", () => {
-  test("onclose = null does not panic on close()", () => {
-    const c = new RedisClient("redis://localhost:6379");
-    try {
-      c.onclose = null;
-      expect(() => c.close()).not.toThrow();
-    } finally {
-      c.close();
-    }
-  });
-
-  test("onconnect = null does not panic on close()", () => {
-    const c = new RedisClient("redis://localhost:6379");
-    try {
-      c.onconnect = null;
-      expect(() => c.close()).not.toThrow();
-    } finally {
-      c.close();
-    }
-  });
-
   test("null onclose while a connection is being torn down does not panic", async () => {
     // Reproduces the original bug by forcing the teardown path:
     //

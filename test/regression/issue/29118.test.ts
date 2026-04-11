@@ -215,6 +215,24 @@ test("image without a src still works (doesn't crash, doesn't print URL)", () =>
   expect(out).not.toContain("()");
 });
 
+test("data:image/png;base64, with empty payload falls back instead of malformed APC", () => {
+  // Trailing comma + no base64 body used to satisfy every check in
+  // extractPngDataUrlBase64 and return a non-null zero-length slice
+  // (Zig's `?[]const u8` treats empty slices as non-null), which
+  // made emitKittyImageDirect emit a malformed empty APC and skip
+  // the camera + alt + URL fallback entirely.
+  const out = Bun.markdown.ansi("![oops](data:image/png;base64,)\n", {
+    colors: true,
+    kittyGraphics: true,
+    hyperlinks: false,
+    columns: 40,
+  });
+  // No Kitty APC — we must not hand Kitty an empty transmission.
+  expect(out).not.toContain("\x1b_Ga=T");
+  // Alt text still shows.
+  expect(out).toContain("oops");
+});
+
 test("inline image after text caps Kitty c= to the remaining line width", async () => {
   // Paragraph like `prefix ![](./img.png)` puts the image mid-line, so the
   // Kitty cap must be (columns - visible prefix width), not (columns -

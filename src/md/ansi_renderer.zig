@@ -1820,8 +1820,13 @@ pub const AnsiRenderer = struct {
             // URL-label fallback instead of getting sent to Kitty as
             // f=100 (PNG), which shows as a broken image indicator.
             if (self.theme.remote_image_paths) |map| {
-                if ((bun.strings.startsWith(src.?, "http://") or
-                    bun.strings.startsWith(src.?, "https://")))
+                // Case-insensitive scheme check per RFC 3986 §3.1 to
+                // stay consistent with the pre-scan filter in
+                // `prefetchRemoteImages` (which also downloads uppercase
+                // schemes) — otherwise a downloaded `HTTP://…` URL
+                // would never be looked up in the map.
+                if (bun.strings.startsWithCaseInsensitiveAscii(src.?, "http://") or
+                    bun.strings.startsWithCaseInsensitiveAscii(src.?, "https://"))
                 {
                     if (map.get(src.?)) |local_path| if (isPngFile(local_path)) {
                         self.emitKittyImageFile(local_path);
@@ -2294,6 +2299,12 @@ fn extractPngDataUrlBase64(src: []const u8) ?[]const u8 {
     if (!endsWithCaseInsensitiveAscii(header, ";base64")) return null;
     // Only PNG is losslessly transmittable via t=d,f=100.
     if (!bun.strings.containsCaseInsensitiveASCII(header, "image/png")) return null;
+    // Empty payload (`data:image/png;base64,` with nothing after the
+    // comma) would otherwise return a non-null zero-length slice —
+    // Zig's `?[]const u8` treats that as non-null, so emitKittyImage
+    // Direct would emit a malformed empty APC and skip the camera +
+    // alt + URL fallback entirely. Route it to the fallback instead.
+    if (payload.len == 0) return null;
     return payload;
 }
 

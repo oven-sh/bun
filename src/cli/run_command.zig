@@ -1304,8 +1304,10 @@ pub const RunCommand = struct {
         var remote_urls = std.ArrayListUnmanaged([]const u8){};
         defer remote_urls.deinit(allocator);
         for (collector.urls.items) |u| {
-            if (!bun.strings.hasPrefixComptime(u, "http://") and
-                !bun.strings.hasPrefixComptime(u, "https://")) continue;
+            // Case-insensitive scheme check per RFC 3986 §3.1, matching
+            // the lookup in `emitImage` against `remote_image_paths`.
+            if (!bun.strings.startsWithCaseInsensitiveAscii(u, "http://") and
+                !bun.strings.startsWithCaseInsensitiveAscii(u, "https://")) continue;
             const gop = seen.getOrPut(allocator, u) catch continue;
             if (gop.found_existing) continue;
             remote_urls.append(allocator, u) catch continue;

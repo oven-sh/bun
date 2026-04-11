@@ -266,39 +266,40 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 // process object at call time, so user overrides of `process.emit`
 // (e.g. signal-exit's monkey-patch) are honored. Matches Node.js, which
 // dispatches lifecycle events through the user-visible emit method.
-static void callProcessEmit(JSC::JSGlobalObject* globalObject, Process* process, ASCIILiteral eventName, JSValue exitCodeArg)
+static void callProcessEmit(JSC::JSGlobalObject* globalObject, Process* process, ASCIILiteral eventName, JSC::JSValue exitCodeArg)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    JSValue emitValue = process->get(globalObject, Identifier::fromString(vm, "emit"_s));
-    if (scope.exception()) [[unlikely]] {
-        auto* exception = scope.exception();
-        scope.clearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(zigGlobalObject, exception);
+    JSC::JSValue emitValue = process->get(globalObject, JSC::Identifier::fromString(vm, "emit"_s));
+    if (auto* exception = scope.exception()) {
+        if (!vm.isTerminationException(exception)) {
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        }
+        (void)scope.tryClearException();
         return;
     }
 
     auto callData = JSC::getCallData(emitValue);
-    if (callData.type == CallData::Type::None) {
+    if (callData.type == JSC::CallData::Type::None) {
         // process.emit was replaced with a non-function; fall back to the
         // internal emitter so we still dispatch lifecycle events.
-        MarkedArgumentBuffer fallbackArgs;
+        JSC::MarkedArgumentBuffer fallbackArgs;
         fallbackArgs.append(exitCodeArg);
-        process->wrapped().emit(Identifier::fromString(vm, eventName), fallbackArgs);
+        process->wrapped().emit(JSC::Identifier::fromString(vm, eventName), fallbackArgs);
         return;
     }
 
-    MarkedArgumentBuffer callArgs;
-    callArgs.append(jsString(vm, String(eventName)));
+    JSC::MarkedArgumentBuffer callArgs;
+    callArgs.append(JSC::jsString(vm, String(eventName)));
     callArgs.append(exitCodeArg);
 
-    JSC::call(globalObject, emitValue, callData, process, callArgs);
-    if (scope.exception()) [[unlikely]] {
-        auto* exception = scope.exception();
-        scope.clearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(zigGlobalObject, exception);
+    JSC::profiledCall(globalObject, JSC::ProfilingReason::API, emitValue, callData, process, callArgs);
+    if (auto* exception = scope.exception()) {
+        if (!vm.isTerminationException(exception)) {
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        }
+        (void)scope.tryClearException();
     }
 }
 

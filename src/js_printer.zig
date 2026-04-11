@@ -4673,21 +4673,46 @@ fn NewPrinter(
                             return;
                         }
 
-                        // If both a default/namespace binding AND named items
-                        // are present, emit `var foo = require(...), { a, b } = foo;`
-                        // so we only require once.
-                        if ((has_default or has_star) and has_items) {
+                        // `import foo, * as ns from "x"` — default AND
+                        // namespace binding, no items. Emit both bindings
+                        // off a single require.
+                        if (has_default and has_star and !has_items) {
                             p.print("var ");
-                            if (s.default_name) |name| {
-                                p.printSymbol(name.ref.?);
-                            } else {
-                                p.printSymbol(s.namespace_ref);
-                            }
+                            p.printSymbol(s.default_name.?.ref.?);
                             p.@"print = "();
                             p.print("require(");
                             p.printImportRecordPath(record);
                             p.print("),");
                             p.printSpace();
+                            p.printSymbol(s.namespace_ref);
+                            p.@"print = "();
+                            p.printSymbol(s.default_name.?.ref.?);
+                            p.printSemicolonAfterStatement();
+                            return;
+                        }
+
+                        // If a default/namespace binding AND named items are
+                        // present, emit `var foo = require(...), { a, b } = foo;`
+                        // so we only require once. The "root" binding is the
+                        // default name if any, otherwise the namespace ref.
+                        // `import foo, * as ns, { a }` also adds `ns = foo`.
+                        if ((has_default or has_star) and has_items) {
+                            p.print("var ");
+                            const root_ref = if (s.default_name) |name| name.ref.? else s.namespace_ref;
+                            p.printSymbol(root_ref);
+                            p.@"print = "();
+                            p.print("require(");
+                            p.printImportRecordPath(record);
+                            p.print("),");
+                            p.printSpace();
+                            if (has_default and has_star) {
+                                // Alias the namespace to the default binding.
+                                p.printSymbol(s.namespace_ref);
+                                p.@"print = "();
+                                p.printSymbol(root_ref);
+                                p.print(",");
+                                p.printSpace();
+                            }
                             p.print("{");
                             p.printSpace();
                             for (s.items, 0..) |item, i| {
@@ -4700,11 +4725,7 @@ fn NewPrinter(
                             p.printSpace();
                             p.print("}");
                             p.@"print = "();
-                            if (s.default_name) |name| {
-                                p.printSymbol(name.ref.?);
-                            } else {
-                                p.printSymbol(s.namespace_ref);
-                            }
+                            p.printSymbol(root_ref);
                             p.printSemicolonAfterStatement();
                             return;
                         }

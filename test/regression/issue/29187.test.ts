@@ -67,6 +67,53 @@ export function hello() {
     expect(output).toContain("hello");
   });
 
+  test.concurrent(`--format cjs --no-bundle: all import shapes (${target})`, async () => {
+    // Exhaustive coverage so future regressions in the s_import rewrite
+    // are caught. Previously `import foo, * as ns from "x"` silently
+    // dropped the `ns` binding, which threw `ReferenceError: ns is not
+    // defined` at runtime.
+    const output = await buildCjs(
+      {
+        "index.ts": `import "./side-effect";
+import def from "./mod";
+import * as ns from "./mod";
+import { a } from "./mod";
+import { a as aa, b } from "./mod";
+import def2, { a as a2 } from "./mod";
+import def3, * as ns3 from "./mod";
+
+export const used = [def, ns, a, aa, b, def2, a2, def3, ns3];
+`,
+        "side-effect.ts": `\n`,
+        "mod.ts": `export default 1;\nexport const a = 2;\nexport const b = 3;\n`,
+      },
+      "./index.ts",
+      target,
+    );
+
+    expect(output).not.toMatch(/^\s*import\s+/m);
+    // `import "./side-effect"` → bare require, no binding.
+    expect(output).toMatch(/^\s*require\(["']\.\/side-effect["']\)/m);
+    // Every binding that appears in `used` must have been declared.
+    for (const name of ["def", "ns", "a", "aa", "b", "def2", "a2", "def3", "ns3"]) {
+      expect(output).toMatch(new RegExp(`\\b${name}\\b`));
+    }
+    // Sanity-run the emitted CJS via `new Function` with a minimal
+    // `require` stub so we catch any ReferenceError shadow.
+    const mods: Record<string, { default: number; a: number; b: number }> = {
+      "./mod": { default: 1, a: 2, b: 3 },
+    };
+    const mod = { exports: {} as any };
+    const fakeRequire = (p: string) => {
+      if (p === "./side-effect") return {};
+      return mods[p];
+    };
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+    new Function("module", "exports", "require", output)(mod, mod.exports, fakeRequire);
+    expect(Array.isArray(mod.exports.used)).toBe(true);
+    expect(mod.exports.used.length).toBe(9);
+  });
+
   test.concurrent(`--format cjs --no-bundle: export const/let/var + destructuring (${target})`, async () => {
     // Pre-fix this hit `runtime_imports.__export.?` → panic. The rewrite
     // also has to recurse into nested destructuring.

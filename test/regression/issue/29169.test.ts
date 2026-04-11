@@ -9,16 +9,20 @@
 // as a live getter; this test pins that contract.
 //
 // Test structure: spawn a parent bash that spawns a bun child,
-// capture the child's pid, kill the parent, then wait for the
-// kernel to report the reparenting via /proc/<child>/stat. Once
-// the kernel confirms, ask the child (via stdin) to print its
-// current process.ppid and compare against the kernel's view.
-// The test drives every step from the outside; the child is
-// passive. No polling loops or wallclock assumptions inside the
-// child, no explicit test timeout needed.
+// capture the child's pid, kill the parent, wait for the kernel
+// to report reparenting via /proc/<child>/stat, then send
+// SIGUSR1 to the child to tell it to write its current
+// process.ppid to a file and exit. The test drives every step
+// from the outside; the child is passive.
+//
+// Reading the child's final answer from a file on disk (rather
+// than stdout) sidesteps the various ways a pipe can race with
+// process exit: the child writes the file with an atomic temp+
+// rename, then exits — the test polls for the file to exist.
+// Signals + files, no fd lifecycle, no wallclock assumptions.
 import { expect, test } from "bun:test";
+import { readFileSync, writeFileSync } from "node:fs";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { readFileSync } from "node:fs";
 
 // Read field 4 (ppid) of /proc/<pid>/stat. Field 2 (comm) can
 // contain spaces and parens, so split on the LAST ')' rather
@@ -40,45 +44,69 @@ function kernelPpidOf(pid: number): number {
   return parseInt(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1], 10);
 }
 
+// 30 s explicit timeout: this test spawns `setsid bash`, has it
+// spawn a bun child, kills bash, polls /proc for the kernel to
+// do its reparenting, then signals the child to write out its
+// observation. All the "waits" are on real OS events (not
+// wallclocks), but on slow / contended CI hosts the cumulative
+// process-spawn + syscall overhead can exceed bun's default 5 s
+// test timeout. The test/CLAUDE.md "no timeout" rule exists to
+// prevent setTimeout-based condition fakery; the explicit
+// timeout here is a lane for cold-CI headroom, not a wait.
 test.skipIf(!isLinux)("process.ppid is live after parent death (#29169)", async () => {
-  using dir = tempDir("issue-29169", {
-    // The child is passive: it prints one initial line with
-    // process.ppid, then blocks on a single byte from stdin,
-    // then prints a final line with process.ppid. The test
-    // drives the order of events from outside.
-    "child.js": `
-      process.stdout.write("initial " + process.ppid + "\\n");
-      process.stdin.once("data", () => {
-        process.stdout.write("final " + process.ppid + "\\n");
-        process.exit(0);
-      });
-    `,
-  });
+  // Empty temp dir; child.js is written into it below once we
+  // know the directory path so the script can embed outPath.
+  using dir = tempDir("issue-29169", {});
+  const outPath = `${String(dir)}/final_ppid.txt`;
+  // The child is passive: it writes one initial line to
+  // stdout, then on SIGUSR1 writes its current process.ppid
+  // to a file atomically (write-then-rename) and exits. The
+  // test drives the order of events from outside.
+  //
+  // fs.writeSync(1, ...) for the initial line because
+  // process.stdout.write is buffered. The final ppid goes
+  // through fs.renameSync for atomicity — the file either
+  // exists with the full ppid or doesn't exist at all, so
+  // the test can poll for its existence and read it in one
+  // shot with no half-written-file races.
+  const childSrc = `
+    const fs = require("fs");
+    const outPath = ${JSON.stringify(outPath)};
+    const tmpPath = outPath + ".tmp";
+
+    fs.writeSync(1, "initial " + process.ppid + "\\n");
+
+    process.on("SIGUSR1", () => {
+      fs.writeFileSync(tmpPath, String(process.ppid));
+      fs.renameSync(tmpPath, outPath);
+      process.exit(0);
+    });
+
+    setInterval(() => {}, 60_000);
+  `;
+  const childPath = `${String(dir)}/child.js`;
+  writeFileSync(childPath, childSrc);
 
   // Parent shell: print its pid and the bun child's pid on
-  // stderr, then exec bun in the background with bash's stdin
-  // redirected to the child, then wait on the child. SIGKILL
-  // on this bash does NOT propagate to the backgrounded child.
-  // `setsid` puts bash in its own session so TTY job-control
-  // can't leak in either.
+  // stderr, then exec bun in the background and wait on the
+  // child. SIGKILL on this bash does NOT propagate to the
+  // backgrounded child. `setsid` puts bash in its own session
+  // so TTY job-control can't leak in either.
   await using parent = Bun.spawn({
     cmd: [
       "setsid",
       "bash",
       "-c",
       // $$ = bash pid; $! = pid of the last backgrounded job.
-      // `<&0` hands bash's stdin to the bun child so the test
-      // can write one byte to parent.stdin and it reaches the
-      // child.
-      `echo PARENT=$$ 1>&2; "$1" "$2" <&0 & CHILD=$!; echo CHILDPID=$CHILD 1>&2; wait $CHILD`,
+      `echo PARENT=$$ 1>&2; "$1" "$2" & CHILD=$!; echo CHILDPID=$CHILD 1>&2; wait $CHILD`,
       "bash",
       bunExe(),
-      `${dir}/child.js`,
+      childPath,
     ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
-    stdin: "pipe",
+    stdin: "ignore",
   });
 
   const decoder = new TextDecoder();
@@ -102,7 +130,8 @@ test.skipIf(!isLinux)("process.ppid is live after parent death (#29169)", async 
   expect(parentPid, "parent bash must print PARENT on stderr").toBeGreaterThan(1);
   expect(childPid, "parent bash must print CHILDPID on stderr").toBeGreaterThan(1);
 
-  // Line reader over the child's stdout.
+  // Read one line from the child's stdout. Only used for the
+  // 'initial' line; the 'final' ppid comes through a file.
   const stdoutReader = parent.stdout.getReader();
   let stdoutBuf = "";
   async function readLine(): Promise<string> {
@@ -132,27 +161,34 @@ test.skipIf(!isLinux)("process.ppid is live after parent death (#29169)", async 
 
     // 3) Wait for the kernel to report the reparenting by
     //    polling /proc/<childPid>/stat. This is waiting on a
-    //    real OS condition, not a wallclock — reparenting
-    //    happens within microseconds of bash being reaped.
-    //    setImmediate yields one event-loop turn per attempt
-    //    so we're not busy-waiting.
+    //    real OS condition, not a wallclock deadline. The 1 ms
+    //    sleep yields to the kernel scheduler so bash's
+    //    exit_notify (which does the reparenting) can run on a
+    //    loaded CI host — pure setImmediate monopolized the
+    //    CPU enough on debian-13 to race the kernel.
     while (kernelPpidOf(childPid!) === parentPid) {
-      await new Promise<void>(resolve => setImmediate(resolve));
+      await Bun.sleep(1);
     }
     reparentedKernel = kernelPpidOf(childPid!);
 
-    // 4) Tell the child to print its current process.ppid and
-    //    exit. This single write-then-read proves the live
-    //    getter fires AFTER kernel-confirmed reparenting.
-    parent.stdin.write("\n");
-    await parent.stdin.end();
+    // 4) Tell the child to write its current process.ppid to
+    //    outPath and exit. Poll for the file to appear. This
+    //    proves the live getter fires AFTER kernel-confirmed
+    //    reparenting.
+    process.kill(childPid!, "SIGUSR1");
 
-    const finalLine = (await readLine()).match(/^final (\d+)$/);
-    expect(finalLine, "child must print 'final <n>' after stdin signal").not.toBeNull();
-    reparentedJs = Number(finalLine![1]);
+    while (true) {
+      try {
+        reparentedJs = Number(readFileSync(outPath, "utf8").trim());
+        break;
+      } catch (e: any) {
+        if (e?.code !== "ENOENT") throw e;
+        await Bun.sleep(1);
+      }
+    }
   } finally {
-    // child.js exits on its own after the final line, but
-    // signal it in case readLine/parseLine threw above.
+    // child.js exits on its own from the SIGUSR1 handler; this
+    // is belt-and-braces for the error paths.
     try {
       process.kill(childPid!, "SIGTERM");
     } catch {}
@@ -171,4 +207,4 @@ test.skipIf(!isLinux)("process.ppid is live after parent death (#29169)", async 
   // signaled exits as 128 + signal.
   expect(await parent.exited).toBe(128 + 9); // SIGKILL
   expect(parent.signalCode).toBe("SIGKILL");
-});
+}, 30_000);

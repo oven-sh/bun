@@ -23,8 +23,20 @@ import { readFileSync } from "node:fs";
 // Read field 4 (ppid) of /proc/<pid>/stat. Field 2 (comm) can
 // contain spaces and parens, so split on the LAST ')' rather
 // than whitespace.
+//
+// If the pid's /proc entry is gone — e.g. CI infra killed the
+// child out from under us — rethrow as a message that names the
+// actual failure mode. The raw ENOENT is confusing post-mortem.
 function kernelPpidOf(pid: number): number {
-  const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+  let stat: string;
+  try {
+    stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+  } catch (e: any) {
+    if (e?.code === "ENOENT") {
+      throw new Error(`bun child (pid ${pid}) exited before reparenting was observed`);
+    }
+    throw e;
+  }
   return parseInt(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1], 10);
 }
 

@@ -4335,7 +4335,9 @@ fn NewPrinter(
                         // a fresh identifier. `printCjsMemberKey` switches to
                         // bracket notation when the alias is not a valid
                         // identifier (ES2022 string-literal exports).
-                        p.print("((__m) => {");
+                        p.print("((__m)");
+                        p.printWhitespacer(ws(" => "));
+                        p.print("{");
                         p.printNewline();
                         p.indent();
                         for (s.items) |item| {

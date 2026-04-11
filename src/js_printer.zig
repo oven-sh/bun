@@ -4648,6 +4648,104 @@ fn NewPrinter(
                         }
                     }
 
+                    if (rewrite_esm_to_cjs) {
+                        // CJS rewrite for `import ... from "..."`:
+                        //
+                        //   import "./side-effect"          → require("./side-effect");
+                        //   import foo from "./bar"         → var foo = require("./bar");
+                        //   import * as ns from "./bar"     → var ns = require("./bar");
+                        //   import { a, b as c } from "./x" → var { a, b: c } = require("./x");
+                        //   import foo, { a } from "./x"    → var foo = require("./x"), { a } = foo;
+                        //
+                        // No live bindings / __esModule interop — the goal is a
+                        // readable `--no-bundle` output. Users who need strict
+                        // ESM interop should run with the full bundler.
+                        const has_default = s.default_name != null;
+                        const has_items = s.items.len > 0;
+                        const has_star = record.flags.contains_import_star;
+
+                        if (!has_default and !has_items and !has_star) {
+                            // Side-effect import.
+                            p.print("require(");
+                            p.printImportRecordPath(record);
+                            p.print(")");
+                            p.printSemicolonAfterStatement();
+                            return;
+                        }
+
+                        // If both a default/namespace binding AND named items
+                        // are present, emit `var foo = require(...), { a, b } = foo;`
+                        // so we only require once.
+                        if ((has_default or has_star) and has_items) {
+                            p.print("var ");
+                            if (s.default_name) |name| {
+                                p.printSymbol(name.ref.?);
+                            } else {
+                                p.printSymbol(s.namespace_ref);
+                            }
+                            p.@"print = "();
+                            p.print("require(");
+                            p.printImportRecordPath(record);
+                            p.print("),");
+                            p.printSpace();
+                            p.print("{");
+                            p.printSpace();
+                            for (s.items, 0..) |item, i| {
+                                if (i != 0) {
+                                    p.print(",");
+                                    p.printSpace();
+                                }
+                                p.printClauseItemAs(item, .@"var");
+                            }
+                            p.printSpace();
+                            p.print("}");
+                            p.@"print = "();
+                            if (s.default_name) |name| {
+                                p.printSymbol(name.ref.?);
+                            } else {
+                                p.printSymbol(s.namespace_ref);
+                            }
+                            p.printSemicolonAfterStatement();
+                            return;
+                        }
+
+                        // Named items only.
+                        if (has_items) {
+                            p.print("var ");
+                            p.print("{");
+                            p.printSpace();
+                            for (s.items, 0..) |item, i| {
+                                if (i != 0) {
+                                    p.print(",");
+                                    p.printSpace();
+                                }
+                                p.printClauseItemAs(item, .@"var");
+                            }
+                            p.printSpace();
+                            p.print("}");
+                            p.@"print = "();
+                            p.print("require(");
+                            p.printImportRecordPath(record);
+                            p.print(")");
+                            p.printSemicolonAfterStatement();
+                            return;
+                        }
+
+                        // Default / namespace binding only.
+                        p.print("var ");
+                        if (s.default_name) |name| {
+                            p.printSymbol(name.ref.?);
+                        } else {
+                            p.printSymbol(s.namespace_ref);
+                        }
+                        p.@"print = "();
+                        p.print("require(");
+                        p.printImportRecordPath(record);
+                        p.print(")");
+                        p.printSemicolonAfterStatement();
+                        return;
+                    }
+
                     if (record.path.is_disabled) {
                         if (record.flags.contains_import_star) {
                             p.print("var ");

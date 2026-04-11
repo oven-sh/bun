@@ -1682,20 +1682,22 @@ export function readableStreamClose(stream) {
     if (readIntoRequests?.isNotEmpty()) {
       $putByIdDirectPrivate(reader, "readIntoRequests", $createFIFO());
 
+      // `readableStreamController` is initialized to `null` (to distinguish
+      // from `undefined`), so the guard must be loose inequality.
       const controller = $getByIdDirectPrivate(stream, "readableStreamController");
       const pendingPullIntos =
-        controller !== undefined ? $getByIdDirectPrivate(controller, "pendingPullIntos") : undefined;
+        controller != null ? $getByIdDirectPrivate(controller, "pendingPullIntos") : undefined;
 
       for (var request = readIntoRequests.shift(); request; request = readIntoRequests.shift()) {
         const descriptor = pendingPullIntos?.shift();
         if (descriptor) {
-          // Size by bytesFilled / elementSize so partially-filled descriptors
-          // at EOF still return the buffered bytes. See spec:
-          // `ReadableByteStreamControllerConvertPullIntoDescriptor`.
+          // Size by `Math.floor(bytesFilled / elementSize)` so partially-
+          // filled descriptors at EOF still return the buffered bytes. See
+          // `ReadableByteStreamControllerConvertPullIntoDescriptor` step 8.
           const filledView = new descriptor.ctor(
             descriptor.buffer,
             descriptor.byteOffset,
-            descriptor.bytesFilled / descriptor.elementSize,
+            Math.floor(descriptor.bytesFilled / descriptor.elementSize),
           );
           $fulfillPromise(request, { value: filledView, done: true });
         } else {

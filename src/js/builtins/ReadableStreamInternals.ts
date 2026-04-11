@@ -1988,18 +1988,15 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     }
   }
 
-  // This is a `type: "bytes"` stream so `getReader({ mode: "byob" })` works.
-  // `autoAllocateChunkSize` is intentionally NOT exposed on the underlying
-  // source object (it lives on a private `#chunkSize` field instead), so the
-  // `ReadableByteStreamController` never creates auto-allocated pending pull
-  // descriptors. The controller's queue path is fine with BYOB readers: when
-  // we `controller.enqueue(view)`, `ReadableByteStreamController.enqueue`
-  // pushes to the internal queue and — if a BYOB read is waiting — fills its
-  // descriptor from the queue via `processPullDescriptorsUsingQueue`. The
-  // previous bug (up to Bun v1.1.44) was that `autoAllocateChunkSize` on the
-  // underlying source caused the controller's own pull path to create a
-  // pending pull descriptor per call that our native pull never satisfied;
-  // keeping it off the source avoids that.
+  // Only the BYOB path marks the instance with `type: "bytes"` (see
+  // `lazyLoadStream` above). The default-reader path stays on the standard
+  // `ReadableStreamDefaultController`, which is what preserves correct
+  // cancellation / GC behavior for ordinary fetch/req.body consumers. When
+  // BYOB is selected, `#chunkSize` (private) replaces the old public
+  // `autoAllocateChunkSize` field so that the `ReadableByteStreamController`
+  // never creates auto-allocated pending pull descriptors from it — that
+  // was the reason native streams were reverted from bytes to default back
+  // in Bun v1.1.44.
   //
   // When we receive chunks of data from native code, we sometimes read more
   // than what the input buffer provided. When that happens, we return a typed
@@ -2023,8 +2020,9 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       handle.onDrain = this.#onDrain.bind(this);
     }
 
-    // Mark this as a byte stream so `getReader({ mode: "byob" })` works.
-    type = "bytes";
+    // `type` is set to "bytes" on the instance only when a BYOB reader is
+    // requested (via lazyLoadStream). Without it, the default controller is
+    // used — preserving legacy cancellation/GC semantics for default readers.
 
     #onDrain(chunk) {
       var controller = this.#controller?.deref?.();
@@ -2208,8 +2206,8 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
   return NativeReadableStreamSource;
 }
 
-export function lazyLoadStream(stream, autoAllocateChunkSize) {
-  $debug("lazyLoadStream", stream, autoAllocateChunkSize);
+export function lazyLoadStream(stream, autoAllocateChunkSize, byob) {
+  $debug("lazyLoadStream", stream, autoAllocateChunkSize, byob);
   var handle = stream.$bunNativePtr;
   if (handle === -1) return;
   var Prototype = $lazyStreamPrototypeMap.$get($getPrototypeOf(handle));
@@ -2237,8 +2235,7 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
   // empty file, no need for native back-and-forth on this
   if (chunkSize === 0) {
     if ((drainValue?.byteLength ?? 0) > 0) {
-      return {
-        type: "bytes",
+      const source: { type?: "bytes"; start(c: any): void; pull(c: any): void } = {
         start(controller) {
           controller.enqueue(drainValue);
           controller.close();
@@ -2247,10 +2244,11 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
           controller.close();
         },
       };
+      if (byob) source.type = "bytes";
+      return source;
     }
 
-    return {
-      type: "bytes",
+    const source: { type?: "bytes"; start(c: any): void; pull(c: any): void } = {
       start(controller) {
         controller.close();
       },
@@ -2258,9 +2256,17 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
         controller.close();
       },
     };
+    if (byob) source.type = "bytes";
+    return source;
   }
 
-  return new Prototype(handle, Math.max(chunkSize, autoAllocateChunkSize), drainValue);
+  const instance = new Prototype(handle, Math.max(chunkSize, autoAllocateChunkSize), drainValue);
+  // Only mark as a byte stream when BYOB was explicitly requested.
+  // Unconditionally making native streams byte streams caused memory leaks
+  // on the default-reader path (see serve-body-leak.test.ts
+  // "should not leak memory when streaming the body incompletely").
+  if (byob) instance.type = "bytes";
+  return instance;
 }
 
 export function readableStreamIntoArray(stream) {

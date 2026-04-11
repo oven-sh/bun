@@ -90,8 +90,8 @@ export function initializeReadableStream(
       autoAllocateChunkSize || $getByIdDirectPrivate(strategy, "highWaterMark"),
     );
 
-    $putByIdDirectPrivate(this, "start", () => {
-      const instance = $lazyLoadStream(this, autoAllocateChunkSize);
+    $putByIdDirectPrivate(this, "start", (byob?: boolean) => {
+      const instance = $lazyLoadStream(this, autoAllocateChunkSize, byob);
       if (instance) {
         $createReadableStreamController(this, instance, strategy);
       }
@@ -381,27 +381,31 @@ export function getReader(this, options) {
   if (!$isReadableStream(this)) throw $ERR_INVALID_THIS("ReadableStream");
 
   const mode = $toDictionary(options, {}, "ReadableStream.getReader takes an object as first argument").mode;
-  if (mode === undefined) {
-    var start_ = $getByIdDirectPrivate(this, "start");
-    if (start_) {
-      $putByIdDirectPrivate(this, "start", undefined);
-      start_();
-    }
-
-    return new ReadableStreamDefaultReader(this);
-  }
   // String conversion is required by spec, hence double equals.
-  if (mode == "byob") {
-    var start_ = $getByIdDirectPrivate(this, "start");
-    if (start_) {
-      $putByIdDirectPrivate(this, "start", undefined);
-      start_();
-    }
+  const isByob = mode == "byob";
 
+  // Invoke the lazy start for both default and BYOB readers, passing the
+  // BYOB flag through so that native-backed streams can set up a byte
+  // controller only when BYOB was actually requested. This preserves the
+  // default-reader path exactly for non-BYOB consumers — important because
+  // switching all native streams to a byte controller unconditionally
+  // caused memory leaks on the server-side streaming path (see issue #29162
+  // discussion / serve-body-leak.test.ts).
+  var start_ = $getByIdDirectPrivate(this, "start");
+  if (start_) {
+    $putByIdDirectPrivate(this, "start", undefined);
+    start_(isByob);
+  }
+
+  if (isByob) {
     return new ReadableStreamBYOBReader(this);
   }
 
-  throw $ERR_INVALID_ARG_VALUE("mode", mode, "byob");
+  if (mode !== undefined) {
+    throw $ERR_INVALID_ARG_VALUE("mode", mode, "byob");
+  }
+
+  return new ReadableStreamDefaultReader(this);
 }
 
 export function pipeThrough(this, streams, options) {

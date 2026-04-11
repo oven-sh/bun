@@ -9,14 +9,21 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-async function buildCjs(files: Record<string, string>, entry: string, target: "node" | "bun"): Promise<string> {
+async function buildCjs(
+  files: Record<string, string>,
+  entry: string,
+  target: "node" | "bun",
+  extraArgs: string[] = [],
+): Promise<string> {
   using dir = tempDir("issue-29187", files);
   const out = join(String(dir), "out.js");
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", entry, "--outfile", out, "--target", target, "--format", "cjs", "--no-bundle"],
+    cmd: [bunExe(), "build", entry, "--outfile", out, "--target", target, "--format", "cjs", "--no-bundle", ...extraArgs],
     cwd: String(dir),
     env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
   const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -149,43 +156,65 @@ export const { nested: { deep } } = { nested: { deep: 99 } };
     );
 
     // LHS uses dot (`ok` is a valid identifier); RHS must use bracket
-    // because `hello-world` is not.
-    expect(output).toMatch(/module\.exports\.ok\s*=\s*__m\[["']hello-world["']\]/);
-    // Should not contain `__m."hello-world"` which would be invalid JS.
-    expect(output).not.toMatch(/__m\.["']/);
+    // because `hello-world` is not. Accept any identifier for the temp
+    // binder the printer picks — the assertion is about notation, not
+    // the internal name.
+    expect(output).toMatch(/module\.exports\.ok\s*=\s*[A-Za-z_$][\w$]*\[["']hello-world["']\]/);
+    // No `identifier."string"` / `identifier.'string'` dot-string access
+    // anywhere in the output.
+    expect(output).not.toMatch(/[A-Za-z_$][\w$]*\.\s*["']/);
   });
 }
 
-test.concurrent("--format cjs --no-bundle: minify-whitespace preserves function keyword boundary", async () => {
+test.concurrent("--format cjs --no-bundle --minify-whitespace: function keyword boundary", async () => {
   // Regression: `export default function greet` → must emit a space between
   // `function` and `greet` even under --minify-whitespace, otherwise it
   // collapses to `functiongreet` and is a syntax error.
-  using dir = tempDir("issue-29187-minify", {
-    "index.ts": `export default function greet() { return "hi"; }\n`,
-  });
-  const out = join(String(dir), "out.js");
-
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "build",
-      "./index.ts",
-      "--outfile",
-      out,
-      "--target",
-      "node",
-      "--format",
-      "cjs",
-      "--no-bundle",
-      "--minify-whitespace",
-    ],
-    cwd: String(dir),
-    env: bunEnv,
-  });
-  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(exitCode).toBe(0);
-
-  const output = readFileSync(out, "utf8");
+  const output = await buildCjs(
+    { "index.ts": `export default function greet() { return "hi"; }\n` },
+    "./index.ts",
+    "node",
+    ["--minify-whitespace"],
+  );
   expect(output).not.toMatch(/functiongreet/);
   expect(output).toMatch(/function\s+greet/);
+});
+
+test.concurrent("--format cjs --no-bundle --minify-whitespace: export const preserves `;` before Object.defineProperty", async () => {
+  // Regression: `export const a = 1` must not collapse to
+  // `const a=1Object.defineProperty(...)` under minify — the deferred
+  // semicolon has to be flushed before the `Object.defineProperty` call.
+  const output = await buildCjs(
+    { "index.ts": `export const a = 1;\nexport const b = 2;\n` },
+    "./index.ts",
+    "node",
+    ["--minify-whitespace"],
+  );
+  // `1Object` / `2Object` would be a NumericLiteral immediately followed
+  // by an IdentifierStart — a SyntaxError.
+  expect(output).not.toMatch(/[0-9]Object/);
+  expect(output).toContain("Object.defineProperty");
+  // Running the file should not throw — real sanity check.
+  const mod = { exports: {} as Record<string, unknown> };
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+  new Function("module", "exports", output)(mod, mod.exports);
+  expect(mod.exports).toMatchObject({ a: 1, b: 2 });
+});
+
+test.concurrent("--format cjs --no-bundle --minify-whitespace: export {...} from flushes `;` in IIFE", async () => {
+  // Same pattern in the `export { ... } from` IIFE: consecutive
+  // `module.exports.x = __m.x` assignments must be separated.
+  const output = await buildCjs(
+    {
+      "index.ts": `export { foo, bar as baz } from "./other";\n`,
+      "other.ts": `export const foo = 1;\nexport const bar = 2;\n`,
+    },
+    "./index.ts",
+    "node",
+    ["--minify-whitespace"],
+  );
+  // `.foomodule` is the telltale fusion bug.
+  expect(output).not.toMatch(/foomodule/);
+  expect(output).toMatch(/module\.exports\.foo\s*=/);
+  expect(output).toMatch(/module\.exports\.baz\s*=/);
 });

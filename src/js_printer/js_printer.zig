@@ -3955,6 +3955,7 @@ fn NewPrinter(
                                             p.printFunc(func.func);
                                             p.printNewline();
 
+                                            p.printSemicolonIfNeeded();
                                             p.printIndent();
                                             p.printModuleExportSymbol();
                                             p.print(".default");
@@ -3981,6 +3982,7 @@ fn NewPrinter(
                                             p.printClass(class.class);
                                             p.printNewline();
 
+                                            p.printSemicolonIfNeeded();
                                             p.printIndent();
                                             p.printModuleExportSymbol();
                                             p.print(".default");
@@ -4341,6 +4343,7 @@ fn NewPrinter(
                         p.printNewline();
                         p.indent();
                         for (s.items) |item| {
+                            p.printSemicolonIfNeeded();
                             p.printIndent();
                             p.printModuleExportSymbol();
                             p.printCjsMemberKey(item.alias);
@@ -4349,6 +4352,7 @@ fn NewPrinter(
                             p.printCjsMemberKey(item.original_name);
                             p.printSemicolonAfterStatement();
                         }
+                        p.printSemicolonIfNeeded();
                         p.unindent();
                         p.printIndent();
                         p.print("})(require(");
@@ -5382,6 +5386,11 @@ fn NewPrinter(
         fn printBundledExportsForBinding(p: *Printer, binding: Binding) void {
             switch (binding.data) {
                 .b_identifier => |ident| {
+                    // Flush any deferred `;` from the preceding decl (in
+                    // `--minify-whitespace` mode `printSemicolonAfterStatement`
+                    // just sets a flag; `printIndent` is a no-op and won't
+                    // flush it).
+                    p.printSemicolonIfNeeded();
                     p.printIndent();
                     const name = p.renamer.nameForSymbol(ident.ref);
                     p.printBundledExport(name, name);

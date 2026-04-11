@@ -646,6 +646,16 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         loop = vm.uwsLoop();
         this.vm = null;
         vm.is_shutting_down = true;
+        // Clear any pending termination exception set by
+        // `requestAndNotifyTermination()` before running shutdown-time JS.
+        // `BunProcess.dispatchExitInternal` short-circuits when
+        // `hasTerminationRequest()` is true, which would silently skip
+        // every `process.on("exit", ...)` handler in the worker. Clearing
+        // the flag here lets `vm.onExit()` dispatch exit handlers normally
+        // (the worker is already on its way to `bun.exitThread()` below,
+        // so we no longer need the flag to force a wakeup from
+        // `Atomics.wait`).
+        vm.global.clearTerminationException();
         vm.onExit();
         jsc.API.cron.CronJob.clearAllForVM(vm, .teardown);
         exit_code = vm.exit_handler.exit_code;

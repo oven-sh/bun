@@ -1,5 +1,6 @@
 import { RedisClient } from "bun";
 import { describe, expect, test } from "bun:test";
+import { isDebug } from "harness";
 
 /**
  * Regression test for issue #29145: `c.onclose = null` panics during `close()`
@@ -15,8 +16,12 @@ import { describe, expect, test } from "bun:test";
  * The type definitions document `((...)=>void) | null` as the type for both
  * properties, so assigning `null` must be a supported way to detach the
  * handler.
+ *
+ * The panic is a cleared-exception assertion which only surfaces on
+ * debug/ASAN builds, so this file is gated on `isDebug` — release CI lanes
+ * skip it and the gate (which runs `bun bd` with ASAN) still exercises it.
  */
-describe("RedisClient: assigning null to onclose/onconnect (#29145)", () => {
+describe.skipIf(!isDebug)("RedisClient: assigning null to onclose/onconnect (#29145)", () => {
   test("onclose = null does not panic on close()", () => {
     const c = new RedisClient("redis://localhost:6379");
     try {

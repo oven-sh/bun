@@ -342,32 +342,26 @@ declare module "bun:ffi" {
 
   type Pointer = number & { __pointer__: null };
 
+  // Only the canonical enum members are listed below. `FFIType` declares
+  // several alias members (e.g. `i8` for `int8_t`, `pointer` for `ptr`) that
+  // share the same numeric value. Including both an enum member and its alias
+  // as computed property keys makes `tsgo` report duplicate identifiers, and
+  // the resulting lookup type is identical regardless of which alias is used
+  // since both resolve to the same numeric key.
   interface FFITypeToArgsType {
     [FFIType.char]: number;
     [FFIType.int8_t]: number;
-    [FFIType.i8]: number;
     [FFIType.uint8_t]: number;
-    [FFIType.u8]: number;
     [FFIType.int16_t]: number;
-    [FFIType.i16]: number;
     [FFIType.uint16_t]: number;
-    [FFIType.u16]: number;
     [FFIType.int32_t]: number;
-    [FFIType.i32]: number;
-    [FFIType.int]: number;
     [FFIType.uint32_t]: number;
-    [FFIType.u32]: number;
     [FFIType.int64_t]: number | bigint;
-    [FFIType.i64]: number | bigint;
     [FFIType.uint64_t]: number | bigint;
-    [FFIType.u64]: number | bigint;
     [FFIType.double]: number;
-    [FFIType.f64]: number;
     [FFIType.float]: number;
-    [FFIType.f32]: number;
     [FFIType.bool]: boolean;
     [FFIType.ptr]: NodeJS.TypedArray | Pointer | CString | null;
-    [FFIType.pointer]: NodeJS.TypedArray | Pointer | CString | null;
     [FFIType.void]: undefined;
     [FFIType.cstring]: NodeJS.TypedArray | Pointer | CString | null;
     [FFIType.i64_fast]: number | bigint;
@@ -380,29 +374,17 @@ declare module "bun:ffi" {
   interface FFITypeToReturnsType {
     [FFIType.char]: number;
     [FFIType.int8_t]: number;
-    [FFIType.i8]: number;
     [FFIType.uint8_t]: number;
-    [FFIType.u8]: number;
     [FFIType.int16_t]: number;
-    [FFIType.i16]: number;
     [FFIType.uint16_t]: number;
-    [FFIType.u16]: number;
     [FFIType.int32_t]: number;
-    [FFIType.i32]: number;
-    [FFIType.int]: number;
     [FFIType.uint32_t]: number;
-    [FFIType.u32]: number;
     [FFIType.int64_t]: bigint;
-    [FFIType.i64]: bigint;
     [FFIType.uint64_t]: bigint;
-    [FFIType.u64]: bigint;
     [FFIType.double]: number;
-    [FFIType.f64]: number;
     [FFIType.float]: number;
-    [FFIType.f32]: number;
     [FFIType.bool]: boolean;
     [FFIType.ptr]: Pointer | null;
-    [FFIType.pointer]: Pointer | null;
     [FFIType.void]: undefined;
     [FFIType.cstring]: CString;
     [FFIType.i64_fast]: number | bigint;

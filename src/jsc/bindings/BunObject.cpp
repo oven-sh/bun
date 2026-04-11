@@ -932,12 +932,24 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 
         // Node.js implements fileURLToPath via decodeURIComponent on the
         // pathname, which throws URIError: URI malformed for any '%' not
-        // followed by two hex digits. WTF::URL::fileSystemPath uses a lenient
-        // decoder, so validate strictly here to match Node.
+        // followed by two hex digits AND for percent sequences that decode
+        // to invalid UTF-8 (e.g. lone continuation bytes, truncated
+        // multibyte sequences, overlong encodings). WTF::URL::fileSystemPath
+        // is lenient on both counts, so validate strictly here.
         const unsigned pathLen = p.length();
+
+        // Walk the pathname, decoding %XX into a byte buffer so we can
+        // hand it to simdutf::validate_utf8. Non-percent characters are
+        // always ASCII at this point because WHATWG URL percent-encodes
+        // every non-ASCII byte when building the pathname.
+        Vector<uint8_t, 256> decoded;
+        decoded.reserveInitialCapacity(pathLen);
         for (unsigned i = 0; i < pathLen; ++i) {
-            if (p[i] != '%')
+            char16_t c = p[i];
+            if (c != '%') {
+                decoded.append(static_cast<uint8_t>(c));
                 continue;
+            }
             if (i + 2 >= pathLen) {
                 scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
                 return {};
@@ -948,6 +960,13 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
                 scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
                 return {};
             }
+            decoded.append(toASCIIHexValue(hi, lo));
+            i += 2;
+        }
+        auto decodedSpan = decoded.span();
+        if (!simdutf::validate_utf8(reinterpret_cast<const char*>(decodedSpan.data()), decodedSpan.size())) {
+            scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
+            return {};
         }
     }
 

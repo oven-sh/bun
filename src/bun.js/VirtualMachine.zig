@@ -3259,21 +3259,12 @@ fn printErrorInstance(
             try writer.writeAll("\n");
         }
 
-        // "cause" is not enumerable, so the above loop won't see it.
-        if (!saw_cause) {
-            if (try error_instance.getOwn(this.global, "cause")) |cause| {
-                if (cause.jsType() == .ErrorInstance) {
-                    cause.protect();
-                    try errors_to_append.append(cause);
-                }
-            }
-        }
-
         // `AggregateError.errors` is a non-enumerable own property, so the
         // property iterator above skips it. Walk it manually and queue each
         // entry (of any type — Promise.any can reject with non-Error values)
-        // so the wrapper gets printed first, matching Node's `[errors]: [...]`
-        // format instead of the errors replacing it.
+        // so the wrapper gets printed first and the children follow, matching
+        // Node's `[errors]: [...]` format. Queue errors BEFORE cause so the
+        // drain loop emits them in Node's order (wrapper → errors → cause).
         if (error_instance.isAggregateError(this.global)) {
             const AggregateErrorsIterator = struct {
                 errors_to_append: *std.array_list.Managed(JSValue),
@@ -3287,6 +3278,16 @@ fn printErrorInstance(
             var errors_iter = AggregateErrorsIterator{ .errors_to_append = &errors_to_append };
             const errors_array = error_instance.getErrorsProperty(this.global);
             try errors_array.forEach(this.global, &errors_iter, AggregateErrorsIterator.visit);
+        }
+
+        // "cause" is not enumerable, so the above loop won't see it.
+        if (!saw_cause) {
+            if (try error_instance.getOwn(this.global, "cause")) |cause| {
+                if (cause.jsType() == .ErrorInstance) {
+                    cause.protect();
+                    try errors_to_append.append(cause);
+                }
+            }
         }
     } else if (mode == .js and error_instance != .zero) {
         // If you do reportError([1,2,3]] we should still show something at least.
@@ -3338,7 +3339,11 @@ fn printErrorInstance(
         }
 
         try writer.writeAll("\n");
-        try this.printErrorInstance(.js, err, exception_list, formatter, Writer, writer, allow_ansi_color, allow_side_effects);
+        // Go through printErrorFromMaybePrivateData so DOMWrapper children
+        // (BuildMessage / ResolveMessage from processFetchLog) are routed
+        // through their specialized formatters; everything else falls
+        // through to printErrorInstance.
+        _ = this.printErrorFromMaybePrivateData(err, exception_list, formatter, Writer, writer, allow_ansi_color, allow_side_effects);
         _ = formatter.map.remove(err);
     }
 }

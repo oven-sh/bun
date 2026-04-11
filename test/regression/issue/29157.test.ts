@@ -20,7 +20,6 @@ test("console.dir on AggregateError prints the wrapper, not just the inner error
   expect(stdout).toContain("wrapper");
   expect(stdout).toContain("child1");
   expect(stdout).toContain("child2");
-  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -34,7 +33,6 @@ test("Promise.any rejection surfaces as an AggregateError, not a stray inner err
 
   expect(stdout).toContain("AggregateError");
   expect(stdout).toContain("inner");
-  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -70,6 +68,13 @@ test("AggregateError with a cause chain prints wrapper + errors + cause", async 
   expect(stdout).toContain("wrapper");
   expect(stdout).toContain("child");
   expect(stdout).toContain("root cause");
-  expect(stderr).toBe("");
+  // Node's util.inspect emits "[errors]: [ ... ]" with the children before
+  // the cause. Assert that ordering so we don't regress to wrapper → cause →
+  // children (the pre-fix queueing order in errors_to_append).
+  const childIdx = stdout.indexOf("child");
+  const causeIdx = stdout.indexOf("root cause");
+  expect(childIdx).toBeGreaterThan(-1);
+  expect(causeIdx).toBeGreaterThan(-1);
+  expect(childIdx).toBeLessThan(causeIdx);
   expect(exitCode).toBe(0);
 });

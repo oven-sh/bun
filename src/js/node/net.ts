@@ -62,7 +62,6 @@ const { owner_symbol } = require("internal/shared");
 const UV_EOF = -4095;
 const kBuffer = Symbol("kBuffer");
 const kBufferCb = Symbol("kBufferCb");
-const kBufferGen = Symbol("kBufferGen");
 
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
@@ -760,7 +759,6 @@ function Socket(options?) {
     }
     this[kBuffer] = true;
     this[kBufferCb] = onread.callback;
-    this[kBufferGen] = typeof onread.buffer === "function" ? onread.buffer : () => onread.buffer;
     // when the onread option is specified we use a different handlers object
     this[khandlers] = {
       ...SocketHandlers2,
@@ -1221,38 +1219,43 @@ Object.defineProperty(Socket.prototype, "pending", {
 });
 
 Socket.prototype.pause = function pause() {
-  if (this[kBuffer] && !this.connecting && this._handle && $isCallable(this._handle.readStop) && this._handle.reading) {
+  if (this[kBuffer] && !this.connecting && this._handle && this._handle.reading !== false) {
     this._handle.reading = false;
     if (!this.destroyed) {
-      const err = this._handle.readStop();
-      if (err) this.destroy(new ErrnoException(err, "read"));
+      if ($isCallable(this._handle.readStop)) {
+        const err = this._handle.readStop();
+        if (err) this.destroy(new ErrnoException(err, "read"));
+      } else {
+        // usocket-backed handle in onread mode: keep the pre-existing native
+        // pause, since SocketHandlers.data's onread variant does not apply
+        // backpressure on its own.
+        this._handle.pause?.();
+      }
     }
   }
   return Duplex.prototype.pause.$call(this);
 };
 
 Socket.prototype.resume = function resume() {
-  if (
-    this[kBuffer] &&
-    !this.connecting &&
-    this._handle &&
-    $isCallable(this._handle.readStart) &&
-    !this._handle.reading
-  ) {
-    tryReadStart(this);
+  if (this[kBuffer] && !this.connecting && this._handle && !this._handle.reading) {
+    if ($isCallable(this._handle.readStart)) {
+      tryReadStart(this);
+    } else {
+      this._handle.reading = true;
+      this._handle.resume?.();
+    }
   }
   return Duplex.prototype.resume.$call(this);
 };
 
 Socket.prototype.read = function read(size) {
-  if (
-    this[kBuffer] &&
-    !this.connecting &&
-    this._handle &&
-    $isCallable(this._handle.readStart) &&
-    !this._handle.reading
-  ) {
-    tryReadStart(this);
+  if (this[kBuffer] && !this.connecting && this._handle && !this._handle.reading) {
+    if ($isCallable(this._handle.readStart)) {
+      tryReadStart(this);
+    } else {
+      this._handle.reading = true;
+      this._handle.resume?.();
+    }
   }
   return Duplex.prototype.read.$call(this, size);
 };

@@ -207,6 +207,37 @@ describe("issue #29162 — fetch().body BYOB reader", () => {
     expect(Buffer.concat(chunks).toString("utf8")).toBe("hello world");
   });
 
+  test("multi-byte BYOB over an odd-length native body rejects without a spurious unhandled error", async () => {
+    // Uint16Array reader over a body whose byte count is not a multiple of
+    // elementSize (2). The byte controller's close() throws a spec-mandated
+    // "Close requested while there remain pending bytes" — the pending read
+    // must reject with it, but the stream's own callClose must NOT surface
+    // it a second time as an unhandled 'error' event.
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(new Uint8Array([0x41]));
+      },
+    });
+
+    const uncaught: unknown[] = [];
+    const handler = (e: unknown) => uncaught.push(e);
+    process.on("uncaughtException", handler);
+    try {
+      const res = await fetch(`http://${server.hostname}:${server.port}`);
+      const reader = res.body!.getReader({ mode: "byob" });
+      // `as any` — runtime shape is a typed-array, spec allows any ArrayBufferView.
+      await expect(reader.read(new Uint16Array(128) as any)).rejects.toThrow(
+        "Close requested while there remain pending bytes",
+      );
+      // Give the controller any trailing microtask a chance to fire.
+      await Bun.sleep(20);
+      expect(uncaught).toHaveLength(0);
+    } finally {
+      process.off("uncaughtException", handler);
+    }
+  });
+
   test("BYOB on a non-bytes user stream still throws", () => {
     const stream = new ReadableStream({
       start(c) {

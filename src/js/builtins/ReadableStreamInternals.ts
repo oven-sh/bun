@@ -1973,7 +1973,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       var source =
         $getByIdDirectPrivate(controller, "underlyingByteSource") ??
         $getByIdDirectPrivate(controller, "underlyingSource");
-      const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+      var stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
       if (!stream) {
         return;
       }
@@ -1981,7 +1981,15 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       if ($getByIdDirectPrivate(stream, "state") !== $streamReadable) return;
       controller.close();
     } catch (e) {
-      globalThis.reportError(e);
+      // `ReadableByteStreamController.close()` throws when a pending BYOB
+      // pull-into descriptor has `bytesFilled > 0` with an empty queue
+      // (e.g. Uint16Array reader over a 1-byte trailing chunk). That path
+      // already errored the stream and rejected the pending read via
+      // `readableByteStreamControllerError`, so don't surface it as a
+      // second unhandled error event.
+      if (stream === undefined || $getByIdDirectPrivate(stream, "state") !== $streamErrored) {
+        globalThis.reportError(e);
+      }
     } finally {
       if (source?.$stream) {
         source.$stream = undefined;

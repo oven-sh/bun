@@ -117,6 +117,39 @@ export function getStdinStream(
   fdType: BunProcessStdinFdType,
 ) {
   $assert(fd === 0);
+
+  if (!isTTY && fdType !== BunProcessStdinFdType.file) {
+    // PIPE or socket. Node lib/internal/bootstrap/switches/is_main_thread.js
+    // getStdin() uses net.Socket({fd}) which constructs a native Pipe handle
+    // via createHandle.
+    const net = require("node:net");
+    const stdin = new net.Socket({
+      fd,
+      readable: true,
+      writable: false,
+      manualStart: true,
+    });
+    stdin._writableState.ended = true;
+    stdin.fd = fd;
+
+    if (stdin._handle && stdin._handle.readStop) {
+      stdin._handle.reading = false;
+      stdin._readableState.reading = false;
+      stdin._handle.readStop();
+    }
+
+    stdin.on("pause", () => {
+      process.nextTick(() => {
+        if (!stdin._handle) return;
+        stdin._handle.reading = false;
+        stdin._readableState.reading = false;
+        stdin._handle.readStop();
+      });
+    });
+
+    return stdin;
+  }
+
   const native = Bun.stdin.stream();
   const source = native.$bunNativePtr;
 
@@ -190,7 +223,7 @@ export function getStdinStream(
 
   // tty.ReadStream is supposed to extend from net.Socket.
   // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
-  if (isTTY || fdType !== BunProcessStdinFdType.file) {
+  if (isTTY) {
     stream.ref = function () {
       forceUnref = false;
       own();

@@ -15,6 +15,8 @@ pub const crypto = @import("./node/node_crypto_binding.zig");
 pub const os = @import("./node/node_os.zig");
 /// node:process
 pub const process = @import("./node/node_process.zig");
+/// process.binding('pipe_wrap').Pipe
+pub const Pipe = @import("./node/Pipe.zig");
 pub const validators = @import("./node/util/validators.zig");
 pub const ErrorCode = @import("./node/nodejs_error_code.zig").Code;
 

@@ -59,10 +59,22 @@ const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const { owner_symbol } = require("internal/shared");
 
+const guessHandleType = $newZigFunction("node_util_binding.zig", "guessHandleType", 1);
+const handleTypes = ["TCP", "TTY", "UDP", "FILE", "PIPE", "UNKNOWN"];
+const { Pipe, constants: PipeConstants } = process.binding("pipe_wrap");
 const UV_EOF = -4095;
 const kBuffer = Symbol("kBuffer");
 const kBufferCb = Symbol("kBufferCb");
 const kBufferGen = Symbol("kBufferGen");
+
+function createHandle(fd, isServer) {
+  validateInt32(fd, "fd", 0);
+  const type = handleTypes[guessHandleType(fd)];
+  if (type === "PIPE" || type === "TCP") {
+    return new Pipe(isServer ? PipeConstants.SERVER : PipeConstants.SOCKET);
+  }
+  throw $ERR_INVALID_FD_TYPE(type);
+}
 
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
@@ -732,8 +744,12 @@ function Socket(options?) {
     this._handle = options.handle;
     initSocketHandle(this);
   } else if (options?.fd !== undefined) {
-    const { fd } = options;
-    validateInt32(fd, "fd", 0);
+    this._handle = createHandle(options.fd, false);
+    const err = this._handle.open(options.fd);
+    if (err) throw new ErrnoException(err, "open");
+    initSocketHandle(this);
+    this.readable = options.readable !== false;
+    this.writable = options.writable !== false;
   }
 
   if (this._handle && $isCallable(this._handle.readStart) && options.readable !== false) {

@@ -3900,6 +3900,87 @@ fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(stmt.loc);
+
+                    if (rewrite_esm_to_cjs) {
+                        // CJS rewrite: `export default <X>` → `module.exports.default = <X>`.
+                        // For named `export default function foo/class Foo`, emit
+                        // the declaration first so it's hoisted the same way it
+                        // would be in ESM, then add the assignment. For anonymous
+                        // forms or a bare expression, emit a single assignment.
+                        switch (s.value) {
+                            .expr => |expr| {
+                                p.printModuleExportSymbol();
+                                p.print(".default");
+                                p.@"print = "();
+                                p.export_default_start = p.writer.written;
+                                p.printExpr(expr, .comma, ExprFlag.None());
+                                p.printSemicolonAfterStatement();
+                                return;
+                            },
+                            .stmt => |s2| {
+                                switch (s2.data) {
+                                    .s_function => |func| {
+                                        const func_name: ?[]const u8 = if (func.func.name) |name| p.renamer.nameForSymbol(name.ref.?) else null;
+                                        if (func_name) |fn_name| {
+                                            if (func.func.flags.contains(.is_async)) p.print("async ");
+                                            p.print("function");
+                                            if (func.func.flags.contains(.is_generator)) p.print("*");
+                                            p.printSpace();
+                                            p.printIdentifier(fn_name);
+                                            p.printFunc(func.func);
+                                            p.printNewline();
+
+                                            p.printIndent();
+                                            p.printModuleExportSymbol();
+                                            p.print(".default");
+                                            p.@"print = "();
+                                            p.printIdentifier(fn_name);
+                                            p.printSemicolonAfterStatement();
+                                        } else {
+                                            // Anonymous: `export default function () {...}`
+                                            p.printModuleExportSymbol();
+                                            p.print(".default");
+                                            p.@"print = "();
+                                            if (func.func.flags.contains(.is_async)) p.print("async ");
+                                            p.print("function");
+                                            if (func.func.flags.contains(.is_generator)) p.print("*");
+                                            p.printFunc(func.func);
+                                            p.printSemicolonAfterStatement();
+                                        }
+                                    },
+                                    .s_class => |class| {
+                                        if (class.class.class_name) |name| {
+                                            const class_name = p.renamer.nameForSymbol(name.ref.?);
+                                            p.print("class ");
+                                            p.printIdentifier(class_name);
+                                            p.printClass(class.class);
+                                            p.printNewline();
+
+                                            p.printIndent();
+                                            p.printModuleExportSymbol();
+                                            p.print(".default");
+                                            p.@"print = "();
+                                            p.printIdentifier(class_name);
+                                            p.printSemicolonAfterStatement();
+                                        } else {
+                                            // Anonymous: `export default class {...}`
+                                            p.printModuleExportSymbol();
+                                            p.print(".default");
+                                            p.@"print = "();
+                                            p.print("class");
+                                            p.printClass(class.class);
+                                            p.printSemicolonAfterStatement();
+                                        }
+                                    },
+                                    else => {
+                                        Output.panic("Internal error: unexpected export default stmt data", .{});
+                                    },
+                                }
+                                return;
+                            },
+                        }
+                    }
+
                     p.print("export default ");
 
                     switch (s.value) {
@@ -3992,6 +4073,31 @@ fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(stmt.loc);
+
+                    if (rewrite_esm_to_cjs) {
+                        // CJS rewrite:
+                        //   `export * from "x"`      → Object.assign(module.exports, require("x"));
+                        //   `export * as ns from "x"`→ module.exports.ns = require("x");
+                        if (s.alias) |alias| {
+                            p.printModuleExportSymbol();
+                            p.print(".");
+                            p.printClauseAlias(alias.original_name);
+                            p.@"print = "();
+                            p.print("require(");
+                            p.printImportRecordPath(p.importRecord(s.import_record_index));
+                            p.print(")");
+                        } else {
+                            p.print("Object.assign(");
+                            p.printModuleExportSymbol();
+                            p.print(",");
+                            p.printSpace();
+                            p.print("require(");
+                            p.printImportRecordPath(p.importRecord(s.import_record_index));
+                            p.print("))");
+                        }
+                        p.printSemicolonAfterStatement();
+                        return;
+                    }
 
                     if (s.alias != null)
                         p.printWhitespacer(comptime ws("export *").append(" as "))
@@ -4195,6 +4301,37 @@ fn NewPrinter(
                     p.addSourceMapping(stmt.loc);
 
                     const import_record = p.importRecord(s.import_record_index);
+
+                    if (rewrite_esm_to_cjs) {
+                        // CJS rewrite: `export { a, b as c } from "x"` →
+                        //   const <tmp> = require("x");
+                        //   module.exports.a = <tmp>.a;
+                        //   module.exports.c = <tmp>.b;
+                        //
+                        // Uses an inline IIFE so the temp binding doesn't
+                        // leak into the surrounding scope and we don't have
+                        // to invent a fresh identifier.
+                        p.print("((__m) => {");
+                        p.printNewline();
+                        p.indent();
+                        for (s.items) |item| {
+                            p.printIndent();
+                            p.printModuleExportSymbol();
+                            p.print(".");
+                            p.printClauseAlias(item.alias);
+                            p.@"print = "();
+                            p.print("__m.");
+                            p.printClauseAlias(item.original_name);
+                            p.printSemicolonAfterStatement();
+                        }
+                        p.unindent();
+                        p.printIndent();
+                        p.print("})(require(");
+                        p.printImportRecordPath(import_record);
+                        p.print("))");
+                        p.printSemicolonAfterStatement();
+                        return;
+                    }
 
                     p.printWhitespacer(ws("export {"));
 
@@ -5190,42 +5327,33 @@ fn NewPrinter(
                 // class` (see `printBundledExport`) and avoids depending on the
                 // `__export` runtime symbol, which only gets populated by the
                 // bundler linker and is null in `--no-bundle` / `transform_only`
-                // mode. Supports identifier bindings and simple object/array
-                // destructuring; anything more exotic is skipped (the bundler
-                // path handles those on its own).
+                // mode. Recurses into nested object/array destructuring so
+                // `export const { a: { b }, c: [d] } = ...` exposes every leaf.
                 for (decls) |decl| {
-                    switch (decl.binding.data) {
-                        .b_identifier => |ident| {
-                            p.printIndent();
-                            const name = p.renamer.nameForSymbol(ident.ref);
-                            p.printBundledExport(name, name);
-                            p.printSemicolonAfterStatement();
-                        },
-                        .b_object => |obj| {
-                            for (obj.properties) |prop| {
-                                if (prop.value.data == .b_identifier) {
-                                    const ident = prop.value.data.b_identifier;
-                                    p.printIndent();
-                                    const name = p.renamer.nameForSymbol(ident.ref);
-                                    p.printBundledExport(name, name);
-                                    p.printSemicolonAfterStatement();
-                                }
-                            }
-                        },
-                        .b_array => |arr| {
-                            for (arr.items) |item| {
-                                if (item.binding.data == .b_identifier) {
-                                    const ident = item.binding.data.b_identifier;
-                                    p.printIndent();
-                                    const name = p.renamer.nameForSymbol(ident.ref);
-                                    p.printBundledExport(name, name);
-                                    p.printSemicolonAfterStatement();
-                                }
-                            }
-                        },
-                        else => {},
-                    }
+                    p.printBundledExportsForBinding(decl.binding);
                 }
+            }
+        }
+
+        fn printBundledExportsForBinding(p: *Printer, binding: Binding) void {
+            switch (binding.data) {
+                .b_identifier => |ident| {
+                    p.printIndent();
+                    const name = p.renamer.nameForSymbol(ident.ref);
+                    p.printBundledExport(name, name);
+                    p.printSemicolonAfterStatement();
+                },
+                .b_object => |obj| {
+                    for (obj.properties) |prop| {
+                        p.printBundledExportsForBinding(prop.value);
+                    }
+                },
+                .b_array => |arr| {
+                    for (arr.items) |item| {
+                        p.printBundledExportsForBinding(item.binding);
+                    }
+                },
+                else => {},
             }
         }
 

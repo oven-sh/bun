@@ -184,6 +184,29 @@ describe("issue #29162 — fetch().body BYOB reader", () => {
     expect(Buffer.concat(chunks).toString("utf8")).toBe(content);
   });
 
+  test("invalid mode throws before disturbing a native stream", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("hello world");
+      },
+    });
+
+    const res = await fetch(`http://${server.hostname}:${server.port}`);
+    expect(() => res.body!.getReader({ mode: "bogus" as any })).toThrow();
+    // After the throw, the stream must still be usable — neither locked
+    // nor disturbed — so a subsequent getReader() succeeds.
+    expect(res.body!.locked).toBe(false);
+    const reader = res.body!.getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value!);
+    }
+    expect(Buffer.concat(chunks).toString("utf8")).toBe("hello world");
+  });
+
   test("BYOB on a non-bytes user stream still throws", () => {
     const stream = new ReadableStream({
       start(c) {

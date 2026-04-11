@@ -384,6 +384,13 @@ export function getReader(this, options) {
   // String conversion is required by spec, hence double equals.
   const isByob = mode == "byob";
 
+  // Validate the mode BEFORE triggering the lazy native start. An invalid
+  // mode is an argument-validation failure and must not mark the stream
+  // disturbed or consume the one-shot start callback.
+  if (!isByob && mode !== undefined) {
+    throw $ERR_INVALID_ARG_VALUE("mode", mode, "byob");
+  }
+
   // Invoke the lazy start for both default and BYOB readers, passing the
   // BYOB flag through so that native-backed streams can set up a byte
   // controller only when BYOB was actually requested. This preserves the
@@ -391,6 +398,14 @@ export function getReader(this, options) {
   // switching all native streams to a byte controller unconditionally
   // caused memory leaks on the server-side streaming path (see issue #29162
   // discussion / serve-body-leak.test.ts).
+  //
+  // Note: `start` is a one-shot callback. The FIRST `getReader` call on a
+  // native-backed lazy stream picks the controller kind based on `isByob`.
+  // A later `getReader({ mode: "byob" })` on the same stream after a default
+  // reader was released will still throw, because the default controller
+  // has already been wired up. This matches the pre-existing behavior for
+  // native streams (BYOB was simply unavailable before this fix); upgrading
+  // sequentially-released readers across controller types is out of scope.
   var start_ = $getByIdDirectPrivate(this, "start");
   if (start_) {
     $putByIdDirectPrivate(this, "start", undefined);
@@ -399,10 +414,6 @@ export function getReader(this, options) {
 
   if (isByob) {
     return new ReadableStreamBYOBReader(this);
-  }
-
-  if (mode !== undefined) {
-    throw $ERR_INVALID_ARG_VALUE("mode", mode, "byob");
   }
 
   return new ReadableStreamDefaultReader(this);

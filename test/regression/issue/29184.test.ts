@@ -23,7 +23,7 @@
 
 import { memfd_create, setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { isLinux, isPosix } from "harness";
+import { isLinux } from "harness";
 import { closeSync, writeSync } from "node:fs";
 import fs from "node:fs/promises";
 
@@ -54,12 +54,13 @@ test.skipIf(!isLinux)("fs.readFile hex-encoded rejects when the would-be string 
   }
 });
 
-test.skipIf(!isPosix)("fs.readFile on /dev/urandom rejects instead of reading forever (issue repro)", async () => {
+test.skipIf(!isLinux)("fs.readFile on /dev/urandom rejects instead of reading forever (issue repro)", async () => {
   // Direct reproduction from the issue. With the 4 MiB limit applied above,
-  // this rejects after ~4 MiB of reads instead of never. One encoding is
-  // enough to prove the fix; every other encoding is already covered by
-  // `test/js/node/fs/fs-oom.test.ts` (for `/dev/zero`) and by the `hex`
-  // memfd test above.
+  // this rejects after ~4 MiB of reads instead of never. Gated to Linux
+  // because the reporter's environment (and Bun's existing `/dev/zero`
+  // regression coverage in `test/js/node/fs/fs-oom.test.ts`) is Linux; the
+  // hex memfd test above proves the same code path under the same synthetic
+  // limit.
   await expect(fs.readFile("/dev/urandom", { encoding: "utf8" })).rejects.toThrow(
     "ENOMEM: not enough memory, read '/dev/urandom'",
   );

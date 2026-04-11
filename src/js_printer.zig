@@ -5187,7 +5187,7 @@ fn NewPrinter(
             if (rewrite_esm_to_cjs and is_export and decls.len > 0) {
                 for (decls) |decl| {
                     p.printIndent();
-                    p.printSymbol(p.options.runtime_imports.__export.?.ref);
+                    p.printSymbol(p.options.runtime_imports.__export.?);
                     p.print("(");
                     p.printSpaceBeforeIdentifier();
                     p.printModuleExportSymbol();

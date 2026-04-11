@@ -675,7 +675,16 @@ pub const Transpiler = struct {
                 const buffer_writer = js_printer.BufferWriter.init(transpiler.allocator);
                 var writer = js_printer.BufferPrinter.init(buffer_writer);
 
-                output_file.size = switch (transpiler.options.target) {
+                output_file.size = if (transpiler.options.output_format == .cjs)
+                    // `bun build --no-bundle --format cjs`: rewrite ESM
+                    // imports/exports to CommonJS `require` / `exports`.
+                    try transpiler.print(
+                        result,
+                        *js_printer.BufferPrinter,
+                        &writer,
+                        .cjs,
+                    )
+                else switch (transpiler.options.target) {
                     .browser, .node => try transpiler.print(
                         result,
                         *js_printer.BufferPrinter,

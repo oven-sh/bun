@@ -10,8 +10,10 @@
 //!   circumstances infrequently (one or two unix listeners per process).
 //!
 //! Implementation: append-only singly linked list with CAS at the head.
-//! Unregister just flips an atomic tombstone flag and eagerly calls
-//! `unlink` so the cleanup walk can skip the node. Nodes are never freed
+//! `unregister` only flips an atomic tombstone flag (it does NOT touch the
+//! filesystem — the caller is responsible for calling `bun.sys.unlink`
+//! separately, and must do so AFTER `unregister` to close the
+//! tombstone-vs-unlink race; see `unregister` docs). Nodes are never freed
 //! (total leak is bounded by the number of unix listeners ever created in
 //! the process lifetime) — this keeps the signal-handler walk wait-free.
 
@@ -40,8 +42,8 @@ pub fn register(path: []const u8) ?Handle {
 
     // Allocator failures here are OOM-only — crash via `handleOom` rather
     // than silently starting a listener that is missing from the cleanup
-    // registry (which would indistinguishable from the "abstract socket"
-    // early return above).
+    // registry (which would be indistinguishable from the "abstract
+    // socket" early return above).
     const node = bun.handleOom(bun.default_allocator.create(Node));
     const path_dup = bun.handleOom(bun.default_allocator.dupeZ(u8, path));
 
@@ -63,12 +65,19 @@ pub fn register(path: []const u8) ?Handle {
     return node;
 }
 
-/// Mark a node tombstoned so the cleanup walk will skip it. Called from a
-/// clean `stopListening()` path after the path has already been unlinked —
-/// this is purely bookkeeping, it does NOT touch the filesystem.
+/// Mark a node tombstoned so the cleanup walk will skip it. Purely
+/// bookkeeping — this does NOT touch the filesystem. The caller must
+/// still `bun.sys.unlink` the path separately.
 ///
-/// Nodes are never actually removed from the list (see module docs) so this
-/// is a plain atomic flag set.
+/// **Call order matters**: the clean `stopListening()` path MUST call
+/// `unregister` BEFORE `unlink`, not after. If a signal arrives between
+/// `unlink` and `unregister`, the cleanup walk would see the node as
+/// live and re-unlink the path — which would be wrong if another
+/// process has already bound a new socket at the same path in that
+/// window. Tombstoning first closes that race.
+///
+/// Nodes are never actually removed from the list (see module docs) so
+/// this is a plain atomic flag set.
 pub fn unregister(handle: ?Handle) void {
     const node = handle orelse return;
     node.tombstoned.store(true, .release);

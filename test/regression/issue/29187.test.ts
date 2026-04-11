@@ -69,18 +69,21 @@ for (const target of ["node", "bun"] as const) {
     expect(output).toContain("hello");
   });
 
-  test.concurrent(`--format cjs --no-bundle handles export const/let/var without crashing (--target ${target})`, async () => {
-    // Pre-fix this panicked on `p.options.runtime_imports.__export.?` —
-    // that optional is only populated by the bundler linker, which
-    // `--no-bundle` / `transform_only` skips.
-    const output = await buildCjs(LOCAL_SOURCE, target);
+  test.concurrent(
+    `--format cjs --no-bundle handles export const/let/var without crashing (--target ${target})`,
+    async () => {
+      // Pre-fix this panicked on `p.options.runtime_imports.__export.?` —
+      // that optional is only populated by the bundler linker, which
+      // `--no-bundle` / `transform_only` skips.
+      const output = await buildCjs(LOCAL_SOURCE, target);
 
-    expect(output).not.toMatch(/^\s*export\s+/m);
+      expect(output).not.toMatch(/^\s*export\s+/m);
 
-    // Every declared name should be exposed on `exports` via
-    // Object.defineProperty (the printBundledExport form).
-    for (const name of ["one", "two", "three", "a", "b", "x", "y"]) {
-      expect(output).toMatch(new RegExp(`Object\\.defineProperty\\(exports,\\s*"${name}"`));
-    }
-  });
+      // Every declared name should be exposed on `exports` via
+      // Object.defineProperty (the printBundledExport form).
+      for (const name of ["one", "two", "three", "a", "b", "x", "y"]) {
+        expect(output).toMatch(new RegExp(`Object\\.defineProperty\\(exports,\\s*"${name}"`));
+      }
+    },
+  );
 }

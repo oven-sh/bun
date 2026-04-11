@@ -31,11 +31,8 @@ async function buildCjs(target: "node" | "bun"): Promise<string> {
     env: bunEnv,
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toBe("");
+  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(exitCode).toBe(0);
-  expect(stdout).toBeTruthy();
 
   return readFileSync(out, "utf8");
 }

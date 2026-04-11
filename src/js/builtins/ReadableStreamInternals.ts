@@ -1812,7 +1812,12 @@ export function readableStreamReaderGenericRelease(reader) {
     const source =
       $getByIdDirectPrivate(controller, "underlyingByteSource") ??
       $getByIdDirectPrivate(controller, "underlyingSource");
-    source?.$resume(false);
+    // Double optional chain: `source` can be the plain `{ start, pull }`
+    // object returned by the small-file path in `lazyLoadStream`, which has
+    // no `$resume` method. The `stream.$bunNativePtr` guard above normally
+    // skips this block for such streams, but defense-in-depth avoids a
+    // `TypeError` if that invariant ever changes.
+    source?.$resume?.(false);
   }
   $putByIdDirectPrivate(stream, "reader", undefined);
   $putByIdDirectPrivate(reader, "ownerReadableStream", undefined);

@@ -738,19 +738,11 @@ function Socket(options?) {
     validateInt32(fd, "fd", 0);
   }
 
-  if (this._handle && $isCallable(this._handle.readStart) && options.readable !== false) {
-    if (options.pauseOnCreate) {
-      this._handle.reading = false;
-      this._handle.readStop();
-      this._readableState.flowing = false;
-    } else if (!options.manualStart) {
-      this.read(0);
-    }
-  }
-
   if (socket instanceof Socket) {
     this[ksocket] = socket;
   }
+  // onread must be set up before the read(0) below — a handle's readStart
+  // can fire onread synchronously, and onStreamRead routes on kBuffer.
   if (onread) {
     if (typeof onread !== "object") {
       throw new TypeError("onread must be an object");
@@ -773,6 +765,17 @@ function Socket(options?) {
         }
       },
     };
+  }
+
+  if (this._handle && $isCallable(this._handle.readStart) && options.readable !== false) {
+    if (options.pauseOnCreate) {
+      this._handle.reading = false;
+      const err = this._handle.readStop();
+      if (err) this.destroy(new ErrnoException(err, "read"));
+      this._readableState.flowing = false;
+    } else if (!options.manualStart) {
+      this.read(0);
+    }
   }
   if (signal) {
     if (signal.aborted) {
@@ -1221,42 +1224,51 @@ Object.defineProperty(Socket.prototype, "pending", {
 });
 
 Socket.prototype.pause = function pause() {
-  if (this[kBuffer] && !this.connecting && this._handle && this._handle.reading !== false) {
-    this._handle.reading = false;
-    if (!this.destroyed) {
-      if ($isCallable(this._handle.readStop)) {
-        const err = this._handle.readStop();
-        if (err) this.destroy(new ErrnoException(err, "read"));
-      } else {
-        // usocket-backed handle in onread mode: keep the pre-existing native
-        // pause, since SocketHandlers.data's onread variant does not apply
-        // backpressure on its own.
-        this._handle.pause?.();
+  const handle = this._handle;
+  if (handle) {
+    if ($isCallable(handle.readStop)) {
+      // stream-wrap handle: only drive readStop directly in onread mode —
+      // otherwise Duplex.pause stops _read which stops readStart (Node's
+      // lib/net.js kBuffer gating).
+      if (this[kBuffer] && !this.connecting && handle.reading !== false) {
+        handle.reading = false;
+        if (!this.destroyed) {
+          const err = handle.readStop();
+          if (err) this.destroy(new ErrnoException(err, "read"));
+        }
       }
+    } else if (!this.destroyed) {
+      // usocket handle: SocketHandlers.data pushes unconditionally, so the
+      // native side must be paused explicitly (pre-existing behavior).
+      handle.pause?.();
     }
   }
   return Duplex.prototype.pause.$call(this);
 };
 
 Socket.prototype.resume = function resume() {
-  if (this[kBuffer] && !this.connecting && this._handle && !this._handle.reading) {
-    if ($isCallable(this._handle.readStart)) {
-      tryReadStart(this);
-    } else {
-      this._handle.reading = true;
-      this._handle.resume?.();
+  const handle = this._handle;
+  if (handle) {
+    if ($isCallable(handle.readStart)) {
+      if (this[kBuffer] && !this.connecting && !handle.reading) {
+        tryReadStart(this);
+      }
+    } else if (!this.connecting) {
+      handle.resume?.();
     }
   }
   return Duplex.prototype.resume.$call(this);
 };
 
 Socket.prototype.read = function read(size) {
-  if (this[kBuffer] && !this.connecting && this._handle && !this._handle.reading) {
-    if ($isCallable(this._handle.readStart)) {
-      tryReadStart(this);
-    } else {
-      this._handle.reading = true;
-      this._handle.resume?.();
+  const handle = this._handle;
+  if (handle) {
+    if ($isCallable(handle.readStart)) {
+      if (this[kBuffer] && !this.connecting && !handle.reading) {
+        tryReadStart(this);
+      }
+    } else if (!this.connecting) {
+      handle.resume?.();
     }
   }
   return Duplex.prototype.read.$call(this, size);
@@ -2639,23 +2651,26 @@ function initSocketHandle(self) {
 function onStreamRead(nread, arrayBuffer) {
   const self = this[owner_symbol];
   if (nread > 0) {
-    self.bytesRead += nread;
     let ret;
     if (self[kBuffer]) {
       // onread: {buffer, callback}. Node's native layer writes directly into
-      // the user buffer; copy from the handle's buffer so the callback
-      // receives the caller's buffer as documented.
+      // the user buffer so nread <= buffer.byteLength by construction; until
+      // native useUserBuffer lands we copy here, clamping nread to what fits
+      // so the callback's (nread, buf) contract holds.
       let userBuf = self[kBufferGen]();
+      let n = nread;
       if ($isTypedArrayView(userBuf)) {
         if (userBuf !== arrayBuffer) {
-          const n = nread < userBuf.byteLength ? nread : userBuf.byteLength;
+          if (n > userBuf.byteLength) n = userBuf.byteLength;
           userBuf.set(arrayBuffer.subarray(0, n));
         }
       } else {
         userBuf = arrayBuffer;
       }
-      ret = self[kBufferCb](nread, userBuf);
+      self.bytesRead += n;
+      ret = self[kBufferCb](n, userBuf);
     } else {
+      self.bytesRead += nread;
       ret = self.push(arrayBuffer);
     }
     if (ret === false && this.reading) {

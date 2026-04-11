@@ -142,11 +142,15 @@ function validateTransferList(transferList: unknown) {
 }
 
 const messagePortPostMessage = MessagePort.prototype.postMessage;
+const messagePortPostMessageDescriptor = Object.getOwnPropertyDescriptor(MessagePort.prototype, "postMessage");
+function postMessage(this: MessagePort, message: any, transfer: any) {
+  validateTransferList(transfer);
+  return messagePortPostMessage.$apply(this, arguments);
+}
+Object.defineProperty(postMessage, "length", { value: messagePortPostMessage.length });
 Object.defineProperty(MessagePort.prototype, "postMessage", {
-  value(...args: [any, any]) {
-    validateTransferList(args[1]);
-    return messagePortPostMessage.$apply(this, args);
-  },
+  ...messagePortPostMessageDescriptor,
+  value: postMessage,
 });
 
 let resourceLimits = {};
@@ -272,7 +276,7 @@ class Worker extends EventEmitter {
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
 
-    validateTransferList(options.transferList);
+    validateTransferList(options?.transferList);
 
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options && builtinsGeneratorHatesEval in options) {

@@ -1614,7 +1614,7 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const cha
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
 
     if (fd == LIBUS_SOCKET_ERROR) {
-        if (err) *err = errno;
+        *err = errno;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1622,7 +1622,7 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const cha
 
     int rc = bsd_do_connect_raw(fd, (struct sockaddr *)server_address, addrlen);
     if (rc != 0) {
-        if (err) *err = rc;
+        *err = rc;
         bsd_close_socket(fd);
         return LIBUS_SOCKET_ERROR;
     }
@@ -1635,7 +1635,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, 
     size_t addrlen = 0;
     int dirfd_workaround_for_unix_path_len = -1;
     if (bsd_create_unix_socket_address(server_path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
-        if (err) *err = errno;
+        *err = errno;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1643,7 +1643,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, 
     if (dirfd_workaround_for_unix_path_len != -1) {
         if (__pthread_fchdir(dirfd_workaround_for_unix_path_len) != 0) {
             close(dirfd_workaround_for_unix_path_len);
-            if (err) *err = ENAMETOOLONG;
+            *err = ENAMETOOLONG;
             return LIBUS_SOCKET_ERROR;
         }
     }

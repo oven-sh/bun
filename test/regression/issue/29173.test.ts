@@ -66,12 +66,15 @@ test.concurrent("worker.terminate() unblocks a worker parked in Atomics.wait", {
 // Catches races in the parent → child termination signalling that a
 // single-worker test can miss. Kept small (N=2) so the debug-ASAN build
 // fits in the default per-test timeout; the fix is exercised regardless.
-test.concurrent("worker.terminate() unblocks multiple workers parked in Atomics.wait", { timeout: 30_000 }, async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+test.concurrent(
+  "worker.terminate() unblocks multiple workers parked in Atomics.wait",
+  { timeout: 30_000 },
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         const { Worker } = require("worker_threads");
         const workerSource =
           'const { parentPort } = require("worker_threads");' +
@@ -94,13 +97,14 @@ test.concurrent("worker.terminate() unblocks multiple workers parked in Atomics.
         const codes = await Promise.all(workers.map((w) => w.terminate()));
         console.log("terminated", codes.length, "workers");
       `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stripAsanNotice(stderr)).toBe("");
-  expect(stdout).toBe("terminated 2 workers\n");
-  expect(exitCode).toBe(0);
-});
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stripAsanNotice(stderr)).toBe("");
+    expect(stdout).toBe("terminated 2 workers\n");
+    expect(exitCode).toBe(0);
+  },
+);

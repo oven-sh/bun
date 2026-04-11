@@ -647,6 +647,10 @@ pub const Win32Error = enum(u16) {
     PROCESS_MODE_ALREADY_BACKGROUND = 402,
     /// The process is not in background processing mode.
     PROCESS_MODE_NOT_BACKGROUND = 403,
+    /// The path cannot be traversed because it contains an untrusted mount point.
+    /// Returned by NtCreateFile (STATUS_UNTRUSTED_MOUNT_POINT = 0xC00004BC) when
+    /// traversing a junction that Windows 11 security policy considers untrusted.
+    UNTRUSTED_MOUNT_POINT = 448,
     /// Attempt to access invalid address.
     INVALID_ADDRESS = 487,
     /// User profile cannot be loaded.

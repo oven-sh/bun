@@ -22,55 +22,49 @@
 //   - Fixed:          `size * 2`     ≈ 4 MiB + 2    → throws ENOMEM.
 
 import { memfd_create, setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
-import { test, expect } from "bun:test";
-import fs from "node:fs/promises";
-import { closeSync, writeSync } from "node:fs";
+import { expect, test } from "bun:test";
 import { isLinux, isPosix } from "harness";
+import { closeSync, writeSync } from "node:fs";
+import fs from "node:fs/promises";
 
 setSyntheticAllocationLimitForTesting(4 * 1024 * 1024);
 
-test.skipIf(!isLinux)(
-  "fs.readFile hex-encoded rejects when the would-be string exceeds the limit",
-  async () => {
-    // 2 MiB + 1 byte of input → 4 MiB + 2 hex chars of output.
-    const size = 2 * 1024 * 1024 + 1;
-    const fd = memfd_create(size);
-    const chunk = new Uint8Array(1024 * 1024);
-    chunk.fill(0x42);
-    for (let off = 0; off < size; off += chunk.byteLength) {
-      writeSync(fd, chunk, 0, Math.min(chunk.byteLength, size - off), off);
-    }
-    try {
-      await expect(fs.readFile(fd, { encoding: "hex" })).rejects.toThrow("ENOMEM: not enough memory");
-    } finally {
-      closeSync(fd);
-      Bun.gc(true);
-    }
-  },
-);
+test.skipIf(!isLinux)("fs.readFile hex-encoded rejects when the would-be string exceeds the limit", async () => {
+  // 2 MiB + 1 byte of input → 4 MiB + 2 hex chars of output.
+  const size = 2 * 1024 * 1024 + 1;
+  const fd = memfd_create(size);
+  const chunk = new Uint8Array(1024 * 1024);
+  chunk.fill(0x42);
+  for (let off = 0; off < size; off += chunk.byteLength) {
+    writeSync(fd, chunk, 0, Math.min(chunk.byteLength, size - off), off);
+  }
+  try {
+    await expect(fs.readFile(fd, { encoding: "hex" })).rejects.toThrow("ENOMEM: not enough memory");
+  } finally {
+    closeSync(fd);
+    Bun.gc(true);
+  }
+});
 
-test.skipIf(!isPosix)(
-  "fs.readFile on /dev/urandom rejects instead of reading forever (issue repro)",
-  async () => {
-    // The direct reproduction from the issue. With the 4 MiB limit applied
-    // above, this should reject near-instantly under every encoding.
-    for (const encoding of [
-      "utf8",
-      "utf16le",
-      "ucs2",
-      "hex",
-      "base64",
-      "base64url",
-      "ascii",
-      "latin1",
-      "buffer",
-    ] as const) {
-      await expect(fs.readFile("/dev/urandom", { encoding })).rejects.toThrow(
-        "ENOMEM: not enough memory, read '/dev/urandom'",
-      );
-    }
-  },
-);
+test.skipIf(!isPosix)("fs.readFile on /dev/urandom rejects instead of reading forever (issue repro)", async () => {
+  // The direct reproduction from the issue. With the 4 MiB limit applied
+  // above, this should reject near-instantly under every encoding.
+  for (const encoding of [
+    "utf8",
+    "utf16le",
+    "ucs2",
+    "hex",
+    "base64",
+    "base64url",
+    "ascii",
+    "latin1",
+    "buffer",
+  ] as const) {
+    await expect(fs.readFile("/dev/urandom", { encoding })).rejects.toThrow(
+      "ENOMEM: not enough memory, read '/dev/urandom'",
+    );
+  }
+});
 
 test("fs.readFile on a small regular file still returns its contents", async () => {
   // Sanity-check that narrowing the early-throw limit didn't break the

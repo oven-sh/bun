@@ -2675,7 +2675,10 @@ function onStreamRead(nread, arrayBuffer) {
     }
     if (ret === false && this.reading) {
       this.reading = false;
-      this.readStop();
+      if (!self.destroyed) {
+        const err = this.readStop();
+        if (err) self.destroy(new ErrnoException(err, "read"));
+      }
     }
     return;
   }

@@ -54,20 +54,16 @@ test.skipIf(!isLinux)("fs.readFile hex-encoded rejects when the would-be string 
   }
 });
 
-test.skipIf(!isPosix)(
-  "fs.readFile on /dev/urandom rejects instead of reading forever (issue repro)",
-  async () => {
-    // Direct reproduction from the issue. With the 4 MiB limit applied
-    // above, this rejects after ~4 MiB of reads instead of never. One
-    // encoding is enough to prove the fix; every other encoding is already
-    // covered by `test/js/node/fs/fs-oom.test.ts` (for `/dev/zero`) and by
-    // the `hex` memfd test below.
-    await expect(fs.readFile("/dev/urandom", { encoding: "utf8" })).rejects.toThrow(
-      "ENOMEM: not enough memory, read '/dev/urandom'",
-    );
-  },
-  30_000,
-);
+test.skipIf(!isPosix)("fs.readFile on /dev/urandom rejects instead of reading forever (issue repro)", async () => {
+  // Direct reproduction from the issue. With the 4 MiB limit applied above,
+  // this rejects after ~4 MiB of reads instead of never. One encoding is
+  // enough to prove the fix; every other encoding is already covered by
+  // `test/js/node/fs/fs-oom.test.ts` (for `/dev/zero`) and by the `hex`
+  // memfd test above.
+  await expect(fs.readFile("/dev/urandom", { encoding: "utf8" })).rejects.toThrow(
+    "ENOMEM: not enough memory, read '/dev/urandom'",
+  );
+});
 
 test("fs.readFile on a small regular file still returns its contents", async () => {
   // Sanity-check that narrowing the early-throw limit didn't break the

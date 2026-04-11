@@ -2206,7 +2206,21 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
             this.$data = undefined;
             this.#closed = true;
             this.#controller = undefined;
-            controller.error(err);
+            // Only propagate the error to the controller if the stream is
+            // still readable. `ReadableByteStreamController.error()` throws
+            // `ERR_INVALID_STATE_TypeError` when the stream state is not
+            // `$streamReadable` — which is reachable via `reader.cancel()`
+            // racing an in-flight pull: `readableStreamCancel` closes the
+            // stream first, then propagates the cancel to the native
+            // handle, whose pull Promise rejects on a now-closed stream.
+            // Default controllers have their own graceful early-return, so
+            // this guard is a no-op for the non-BYOB path.
+            const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+            if (stream && $getByIdDirectPrivate(stream, "state") === $streamReadable) {
+              try {
+                controller.error(err);
+              } catch {}
+            }
             this.#onClose();
           },
         );

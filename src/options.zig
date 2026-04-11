@@ -2750,9 +2750,9 @@ const string = []const u8;
 const DotEnv = @import("./env_loader.zig");
 const Fs = @import("./fs.zig");
 const resolver = @import("./resolver/resolver.zig");
+const DataURL = @import("./resolver/data_url.zig").DataURL;
 const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("./url.zig").URL;
-const DataURL = @import("./resolver/data_url.zig").DataURL;
 
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;

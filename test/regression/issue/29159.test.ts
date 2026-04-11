@@ -53,21 +53,13 @@ test("data:application/javascript still runs valid JavaScript", async () => {
   const dataUrl = "data:application/javascript;base64,ZXhwb3J0IGNvbnN0IHZhbHVlID0gNDI7";
 
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const m = await import(${JSON.stringify(dataUrl)}); console.log(m.value);`,
-    ],
+    cmd: [bunExe(), "-e", `const m = await import(${JSON.stringify(dataUrl)}); console.log(m.value);`],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("42");

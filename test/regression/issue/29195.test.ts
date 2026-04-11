@@ -6,7 +6,9 @@
 // conversion throws TypeError for non-object, non-nullish values.
 import { describe, expect, test } from "bun:test";
 
-const url = "http://bun.invalid.example/";
+// data: URL so the "good init" cases resolve synchronously without any
+// network I/O — keeps the test hermetic on every platform.
+const url = "data:text/plain,ok";
 
 const bad_init: [string, unknown][] = [
   ["number 0", 0],
@@ -33,17 +35,10 @@ describe("fetch() init argument validation (#29195)", () => {
     await expect(fetch(url, Symbol("test") as any)).rejects.toBeInstanceOf(TypeError);
   });
 
-  test.each(good_init)("does not reject with TypeError when init is %s", async (_label, value) => {
-    // The request will fail with a DNS/network error, not a TypeError from
-    // init validation. We only care that the rejection (if any) is not a
-    // TypeError about the init argument.
-    const result = await fetch(url, value as any).then(
-      r => ({ ok: true as const, r }),
-      e => ({ ok: false as const, e }),
-    );
-    if (!result.ok) {
-      expect(result.e).not.toBeInstanceOf(TypeError);
-    }
+  test.each(good_init)("resolves when init is %s", async (_label, value) => {
+    const res = await fetch(url, value as any);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
   });
 });
 
@@ -53,8 +48,9 @@ describe("new Request() init argument validation (#29195)", () => {
   });
 
   test("throws TypeError when init is a symbol", () => {
-    // Symbol → string conversion throws its own TypeError, so new Request()
-    // throws before our validation even runs — both outcomes are TypeError.
+    // Our validation in constructInto catches the Symbol: isUndefinedOrNull()
+    // is false and isObject() is false, so it throws TypeError before the
+    // code path that would otherwise stringify it.
     expect(() => new Request(url, Symbol("test") as any)).toThrow(TypeError);
   });
 

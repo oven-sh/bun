@@ -1,10 +1,9 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // ASAN debug builds print a one-line warning to stderr on startup.
 // Strip it so the tests still assert on a clean stderr.
-const stripAsanNotice = (s: string) =>
-  s.replace(/^WARNING: ASAN interferes .*\n/m, "");
+const stripAsanNotice = (s: string) => s.replace(/^WARNING: ASAN interferes .*\n/m, "");
 
 // https://github.com/oven-sh/bun/issues/29173
 //
@@ -51,11 +50,7 @@ test("worker.terminate() unblocks a worker parked in Atomics.wait", { timeout: 3
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stripAsanNotice(stderr)).toBe("");
   expect(stdout).toBe("terminated with code 0\n");
   expect(exitCode).toBe(0);
@@ -100,11 +95,7 @@ test("worker.terminate() unblocks multiple workers parked in Atomics.wait", { ti
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stripAsanNotice(stderr)).toBe("");
   expect(stdout).toBe("terminated 2 workers\n");
   expect(exitCode).toBe(0);

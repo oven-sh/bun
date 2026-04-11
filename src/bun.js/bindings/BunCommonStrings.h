@@ -28,6 +28,7 @@
     macro(httpLOCK, "LOCK") \
     macro(httpMERGE, "MERGE") \
     macro(httpMKACTIVITY, "MKACTIVITY") \
+    macro(httpMKADDRESSBOOK, "MKADDRESSBOOK") \
     macro(httpMKCALENDAR, "MKCALENDAR") \
     macro(httpMKCOL, "MKCOL") \
     macro(httpMOVE, "MOVE") \

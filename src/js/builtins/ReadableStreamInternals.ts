@@ -1685,8 +1685,7 @@ export function readableStreamClose(stream) {
       // `readableStreamController` is initialized to `null` (to distinguish
       // from `undefined`), so the guard must be loose inequality.
       const controller = $getByIdDirectPrivate(stream, "readableStreamController");
-      const pendingPullIntos =
-        controller != null ? $getByIdDirectPrivate(controller, "pendingPullIntos") : undefined;
+      const pendingPullIntos = controller != null ? $getByIdDirectPrivate(controller, "pendingPullIntos") : undefined;
 
       for (var request = readIntoRequests.shift(); request; request = readIntoRequests.shift()) {
         const descriptor = pendingPullIntos?.shift();

@@ -828,6 +828,15 @@ pub const Transpiler = struct {
                     .minify_syntax = transpiler.options.minify_syntax,
                     .minify_identifiers = transpiler.options.minify_identifiers,
                     .transform_only = transpiler.options.transform_only,
+                    // `module_type = .cjs` so `computeInitialReservedNames`
+                    // reserves `module` / `exports` under `--minify-identifiers`
+                    // (otherwise the MinifyRenamer could assign those strings to
+                    // user locals and poison `module.exports` at runtime).
+                    .module_type = .cjs,
+                    // Actual target so `e_import_meta_main` rewrites
+                    // `import.meta.main` to `require.main == module` in node
+                    // output instead of emitting raw ESM.
+                    .target = transpiler.options.target,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
                     .hmr_ref = ast.wrapper_ref,

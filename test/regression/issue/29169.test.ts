@@ -81,8 +81,10 @@ test.skipIf(!isLinux)("process.ppid matches /proc/self/stat (#29169)", async () 
   const [jsPpid, kernelPpid] = text.split(" ").map(Number);
 
   // JS-side ppid and kernel ppid must agree — that's the live-
-  // getter invariant. Both must also be > 1 (some real process).
+  // getter invariant. Accept pid >= 1: in Docker-as-init
+  // containers bun can legitimately run as pid 1, and the
+  // spawned child's ppid is also 1.
   expect(jsPpid).toBe(kernelPpid);
-  expect(jsPpid).toBeGreaterThan(1);
+  expect(jsPpid).toBeGreaterThan(0);
   expect(await child.exited).toBe(0);
 });

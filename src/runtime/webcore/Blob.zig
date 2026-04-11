@@ -2420,7 +2420,18 @@ const S3BlobDownloadTask = struct {
                 // response buffer with the right allocator so that
                 // `AsyncHTTP` does not clobber it later.
                 var body = response.body;
-                const owned = body.toOwnedSlice();
+                // Empty body: deinit the MutableString directly (which
+                // internally `expandToCapacity` + `clearAndFree`s the
+                // 16-byte pre-allocation) and hand the handler an empty
+                // slice. Avoids creating a stray 0-byte mimalloc
+                // allocation via `toOwnedSlice()` that
+                // `default_allocator.free` would silently no-op on,
+                // since Zig's `Allocator.free` early-returns for
+                // `bytes.len == 0`. See #29083.
+                const owned: []u8 = if (body.list.items.len == 0) blk: {
+                    body.deinit();
+                    break :blk &.{};
+                } else body.toOwnedSlice();
                 if (this.blob.size == Blob.max_size) {
                     this.blob.size = @truncate(owned.len);
                 }

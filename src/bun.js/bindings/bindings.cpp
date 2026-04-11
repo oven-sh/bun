@@ -74,7 +74,6 @@
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
-#include "JavaScriptCore/WaiterListManager.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "JavaScriptCore/Watchdog.h"
 #include "ZigGlobalObject.h"
@@ -4912,38 +4911,46 @@ void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
         vm.apiLock().lock();
 }
 
-// Wake up a worker VM blocked in `Atomics.wait`.
+// Request termination of a VM from another thread AND unpark it if it is
+// blocked in `Atomics.wait`.
 //
 // `WaiterListManager::waitSyncImpl` parks on `vm.syncWaiter()->condition()`
 // and loops while `syncWaiter->isOnList() && time.now() < time &&
-// !vm.hasTerminationRequest()`. To make the worker exit the wait on
-// termination, we need to:
+// !vm.hasTerminationRequest()`. Two things are needed to break that wait
+// from another thread:
 //
-//   1. Set `m_hasTerminationRequest` directly — the flag is normally only set
-//      from inside `VMTraps::handleTraps()` on the VM's own thread, but
-//      `handleTraps` cannot run while the thread is parked inside a host
-//      function, so we set it from the parent thread here.
+//   1. Set `m_hasTerminationRequest` so the wait loop's predicate check
+//      returns on wakeup. `VMTraps::handleTraps()` normally sets this, but
+//      it only runs on the target VM's own thread at a JS interrupt point
+//      — a thread parked inside a host function never reaches one, so we
+//      set the flag from the parent thread here.
 //
-//   2. Signal `syncWaiter->condition()` so the worker thread wakes out of
-//      `Condition::waitUntil`. It then re-evaluates the loop condition, sees
-//      `hasTerminationRequest` is true, falls through, and `atomicsWaitImpl`
-//      returns `WaitSyncResult::Terminated`. The worker's own JS code path
-//      then observes the termination via `throwTerminationException()` and
-//      unwinds back to its event loop, which triggers the normal
-//      `exitAndDeinit` path and dispatches the `close` event.
+//   2. Fire the NeedTermination trap via `notifyNeedTermination()`. This
+//      engages `VMTraps::SignalSender`, which runs on its own thread and
+//      repeatedly calls `vm.syncWaiter()->condition().notifyOne()` at 1ms
+//      intervals (see `VMTraps.cpp:SignalSender::work`) and delivers a
+//      POSIX signal to the target thread. The repeated signalling is what
+//      makes the wake robust against the classic missed-wakeup race — a
+//      single `notifyOne()` can be lost if the worker hasn't registered on
+//      the condition yet, but the sender keeps trying until the trap bit
+//      is cleared.
 //
-// We do NOT call `VM::notifyNeedTermination` here because that fires a JSC
-// trap through the signal-based path which can have side effects on other
-// VMs on this process — it's only needed to interrupt running JS code, not
-// to unblock a host-function wait.
+// Once the worker wakes from `waitSyncImpl`, it observes
+// `hasTerminationRequest`, returns `WaitSyncResult::Terminated`, and
+// `atomicsWaitImpl` throws a termination exception that unwinds back to
+// the worker's event loop, triggering the normal `exitAndDeinit` path.
 void JSC__VM__requestAndNotifyTermination(JSC::VM* arg0)
 {
     JSC::VM& vm = *arg0;
     bool didEnter = vm.currentThreadIsHoldingAPILock();
     if (didEnter)
         vm.apiLock().unlock();
+    // Order matters: set the flag before firing the trap so the very first
+    // SignalSender wake observes `hasTerminationRequest == true` in the
+    // waitSync loop's predicate check. `notifyNeedTermination` crosses the
+    // trap signaling lock, publishing the write.
     vm.setHasTerminationRequest();
-    vm.syncWaiter()->condition().notifyOne();
+    vm.notifyNeedTermination();
     if (didEnter)
         vm.apiLock().lock();
 }

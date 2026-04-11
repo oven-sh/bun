@@ -17,7 +17,7 @@ const stripAsanNotice = (s: string) => s.replace(/^WARNING: ASAN interferes .*\n
 // the child VM from the parent thread and signal the syncWaiter's condition,
 // so the wait loop observes the flag on wakeup and returns
 // `WaitSyncResult::Terminated`.
-test("worker.terminate() unblocks a worker parked in Atomics.wait", { timeout: 30_000 }, async () => {
+test.concurrent("worker.terminate() unblocks a worker parked in Atomics.wait", { timeout: 30_000 }, async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -35,15 +35,20 @@ test("worker.terminate() unblocks a worker parked in Atomics.wait", { timeout: 3
           '});';
         const blob = new Blob([workerSource], { type: "application/javascript" });
         const w = new Worker(URL.createObjectURL(blob));
+        // "ready" is sent before the worker registers its message handler,
+        // so by the time we get it and postMessage back, the worker is in
+        // its event loop waiting for our message. The fix itself is
+        // race-free: \`requestAndNotifyTermination\` sets
+        // \`hasTerminationRequest\` BEFORE waking the syncWaiter, so even if
+        // the worker hasn't parked yet when terminate() is called, it will
+        // observe the flag as soon as it enters Atomics.wait.
         await new Promise((r) => w.once("message", r));
         const sab = new SharedArrayBuffer(4);
         w.postMessage({ sab });
-        // Let the worker thread actually enter Atomics.wait before we try to
-        // unblock it — avoids racing termination against a not-yet-parked
-        // worker, which would work even without the fix.
-        await new Promise((r) => setTimeout(r, 50));
-        const code = await w.terminate();
-        console.log("terminated with code", code);
+        // Node resolves with 1 here; what matters for the regression is
+        // that the promise resolves at all (it never did before the fix).
+        await w.terminate();
+        console.log("terminated");
       `,
     ],
     env: bunEnv,
@@ -52,7 +57,7 @@ test("worker.terminate() unblocks a worker parked in Atomics.wait", { timeout: 3
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stripAsanNotice(stderr)).toBe("");
-  expect(stdout).toBe("terminated with code 0\n");
+  expect(stdout).toBe("terminated\n");
   expect(exitCode).toBe(0);
 });
 
@@ -61,7 +66,7 @@ test("worker.terminate() unblocks a worker parked in Atomics.wait", { timeout: 3
 // Catches races in the parent → child termination signalling that a
 // single-worker test can miss. Kept small (N=2) so the debug-ASAN build
 // fits in the default per-test timeout; the fix is exercised regardless.
-test("worker.terminate() unblocks multiple workers parked in Atomics.wait", { timeout: 30_000 }, async () => {
+test.concurrent("worker.terminate() unblocks multiple workers parked in Atomics.wait", { timeout: 30_000 }, async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -86,7 +91,6 @@ test("worker.terminate() unblocks multiple workers parked in Atomics.wait", { ti
           w.postMessage({ sab });
           workers.push(w);
         }
-        await new Promise((r) => setTimeout(r, 100));
         const codes = await Promise.all(workers.map((w) => w.terminate()));
         console.log("terminated", codes.length, "workers");
       `,

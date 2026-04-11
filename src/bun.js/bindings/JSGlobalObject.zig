@@ -662,9 +662,12 @@ pub const JSGlobalObject = opaque {
         // `Atomics.wait` is woken by `worker.terminate()` and its VM has
         // `hasTerminationRequest` set), the TopExceptionScope used by
         // fromJSHostCallGeneric will observe the pending termination
-        // exception and return `error.JSError`. That's not a bug — it's the
-        // expected shutdown path — so swallow it instead of panicking.
-        return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch {};
+        // exception and return `error.JSError`. That's not a bug — it's
+        // the expected shutdown path — so swallow it. Exhaustively handle
+        // the error set so if it ever grows, the compiler forces a review.
+        bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch |err| switch (err) {
+            error.JSError => {},
+        };
     }
 
     extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;

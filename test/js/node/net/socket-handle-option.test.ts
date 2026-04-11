@@ -93,3 +93,41 @@ test("net.Socket({handle, onread}) passes user buffer to callback", async () => 
   expect(calls[0].buf).not.toBe(handleBuf);
   expect(userBuf.subarray(0, 5).toString()).toBe("hello");
 });
+
+// nread reported to the onread callback must not exceed the user buffer's
+// capacity — callers do buf.subarray(0, nread).
+test("net.Socket({handle, onread}) clamps nread to user buffer", async () => {
+  let onread;
+  const handle = {
+    readStart: () => 0,
+    readStop: () => 0,
+    close() {},
+    set onread(fn) {
+      onread = fn;
+    },
+    get onread() {
+      return onread;
+    },
+    reading: false,
+  };
+
+  const userBuf = Buffer.alloc(4);
+  const calls: { nread: number; buf: Buffer }[] = [];
+  const socket = new Socket({
+    handle,
+    manualStart: true,
+    writable: false,
+    onread: { buffer: userBuf, callback: (nread, buf) => calls.push({ nread, buf }) },
+  });
+  socket.read(0);
+
+  onread.call(handle, 10, Buffer.from("0123456789"));
+  onread.call(handle, -4095, undefined); // UV_EOF
+  await new Promise(resolve => socket.on("end", resolve));
+
+  expect(calls.length).toBe(1);
+  expect(calls[0].buf).toBe(userBuf);
+  expect(calls[0].nread).toBe(4);
+  expect(userBuf.toString()).toBe("0123");
+  expect(socket.bytesRead).toBe(4);
+});

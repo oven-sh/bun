@@ -145,7 +145,7 @@ describe("guessHandleType per-fd-type", () => {
 // The contract that `process.stdin`'s createHandle/getStdin depend on: what
 // fd 0 looks like to a child under each parent stdio configuration. Run the
 // same fixture under Bun and (when available) Node, and assert both agree.
-describe("guessHandleType stdio matrix (child fd 0)", () => {
+describe.concurrent("guessHandleType stdio matrix (child fd 0)", () => {
   async function runBun(stdin: Parameters<typeof Bun.spawn>[0]["stdin"]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), fixture, "0"],

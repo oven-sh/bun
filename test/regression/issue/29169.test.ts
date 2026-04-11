@@ -118,15 +118,21 @@ test.skipIf(!isLinux)(
     let childPid: number | undefined;
     {
       const reader = parent.stderr.getReader();
-      let buf = "";
-      while (parentPid === undefined || childPid === undefined) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const pm = buf.match(/PARENT=(\d+)/);
-        if (pm) parentPid = Number(pm[1]);
-        const cm = buf.match(/CHILDPID=(\d+)/);
-        if (cm) childPid = Number(cm[1]);
+      try {
+        let buf = "";
+        while (parentPid === undefined || childPid === undefined) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const pm = buf.match(/PARENT=(\d+)/);
+          if (pm) parentPid = Number(pm[1]);
+          const cm = buf.match(/CHILDPID=(\d+)/);
+          if (cm) childPid = Number(cm[1]);
+        }
+      } finally {
+        // Release the lock so the stream is reusable (and so
+        // this block doesn't leak a reader-with-lock into GC).
+        reader.releaseLock();
       }
     }
     expect(parentPid, "parent bash must print PARENT on stderr").toBeGreaterThan(1);

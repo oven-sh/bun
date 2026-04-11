@@ -99,3 +99,19 @@ test("X25519 deriveBits rejects with all-zero public key (RFC 7748 Section 6.1)"
 
   await expect(crypto.subtle.deriveBits({ name: "X25519", public: zeroPublicKey }, privateKey, 256)).rejects.toThrow();
 });
+
+test("X25519 deriveKey produces an AES-GCM key from the shared secret", async () => {
+  const { privateKey, publicKey } = await importX25519Keys(["deriveKey", "deriveBits"]);
+
+  const key = await crypto.subtle.deriveKey(
+    { name: "X25519", public: publicKey },
+    privateKey,
+    { name: "AES-GCM", length: 256 },
+    true,
+    ["encrypt", "decrypt"],
+  );
+
+  expect(key.algorithm.name).toBe("AES-GCM");
+  const raw = await crypto.subtle.exportKey("raw", key);
+  expect(Buffer.from(raw).toString("hex")).toBe(x25519Vector.result);
+});

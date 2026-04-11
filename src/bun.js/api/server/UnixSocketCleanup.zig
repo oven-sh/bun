@@ -86,16 +86,22 @@ pub fn unregister(handle: ?Handle) void {
 /// Walk the registered-but-not-tombstoned nodes and unlink each path.
 ///
 /// Intended to be called from `atexit()` and, via an `extern "C"` shim,
-/// from a SIGINT/SIGTERM handler. Uses only `unlink(2)` on the syscall
-/// path, which is async-signal-safe.
+/// from a SIGINT/SIGTERM handler. We call `unlink(2)` directly via
+/// `std.posix.system.unlink` — `bun.sys.unlink` logs on debug builds
+/// via a scoped logger that takes a mutex and writes to stdio, which is
+/// NOT async-signal-safe and could deadlock/reenter if a signal arrives
+/// while the main thread holds that lock. Raw `unlink(2)` is on the
+/// POSIX async-signal-safe list.
 pub fn cleanupAll() void {
     var cur = head.load(.acquire);
     while (cur) |node| : (cur = node.next.load(.acquire)) {
         if (node.tombstoned.load(.acquire)) continue;
         // Best-effort: errors here (ENOENT if already removed, EACCES if
         // chmod'd, etc.) are intentionally swallowed — we're on the
-        // termination path and have no way to report them.
-        _ = bun.sys.unlink(node.path);
+        // termination path and have no way to report them. We don't
+        // retry on EINTR either: a second signal during exit is going
+        // to be handled by the kernel's default disposition anyway.
+        _ = std.posix.system.unlink(node.path.ptr);
         // Flip the tombstone so a second invocation (e.g. atexit firing
         // after the signal handler already ran) is a no-op.
         node.tombstoned.store(true, .release);

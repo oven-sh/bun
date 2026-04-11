@@ -133,19 +133,28 @@ describe("RedisClient: assigning null to onclose/onconnect (#29145)", () => {
     }
   });
 
-  test("null onclose while an in-flight connection is being torn down does not panic", async () => {
-    // This reproduces the original bug's exact shape: obtain an in-flight
-    // connection, detach via `null`, and close. Before the fix, the close path
-    // invoked `.call(...)` on the cached `null`, triggering a TypeError that
-    // was cleared during teardown.
-    const c = new RedisClient("redis://localhost:6379");
+  test("null onclose while a connection is being torn down does not panic", async () => {
+    // Reproduces the original bug by forcing the teardown path:
+    //
+    //   1. Point the client at a guaranteed-refused local port (127.0.0.1:1)
+    //      so no external Redis is required and the test is self-contained.
+    //   2. Issue a command to make the client connect; the connect fails with
+    //      "Connection closed", which drives the socket close handler and
+    //      fires the `onclose` callback path.
+    //   3. Detach the handler via `null` before the final `close()` so the
+    //      cached slot is empty during teardown.
+    //
+    // Before the fix, the teardown path invoked `.call(...)` on the cached
+    // `null`, producing a TypeError that was cleared during close and
+    // surfaced as `A JavaScript exception was thrown, but it was cleared
+    // before it could be read.`
+    const c = new RedisClient("redis://127.0.0.1:1", {
+      autoReconnect: false,
+      connectionTimeout: 500,
+    });
     try {
-      // Touch the connection so the client transitions through states that
-      // exercise the onclose callback path. If the server isn't reachable we
-      // just swallow the rejection — the bug fires regardless of whether the
-      // command succeeds.
-      await c.set("test:issue-29145", "v", "EX", "10").catch(() => {});
       c.onclose = null;
+      await c.set("test:issue-29145", "v", "EX", "10").catch(() => {});
       expect(() => c.close()).not.toThrow();
     } finally {
       c.close();

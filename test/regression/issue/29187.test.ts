@@ -278,39 +278,42 @@ test.concurrent("--format cjs --no-bundle --minify-whitespace: export {...} from
   expect(output).toMatch(/module\.exports\.baz\s*=/);
 });
 
-test.concurrent("--format cjs --no-bundle --minify-identifiers: export function/class keep external names", async () => {
-  // Regression: with MinifyRenamer active, local bindings get renamed but
-  // the public export contract must still use the source name. Consumers
-  // doing `require("./m").hello` must not see `undefined`.
-  const output = await buildCjs(
-    {
-      "index.ts": `export function veryLongFunctionName() { return 42; }
+test.concurrent(
+  "--format cjs --no-bundle --minify-identifiers: export function/class keep external names",
+  async () => {
+    // Regression: with MinifyRenamer active, local bindings get renamed but
+    // the public export contract must still use the source name. Consumers
+    // doing `require("./m").hello` must not see `undefined`.
+    const output = await buildCjs(
+      {
+        "index.ts": `export function veryLongFunctionName() { return 42; }
 export class VeryLongClassName { get a() { return 1; } }
 const veryLongLocalName = 7;
 const anotherLongOne = 8;
 export { veryLongLocalName, anotherLongOne as renamedExport };
 `,
-    },
-    "./index.ts",
-    "node",
-    ["--minify-identifiers"],
-  );
+      },
+      "./index.ts",
+      "node",
+      ["--minify-identifiers"],
+    );
 
-  // External contract is preserved — the Object.defineProperty /
-  // Object.assign emissions use the SOURCE names as keys.
-  expect(output).toMatch(/"veryLongFunctionName"/);
-  expect(output).toMatch(/"VeryLongClassName"/);
-  // Sanity-run: all four exports must be reachable by source name.
-  const mod = { exports: {} as any };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-  new Function("module", "exports", output)(mod, mod.exports);
-  expect(typeof mod.exports.veryLongFunctionName).toBe("function");
-  expect(mod.exports.veryLongFunctionName()).toBe(42);
-  expect(typeof mod.exports.VeryLongClassName).toBe("function");
-  expect(new mod.exports.VeryLongClassName().a).toBe(1);
-  expect(mod.exports.veryLongLocalName).toBe(7);
-  expect(mod.exports.renamedExport).toBe(8);
-});
+    // External contract is preserved — the Object.defineProperty /
+    // Object.assign emissions use the SOURCE names as keys.
+    expect(output).toMatch(/"veryLongFunctionName"/);
+    expect(output).toMatch(/"VeryLongClassName"/);
+    // Sanity-run: all four exports must be reachable by source name.
+    const mod = { exports: {} as any };
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+    new Function("module", "exports", output)(mod, mod.exports);
+    expect(typeof mod.exports.veryLongFunctionName).toBe("function");
+    expect(mod.exports.veryLongFunctionName()).toBe(42);
+    expect(typeof mod.exports.VeryLongClassName).toBe("function");
+    expect(new mod.exports.VeryLongClassName().a).toBe(1);
+    expect(mod.exports.veryLongLocalName).toBe(7);
+    expect(mod.exports.renamedExport).toBe(8);
+  },
+);
 
 test.concurrent("--format cjs --no-bundle --minify-identifiers: module/exports stay reserved", async () => {
   // Regression: if `printCommonJS` doesn't pass `module_type: .cjs` to

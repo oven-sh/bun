@@ -22,12 +22,20 @@
 //   - Fixed:          `size * 2`     ≈ 4 MiB + 2    → throws ENOMEM.
 
 import { memfd_create, setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
-import { expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { isLinux, isPosix } from "harness";
 import { closeSync, writeSync } from "node:fs";
 import fs from "node:fs/promises";
 
-setSyntheticAllocationLimitForTesting(4 * 1024 * 1024);
+// Previous limit, restored in `afterAll` so we don't leak VM-global state into
+// whichever test file runs next in the same process.
+let previousSyntheticLimit = 0;
+beforeAll(() => {
+  previousSyntheticLimit = setSyntheticAllocationLimitForTesting(4 * 1024 * 1024);
+});
+afterAll(() => {
+  setSyntheticAllocationLimitForTesting(previousSyntheticLimit);
+});
 
 test.skipIf(!isLinux)("fs.readFile hex-encoded rejects when the would-be string exceeds the limit", async () => {
   // 2 MiB + 1 byte of input → 4 MiB + 2 hex chars of output.

@@ -78,7 +78,12 @@ const ExitFn = *const fn () callconv(.c) void;
 var on_exit_callbacks = std.ArrayListUnmanaged(ExitFn){};
 export fn Bun__atexit(function: ExitFn) void {
     if (std.mem.indexOfScalar(ExitFn, on_exit_callbacks.items, function) == null) {
-        on_exit_callbacks.append(bun.default_allocator, function) catch {};
+        // The caller has no signal channel (return type is `void`), so
+        // swallowing OOM here silently drops the exit callback — e.g.
+        // the unix-socket cleanup registered from `bun_initialize_process`
+        // for #29166 — which would reintroduce that bug on
+        // `process.exit()`. Crash instead.
+        bun.handleOom(on_exit_callbacks.append(bun.default_allocator, function));
     }
 }
 

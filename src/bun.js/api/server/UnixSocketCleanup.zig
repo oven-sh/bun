@@ -92,19 +92,29 @@ pub fn unregister(handle: ?Handle) void {
 /// NOT async-signal-safe and could deadlock/reenter if a signal arrives
 /// while the main thread holds that lock. Raw `unlink(2)` is on the
 /// POSIX async-signal-safe list.
+///
+/// Concurrency: `cleanupAll` can be re-entered — the signal handler may
+/// preempt an in-progress `atexit` walk, since POSIX doesn't block
+/// signals during atexit callbacks. We claim each node with an atomic
+/// compare-and-swap so that only one caller issues `unlink(2)` for a
+/// given path. This matters in the pathological case where another
+/// process binds a new socket at the same path in the nanoseconds
+/// between one caller's `unlink` and a second redundant `unlink` from
+/// the re-entrant walk — the CAS prevents the second call entirely.
 pub fn cleanupAll() void {
     var cur = head.load(.acquire);
     while (cur) |node| : (cur = node.next.load(.acquire)) {
-        if (node.tombstoned.load(.acquire)) continue;
+        // Atomically claim the right to unlink this node. If another
+        // `cleanupAll` caller (or the signal handler preempting us) has
+        // already flipped the tombstone, this CAS returns the old `true`
+        // and we skip. Otherwise we are the sole unlinker for this path.
+        if (node.tombstoned.cmpxchgStrong(false, true, .acq_rel, .acquire) != null) continue;
         // Best-effort: errors here (ENOENT if already removed, EACCES if
         // chmod'd, etc.) are intentionally swallowed — we're on the
         // termination path and have no way to report them. We don't
         // retry on EINTR either: a second signal during exit is going
         // to be handled by the kernel's default disposition anyway.
         _ = std.posix.system.unlink(node.path.ptr);
-        // Flip the tombstone so a second invocation (e.g. atexit firing
-        // after the signal handler already ran) is a no-op.
-        node.tombstoned.store(true, .release);
     }
 }
 

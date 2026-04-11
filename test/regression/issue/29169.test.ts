@@ -22,7 +22,7 @@
 // exactly the property the fix establishes: `process.ppid` is
 // a live accessor.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux } from "harness";
 
 test("process.ppid is a live accessor (#29169)", () => {
   // JSC's CustomAccessor appears in Object.getOwnPropertyDescriptor
@@ -55,22 +55,19 @@ test("process.ppid is a live accessor (#29169)", () => {
 // path, not just the JS surface. Kept off other platforms to
 // keep the test portable.
 test.skipIf(!isLinux)("process.ppid matches /proc/self/stat (#29169)", async () => {
-  using dir = tempDir("issue-29169", {
-    "child.js": `
-      const fs = require("fs");
-      // Field 4 of /proc/self/stat is the real ppid; field 2
-      // (comm) may contain spaces and parens so split on the
-      // last ')'.
-      const stat = fs.readFileSync("/proc/self/stat", "utf8");
-      const kernelPpid = parseInt(
-        stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1], 10
-      );
-      process.stdout.write(process.ppid + " " + kernelPpid + "\\n");
-    `,
-  });
+  // Single-file child script — inline via `-e` per
+  // test/CLAUDE.md. Field 4 of /proc/self/stat is the real
+  // ppid; field 2 (comm) may contain spaces and parens so
+  // split on the last ')'.
+  const childScript = `
+    const fs = require("fs");
+    const stat = fs.readFileSync("/proc/self/stat", "utf8");
+    const kernelPpid = parseInt(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1], 10);
+    process.stdout.write(process.ppid + " " + kernelPpid + "\\n");
+  `;
 
   await using child = Bun.spawn({
-    cmd: [bunExe(), `${dir}/child.js`],
+    cmd: [bunExe(), "-e", childScript],
     env: bunEnv,
     stdout: "pipe",
     stderr: "inherit",

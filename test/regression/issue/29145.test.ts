@@ -156,7 +156,7 @@ describe("RedisClient: assigning null to onclose/onconnect (#29145)", () => {
     });
     try {
       c.onclose = null;
-      await c.set("test:issue-29145", "v", "EX", "10").catch(() => {});
+      await c.set("test:issue-29145", "v", "EX", 10).catch(() => {});
       expect(() => c.close()).not.toThrow();
     } finally {
       c.close();

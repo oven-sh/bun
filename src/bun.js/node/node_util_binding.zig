@@ -120,7 +120,7 @@ pub fn guessHandleType(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFram
     return jsc.JSValue.jsNumber(@as(u32, guessHandleTypeFromFd(fd_int)));
 }
 
-fn guessHandleTypeFromFd(fd_int: i32) u32 {
+pub fn guessHandleTypeFromFd(fd_int: i32) u32 {
     const TCP = 0;
     const TTY_TYPE = 1;
     const UDP = 2;

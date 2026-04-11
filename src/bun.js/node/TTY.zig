@@ -69,9 +69,9 @@ extern "c" fn Bun__getTTYWindowSize(i32, *usize, *usize) bool;
 const UV_EOF: i32 = -4095;
 
 inline fn toUVErrno(err: bun.sys.Error) i32 {
-    if (comptime Environment.isWindows) {
-        return @intCast(err.errno);
-    }
+    // bun.sys.Error.errno is u16 magnitude on every platform (Windows stores
+    // via @abs in fromCodeInt); recover the negative libuv code here so
+    // net.Socket's onStreamRead sees nread < 0 as an error.
     return -@as(i32, @intCast(err.errno));
 }
 
@@ -92,9 +92,29 @@ pub fn constructor(
     }
     const fd: bun.FD = .fromUV(fd_int);
 
-    // Do NOT throw on !isatty — Node accepts pipe/socket fds in
-    // tty.ReadStream and reports failures via the ctx out-param. We only
-    // populate ctx.code on a hard syscall error below.
+    // libuv's uv_tty_init rejects FILE and UNKNOWN fds with UV_EINVAL (TTY,
+    // PIPE, TCP, UDP are accepted). Report via the ctx out-param so
+    // tty.ReadStream throws ERR_TTY_INIT_FAILED — Node returns a dead wrap
+    // here rather than throwing, so we do the same.
+    const handle_type = node_util_binding.guessHandleTypeFromFd(fd_int);
+    if (handle_type == 3 or handle_type == 5) { // FILE | UNKNOWN
+        if (args[1].isObject()) {
+            args[1].put(globalObject, jsc.ZigString.static("code"), try bun.String.static("EINVAL").toJS(globalObject));
+        }
+        const dead = bun.new(TTY, .{
+            .ref_count = .init(),
+            .fd = fd,
+            .fd_int = fd_int,
+            .owned_fd = fd,
+            .reader = IOReader.init(TTY),
+            .event_loop_handle = jsc.EventLoopHandle.init(globalObject.bunVM().eventLoop()),
+            .globalThis = globalObject,
+            .flags = .{ .closed = true },
+        });
+        dead.reader.setParent(dead);
+        dead.this_value = jsc.JSRef.initWeak(this_value);
+        return dead;
+    }
 
     var owned_fd = fd;
     var nonblocking = false;
@@ -135,10 +155,6 @@ pub fn constructor(
     tty.reader.flags.close_handle = false;
 
     tty.this_value = jsc.JSRef.initWeak(this_value);
-
-    // Node's ctx out-param: only populate code on hard failure. We have none
-    // here (reopen failure just falls back), so leave ctx untouched.
-    _ = args[1];
 
     return tty;
 }
@@ -227,12 +243,12 @@ pub fn getWindowSize(this: *TTY, globalObject: *jsc.JSGlobalObject, callframe: *
     var width: usize = 0;
     var height: usize = 0;
     if (!Bun__getTTYWindowSize(this.fd_int, &width, &height)) {
-        return JSValue.jsBoolean(false);
+        return .false;
     }
 
     try arr_value.putIndex(globalObject, 0, JSValue.jsNumber(width));
     try arr_value.putIndex(globalObject, 1, JSValue.jsNumber(height));
-    return JSValue.jsBoolean(true);
+    return .true;
 }
 
 pub fn close(this: *TTY, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
@@ -292,9 +308,9 @@ pub fn onReadChunk(this: *TTY, chunk: []const u8, has_more: bun.io.ReadState) bo
     const callback = js.gc.get(.onread, this_jsvalue) orelse return this.flags.reading;
 
     const globalThis = this.globalThis;
-    // dupe — the reader buffer is reused across reads.
-    const duped = bun.default_allocator.dupe(u8, chunk) catch return this.flags.reading;
-    const buf = jsc.ArrayBuffer.createBuffer(globalThis, duped) catch return this.flags.reading;
+    // createBuffer memcpy's into JSC-owned memory, so the reader's reused
+    // backing buffer is safe to pass directly.
+    const buf = jsc.ArrayBuffer.createBuffer(globalThis, chunk) catch return this.flags.reading;
 
     this.bytes_read += chunk.len;
 
@@ -384,6 +400,7 @@ extern "c" fn Source__setRawModeStdin(bool) i32;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const node_util_binding = @import("./node_util_binding.zig");
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

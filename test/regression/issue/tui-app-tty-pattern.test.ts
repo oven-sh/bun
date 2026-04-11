@@ -107,35 +107,34 @@ test("TUI app pattern: read piped stdin then reopen /dev/tty", async () => {
   expect(exitCode).toBe(0);
 });
 
-// Test that tty.ReadStream works correctly with various file descriptors
-test("tty.ReadStream handles non-TTY file descriptors correctly", () => {
+// Node's uv_tty_init rejects regular-file fds with UV_EINVAL, so
+// new tty.ReadStream(regular_file_fd) throws ERR_TTY_INIT_FAILED. Bun now
+// matches this since tty.ReadStream extends net.Socket with a native TTY
+// handle (previously it wrapped fs.ReadStream and accepted any fd).
+test("tty.ReadStream rejects non-TTY file descriptors", () => {
   const fs = require("fs");
   const tty = require("tty");
   const path = require("path");
   const os = require("os");
 
-  // Create a regular file in the system temp directory
   const tempFile = path.join(os.tmpdir(), "test-regular-file-" + Date.now() + ".txt");
   fs.writeFileSync(tempFile, "test content");
 
+  let fd;
   try {
-    const fd = fs.openSync(tempFile, "r");
-    const stream = new tty.ReadStream(fd);
-
-    // Regular file should not be identified as TTY
-    expect(stream.isTTY).toBe(false);
-
-    // ref/unref should still exist (for compatibility) but may be no-ops
-    expect(typeof stream.ref).toBe("function");
-    expect(typeof stream.unref).toBe("function");
-
-    // Clean up - only destroy the stream, don't double-close the fd
-    stream.destroy();
+    fd = fs.openSync(tempFile, "r");
+    let thrown;
+    try {
+      new tty.ReadStream(fd);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeDefined();
+    expect(thrown.code).toBe("ERR_TTY_INIT_FAILED");
   } finally {
     try {
+      if (fd !== undefined) fs.closeSync(fd);
       fs.unlinkSync(tempFile);
-    } catch (e) {
-      // Ignore cleanup errors
-    }
+    } catch {}
   }
 });

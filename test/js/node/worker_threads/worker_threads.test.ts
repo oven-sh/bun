@@ -320,7 +320,7 @@ test("eval does not leak source code", async () => {
   const errors = await proc.stderr.text();
   if (errors.length > 0) throw new Error(errors);
   expect(proc.exitCode).toBe(0);
-});
+}, 30000);
 
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {

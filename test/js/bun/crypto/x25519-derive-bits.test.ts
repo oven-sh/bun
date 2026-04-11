@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // Test vectors from RFC 7748 / Node.js test suite
 const x25519Vector = {

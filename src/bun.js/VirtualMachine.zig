@@ -3271,24 +3271,22 @@ fn printErrorInstance(
 
         // `AggregateError.errors` is a non-enumerable own property, so the
         // property iterator above skips it. Walk it manually and queue each
-        // entry so the wrapper gets printed first (matching Node's
-        // `[errors]: [...]` format) instead of the errors replacing it.
+        // entry (of any type — Promise.any can reject with non-Error values)
+        // so the wrapper gets printed first, matching Node's `[errors]: [...]`
+        // format instead of the errors replacing it.
         if (error_instance.isAggregateError(this.global)) {
             const AggregateErrorsIterator = struct {
                 errors_to_append: *std.array_list.Managed(JSValue),
 
                 pub fn visit(_: *VM, _: *JSGlobalObject, ctx: ?*anyopaque, next_value: JSValue) callconv(.c) void {
                     const self: *@This() = @ptrCast(@alignCast(ctx.?));
-                    if (next_value.jsType() == .ErrorInstance) {
-                        next_value.protect();
-                        bun.handleOom(self.errors_to_append.append(next_value));
-                    }
+                    next_value.protect();
+                    bun.handleOom(self.errors_to_append.append(next_value));
                 }
             };
             var errors_iter = AggregateErrorsIterator{ .errors_to_append = &errors_to_append };
-            error_instance.getErrorsProperty(this.global).forEach(this.global, &errors_iter, AggregateErrorsIterator.visit) catch {
-                if (this.global.hasException()) this.global.clearException();
-            };
+            const errors_array = error_instance.getErrorsProperty(this.global);
+            try errors_array.forEach(this.global, &errors_iter, AggregateErrorsIterator.visit);
         }
     } else if (mode == .js and error_instance != .zero) {
         // If you do reportError([1,2,3]] we should still show something at least.

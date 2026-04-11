@@ -1,31 +1,20 @@
 // https://github.com/oven-sh/bun/issues/29187
 //
-// `bun build --format cjs --no-bundle` silently ignored the format and
-// emitted ESM output (`import` / `export`). The `--no-bundle` path in
-// `Transpiler.buildWithResolveResultEager` hardcoded `.esm` / `.esm_ascii`
-// based on target, never reading `transpiler.options.output_format`.
-//
-// Fix: route through the `.cjs` printer when `output_format == .cjs`,
-// rewriting ESM imports/exports to `require(...)` / `exports.*`.
-//
-// Additionally the `S.Local` export branch in `printDeclStmt` used to
-// dereference `runtime_imports.__export.?` — a symbol the linker populates
-// for the bundler path but which is always null in `transform_only` mode.
-// `export const` / `export let` / `export var` must emit inline
-// `Object.defineProperty(exports, ...)` via `printBundledExport`, the same
-// as `export function` / `export class` already did.
+// `bun build --format cjs --no-bundle` used to silently emit ESM output.
+// These tests exercise every export form that `printCommonJS` has to
+// handle on the no-bundle path so future regressions are caught.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-async function buildCjs(source: string, target: "node" | "bun"): Promise<string> {
-  using dir = tempDir("issue-29187", { "index.ts": source });
+async function buildCjs(files: Record<string, string>, entry: string, target: "node" | "bun"): Promise<string> {
+  using dir = tempDir("issue-29187", files);
   const out = join(String(dir), "out.js");
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "./index.ts", "--outfile", out, "--target", target, "--format", "cjs", "--no-bundle"],
+    cmd: [bunExe(), "build", entry, "--outfile", out, "--target", target, "--format", "cjs", "--no-bundle"],
     cwd: String(dir),
     env: bunEnv,
   });
@@ -36,54 +25,112 @@ async function buildCjs(source: string, target: "node" | "bun"): Promise<string>
   return readFileSync(out, "utf8");
 }
 
-const FUNCTION_SOURCE = `import { readFileSync } from "fs";
+for (const target of ["node", "bun"] as const) {
+  test.concurrent(`--format cjs --no-bundle: imports + export function (${target})`, async () => {
+    const output = await buildCjs(
+      {
+        "index.ts": `import { readFileSync } from "fs";
 import path from "path";
-
 export function hello() {
   console.log("Hello", readFileSync, path);
 }
-`;
+`,
+      },
+      "./index.ts",
+      target,
+    );
 
-const LOCAL_SOURCE = `export const one = 1;
-export let two = 2;
-export var three = 3;
-export const { a, b } = { a: 10, b: 20 };
-export const [x, y] = [30, 40];
-`;
-
-for (const target of ["node", "bun"] as const) {
-  test.concurrent(`--format cjs --no-bundle emits CommonJS (export function, --target ${target})`, async () => {
-    const output = await buildCjs(FUNCTION_SOURCE, target);
-
-    // The CJS printer rewrites `import` / `export` to `require` / `exports.*`.
-    // Neither of the original ESM keywords should appear as top-level
-    // statements in the output.
     expect(output).not.toMatch(/^\s*import\s+/m);
     expect(output).not.toMatch(/^\s*export\s+/m);
-
-    // It should contain `require("fs")` / `require("path")` and expose
-    // `hello` on `exports`.
     expect(output).toContain('require("fs")');
     expect(output).toContain('require("path")');
     expect(output).toMatch(/exports\b/);
     expect(output).toContain("hello");
   });
 
-  test.concurrent(
-    `--format cjs --no-bundle handles export const/let/var without crashing (--target ${target})`,
-    async () => {
-      // Pre-fix this panicked on `p.options.runtime_imports.__export.?` —
-      // that optional is only populated by the bundler linker, which
-      // `--no-bundle` / `transform_only` skips.
-      const output = await buildCjs(LOCAL_SOURCE, target);
+  test.concurrent(`--format cjs --no-bundle: export const/let/var + destructuring (${target})`, async () => {
+    // Pre-fix this hit `runtime_imports.__export.?` → panic. The rewrite
+    // also has to recurse into nested destructuring.
+    const output = await buildCjs(
+      {
+        "index.ts": `export const one = 1;
+export let two = 2;
+export var three = 3;
+export const { a, b } = { a: 10, b: 20 };
+export const [x, y] = [30, 40];
+export const { nested: { deep } } = { nested: { deep: 99 } };
+`,
+      },
+      "./index.ts",
+      target,
+    );
 
-      expect(output).not.toMatch(/^\s*export\s+/m);
+    expect(output).not.toMatch(/^\s*export\s+/m);
+    for (const name of ["one", "two", "three", "a", "b", "x", "y", "deep"]) {
+      expect(output).toMatch(new RegExp(`Object\\.defineProperty\\(module\\.exports,\\s*"${name}"`));
+    }
+  });
 
-      // Every declared name should be exposed on `exports` via
-      // Object.defineProperty (the printBundledExport form).
-      for (const name of ["one", "two", "three", "a", "b", "x", "y"]) {
-        expect(output).toMatch(new RegExp(`Object\\.defineProperty\\(exports,\\s*"${name}"`));
-      }
-    },
-  );
+  test.concurrent(`--format cjs --no-bundle: export default value (${target})`, async () => {
+    const output = await buildCjs({ "index.ts": `export default 42;\n` }, "./index.ts", target);
+
+    expect(output).not.toMatch(/^\s*export\s+default/m);
+    expect(output).toMatch(/module\.exports\.default\s*=\s*42/);
+  });
+
+  test.concurrent(`--format cjs --no-bundle: export default function (${target})`, async () => {
+    const output = await buildCjs(
+      { "index.ts": `export default function greet() { return "hi"; }\n` },
+      "./index.ts",
+      target,
+    );
+
+    expect(output).not.toMatch(/^\s*export\s+default/m);
+    expect(output).toContain("function greet");
+    expect(output).toMatch(/module\.exports\.default\s*=\s*greet/);
+  });
+
+  test.concurrent(`--format cjs --no-bundle: export * from (${target})`, async () => {
+    const output = await buildCjs(
+      {
+        "index.ts": `export * from "./other";\n`,
+        "other.ts": `export const foo = 1;\n`,
+      },
+      "./index.ts",
+      target,
+    );
+
+    expect(output).not.toMatch(/^\s*export\s+/m);
+    expect(output).toMatch(/Object\.assign\(module\.exports,\s*require\(["']\.\/other["']\)\)/);
+  });
+
+  test.concurrent(`--format cjs --no-bundle: export * as ns from (${target})`, async () => {
+    const output = await buildCjs(
+      {
+        "index.ts": `export * as ns from "./other";\n`,
+        "other.ts": `export const foo = 1;\n`,
+      },
+      "./index.ts",
+      target,
+    );
+
+    expect(output).not.toMatch(/^\s*export\s+/m);
+    expect(output).toMatch(/module\.exports\.ns\s*=\s*require\(["']\.\/other["']\)/);
+  });
+
+  test.concurrent(`--format cjs --no-bundle: export { a, b as c } from (${target})`, async () => {
+    const output = await buildCjs(
+      {
+        "index.ts": `export { foo, bar as baz } from "./other";\n`,
+        "other.ts": `export const foo = 1;\nexport const bar = 2;\n`,
+      },
+      "./index.ts",
+      target,
+    );
+
+    expect(output).not.toMatch(/^\s*export\s+/m);
+    expect(output).toContain('require("./other")');
+    expect(output).toMatch(/module\.exports\.foo\s*=/);
+    expect(output).toMatch(/module\.exports\.baz\s*=/);
+  });
 }

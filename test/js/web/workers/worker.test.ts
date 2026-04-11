@@ -315,6 +315,29 @@ describe("worker_threads", () => {
     });
   });
 
+  test("worker terminate called twice does not crash", async () => {
+    // The first terminate() causes the worker thread to take the fast early-exit path
+    // and free its state. A second terminate() must not touch that freed state.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          for (let i = 0; i < 200; i++) {
+            const w = new Worker("does-not-exist-" + i);
+            w.terminate();
+            w.terminate();
+          }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+  });
+
   test("worker terminate while setting up thread", async () => {
     // this test is inherently somewhat flaky: if we call terminate() before the worker starts
     // running any JavaScript the code will be 0 like we expect, but if we terminate while it is

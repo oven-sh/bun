@@ -262,7 +262,8 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
-    m_terminationFlags.fetch_or(TerminateRequestedFlag);
+    if (m_terminationFlags.fetch_or(TerminateRequestedFlag) & (TerminateRequestedFlag | TerminatedFlag))
+        return;
     WebWorker__notifyNeedTermination(impl_);
 }
 

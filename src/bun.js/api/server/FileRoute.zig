@@ -186,7 +186,10 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
 
     const fd = fd_result.result;
 
-    const input_if_modified_since_date: ?u64 = req.dateForHeader("if-modified-since") catch return; // TODO: properly propagate exception upwards
+    const input_if_modified_since_date: ?u64 = req.dateForHeader("if-modified-since") catch {
+        bun.Async.Closer.close(fd, if (bun.Environment.isWindows) bun.windows.libuv.Loop.get());
+        return;
+    }; // TODO: properly propagate exception upwards
 
     const can_serve_file: bool, const size: u64, const file_type: bun.io.FileType, const pollable: bool = brk: {
         const stat = switch (bun.sys.fstat(fd)) {
@@ -227,7 +230,10 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
         // ignored, unless the server doesn't support If-None-Match.
         if (input_if_modified_since_date) |requested_if_modified_since| {
             if (method == .HEAD or method == .GET) {
-                if (this.lastModifiedDate() catch return) |actual_last_modified_at| { // TODO: properly propagate exception upwards
+                if (this.lastModifiedDate() catch {
+                    bun.Async.Closer.close(fd, if (bun.Environment.isWindows) bun.windows.libuv.Loop.get());
+                    return;
+                }) |actual_last_modified_at| { // TODO: properly propagate exception upwards
                     if (actual_last_modified_at <= requested_if_modified_since) {
                         break :brk 304;
                     }
@@ -250,6 +256,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
 
     switch (status_code) {
         204, 205, 304, 307, 308 => {
+            bun.Async.Closer.close(fd, if (bun.Environment.isWindows) bun.windows.libuv.Loop.get());
             resp.endWithoutBody(resp.shouldCloseConnection());
             this.deref();
             return;
@@ -263,6 +270,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
     }
 
     if (method == .HEAD) {
+        bun.Async.Closer.close(fd, if (bun.Environment.isWindows) bun.windows.libuv.Loop.get());
         resp.endWithoutBody(resp.shouldCloseConnection());
         this.deref();
         return;

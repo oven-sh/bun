@@ -22,7 +22,8 @@
 // exactly the property the fix establishes: `process.ppid` is
 // a live accessor.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux } from "harness";
+import { readFileSync } from "node:fs";
+import { isLinux } from "harness";
 
 test("process.ppid is a live accessor (#29169)", () => {
   // JSC's CustomAccessor appears in Object.getOwnPropertyDescriptor
@@ -50,41 +51,18 @@ test("process.ppid is a live accessor (#29169)", () => {
   expect(secondRead).toBe(firstRead);
 });
 
-// Sanity check on Linux: the JS value matches what /proc says.
-// This pins the actual syscall path in addition to the JS-side
-// descriptor check above. We compare js vs kernel rather than
-// asserting against a specific pid because `bun test` can run
-// individual test files under a worker wrapper on some CI
-// lanes, which makes `process.pid` in the test body a poor
-// proxy for the spawned child's actual parent.
-test.skipIf(!isLinux)("process.ppid matches /proc/self/stat (#29169)", async () => {
-  // Single-file child script — inline via `-e` per
-  // test/CLAUDE.md. Field 4 of /proc/self/stat is the real
-  // ppid; field 2 (comm) may contain spaces and parens so
-  // split on the last ')'.
-  const childScript = `
-    const fs = require("fs");
-    const stat = fs.readFileSync("/proc/self/stat", "utf8");
-    const kernelPpid = parseInt(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1], 10);
-    process.stdout.write(process.ppid + " " + kernelPpid + "\\n");
-  `;
+// Sanity check on Linux: the getter's return value agrees with
+// what the kernel reports in /proc/self/stat. Runs synchronously
+// in the test-runner process itself — no subprocess spawn — so
+// there's no CI-lane-specific process-lifecycle variance.
+test.skipIf(!isLinux)("process.ppid matches /proc/self/stat (#29169)", () => {
+  // Field 4 of /proc/self/stat is the real ppid. Field 2
+  // (comm) can contain spaces and parens, so split on the
+  // LAST ')' rather than whitespace.
+  const stat = readFileSync("/proc/self/stat", "utf8");
+  const kernelPpid = parseInt(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1], 10);
 
-  await using child = Bun.spawn({
-    cmd: [bunExe(), "-e", childScript],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-    stdin: "ignore",
-  });
-
-  const text = (await child.stdout.text()).trim();
-  const [jsPpid, kernelPpid] = text.split(" ").map(Number);
-
-  // JS-side ppid and kernel ppid must agree — that's the live-
-  // getter invariant. Accept pid >= 1: in Docker-as-init
-  // containers bun can legitimately run as pid 1, and the
-  // spawned child's ppid is also 1.
-  expect(jsPpid).toBe(kernelPpid);
-  expect(jsPpid).toBeGreaterThan(0);
-  expect(await child.exited).toBe(0);
+  // JS and kernel must agree on the same tick.
+  expect(process.ppid).toBe(kernelPpid);
+  expect(process.ppid).toBeGreaterThan(0);
 });

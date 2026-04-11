@@ -934,11 +934,17 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
         // pathname, which throws URIError: URI malformed for any '%' not
         // followed by two hex digits. WTF::URL::fileSystemPath uses a lenient
         // decoder, so validate strictly here to match Node.
-        const size_t length = p.length();
-        for (size_t i = 0; i < length; ++i) {
+        const unsigned pathLen = p.length();
+        for (unsigned i = 0; i < pathLen; ++i) {
             if (p[i] != '%')
                 continue;
-            if (i + 2 >= length || !WTF::isASCIIHexDigit(p[i + 1]) || !WTF::isASCIIHexDigit(p[i + 2])) {
+            if (i + 2 >= pathLen) {
+                scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
+                return {};
+            }
+            char16_t hi = p[i + 1];
+            char16_t lo = p[i + 2];
+            if (!isASCIIHexDigit(hi) || !isASCIIHexDigit(lo)) {
                 scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
                 return {};
             }

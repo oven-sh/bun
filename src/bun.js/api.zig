@@ -38,6 +38,7 @@ pub const MarkdownObject = @import("./api/MarkdownObject.zig");
 pub const TOMLObject = @import("./api/TOMLObject.zig");
 pub const UnsafeObject = @import("./api/UnsafeObject.zig");
 pub const JSON5Object = @import("./api/JSON5Object.zig");
+pub const XMLObject = @import("./api/XMLObject.zig");
 pub const YAMLObject = @import("./api/YAMLObject.zig");
 pub const Timer = @import("./api/Timer.zig");
 pub const FFIObject = @import("./api/FFIObject.zig");

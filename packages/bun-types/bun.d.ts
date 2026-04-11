@@ -794,6 +794,35 @@ declare module "bun" {
   }
 
   /**
+   * XML related APIs
+   */
+  namespace XML {
+    /**
+     * Parse an XML string into a JavaScript object.
+     *
+     * Elements become object properties keyed by tag name. Attributes are
+     * prefixed with `@`. Repeated sibling elements with the same tag name
+     * become arrays. Mixed-content text is stored under `#text`.
+     *
+     * @category Utilities
+     *
+     * @param input The XML string to parse
+     * @returns A JavaScript object
+     *
+     * @example
+     * ```js
+     * const result = Bun.XML.parse(`
+     *   <book id="1">
+     *     <title>Bun</title>
+     *   </book>
+     * `);
+     * // { book: { "@id": "1", title: "Bun" } }
+     * ```
+     */
+    export function parse(input: string): object;
+  }
+
+  /**
    * JSONC related APIs
    */
   namespace JSONC {
@@ -5324,6 +5353,7 @@ declare module "bun" {
     | "jsonc"
     | "toml"
     | "yaml"
+    | "xml"
     | "file"
     | "napi"
     | "wasm"

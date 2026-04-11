@@ -372,6 +372,17 @@ fn getAST(
             const root = try YAML.parse(source, &temp_log, allocator);
             return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
         },
+        .xml => {
+            const trace = bun.perf.trace("Bundler.ParseXML");
+            defer trace.end();
+            var temp_log = bun.logger.Log.init(allocator);
+            defer {
+                bun.handleOom(temp_log.cloneToWithRecycled(log, true));
+                temp_log.msgs.clearAndFree();
+            }
+            const root = try XML.parse(source, &temp_log, allocator);
+            return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, source, "")).?);
+        },
         .json5 => {
             const trace = bun.perf.trace("Bundler.ParseJSON5");
             defer trace.end();
@@ -1478,6 +1489,7 @@ const strings = bun.strings;
 const BabyList = bun.collections.BabyList;
 const JSON5 = bun.interchange.json5.JSON5Parser;
 const TOML = bun.interchange.toml.TOML;
+const XML = bun.interchange.xml.XML;
 const YAML = bun.interchange.yaml.YAML;
 
 const js_ast = bun.ast;

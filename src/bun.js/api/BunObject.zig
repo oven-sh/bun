@@ -67,6 +67,7 @@ pub const BunObject = struct {
     pub const markdown = toJSLazyPropertyCallback(Bun.getMarkdownObject);
     pub const TOML = toJSLazyPropertyCallback(Bun.getTOMLObject);
     pub const JSON5 = toJSLazyPropertyCallback(Bun.getJSON5Object);
+    pub const XML = toJSLazyPropertyCallback(Bun.getXMLObject);
     pub const YAML = toJSLazyPropertyCallback(Bun.getYAMLObject);
     pub const Transpiler = toJSLazyPropertyCallback(Bun.getTranspilerConstructor);
     pub const argv = toJSLazyPropertyCallback(Bun.getArgv);
@@ -137,6 +138,7 @@ pub const BunObject = struct {
         @export(&BunObject.markdown, .{ .name = lazyPropertyCallbackName("markdown") });
         @export(&BunObject.TOML, .{ .name = lazyPropertyCallbackName("TOML") });
         @export(&BunObject.JSON5, .{ .name = lazyPropertyCallbackName("JSON5") });
+        @export(&BunObject.XML, .{ .name = lazyPropertyCallbackName("XML") });
         @export(&BunObject.YAML, .{ .name = lazyPropertyCallbackName("YAML") });
         @export(&BunObject.Glob, .{ .name = lazyPropertyCallbackName("Glob") });
         @export(&BunObject.Transpiler, .{ .name = lazyPropertyCallbackName("Transpiler") });
@@ -1288,6 +1290,10 @@ pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
     return YAMLObject.create(globalThis);
 }
 
+pub fn getXMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return XMLObject.create(globalThis);
+}
+
 pub fn getArchiveConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Archive.js.getConstructor(globalThis);
 }
@@ -2146,6 +2152,7 @@ const JSONCObject = bun.api.JSONCObject;
 const MarkdownObject = bun.api.MarkdownObject;
 const TOMLObject = bun.api.TOMLObject;
 const UnsafeObject = bun.api.UnsafeObject;
+const XMLObject = bun.api.XMLObject;
 const YAMLObject = bun.api.YAMLObject;
 const node = bun.api.node;
 

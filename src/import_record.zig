@@ -231,6 +231,11 @@ pub const ImportRecord = struct {
         naming: ?[]const u8 = null,
         env_behavior: ?bun.schema.api.DotEnvBehavior = null,
         env_prefix: ?[]const u8 = null,
+        compress: ?CompressionEncoding = null,
+
+        pub const CompressionEncoding = enum {
+            gzip,
+        };
     };
 };
 

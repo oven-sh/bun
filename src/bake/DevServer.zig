@@ -1047,6 +1047,18 @@ pub fn generateStandaloneClientBundleForEntryPoint(
         }
     }
 
+    // Also trace CSS imports so standalone JSBundle can expose them in .files.
+    // Reset gts bits since .find_css needs to re-traverse the graph.
+    dev.client_graph.current_css_files.clearRetainingCapacity();
+    if (entry_index) |file_index| {
+        gts.clear();
+        if (file_index.get() < dev.client_graph.stale_files.bit_length and
+            !dev.client_graph.stale_files.isSet(file_index.get()))
+        {
+            try dev.client_graph.traceImports(file_index, &gts, .find_css);
+        }
+    }
+
     var react_fast_refresh_id: []const u8 = "";
     if (dev.framework.react_fast_refresh) |rfr| brk: {
         const rfr_index = dev.client_graph.getFileIndex(rfr.import_source) orelse

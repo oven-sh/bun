@@ -17,6 +17,8 @@ mime_type: []const u8,
 file_size: u64,
 /// The blob backing this file's content
 blob: jsc.WebCore.Blob,
+/// Content encoding (e.g., "gzip"), or null if uncompressed.
+encoding: ?[]const u8,
 
 pub const OutputKind = enum {
     @"entry-point",
@@ -31,6 +33,7 @@ pub fn init(
     mime_type: []const u8,
     file_size: u64,
     blob: jsc.WebCore.Blob,
+    encoding: ?[]const u8,
 ) *BundleFile {
     return bun.new(BundleFile, .{
         .file_name = bun.handleOom(bun.default_allocator.dupe(u8, file_name)),
@@ -38,6 +41,7 @@ pub fn init(
         .mime_type = bun.handleOom(bun.default_allocator.dupe(u8, mime_type)),
         .file_size = file_size,
         .blob = blob,
+        .encoding = if (encoding) |e| bun.handleOom(bun.default_allocator.dupe(u8, e)) else null,
     });
 }
 
@@ -55,6 +59,7 @@ fn deinit(this: *BundleFile) void {
     this.blob.deinit();
     bun.default_allocator.free(this.file_name);
     bun.default_allocator.free(this.mime_type);
+    if (this.encoding) |e| bun.default_allocator.free(e);
     bun.destroy(this);
 }
 
@@ -72,6 +77,13 @@ pub fn getType(this: *BundleFile, globalObject: *JSGlobalObject) JSValue {
 
 pub fn getSize(this: *BundleFile, _: *JSGlobalObject) JSValue {
     return JSValue.jsNumber(this.file_size);
+}
+
+pub fn getEncoding(this: *BundleFile, globalObject: *JSGlobalObject) JSValue {
+    if (this.encoding) |enc| {
+        return bun.String.createUTF8ForJS(globalObject, enc) catch return .js_undefined;
+    }
+    return .null;
 }
 
 pub fn getFile(

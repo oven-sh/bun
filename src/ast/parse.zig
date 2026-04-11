@@ -1083,6 +1083,7 @@ pub fn Parse(
                     format,
                     naming,
                     env,
+                    compress,
                 };
 
                 var has_seen_embed_true = false;
@@ -1190,6 +1191,12 @@ pub fn Parse(
                                     path.bundle_config.?.env_behavior = .load_all;
                                 } else if (strings.eqlComptime(string_literal_text, "disable") or strings.eqlComptime(string_literal_text, "0")) {
                                     path.bundle_config.?.env_behavior = .disable;
+                                }
+                            },
+                            .compress => {
+                                if (path.bundle_config == null) path.bundle_config = .{};
+                                if (strings.eqlComptime(string_literal_text, "gzip")) {
+                                    path.bundle_config.?.compress = .gzip;
                                 }
                             },
                         }

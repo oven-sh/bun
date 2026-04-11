@@ -159,6 +159,10 @@ pub fn build(this: *JSBundle) !void {
         config.names.chunk.data = config.names.owned_chunk.list.items;
     }
 
+    // Enable content-based CSS chunk deduplication so that multiple
+    // entry points sharing the same CSS produce one chunk, not duplicates.
+    config.css_chunking = true;
+
     // Load plugins if configured
     var plugins: ?*jsc.API.JSBundler.Plugin = null;
     if (vm.transpiler.options.serve_plugins) |serve_plugins_config| {
@@ -272,7 +276,7 @@ pub fn onBuildComplete(this: *JSBundle, completion_task: *bun.BundleV2.JSBundleC
             var entrypoint_js_value: ?JSValue = null;
 
             for (output_files, 0..) |*output_file, file_idx| {
-                const blob = bun.handleOom(output_file.toBlob(bun.default_allocator, globalThis));
+                var blob = bun.handleOom(output_file.toBlob(bun.default_allocator, globalThis));
                 const content_type = blob.contentTypeOrMimeType() orelse brk: {
                     bun.debugAssert(false);
                     break :brk output_file.loader.toMimeType(&.{}).value;
@@ -291,12 +295,26 @@ pub fn onBuildComplete(this: *JSBundle, completion_task: *bun.BundleV2.JSBundleC
                     .sourcemap => .sourcemap,
                     else => .asset,
                 };
+
+                // Compress if configured (skip sourcemaps)
+                var file_size: u64 = output_file.size_without_sourcemap;
+                var encoding_str: ?[]const u8 = null;
+                if (this.config.compress != null and output_file.output_kind != .sourcemap) {
+                    if (compressBlob(&blob, globalThis)) |compressed| {
+                        blob.deinit();
+                        blob = compressed.blob;
+                        file_size = compressed.size;
+                        encoding_str = compressed.encoding;
+                    }
+                }
+
                 const bundle_file = BundleFile.init(
                     file_name,
                     bundle_file_kind,
                     content_type,
-                    output_file.size_without_sourcemap,
+                    file_size,
                     blob,
+                    encoding_str,
                 );
                 const bundle_file_js = BundleFile.toJS(bundle_file, globalThis);
 
@@ -375,6 +393,7 @@ pub fn updateDevEntrypoint(this: *JSBundle, payload: []const u8, _: *bun.bake.De
             content_type,
             file_size,
             blob,
+            null,
         );
         const bundle_file_js = BundleFile.toJS(bundle_file, globalThis);
         this.entrypoint_value = .create(bundle_file_js, globalThis);
@@ -471,33 +490,110 @@ pub fn onDevServerBuildComplete(ctx: *anyopaque, dev: *bun.bake.DevServer, succe
     const payload = dev.generateStandaloneClientBundleForEntryPoint(this.path, script_id) catch |err| bun.handleOom(err);
     this.updateDevEntrypoint(payload, dev);
 
-    // Include sub-build output files (from nested ?bundle imports) in the
-    // files array so they're accessible through .files on the JSBundle.
+    const globalThis = this.global;
+
+    // CSS files are traced by generateStandaloneClientBundleForEntryPoint
+    // and left in current_css_files for us to read.
+    const css_ids = dev.client_graph.current_css_files.items;
     const sub_files = dev.sub_build_files;
-    if (sub_files.count() > 0) {
-        const globalThis = this.global;
-        const total_files = 1 + sub_files.count();
-        const arr = jsc.JSValue.createEmptyArray(globalThis, total_files) catch return;
 
-        // Entry 0 = the main entrypoint
-        if (this.entrypoint_value.get()) |ep_js| {
-            arr.putIndex(globalThis, 0, ep_js) catch {};
-        }
+    // Rebuild the files array: entrypoint + CSS files + sub-build files
+    const total_files: u32 = 1 + @as(u32, @intCast(css_ids.len)) + @as(u32, @intCast(sub_files.count()));
+    const arr = jsc.JSValue.createEmptyArray(globalThis, total_files) catch return;
+    var idx: u32 = 0;
 
-        // Remaining entries = sub-build output files
-        var idx: u32 = 1;
-        for (sub_files.keys(), sub_files.values()) |name, file| {
-            const mime = file.loader.toMimeType(&.{name}).value;
-            const blob = jsc.WebCore.Blob.create(file.content, bun.default_allocator, globalThis, false);
-            const bundle_file = BundleFile.init(name, .chunk, mime, file.content.len, blob);
-            const bf_js = BundleFile.toJS(bundle_file, globalThis);
-            arr.putIndex(globalThis, idx, bf_js) catch {};
-            idx += 1;
-        }
-
-        this.files_value.deinit();
-        this.files_value = .create(arr, globalThis);
+    // Entry 0 = the main JS entrypoint
+    if (this.entrypoint_value.get()) |ep_js| {
+        arr.putIndex(globalThis, idx, ep_js) catch {};
     }
+    idx += 1;
+
+    // CSS files from the asset store
+    for (css_ids) |css_id| {
+        const asset = dev.assets.get(css_id) orelse continue;
+        const css_bytes = asset.blob.slice();
+        if (css_bytes.len == 0) continue;
+
+        var name_buf: [16 + ".css".len]u8 = undefined;
+        const css_name = std.fmt.bufPrint(&name_buf, "{s}.css", .{
+            &std.fmt.bytesToHex(std.mem.asBytes(&css_id), .lower),
+        }) catch continue;
+
+        var css_blob = jsc.WebCore.Blob.create(css_bytes, bun.default_allocator, globalThis, false);
+        var css_size: u64 = @intCast(css_bytes.len);
+        var css_encoding: ?[]const u8 = null;
+
+        if (this.config.compress != null) {
+            if (compressBlob(&css_blob, globalThis)) |compressed| {
+                css_blob.deinit();
+                css_blob = compressed.blob;
+                css_size = compressed.size;
+                css_encoding = compressed.encoding;
+            }
+        }
+
+        const css_file = BundleFile.init(css_name, .asset, "text/css", css_size, css_blob, css_encoding);
+        arr.putIndex(globalThis, idx, BundleFile.toJS(css_file, globalThis)) catch {};
+        idx += 1;
+    }
+
+    // Sub-build output files (from nested ?bundle imports)
+    for (sub_files.keys(), sub_files.values()) |name, file| {
+        const mime = file.loader.toMimeType(&.{name}).value;
+        var blob = jsc.WebCore.Blob.create(file.content, bun.default_allocator, globalThis, false);
+        var file_size: u64 = @intCast(file.content.len);
+        var encoding: ?[]const u8 = null;
+
+        if (this.config.compress != null) {
+            if (compressBlob(&blob, globalThis)) |compressed| {
+                blob.deinit();
+                blob = compressed.blob;
+                file_size = compressed.size;
+                encoding = compressed.encoding;
+            }
+        }
+
+        const bundle_file = BundleFile.init(name, .chunk, mime, file_size, blob, encoding);
+        arr.putIndex(globalThis, idx, BundleFile.toJS(bundle_file, globalThis)) catch {};
+        idx += 1;
+    }
+
+    this.files_value.deinit();
+    this.files_value = .create(arr, globalThis);
+}
+
+const CompressResult = struct {
+    blob: jsc.WebCore.Blob,
+    size: u64,
+    encoding: []const u8,
+};
+
+/// Gzip-compress a blob's content. Returns null if compression fails or input is empty.
+fn compressGzip(input: []const u8) ?[]u8 {
+    if (input.len == 0) return null;
+    const compressor = bun.libdeflate.Compressor.alloc(6) orelse return null;
+    defer compressor.deinit();
+    const max_size = compressor.maxBytesNeeded(input, .gzip);
+    const output = bun.default_allocator.alloc(u8, max_size) catch return null;
+    const result = compressor.gzip(input, output);
+    if (result.written == 0) {
+        bun.default_allocator.free(output);
+        return null;
+    }
+    return bun.default_allocator.realloc(output, result.written) catch output[0..result.written];
+}
+
+/// Compress a blob's content using gzip. Returns a new blob with compressed
+/// content, or null if compression fails. Caller must deinit the old blob
+/// if this returns non-null.
+fn compressBlob(blob: *const jsc.WebCore.Blob, globalThis: *JSGlobalObject) ?CompressResult {
+    const input = blob.sharedView();
+    const compressed = compressGzip(input) orelse return null;
+    return .{
+        .blob = jsc.WebCore.Blob.create(compressed, bun.default_allocator, globalThis, false),
+        .size = @intCast(compressed.len),
+        .encoding = "gzip",
+    };
 }
 
 const debug = bun.Output.scoped(.JSBundle, .hidden);
@@ -507,6 +603,7 @@ const std = @import("std");
 
 const bun = @import("bun");
 const strings = bun.strings;
+const libdeflate = bun.libdeflate;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

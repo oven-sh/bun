@@ -374,6 +374,10 @@ export default [
       size: {
         getter: "getSize",
       },
+      encoding: {
+        getter: "getEncoding",
+        cache: true,
+      },
       file: {
         fn: "getFile",
         length: 0,

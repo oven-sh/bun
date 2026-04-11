@@ -5664,6 +5664,8 @@ declare module "bun" {
     readonly type: string;
     /** File size in bytes */
     readonly size: number;
+    /** Content encoding, or `null` if uncompressed. Set when `compress` is used in import attributes. */
+    readonly encoding: "gzip" | null;
     /** Returns a Blob containing the file's content */
     file(): Blob;
   }

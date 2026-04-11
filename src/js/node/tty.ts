@@ -7,7 +7,7 @@ const { isatty, getWindowSize: _getWindowSize } = $cpp("ProcessBindingTTYWrap.cp
 
 const { validateInteger } = require("internal/validators");
 const fs = require("internal/fs/streams");
-const { Socket } = require("node:net");
+const net = require("node:net");
 
 const { TTY } = process.binding("tty_wrap");
 
@@ -31,7 +31,7 @@ function ReadStream(fd, options): void {
     throw err;
   }
 
-  Socket.$call(this, {
+  net.Socket.$call(this, {
     readableHighWaterMark: 0,
     handle: tty,
     manualStart: true,
@@ -44,22 +44,36 @@ function ReadStream(fd, options): void {
 }
 
 // Wire the constructor chain eagerly (Node lib/tty.js does the same) so
-// Object.getPrototypeOf(tty.ReadStream) === net.Socket holds without first
-// touching ReadStream.prototype — test-net-access-byteswritten.js relies on
-// this.
-Object.setPrototypeOf(ReadStream.prototype, Socket.prototype);
-Object.setPrototypeOf(ReadStream, Socket);
+// Object.getPrototypeOf(tty.ReadStream) === net.Socket holds without
+// touching ReadStream.prototype first — test-net-access-byteswritten.js
+// relies on this. $toClass falls back to Function.prototype if the base
+// isn't an object yet (circular load); the lazy prototype getter below
+// re-installs the real chain on first access in that case.
+$toClass(ReadStream, "ReadStream", net.Socket);
 
-ReadStream.prototype.setRawMode = function (flag) {
-  flag = !!flag;
-  const err = this._handle?.setRawMode(flag);
-  if (err) {
-    this.emit("error", new Error("setRawMode failed with errno: " + err));
-    return this;
-  }
-  this.isRaw = flag;
-  return this;
-};
+Object.defineProperty(ReadStream, "prototype", {
+  get() {
+    const Socket = net.Socket;
+    const Prototype = Object.create(Socket.prototype);
+
+    Prototype.setRawMode = function (flag) {
+      flag = !!flag;
+      const err = this._handle?.setRawMode(flag);
+      if (err) {
+        this.emit("error", new Error("setRawMode failed with errno: " + err));
+        return this;
+      }
+      this.isRaw = flag;
+      return this;
+    };
+
+    Object.defineProperty(ReadStream, "prototype", { value: Prototype });
+    Object.setPrototypeOf(ReadStream, Socket);
+    return Prototype;
+  },
+  enumerable: true,
+  configurable: true,
+});
 
 function WriteStream(fd): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);

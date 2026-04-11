@@ -262,7 +262,14 @@ fn closeInternal(this: *TTY) void {
     this.flags.reading = false;
 
     if (this.flags.reader_started) {
-        this.reader.close();
+        // reader.close() is a no-op with close_handle=false, so the
+        // terminal onReaderDone/onReaderError → readerTerminated path
+        // can't release the ref readStart took. pause() unregisters the
+        // poll (no more callbacks), then release the ref directly. The
+        // FilePoll/buffers are freed via reader.deinit() when ref_count→0.
+        this.reader.pause();
+        this.reader.updateRef(false);
+        this.readerTerminated();
     }
     if (this.flags.owns_fd and this.owned_fd != bun.invalid_fd) {
         this.owned_fd.close();

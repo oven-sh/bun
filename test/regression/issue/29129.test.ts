@@ -165,7 +165,12 @@ if (process.platform === "linux") {
     // minimal alpine variants), so skip gracefully in that case — the
     // cross-process path is extra coverage on top of the in-process
     // assertion above.
-    const which = spawnSync("sh", ["-c", "command -v taskset || true"], { encoding: "utf8" });
+    // timeout is an OS-level kill (child_process option, not a
+    // bun:test per-test timeout) — this is the only way to interrupt a
+    // hung spawnSync, since the JS event loop is blocked while the
+    // call is in progress. 10s is far longer than `command -v` needs
+    // but short enough that a real hang surfaces quickly.
+    const which = spawnSync("sh", ["-c", "command -v taskset || true"], { encoding: "utf8", timeout: 10_000 });
     const tasksetPath = (which.stdout || "").trim();
     if (!tasksetPath) return;
 
@@ -177,6 +182,12 @@ if (process.platform === "linux") {
     // Run the same runtime that's executing this file (bun under
     // `bun test`, node under `node --test`) so the subprocess
     // actually exercises the binary under test.
+    // timeout is OS-level (child_process option, not bun:test) and is
+    // the only way to interrupt a hung synchronous spawn — the JS
+    // event loop can't fire a timer while the thread is blocked here.
+    // 60s is generous for a trivial `bun -e console.log(...)` even on
+    // a debug+ASAN build pinned to a single CPU, but short enough that
+    // a real hang surfaces without wasting a CI runner slot.
     const result = spawnSync(
       tasksetPath,
       [
@@ -186,7 +197,7 @@ if (process.platform === "linux") {
         "-e",
         "console.log(require('os').availableParallelism() + '|' + (globalThis.navigator?.hardwareConcurrency ?? ''))",
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", timeout: 60_000 },
     );
 
     // spawnSync returns result.status === null both when the process

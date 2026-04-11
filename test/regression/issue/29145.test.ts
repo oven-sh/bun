@@ -19,84 +19,118 @@ import { describe, expect, test } from "bun:test";
 describe("RedisClient: assigning null to onclose/onconnect (#29145)", () => {
   test("onclose = null does not panic on close()", () => {
     const c = new RedisClient("redis://localhost:6379");
-    c.onclose = null;
-    expect(() => c.close()).not.toThrow();
+    try {
+      c.onclose = null;
+      expect(() => c.close()).not.toThrow();
+    } finally {
+      c.close();
+    }
   });
 
   test("onconnect = null does not panic on close()", () => {
     const c = new RedisClient("redis://localhost:6379");
-    c.onconnect = null;
-    expect(() => c.close()).not.toThrow();
+    try {
+      c.onconnect = null;
+      expect(() => c.close()).not.toThrow();
+    } finally {
+      c.close();
+    }
   });
 
   test("onclose = undefined is also accepted", () => {
     const c = new RedisClient("redis://localhost:6379");
-    c.onclose = undefined as any;
-    expect(() => c.close()).not.toThrow();
+    try {
+      c.onclose = undefined as any;
+      expect(() => c.close()).not.toThrow();
+    } finally {
+      c.close();
+    }
   });
 
   test("onconnect = undefined is also accepted", () => {
     const c = new RedisClient("redis://localhost:6379");
-    c.onconnect = undefined as any;
-    expect(() => c.close()).not.toThrow();
+    try {
+      c.onconnect = undefined as any;
+      expect(() => c.close()).not.toThrow();
+    } finally {
+      c.close();
+    }
   });
 
   test("reading onclose after assigning null returns undefined", () => {
     const c = new RedisClient("redis://localhost:6379");
-    c.onclose = null;
-    expect(c.onclose).toBeUndefined();
-    c.close();
+    try {
+      c.onclose = null;
+      expect(c.onclose).toBeUndefined();
+    } finally {
+      c.close();
+    }
   });
 
   test("reading onconnect after assigning null returns undefined", () => {
     const c = new RedisClient("redis://localhost:6379");
-    c.onconnect = null;
-    expect(c.onconnect).toBeUndefined();
-    c.close();
+    try {
+      c.onconnect = null;
+      expect(c.onconnect).toBeUndefined();
+    } finally {
+      c.close();
+    }
   });
 
   test("assigning a function to onclose still works", () => {
     const c = new RedisClient("redis://localhost:6379");
-    const handler = () => {};
-    c.onclose = handler;
-    expect(c.onclose).toBe(handler);
-    c.close();
+    try {
+      const handler = () => {};
+      c.onclose = handler;
+      expect(c.onclose).toBe(handler);
+    } finally {
+      c.close();
+    }
   });
 
   test("assigning a function to onconnect still works", () => {
     const c = new RedisClient("redis://localhost:6379");
-    const handler = () => {};
-    c.onconnect = handler;
-    expect(c.onconnect).toBe(handler);
-    c.close();
+    try {
+      const handler = () => {};
+      c.onconnect = handler;
+      expect(c.onconnect).toBe(handler);
+    } finally {
+      c.close();
+    }
   });
 
   test("assigning a non-callable non-null value to onclose throws TypeError", () => {
     const c = new RedisClient("redis://localhost:6379");
-    expect(() => {
-      (c as any).onclose = "not a function";
-    }).toThrow(TypeError);
-    expect(() => {
-      (c as any).onclose = 42;
-    }).toThrow(TypeError);
-    expect(() => {
-      (c as any).onclose = {};
-    }).toThrow(TypeError);
-    c.close();
+    try {
+      expect(() => {
+        (c as any).onclose = "not a function";
+      }).toThrow(TypeError);
+      expect(() => {
+        (c as any).onclose = 42;
+      }).toThrow(TypeError);
+      expect(() => {
+        (c as any).onclose = {};
+      }).toThrow(TypeError);
+    } finally {
+      c.close();
+    }
   });
 
   test("assigning a non-callable non-null value to onconnect throws TypeError", () => {
     const c = new RedisClient("redis://localhost:6379");
-    expect(() => {
-      (c as any).onconnect = "not a function";
-    }).toThrow(TypeError);
-    expect(() => {
-      (c as any).onconnect = 42;
-    }).toThrow(TypeError);
-    expect(() => {
-      (c as any).onconnect = {};
-    }).toThrow(TypeError);
-    c.close();
+    try {
+      expect(() => {
+        (c as any).onconnect = "not a function";
+      }).toThrow(TypeError);
+      expect(() => {
+        (c as any).onconnect = 42;
+      }).toThrow(TypeError);
+      expect(() => {
+        (c as any).onconnect = {};
+      }).toThrow(TypeError);
+    } finally {
+      c.close();
+    }
   });
 
   test("null onclose while an in-flight connection is being torn down does not panic", async () => {
@@ -111,9 +145,10 @@ describe("RedisClient: assigning null to onclose/onconnect (#29145)", () => {
       // just swallow the rejection — the bug fires regardless of whether the
       // command succeeds.
       await c.set("test:issue-29145", "v", "EX", "10").catch(() => {});
-    } finally {
       c.onclose = null;
       expect(() => c.close()).not.toThrow();
+    } finally {
+      c.close();
     }
   });
 });

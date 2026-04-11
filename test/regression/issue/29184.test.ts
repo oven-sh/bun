@@ -41,12 +41,12 @@ test.skipIf(!isLinux)("fs.readFile hex-encoded rejects when the would-be string 
   // 2 MiB + 1 byte of input → 4 MiB + 2 hex chars of output.
   const size = 2 * 1024 * 1024 + 1;
   const fd = memfd_create(size);
-  const chunk = new Uint8Array(1024 * 1024);
-  chunk.fill(0x42);
-  for (let off = 0; off < size; off += chunk.byteLength) {
-    writeSync(fd, chunk, 0, Math.min(chunk.byteLength, size - off), off);
-  }
   try {
+    const chunk = new Uint8Array(1024 * 1024);
+    chunk.fill(0x42);
+    for (let off = 0; off < size; off += chunk.byteLength) {
+      writeSync(fd, chunk, 0, Math.min(chunk.byteLength, size - off), off);
+    }
     await expect(fs.readFile(fd, { encoding: "hex" })).rejects.toThrow("ENOMEM: not enough memory");
   } finally {
     closeSync(fd);

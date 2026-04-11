@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -739,4 +739,44 @@ it("CustomEvent", () => {
       BUBBLING_PHASE: 3,
     }"
   `);
+});
+
+describe("JSX element edge cases", () => {
+  it("does not crash on circular JSX element or non-object props", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const a = { $$typeof: Symbol.for("react.element"), type: "div" };
+          a.props = a;
+          console.log(Bun.inspect(a));
+
+          const b = { $$typeof: Symbol.for("react.element"), type: "span" };
+          b.props = { children: b };
+          console.log(Bun.inspect(b));
+
+          const c = { $$typeof: Symbol.for("react.element"), type: "p" };
+          c.props = { children: [c] };
+          console.log(Bun.inspect(c));
+
+          const d = { $$typeof: Symbol.for("react.element"), type: "i", props: 42 };
+          console.log(Bun.inspect(d));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("[Circular]");
+    expect(stdout).toContain("<i />");
+    expect(exitCode).toBe(0);
+  });
+
+  it("circular JSX prints [Circular]", () => {
+    const el = { $$typeof: Symbol.for("react.element"), type: "div" };
+    el.props = { children: el };
+    expect(Bun.inspect(el)).toContain("[Circular]");
+  });
 });

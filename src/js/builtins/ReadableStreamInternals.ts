@@ -2063,11 +2063,18 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     $stream: ReadableStream;
 
     #onClose() {
+      // Capture the controller BEFORE clearing the WeakRef — otherwise
+      // `deref?.()` on the cleared field always yields undefined and the
+      // `callClose` enqueue below never runs. This used to be harmless
+      // because BYOB reads could not reach the close path at all, but
+      // with BYOB now wired through #pull, a pending readIntoRequest would
+      // hang forever if the native layer closed out-of-band via this
+      // callback (connection reset, transport EOF) instead of through a
+      // pull returning isClosed=true.
+      var controller = this.#controller?.deref?.();
       this.#closed = true;
       this.#controller = undefined;
       this.$data = undefined;
-
-      var controller = this.#controller?.deref?.();
 
       $putByIdDirectPrivate(this, "stream", undefined);
       if (controller) {

@@ -19,7 +19,19 @@ async function buildCjs(
   const out = join(String(dir), "out.js");
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", entry, "--outfile", out, "--target", target, "--format", "cjs", "--no-bundle", ...extraArgs],
+    cmd: [
+      bunExe(),
+      "build",
+      entry,
+      "--outfile",
+      out,
+      "--target",
+      target,
+      "--format",
+      "cjs",
+      "--no-bundle",
+      ...extraArgs,
+    ],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -180,26 +192,26 @@ test.concurrent("--format cjs --no-bundle --minify-whitespace: function keyword 
   expect(output).toMatch(/function\s+greet/);
 });
 
-test.concurrent("--format cjs --no-bundle --minify-whitespace: export const preserves `;` before Object.defineProperty", async () => {
-  // Regression: `export const a = 1` must not collapse to
-  // `const a=1Object.defineProperty(...)` under minify — the deferred
-  // semicolon has to be flushed before the `Object.defineProperty` call.
-  const output = await buildCjs(
-    { "index.ts": `export const a = 1;\nexport const b = 2;\n` },
-    "./index.ts",
-    "node",
-    ["--minify-whitespace"],
-  );
-  // `1Object` / `2Object` would be a NumericLiteral immediately followed
-  // by an IdentifierStart — a SyntaxError.
-  expect(output).not.toMatch(/[0-9]Object/);
-  expect(output).toContain("Object.defineProperty");
-  // Running the file should not throw — real sanity check.
-  const mod = { exports: {} as Record<string, unknown> };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-  new Function("module", "exports", output)(mod, mod.exports);
-  expect(mod.exports).toMatchObject({ a: 1, b: 2 });
-});
+test.concurrent(
+  "--format cjs --no-bundle --minify-whitespace: export const preserves `;` before Object.defineProperty",
+  async () => {
+    // Regression: `export const a = 1` must not collapse to
+    // `const a=1Object.defineProperty(...)` under minify — the deferred
+    // semicolon has to be flushed before the `Object.defineProperty` call.
+    const output = await buildCjs({ "index.ts": `export const a = 1;\nexport const b = 2;\n` }, "./index.ts", "node", [
+      "--minify-whitespace",
+    ]);
+    // `1Object` / `2Object` would be a NumericLiteral immediately followed
+    // by an IdentifierStart — a SyntaxError.
+    expect(output).not.toMatch(/[0-9]Object/);
+    expect(output).toContain("Object.defineProperty");
+    // Running the file should not throw — real sanity check.
+    const mod = { exports: {} as Record<string, unknown> };
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+    new Function("module", "exports", output)(mod, mod.exports);
+    expect(mod.exports).toMatchObject({ a: 1, b: 2 });
+  },
+);
 
 test.concurrent("--format cjs --no-bundle --minify-whitespace: export {...} from flushes `;` in IIFE", async () => {
   // Same pattern in the `export { ... } from` IIFE: consecutive

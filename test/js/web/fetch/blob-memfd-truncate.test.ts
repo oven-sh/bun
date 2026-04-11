@@ -41,7 +41,9 @@ describe.skipIf(process.platform !== "linux")("Blob memfd store", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout, exitCode, signal: proc.signalCode }).toEqual({ stdout: "ok\n", exitCode: 0, signal: null });
+    expect(stdout).toBe("ok\n");
     expect(stderr).not.toContain("AddressSanitizer");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
   });
 });

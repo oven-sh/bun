@@ -276,32 +276,20 @@ static void callProcessEmit(JSC::JSGlobalObject* globalObject, Process* process,
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto eventIdent = JSC::Identifier::fromString(vm, eventName);
 
-    // Only honor `emit` if it's an own property of process — i.e. the user
-    // replaced it. Inherited (prototype) `emit` is the native JSEventEmitter
-    // binding, which goes through `emitForBindings` and drops events when
-    // the script context is being torn down during shutdown. We must not
-    // rely on that path for exit/beforeExit.
-    auto emitIdent = JSC::Identifier::fromString(vm, "emit"_s);
-    JSC::PropertySlot slot(process, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
-    JSC::JSValue emitValue;
-    JSC::CallData callData;
-    if (process->methodTable()->getOwnPropertySlot(process, globalObject, emitIdent, slot)) {
-        emitValue = slot.getValue(globalObject, emitIdent);
-        if (auto* exception = scope.exception()) {
-            if (!vm.isTerminationException(exception)) {
-                Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-            }
-            (void)scope.tryClearException();
-            return;
-        }
-        callData = JSC::getCallData(emitValue);
-    }
+    // Only honor an override installed directly on the process instance.
+    // `getDirect` skips the prototype chain and static hash tables, so it
+    // only finds values the user put there with `process.emit = fn`. The
+    // default prototype `emit` is the native JSEventEmitter binding, which
+    // goes through `emitForBindings` and drops events when the script
+    // context is being torn down during shutdown — we must NOT rely on
+    // that path for exit/beforeExit.
+    JSC::JSValue emitValue = process->getDirect(vm, JSC::Identifier::fromString(vm, "emit"_s));
+    JSC::CallData callData = emitValue ? JSC::getCallData(emitValue) : JSC::CallData();
 
     if (callData.type == JSC::CallData::Type::None) {
         // No user override (or it's not callable). Dispatch through the
         // internal emitter directly, matching pre-fix semantics for the
-        // default path and avoiding the script-context gate on
-        // `emitForBindings`.
+        // default path.
         JSC::MarkedArgumentBuffer args;
         args.append(exitCodeArg);
         process->wrapped().emit(eventIdent, args);

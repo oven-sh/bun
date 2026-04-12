@@ -211,6 +211,16 @@ static void sha3Update(Sha3Context& ctx, const uint8_t* input, size_t length)
 
 static void sha3Final(Sha3Context& ctx, uint8_t* output)
 {
+    // This single-block squeeze is only valid when the entire digest fits
+    // inside one rate-sized squeeze block. All three currently registered
+    // variants satisfy that (SHA3-256: 32 < 136, SHA3-384: 48 < 104,
+    // SHA3-512: 64 < 72); see Sha3Context's comment above. When XOF
+    // variants (SHAKE / cSHAKE / TurboSHAKE) are added they will need a
+    // multi-block squeeze loop — this assert catches anyone accidentally
+    // taking this path with a variant that doesn't satisfy the invariant
+    // before it silently reads capacity bits out of the state.
+    ASSERT(ctx.digestLength <= ctx.rateBytes);
+
     // Pad10*1 with the SHA-3 domain separator 0x06.
     std::memset(ctx.buffer + ctx.bufferLength, 0, ctx.rateBytes - ctx.bufferLength);
     ctx.buffer[ctx.bufferLength] |= 0x06;

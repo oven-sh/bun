@@ -75,19 +75,17 @@ describe("onTestFinished in concurrent tests", () => {
   const a_output: string[] = [];
   const b_output: string[] = [];
 
-  test.concurrent("test a", async () => {
+  test.concurrent("test a", () => {
     onTestFinished(() => {
       a_output.push("a-finished");
     });
-    await new Promise(resolve => setTimeout(resolve, 5));
     a_output.push("a-body");
   });
 
-  test.concurrent("test b", async () => {
+  test.concurrent("test b", () => {
     onTestFinished(() => {
       b_output.push("b-finished");
     });
-    await new Promise(resolve => setTimeout(resolve, 5));
     b_output.push("b-body");
   });
 

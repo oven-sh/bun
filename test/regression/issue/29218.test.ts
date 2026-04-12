@@ -147,6 +147,66 @@ describe("crypto.subtle SHA-3", () => {
       ).rejects.toMatchObject({ name: "NotSupportedError" });
     }
   });
+
+  // The full (algorithm × input-size) matrix shipped by WPT's
+  // WebCryptoAPI/digest/sha3.tentative.https.any.js, ported to hex. If you
+  // need to verify these bytes against upstream, compare to:
+  // https://github.com/web-platform-tests/wpt/blob/master/WebCryptoAPI/digest/sha3.tentative.https.any.js
+  //
+  // The WPT file exercises four source payloads per algorithm:
+  //   - empty:  0 bytes
+  //   - short:  16 bytes (one sample block)
+  //   - medium: 85 bytes
+  //   - long:   85 * 1024 bytes (multi-block)
+  // Each digest must match to the byte.
+  test("SHA-3 matches every vector from the WPT sha3.tentative digest suite", async () => {
+    const sourceData = {
+      empty: new Uint8Array(0),
+      short: new Uint8Array([21, 110, 234, 124, 193, 76, 86, 203, 148, 219, 3, 10, 74, 157, 149, 255]),
+      medium: new Uint8Array([
+        182, 200, 249, 223, 100, 140, 208, 136, 183, 15, 56, 231, 65, 151, 177, 140, 184, 30, 30, 67, 80, 213, 11,
+        204, 184, 251, 90, 115, 121, 200, 123, 178, 227, 214, 237, 84, 97, 237, 30, 159, 54, 243, 64, 163, 150, 42,
+        68, 107, 129, 91, 121, 75, 75, 212, 58, 68, 3, 80, 32, 119, 178, 37, 108, 200, 7, 131, 127, 58, 172, 209,
+        24, 235, 75, 156, 43, 174, 184, 151, 6, 134, 37, 171, 172, 161, 147,
+      ]),
+      long: new Uint8Array(0), // filled in below
+    };
+    const longBuf = new Uint8Array(1024 * sourceData.medium.byteLength);
+    for (let i = 0; i < 1024; i++) longBuf.set(sourceData.medium, i * sourceData.medium.byteLength);
+    sourceData.long = longBuf;
+
+    const wptVectors = {
+      "SHA3-256": {
+        empty: "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a",
+        short: "3059af7aa33b517084e8ad7bbc4fb208a44c28ef32b4698d103dd540e4f91aa1",
+        medium: "1fa7cd1da74cd8046417508c8314e74a9a4a9d38f9f18e6cb215b8c891a0a80e",
+        long: "b2cfc61e0386cdaef5e10a2be189891f5ef52a7624bfcd8edc893acc64fec600",
+      },
+      "SHA3-384": {
+        empty: "0c63a75b845e4f7d01107d852e4c2485c51a50aaaa94fc61995e71bbee983a2ac3713831264adb47fb6bd1e058d5f004",
+        short: "54b8f0e4cf4974de740098f66b3024479b01631315a6773606c33eadc32556a6e778e08f0225ae79265aec666cb2390b",
+        medium: "437b7d8b68b250b5c1739ea4cc86db2033879dfb18de292c9c50d9c193a4c79a08a6cae3f4e483c2795ea5d1ef7e69d2",
+        long: "3b39c4c97ad87613305d0ccc987181713e2d5e84b1f9760011bcce0c297499005bdce8a3d2409b5ad0164f32bb8778d0",
+      },
+      "SHA3-512": {
+        empty:
+          "a69f73cca23a9ac5c8b567dc185a756e97c982164fe25859e0d1dcc1475c80a615b2123af1f5f94c11e3e9402c3ac558f500199d95b6d3e301758586281dcd26",
+        short:
+          "2dd2e07a62e6ad0498ba84f313c4d4024cb46001f78f75db336b0d4d8bd2a9ec152c4ad20878735d82ba0872ecf59608ef3ced2b2a8669427e7da31e362333d8",
+        medium:
+          "e640a21909536640369e9b0a48931c5cb2efcbc91fecf247306bc96a0e4ca33307cb8e1b9af367946dd01c243f3907508d04f1692a3161df1f898de8ee25febe",
+        long: "bd262cecf565c338032de5ba0138f0aacfe7dde83d272d0d37d952829ed25de1a1342d98659ef7d2fa4aca7ce2b1aa0784d8fc1dcbf81bcec7a7431a3da36bf7",
+      },
+    } as const;
+
+    for (const [alg, sizes] of Object.entries(wptVectors)) {
+      for (const [size, expected] of Object.entries(sizes)) {
+        const input = sourceData[size as keyof typeof sourceData];
+        const got = await crypto.subtle.digest(alg, input);
+        expect(hex(got)).toBe(expected);
+      }
+    }
+  });
 });
 
 describe("SubtleCrypto.supports", () => {

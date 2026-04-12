@@ -146,6 +146,7 @@ test/js/web/crypto/web-crypto.test.ts
 test/regression/issue/01466.test.ts
 test/regression/issue/21311.test.ts
 test/regression/issue/24399.test.ts
+test/regression/issue/29218.test.ts
 vendor/elysia/test/aot/response.test.ts
 vendor/elysia/test/cookie/response.test.ts
 vendor/elysia/test/cookie/signature.test.ts

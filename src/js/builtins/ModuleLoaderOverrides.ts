@@ -1,6 +1,6 @@
 // Override(s) installed on the JSC `JSModuleLoader` object at Zig::GlobalObject
 // construction. Each builtin in this file is installed by
-// ZigGlobalObject::finishCreation via `moduleLoader->putDirectBuiltinFunction`.
+// `GlobalObject::addBuiltinGlobals` via `moduleLoader->putDirectBuiltinFunction`.
 //
 // Why this file exists: the stock WebKit builtin `ModuleLoader.js`'s
 // `requestImportModule` has a fast path that returns the module namespace

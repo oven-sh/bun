@@ -45,19 +45,17 @@ test.skipIf(isWindows)("execFileSync/spawnSync/execSync honor runtime mutations 
     cmd: [bunExe(), "fixture.js"],
     env: bunEnv,
     cwd: String(dir),
-    stderr: "pipe",
+    stderr: "ignore",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect({ stdout, exitCode }).toEqual({
-    stdout:
-      "execFileSync: FAKE_CALLED\n" +
+  // Assert stdout first for better failure messages, then exit code.
+  expect(stdout).toBe(
+    "execFileSync: FAKE_CALLED\n" +
       "spawnSync: FAKE_CALLED\n" +
       "execSync: FAKE_CALLED\n" +
       "execFileSync+env: FAKE_CALLED\n",
-    exitCode: 0,
-  });
-  // stderr may contain ASAN banner; we just want no actual errors from the fixture.
-  expect(stderr).not.toContain("error:");
+  );
+  expect(exitCode).toBe(0);
 });

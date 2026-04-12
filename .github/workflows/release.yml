@@ -72,7 +72,7 @@ jobs:
         with:
           bun-version: "1.2.3"
       - name: Install Dependencies
-        run: bun install
+        run: bun ci
       - name: Sign Release
         run: |
           echo "$GPG_PASSPHRASE" | bun upload-assets -- "${{ env.BUN_VERSION }}"
@@ -100,7 +100,7 @@ jobs:
         with:
           bun-version: "1.2.3"
       - name: Install Dependencies
-        run: bun install
+        run: bun ci
       - name: Release
         run: bun upload-npm -- "${{ env.BUN_VERSION }}" publish
         env:
@@ -134,7 +134,7 @@ jobs:
         with:
           bun-version: "canary" # Must be 'canary' so tag is correct
       - name: Install Dependencies
-        run: bun install
+        run: bun ci
       - name: Setup Tag
         if: ${{ env.BUN_VERSION == 'canary' }}
         run: |
@@ -317,7 +317,7 @@ jobs:
         with:
           bun-version: "1.2.0"
       - name: Install Dependencies
-        run: bun install
+        run: bun ci
       - name: Release
         run: bun upload-s3 -- "${{ env.BUN_VERSION }}"
         env:

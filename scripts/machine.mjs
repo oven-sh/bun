@@ -1402,7 +1402,7 @@ async function main() {
     name += `-with-${features.join("-")}`;
   }
 
-  let bootstrapPath, agentPath, dockerfilePath;
+  let bootstrapPath, agentPath, dockerfilePath, prefetchPath;
   if (bootstrap) {
     bootstrapPath = resolve(
       import.meta.dirname,
@@ -1414,6 +1414,15 @@ async function main() {
     );
     if (!existsSync(bootstrapPath)) {
       throw new Error(`Script not found: ${bootstrapPath}`);
+    }
+    // Ship scripts/build/ so bootstrap can run prefetch.ts and bake dep
+    // tarballs into the image. bootstrap.{sh,ps1} treat this as optional —
+    // if the tarball isn't there, prefetch is skipped and builds download
+    // deps on demand like before.
+    {
+      const tmpDir = mkdtempSync(join(tmpdir(), "prefetch-"));
+      prefetchPath = join(tmpDir, "bun-prefetch.tgz");
+      await spawnSafe($`tar czf ${prefetchPath} -C ${import.meta.dirname} build`);
     }
     if (ci) {
       const npx = which("bunx") || which("npx");
@@ -1526,6 +1535,7 @@ async function main() {
         const args = ci ? ["-CI"] : [];
         await startGroup("Running bootstrap...", async () => {
           await machine.upload(bootstrapPath, remotePath);
+          if (prefetchPath) await machine.upload(prefetchPath, "C:\\Windows\\Temp\\bun-prefetch.tgz");
           await machine.spawnSafe(["powershell", remotePath, ...args], { stdio: "inherit" });
         });
       } else {
@@ -1537,6 +1547,7 @@ async function main() {
           }
           await startGroup("Running bootstrap...", async () => {
             await machine.upload(bootstrapPath, remotePath);
+            if (prefetchPath) await machine.upload(prefetchPath, "/tmp/bun-prefetch.tgz");
             await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });
           });
         } else if (dockerfilePath) {

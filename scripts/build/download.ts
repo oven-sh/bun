@@ -30,20 +30,61 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { createWriteStream, existsSync, readFileSync } from "node:fs";
-import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { createWriteStream, existsSync, readFileSync, statSync } from "node:fs";
+import { copyFile, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadable } from "node:stream/web";
 import { BuildError, assert } from "./error.ts";
 
 /**
+ * Env var: directory of pre-downloaded archives, keyed by `offlineCacheKey(url)`.
+ *
+ * When set, `downloadWithRetry()` checks here before the network. Populated by
+ * `scripts/build/prefetch.ts` (typically baked into a CI image), so builds on
+ * fresh machines skip ~250MB of GitHub/nodejs.org traffic. Read-only — the
+ * build never writes here; only prefetch does.
+ */
+export const DEPS_CACHE_ENV = "BUN_DEPS_CACHE_DIR";
+
+/**
+ * Filename for `url` inside the offline deps cache. Full sha256 hex — purely
+ * URL-derived so prefetch and build agree without sharing any other state.
+ * No extension: cache holds .tar.gz, .zip, and bare files alike.
+ */
+export function offlineCacheKey(url: string): string {
+  return createHash("sha256").update(url).digest("hex");
+}
+
+/**
  * Download a URL to a file with retry. Atomic: temp file → rename on success.
+ *
+ * If `$BUN_DEPS_CACHE_DIR` is set and contains `offlineCacheKey(url)`, that
+ * file is copied to `dest` and the network is never touched.
  *
  * @param logPrefix Shown in progress/retry messages: `[<logPrefix>] retry 2/5`
  */
 export async function downloadWithRetry(url: string, dest: string, logPrefix: string): Promise<void> {
+  const cacheDir = process.env[DEPS_CACHE_ENV];
+  if (cacheDir) {
+    const cached = join(cacheDir, offlineCacheKey(url));
+    let size: number | undefined;
+    try {
+      size = statSync(cached).size;
+    } catch {}
+    // size > 0: a truncated/empty cache entry is worse than a miss — fall
+    // through to the network rather than feeding tar a 0-byte file.
+    if (size !== undefined && size > 0) {
+      console.log(`from ${DEPS_CACHE_ENV} (${(size / 1048576).toFixed(1)} MiB)`);
+      const tmpPath = `${dest}.${process.pid}.partial`;
+      await copyFile(cached, tmpPath);
+      await rename(tmpPath, dest);
+      return;
+    }
+  }
+
   const maxAttempts = 5;
   let lastError: unknown;
 

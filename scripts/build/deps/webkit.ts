@@ -68,7 +68,7 @@ function prebuiltSuffix(cfg: Config): string {
   return s;
 }
 
-function prebuiltUrl(cfg: Config): string {
+export function prebuiltUrl(cfg: Config): string {
   const os = cfg.windows ? "windows" : cfg.darwin ? "macos" : "linux";
   const arch = cfg.arm64 ? "arm64" : "amd64";
   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;

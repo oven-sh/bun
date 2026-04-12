@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 29
+# Version: 30
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -987,6 +987,40 @@ install_bun() {
 	execute_sudo ln -sf "$bun_path" "$(dirname "$bun_path")/bunx"
 }
 
+# Pre-download build deps (vendored tarballs, prebuilt WebKit, zig) into a
+# content-addressed dir baked into the image. machine.mjs ships scripts/build/
+# as /tmp/bun-prefetch.tgz; if absent (e.g. running bootstrap.sh by hand),
+# this is a no-op. Builds consult $BUN_DEPS_CACHE_DIR before the network and
+# fall through on a miss, so a stale image after a dep bump still works — it
+# just downloads that one dep.
+prefetch_build_deps() {
+	if ! [ "$ci" = "1" ]; then
+		return
+	fi
+	prefetch_tgz="/tmp/bun-prefetch.tgz"
+	if ! [ -f "$prefetch_tgz" ]; then
+		return
+	fi
+
+	deps_cache="/opt/bun-deps"
+	tar="$(require tar)"
+	bun_exe="$(require bun)"
+
+	prefetch_dir="$(create_tmp_directory)"
+	execute "$tar" xzf "$prefetch_tgz" -C "$prefetch_dir"
+
+	create_directory "$deps_cache"
+	grant_to_user "$deps_cache"
+	execute "$bun_exe" "$prefetch_dir/build/prefetch.ts" \
+		--out="$deps_cache" \
+		--webkit=lto,none,asan,baseline
+	execute cat "$deps_cache/manifest.json"
+
+	# Buildkite jobs don't source shell profiles, so the export goes in the
+	# agent's environment hook (created earlier by create_buildkite_user).
+	append_file "/var/lib/buildkite-agent/hooks/environment" "export BUN_DEPS_CACHE_DIR=\"$deps_cache\""
+}
+
 install_cmake() {
 	case "$os-$pm" in
 	darwin-* | linux-apk)
@@ -1681,6 +1715,7 @@ main() {
 	create_buildkite_user
 	install_common_software
 	install_build_essentials
+	prefetch_build_deps
 	install_chromium
 	install_fuse_python
 	install_age

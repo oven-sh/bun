@@ -76,6 +76,7 @@
     "node:test": "node ./scripts/runner.node.mjs --quiet --exec-path=$npm_execpath --node-tests ",
     "node:test:cp": "bun ./scripts/fetch-node-test.ts ",
     "clean": "bun scripts/build/clean.ts",
+    "prefetch": "bun scripts/build/prefetch.ts",
     "machine:linux:ubuntu": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=ubuntu --release=25.04",
     "machine:linux:debian": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=debian --release=13",
     "machine:linux:alpine": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=alpine --release=3.22",

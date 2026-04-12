@@ -136,6 +136,20 @@ RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64";
 
 RUN mkdir -p /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /etc/buildkite-agent /var/lib/buildkite-agent/cache/bun
 
+# Pre-download build dependencies (dep tarballs, prebuilt WebKit, zig).
+# downloadWithRetry() consults this dir before the network. Cache miss
+# (e.g. a PR bumps a dep) falls through to a normal download — the build
+# never breaks on a stale image, it's just slower for that one dep.
+# Only scripts/build/ is copied so this layer survives unrelated commits;
+# it busts exactly when a pinned version changes.
+ENV BUN_DEPS_CACHE_DIR=/opt/bun-deps
+COPY scripts/build /tmp/prefetch/scripts/build
+RUN bun /tmp/prefetch/scripts/build/prefetch.ts \
+        --out=${BUN_DEPS_CACHE_DIR} \
+        --webkit=lto,none,asan,baseline \
+    && rm -rf /tmp/prefetch \
+    && cat ${BUN_DEPS_CACHE_DIR}/manifest.json
+
 # The following is necessary to configure buildkite to use a stable
 # checkout directory for ccache to be effective.
 RUN mkdir -p -m 755 /var/lib/buildkite-agent/hooks && \

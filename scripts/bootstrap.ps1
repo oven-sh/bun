@@ -1,4 +1,4 @@
-# Version: 16
+# Version: 17
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.
@@ -406,6 +406,28 @@ function Install-Bun {
   }
 }
 
+function Prefetch-BuildDeps {
+  # machine.mjs ships scripts/build/ here. Absent → no-op (e.g. running
+  # bootstrap.ps1 standalone). Builds fall through to the network on cache
+  # miss, so a stale image after a dep bump still works.
+  $prefetchTgz = "C:\Windows\Temp\bun-prefetch.tgz"
+  if (-not (Test-Path $prefetchTgz)) {
+    return
+  }
+
+  $depsCache = "C:\bun-deps"
+  $prefetchDir = "C:\Windows\Temp\bun-prefetch"
+  New-Item -Path $prefetchDir -ItemType Directory -Force | Out-Null
+  & tar xzf $prefetchTgz -C $prefetchDir
+
+  $bun = Which bun -Required
+  & $bun "$prefetchDir\build\prefetch.ts" --out=$depsCache --webkit=lto,none,asan,baseline
+  if ($LASTEXITCODE -ne 0) { throw "prefetch.ts failed" }
+  Get-Content "$depsCache\manifest.json"
+
+  Set-Env "BUN_DEPS_CACHE_DIR" $depsCache
+}
+
 function Install-Rust {
   if (Which rustc) {
     return
@@ -655,6 +677,7 @@ if (-not $script:IsARM64) {
 Install-Pwsh
 Install-OpenSSH
 Install-Bun
+Prefetch-BuildDeps
 Install-Ccache
 Install-Rust
 Install-Visual-Studio

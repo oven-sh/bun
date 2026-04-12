@@ -190,7 +190,7 @@ function zigCacheDirs(cfg: Config): { local: string; global: string } {
  * os-abi: zig binaries are always statically linked (musl on linux, gnu
  * on windows), so the abi is fixed per-os.
  */
-function zigDownloadUrl(cfg: Config, safe: boolean): string {
+export function zigDownloadUrl(cfg: Config, safe: boolean): string {
   const arch = cfg.host.arch === "aarch64" ? "aarch64" : "x86_64";
   let osAbi: string;
   if (cfg.host.os === "darwin") {

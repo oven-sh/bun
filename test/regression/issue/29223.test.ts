@@ -49,8 +49,7 @@ NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)
       "target_name": "addon",
       "sources": [ "addon.c" ],
       "include_dirs": [ ".", "./libuv" ],
-      "cflags": ["-fPIC"],
-      "ldflags": ["-Wl,--export-dynamic"]
+      "cflags": ["-fPIC"]
     }
   ]
 }`,
@@ -69,7 +68,8 @@ console.log("OK");
     const libuvDir = path.join(import.meta.dir, "../../../src/bun.js/bindings/libuv");
     await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`.env(bunEnv);
     await Bun.$`${bunExe()} install && ${bunExe()} run build:napi`.env(bunEnv).cwd(tempdir);
-  });
+    // cold `bun install` + node-gyp build can exceed the default 5s hook timeout on CI
+  }, 60_000);
 
   test("NAPI addon calling uv_thread_self during Init does not crash", () => {
     // spawnSync because the baseline (pre-fix) crashes via panic + abort;

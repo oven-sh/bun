@@ -905,9 +905,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         var crbuf: [64]u8 = undefined;
                         this.doWriteStatus(416);
                         resp.writeHeader("content-range", std.fmt.bufPrint(&crbuf, "bytes */{d}", .{stat_size}) catch unreachable);
+                        const close = resp.shouldCloseConnection();
                         this.detachResponse();
                         this.endRequestStreamingAndDrain();
-                        resp.end("", this.shouldCloseConnection());
+                        resp.end("", close);
                         this.deref();
                         return;
                     },
@@ -918,9 +919,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if ((is_regular and this.sendfile.remain == 0) or !this.method.hasBody()) {
                 if (auto_close) fd.close();
+                const close = resp.shouldCloseConnection();
                 this.detachResponse();
                 this.endRequestStreamingAndDrain();
-                resp.end("", this.shouldCloseConnection());
+                resp.end("", close);
                 this.deref();
                 return;
             }

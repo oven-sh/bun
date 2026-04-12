@@ -58,11 +58,7 @@ test("node:stream/web classes inspect as [class X], not [class Function]", async
     stderr: "pipe",
   });
 
-  const [stdout, _stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
 
@@ -97,11 +93,7 @@ test("other DOM / WebCore constructors inspect as [class X]", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, _stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   expect(stdout).toBe(
@@ -131,11 +123,7 @@ test("user-defined classes and extends still render correctly", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, _stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(exitCode).toBe(0);
   // `Anon` picks up the "Anon" name from the variable binding, matching

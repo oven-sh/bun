@@ -40,7 +40,7 @@ test("Bun.inspect on object with custom inspect does not crash when node:util fa
   expect(stdout).toBe("caught: poisoned forEach\nok\nok\nok\nbc ok\n");
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
-}, 30_000);
+});
 
 test("Bun.inspect with colors does not crash when utilInspectFunction was previously nulled", async () => {
   const src = `
@@ -77,4 +77,4 @@ test("Bun.inspect with colors does not crash when utilInspectFunction was previo
   expect(stdout).toBe("nocolors caught: poisoned forEach\ncolors ok\n");
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
-}, 30_000);
+});

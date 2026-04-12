@@ -54,17 +54,34 @@ export function findPackageJSON(specifier: string | URL, base?: string | URL) {
     }
     try {
       const resolved = $resolveSync(specifier, base, false, false, undefined);
-      // Walk up from the resolved path to find package.json
+      // Walk up from the resolved path to find the package root.
+      // The root is the directory immediately inside node_modules/
+      // (or node_modules/@scope/pkg/ for scoped packages).
       let dir = path.dirname(resolved);
+      let packageRoot: string | undefined;
       while (true) {
-        const candidate = path.join(dir, "package.json");
-        if (fs.existsSync(candidate)) {
-          return candidate;
+        const dirName = path.basename(dir);
+        const parentDir = path.dirname(dir);
+        const parentName = path.basename(parentDir);
+
+        if (parentName === "node_modules") {
+          // dir is the package root (e.g., node_modules/some-package)
+          packageRoot = dir;
+          break;
         }
-        const parent = path.dirname(dir);
-        if (parent === dir) return undefined;
-        dir = parent;
+        if (path.basename(path.dirname(parentDir)) === "node_modules" && parentName.startsWith("@")) {
+          // dir is inside a scoped package (e.g., node_modules/@scope/pkg)
+          packageRoot = dir;
+          break;
+        }
+        if (parentDir === dir) break; // filesystem root
+        dir = parentDir;
       }
+      if (packageRoot) {
+        const candidate = path.join(packageRoot, "package.json");
+        if (fs.existsSync(candidate)) return candidate;
+      }
+      return undefined;
     } catch {
       return undefined;
     }

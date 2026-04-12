@@ -2720,8 +2720,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     // completes. See https://github.com/oven-sh/bun/issues/29221.
     //
     // The JSC C++ `JSModuleLoader::requestImportModule` looks this function
-    // up dynamically by its private-name property, so installing our version
-    // here replaces both C++-initiated and JS-initiated dynamic imports.
+    // up dynamically by its public-name property (the plain string key, not
+    // an @-prefixed private symbol), so installing our version here replaces
+    // both C++-initiated and JS-initiated dynamic imports.
     this->moduleLoader()->putDirectBuiltinFunction(vm, this, vm.propertyNames->builtinNames().requestImportModulePublicName(), moduleLoaderOverridesRequestImportModuleCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontEnum);
 
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);

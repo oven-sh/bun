@@ -18,6 +18,17 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
+// ASAN builds unconditionally print "WARNING: ASAN interferes with JSC
+// signal handlers..." to stderr from WebKit's Options.cpp; filter it out
+// so debug runs don't fail the stderr-empty assertions below.
+function cleanStderr(stderr: string): string {
+  return stderr
+    .split("\n")
+    .filter(line => !line.startsWith("WARNING: ASAN interferes"))
+    .join("\n")
+    .trim();
+}
+
 test("dynamic import waits for top-level await to settle (#29221)", async () => {
   using dir = tempDir("issue-29221", {
     "entry.mjs": `
@@ -41,7 +52,11 @@ globalThis.order.push("tla-end");
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
 
   // Expected ordering: the TLA module runs to completion first (tla-start
   // then tla-end), then BOTH .then() handlers fire in import order.
@@ -51,6 +66,7 @@ globalThis.order.push("tla-end");
   // the JSC builtin's fast path returned the namespace without awaiting
   // the pending evaluation promise.
   expect(stdout.trim()).toBe(`["tla-start","tla-end","then-a","then-b"]`);
+  expect(cleanStderr(stderr)).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -90,9 +106,13 @@ export function fn() { return "ok"; }
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
 
   expect(stdout.trim()).toBe(`[[1,3,"function"],[2,3,"function"],[3,3,"function"],[4,3,"function"],[5,3,"function"]]`);
-  expect(stderr).not.toContain("before initialization");
+  expect(cleanStderr(stderr)).toBe("");
   expect(exitCode).toBe(0);
 });

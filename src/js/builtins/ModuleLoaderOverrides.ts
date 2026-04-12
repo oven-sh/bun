@@ -14,8 +14,9 @@
 // Bun ships prebuilt WebKit, so patching the vendored `ModuleLoader.js`
 // isn't enough — we install this override on top of the existing builtin.
 // JSC's C++ `JSModuleLoader::requestImportModule` looks the function up
-// dynamically by its private-name property every time, so overriding the
-// property is sufficient for both C++-initiated and JS-initiated imports.
+// dynamically by its public-name property (the plain string key, not an
+// @-prefixed private symbol) every time, so overriding the property is
+// sufficient for both C++-initiated and JS-initiated imports.
 //
 // The fix: cache the evaluation promise on the registry entry so concurrent
 // dynamic imports can `await` it instead of taking the early-return path.

@@ -47,13 +47,15 @@ test("ServerResponse emits 'close' when the client aborts mid-response", async (
 // cause, but the handler never writes a response before the client
 // disconnects. Pre-fix, only `req.on("close")` fired.
 test("ServerResponse emits 'close' when the client aborts before any write", async () => {
-  const { promise: resClose, resolve: resolveResClose } = Promise.withResolvers<void>();
+  const { promise: resClose, resolve: resolveResClose } = Promise.withResolvers<{
+    writableEnded: boolean;
+  }>();
   const { promise: reqClose, resolve: resolveReqClose } = Promise.withResolvers<void>();
   const { promise: requestSeen, resolve: markRequestSeen } = Promise.withResolvers<void>();
 
   const server = http.createServer((req, res) => {
-    res.once("close", resolveResClose);
-    req.once("close", resolveReqClose);
+    res.once("close", () => resolveResClose({ writableEnded: res.writableEnded }));
+    req.once("close", () => resolveReqClose());
     markRequestSeen();
     // Deliberately don't write or end — wait for the client to go away.
   });
@@ -72,10 +74,11 @@ test("ServerResponse emits 'close' when the client aborts before any write", asy
       });
     });
 
-    // Both events must fire. Pre-fix, res close never did — this would
-    // hang and timeout the test instead of reaching the assertion.
-    await Promise.all([resClose, reqClose]);
-    expect(true).toBe(true);
+    // Pre-fix, `res.on("close")` never fired, so awaiting resClose would
+    // hang and the test would timeout. Post-fix, both events fire and
+    // writableEnded is false because the handler never called res.end().
+    const [resResult] = await Promise.all([resClose, reqClose]);
+    expect(resResult).toEqual({ writableEnded: false });
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
   }

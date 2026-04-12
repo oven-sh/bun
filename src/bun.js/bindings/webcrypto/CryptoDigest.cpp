@@ -164,8 +164,12 @@ static inline void storeLE64(uint8_t* bytes, uint64_t v)
 // Streaming SHA-3 sponge for one of the fixed output sizes.
 struct Sha3Context {
     KeccakState state {};
-    // Input bytes buffered before the next permutation.
-    uint8_t buffer[144] {}; // enough for SHA3-224's 144-byte rate (largest)
+    // Input bytes buffered before the next permutation. Sized for the largest
+    // FIPS 202 fixed-output rate (144 bytes for SHA3-224, which is not
+    // registered here); the three variants this file ships only need up to
+    // SHA3-256's 136-byte rate. The extra room lets future SHA3-224 /
+    // SHAKE128 support reuse this struct without a resize.
+    uint8_t buffer[144] {};
     size_t bufferLength = 0;
     size_t rateBytes = 0;
     size_t digestLength = 0;
@@ -214,8 +218,9 @@ static void sha3Final(Sha3Context& ctx, uint8_t* output)
     keccakF1600(ctx.state);
 
     // Squeeze. For the fixed-output SHA-3 variants the digest always fits
-    // inside a single rate-sized squeeze block (rate >= 104 bytes, digest
-    // <= 64 bytes), so no additional permutation is needed.
+    // inside a single rate-sized squeeze block: the smallest rate is
+    // SHA3-512's 72 bytes and its digest is 64 bytes, so no additional
+    // permutation is needed.
     size_t produced = 0;
     uint8_t lane[8];
     while (produced < ctx.digestLength) {

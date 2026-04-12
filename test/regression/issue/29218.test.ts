@@ -116,6 +116,18 @@ describe("crypto.subtle SHA-3", () => {
     // clone, so accepting it as a hash sub-algorithm for HMAC/RSA/ECDSA
     // would create broken CryptoKey instances that crash at sign() or
     // postMessage() time. Reject up front until those paths are wired.
+    //
+    // For HMAC and RSA-PSS the hash is supplied at key creation time, so
+    // importKey()/generateKey() is where the rejection lives. For ECDSA
+    // the hash is supplied at sign()/verify() time, so we generate a real
+    // P-256 key pair first (which must still succeed) and then assert
+    // that sign() rejects when a SHA-3 hash is requested.
+    const ecdsaPair = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+      "sign",
+      "verify",
+    ])) as CryptoKeyPair;
+    expect(ecdsaPair.privateKey).toBeDefined();
+
     for (const alg of ["SHA3-256", "SHA3-384", "SHA3-512"]) {
       await expect(
         crypto.subtle.importKey("raw", new Uint8Array(32), { name: "HMAC", hash: alg }, true, ["sign"]),
@@ -131,8 +143,8 @@ describe("crypto.subtle SHA-3", () => {
         ),
       ).rejects.toMatchObject({ name: "NotSupportedError" });
       await expect(
-        crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]),
-      ).resolves.toBeDefined(); // sanity: real ECDSA still works
+        crypto.subtle.sign({ name: "ECDSA", hash: alg }, ecdsaPair.privateKey, te.encode("msg")),
+      ).rejects.toMatchObject({ name: "NotSupportedError" });
     }
   });
 });

@@ -4,9 +4,9 @@
 // is omitted — not a stale snapshot captured at Bun startup.
 
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import path from "node:path";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test.skipIf(isWindows)("execFileSync/spawnSync/execSync honor runtime mutations to process.env.PATH", async () => {
   using dir = tempDir("issue-29237", {

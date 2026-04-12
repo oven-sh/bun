@@ -8,7 +8,7 @@ import { bunEnv, bunExe } from "harness";
 // `orelse unreachable` because `this_value.tryGet()` returns null for a
 // finalized JSRef.
 
-test("RedisClient survives GC after a command throws during argument validation", async () => {
+test.concurrent("RedisClient survives GC after a command throws during argument validation", async () => {
   const src = `
     for (let i = 0; i < 200; i++) {
       const c = new Bun.RedisClient();
@@ -38,7 +38,7 @@ test("RedisClient survives GC after a command throws during argument validation"
   expect(exitCode).toBe(0);
 });
 
-test("RedisClient survives GC across many short-lived instances", async () => {
+test.concurrent("RedisClient survives GC across many short-lived instances", async () => {
   const src = `
     for (let i = 0; i < 1000; i++) {
       new Bun.RedisClient();

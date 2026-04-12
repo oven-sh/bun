@@ -693,10 +693,30 @@ describe("user-set Content-Range disables automatic Range handling", () => {
   });
 });
 
+test("Range works after JS reads file.size before constructing Response", async () => {
+  // Reading .size resolves the Blob.max_size sentinel; the Range guard must
+  // also accept original_size == stat_size for this case.
+  const dir = tempDirWithFiles("range-after-size-", { "f.txt": "0123456789ABCDEF" });
+  using _ = rmScope(dir);
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => {
+      const f = Bun.file(join(dir, "f.txt"));
+      void f.size;
+      return new Response(f);
+    },
+  });
+  const res = await fetch(server.url, { headers: { Range: "bytes=4-7" } });
+  expect(res.status).toBe(206);
+  expect(res.headers.get("content-range")).toBe("bytes 4-7/16");
+  expect(await res.text()).toBe("4567");
+});
+
 test("Range header cannot escape a Bun.file().slice(0, n) window via fetch handler", async () => {
   const dir = tempDirWithFiles("range-slice-escape-", {
     "f.bin": Buffer.from(Array.from({ length: 256 }, (_, i) => i)),
   });
+  using _ = rmScope(dir);
   using server = Bun.serve({
     port: 0,
     fetch: () => new Response(Bun.file(join(dir, "f.bin")).slice(0, 100)),

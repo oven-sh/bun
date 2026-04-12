@@ -256,7 +256,11 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
         if (input_if_modified_since_date) |requested_if_modified_since| {
             if (method == .HEAD or method == .GET) {
                 if (this.lastModifiedDate() catch return) |actual_last_modified_at| { // TODO: properly propagate exception upwards
-                    if (actual_last_modified_at <= requested_if_modified_since) {
+                    // Compare at second precision: the Last-Modified header we
+                    // emit is second-granular (HTTP-date), so a sub-second
+                    // mtime would otherwise never satisfy `<=` against the
+                    // client's echoed value.
+                    if (actual_last_modified_at / 1000 <= requested_if_modified_since / 1000) {
                         break :brk 304;
                     }
                 }

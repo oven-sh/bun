@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { itBundled } from "./expectBundled";
 import { tempDirWithFiles } from "harness";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { writeFileSync, readFileSync } from "node:fs";
+import { itBundled } from "./expectBundled";
 
 describe.concurrent("bundler", () => {
   // Test HTML import manifest with enhanced metadata

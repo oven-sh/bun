@@ -10,14 +10,18 @@ import { bunEnv, bunExe } from "harness";
 
 test.concurrent("RedisClient survives GC after a command throws during argument validation", async () => {
   const src = `
+    let threw = 0;
     for (let i = 0; i < 200; i++) {
       const c = new Bun.RedisClient();
       try {
         // BigUint64Array (a constructor function) is not a valid argument,
         // so this throws before send() / connect() is ever called.
         c.zrangebylex(65535, 65535, BigUint64Array);
-      } catch {}
+      } catch {
+        threw++;
+      }
     }
+    if (threw !== 200) throw new Error("expected zrangebylex to throw on every call, got " + threw);
     Bun.gc(true);
     await 1;
     Bun.gc(true);

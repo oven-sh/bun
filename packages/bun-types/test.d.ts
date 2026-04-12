@@ -380,12 +380,6 @@ declare module "bun:test" {
    *
    * Can only be called inside a test, not in describe blocks.
    *
-   * Works inside concurrent tests when `onTestFinished()` is called
-   * synchronously from the test callback body (including microtasks drained
-   * before the first suspension point). Registrations made after yielding to
-   * a later event-loop turn — for example after `await`ing a timer — may
-   * not resolve which concurrent sequence they belong to.
-   *
    * @example
    * test("my test", () => {
    *   onTestFinished(() => {

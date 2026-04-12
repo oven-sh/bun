@@ -16,6 +16,7 @@ const files = {
   "special chars & symbols.txt": "special file content",
   "will-be-deleted.txt": "will be deleted",
   "partial.txt": "0123456789ABCDEF",
+  "bytes256.bin": Buffer.from(Array.from({ length: 256 }, (_, i) => i)),
 };
 
 describe("Bun.file in serve routes", () => {
@@ -70,6 +71,22 @@ describe("Bun.file in serve routes", () => {
         // This would test file descriptors, but they're not supported yet
         return new Response(Bun.file(join(tempDir, "hello.txt")));
       })(),
+      // Static route with user-set Content-Range — auto-Range must be disabled.
+      "/user-content-range-route": new Response(Bun.file(join(tempDir, "partial.txt")), {
+        headers: { "Content-Range": "bytes 0-15/100" },
+      }),
+      // Function routes (dynamic responses) — exercised by the fetch-handler
+      // Range tests below. Kept as routes (not the `fetch` fallback) so they
+      // don't perturb the fallback handler's mock call count.
+      "/range-handler": () => new Response(Bun.file(join(tempDir, "partial.txt"))),
+      "/user-content-range-handler": () =>
+        new Response(Bun.file(join(tempDir, "partial.txt")), { headers: { "Content-Range": "bytes 0-15/100" } }),
+      "/range-after-size": () => {
+        const f = Bun.file(join(tempDir, "partial.txt"));
+        void f.size;
+        return new Response(f);
+      },
+      "/slice-escape": () => new Response(Bun.file(join(tempDir, "bytes256.bin")).slice(0, 100)),
     } as const;
 
     server = Bun.serve({
@@ -87,7 +104,7 @@ describe("Bun.file in serve routes", () => {
     using _ = rmScope(tempDir);
   });
 
-  describe("Basic file serving", () => {
+  describe.concurrent("Basic file serving", () => {
     it("serves text file", async () => {
       const res = await fetch(new URL(`/hello.txt`, server.url));
       expect(res.status).toBe(200);
@@ -228,7 +245,7 @@ describe("Bun.file in serve routes", () => {
     });
   });
 
-  describe("HTTP methods", () => {
+  describe.concurrent("HTTP methods", () => {
     it("supports HEAD requests", async () => {
       const res = await fetch(new URL(`/hello.txt`, server.url), { method: "HEAD" });
       expect(res.status).toBe(200);
@@ -244,7 +261,7 @@ describe("Bun.file in serve routes", () => {
     });
   });
 
-  describe("Custom headers and status", () => {
+  describe.concurrent("Custom headers and status", () => {
     it("preserves custom headers", async () => {
       const res = await fetch(new URL(`/with-headers.txt`, server.url));
       expect(res.status).toBe(200);
@@ -304,7 +321,7 @@ describe("Bun.file in serve routes", () => {
     });
   });
 
-  describe("Conditional requests", () => {
+  describe.concurrent("Conditional requests", () => {
     describe.each(["GET", "HEAD"])("%s", method => {
       it(`handles If-Modified-Since with future date (304)`, async () => {
         // First request to get Last-Modified
@@ -468,7 +485,7 @@ describe("Bun.file in serve routes", () => {
     });
   });
 
-  describe("Last-Modified header handling", () => {
+  describe.concurrent("Last-Modified header handling", () => {
     it("automatically adds Last-Modified header", async () => {
       const res = await fetch(new URL(`/hello.txt`, server.url));
       const lastModified = res.headers.get("Last-Modified");
@@ -500,7 +517,7 @@ describe("Bun.file in serve routes", () => {
     });
   });
 
-  describe("File slicing", () => {
+  describe.concurrent("File slicing", () => {
     it("serves complete file", async () => {
       const res = await fetch(new URL(`/partial.txt`, server.url));
       expect(res.status).toBe(200);
@@ -516,7 +533,7 @@ describe("Bun.file in serve routes", () => {
     });
   });
 
-  describe("Special status codes", () => {
+  describe.concurrent("Special status codes", () => {
     it("returns 204 for empty files with 200 status", async () => {
       const res = await fetch(new URL(`/empty.txt`, server.url));
       expect(res.status).toBe(204);
@@ -545,7 +562,7 @@ describe("Bun.file in serve routes", () => {
     });
   });
 
-  describe("Streaming and file types", () => {
+  describe.concurrent("Streaming and file types", () => {
     it("sets Content-Length for regular files", async () => {
       const res = await fetch(new URL(`/hello.txt`, server.url));
       expect(res.headers.get("Content-Length")).toBe("13");
@@ -593,7 +610,7 @@ describe("Bun.file in serve routes", () => {
     });
   });
 
-  describe("Content-Type detection", () => {
+  describe.concurrent("Content-Type detection", () => {
     it("detects text/plain for .txt files", async () => {
       const res = await fetch(new URL(`/hello.txt`, server.url));
       expect(res.headers.get("Content-Type")).toMatch(/text\/plain/);
@@ -609,123 +626,75 @@ describe("Bun.file in serve routes", () => {
       expect(res.headers.get("Content-Type")).toMatch(/application\/octet-stream/);
     });
   });
-});
 
-describe.each([
-  ["FileRoute", "/route"],
-  ["fetch handler", "/handler"],
-])("Range requests via %s", (_label, path) => {
-  let dir: string;
-  let server: Server;
-  const body = "0123456789ABCDEF";
-  beforeAll(() => {
-    dir = tempDirWithFiles("file-route-range-", { "data.bin": body });
-    const file = Bun.file(join(dir, "data.bin"));
-    server = Bun.serve({
-      port: 0,
-      routes: { "/route": new Response(file) },
-      fetch: req => (new URL(req.url).pathname === "/handler" ? new Response(file) : new Response("fallback")),
+  describe.concurrent.each([
+    ["FileRoute", "/partial.txt"],
+    ["fetch handler", "/range-handler"],
+  ])("Range requests via %s", (_label, path) => {
+    const body = files["partial.txt"];
+
+    it.each([
+      ["bytes=0-3", 206, "0123", "bytes 0-3/16"],
+      ["bytes=4-", 206, "456789ABCDEF", "bytes 4-15/16"],
+      ["bytes=-4", 206, "CDEF", "bytes 12-15/16"],
+      ["bytes=0-999", 206, body, "bytes 0-15/16"],
+      ["Bytes = 2-5", 206, "2345", "bytes 2-5/16"],
+    ])("%s → %d", async (range, status, expected, contentRange) => {
+      const res = await fetch(new URL(path, server.url), { headers: { Range: range } });
+      expect(res.status).toBe(status);
+      expect(res.headers.get("content-range")).toBe(contentRange);
+      expect(res.headers.get("content-length")).toBe(String(expected.length));
+      expect(await res.text()).toBe(expected);
+    });
+
+    it("416 on start past EOF", async () => {
+      const res = await fetch(new URL(path, server.url), { headers: { Range: "bytes=100-200" } });
+      expect(res.status).toBe(416);
+      expect(res.headers.get("content-range")).toBe("bytes */16");
+      expect(res.headers.get("accept-ranges")).toBe("bytes");
+      expect(await res.text()).toBe("");
+    });
+
+    it("ignores multi-range and serves full body", async () => {
+      const res = await fetch(new URL(path, server.url), { headers: { Range: "bytes=0-1,4-5" } });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(body);
     });
   });
-  afterAll(() => {
-    server?.stop(true);
-    using _ = rmScope(dir);
-  });
 
-  it.each([
-    ["bytes=0-3", 206, "0123", "bytes 0-3/16"],
-    ["bytes=4-", 206, "456789ABCDEF", "bytes 4-15/16"],
-    ["bytes=-4", 206, "CDEF", "bytes 12-15/16"],
-    ["bytes=0-999", 206, body, "bytes 0-15/16"],
-    ["Bytes = 2-5", 206, "2345", "bytes 2-5/16"],
-  ])("%s → %d", async (range, status, expected, contentRange) => {
-    const res = await fetch(new URL(path, server.url), { headers: { Range: range } });
-    expect(res.status).toBe(status);
-    expect(res.headers.get("content-range")).toBe(contentRange);
-    expect(res.headers.get("content-length")).toBe(String(expected.length));
-    expect(await res.text()).toBe(expected);
-  });
+  describe.concurrent("user-set Content-Range disables automatic Range handling", () => {
+    const body = files["partial.txt"];
 
-  it("416 on start past EOF", async () => {
-    const res = await fetch(new URL(path, server.url), { headers: { Range: "bytes=100-200" } });
-    expect(res.status).toBe(416);
-    expect(res.headers.get("content-range")).toBe("bytes */16");
-    expect(res.headers.get("accept-ranges")).toBe("bytes");
-    expect(await res.text()).toBe("");
-  });
-
-  it("ignores multi-range and serves full body", async () => {
-    const res = await fetch(new URL(path, server.url), { headers: { Range: "bytes=0-1,4-5" } });
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe(body);
-  });
-});
-
-describe("user-set Content-Range disables automatic Range handling", () => {
-  let dir: string;
-  let server: Server;
-  const body = "0123456789ABCDEF";
-  beforeAll(() => {
-    dir = tempDirWithFiles("user-content-range-", { "data.bin": body });
-    const file = () => Bun.file(join(dir, "data.bin"));
-    server = Bun.serve({
-      port: 0,
-      routes: {
-        "/route": new Response(file(), { headers: { "Content-Range": "bytes 0-15/100" } }),
-      },
-      fetch: () => new Response(file(), { headers: { "Content-Range": "bytes 0-15/100" } }),
+    it.each([
+      ["FileRoute", "/user-content-range-route"],
+      ["fetch handler", "/user-content-range-handler"],
+    ])("via %s: client Range ignored, user Content-Range preserved", async (_label, path) => {
+      const res = await fetch(new URL(path, server.url), { headers: { Range: "bytes=2-5" } });
+      // User explicitly set Content-Range — they're managing partial responses
+      // themselves. We must serve the full body with their header, exactly once.
+      expect(await res.text()).toBe(body);
+      expect(res.headers.get("content-range")).toBe("bytes 0-15/100");
     });
   });
-  afterAll(() => {
-    server?.stop(true);
-    using _ = rmScope(dir);
-  });
 
-  it.each([
-    ["FileRoute", "/route"],
-    ["fetch handler", "/handler"],
-  ])("via %s: client Range ignored, user Content-Range preserved", async (_label, path) => {
-    const res = await fetch(new URL(path, server.url), { headers: { Range: "bytes=2-5" } });
-    // User explicitly set Content-Range — they're managing partial responses
-    // themselves. We must serve the full body with their header, exactly once.
-    expect(await res.text()).toBe(body);
-    expect(res.headers.get("content-range")).toBe("bytes 0-15/100");
-  });
-});
+  describe.concurrent("Range via fetch handler edge cases", () => {
+    it("Range works after JS reads file.size before constructing Response", async () => {
+      // Reading .size resolves the Blob.max_size sentinel; the Range guard must
+      // also accept original_size == stat_size for this case.
+      const res = await fetch(new URL("/range-after-size", server.url), { headers: { Range: "bytes=4-7" } });
+      expect(res.status).toBe(206);
+      expect(res.headers.get("content-range")).toBe("bytes 4-7/16");
+      expect(await res.text()).toBe("4567");
+    });
 
-test("Range works after JS reads file.size before constructing Response", async () => {
-  // Reading .size resolves the Blob.max_size sentinel; the Range guard must
-  // also accept original_size == stat_size for this case.
-  const dir = tempDirWithFiles("range-after-size-", { "f.txt": "0123456789ABCDEF" });
-  using _ = rmScope(dir);
-  using server = Bun.serve({
-    port: 0,
-    fetch: () => {
-      const f = Bun.file(join(dir, "f.txt"));
-      void f.size;
-      return new Response(f);
-    },
+    it("Range header cannot escape a Bun.file().slice(0, n) window via fetch handler", async () => {
+      const res = await fetch(new URL("/slice-escape", server.url), { headers: { Range: "bytes=200-220" } });
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      // Range must be ignored for sliced blobs: serve the 100-byte slice, never bytes 200-220.
+      expect(bytes.length).toBe(100);
+      expect(bytes[0]).toBe(0);
+      expect(bytes[99]).toBe(99);
+      expect(res.headers.get("content-range")).not.toContain("/256");
+    });
   });
-  const res = await fetch(server.url, { headers: { Range: "bytes=4-7" } });
-  expect(res.status).toBe(206);
-  expect(res.headers.get("content-range")).toBe("bytes 4-7/16");
-  expect(await res.text()).toBe("4567");
-});
-
-test("Range header cannot escape a Bun.file().slice(0, n) window via fetch handler", async () => {
-  const dir = tempDirWithFiles("range-slice-escape-", {
-    "f.bin": Buffer.from(Array.from({ length: 256 }, (_, i) => i)),
-  });
-  using _ = rmScope(dir);
-  using server = Bun.serve({
-    port: 0,
-    fetch: () => new Response(Bun.file(join(dir, "f.bin")).slice(0, 100)),
-  });
-  const res = await fetch(server.url, { headers: { Range: "bytes=200-220" } });
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  // Range must be ignored for sliced blobs: serve the 100-byte slice, never bytes 200-220.
-  expect(bytes.length).toBe(100);
-  expect(bytes[0]).toBe(0);
-  expect(bytes[99]).toBe(99);
-  expect(res.headers.get("content-range")).not.toContain("/256");
 });

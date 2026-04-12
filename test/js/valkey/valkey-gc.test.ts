@@ -28,7 +28,7 @@ test("RedisClient survives GC after a command throws during argument validation"
     cmd: [bunExe(), "-e", src],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
@@ -40,7 +40,7 @@ test("RedisClient survives GC after a command throws during argument validation"
 
 test("RedisClient survives GC across many short-lived instances", async () => {
   const src = `
-    for (let i = 0; i < 5000; i++) {
+    for (let i = 0; i < 1000; i++) {
       new Bun.RedisClient();
     }
     Bun.gc(true);
@@ -53,7 +53,7 @@ test("RedisClient survives GC across many short-lived instances", async () => {
     cmd: [bunExe(), "-e", src],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);

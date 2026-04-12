@@ -310,18 +310,20 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
-    auto event = Identifier::fromString(vm, "exit"_s);
-    JSC::JSValue userEmit = userEmitOverride(vm, process);
-    if (!userEmit && !emitter.hasEventListeners(event)) {
-        return;
-    }
+    // Match Node: set _exiting unconditionally during shutdown, regardless
+    // of whether any exit listener is registered.
     process->putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(true), 0);
 
+    auto event = Identifier::fromString(vm, "exit"_s);
+    JSC::JSValue userEmit = userEmitOverride(vm, process);
     if (userEmit) {
         callUserEmitOverride(globalObject, process, userEmit, "exit"_s, jsNumber(exitCode));
         return;
     }
 
+    if (!emitter.hasEventListeners(event)) {
+        return;
+    }
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));
     emitter.emit(event, arguments);

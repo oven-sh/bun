@@ -98,8 +98,6 @@ test("parent messages do not fire self.onmessage in a node:worker_threads worker
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
-
   // Four parent messages were posted (three data + one 'report'). The
   // `parentPort.on('message', (msg) => onmessage({data:msg}))` forwarding
   // listener runs once per incoming parent message and manually calls
@@ -115,6 +113,7 @@ test("parent messages do not fire self.onmessage in a node:worker_threads worker
     selfAddListenerCalls: 0,
     globalAddListenerCalls: 0,
   });
+  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
 test("parentPort delivers each parent message exactly once to every listener variant (#29211)", async () => {
@@ -166,8 +165,6 @@ test("parentPort delivers each parent message exactly once to every listener var
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
-
   // Each listener variant must see exactly 6 deliveries — one per message
   // posted. Pre-fix, `parentPort.onmessage` was 0 (never fired at all
   // because the parentPort getter/setter aliased `self.onmessage` but the
@@ -179,6 +176,7 @@ test("parentPort delivers each parent message exactly once to every listener var
     addEventListener: 6,
     onmessage: 6,
   });
+  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
 test("parentPort.off removes a listener (#29211)", async () => {
@@ -233,10 +231,10 @@ test("parentPort.off removes a listener (#29211)", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
   // `handler` should fire exactly once — it unsubscribes itself on the
   // first invocation — then stay silent for the remaining messages.
   expect(JSON.parse(stdout.trim())).toEqual({ fired: 1 });
+  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
 test("transferred MessagePorts are still reachable via parentPort listeners (#29211)", async () => {
@@ -290,12 +288,12 @@ test("transferred MessagePorts are still reachable via parentPort listeners (#29
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
   // The transferred port must reach the parentPort listener via `event.ports`
   // and must be usable for round-trip messaging. Before the port-preservation
   // fix, `event.ports` was an empty array and the transferred MessagePort was
   // silently dropped.
   expect(JSON.parse(stdout.trim())).toEqual({ ok: true, echoed: "reply:hello-from-worker" });
+  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
 test("parentPort.addEventListener accepts an EventListenerObject (#29211)", async () => {
@@ -337,11 +335,11 @@ test("parentPort.addEventListener accepts an EventListenerObject (#29211)", asyn
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
   // Three parent messages — the EventListenerObject's `handleEvent` should
   // run once per message (3 times). Pre-fix, the wrapper unconditionally
   // invoked `listener.$call` which throws on a non-function.
   expect(JSON.parse(stdout.trim())).toEqual({ fired: 3 });
+  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
 test("parentPort.addEventListener with AbortSignal exits cleanly after abort (#29211)", async () => {
@@ -382,12 +380,12 @@ test("parentPort.addEventListener with AbortSignal exits cleanly after abort (#2
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
   // The worker must exit naturally (exit code 0), not be killed by the
   // 3-second timeout (which would report -1). Pre-fix, the capture
   // forwarder stayed installed after AbortSignal detached the wrapped
   // listener, pinning the event loop and forcing the terminate fallback.
   expect(JSON.parse(stdout.trim())).toEqual({ exitCode: 0 });
+  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
 test("parentPort listener for non-message events does not block parent messages (#29211)", async () => {
@@ -439,8 +437,8 @@ test("parentPort listener for non-message events does not block parent messages 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
   // All three parent messages should reach the 'message' listener — the
   // earlier 'close' listener must not route anything into the forwarder.
   expect(JSON.parse(stdout.trim())).toEqual({ received: 3 });
+  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });

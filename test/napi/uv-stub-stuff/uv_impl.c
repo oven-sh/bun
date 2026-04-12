@@ -108,7 +108,7 @@ static napi_value test_uv_once(napi_env env, napi_callback_info info) {
 // because uv_thread_self was a stubbed libuv symbol on POSIX.
 static napi_value test_thread_self(napi_env env, napi_callback_info info) {
   // Call uv_thread_self twice — both from the current (main) thread. They
-  // must refer to the same thread per uv_thread_equal.
+  // must refer to the same thread per pthread_equal.
   uv_thread_t a = uv_thread_self();
   uv_thread_t b = uv_thread_self();
 

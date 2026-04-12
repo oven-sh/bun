@@ -20,8 +20,7 @@ import path from "node:path";
 describe.if(!isWindows)("issue #29223", () => {
   let tempdir: string = "";
 
-  // node-gyp install + compile can take a while on a cold debug build,
-  // so do it once in beforeAll with a generous timeout.
+  // Build the addon once in beforeAll (same pattern as test/napi/uv.test.ts).
   beforeAll(async () => {
     const addonSource = `
 #include <node_api.h>
@@ -84,12 +83,12 @@ console.log("OK");
     const libuvDir = path.join(import.meta.dir, "../../../src/bun.js/bindings/libuv");
     await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`.env(bunEnv);
     await Bun.$`${bunExe()} install && ${bunExe()} run build:napi`.env(bunEnv).cwd(tempdir);
-  }, 120_000);
+  });
 
   test("NAPI addon calling uv_thread_self during Init does not crash", async () => {
     // spawnSync because the baseline (pre-fix) crashes via panic + abort;
     // spawn + proc.exited can hang on such aborts under the test runner.
-    const { stdout, stderr, exitCode } = Bun.spawnSync({
+    const { stdout, exitCode } = Bun.spawnSync({
       cmd: [bunExe(), "index.js"],
       env: bunEnv,
       cwd: tempdir,
@@ -97,13 +96,10 @@ console.log("OK");
       stdout: "pipe",
     });
 
-    const stdoutStr = stdout.toString();
-    const stderrStr = stderr.toString();
-
-    // Before the fix, stderr contained the named panic message and stdout
-    // was empty because the addon crashed during Init.
-    expect(stderrStr).not.toContain("unsupported uv function: uv_thread_self");
-    expect(stdoutStr.trim()).toBe("OK");
+    // The addon prints "OK" from index.js only if require() succeeded and
+    // uv_thread_self() returned a thread id consistent with pthread_self().
+    // Pre-fix, require() panics the process and stdout stays empty.
+    expect(stdout.toString().trim()).toBe("OK");
     expect(exitCode).toBe(0);
   });
 });

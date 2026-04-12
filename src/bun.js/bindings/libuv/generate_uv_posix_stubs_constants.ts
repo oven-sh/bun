@@ -280,7 +280,7 @@ export const symbols = [
   "uv_thread_getname",
   "uv_thread_getpriority",
   "uv_thread_join",
-  // Defined in uv-posix-polyfills.cpp
+  // Defined in uv-posix-polyfills.c
   // "uv_thread_self",
   "uv_thread_setaffinity",
   "uv_thread_setname",

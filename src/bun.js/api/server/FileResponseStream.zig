@@ -231,55 +231,72 @@ fn onSendfile(this: *FileResponseStream) bool {
         return false;
     }
 
-    const adjusted = @min(this.sendfile.remain, @as(u64, std.math.maxInt(i32)));
-
     if (comptime bun.Environment.isLinux) {
-        var off: i64 = @intCast(this.sendfile.offset);
-        const rc = std.os.linux.sendfile(
-            this.sendfile.socket_fd.cast(),
-            this.fd.cast(),
-            &off,
-            adjusted,
-        );
-        const errno = bun.sys.getErrno(rc);
-        const sent: u64 = @intCast(@max(@as(i64, @intCast(off)) - @as(i64, @intCast(this.sendfile.offset)), 0));
-        this.sendfile.offset = @intCast(off);
-        this.sendfile.remain -|= sent;
+        while (true) {
+            const adjusted = @min(this.sendfile.remain, @as(u64, std.math.maxInt(i32)));
+            var off: i64 = @intCast(this.sendfile.offset);
+            const rc = std.os.linux.sendfile(
+                this.sendfile.socket_fd.cast(),
+                this.fd.cast(),
+                &off,
+                adjusted,
+            );
+            const errno = bun.sys.getErrno(rc);
+            const sent: u64 = @intCast(@max(@as(i64, @intCast(off)) - @as(i64, @intCast(this.sendfile.offset)), 0));
+            this.sendfile.offset = @intCast(off);
+            this.sendfile.remain -|= sent;
 
-        if (errno == .AGAIN) return this.armSendfileWritable();
-        if (errno != .SUCCESS) {
-            this.failWith(.{ .errno = @intFromEnum(errno), .syscall = .sendfile, .fd = this.fd });
-            return false;
+            switch (errno) {
+                .SUCCESS => {
+                    if (this.sendfile.remain == 0 or sent == 0) {
+                        this.endSendfile();
+                        return false;
+                    }
+                    return this.armSendfileWritable();
+                },
+                .INTR => continue,
+                .AGAIN => return this.armSendfileWritable(),
+                else => {
+                    this.failWith(.{ .errno = @intFromEnum(errno), .syscall = .sendfile, .fd = this.fd });
+                    return false;
+                },
+            }
         }
-        if (this.sendfile.remain == 0 or sent == 0) {
-            this.endSendfile();
-            return false;
-        }
-        return this.armSendfileWritable();
     } else if (comptime bun.Environment.isMac) {
-        var sbytes: std.posix.off_t = @intCast(adjusted);
-        const errno = bun.sys.getErrno(std.c.sendfile(
-            this.fd.cast(),
-            this.sendfile.socket_fd.cast(),
-            @intCast(this.sendfile.offset),
-            &sbytes,
-            null,
-            0,
-        ));
-        const sent: u64 = @intCast(sbytes);
-        this.sendfile.offset += sent;
-        this.sendfile.remain -|= sent;
+        while (true) {
+            var sbytes: std.posix.off_t = @intCast(@min(this.sendfile.remain, @as(u64, std.math.maxInt(i32))));
+            const errno = bun.sys.getErrno(std.c.sendfile(
+                this.fd.cast(),
+                this.sendfile.socket_fd.cast(),
+                @intCast(this.sendfile.offset),
+                &sbytes,
+                null,
+                0,
+            ));
+            const sent: u64 = @intCast(sbytes);
+            this.sendfile.offset += sent;
+            this.sendfile.remain -|= sent;
 
-        if (errno == .AGAIN) return this.armSendfileWritable();
-        if (errno != .SUCCESS and errno != .PIPE and errno != .NOTCONN) {
-            this.failWith(.{ .errno = @intFromEnum(errno), .syscall = .sendfile, .fd = this.fd });
-            return false;
+            switch (errno) {
+                .SUCCESS => {
+                    if (this.sendfile.remain == 0 or sent == 0) {
+                        this.endSendfile();
+                        return false;
+                    }
+                    return this.armSendfileWritable();
+                },
+                .INTR => continue,
+                .AGAIN => return this.armSendfileWritable(),
+                .PIPE, .NOTCONN => {
+                    this.endSendfile();
+                    return false;
+                },
+                else => {
+                    this.failWith(.{ .errno = @intFromEnum(errno), .syscall = .sendfile, .fd = this.fd });
+                    return false;
+                },
+            }
         }
-        if (this.sendfile.remain == 0 or sent == 0 or errno == .PIPE or errno == .NOTCONN) {
-            this.endSendfile();
-            return false;
-        }
-        return this.armSendfileWritable();
     } else {
         unreachable; // canSendfile gates this
     }

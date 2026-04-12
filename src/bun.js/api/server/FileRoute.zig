@@ -247,8 +247,9 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
         .none;
 
     const status_code: u16 = brk: {
-        if (range == .unsatisfiable) break :brk 416;
-        if (range == .satisfiable) break :brk 206;
+        // RFC 9110 §13.2.2: conditional preconditions are evaluated before
+        // Range. If-Modified-Since on an unmodified resource yields 304 even
+        // when a Range header is present (without If-Range).
         // Unlike If-Unmodified-Since, If-Modified-Since can only be used with a
         // GET or HEAD. When used in combination with If-None-Match, it is
         // ignored, unless the server doesn't support If-None-Match.
@@ -261,6 +262,9 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
                 }
             }
         }
+
+        if (range == .unsatisfiable) break :brk 416;
+        if (range == .satisfiable) break :brk 206;
 
         if (size == 0 and file_type == .file and this.status_code == 200) {
             break :brk 204;
@@ -275,6 +279,17 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
     resp.writeMark();
     this.writeHeaders(resp);
 
+    // Bodiless statuses end here — before the range switch, so a 304 (which
+    // can win over a satisfiable Range per RFC 9110 §13.2.2) doesn't emit
+    // Content-Range.
+    switch (status_code) {
+        204, 205, 304, 307, 308 => {
+            resp.endWithoutBody(resp.shouldCloseConnection());
+            return;
+        },
+        else => {},
+    }
+
     const body_offset: u64, const body_len: ?u64 = switch (range) {
         .satisfiable => |r| brk: {
             var crbuf: [96]u8 = undefined;
@@ -285,6 +300,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
         .unsatisfiable => {
             var crbuf: [64]u8 = undefined;
             resp.writeHeader("content-range", std.fmt.bufPrint(&crbuf, "bytes */{d}", .{size}) catch unreachable);
+            resp.writeHeader("accept-ranges", "bytes");
             resp.end("", resp.shouldCloseConnection());
             return;
         },
@@ -293,14 +309,6 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
             if (file_type == .file and this.blob.size > 0) @as(u64, @intCast(size)) else null,
         },
     };
-
-    switch (status_code) {
-        204, 205, 304, 307, 308 => {
-            resp.endWithoutBody(resp.shouldCloseConnection());
-            return;
-        },
-        else => {},
-    }
 
     if (file_type == .file and !resp.state().hasWrittenContentLengthHeader()) {
         resp.writeHeaderInt("content-length", body_len orelse size);

@@ -913,6 +913,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         var crbuf: [64]u8 = undefined;
                         this.doWriteStatus(416);
                         resp.writeHeader("content-range", std.fmt.bufPrint(&crbuf, "bytes */{d}", .{stat_size}) catch unreachable);
+                        resp.writeHeader("accept-ranges", "bytes");
                         const close = resp.shouldCloseConnection();
                         this.detachResponse();
                         this.endRequestStreamingAndDrain();

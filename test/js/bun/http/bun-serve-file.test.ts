@@ -339,6 +339,25 @@ describe("Bun.file in serve routes", () => {
       });
     });
 
+    it("If-Modified-Since wins over Range (304, no Content-Range)", async () => {
+      // RFC 9110 §13.2.2: preconditions evaluate before Range. An unmodified
+      // resource returns 304 even when a Range header is present.
+      const res1 = await fetch(new URL(`/partial.txt`, server.url));
+      const lastModified = res1.headers.get("Last-Modified");
+      expect(lastModified).not.toBeEmpty();
+
+      const res2 = await fetch(new URL(`/partial.txt`, server.url), {
+        headers: {
+          "If-Modified-Since": new Date(Date.parse(lastModified!) + 10000).toISOString(),
+          "Range": "bytes=0-3",
+        },
+      });
+
+      expect(res2.status).toBe(304);
+      expect(res2.headers.get("content-range")).toBeNull();
+      expect(await res2.text()).toBe("");
+    });
+
     it("ignores If-Modified-Since for non-GET/HEAD requests", async () => {
       const res1 = await fetch(new URL(`/hello.txt`, server.url));
       const lastModified = res1.headers.get("Last-Modified");
@@ -631,6 +650,7 @@ describe.each([
     const res = await fetch(new URL(path, server.url), { headers: { Range: "bytes=100-200" } });
     expect(res.status).toBe(416);
     expect(res.headers.get("content-range")).toBe("bytes */16");
+    expect(res.headers.get("accept-ranges")).toBe("bytes");
     expect(await res.text()).toBe("");
   });
 

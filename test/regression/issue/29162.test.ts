@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/29162
 //
@@ -99,7 +99,7 @@ describe("issue #29162 — fetch().body BYOB reader", () => {
   });
 
   test("BYOB works on Bun.file() streams", async () => {
-    const dir = tempDirWithFiles("issue-29162", {
+    using dir = tempDir("issue-29162", {
       "payload.txt": "hello from Bun.file",
     });
 

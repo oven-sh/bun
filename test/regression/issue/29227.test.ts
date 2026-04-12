@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
 // https://github.com/oven-sh/bun/issues/29227
 //
@@ -58,11 +58,7 @@ dns.lookup(name, (err, address, family) => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Filter out the ASAN warning that debug builds print to stderr.
     const realStderr = stderr

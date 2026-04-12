@@ -35,7 +35,7 @@ function cleanStderr(s: string): string {
     .trim();
 }
 
-test("parent messages do not fire self.onmessage in a node:worker_threads worker (#29211)", async () => {
+test.concurrent("parent messages do not fire self.onmessage in a node:worker_threads worker (#29211)", async () => {
   using dir = tempDir("issue-29211-self-onmessage", {
     "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
@@ -116,7 +116,7 @@ test("parent messages do not fire self.onmessage in a node:worker_threads worker
   expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
-test("parentPort delivers each parent message exactly once to every listener variant (#29211)", async () => {
+test.concurrent("parentPort delivers each parent message exactly once to every listener variant (#29211)", async () => {
   using dir = tempDir("issue-29211-listener-variants", {
     "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
@@ -179,7 +179,7 @@ test("parentPort delivers each parent message exactly once to every listener var
   expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
-test("parentPort.off removes a listener (#29211)", async () => {
+test.concurrent("parentPort.off removes a listener (#29211)", async () => {
   using dir = tempDir("issue-29211-off", {
     "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
@@ -237,7 +237,7 @@ test("parentPort.off removes a listener (#29211)", async () => {
   expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
-test("transferred MessagePorts are still reachable via parentPort listeners (#29211)", async () => {
+test.concurrent("transferred MessagePorts are still reachable via parentPort listeners (#29211)", async () => {
   using dir = tempDir("issue-29211-ports", {
     "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
@@ -296,7 +296,7 @@ test("transferred MessagePorts are still reachable via parentPort listeners (#29
   expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
-test("parentPort.addEventListener accepts an EventListenerObject (#29211)", async () => {
+test.concurrent("parentPort.addEventListener accepts an EventListenerObject (#29211)", async () => {
   using dir = tempDir("issue-29211-listener-object", {
     "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
@@ -342,7 +342,7 @@ test("parentPort.addEventListener accepts an EventListenerObject (#29211)", asyn
   expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
-test("parentPort.addEventListener with AbortSignal exits cleanly after abort (#29211)", async () => {
+test.concurrent("parentPort.addEventListener with AbortSignal exits cleanly after abort (#29211)", async () => {
   using dir = tempDir("issue-29211-abort-signal", {
     "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
@@ -388,7 +388,7 @@ test("parentPort.addEventListener with AbortSignal exits cleanly after abort (#2
   expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 });
 
-test("parentPort listener for non-message events does not block parent messages (#29211)", async () => {
+test.concurrent("parentPort listener for non-message events does not block parent messages (#29211)", async () => {
   // Regression for a gating bug in `parentPortAddEventListener`: registering
   // a listener for a non-message event (e.g. via `parentPort.once('close',
   // …)` or `.on('error', …)`) used to bump `listenerCount`, which in turn

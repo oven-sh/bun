@@ -126,6 +126,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_importKey);
 static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_exportKey);
 static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_wrapKey);
 static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_unwrapKey);
+static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_supports);
 
 // Attributes
 
@@ -198,6 +199,7 @@ static const HashTableValue JSSubtleCryptoPrototypeTableValues[] = {
     { "exportKey"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_exportKey, 2 } },
     { "wrapKey"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_wrapKey, 4 } },
     { "unwrapKey"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_unwrapKey, 7 } },
+    { "supports"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_supports, 2 } },
 };
 
 const ClassInfo JSSubtleCryptoPrototype::s_info = { "SubtleCrypto"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSubtleCryptoPrototype) };
@@ -596,6 +598,29 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_unwrapKeyBody(
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_unwrapKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_unwrapKeyBody>(*lexicalGlobalObject, *callFrame, "unwrapKey");
+}
+
+static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_supportsBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSSubtleCrypto>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    if (callFrame->argumentCount() < 2) [[unlikely]]
+        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto operation = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
+    auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument1.value());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(impl.supports(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), operation, WTF::move(algorithm)))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_supports, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_supportsBody>(*lexicalGlobalObject, *callFrame, "supports");
 }
 
 JSC::GCClient::IsoSubspace* JSSubtleCrypto::subspaceForImpl(JSC::VM& vm)

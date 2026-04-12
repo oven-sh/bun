@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013, 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2013 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,43 +25,25 @@
 
 #pragma once
 
-#include <wtf/Noncopyable.h>
-#include <wtf/Vector.h>
-#include <wtf/text/WTFString.h>
+#include "CryptoAlgorithm.h"
 
-#ifndef PAL_EXPORT
-#define PAL_EXPORT
-#endif
+#if ENABLE(WEB_CRYPTO)
 
-namespace PAL {
+namespace WebCore {
 
-struct CryptoDigestContext;
-
-class CryptoDigest {
-    WTF_MAKE_NONCOPYABLE(CryptoDigest);
-
+class CryptoAlgorithmSHA3_512 final : public CryptoAlgorithm {
 public:
-    enum class Algorithm {
-        SHA_1,
-        SHA_224,
-        SHA_256,
-        SHA_384,
-        SHA_512,
-        SHA3_256,
-        SHA3_384,
-        SHA3_512,
-    };
-    PAL_EXPORT static std::unique_ptr<CryptoDigest> create(Algorithm);
-    PAL_EXPORT ~CryptoDigest();
+    static constexpr ASCIILiteral s_name = "SHA3-512"_s;
 
-    PAL_EXPORT void addBytes(const void* input, size_t length);
-    PAL_EXPORT Vector<uint8_t> computeHash();
-    PAL_EXPORT String toHexString();
+    static const CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::SHA3_512;
+    static Ref<CryptoAlgorithm> create();
 
 private:
-    CryptoDigest();
-
-    std::unique_ptr<CryptoDigestContext> m_context;
+    CryptoAlgorithmSHA3_512() = default;
+    CryptoAlgorithmIdentifier identifier() const final;
+    void digest(Vector<uint8_t>&&, VectorCallback&&, ExceptionCallback&&, ScriptExecutionContext&, WorkQueue&) final;
 };
 
-} // namespace PAL
+} // namespace WebCore
+
+#endif // ENABLE(WEB_CRYPTO)

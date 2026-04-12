@@ -204,6 +204,9 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::SHA_256:
         case CryptoAlgorithmIdentifier::SHA_384:
         case CryptoAlgorithmIdentifier::SHA_512:
+        case CryptoAlgorithmIdentifier::SHA3_256:
+        case CryptoAlgorithmIdentifier::SHA3_384:
+        case CryptoAlgorithmIdentifier::SHA3_512:
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
@@ -381,6 +384,9 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::SHA_256:
         case CryptoAlgorithmIdentifier::SHA_384:
         case CryptoAlgorithmIdentifier::SHA_512:
+        case CryptoAlgorithmIdentifier::SHA3_256:
+        case CryptoAlgorithmIdentifier::SHA3_384:
+        case CryptoAlgorithmIdentifier::SHA3_512:
             return Exception { NotSupportedError };
         case CryptoAlgorithmIdentifier::None:
             return Exception { NotSupportedError };
@@ -801,6 +807,67 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
     };
 
     algorithm->digest(WTF::move(data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
+}
+
+// WICG "Modern Algorithms in the Web Cryptography API":
+// https://wicg.github.io/webcrypto-modern-algos/#SubtleCrypto-method-supports
+//
+// Synchronously report whether this SubtleCrypto implementation supports
+// a given (operation, algorithm) pair. Mirrors the normalization step of
+// the relevant algorithm dispatch: if the algorithm is recognised and its
+// parameter dictionary is well-formed for the requested operation, return
+// true; otherwise return false. Exceptions thrown by normalization (e.g.
+// TypeError for malformed input) are swallowed and surfaced as false so
+// callers can use supports() purely for feature detection.
+bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation, AlgorithmIdentifier&& algorithmIdentifier)
+{
+    auto& vm = state.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    Operations op;
+    if (operation == "encrypt"_s)
+        op = Operations::Encrypt;
+    else if (operation == "decrypt"_s)
+        op = Operations::Decrypt;
+    else if (operation == "sign"_s)
+        op = Operations::Sign;
+    else if (operation == "verify"_s)
+        op = Operations::Verify;
+    else if (operation == "digest"_s)
+        op = Operations::Digest;
+    else if (operation == "generateKey"_s)
+        op = Operations::GenerateKey;
+    else if (operation == "deriveBits"_s)
+        op = Operations::DeriveBits;
+    else if (operation == "deriveKey"_s)
+        op = Operations::DeriveBits; // deriveKey reuses DeriveBits normalization
+    else if (operation == "importKey"_s)
+        op = Operations::ImportKey;
+    else if (operation == "exportKey"_s)
+        op = Operations::ImportKey; // exportKey has no dedicated normalization; accept anything importable
+    else if (operation == "wrapKey"_s)
+        op = Operations::WrapKey;
+    else if (operation == "unwrapKey"_s)
+        op = Operations::UnwrapKey;
+    else if (operation == "getPublicKey"_s)
+        op = Operations::ImportKey; // getPublicKey applies to asymmetric keys; re-use importKey normalization
+    else if (operation == "encapsulateBits"_s || operation == "encapsulateKey"_s
+        || operation == "decapsulateBits"_s || operation == "decapsulateKey"_s) {
+        // KEM operations are not yet implemented.
+        return false;
+    } else {
+        // Unknown operation name.
+        return false;
+    }
+
+    auto params = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), op);
+    if (scope.exception()) {
+        scope.clearException();
+        return false;
+    }
+    if (params.hasException())
+        return false;
+    return true;
 }
 
 void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)

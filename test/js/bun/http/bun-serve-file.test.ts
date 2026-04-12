@@ -87,6 +87,10 @@ describe("Bun.file in serve routes", () => {
         return new Response(f);
       },
       "/slice-escape": () => new Response(Bun.file(join(tempDir, "bytes256.bin")).slice(0, 100)),
+      "/range-custom-headers": () =>
+        new Response(Bun.file(join(tempDir, "partial.txt")), {
+          headers: { "Cache-Control": "max-age=3600", "X-Custom": "abc" },
+        }),
     } as const;
 
     server = Bun.serve({
@@ -659,6 +663,31 @@ describe("Bun.file in serve routes", () => {
       const res = await fetch(new URL(path, server.url), { headers: { Range: "bytes=0-1,4-5" } });
       expect(res.status).toBe(200);
       expect(await res.text()).toBe(body);
+    });
+
+    it("ignores Range for non-GET/HEAD methods", async () => {
+      // RFC 9110 §14.2: Range is only defined for GET.
+      const res = await fetch(new URL(path, server.url), { method: "POST", headers: { Range: "bytes=0-3" } });
+      expect(res.status).not.toBe(206);
+      expect(res.headers.get("content-range")).toBeNull();
+    });
+  });
+
+  describe.concurrent("Range with custom headers (fetch handler)", () => {
+    it("416 preserves user headers", async () => {
+      const res = await fetch(new URL("/range-custom-headers", server.url), { headers: { Range: "bytes=100-200" } });
+      expect(res.status).toBe(416);
+      expect(res.headers.get("cache-control")).toBe("max-age=3600");
+      expect(res.headers.get("x-custom")).toBe("abc");
+      expect(res.headers.get("content-range")).toBe("bytes */16");
+    });
+
+    it("206 preserves user headers", async () => {
+      const res = await fetch(new URL("/range-custom-headers", server.url), { headers: { Range: "bytes=0-3" } });
+      expect(res.status).toBe(206);
+      expect(res.headers.get("cache-control")).toBe("max-age=3600");
+      expect(res.headers.get("x-custom")).toBe("abc");
+      expect(await res.text()).toBe("0123");
     });
   });
 

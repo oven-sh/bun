@@ -239,9 +239,10 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
 
     // Range applies to the slice the route was configured with, not the
     // underlying file: a Bun.file(p).slice(a,b) route exposes only [a,b).
-    // Skip if the route has a non-200 status or the user already set
-    // Content-Range — they're managing partial responses themselves.
-    const range: RangeRequest.Result = if (file_type == .file and this.status_code == 200 and !this.has_content_range_header)
+    // RFC 9110 §14.2: Range is only defined for GET (HEAD mirrors GET's
+    // headers). Skip if the route has a non-200 status or the user already
+    // set Content-Range — they're managing partial responses themselves.
+    const range: RangeRequest.Result = if ((method == .GET or method == .HEAD) and file_type == .file and this.status_code == 200 and !this.has_content_range_header)
         RangeRequest.fromRequest(req, size)
     else
         .none;

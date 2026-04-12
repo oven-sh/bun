@@ -902,7 +902,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             else
                 false;
             const is_whole_file = this.blob.Blob.offset == 0 and (original_size == Blob.max_size or original_size == stat_size);
-            if (is_regular and !user_handles_range and is_whole_file and this.range != .none) {
+            // RFC 9110 §14.2: Range is only defined for GET (HEAD mirrors GET's headers).
+            const method_allows_range = this.method == .GET or this.method == .HEAD;
+            if (is_regular and method_allows_range and !user_handles_range and is_whole_file and this.range != .none) {
                 switch (this.range.resolve(stat_size)) {
                     .none => {},
                     .satisfiable => |r| {
@@ -915,6 +917,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         if (auto_close) fd.close();
                         var crbuf: [64]u8 = undefined;
                         this.doWriteStatus(416);
+                        if (this.response_ptr) |response| {
+                            if (response.swapInitHeaders()) |headers_| {
+                                defer headers_.deref();
+                                this.doWriteHeaders(headers_);
+                            }
+                        }
                         resp.writeHeader("content-range", std.fmt.bufPrint(&crbuf, "bytes */{d}", .{stat_size}) catch unreachable);
                         resp.writeHeader("accept-ranges", "bytes");
                         const close = resp.shouldCloseConnection();

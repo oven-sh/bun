@@ -6,13 +6,11 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
-test.skipIf(isWindows)(
-  "execFileSync/spawnSync/execSync honor runtime mutations to process.env.PATH",
-  async () => {
-    using dir = tempDir("issue-29237", {
-      // Fake `marker` binary — whichever PATH entry wins gets called.
-      "fake/marker": '#!/bin/sh\necho "FAKE_CALLED"\n',
-      "fixture.js": `
+test.skipIf(isWindows)("execFileSync/spawnSync/execSync honor runtime mutations to process.env.PATH", async () => {
+  using dir = tempDir("issue-29237", {
+    // Fake `marker` binary — whichever PATH entry wins gets called.
+    "fake/marker": '#!/bin/sh\necho "FAKE_CALLED"\n',
+    "fixture.js": `
         const { execFileSync, spawnSync, execSync } = require("node:child_process");
         const path = require("node:path");
 
@@ -36,35 +34,30 @@ test.skipIf(isWindows)(
         const d = execFileSync("marker", { encoding: "utf8", env: process.env }).trim();
         console.log("execFileSync+env:", d);
       `,
-    });
+  });
 
-    // chmod the fake binary so it's executable — tempDir writes 0644 by default.
-    const { chmodSync } = require("node:fs");
-    const path = require("node:path");
-    chmodSync(path.join(String(dir), "fake", "marker"), 0o755);
+  // chmod the fake binary so it's executable — tempDir writes 0644 by default.
+  const { chmodSync } = require("node:fs");
+  const path = require("node:path");
+  chmodSync(path.join(String(dir), "fake", "marker"), 0o755);
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout, exitCode }).toEqual({
-      stdout:
-        "execFileSync: FAKE_CALLED\n" +
-        "spawnSync: FAKE_CALLED\n" +
-        "execSync: FAKE_CALLED\n" +
-        "execFileSync+env: FAKE_CALLED\n",
-      exitCode: 0,
-    });
-    // stderr may contain ASAN banner; we just want no actual errors from the fixture.
-    expect(stderr).not.toContain("error:");
-  },
-);
+  expect({ stdout, exitCode }).toEqual({
+    stdout:
+      "execFileSync: FAKE_CALLED\n" +
+      "spawnSync: FAKE_CALLED\n" +
+      "execSync: FAKE_CALLED\n" +
+      "execFileSync+env: FAKE_CALLED\n",
+    exitCode: 0,
+  });
+  // stderr may contain ASAN banner; we just want no actual errors from the fixture.
+  expect(stderr).not.toContain("error:");
+});

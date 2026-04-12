@@ -757,6 +757,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             this.deref();
         }
 
+        fn onFileStreamAbort(ctx: *anyopaque, resp: uws.AnyResponse) void {
+            const this: *RequestContext = @ptrCast(@alignCast(ctx));
+            // Route through the real onAbort so flags.aborted, request.signal,
+            // and additional_on_abort fire exactly as they did pre-consolidation.
+            this.onAbort(if (comptime ssl_enabled) resp.SSL else resp.TCP);
+        }
+
         fn onFileStreamError(ctx: *anyopaque, resp: uws.AnyResponse, _: bun.sys.Error) void {
             // FileResponseStream already force-closed the socket; just clean up.
             onFileStreamComplete(ctx, resp);
@@ -815,7 +822,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         pub fn doSendfile(this: *RequestContext, blob: Blob) void {
             if (this.isAbortedOrEnded()) return;
             if (this.flags.has_sendfile_ctx) return;
-            this.flags.has_sendfile_ctx = true;
 
             if (this.resp == null or this.server == null) return;
             const globalThis = this.server.?.globalThis;
@@ -923,6 +929,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // as userData. uWS keeps a single shared userData slot per response, so
             // any later setAbortHandler()/onWritable() from this RequestContext would
             // stomp it and hand FileResponseStream's callbacks a *RequestContext.
+            this.flags.has_sendfile_ctx = true;
             this.flags.has_abort_handler = true;
             this.flags.has_marked_pending = true;
 
@@ -938,6 +945,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 .idle_timeout = this.server.?.config.idleTimeout,
                 .ctx = this,
                 .on_complete = onFileStreamComplete,
+                .on_abort = onFileStreamAbort,
                 .on_error = onFileStreamError,
             });
         }

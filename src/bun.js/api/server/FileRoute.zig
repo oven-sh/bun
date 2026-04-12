@@ -235,14 +235,16 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
 
     // Range applies to the slice the route was configured with, not the
     // underlying file: a Bun.file(p).slice(a,b) route exposes only [a,b).
-    const range: RangeRequest.Result = if (file_type == .file)
+    // Only honor Range for routes configured with a 200 status — serving a
+    // partial body under a custom status (201, 400, …) is incoherent.
+    const range: RangeRequest.Result = if (file_type == .file and this.status_code == 200)
         RangeRequest.fromRequest(req, size)
     else
         .none;
 
     const status_code: u16 = brk: {
         if (range == .unsatisfiable) break :brk 416;
-        if (range == .satisfiable and this.status_code == 200) break :brk 206;
+        if (range == .satisfiable) break :brk 206;
         // Unlike If-Unmodified-Since, If-Modified-Since can only be used with a
         // GET or HEAD. When used in combination with If-None-Match, it is
         // ignored, unless the server doesn't support If-None-Match.

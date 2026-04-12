@@ -23,7 +23,10 @@ pub const Raw = union(enum) {
         return switch (this) {
             .none => .none,
             .suffix => |n| {
-                if (n == 0 or total == 0) return .unsatisfiable;
+                if (n == 0) return .unsatisfiable;
+                // RFC 9110 §14.1.3: a positive suffix-length is satisfiable;
+                // for an empty representation we serve the whole (0-byte) body.
+                if (total == 0) return .none;
                 return .{ .satisfiable = .{ .start = total -| n, .end = total - 1 } };
             },
             .bounded => |b| {

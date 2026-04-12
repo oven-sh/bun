@@ -19,6 +19,7 @@ idle_timeout: u8,
 
 ctx: *anyopaque,
 on_complete: *const fn (*anyopaque, AnyResponse) void,
+on_abort: ?*const fn (*anyopaque, AnyResponse) void,
 on_error: *const fn (*anyopaque, AnyResponse, bun.sys.Error) void,
 
 mode: Mode,
@@ -59,6 +60,9 @@ pub const StartOptions = struct {
     idle_timeout: u8,
     ctx: *anyopaque,
     on_complete: *const fn (*anyopaque, AnyResponse) void,
+    /// Fires instead of `on_complete` when the client disconnects mid-stream.
+    /// If null, abort is reported via `on_complete`.
+    on_abort: ?*const fn (*anyopaque, AnyResponse) void = null,
     on_error: *const fn (*anyopaque, AnyResponse, bun.sys.Error) void,
 };
 
@@ -74,6 +78,7 @@ pub fn start(opts: StartOptions) void {
         .idle_timeout = opts.idle_timeout,
         .ctx = opts.ctx,
         .on_complete = opts.on_complete,
+        .on_abort = opts.on_abort,
         .on_error = opts.on_error,
         .mode = if (use_sendfile) .sendfile else .reader,
     });
@@ -307,7 +312,7 @@ fn onAborted(this: *FileResponseStream, _: AnyResponse) void {
     if (!this.state.response_done) {
         this.state.response_done = true;
         this.detachResp();
-        this.on_complete(this.ctx, this.resp);
+        (this.on_abort orelse this.on_complete)(this.ctx, this.resp);
     }
     this.finish();
 }

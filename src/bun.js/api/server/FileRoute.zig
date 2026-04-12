@@ -154,7 +154,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
     }
     const path = this.blob.store.?.getPath() orelse {
         req.setYield(true);
-        this.deref();
+        this.onResponseComplete(resp);
         return;
     };
 
@@ -180,11 +180,25 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
 
     if (fd_result == .err) {
         req.setYield(true);
-        this.deref();
+        this.onResponseComplete(resp);
         return;
     }
 
     const fd = fd_result.result;
+
+    // `fd_owned` tracks whether this function is still responsible for
+    // closing the file descriptor and releasing the route ref. Every
+    // non-streaming return — bodiless status codes (304/204/205/307/308),
+    // HEAD, non-streamable files, and the two JS-exception `catch return`
+    // paths below — hits this defer, so neither the fd nor the route ref
+    // (or the server's pending_requests counter) can leak regardless of
+    // which branch runs. The streaming path clears `fd_owned` right
+    // before handing ownership to `StreamTransfer`.
+    var fd_owned = true;
+    defer if (fd_owned) {
+        bun.Async.Closer.close(fd, if (bun.Environment.isWindows) bun.windows.libuv.Loop.get());
+        this.onResponseComplete(resp);
+    };
 
     const input_if_modified_since_date: ?u64 = req.dateForHeader("if-modified-since") catch return; // TODO: properly propagate exception upwards
 
@@ -215,9 +229,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
     };
 
     if (!can_serve_file) {
-        bun.Async.Closer.close(fd, if (bun.Environment.isWindows) bun.windows.libuv.Loop.get());
         req.setYield(true);
-        this.deref();
         return;
     }
 
@@ -251,7 +263,6 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
     switch (status_code) {
         204, 205, 304, 307, 308 => {
             resp.endWithoutBody(resp.shouldCloseConnection());
-            this.deref();
             return;
         },
         else => {},
@@ -264,10 +275,11 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
 
     if (method == .HEAD) {
         resp.endWithoutBody(resp.shouldCloseConnection());
-        this.deref();
         return;
     }
 
+    // Hand ownership of the fd to StreamTransfer; disable the defer close.
+    fd_owned = false;
     const transfer = StreamTransfer.create(fd, resp, this, pollable, file_type != .file, file_type);
     transfer.start(
         if (file_type == .file) this.blob.offset else 0,

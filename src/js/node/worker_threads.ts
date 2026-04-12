@@ -185,7 +185,7 @@ function fakeParentPort() {
       const nativePorts = messageEvent.ports;
       const clone = new MessageEvent(type, {
         data: messageEvent.data,
-        ports: nativePorts && nativePorts.length > 0 ? Array.from(nativePorts) : undefined,
+        ports: nativePorts && nativePorts.length > 0 ? $Array.from(nativePorts) : undefined,
       });
       parentPortTarget.dispatchEvent(clone);
     };
@@ -258,9 +258,15 @@ function fakeParentPort() {
     const signal =
       typeof options === "object" && options !== null ? ((options as AddEventListenerOptions).signal ?? null) : null;
     if (signal && signal.aborted) return;
+    // Only `message` / `messageerror` events are dispatched on `self` by the
+    // native worker runtime — all other event types (`close`, `error`, …)
+    // live purely on `parentPortTarget` and don't need the capture forwarder
+    // at all. Gating on `tracksForwarder` stops us from installing the
+    // forwarder (and leaking `listenerCount`) for unrelated event types.
+    const tracksForwarder = type === "message" || type === "messageerror";
     const slot = listenerSlot(type, capture);
     let bucket = trackedByListener.get(listener as object);
-    if (bucket?.has(slot)) {
+    if (bucket?.$has(slot)) {
       // Duplicate add — EventTarget already dedupes, so no-op.
       return;
     }
@@ -269,10 +275,10 @@ function fakeParentPort() {
     const wrapped: EventListener = function (event) {
       if (once) {
         const bucketNow = trackedByListener.get(listener as object);
-        if (bucketNow?.get(slot) === entry) {
-          bucketNow.delete(slot);
-          if (bucketNow.size === 0) trackedByListener.delete(listener as object);
-          releaseListener();
+        if (bucketNow?.$get(slot) === entry) {
+          bucketNow.$delete(slot);
+          if (bucketNow.$size === 0) trackedByListener.delete(listener as object);
+          if (tracksForwarder) releaseListener();
         }
       }
       invokeListener(listener, event);
@@ -282,11 +288,11 @@ function fakeParentPort() {
       bucket = new Map();
       trackedByListener.set(listener as object, bucket);
     }
-    bucket.set(slot, entry);
+    bucket.$set(slot, entry);
     const innerOptions: boolean | AddEventListenerOptions =
       typeof options === "object" && options !== null ? { ...options, signal: undefined } : (options ?? false);
     parentPortTarget.addEventListener(type, wrapped, innerOptions);
-    acquireListener();
+    if (tracksForwarder) acquireListener();
     if (signal) {
       signal.addEventListener(
         "abort",
@@ -308,12 +314,12 @@ function fakeParentPort() {
     const bucket = trackedByListener.get(listener as object);
     if (!bucket) return;
     const slot = listenerSlot(type, capture);
-    const entry = bucket.get(slot);
+    const entry = bucket.$get(slot);
     if (!entry) return;
-    bucket.delete(slot);
-    if (bucket.size === 0) trackedByListener.delete(listener as object);
+    bucket.$delete(slot);
+    if (bucket.$size === 0) trackedByListener.delete(listener as object);
     parentPortTarget.removeEventListener(type, entry.wrapped, options);
-    releaseListener();
+    if (type === "message" || type === "messageerror") releaseListener();
   }
 
   Object.defineProperty(fake, "onmessage", {

@@ -389,3 +389,58 @@ test("parentPort.addEventListener with AbortSignal exits cleanly after abort (#2
   // listener, pinning the event loop and forcing the terminate fallback.
   expect(JSON.parse(stdout.trim())).toEqual({ exitCode: 0 });
 });
+
+test("parentPort listener for non-message events does not block parent messages (#29211)", async () => {
+  // Regression for a gating bug in `parentPortAddEventListener`: registering
+  // a listener for a non-message event (e.g. via `parentPort.once('close',
+  // …)` or `.on('error', …)`) used to bump `listenerCount`, which in turn
+  // installed the capture-phase `message` forwarder on `self`. The forwarder
+  // re-dispatched every incoming message on `parentPortTarget` — but that
+  // target had no 'message' listener, so all parent messages were silently
+  // dropped. Only listeners for 'message' / 'messageerror' should install
+  // the forwarder.
+  using dir = tempDir("issue-29211-non-message-event", {
+    "worker.mjs": String.raw`
+      import { parentPort } from 'node:worker_threads';
+      // Register a non-message listener FIRST. This must not affect message
+      // delivery.
+      parentPort.on('close', () => {});
+      let received = 0;
+      parentPort.on('message', (msg) => {
+        received++;
+        if (msg && msg.cmd === 'report') {
+          parentPort.postMessage({ received });
+        }
+      });
+    `,
+    "main.mjs": String.raw`
+      import { Worker } from 'node:worker_threads';
+      const w = new Worker(new URL('./worker.mjs', import.meta.url));
+      const result = await new Promise((resolve, reject) => {
+        w.on('error', reject);
+        w.on('message', (msg) => {
+          if (msg && typeof msg.received === 'number') resolve(msg);
+        });
+        w.postMessage({ n: 1 });
+        w.postMessage({ n: 2 });
+        w.postMessage({ cmd: 'report' });
+      });
+      await w.terminate();
+      console.log(JSON.stringify(result));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), String(dir) + "/main.mjs"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  // All three parent messages should reach the 'message' listener — the
+  // earlier 'close' listener must not route anything into the forwarder.
+  expect(JSON.parse(stdout.trim())).toEqual({ received: 3 });
+});

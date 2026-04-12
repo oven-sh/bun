@@ -1,5 +1,5 @@
 import type { Server } from "bun";
-import { afterAll, beforeAll, describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { rmScope, tempDirWithFiles } from "harness";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";

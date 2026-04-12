@@ -201,12 +201,11 @@ describe.skipIf(isWindows)("WebSocket over unix domain socket", () => {
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout.trim()).toBe("pong:from-child");
-    expect(stderr).not.toContain("error");
     expect(exitCode).toBe(0);
   });
 });

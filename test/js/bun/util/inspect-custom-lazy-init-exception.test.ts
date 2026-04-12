@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("Bun.inspect on object with custom inspect does not crash when node:util fails to load", async () => {

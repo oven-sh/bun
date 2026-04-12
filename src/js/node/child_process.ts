@@ -534,7 +534,7 @@ function spawnSync(file, args, options) {
       // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
       // so we have to set argv0 to spawnargs[0] and cmd[0] to file
       cmd: [options.file, ...Array.prototype.slice.$call(options.args, 1)],
-      env: options.env || undefined,
+      env: options[kBunEnv] || undefined,
       cwd: options.cwd || undefined,
       stdio: bunStdio,
       windowsVerbatimArguments: options.windowsVerbatimArguments,

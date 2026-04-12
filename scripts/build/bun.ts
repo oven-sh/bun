@@ -363,7 +363,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     n.blank();
     const archiveName = `${cfg.libPrefix}${exeName}${cfg.libSuffix}`;
     const archive = ar(n, cfg, archiveName, allObjects);
-    n.phony("bun", [archive]);
+    // depLibs explicit in the phony: deps with no provided includes (tinycc,
+    // lolhtml) aren't in depHeaderSignal, so the archive doesn't pull them
+    // transitively — but link-only still needs them uploaded.
+    n.phony("bun", [archive, ...depLibs]);
     n.default(["bun"]);
     return { archive, deps, codegen, zigObjects, objects: allObjects };
   }

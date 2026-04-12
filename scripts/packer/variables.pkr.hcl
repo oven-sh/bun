@@ -67,6 +67,12 @@ variable "agent_script" {
   description = "Path to bundled agent.mjs. If empty, agent install is skipped."
 }
 
+variable "prefetch_tarball" {
+  type        = string
+  default     = ""
+  description = "Path to bun-prefetch.tgz (scripts/build/ tarball). Uploaded before bootstrap so Prefetch-BuildDeps can bake dep archives into the image."
+}
+
 variable "gallery_resource_group" {
   type    = string
   default = "BUN-CI"

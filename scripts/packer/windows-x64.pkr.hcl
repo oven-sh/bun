@@ -84,6 +84,12 @@ source "azure-arm" "windows-x64" {
 build {
   sources = ["source.azure-arm.windows-x64"]
 
+  // Step 0: Upload scripts/build/ so bootstrap's Prefetch-BuildDeps can run.
+  provisioner "file" {
+    source      = var.prefetch_tarball
+    destination = "C:\\Windows\\Temp\\bun-prefetch.tgz"
+  }
+
   // Step 1: Run bootstrap — installs all build dependencies
   provisioner "powershell" {
     script           = var.bootstrap_script

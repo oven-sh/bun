@@ -81,6 +81,13 @@ cp /tmp/Dockerfile /tmp/fakebun/.buildkite/Dockerfile || {
     echo "error: failed to copy Dockerfile"
     exit 1
 }
+# scripts/build/ for the Dockerfile's prefetch layer. machine.mjs ships this
+# as a tarball; without it the COPY in the Dockerfile would fail.
+mkdir -p /tmp/fakebun/scripts
+tar xzf /tmp/bun-prefetch.tgz -C /tmp/fakebun/scripts || {
+    echo "error: failed to extract bun-prefetch.tgz"
+    exit 1
+}
 
 cd /tmp/fakebun || {
     echo "error: failed to change directory"

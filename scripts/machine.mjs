@@ -1143,7 +1143,7 @@ async function getAzureToken(tenantId, clientId, clientSecret) {
  * This eliminates all the Azure Run Command issues (output truncation, x64 emulation,
  * PATH not refreshing, stderr false positives, quote escaping).
  */
-async function buildWindowsImageWithPacker({ os, arch, release, command, ci, agentPath, bootstrapPath }) {
+async function buildWindowsImageWithPacker({ os, arch, release, command, ci, agentPath, bootstrapPath, prefetchPath }) {
   const { getSecret } = await import("./utils.mjs");
 
   // Determine Packer template
@@ -1236,6 +1236,8 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
     `bootstrap_script=${bootstrapPath}`,
     "-var",
     `agent_script=${agentPath}`,
+    "-var",
+    `prefetch_tarball=${prefetchPath}`,
     templateDir,
   ];
 
@@ -1447,7 +1449,7 @@ async function main() {
   // Use Packer for Windows Azure image builds — it handles VM creation,
   // bootstrap, sysprep, and gallery capture via WinRM (no Run Command hacks).
   if (args["cloud"] === "azure" && os === "windows" && (command === "create-image" || command === "publish-image")) {
-    await buildWindowsImageWithPacker({ os, arch, release, command, ci, agentPath, bootstrapPath });
+    await buildWindowsImageWithPacker({ os, arch, release, command, ci, agentPath, bootstrapPath, prefetchPath });
     return;
   }
 
@@ -1560,6 +1562,10 @@ async function main() {
             console.log("Uploaded Dockerfile");
             await machine.upload(agentPath, "/tmp/agent.mjs");
             console.log("Uploaded agent.mjs");
+            if (prefetchPath) {
+              await machine.upload(prefetchPath, "/tmp/bun-prefetch.tgz");
+              console.log("Uploaded bun-prefetch.tgz");
+            }
             agentPath = "";
             bootstrapPath = "";
             await machine.spawnSafe(["sudo", "bash", remotePath], { stdio: "inherit", cwd: "/tmp" });

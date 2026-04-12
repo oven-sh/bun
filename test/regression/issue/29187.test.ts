@@ -344,3 +344,57 @@ export const sum = ${Array.from({ length: 80 }, (_, i) => `v${i}`).join(" + ")};
   new Function("module", "exports", output)(mod, mod.exports);
   expect(mod.exports.sum).toBe((80 * 79) / 2);
 });
+
+test.concurrent("--format cjs --no-bundle: import.meta is replaced with CJS equivalents", async () => {
+  // Regression: raw `import.meta` in CJS output is a SyntaxError at
+  // runtime (`Cannot use 'import.meta' outside a module`). The
+  // --no-bundle CJS rewrite now emits an inline object literal whose
+  // properties map onto `__filename` / `__dirname` / `require.main`.
+  const output = await buildCjs(
+    {
+      "index.ts": `export const info = {
+  url: import.meta.url,
+  dirname: import.meta.dirname,
+  filename: import.meta.filename,
+  main: import.meta.main,
+};
+`,
+    },
+    "./index.ts",
+    "node",
+  );
+
+  // The raw `import.meta` token must not appear in the output.
+  expect(output).not.toMatch(/\bimport\s*\.\s*meta\b/);
+  // Should reference the CJS-level globals the inline shim uses.
+  expect(output).toContain("__filename");
+  expect(output).toContain("__dirname");
+  expect(output).toContain("require.main");
+
+  // Sanity-run with faked __filename / __dirname / require to verify
+  // the emitted shape actually resolves the property accesses.
+  const fakeFilename = "/fake/path/to/mod.js";
+  const fakeDirname = "/fake/path/to";
+  const fakeRequire = (p: string) => {
+    if (p === "url") {
+      return { pathToFileURL: (f: string) => ({ href: `file://${f}` }) };
+    }
+    throw new Error(`unexpected require(${JSON.stringify(p)})`);
+  };
+  (fakeRequire as any).main = {};
+  const mod = { exports: {} as any };
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+  new Function("module", "exports", "require", "__filename", "__dirname", output)(
+    mod,
+    mod.exports,
+    fakeRequire,
+    fakeFilename,
+    fakeDirname,
+  );
+  expect(mod.exports.info).toMatchObject({
+    url: `file://${fakeFilename}`,
+    dirname: fakeDirname,
+    filename: fakeFilename,
+    main: false, // require.main === module is false when module !== require.main
+  });
+});

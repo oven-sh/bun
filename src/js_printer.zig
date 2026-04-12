@@ -2069,9 +2069,20 @@ fn NewPrinter(
                         p.printSymbol(p.options.hmr_ref);
                         p.print(".importMeta");
                     } else if (!p.options.import_meta_ref.isValid()) {
-                        // Most of the time, leave it in there
-                        if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
-                        p.print("import.meta");
+                        if (rewrite_esm_to_cjs) {
+                            // `--no-bundle --format cjs` mode: emit `import.meta`
+                            // as an inline object literal so the common
+                            // property accesses (.url, .dir, .dirname,
+                            // .filename, .main, .resolve) map onto the CJS
+                            // equivalents. Without this, the printer would
+                            // emit literal `import.meta` which is a
+                            // SyntaxError inside a CJS module at runtime.
+                            p.print("({url:require(\"url\").pathToFileURL(__filename).href,dir:__dirname,dirname:__dirname,filename:__filename,path:__filename,main:require.main===module,resolve(p){return require.resolve(p)},env:process.env})");
+                        } else {
+                            // Most of the time, leave it in there
+                            if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
+                            p.print("import.meta");
+                        }
                     } else {
                         // Note: The bundler will not hit this code path. The bundler will replace
                         // the ImportMeta AST node with a regular Identifier AST node.
@@ -3880,11 +3891,11 @@ fn NewPrinter(
                         }
                     }
 
-                    if (rewrite_esm_to_cjs and s.is_export) {
-                        p.printSemicolonAfterStatement();
-                    } else {
-                        p.printNewline();
-                    }
+                    // `class Foo {}` is a declaration statement, not an
+                    // expression — it doesn't need a terminating `;`. Just a
+                    // newline between the body and whatever follows, matching
+                    // the `s_function` handler.
+                    p.printNewline();
 
                     if (rewrite_esm_to_cjs) {
                         if (s.is_export) {

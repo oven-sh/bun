@@ -96,18 +96,21 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
     }
 
     const tmpPath = `${dest}.${process.pid}.partial`;
+    let permanent = false;
     try {
       const res = await fetch(url, { headers: { "User-Agent": "bun-build-system" } });
       if (!res.ok || res.body === null) {
         lastError = new BuildError(`HTTP ${res.status} ${res.statusText} for ${url}`);
-        continue;
+        // 4xx is permanent (wrong URL / asset not published) — retrying just
+        // burns the backoff budget. Only 5xx/network errors get another shot.
+        permanent = res.status >= 400 && res.status < 500;
+      } else {
+        // Cast: DOM ReadableStream vs node:stream/web ReadableStream — same
+        // shape at runtime, different TS lib declarations.
+        await pipeline(Readable.fromWeb(res.body as unknown as NodeWebReadable), createWriteStream(tmpPath));
+        await rename(tmpPath, dest);
+        return;
       }
-
-      // Cast: DOM ReadableStream vs node:stream/web ReadableStream — same
-      // shape at runtime, different TS lib declarations.
-      await pipeline(Readable.fromWeb(res.body as unknown as NodeWebReadable), createWriteStream(tmpPath));
-      await rename(tmpPath, dest);
-      return;
     } catch (err) {
       lastError = err;
       // Swallow cleanup errors: on Windows, AV/indexer can briefly lock the
@@ -115,6 +118,7 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
       // createWriteStream truncates anyway.
       await rm(tmpPath, { force: true }).catch(() => {});
     }
+    if (permanent) break;
   }
 
   throw new BuildError(`Failed to download after ${maxAttempts} attempts: ${url}`, {

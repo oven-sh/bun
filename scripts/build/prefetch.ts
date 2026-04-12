@@ -257,6 +257,7 @@ async function main(): Promise<void> {
   );
 
   const manifest: Record<string, { url: string; label: string; bytes: number }> = {};
+  const missing: string[] = [];
   const queue = Array.from(urls.entries());
   let fetched = 0;
   let skipped = 0;
@@ -271,8 +272,17 @@ async function main(): Promise<void> {
       if (existsSync(dest) && statSync(dest).size > 0) {
         skipped++;
       } else {
-        await downloadWithRetry(url, dest, label);
-        fetched++;
+        // Non-fatal: not every WebKit variant is published for every target
+        // (e.g. no -asan on Windows). A miss here just means that build
+        // config downloads at build time — same as having no cache at all.
+        try {
+          await downloadWithRetry(url, dest, label);
+          fetched++;
+        } catch (err) {
+          missing.push(`${label}  ${url}`);
+          console.warn(`warn: skipping ${label}: ${err instanceof Error ? err.message : err}`);
+          continue;
+        }
       }
       manifest[key] = { url, label, bytes: statSync(dest).size };
     }
@@ -282,7 +292,12 @@ async function main(): Promise<void> {
   await writeFile(join(args.out, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
 
   const totalMiB = Object.values(manifest).reduce((a, b) => a + b.bytes, 0) / 1048576;
-  console.log(`done: ${fetched} fetched, ${skipped} cached, ${totalMiB.toFixed(1)} MiB total`);
+  console.log(
+    `done: ${fetched} fetched, ${skipped} cached, ${missing.length} unavailable, ${totalMiB.toFixed(1)} MiB total`,
+  );
+  if (missing.length > 0) {
+    console.log(`unavailable (will download at build time if needed):\n  ${missing.join("\n  ")}`);
+  }
 }
 
 if (process.argv[1] === import.meta.filename) {

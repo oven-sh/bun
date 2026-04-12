@@ -35,11 +35,7 @@ globalThis.order.push("tla-end");
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Expected ordering: the TLA module runs to completion first (tla-start
   // then tla-end), then BOTH .then() handlers fire in import order.

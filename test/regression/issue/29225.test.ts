@@ -1,21 +1,9 @@
 // https://github.com/oven-sh/bun/issues/29225
-//
-// Before the fix, `console.log(ReadableStreamBYOBReader)` printed
-// `[class Function]` in Bun. The underlying bug was in the inspector's
-// `.Class` formatter: it used `calculatedClassName`, which walks the
-// prototype chain looking for `.constructor`. For DOM / WebCore
-// InternalFunction constructors, that walk resolves to
-// `Function.prototype.constructor === Function` and returns `"Function"`.
-//
-// The fix is to use the constructor's own `.name` property instead,
-// which is set at constructor initialization to the real class name.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { ReadableStreamBYOBReader } from "node:stream/web";
 
-// All of these are WebCore-generated `InternalFunction` constructors in
-// Bun. Every one of them reported as `[class Function]` before the fix.
 const streamWebClasses = [
   "ByteLengthQueuingStrategy",
   "CompressionStream",
@@ -36,7 +24,7 @@ const streamWebClasses = [
   "WritableStreamDefaultWriter",
 ];
 
-test("node:stream/web classes inspect as [class X], not [class Function]", async () => {
+test.concurrent("node:stream/web classes inspect as [class X], not [class Function]", async () => {
   const source = `
     const sw = require("node:stream/web");
     const names = ${JSON.stringify(streamWebClasses)};
@@ -60,8 +48,6 @@ test("node:stream/web classes inspect as [class X], not [class Function]", async
 
   const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(exitCode).toBe(0);
-
   const lines = stdout.trim().split("\n");
   expect(lines.length).toBe(streamWebClasses.length);
 
@@ -72,9 +58,10 @@ test("node:stream/web classes inspect as [class X], not [class Function]", async
     expect(lines[i]).not.toContain("MISSING");
     expect(lines[i]).toBe(`${name}: [class ${name}]`);
   }
+  expect(exitCode).toBe(0);
 });
 
-test("other DOM / WebCore constructors inspect as [class X]", async () => {
+test.concurrent("other DOM / WebCore constructors inspect as [class X]", async () => {
   // Sanity: the inspect formatter should work for any `isConstructor`
   // InternalFunction exposed as a global. Keep this list small — it's
   // a regression guard, not an audit.
@@ -95,7 +82,6 @@ test("other DOM / WebCore constructors inspect as [class X]", async () => {
 
   const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(exitCode).toBe(0);
   expect(stdout).toBe(
     "URL: [class URL]\n" +
       "Request: [class Request]\n" +
@@ -103,9 +89,10 @@ test("other DOM / WebCore constructors inspect as [class X]", async () => {
       "Blob: [class Blob]\n" +
       "Event: [class Event]\n",
   );
+  expect(exitCode).toBe(0);
 });
 
-test("user-defined classes and extends still render correctly", async () => {
+test.concurrent("user-defined classes and extends still render correctly", async () => {
   const code = `
     class Foo {}
     class Bar extends Foo {}
@@ -125,13 +112,13 @@ test("user-defined classes and extends still render correctly", async () => {
 
   const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(exitCode).toBe(0);
   // `Anon` picks up the "Anon" name from the variable binding, matching
   // JSC's naming inference for `const Anon = class {};`.
   expect(stdout).toBe("Foo: [class Foo]\n" + "Bar: [class Bar extends Foo]\n" + "Anon: [class Anon]\n");
+  expect(exitCode).toBe(0);
 });
 
-test("instanceof and prototype identity still work", async () => {
+test.concurrent("instanceof and prototype identity still work", async () => {
   // Functional behavior must not regress — the fix is cosmetic only.
   const stream = new ReadableStream({
     type: "bytes",

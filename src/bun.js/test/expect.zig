@@ -280,6 +280,12 @@ pub const Expect = struct {
         var buntest_strong = parent.bunTest() orelse return error.TestNotActive;
         defer buntest_strong.deinit();
         const buntest = buntest_strong.get();
+        // Snapshots in a concurrent group have the same limitation as
+        // `expect.assertions` — the sync call works, but a post-await call
+        // in the same test body can't resolve back to the right sequence.
+        // Reject at call time rather than silently writing to the wrong
+        // snapshot slot. See https://github.com/oven-sh/bun/issues/29236.
+        if (isInMultiSequenceConcurrentGroup(buntest)) return error.SnapshotInConcurrentGroup;
         const execution_entry = parent.phase.entry(buntest) orelse return error.SnapshotInConcurrentGroup;
 
         const test_name = execution_entry.base.name orelse "(unnamed)";

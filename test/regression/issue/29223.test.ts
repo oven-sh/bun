@@ -1,19 +1,6 @@
-// Regression test for https://github.com/oven-sh/bun/issues/29223
-//
-// Issue: `ffi-napi`'s NAPI addon calls `uv_thread_self()` from inside its
-// module-init path. `uv_thread_self` was a stubbed libuv symbol on POSIX,
-// so Bun would panic with "unsupported uv function: uv_thread_self" and
-// the addon (and therefore the user's program) crashed before a single
-// FFI call was made.
-//
-// Fix: implement `uv_thread_self` on POSIX as a pthread_self() wrapper
-// (matches upstream libuv src/unix/thread.c).
-//
-// This regression test builds a minimal NAPI addon that calls
-// `uv_thread_self()` from its Init function — the exact shape of the
-// ffi-napi crash — and asserts that requiring it does not crash.
+// https://github.com/oven-sh/bun/issues/29223
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, makeTree, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import path from "node:path";
 
 // Windows uses real libuv; the POSIX-stub code path does not apply there.
@@ -77,7 +64,6 @@ console.log("OK");
     };
 
     tempdir = tempDirWithFiles("issue-29223", files);
-    await makeTree(tempdir, files);
 
     // node-gyp uses the libuv headers we vendor for the stubs.
     const libuvDir = path.join(import.meta.dir, "../../../src/bun.js/bindings/libuv");

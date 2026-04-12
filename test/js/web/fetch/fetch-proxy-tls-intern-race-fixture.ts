@@ -36,10 +36,10 @@ let probes = 0;
 // flips `stop` and aborts any in-flight driver fetch so `await driverDone`
 // cannot hang on a stalled proxy connection.
 const driverAbort = new AbortController();
-const hardCap = setTimeout(() => {
+setTimeout(() => {
   stop = true;
   driverAbort.abort();
-}, HARD_CAP_MS);
+}, HARD_CAP_MS).unref();
 
 // Probe: setImmediate loop firing fetch+abort. Each call to fetch() runs
 // intern() on the JS thread. abort() causes the request to complete quickly,
@@ -77,7 +77,6 @@ while (driverOk === 0 && !stop) await Bun.sleep(1);
 probe();
 
 await driverDone;
-clearTimeout(hardCap);
 
 process.stdout.write(JSON.stringify({ driverOk, probes }) + "\n");
 process.exit(0);

@@ -105,10 +105,11 @@ test("error message after yielding await in concurrent test tells users to hoist
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const output = stdout + stderr;
   // The legacy wording told users to switch to test.serial — that's wrong
   // after this fix; synchronous registration works fine.
   expect(output).not.toContain("Use test.serial");
   expect(output).toMatch(/before the first `?await`?/);
+  expect(exitCode).not.toBe(0);
 });

@@ -12,9 +12,34 @@ pub const Result = union(enum) {
     unsatisfiable,
 };
 
-pub fn parse(header: []const u8, total: u64) Result {
-    // Match WebKit's parseRange (HTTPParsers.cpp): case-insensitive "bytes",
-    // optional whitespace before "=". https://fetch.spec.whatwg.org/#simple-range-header-value
+/// Parsed Range header before the total size is known. Safe to store on a
+/// request context: it owns no slices into the uWS request buffer.
+pub const Raw = union(enum) {
+    none,
+    suffix: u64, // bytes=-N
+    bounded: struct { start: u64, end: ?u64 }, // bytes=N-[M]
+
+    pub fn resolve(this: Raw, total: u64) Result {
+        return switch (this) {
+            .none => .none,
+            .suffix => |n| {
+                if (n == 0 or total == 0) return .unsatisfiable;
+                return .{ .satisfiable = .{ .start = total -| n, .end = total - 1 } };
+            },
+            .bounded => |b| {
+                if (b.start >= total) return .unsatisfiable;
+                var end = b.end orelse (total - 1);
+                if (end < b.start) return .none;
+                if (end >= total) end = total - 1;
+                return .{ .satisfiable = .{ .start = b.start, .end = end } };
+            },
+        };
+    }
+};
+
+/// Match WebKit's parseRange (HTTPParsers.cpp): case-insensitive "bytes",
+/// optional whitespace before "=". https://fetch.spec.whatwg.org/#simple-range-header-value
+pub fn parseRaw(header: []const u8) Raw {
     var rest = header;
     if (rest.len < 5 or !bun.strings.eqlCaseInsensitiveASCII(rest[0..5], "bytes", false)) return .none;
     rest = bun.strings.trim(rest[5..], " \t");
@@ -29,31 +54,27 @@ pub fn parse(header: []const u8, total: u64) Result {
     const end_s = bun.strings.trim(rest[dash + 1 ..], " \t");
 
     if (start_s.len == 0) {
-        // suffix: bytes=-N → last N bytes
         const n = std.fmt.parseUnsigned(u64, end_s, 10) catch return .none;
-        if (n == 0) return .unsatisfiable;
-        if (total == 0) return .unsatisfiable;
-        const start = total -| n;
-        return .{ .satisfiable = .{ .start = start, .end = total - 1 } };
+        return .{ .suffix = n };
     }
 
     const start = std.fmt.parseUnsigned(u64, start_s, 10) catch return .none;
-    if (start >= total) return .unsatisfiable;
+    const end: ?u64 = if (end_s.len == 0) null else std.fmt.parseUnsigned(u64, end_s, 10) catch return .none;
+    return .{ .bounded = .{ .start = start, .end = end } };
+}
 
-    if (end_s.len == 0) {
-        // open: bytes=N-
-        return .{ .satisfiable = .{ .start = start, .end = total - 1 } };
-    }
-
-    var end = std.fmt.parseUnsigned(u64, end_s, 10) catch return .none;
-    if (end < start) return .none;
-    if (end >= total) end = total - 1;
-    return .{ .satisfiable = .{ .start = start, .end = end } };
+pub fn parse(header: []const u8, total: u64) Result {
+    return parseRaw(header).resolve(total);
 }
 
 pub fn fromRequest(req: *uws.Request, total: u64) Result {
     const h = req.header("range") orelse return .none;
     return parse(h, total);
+}
+
+pub fn rawFromRequest(req: *uws.Request) Raw {
+    const h = req.header("range") orelse return .none;
+    return parseRaw(h);
 }
 
 const std = @import("std");

@@ -592,16 +592,20 @@ describe("Bun.file in serve routes", () => {
   });
 });
 
-describe("Range requests", () => {
+describe.each([
+  ["FileRoute", "/route"],
+  ["fetch handler", "/handler"],
+])("Range requests via %s", (_label, path) => {
   let dir: string;
   let server: Server;
   const body = "0123456789ABCDEF";
   beforeAll(() => {
     dir = tempDirWithFiles("file-route-range-", { "data.bin": body });
+    const file = Bun.file(join(dir, "data.bin"));
     server = Bun.serve({
       port: 0,
-      routes: { "/data": new Response(Bun.file(join(dir, "data.bin"))) },
-      fetch: () => new Response("fallback"),
+      routes: { "/route": new Response(file) },
+      fetch: req => (new URL(req.url).pathname === "/handler" ? new Response(file) : new Response("fallback")),
     });
   });
   afterAll(() => {
@@ -616,7 +620,7 @@ describe("Range requests", () => {
     ["bytes=0-999", 206, body, "bytes 0-15/16"],
     ["Bytes = 2-5", 206, "2345", "bytes 2-5/16"],
   ])("%s → %d", async (range, status, expected, contentRange) => {
-    const res = await fetch(new URL("/data", server.url), { headers: { Range: range } });
+    const res = await fetch(new URL(path, server.url), { headers: { Range: range } });
     expect(res.status).toBe(status);
     expect(res.headers.get("content-range")).toBe(contentRange);
     expect(res.headers.get("content-length")).toBe(String(expected.length));
@@ -624,14 +628,14 @@ describe("Range requests", () => {
   });
 
   it("416 on start past EOF", async () => {
-    const res = await fetch(new URL("/data", server.url), { headers: { Range: "bytes=100-200" } });
+    const res = await fetch(new URL(path, server.url), { headers: { Range: "bytes=100-200" } });
     expect(res.status).toBe(416);
     expect(res.headers.get("content-range")).toBe("bytes */16");
     expect(await res.text()).toBe("");
   });
 
   it("ignores multi-range and serves full body", async () => {
-    const res = await fetch(new URL("/data", server.url), { headers: { Range: "bytes=0-1,4-5" } });
+    const res = await fetch(new URL(path, server.url), { headers: { Range: "bytes=0-1,4-5" } });
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(body);
   });

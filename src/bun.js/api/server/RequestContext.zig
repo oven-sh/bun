@@ -54,6 +54,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         blob: jsc.WebCore.Blob.Any = jsc.WebCore.Blob.Any{ .Blob = .{} },
 
         sendfile: SendfileContext = undefined,
+        range: RangeRequest.Raw = .none,
 
         request_body_readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
         request_body: ?*WebCore.Body.Value.HiveRef = null,
@@ -575,6 +576,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 .method = method orelse HTTP.Method.which(req.method()) orelse .GET,
                 .server = server,
                 .defer_deinit_until_callback_completes = should_deinit_context,
+                .range = RangeRequest.rawFromRequest(req),
             };
 
             ctxLog("create<d> ({*})<r>", .{this});
@@ -877,6 +879,33 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (is_regular) {
                 this.sendfile.offset = @min(this.sendfile.offset, stat_size);
                 this.sendfile.remain = @min(@max(this.sendfile.remain, this.sendfile.offset), stat_size) -| this.sendfile.offset;
+            }
+
+            // Honor an incoming Range: header for whole-file responses. We
+            // don't compose Range with a user-supplied .slice() because the
+            // Content-Range arithmetic gets ambiguous; the slice path keeps
+            // its existing slice-as-range behavior.
+            if (is_regular and this.blob.Blob.offset == 0 and this.range != .none) {
+                switch (this.range.resolve(stat_size)) {
+                    .none => {},
+                    .satisfiable => |r| {
+                        this.sendfile.offset = @intCast(r.start);
+                        this.sendfile.remain = @intCast(r.end - r.start + 1);
+                        this.sendfile.total = stat_size;
+                        this.flags.needs_content_range = true;
+                    },
+                    .unsatisfiable => {
+                        if (auto_close) fd.close();
+                        var crbuf: [64]u8 = undefined;
+                        this.doWriteStatus(416);
+                        resp.writeHeader("content-range", std.fmt.bufPrint(&crbuf, "bytes */{d}", .{stat_size}) catch unreachable);
+                        this.detachResponse();
+                        this.endRequestStreamingAndDrain();
+                        resp.end("", this.shouldCloseConnection());
+                        this.deref();
+                        return;
+                    },
+                }
             }
 
             resp.runCorkedWithType(*RequestContext, renderMetadata, this);
@@ -2054,7 +2083,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             var response: *jsc.WebCore.Response = this.response_ptr.?;
             var status = response.statusCode();
-            var needs_content_range = this.flags.needs_content_range and this.sendfile.remain < this.blob.size();
+            var needs_content_range = this.flags.needs_content_range and (this.sendfile.total > 0 or this.sendfile.remain < this.blob.size());
 
             const size = if (needs_content_range)
                 this.sendfile.remain
@@ -2078,7 +2107,10 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 defer headers_.deref();
                 has_content_disposition = headers_.fastHas(.ContentDisposition);
                 has_content_range = headers_.fastHas(.ContentRange);
-                needs_content_range = needs_content_range and has_content_range;
+                // For .slice()-driven ranges, only promote to 206 if the user
+                // also set Content-Range (preserves the old contract). For an
+                // incoming Range: header (sendfile.total > 0) we always 206.
+                needs_content_range = needs_content_range and (this.sendfile.total > 0 or has_content_range);
                 if (needs_content_range) {
                     status = 206;
                 }
@@ -2125,6 +2157,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (this.flags.needs_content_length) {
                 resp.writeHeaderInt("content-length", size);
+                resp.markWroteContentLengthHeader();
                 this.flags.needs_content_length = false;
             }
 
@@ -2133,14 +2166,21 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
                 resp.writeHeader(
                     "content-range",
-                    std.fmt.bufPrint(
-                        &content_range_buf,
-                        // we omit the full size of the Blob because it could
-                        // change between requests and this potentially leaks
-                        // PII undesirably
-                        "bytes {d}-{d}/*",
-                        .{ this.sendfile.offset, this.sendfile.offset + (this.sendfile.remain -| 1) },
-                    ) catch "bytes */*",
+                    if (this.sendfile.total > 0)
+                        // We resolved an incoming Range header against the
+                        // stat'd size, so the total is meaningful.
+                        std.fmt.bufPrint(&content_range_buf, "bytes {d}-{d}/{d}", .{
+                            this.sendfile.offset,
+                            this.sendfile.offset + (this.sendfile.remain -| 1),
+                            this.sendfile.total,
+                        }) catch "bytes */*"
+                    else
+                        // For .slice()-driven ranges we omit the full size:
+                        // it can change between requests and may leak PII.
+                        std.fmt.bufPrint(&content_range_buf, "bytes {d}-{d}/*", .{
+                            this.sendfile.offset,
+                            this.sendfile.offset + (this.sendfile.remain -| 1),
+                        }) catch "bytes */*",
                 );
                 this.flags.needs_content_range = false;
             }
@@ -2396,6 +2436,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 const SendfileContext = struct {
     remain: Blob.SizeType = 0,
     offset: Blob.SizeType = 0,
+    /// When non-zero, the Content-Range total (`/{total}` instead of `/*`).
+    total: Blob.SizeType = 0,
 };
 
 fn NewFlags(comptime debug_mode: bool) type {
@@ -2505,6 +2547,7 @@ const uws = bun.uws;
 const Api = bun.schema.api;
 
 const FileResponseStream = bun.api.server.FileResponseStream;
+const RangeRequest = bun.api.server.RangeRequest;
 const writeStatus = bun.api.server.writeStatus;
 
 const HTTP = bun.http;

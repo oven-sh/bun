@@ -123,7 +123,7 @@ export const symbols = [
   "uv_handle_size",
   "uv_handle_type_name",
   "uv_has_ref",
-  // Defined in uv-posix-polyfills.cpp
+  // Defined in uv-posix-polyfills.c
   // "uv_hrtime",
   "uv_idle_init",
   "uv_idle_start",
@@ -162,7 +162,7 @@ export const symbols = [
   "uv_loop_size",
   "uv_metrics_idle_time",
   "uv_metrics_info",
-  // Defined in uv-posix-polyfills.cpp
+  // Defined in uv-posix-polyfills.c
   // "uv_mutex_destroy",
   // "uv_mutex_init",
   // "uv_mutex_init_recursive",
@@ -170,7 +170,7 @@ export const symbols = [
   // "uv_mutex_trylock",
   // "uv_mutex_unlock",
   "uv_now",
-  // Defined in uv-posix-polyfills.cpp
+  // Defined in uv-posix-polyfills.c
   // "uv_once",
   "uv_open_osfhandle",
   "uv_os_environ",
@@ -182,9 +182,9 @@ export const symbols = [
   "uv_os_get_passwd2",
   "uv_os_getenv",
   "uv_os_gethostname",
-  // Defined in uv-posix-polyfills.cpp
+  // Defined in uv-posix-polyfills.c
   // "uv_os_getpid",
-  // Defined in uv-posix-polyfills.cpp
+  // Defined in uv-posix-polyfills.c
   // "uv_os_getppid",
   "uv_os_getpriority",
   "uv_os_homedir",

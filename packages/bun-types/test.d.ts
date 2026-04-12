@@ -381,7 +381,9 @@ declare module "bun:test" {
   /**
    * Runs a function after the test finishes, once all `afterEach` hooks have completed.
    *
-   * Can only be called inside a test, not in `describe` blocks.
+   * Can only be called inside a test, not in `describe` blocks. Works inside
+   * concurrent tests — each call is attached to the specific concurrent test
+   * whose body is currently executing.
    *
    * @example
    * ```ts

@@ -137,12 +137,14 @@ test.failing("expect.assertions", () => {
   expect.hasAssertions(); // make sure this doesn't overwrite the assertions count, matching existing behaviour
 });
 
-test.concurrent.failing("expect.assertions not yet supported in concurrent tests", () => {
-  expect.hasAssertions(); // this call will fail because expect.hasAssertions is not yet supported in concurrent tests
+// https://github.com/oven-sh/bun/issues/29236 — expect.hasAssertions and
+// expect.assertions resolve to the currently executing concurrent test.
+test.concurrent("expect.hasAssertions works in concurrent tests", () => {
+  expect.hasAssertions();
   expect(true).toBe(true);
 });
-test.concurrent.failing("expect.assertions not yet supported in concurrent tests", () => {
-  expect.assertions(1); // this call will fail because expect.assertions is not yet supported in concurrent tests
+test.concurrent("expect.assertions works in concurrent tests", () => {
+  expect.assertions(1);
   expect(true).toBe(true);
 });
 

@@ -541,7 +541,15 @@ pub const Bytes = struct {
     pub fn deinit(this: *Bytes) void {
         bun.default_allocator.free(this.stored_name.slice());
         if (this.ptr) |ptr| {
-            this.allocator.free(ptr[0..this.cap]);
+            if ((comptime bun.Environment.isLinux) and bun.linux.MemFdAllocator.isInstance(this.allocator)) {
+                // Bypass the @memset(undefined) in std.mem.Allocator.free for memfd-backed
+                // storage. The MAP_SHARED mapping propagates writes back to the memfd, which:
+                //   - corrupts any outstanding MAP_PRIVATE views (e.g. from blob.arrayBuffer())
+                //   - forces commitment of the entire region to tmpfs, spiking RSS for large blobs
+                this.allocator.rawFree(ptr[0..this.cap], .fromByteUnits(1), @returnAddress());
+            } else {
+                this.allocator.free(ptr[0..this.cap]);
+            }
         }
         this.ptr = null;
         this.len = 0;

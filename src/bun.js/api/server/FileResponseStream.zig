@@ -378,8 +378,10 @@ pub const deref = RefCount.deref;
 const log = bun.Output.scoped(.FileResponseStream, .hidden);
 
 const std = @import("std");
+
 const bun = @import("bun");
-const jsc = bun.jsc;
 const Async = bun.Async;
+const jsc = bun.jsc;
+
 const uws = bun.uws;
 const AnyResponse = uws.AnyResponse;

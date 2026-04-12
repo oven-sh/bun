@@ -356,9 +356,10 @@ const jsc = bun.jsc;
 const Headers = bun.http.Headers;
 const AnyServer = jsc.API.AnyServer;
 const Blob = jsc.WebCore.Blob;
-const writeStatus = bun.api.server.writeStatus;
+
 const FileResponseStream = bun.api.server.FileResponseStream;
 const RangeRequest = bun.api.server.RangeRequest;
+const writeStatus = bun.api.server.writeStatus;
 
 const uws = bun.uws;
 const AnyResponse = uws.AnyResponse;

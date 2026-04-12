@@ -2503,8 +2503,9 @@ const assert = bun.assert;
 const logger = bun.logger;
 const uws = bun.uws;
 const Api = bun.schema.api;
-const writeStatus = bun.api.server.writeStatus;
+
 const FileResponseStream = bun.api.server.FileResponseStream;
+const writeStatus = bun.api.server.writeStatus;
 
 const HTTP = bun.http;
 const MimeType = bun.http.MimeType;

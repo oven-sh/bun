@@ -193,7 +193,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
     // paths below — hits this defer, so neither the fd nor the route ref
     // (or the server's pending_requests counter) can leak regardless of
     // which branch runs. The streaming path clears `fd_owned` right
-    // before handing ownership to `StreamTransfer`.
+    // before handing ownership to `FileResponseStream`.
     var fd_owned = true;
     defer if (fd_owned) {
         bun.Async.Closer.close(fd, if (bun.Environment.isWindows) bun.windows.libuv.Loop.get());
@@ -233,7 +233,16 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
         return;
     }
 
+    // Range applies to the slice the route was configured with, not the
+    // underlying file: a Bun.file(p).slice(a,b) route exposes only [a,b).
+    const range: RangeRequest.Result = if (file_type == .file)
+        RangeRequest.fromRequest(req, size)
+    else
+        .none;
+
     const status_code: u16 = brk: {
+        if (range == .unsatisfiable) break :brk 416;
+        if (range == .satisfiable and this.status_code == 200) break :brk 206;
         // Unlike If-Unmodified-Since, If-Modified-Since can only be used with a
         // GET or HEAD. When used in combination with If-None-Match, it is
         // ignored, unless the server doesn't support If-None-Match.
@@ -260,6 +269,25 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
     resp.writeMark();
     this.writeHeaders(resp);
 
+    const body_offset: u64, const body_len: ?u64 = switch (range) {
+        .satisfiable => |r| brk: {
+            var crbuf: [96]u8 = undefined;
+            resp.writeHeader("content-range", std.fmt.bufPrint(&crbuf, "bytes {d}-{d}/{d}", .{ r.start, r.end, size }) catch unreachable);
+            resp.writeHeader("accept-ranges", "bytes");
+            break :brk .{ this.blob.offset + r.start, r.end - r.start + 1 };
+        },
+        .unsatisfiable => {
+            var crbuf: [64]u8 = undefined;
+            resp.writeHeader("content-range", std.fmt.bufPrint(&crbuf, "bytes */{d}", .{size}) catch unreachable);
+            resp.end("", resp.shouldCloseConnection());
+            return;
+        },
+        .none => .{
+            if (file_type == .file) this.blob.offset else 0,
+            if (file_type == .file and this.blob.size > 0) @as(u64, @intCast(size)) else null,
+        },
+    };
+
     switch (status_code) {
         204, 205, 304, 307, 308 => {
             resp.endWithoutBody(resp.shouldCloseConnection());
@@ -269,7 +297,7 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
     }
 
     if (file_type == .file and !resp.state().hasWrittenContentLengthHeader()) {
-        resp.writeHeaderInt("content-length", size);
+        resp.writeHeaderInt("content-length", body_len orelse size);
         resp.markWroteContentLengthHeader();
     }
 
@@ -278,13 +306,33 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
         return;
     }
 
-    // Hand ownership of the fd to StreamTransfer; disable the defer close.
+    // Hand ownership of the fd to FileResponseStream; disable the defer close.
+    // The route ref taken at the top of on() is released in onStreamComplete.
     fd_owned = false;
-    const transfer = StreamTransfer.create(fd, resp, this, pollable, file_type != .file, file_type);
-    transfer.start(
-        if (file_type == .file) this.blob.offset else 0,
-        if (file_type == .file and this.blob.size > 0) @intCast(size) else null,
-    );
+    FileResponseStream.start(.{
+        .fd = fd,
+        .auto_close = true,
+        .resp = resp,
+        .vm = this.server.?.vm(),
+        .file_type = file_type,
+        .pollable = pollable,
+        .offset = body_offset,
+        .length = body_len,
+        .idle_timeout = this.server.?.config().idleTimeout,
+        .ctx = this,
+        .on_complete = onStreamComplete,
+        .on_error = onStreamError,
+    });
+}
+
+fn onStreamComplete(ctx: *anyopaque, resp: AnyResponse) void {
+    const this: *FileRoute = @ptrCast(@alignCast(ctx));
+    this.onResponseComplete(resp);
+}
+
+fn onStreamError(ctx: *anyopaque, resp: AnyResponse, _: bun.sys.Error) void {
+    const this: *FileRoute = @ptrCast(@alignCast(ctx));
+    this.onResponseComplete(resp);
 }
 
 fn onResponseComplete(this: *FileRoute, resp: AnyResponse) void {
@@ -297,267 +345,6 @@ fn onResponseComplete(this: *FileRoute, resp: AnyResponse) void {
     this.deref();
 }
 
-const StreamTransfer = struct {
-    const StreamTransferRefCount = bun.ptr.RefCount(@This(), "ref_count", StreamTransfer.deinit, .{});
-    pub const ref = StreamTransferRefCount.ref;
-    pub const deref = StreamTransferRefCount.deref;
-
-    reader: bun.io.BufferedReader = bun.io.BufferedReader.init(StreamTransfer),
-    ref_count: StreamTransferRefCount,
-    fd: bun.FD,
-    resp: AnyResponse,
-    route: *FileRoute,
-
-    max_size: ?u64 = null,
-
-    eof_task: ?jsc.AnyTask = null,
-
-    state: packed struct(u8) {
-        has_ended_response: bool = false,
-        finished: bool = false,
-        _: u6 = 0,
-    } = .{},
-    const log = Output.scoped(.StreamTransfer, .visible);
-
-    pub fn create(
-        fd: bun.FD,
-        resp: AnyResponse,
-        route: *FileRoute,
-        pollable: bool,
-        nonblocking: bool,
-        file_type: FileType,
-    ) *StreamTransfer {
-        var t = bun.new(StreamTransfer, .{
-            .ref_count = .init(),
-            .fd = fd,
-            .resp = resp,
-            .route = route,
-        });
-        t.reader.flags.close_handle = true;
-        t.reader.flags.pollable = pollable;
-        t.reader.flags.nonblocking = nonblocking;
-        if (comptime bun.Environment.isPosix) {
-            if (file_type == .socket) {
-                t.reader.flags.socket = true;
-            }
-        }
-        t.reader.setParent(t);
-        return t;
-    }
-
-    fn start(this: *StreamTransfer, start_offset: usize, size: ?usize) void {
-        log("start", .{});
-
-        this.ref();
-        defer this.deref();
-
-        this.max_size = size;
-
-        switch (if (start_offset > 0)
-            this.reader.startFileOffset(this.fd, this.reader.flags.pollable, start_offset)
-        else
-            this.reader.start(this.fd, this.reader.flags.pollable)) {
-            .err => {
-                this.finish();
-                return;
-            },
-            .result => {},
-        }
-
-        this.reader.updateRef(true);
-
-        if (bun.Environment.isPosix) {
-            if (this.reader.handle.getPoll()) |poll| {
-                if (this.reader.flags.nonblocking) {
-                    poll.flags.insert(.nonblocking);
-                }
-
-                switch (this.reader.getFileType()) {
-                    .socket => poll.flags.insert(.socket),
-                    .nonblocking_pipe, .pipe => poll.flags.insert(.fifo),
-                    .file => {},
-                }
-            }
-        }
-        // the socket maybe open for some time before so we reset the timeout here
-        if (this.route.server) |server| {
-            this.resp.timeout(server.config().idleTimeout);
-        }
-        // we connection aborts/closes so we need to be notified
-        this.resp.onAborted(*StreamTransfer, onAborted, this);
-
-        // we are reading so increase the ref count until onReaderDone/onReaderError
-        this.ref();
-        this.reader.read();
-    }
-
-    pub fn onReadChunk(this: *StreamTransfer, chunk_: []const u8, state_: bun.io.ReadState) bool {
-        log("onReadChunk", .{});
-
-        this.ref();
-        defer this.deref();
-
-        if (this.state.has_ended_response) {
-            return false;
-        }
-
-        const chunk, const state = brk: {
-            if (this.max_size) |*max_size| {
-                const chunk = chunk_[0..@min(chunk_.len, max_size.*)];
-                max_size.* -|= chunk.len;
-                if (state_ != .eof and max_size.* == 0) {
-                    // artificially end the stream aka max_size reached
-                    log("max_size reached, ending stream", .{});
-                    if (this.route.server) |server| {
-                        // dont need to ref because we are already holding a ref and will be derefed in onReaderDone
-                        if (!bun.Environment.isPosix) {
-                            this.reader.pause();
-                        }
-                        // we cannot free inside onReadChunk this would be UAF so we schedule it to be done in the next event loop tick
-                        this.eof_task = jsc.AnyTask.New(StreamTransfer, StreamTransfer.onReaderDone).init(this);
-                        server.vm().enqueueTask(jsc.Task.init(&this.eof_task.?));
-                    }
-                    break :brk .{ chunk, .eof };
-                }
-
-                break :brk .{ chunk, state_ };
-            }
-
-            break :brk .{ chunk_, state_ };
-        };
-
-        if (this.route.server) |server| {
-            this.resp.timeout(server.config().idleTimeout);
-        }
-
-        if (state == .eof) {
-            this.state.has_ended_response = true;
-            const resp = this.resp;
-            const route = this.route;
-            route.onResponseComplete(resp);
-            resp.end(chunk, resp.shouldCloseConnection());
-            log("end: {}", .{chunk.len});
-            return false;
-        }
-
-        switch (this.resp.write(chunk)) {
-            .backpressure => {
-                // pause the reader so deref until onWritable
-                defer this.deref();
-                this.resp.onWritable(*StreamTransfer, onWritable, this);
-                if (!bun.Environment.isPosix) {
-                    this.reader.pause();
-                }
-                return false;
-            },
-            .want_more => {
-                return true;
-            },
-        }
-    }
-
-    pub fn onReaderDone(this: *StreamTransfer) void {
-        log("onReaderDone", .{});
-        // deref the ref because reader is done
-        defer this.deref();
-
-        this.finish();
-    }
-
-    pub fn onReaderError(this: *StreamTransfer, err: bun.sys.Error) void {
-        log("onReaderError {f}", .{err});
-        defer this.deref(); // deref the ref because reader is done
-
-        if (!this.state.has_ended_response) {
-            // we need to signal to the client that something went wrong, so close the connection
-            // sending the end chunk would be a lie and could cause issues
-            this.state.has_ended_response = true;
-            const resp = this.resp;
-            const route = this.route;
-            route.onResponseComplete(resp);
-            this.resp.forceClose();
-        }
-        this.finish();
-    }
-
-    pub fn eventLoop(this: *StreamTransfer) jsc.EventLoopHandle {
-        return jsc.EventLoopHandle.init(this.route.server.?.vm().eventLoop());
-    }
-
-    pub fn loop(this: *StreamTransfer) *Async.Loop {
-        if (comptime bun.Environment.isWindows) {
-            return this.eventLoop().loop().uv_loop;
-        } else {
-            return this.eventLoop().loop();
-        }
-    }
-
-    fn onWritable(this: *StreamTransfer, _: u64, _: AnyResponse) bool {
-        log("onWritable", .{});
-
-        this.ref();
-        defer this.deref();
-
-        if (this.reader.isDone()) {
-            @branchHint(.unlikely);
-            log("finish inside onWritable", .{});
-            this.finish();
-            return true;
-        }
-
-        // reset the socket timeout before reading more data
-        if (this.route.server) |server| {
-            this.resp.timeout(server.config().idleTimeout);
-        }
-
-        // we are reading so increase the ref count until onReaderDone/onReaderError
-        this.ref();
-        this.reader.read();
-        return true;
-    }
-
-    fn finish(this: *StreamTransfer) void {
-        log("finish", .{});
-        // onAborted and onReaderDone/onReaderError can both reach here for the
-        // same transfer; the second call must not consume another ref.
-        if (this.state.finished) return;
-        this.state.finished = true;
-
-        this.resp.clearOnWritable();
-        this.resp.clearAborted();
-        this.resp.clearTimeout();
-
-        if (!this.state.has_ended_response) {
-            this.state.has_ended_response = true;
-            const resp = this.resp;
-            const route = this.route;
-            route.onResponseComplete(resp);
-            log("endWithoutBody", .{});
-            resp.endWithoutBody(resp.shouldCloseConnection());
-        }
-        // deref this indicates the main thing is done, the reader may be holding a ref and will be derefed in onReaderDone/onReaderError
-        this.deref();
-    }
-
-    fn onAborted(this: *StreamTransfer, _: AnyResponse) void {
-        log("onAborted", .{});
-        if (!this.state.has_ended_response) {
-            this.state.has_ended_response = true;
-            // The socket is gone, so we can't write a response — but we still
-            // owe the server a pending_requests decrement and the route deref.
-            this.route.onResponseComplete(this.resp);
-        }
-        this.finish();
-    }
-
-    pub fn deinit(this: *StreamTransfer) void {
-        log("deinit", .{});
-        // deinit will close the reader if it is not already closed (this will not trigger onReaderDone/onReaderError)
-        this.reader.deinit();
-        bun.destroy(this);
-    }
-};
-
 const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
@@ -565,14 +352,13 @@ pub const deref = RefCount.deref;
 const std = @import("std");
 
 const bun = @import("bun");
-const Async = bun.Async;
-const Output = bun.Output;
 const jsc = bun.jsc;
-const FileType = bun.io.FileType;
 const Headers = bun.http.Headers;
 const AnyServer = jsc.API.AnyServer;
 const Blob = jsc.WebCore.Blob;
 const writeStatus = bun.api.server.writeStatus;
+const FileResponseStream = bun.api.server.FileResponseStream;
+const RangeRequest = bun.api.server.RangeRequest;
 
 const uws = bun.uws;
 const AnyResponse = uws.AnyResponse;

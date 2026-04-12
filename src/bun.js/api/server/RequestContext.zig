@@ -78,7 +78,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         additional_on_abort: ?AdditionalOnAbortCallback = null,
 
         // TODO: support builtin compression
-        const can_sendfile = !ssl_enabled and !Environment.isWindows;
 
         pub fn setSignalAborted(this: *RequestContext, reason: bun.jsc.CommonAbortReason) void {
             if (this.signal) |signal| {
@@ -469,26 +468,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
         }
 
-        /// Render a complete response buffer
-        pub fn renderResponseBufferAndMetadata(this: *RequestContext) void {
-            if (this.resp) |resp| {
-                this.renderMetadata();
-
-                if (!resp.tryEnd(
-                    this.response_buf_owned.items,
-                    this.response_buf_owned.items.len,
-                    this.shouldCloseConnection(),
-                )) {
-                    this.flags.has_marked_pending = true;
-                    resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
-                    return;
-                }
-            }
-            this.detachResponse();
-            this.endRequestStreamingAndDrain();
-            this.deref();
-        }
-
         /// Drain a partial response buffer
         pub fn drainResponseBufferAndMetadata(this: *RequestContext) void {
             if (this.resp) |resp| {
@@ -769,92 +748,16 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
         }
 
-        pub fn endSendFile(this: *RequestContext, writeOffSet: usize, closeConnection: bool) void {
-            if (this.resp) |resp| {
-                defer this.deref();
-
-                this.detachResponse();
-                this.endRequestStreamingAndDrain();
-                resp.endSendFile(writeOffSet, closeConnection);
-            }
+        fn onFileStreamComplete(ctx: *anyopaque, _: uws.AnyResponse) void {
+            const this: *RequestContext = @ptrCast(@alignCast(ctx));
+            this.detachResponse();
+            this.endRequestStreamingAndDrain();
+            this.deref();
         }
 
-        fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
-            const sendfile = this.sendfile;
-            this.endSendFile(sendfile.offset, this.shouldCloseConnection());
-
-            // use node syscall so that we don't segfault on BADF
-            if (sendfile.auto_close)
-                sendfile.fd.close();
-        }
-        const separator: string = "\r\n";
-        const separator_iovec = [1]std.posix.iovec_const{.{
-            .iov_base = separator.ptr,
-            .iov_len = separator.len,
-        }};
-
-        pub fn onSendfile(this: *RequestContext) bool {
-            if (this.isAbortedOrEnded()) {
-                this.cleanupAndFinalizeAfterSendfile();
-                return false;
-            }
-            const resp = this.resp.?;
-
-            const adjusted_count_temporary = @min(@as(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
-            // TODO we should not need this int cast; improve the return type of `@min`
-            const adjusted_count = @as(u63, @intCast(adjusted_count_temporary));
-
-            if (Environment.isLinux) {
-                var signed_offset = @as(i64, @intCast(this.sendfile.offset));
-                const start = this.sendfile.offset;
-                const val = linux.sendfile(this.sendfile.socket_fd.cast(), this.sendfile.fd.cast(), &signed_offset, this.sendfile.remain);
-                this.sendfile.offset = @as(Blob.SizeType, @intCast(signed_offset));
-
-                const errcode = bun.sys.getErrno(val);
-
-                this.sendfile.remain -|= @as(Blob.SizeType, @intCast(this.sendfile.offset -| start));
-
-                if (errcode != .SUCCESS or this.isAbortedOrEnded() or this.sendfile.remain == 0 or val == 0) {
-                    if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE and errcode != .NOTCONN) {
-                        Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
-                        Output.flush();
-                    }
-                    this.cleanupAndFinalizeAfterSendfile();
-                    return errcode != .SUCCESS;
-                }
-            } else {
-                var sbytes: std.posix.off_t = adjusted_count;
-                const signed_offset = @as(i64, @bitCast(@as(u64, this.sendfile.offset)));
-                const errcode = bun.sys.getErrno(std.c.sendfile(
-                    this.sendfile.fd.cast(),
-                    this.sendfile.socket_fd.cast(),
-                    signed_offset,
-                    &sbytes,
-                    null,
-                    0,
-                ));
-                const wrote = @as(Blob.SizeType, @intCast(sbytes));
-                this.sendfile.offset +|= wrote;
-                this.sendfile.remain -|= wrote;
-                if (errcode != .AGAIN or this.isAbortedOrEnded() or this.sendfile.remain == 0 or sbytes == 0) {
-                    if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE and errcode != .NOTCONN) {
-                        Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
-                        Output.flush();
-                    }
-                    this.cleanupAndFinalizeAfterSendfile();
-                    return errcode == .SUCCESS;
-                }
-            }
-
-            if (!this.sendfile.has_set_on_writable) {
-                this.sendfile.has_set_on_writable = true;
-                this.flags.has_marked_pending = true;
-                resp.onWritable(*RequestContext, onWritableSendfile, this);
-            }
-
-            resp.markNeedsMore();
-
-            return true;
+        fn onFileStreamError(ctx: *anyopaque, resp: uws.AnyResponse, _: bun.sys.Error) void {
+            // FileResponseStream already force-closed the socket; just clean up.
+            onFileStreamComplete(ctx, resp);
         }
 
         pub fn onWritableBytes(this: *RequestContext, write_offset: u64, resp: *App.Response) bool {
@@ -907,14 +810,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return true;
         }
 
-        pub fn onWritableSendfile(this: *RequestContext, _: u64, _: *App.Response) bool {
-            ctxLog("onWritableSendfile", .{});
-            return this.onSendfile();
-        }
+        pub fn doSendfile(this: *RequestContext, blob: Blob) void {
+            if (this.isAbortedOrEnded()) return;
+            if (this.flags.has_sendfile_ctx) return;
+            this.flags.has_sendfile_ctx = true;
 
-        // We tried open() in another thread for this
-        // it was not faster due to the mountain of syscalls
-        pub fn renderSendFile(this: *RequestContext, blob: jsc.WebCore.Blob) void {
             if (this.resp == null or this.server == null) return;
             const globalThis = this.server.?.globalThis;
             const resp = this.resp.?;
@@ -923,7 +823,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const file = &this.blob.store().?.data.file;
             var file_buf: bun.PathBuffer = undefined;
             const auto_close = file.pathlike != .fd;
-            const fd = if (!auto_close)
+            const fd: bun.FD = if (!auto_close)
                 file.pathlike.fd
             else switch (bun.sys.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
                 .result => |_fd| _fd,
@@ -935,174 +835,82 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 },
             };
 
-            // stat only blocks if the target is a file descriptor
             const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
-                .result => |result| result,
+                .result => |s| s,
                 .err => |err| {
-                    // Close fd before toJS call, which might throw
-                    if (auto_close) {
-                        fd.close();
-                    }
+                    if (auto_close) fd.close();
                     const js_err = err.withPathLike(file.pathlike).toJS(globalThis) catch {
                         return this.renderProductionError(500);
                     };
-                    this.runErrorHandler(js_err);
-                    return;
+                    return this.runErrorHandler(js_err);
                 },
             };
 
-            if (Environment.isMac) {
-                if (!bun.isRegularFile(stat.mode)) {
-                    if (auto_close) {
-                        fd.close();
-                    }
-
-                    var err = bun.sys.Error{
-                        .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.posix.E.INVAL))),
-                        .syscall = .sendfile,
-                    };
-                    var sys = err.withPathLike(file.pathlike).toSystemError();
-                    sys.message = bun.String.static("MacOS does not support sending non-regular files");
-                    const js_err = sys.toErrorInstance(globalThis);
-                    this.runErrorHandler(js_err);
-                    return;
+            const is_regular = bun.isRegularFile(stat.mode);
+            const file_type: bun.io.FileType, const pollable: bool = brk: {
+                if (bun.S.ISFIFO(@intCast(stat.mode)) or bun.S.ISCHR(@intCast(stat.mode))) break :brk .{ .pipe, true };
+                if (bun.S.ISSOCK(@intCast(stat.mode))) break :brk .{ .socket, true };
+                if (bun.S.ISDIR(@intCast(stat.mode))) {
+                    if (auto_close) fd.close();
+                    var sys = (bun.sys.Error{
+                        .errno = @intFromEnum(bun.sys.E.ISDIR),
+                        .syscall = .read,
+                    }).withPathLike(file.pathlike).toSystemError();
+                    sys.message = bun.String.static("Cannot stream a directory as a response body");
+                    return this.runErrorHandler(sys.toErrorInstance(globalThis));
                 }
-            }
-
-            if (Environment.isLinux) {
-                if (!(bun.isRegularFile(stat.mode) or std.posix.S.ISFIFO(stat.mode) or std.posix.S.ISSOCK(stat.mode))) {
-                    if (auto_close) {
-                        fd.close();
-                    }
-
-                    var err = bun.sys.Error{
-                        .errno = @as(bun.sys.Error.Int, @intCast(@intFromEnum(std.posix.E.INVAL))),
-                        .syscall = .sendfile,
-                    };
-                    var sys = err.withPathLike(file.pathlike).toShellSystemError();
-                    sys.message = bun.String.static("File must be regular or FIFO");
-                    const js_err = sys.toErrorInstance(globalThis);
-                    this.runErrorHandler(js_err);
-                    return;
-                }
-            }
-
-            const original_size = this.blob.Blob.size;
-            const stat_size = @as(Blob.SizeType, @intCast(stat.size));
-            this.blob.Blob.size = if (bun.isRegularFile(stat.mode))
-                stat_size
-            else
-                @min(original_size, stat_size);
-
-            this.flags.needs_content_length = true;
-
-            this.sendfile = .{
-                .fd = fd,
-                .remain = this.blob.Blob.offset + original_size,
-                .offset = this.blob.Blob.offset,
-                .auto_close = auto_close,
-                .socket_fd = if (!this.isAbortedOrEnded()) resp.getNativeHandle() else bun.invalid_fd,
+                break :brk .{ .file, false };
             };
 
-            // if we are sending only part of a file, include the content-range header
-            // only include content-range automatically when using a file path instead of an fd
-            // this is to better support manually controlling the behavior
-            if (bun.isRegularFile(stat.mode) and auto_close) {
+            const original_size = this.blob.Blob.size;
+            const stat_size: Blob.SizeType = @intCast(@max(stat.size, 0));
+            this.blob.Blob.size = if (is_regular) stat_size else @min(original_size, stat_size);
+
+            this.flags.needs_content_length = true;
+            this.sendfile = .{
+                .remain = this.blob.Blob.offset + original_size,
+                .offset = this.blob.Blob.offset,
+            };
+            if (is_regular and auto_close) {
                 this.flags.needs_content_range = (this.sendfile.remain -| this.sendfile.offset) != stat_size;
             }
-
-            // we know the bounds when we are sending a regular file
-            if (bun.isRegularFile(stat.mode)) {
+            if (is_regular) {
                 this.sendfile.offset = @min(this.sendfile.offset, stat_size);
                 this.sendfile.remain = @min(@max(this.sendfile.remain, this.sendfile.offset), stat_size) -| this.sendfile.offset;
             }
 
-            resp.runCorkedWithType(*RequestContext, renderMetadataAndNewline, this);
+            resp.runCorkedWithType(*RequestContext, renderMetadata, this);
 
-            if (this.sendfile.remain == 0 or !this.method.hasBody()) {
-                this.cleanupAndFinalizeAfterSendfile();
+            if ((is_regular and this.sendfile.remain == 0) or !this.method.hasBody()) {
+                if (auto_close) fd.close();
+                this.detachResponse();
+                this.endRequestStreamingAndDrain();
+                resp.end("", this.shouldCloseConnection());
+                this.deref();
                 return;
             }
 
-            _ = this.onSendfile();
-        }
+            // FileResponseStream registers its own onAborted/onWritable with itself
+            // as userData. uWS keeps a single shared userData slot per response, so
+            // any later setAbortHandler()/onWritable() from this RequestContext would
+            // stomp it and hand FileResponseStream's callbacks a *RequestContext.
+            this.flags.has_abort_handler = true;
+            this.flags.has_marked_pending = true;
 
-        pub fn renderMetadataAndNewline(this: *RequestContext) void {
-            if (this.resp) |resp| {
-                this.renderMetadata();
-                resp.prepareForSendfile();
-            }
-        }
-
-        pub fn doSendfile(this: *RequestContext, blob: Blob) void {
-            if (this.isAbortedOrEnded()) {
-                return;
-            }
-
-            if (this.flags.has_sendfile_ctx) return;
-
-            this.flags.has_sendfile_ctx = true;
-
-            if (comptime can_sendfile) {
-                return this.renderSendFile(blob);
-            }
-            if (this.server) |server| {
-                this.ref();
-                this.blob.Blob.doReadFileInternal(*RequestContext, this, onReadFile, server.globalThis);
-            }
-        }
-
-        pub fn onReadFile(this: *RequestContext, result: Blob.read_file.ReadFileResultType) void {
-            defer this.deref();
-
-            if (this.isAbortedOrEnded()) {
-                return;
-            }
-
-            if (result == .err) {
-                if (this.server) |server| {
-                    const js_err = result.err.toErrorInstance(server.globalThis);
-                    this.runErrorHandler(js_err);
-                }
-                return;
-            }
-
-            const is_temporary = result.result.is_temporary;
-
-            if (comptime Environment.allow_assert) {
-                assert(this.blob == .Blob);
-            }
-
-            if (!is_temporary) {
-                this.blob.Blob.resolveSize();
-                this.doRenderBlob();
-            } else {
-                const stat_size = @as(Blob.SizeType, @intCast(result.result.total_size));
-
-                if (this.blob == .Blob) {
-                    const original_size = this.blob.Blob.size;
-                    // if we dont know the size we use the stat size
-                    this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
-                        stat_size
-                    else // the blob can be a slice of a file
-                        @max(original_size, stat_size);
-                }
-
-                if (!this.flags.has_written_status)
-                    this.flags.needs_content_range = true;
-
-                // this is used by content-range
-                this.sendfile = .{
-                    .fd = bun.invalid_fd,
-                    .remain = @as(Blob.SizeType, @truncate(result.result.buf.len)),
-                    .offset = if (this.blob == .Blob) this.blob.Blob.offset else 0,
-                    .auto_close = false,
-                    .socket_fd = bun.invalid_fd,
-                };
-
-                this.response_buf_owned = .{ .items = result.result.buf, .capacity = result.result.buf.len };
-                this.resp.?.runCorkedWithType(*RequestContext, renderResponseBufferAndMetadata, this);
-            }
+            FileResponseStream.start(.{
+                .fd = fd,
+                .auto_close = auto_close,
+                .resp = if (comptime ssl_enabled) .{ .SSL = resp } else .{ .TCP = resp },
+                .vm = this.server.?.vm,
+                .file_type = file_type,
+                .pollable = pollable,
+                .offset = this.sendfile.offset,
+                .length = if (is_regular) @as(u64, this.sendfile.remain) else null,
+                .idle_timeout = this.server.?.config.idleTimeout,
+                .ctx = this,
+                .on_complete = onFileStreamComplete,
+                .on_error = onFileStreamError,
+            });
         }
 
         pub fn doRenderWithBodyLocked(this: *anyopaque, value: *jsc.WebCore.Body.Value) void {
@@ -2582,14 +2390,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
     };
 }
 
+// Retained only for `renderMetadata` to compute Content-Range / Content-Length
+// for file-blob bodies; the actual fd/socket bookkeeping lives in
+// `FileResponseStream` now.
 const SendfileContext = struct {
-    fd: bun.FD,
-    socket_fd: bun.FD = bun.invalid_fd,
     remain: Blob.SizeType = 0,
     offset: Blob.SizeType = 0,
-    has_listener: bool = false,
-    has_set_on_writable: bool = false,
-    auto_close: bool = false,
 };
 
 fn NewFlags(comptime debug_mode: bool) type {
@@ -2686,7 +2492,6 @@ const string = []const u8;
 
 const std = @import("std");
 const Fallback = @import("../../../runtime.zig").Fallback;
-const linux = std.os.linux;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -2699,6 +2504,7 @@ const logger = bun.logger;
 const uws = bun.uws;
 const Api = bun.schema.api;
 const writeStatus = bun.api.server.writeStatus;
+const FileResponseStream = bun.api.server.FileResponseStream;
 
 const HTTP = bun.http;
 const MimeType = bun.http.MimeType;

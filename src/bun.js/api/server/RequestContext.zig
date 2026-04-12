@@ -893,8 +893,13 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // its existing slice-as-range behavior. `offset == 0` alone is
             // insufficient — `Bun.file(p).slice(0, n)` has offset 0 — so we
             // also require the unset-size sentinel that only an unsliced file
-            // blob carries.
-            if (is_regular and this.blob.Blob.offset == 0 and original_size == Blob.max_size and this.range != .none) {
+            // blob carries. Skip if the user already set Content-Range or a
+            // non-200 status — they're managing partial responses themselves.
+            const user_handles_range = if (this.response_ptr) |r|
+                r.statusCode() != 200 or (if (r.getInitHeaders()) |h| h.fastHas(.ContentRange) else false)
+            else
+                false;
+            if (is_regular and !user_handles_range and this.blob.Blob.offset == 0 and original_size == Blob.max_size and this.range != .none) {
                 switch (this.range.resolve(stat_size)) {
                     .none => {},
                     .satisfiable => |r| {

@@ -641,6 +641,38 @@ describe.each([
   });
 });
 
+describe("user-set Content-Range disables automatic Range handling", () => {
+  let dir: string;
+  let server: Server;
+  const body = "0123456789ABCDEF";
+  beforeAll(() => {
+    dir = tempDirWithFiles("user-content-range-", { "data.bin": body });
+    const file = () => Bun.file(join(dir, "data.bin"));
+    server = Bun.serve({
+      port: 0,
+      routes: {
+        "/route": new Response(file(), { headers: { "Content-Range": "bytes 0-15/100" } }),
+      },
+      fetch: () => new Response(file(), { headers: { "Content-Range": "bytes 0-15/100" } }),
+    });
+  });
+  afterAll(() => {
+    server?.stop(true);
+    using _ = rmScope(dir);
+  });
+
+  it.each([
+    ["FileRoute", "/route"],
+    ["fetch handler", "/handler"],
+  ])("via %s: client Range ignored, user Content-Range preserved", async (_label, path) => {
+    const res = await fetch(new URL(path, server.url), { headers: { Range: "bytes=2-5" } });
+    // User explicitly set Content-Range — they're managing partial responses
+    // themselves. We must serve the full body with their header, exactly once.
+    expect(await res.text()).toBe(body);
+    expect(res.headers.get("content-range")).toBe("bytes 0-15/100");
+  });
+});
+
 test("Range header cannot escape a Bun.file().slice(0, n) window via fetch handler", async () => {
   const dir = tempDirWithFiles("range-slice-escape-", {
     "f.bin": Buffer.from(Array.from({ length: 256 }, (_, i) => i)),

@@ -8,6 +8,7 @@ status_code: u16,
 stat_hash: bun.fs.StatHash = .{},
 has_last_modified_header: bool,
 has_content_length_header: bool,
+has_content_range_header: bool,
 
 pub const InitOptions = struct {
     server: ?AnyServer,
@@ -43,6 +44,7 @@ pub fn initFromBlob(blob: Blob, opts: InitOptions) *FileRoute {
         .headers = headers,
         .has_last_modified_header = headers.get("last-modified") != null,
         .has_content_length_header = headers.get("content-length") != null,
+        .has_content_range_header = headers.get("content-range") != null,
         .status_code = opts.status_code,
     });
 }
@@ -80,6 +82,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
                 .headers = headers,
                 .has_last_modified_header = headers.get("last-modified") != null,
                 .has_content_length_header = headers.get("content-length") != null,
+                .has_content_range_header = headers.get("content-range") != null,
                 .status_code = response.statusCode(),
             });
         }
@@ -96,6 +99,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
                 .headers = bun.handleOom(Headers.from(null, bun.default_allocator, .{ .body = &.{ .Blob = b } })),
                 .has_content_length_header = false,
                 .has_last_modified_header = false,
+                .has_content_range_header = false,
                 .status_code = 200,
             });
         }
@@ -235,9 +239,9 @@ pub fn on(this: *FileRoute, req: *uws.Request, resp: AnyResponse, method: bun.ht
 
     // Range applies to the slice the route was configured with, not the
     // underlying file: a Bun.file(p).slice(a,b) route exposes only [a,b).
-    // Only honor Range for routes configured with a 200 status — serving a
-    // partial body under a custom status (201, 400, …) is incoherent.
-    const range: RangeRequest.Result = if (file_type == .file and this.status_code == 200)
+    // Skip if the route has a non-200 status or the user already set
+    // Content-Range — they're managing partial responses themselves.
+    const range: RangeRequest.Result = if (file_type == .file and this.status_code == 200 and !this.has_content_range_header)
         RangeRequest.fromRequest(req, size)
     else
         .none;

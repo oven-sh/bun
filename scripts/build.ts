@@ -363,10 +363,6 @@ function parseArgs(argv: string[]): CliArgs {
       // Not a --flag at all: first bare positional ends flag parsing.
       // Everything after goes to the built binary verbatim.
       execArgs.push(arg);
-      // depLibs explicit in the phony: deps with no provided includes (tinycc,
-      // lolhtml) aren't in depHeaderSignal, so the archive doesn't pull them
-      // transitively — but link-only still needs them uploaded.
-      n.phony("bun", [archive, ...depLibs]);
       inExec = true;
       continue;
     }

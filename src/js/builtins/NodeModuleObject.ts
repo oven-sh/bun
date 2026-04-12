@@ -18,6 +18,9 @@ export function findPackageJSON(specifier: string | URL, base?: string | URL) {
   // Convert base from URL to string if needed
   if (base !== undefined) {
     if (base instanceof URL) {
+      if (base.protocol !== "file:") {
+        throw $ERR_INVALID_ARG_VALUE("base", base, "must be a file URL or absolute path");
+      }
       base = base.href;
     } else if (typeof base !== "string") {
       throw $ERR_INVALID_ARG_TYPE("base", ["string", "URL"], base);
@@ -30,6 +33,8 @@ export function findPackageJSON(specifier: string | URL, base?: string | URL) {
   }
   if (base !== undefined && base.startsWith("file://")) {
     base = fileURLToPath(base);
+  } else if (base !== undefined && !path.isAbsolute(base)) {
+    throw $ERR_INVALID_ARG_VALUE("base", base, "must be a file URL or absolute path");
   }
 
   // Determine if this is a bare specifier (package name)
@@ -44,8 +49,12 @@ export function findPackageJSON(specifier: string | URL, base?: string | URL) {
     if (base === undefined) {
       throw $ERR_INVALID_ARG_VALUE("specifier", specifier, "base is required for bare specifiers");
     }
+    // Strip subpaths: "pkg/subpath" → "pkg", "@scope/pkg/sub" → "@scope/pkg"
+    const packageName = specifier[0] === "@"
+      ? specifier.split("/", 2).join("/")
+      : specifier.split("/", 1)[0];
     try {
-      const resolved = $resolveSync(specifier + "/package.json", base, false, false, undefined);
+      const resolved = $resolveSync(packageName + "/package.json", base, false, false, undefined);
       if (fs.existsSync(resolved)) {
         return resolved;
       }
@@ -53,7 +62,7 @@ export function findPackageJSON(specifier: string | URL, base?: string | URL) {
       // package.json subpath may not be exported, try resolving the package itself
     }
     try {
-      const resolved = $resolveSync(specifier, base, false, false, undefined);
+      const resolved = $resolveSync(packageName, base, false, false, undefined);
       // Walk up from the resolved path to find the package root.
       // The root is the directory immediately inside node_modules/
       // (or node_modules/@scope/pkg/ for scoped packages).

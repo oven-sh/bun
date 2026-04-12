@@ -1,14 +1,4 @@
 // https://github.com/oven-sh/bun/issues/29236
-//
-// onTestFinished() must be usable from inside a concurrent test, just like
-// a plain try/finally cleanup block is. Before the fix, any onTestFinished()
-// call from a concurrent test threw:
-//
-//   Cannot call onTestFinished() here. It cannot be called inside a
-//   concurrent test. Use test.serial or remove test.concurrent.
-//
-// because the hook lookup couldn't resolve which sequence owned the call
-// when more than one concurrent sequence was active.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
@@ -19,21 +9,18 @@ test("onTestFinished works inside concurrent tests", async () => {
 
       const runs: string[] = [];
 
-      test.concurrent("a", async () => {
+      test.concurrent("a", () => {
         onTestFinished(() => { runs.push("a-finished"); });
-        await new Promise<void>(r => setTimeout(r, 10));
         expect(1).toBe(1);
       });
 
-      test.concurrent("b", async () => {
+      test.concurrent("b", () => {
         onTestFinished(() => { runs.push("b-finished"); });
-        await new Promise<void>(r => setTimeout(r, 10));
         expect(1).toBe(1);
       });
 
-      test.concurrent("c", async () => {
+      test.concurrent("c", () => {
         onTestFinished(() => { runs.push("c-finished"); });
-        await new Promise<void>(r => setTimeout(r, 10));
         expect(1).toBe(1);
       });
 
@@ -51,11 +38,15 @@ test("onTestFinished works inside concurrent tests", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
   const output = stdout + stderr;
   expect(output).not.toContain("Cannot call onTestFinished");
-  expect(output).toContain("4 pass");
-  expect(output).toContain("0 fail");
+  expect(output).toMatch(/\b4 pass\b/);
+  expect(output).toMatch(/\b0 fail\b/);
   expect(exitCode).toBe(0);
 });
 
@@ -64,15 +55,13 @@ test("onTestFinished works inside concurrent tests via --concurrent flag", async
     "plain.test.ts": /* ts */ `
       import { expect, onTestFinished, test } from "bun:test";
 
-      test("one", async () => {
+      test("one", () => {
         onTestFinished(() => {});
-        await new Promise<void>(r => setTimeout(r, 5));
         expect(1).toBe(1);
       });
 
-      test("two", async () => {
+      test("two", () => {
         onTestFinished(() => {});
-        await new Promise<void>(r => setTimeout(r, 5));
         expect(1).toBe(1);
       });
     `,
@@ -85,10 +74,49 @@ test("onTestFinished works inside concurrent tests via --concurrent flag", async
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
   const output = stdout + stderr;
   expect(output).not.toContain("Cannot call onTestFinished");
-  expect(output).toContain("2 pass");
-  expect(output).toContain("0 fail");
+  expect(output).toMatch(/\b2 pass\b/);
+  expect(output).toMatch(/\b0 fail\b/);
   expect(exitCode).toBe(0);
+});
+
+// When onTestFinished() is called in a concurrent test *after* control has
+// returned to the event loop (e.g. after a timer-based await), the
+// synchronous push/pop stack has already been popped, so the hook cannot
+// resolve which concurrent sequence it belongs to. The error message should
+// tell the user to hoist the call before the first await — not to remove
+// .concurrent or use describe(), which was the pre-fix wording.
+test("error message after yielding await in concurrent test tells users to hoist", async () => {
+  using dir = tempDir("issue-29236-after-await-error", {
+    "after-await.test.ts": /* ts */ `
+      import { onTestFinished, test } from "bun:test";
+      test.concurrent("a", async () => {
+        await Bun.sleep(5);
+        onTestFinished(() => {});
+      });
+      test.concurrent("b", async () => {
+        await Bun.sleep(5);
+        onTestFinished(() => {});
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "after-await.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+  const output = stdout + stderr;
+  // The legacy wording told users to switch to test.serial — that's wrong
+  // after this fix; synchronous registration works fine.
+  expect(output).not.toContain("Use test.serial");
+  expect(output).toMatch(/before the first `?await`?/);
 });

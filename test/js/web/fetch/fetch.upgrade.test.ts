@@ -37,26 +37,30 @@ describe("fetch upgrade", () => {
     expect(res.headers.get("sec-websocket-accept")).toBeString();
     expect(res.headers.get("connection")).toBe("Upgrade");
 
-    const clientMessages: string[] = [];
-    const { promise, resolve } = Promise.withResolvers<void>();
     const reader = res.body!.getReader();
+    // Accumulate across reads: a frame may straddle two reader.read() chunks and
+    // decodeFrames() silently skips partial frames at the tail of its input, so we
+    // re-decode the full buffer from scratch each iteration.
+    let buffered = Buffer.alloc(0);
+    let clientMessages: string[] = [];
+    let gotClose = false;
 
-    while (true) {
+    while (!gotClose) {
       const { value, done } = await reader.read();
       if (done) break;
-      for (const msg of decodeFrames(Buffer.from(value))) {
+      buffered = Buffer.concat([buffered, Buffer.from(value)]);
+      clientMessages = [];
+      for (const msg of decodeFrames(buffered)) {
         if (typeof msg === "string") {
           clientMessages.push(msg);
         } else {
           clientMessages.push(msg.type);
-        }
-
-        if (msg.type === "close") {
-          resolve();
+          if (msg.type === "close") gotClose = true;
         }
       }
     }
-    await promise;
+    await reader.cancel();
+    expect(gotClose).toBe(true);
     expect(serverMessages).toEqual(["hello", "world", "bye", "close"]);
     expect(clientMessages).toEqual(["Hello World", "close"]);
   });

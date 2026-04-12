@@ -2114,6 +2114,14 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
     else
         .{ .unknown = {} };
 
+    // FetchTasklet.callback() coalesces results: a later toResult() can overwrite an earlier
+    // one before the JS thread sees it. The first progressUpdate after request headers are
+    // sent is what flips can_stream=true so the JS side starts pulling the request body
+    // stream. If the response headers race in before that task runs and we report
+    // can_stream=false here, the request body stream is never started and upgraded
+    // connections (which depend on the body stream for their write side) deadlock.
+    const can_stream = (this.state.request_stage == .body or this.state.request_stage == .proxy_body) and this.flags.is_streaming_request_body;
+
     var certificate_info: ?CertificateInfo = null;
     if (this.state.certificate_info) |info| {
         // transfer owner ship of the certificate info here
@@ -2131,6 +2139,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
             .has_more = certificate_info != null or (this.state.fail == null and !this.state.isDone()),
             .body_size = body_size,
             .certificate_info = null,
+            .can_stream = can_stream,
         };
     }
     return HTTPClientResult{
@@ -2142,8 +2151,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
         .has_more = certificate_info != null or (this.state.fail == null and !this.state.isDone()),
         .body_size = body_size,
         .certificate_info = certificate_info,
-        // we can stream the request_body at this stage
-        .can_stream = (this.state.request_stage == .body or this.state.request_stage == .proxy_body) and this.flags.is_streaming_request_body,
+        .can_stream = can_stream,
     };
 }
 

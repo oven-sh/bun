@@ -4,6 +4,8 @@
 // is omitted — not a stale snapshot captured at Bun startup.
 
 import { expect, test } from "bun:test";
+import { chmodSync } from "node:fs";
+import path from "node:path";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test.skipIf(isWindows)("execFileSync/spawnSync/execSync honor runtime mutations to process.env.PATH", async () => {
@@ -37,8 +39,6 @@ test.skipIf(isWindows)("execFileSync/spawnSync/execSync honor runtime mutations 
   });
 
   // chmod the fake binary so it's executable — tempDir writes 0644 by default.
-  const { chmodSync } = require("node:fs");
-  const path = require("node:path");
   chmodSync(path.join(String(dir), "fake", "marker"), 0o755);
 
   await using proc = Bun.spawn({

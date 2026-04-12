@@ -1382,7 +1382,11 @@ pub const FetchTasklet = struct {
 
         const prev_metadata = task.result.metadata;
         const prev_cert_info = task.result.certificate_info;
+        const prev_can_stream = task.result.can_stream;
         task.result = result;
+        // can_stream is a one-shot signal to start the request body stream; don't let a
+        // later coalesced result clobber it before the JS thread sees it.
+        task.result.can_stream = task.result.can_stream or prev_can_stream;
 
         // Preserve pending certificate info if it was preovided in the previous update.
         if (task.result.certificate_info == null) {

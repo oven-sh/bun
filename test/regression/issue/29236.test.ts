@@ -38,11 +38,7 @@ test("onTestFinished works inside concurrent tests", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const output = stdout + stderr;
   expect(output).not.toContain("Cannot call onTestFinished");
   expect(output).toMatch(/\b4 pass\b/);
@@ -74,11 +70,7 @@ test("onTestFinished works inside concurrent tests via --concurrent flag", async
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const output = stdout + stderr;
   expect(output).not.toContain("Cannot call onTestFinished");
   expect(output).toMatch(/\b2 pass\b/);

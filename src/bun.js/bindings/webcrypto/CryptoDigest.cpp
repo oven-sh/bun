@@ -186,6 +186,12 @@ static void sha3Init(Sha3Context& ctx, size_t outputBytes)
     // rate = 1600 - 2 * outputBits
     const size_t capacityBytes = 2 * outputBytes;
     ctx.rateBytes = 200 - capacityBytes;
+    // Symmetric to the ASSERT in sha3Final: catch any mistaken wiring of a
+    // variant whose rate exceeds our fixed-output buffer. sha3Update memcpys
+    // up to rateBytes at a time, so if a caller ever wires SHAKE128
+    // (rateBytes = 168) through this path the absorption phase would
+    // silently overflow buffer[144] before the sha3Final guard ever runs.
+    ASSERT(ctx.rateBytes <= sizeof(ctx.buffer));
 }
 
 static void sha3Update(Sha3Context& ctx, const uint8_t* input, size_t length)

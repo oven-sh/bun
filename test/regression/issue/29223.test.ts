@@ -85,7 +85,7 @@ console.log("OK");
     await Bun.$`${bunExe()} install && ${bunExe()} run build:napi`.env(bunEnv).cwd(tempdir);
   });
 
-  test("NAPI addon calling uv_thread_self during Init does not crash", async () => {
+  test("NAPI addon calling uv_thread_self during Init does not crash", () => {
     // spawnSync because the baseline (pre-fix) crashes via panic + abort;
     // spawn + proc.exited can hang on such aborts under the test runner.
     const { stdout, exitCode } = Bun.spawnSync({

@@ -107,7 +107,6 @@ test.concurrent(
     });
     expect(exitCode).toBe(0);
   },
-  30000,
 );
 
 test.concurrent(
@@ -174,7 +173,6 @@ test.concurrent(
     });
     expect(exitCode).toBe(0);
   },
-  30000,
 );
 
 test.concurrent(
@@ -236,7 +234,6 @@ test.concurrent(
     expect(JSON.parse(stdout.trim())).toEqual({ fired: 1 });
     expect(exitCode).toBe(0);
   },
-  30000,
 );
 
 test.concurrent(
@@ -299,7 +296,6 @@ test.concurrent(
     expect(JSON.parse(stdout.trim())).toEqual({ ok: true, echoed: "reply:hello-from-worker" });
     expect(exitCode).toBe(0);
   },
-  30000,
 );
 
 test.concurrent(
@@ -349,7 +345,6 @@ test.concurrent(
     expect(JSON.parse(stdout.trim())).toEqual({ fired: 3 });
     expect(exitCode).toBe(0);
   },
-  30000,
 );
 
 test.concurrent(
@@ -399,7 +394,6 @@ test.concurrent(
     expect(JSON.parse(stdout.trim())).toEqual({ exitCode: 0 });
     expect(exitCode).toBe(0);
   },
-  30000,
 );
 
 test.concurrent(
@@ -458,7 +452,6 @@ test.concurrent(
     expect(JSON.parse(stdout.trim())).toEqual({ received: 3 });
     expect(exitCode).toBe(0);
   },
-  30000,
 );
 
 test.concurrent(
@@ -531,7 +524,6 @@ test.concurrent(
     expect(JSON.parse(stdout.trim())).toEqual({ fired: 1 });
     expect(exitCode).toBe(0);
   },
-  30000,
 );
 
 test.concurrent(
@@ -574,5 +566,4 @@ test.concurrent(
     expect(JSON.parse(stdout.trim())).toEqual({ exitCode: 0 });
     expect(exitCode).toBe(0);
   },
-  30000,
 );

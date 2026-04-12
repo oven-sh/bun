@@ -63,8 +63,8 @@ test("describe/test", async () => {
     (pass) addition 3 + 4 = 7
     AssertionError: expected 1 assertion, but test ended with 0 assertions
     (fail) expect.assertions
-    (pass) expect.hasAssertions works in concurrent tests
-    (pass) expect.assertions works in concurrent tests
+    (pass) expect.assertions not yet supported in concurrent tests
+    (pass) expect.assertions not yet supported in concurrent tests
     (pass) expect.assertions works
     (fail) expect.assertions combined with timeout
       ^ this test timed out after 1ms.

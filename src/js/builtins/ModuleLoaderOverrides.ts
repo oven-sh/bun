@@ -51,6 +51,11 @@ export async function requestImportModule(
 
   // Fast path 2: another caller raced us through requestSatisfy and already
   // finished (or is in the middle of) evaluating.
+  //
+  // `entry.evaluated` and `entry.module` are both set synchronously at the
+  // start of `linkAndEvaluateModule` below, so whenever `evaluatingPromise`
+  // is truthy `evaluated`/`module` are already set — this path is the only
+  // place concurrent TLA callers rendezvous.
   if (entry.evaluated && (mod = entry.module)) {
     if (entry.evaluatingPromise) {
       await entry.evaluatingPromise;
@@ -58,19 +63,15 @@ export async function requestImportModule(
     return this.getModuleNamespaceObject(mod);
   }
 
-  // Another concurrent import may have reached the eval step first.
-  if (entry.evaluatingPromise) {
-    await entry.evaluatingPromise;
-    return this.getModuleNamespaceObject(entry.module);
-  }
-
   // First call to reach evaluation for this entry. `linkAndEvaluateModule`
   // returns `moduleEvaluation(entry, fetcher)` directly, which for a TLA
   // module is the promise returned by `asyncModuleEvaluation`. Cache it on
   // the entry so any concurrent caller that slips through the fast paths
-  // can observe and await the same in-flight evaluation.
+  // can observe and await the same in-flight evaluation. Use the tamper-
+  // proof `$isPromise` intrinsic rather than a duck-typed `.then` check so
+  // `delete Promise.prototype.then` in user code can't defeat the fix.
   const evalResult = this.linkAndEvaluateModule(entry.key, fetcher);
-  if (evalResult && typeof (evalResult as any).then === "function") {
+  if (evalResult && $isPromise(evalResult)) {
     entry.evaluatingPromise = evalResult;
     try {
       await evalResult;

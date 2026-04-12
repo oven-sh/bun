@@ -107,15 +107,16 @@ static napi_value test_uv_once(napi_env env, napi_callback_info info) {
 // ffi-napi calls uv_thread_self during NAPI module init; Bun used to panic
 // because uv_thread_self was a stubbed libuv symbol on POSIX.
 static napi_value test_thread_self(napi_env env, napi_callback_info info) {
-  // Call uv_thread_self twice — both from the current (main) thread. They
-  // must refer to the same thread per pthread_equal.
+  // Call uv_thread_self twice — both from the current (main) thread. Also
+  // compare against pthread_self() to catch any bogus implementation that
+  // returns a consistent-but-wrong constant.
   uv_thread_t a = uv_thread_self();
   uv_thread_t b = uv_thread_self();
 
   napi_value ret;
   // pthread_equal returns non-zero for equal threads. Return a boolean so
   // the JS side can check it without caring about uv_thread_t layout.
-  napi_get_boolean(env, pthread_equal(a, b) != 0, &ret);
+  napi_get_boolean(env, pthread_equal(a, b) != 0 && pthread_equal(a, pthread_self()) != 0, &ret);
   return ret;
 }
 

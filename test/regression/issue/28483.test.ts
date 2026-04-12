@@ -71,6 +71,45 @@ console.log(m.default);`,
     expect(exitCode).toBe(0);
   });
 
+  test("percent-encoded data URL evaluates correctly", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const m = await import("data:text/javascript,export%20const%20x%20%3D%20%22hi%22");
+console.log(m.x);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toBe("hi\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("base64 data URL evaluates correctly", async () => {
+    const code = Buffer.from('export const x = "b64"').toString("base64");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const m = await import("data:text/javascript;base64,${code}");
+console.log(m.x);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toBe("b64\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("simple data URL import still works", async () => {
     await using proc = Bun.spawn({
       cmd: [

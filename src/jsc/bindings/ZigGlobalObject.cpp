@@ -2105,9 +2105,12 @@ void GlobalObject::finishCreation(VM& vm)
     m_utilInspectStylizeColorFunction.initLater(
         [](const Initializer<JSFunction>& init) {
             auto scope = DECLARE_THROW_SCOPE(init.vm);
-            JSC::MarkedArgumentBuffer args;
-            args.append(uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction());
+            JSFunction* inspectFn = uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction();
             RETURN_IF_EXCEPTION(scope, init.property.setMayBeNull(init.vm, init.owner, nullptr));
+            if (!inspectFn) [[unlikely]]
+                return init.property.setMayBeNull(init.vm, init.owner, nullptr);
+            JSC::MarkedArgumentBuffer args;
+            args.append(inspectFn);
 
             JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
             RETURN_IF_EXCEPTION(scope, init.property.setMayBeNull(init.vm, init.owner, nullptr));

@@ -186,6 +186,11 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
         depthValue = jsNumber(depth - 1);
     }
 
+    JSFunction* utilInspect = globalObject->utilInspectFunction();
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (!utilInspect) [[unlikely]]
+        return JSValue::encode(jsNontrivialString(vm, "BroadcastChannel"_s));
+
     JSObject* options = optionsValue.toObject(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     PropertyNameArrayBuilder optionsArray(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
@@ -211,10 +216,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
     inputObj->putDirect(vm, vm.propertyNames->name, jsString(vm, channel->name()), 0);
     inputObj->putDirect(vm, Identifier::fromString(vm, "active"_s), jsBoolean(!channel->isClosed()), 0);
 
-    JSFunction* utilInspect = globalObject->utilInspectFunction();
-    RETURN_IF_EXCEPTION(throwScope, {});
-    if (!utilInspect) [[unlikely]]
-        return JSValue::encode(jsNontrivialString(vm, "BroadcastChannel"_s));
     auto callData = JSC::getCallData(utilInspect);
     MarkedArgumentBuffer arguments;
     arguments.append(inputObj);

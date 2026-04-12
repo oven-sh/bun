@@ -262,45 +262,57 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     return release;
 }
 
-// Calls process.emit(eventName, exitCodeArg) by looking up `emit` on the
-// process object at call time, so user overrides of `process.emit`
-// (e.g. signal-exit's monkey-patch) are honored. Matches Node.js, which
-// dispatches lifecycle events through the user-visible emit method.
+// Dispatches a lifecycle event. If the user replaced `process.emit` with a
+// custom function (e.g. signal-exit's monkey-patch), that function is called
+// so user overrides are honored — matching Node.js. Otherwise we dispatch
+// directly through the internal EventEmitter, bypassing the JS-visible
+// `emit` binding's `emitForBindings` path. That path gates on
+// `scriptExecutionContext()` being alive, which it may not be during natural
+// shutdown — a critical difference that would otherwise silently drop
+// lifecycle listeners (e.g. test harnesses' mustCall exit handlers).
 static void callProcessEmit(JSC::JSGlobalObject* globalObject, Process* process, ASCIILiteral eventName, JSC::JSValue exitCodeArg)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto eventIdent = JSC::Identifier::fromString(vm, eventName);
 
-    JSC::JSValue emitValue = process->get(globalObject, JSC::Identifier::fromString(vm, "emit"_s));
-    if (auto* exception = scope.exception()) {
-        if (!vm.isTerminationException(exception)) {
-            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        }
-        (void)scope.tryClearException();
-        return;
-    }
-
-    auto callData = JSC::getCallData(emitValue);
-    if (callData.type == JSC::CallData::Type::None) {
-        // process.emit was replaced with a non-function; fall back to the
-        // internal emitter so we still dispatch lifecycle events.
-        JSC::MarkedArgumentBuffer fallbackArgs;
-        fallbackArgs.append(exitCodeArg);
-        process->wrapped().emit(JSC::Identifier::fromString(vm, eventName), fallbackArgs);
+    // Only honor `emit` if it's an own property of process — i.e. the user
+    // replaced it. Inherited (prototype) `emit` is the native JSEventEmitter
+    // binding, which goes through `emitForBindings` and drops events when
+    // the script context is being torn down during shutdown. We must not
+    // rely on that path for exit/beforeExit.
+    auto emitIdent = JSC::Identifier::fromString(vm, "emit"_s);
+    JSC::PropertySlot slot(process, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+    JSC::JSValue emitValue;
+    JSC::CallData callData;
+    if (process->methodTable()->getOwnPropertySlot(process, globalObject, emitIdent, slot)) {
+        emitValue = slot.getValue(globalObject, emitIdent);
         if (auto* exception = scope.exception()) {
             if (!vm.isTerminationException(exception)) {
                 Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
             }
             (void)scope.tryClearException();
+            return;
         }
-        return;
+        callData = JSC::getCallData(emitValue);
     }
 
-    JSC::MarkedArgumentBuffer callArgs;
-    callArgs.append(JSC::jsString(vm, String(eventName)));
-    callArgs.append(exitCodeArg);
+    if (callData.type == JSC::CallData::Type::None) {
+        // No user override (or it's not callable). Dispatch through the
+        // internal emitter directly, matching pre-fix semantics for the
+        // default path and avoiding the script-context gate on
+        // `emitForBindings`.
+        JSC::MarkedArgumentBuffer args;
+        args.append(exitCodeArg);
+        process->wrapped().emit(eventIdent, args);
+    } else {
+        // User replaced process.emit — invoke their function.
+        JSC::MarkedArgumentBuffer callArgs;
+        callArgs.append(JSC::jsString(vm, String(eventName)));
+        callArgs.append(exitCodeArg);
+        JSC::profiledCall(globalObject, JSC::ProfilingReason::API, emitValue, callData, process, callArgs);
+    }
 
-    JSC::profiledCall(globalObject, JSC::ProfilingReason::API, emitValue, callData, process, callArgs);
     if (auto* exception = scope.exception()) {
         if (!vm.isTerminationException(exception)) {
             Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);

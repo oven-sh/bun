@@ -77,10 +77,18 @@ pub const js_fns = struct {
                     .execution => {
                         const active = bunTest.getCurrentStateData();
                         const sequence, _ = bunTest.execution.getCurrentAndValidExecutionSequence(active) orelse {
+                            // We only reach this branch when `current_callback_stack` is
+                            // empty *and* the active concurrent group has more than one
+                            // sequence in flight. The common way to hit this is calling
+                            // the hook after the first `await` in a concurrent test —
+                            // by then the synchronous push/pop has already been popped
+                            // and we can no longer tell which sequence the caller
+                            // belongs to. Tell the user to hoist the call above the
+                            // first `await`, which is the only actionable fix here.
                             const message = if (tag == .onTestFinished)
-                                "Cannot call {s}() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent."
+                                "Cannot call {s}() here. In a concurrent test, call it synchronously before the first `await`."
                             else
-                                "Cannot call {s}() here. It cannot be called inside a concurrent test. Call it inside describe() instead.";
+                                "Cannot call {s}() here. In a concurrent test, call it synchronously before the first `await`, or move it into a describe() block.";
                             return globalThis.throw(message, .{@tagName(tag)});
                         };
 
@@ -278,6 +286,9 @@ pub const BunTest = struct {
             entry.destroy(this.gpa);
         }
         this.extra_execution_entries.deinit();
+        // every pushCurrentCallback must be paired with popCurrentCallback —
+        // a non-empty stack at teardown means we leaked a frame.
+        bun.debugAssert(this.current_callback_stack.items.len == 0);
         this.current_callback_stack.deinit();
 
         this.execution.deinit();

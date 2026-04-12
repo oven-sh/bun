@@ -329,9 +329,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     bun.analytics.Features.WebSocket += 1;
 
                     if (comptime ssl) {
-                        // For wss+unix://, the URL host (or a user-supplied Host
-                        // header) drives SNI; there is no network hostname to fall
-                        // back on so skip SNI if the host is empty or an IP.
+                        // SNI uses the URL host (defaulted to "localhost" in
+                        // C++ when absent), mirroring the TCP path below. A
+                        // user-supplied Host header does NOT affect SNI; use
+                        // `tls: { checkServerIdentity }` or put the hostname
+                        // in the URL (wss+unix://name/path) to verify against
+                        // a specific certificate name.
                         if (host_slice.slice().len > 0 and !strings.isIPAddress(host_slice.slice())) {
                             client.hostname = bun.default_allocator.dupeZ(u8, host_slice.slice()) catch "";
                         }

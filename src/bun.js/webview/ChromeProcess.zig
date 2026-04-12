@@ -234,7 +234,7 @@ fn findPlaywrightShell(alloc: std.mem.Allocator) ?[:0]const u8 {
     return null;
 }
 
-fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*:0]const u8, extraArgv: []const [*:0]const u8, stdoutInherit: bool, stderrInherit: bool) !bun.FileDescriptor {
+fn spawn(vm: *jsc.VirtualMachine, userDataDir: ?[*:0]const u8, explicitPath: ?[*:0]const u8, extraArgv: []const [*:0]const u8, stdoutInherit: bool, stderrInherit: bool) !bun.FD {
     if (comptime bun.Environment.isWindows) return error.Unsupported;
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);

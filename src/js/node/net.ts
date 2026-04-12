@@ -251,10 +251,11 @@ const SocketHandlers: SocketHandler = {
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
+    if (!verifyError && typeof checkServerIdentity === "function") {
+      const hostname = self.servername || self._host || "localhost";
       const cert = self.getPeerCertificate(true);
       if (cert) {
-        verifyError = checkServerIdentity(self.servername, cert);
+        verifyError = checkServerIdentity(hostname, cert);
       }
     }
     if (self._requestCert || self._rejectUnauthorized) {
@@ -563,10 +564,11 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.emit("secure", self);
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function" && self.servername) {
+    if (!verifyError && typeof checkServerIdentity === "function") {
+      const hostname = self.servername || self._host || "localhost";
       const cert = self.getPeerCertificate(true);
       if (cert) {
-        verifyError = checkServerIdentity(self.servername, cert);
+        verifyError = checkServerIdentity(hostname, cert);
       }
     }
     if (self._requestCert || self._rejectUnauthorized) {
@@ -1518,6 +1520,9 @@ function lookupAndConnect(self, options) {
     autoSelectFamilyAttemptTimeout = getDefaultAutoSelectFamilyAttemptTimeout();
   }
 
+  self._host = host;
+  self._port = port;
+
   // If host is an IP, skip performing a lookup
   const addressType = isIP(host);
   if (addressType) {
@@ -1542,8 +1547,6 @@ function lookupAndConnect(self, options) {
 
   $debug("connect: find host", host, addressType);
   $debug("connect: dns options", dnsopts);
-  self._host = host;
-  self._port = port;
   const lookup = options.lookup || dns.lookup;
 
   if (dnsopts.family !== 4 && dnsopts.family !== 6 && !localAddress && autoSelectFamily) {

@@ -19,6 +19,8 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
 pub const StaticRoute = @import("./server/StaticRoute.zig");
 pub const FileRoute = @import("./server/FileRoute.zig");
+pub const FileResponseStream = @import("./server/FileResponseStream.zig");
+pub const RangeRequest = @import("./server/RangeRequest.zig");
 
 pub const AnyRoute = union(enum) {
     /// Serve a static file
@@ -1549,6 +1551,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 this.vm.removeListeningSocketForWatchMode(listener.socket().fd());
 
             this.notifyInspectorServerStopped();
+
+            if (this.config.address == .unix) {
+                const path = this.config.address.unix;
+                if (path.len > 0 and path[0] != 0) {
+                    _ = bun.sys.unlink(path);
+                }
+            }
 
             if (!abrupt) {
                 listener.close();

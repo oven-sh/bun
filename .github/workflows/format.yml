@@ -35,7 +35,6 @@ jobs:
       - name: Setup Dependencies
         run: |
           bun install
-          bun scripts/glob-sources.mjs
       - name: Format Code
         run: |
           # Start prettier in background with prefixed output
@@ -105,5 +104,4 @@ jobs:
       - name: Ban Words
         run: |
           bun ./test/internal/ban-words.test.ts
-          git rm -f cmake/sources/*.txt || true
       - uses: autofix-ci/action@635ffb0c9798bd160680f18fd73371e355b85f27

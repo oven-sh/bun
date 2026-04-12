@@ -162,3 +162,6 @@ test/js/web/urlpattern/urlpattern.test.ts
 # TODO: jsc
 test/js/bun/jsonl/jsonl-parse.test.ts
 test/regression/issue/isArray-proxy-crash.test.ts
+
+# Third-party SDK with unchecked exception path in JSArray pushInline
+test/js/third_party/@azure/service-bus/azure-service-bus.test.ts

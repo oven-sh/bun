@@ -1,6 +1,15 @@
 pub const WTF = struct {
     extern fn WTF__parseDouble(bytes: [*]const u8, length: usize, counted: *usize) f64;
 
+    extern fn WTF__numberOfProcessorCores() c_int;
+
+    /// On Linux, this is min(sysconf(_SC_NPROCESSORS_ONLN), sched_getaffinity count, cgroup cpu.max quota).
+    /// Result is cached after the first call.
+    pub fn numberOfProcessorCores() u32 {
+        jsc.markBinding(@src());
+        return @intCast(@max(1, WTF__numberOfProcessorCores()));
+    }
+
     extern fn WTF__releaseFastMallocFreeMemoryForThisThread() void;
 
     pub fn releaseFastMallocFreeMemoryForThisThread() void {

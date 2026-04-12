@@ -61,28 +61,29 @@ enum class HTTPMethod : uint8_t {
     httpMSEARCH = 10,
     httpMERGE = 11,
     httpMKACTIVITY = 12,
-    httpMKCALENDAR = 13,
-    httpMKCOL = 14,
-    httpMOVE = 15,
-    httpNOTIFY = 16,
-    httpOPTIONS = 17,
-    httpPATCH = 18,
-    httpPOST = 19,
-    httpPROPFIND = 20,
-    httpPROPPATCH = 21,
-    httpPURGE = 22,
-    httpPUT = 23,
-    httpQUERY = 24,
-    httpREBIND = 25,
-    httpREPORT = 26,
-    httpSEARCH = 27,
-    httpSOURCE = 28,
-    httpSUBSCRIBE = 29,
-    httpTRACE = 30,
-    httpUNBIND = 31,
-    httpUNLINK = 32,
-    httpUNLOCK = 33,
-    httpUNSUBSCRIBE = 34,
+    httpMKADDRESSBOOK = 13,
+    httpMKCALENDAR = 14,
+    httpMKCOL = 15,
+    httpMOVE = 16,
+    httpNOTIFY = 17,
+    httpOPTIONS = 18,
+    httpPATCH = 19,
+    httpPOST = 20,
+    httpPROPFIND = 21,
+    httpPROPPATCH = 22,
+    httpPURGE = 23,
+    httpPUT = 24,
+    httpQUERY = 25,
+    httpREBIND = 26,
+    httpREPORT = 27,
+    httpSEARCH = 28,
+    httpSOURCE = 29,
+    httpSUBSCRIBE = 30,
+    httpTRACE = 31,
+    httpUNBIND = 32,
+    httpUNLINK = 33,
+    httpUNLOCK = 34,
+    httpUNSUBSCRIBE = 35,
 };
 
 static JSC::JSValue toJS(Zig::GlobalObject* globalObject, HTTPMethod method)
@@ -105,6 +106,7 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, HTTPMethod method)
         FOR_EACH_METHOD(MSEARCH)
         FOR_EACH_METHOD(MERGE)
         FOR_EACH_METHOD(MKACTIVITY)
+        FOR_EACH_METHOD(MKADDRESSBOOK)
         FOR_EACH_METHOD(MKCALENDAR)
         FOR_EACH_METHOD(MKCOL)
         FOR_EACH_METHOD(MOVE)

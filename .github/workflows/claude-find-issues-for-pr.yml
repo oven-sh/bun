@@ -12,7 +12,7 @@ on:
 jobs:
   claude-find-issues:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     concurrency:
       group: claude-find-issues-${{ github.event.pull_request.number || inputs.pr_number }}
       cancel-in-progress: true
@@ -25,11 +25,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run Claude Code slash command
-        uses: anthropics/claude-code-base-action@beta
+      - name: Find issues this PR may fix
+        uses: anthropics/claude-code-base-action@98d41f9809750c4c96f2cd285746ecef889f14bc
+        env:
+          ANTHROPIC_MODEL: claude-opus-4-6[1m]
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           prompt: "/find-issues ${{ github.repository }}/pull/${{ github.event.pull_request.number || inputs.pr_number }}"
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: "--model claude-opus-4-6[1m]"
-          claude_env: |
-            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Find duplicate PRs
+        if: always()
+        uses: anthropics/claude-code-base-action@98d41f9809750c4c96f2cd285746ecef889f14bc
+        env:
+          ANTHROPIC_MODEL: claude-opus-4-6[1m]
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          prompt: "/find-duplicate-prs ${{ github.repository }}/pull/${{ github.event.pull_request.number || inputs.pr_number }}"
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

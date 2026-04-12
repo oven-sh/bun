@@ -167,7 +167,7 @@ pub fn transpileSourceCode(
             var arena = arena_.?;
             const allocator = arena.allocator();
 
-            var fd: ?StoredFileDescriptorType = null;
+            var fd: ?FD = null;
             var package_json: ?*PackageJSON = null;
 
             if (jsc_vm.bun_watcher.indexOf(hash)) |index| {
@@ -221,7 +221,7 @@ pub fn transpileSourceCode(
                 else => .unknown,
             };
 
-            var input_file_fd: StoredFileDescriptorType = bun.invalid_fd;
+            var input_file_fd: FD = bun.invalid_fd;
             var parse_options = Transpiler.ParseOptions{
                 .allocator = allocator,
                 .path = path,
@@ -598,7 +598,7 @@ pub fn transpileSourceCode(
         .napi => unreachable,
         // .wasm => {
         //     jsc_vm.transpiled_count += 1;
-        //     var fd: ?StoredFileDescriptorType = null;
+        //     var fd: ?FD = null;
 
         //     var allocator = if (jsc_vm.has_loaded) jsc_vm.arena.allocator() else jsc_vm.allocator;
 
@@ -759,7 +759,7 @@ pub fn transpileSourceCode(
             if (virtual_source == null) {
                 if (jsc_vm.isWatcherEnabled()) auto_watch: {
                     if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
-                        const input_fd: bun.StoredFileDescriptorType = brk: {
+                        const input_fd: bun.FD = brk: {
                             // on macOS, we need a file descriptor to receive event notifications on it.
                             // so we use O_EVTONLY to open the file descriptor without asking any additional permissions.
                             if (bun.Watcher.requires_file_descriptors) {
@@ -1381,9 +1381,9 @@ const setBreakPointOnFirstLine = @import("./RuntimeTranspilerStore.zig").setBrea
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const String = bun.String;
 const Transpiler = bun.Transpiler;
 const analytics = bun.analytics;

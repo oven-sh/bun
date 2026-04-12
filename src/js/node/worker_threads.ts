@@ -179,11 +179,14 @@ function fakeParentPort() {
       // messages are only visible through `parentPort`, not through the
       // global scope.
       event.stopImmediatePropagation();
-      const data = (event as MessageEvent).data;
-      const clone =
-        type === "message"
-          ? new MessageEvent("message", { data })
-          : new MessageEvent("messageerror", { data });
+      const messageEvent = event as MessageEvent;
+      // Preserve `ports` so `worker.postMessage(data, [port])` still surfaces
+      // the transferred MessagePort(s) to `parentPort` listeners.
+      const nativePorts = messageEvent.ports;
+      const clone = new MessageEvent(type, {
+        data: messageEvent.data,
+        ports: nativePorts && nativePorts.length > 0 ? Array.from(nativePorts) : undefined,
+      });
       parentPortTarget.dispatchEvent(clone);
     };
     messageForwarder = makeForwarder("message");
@@ -229,14 +232,32 @@ function fakeParentPort() {
     return capture ? type + ":1" : type + ":0";
   }
 
+  function invokeListener(listener: EventListener | EventListenerObject, event: Event): void {
+    // DOM EventTarget accepts either a bare function or an object with a
+    // `handleEvent` method. Dispatch correctly for both forms.
+    if (typeof listener === "function") {
+      (listener as any).$call(fake, event);
+    } else if (listener !== null && typeof listener === "object" && typeof (listener as any).handleEvent === "function") {
+      (listener as any).handleEvent.$call(listener, event);
+    }
+  }
+
   function parentPortAddEventListener(
     type: string,
-    listener: EventListener | null,
+    listener: EventListener | EventListenerObject | null,
     options?: boolean | AddEventListenerOptions,
   ): void {
     if (listener === null || listener === undefined) return;
     const capture = typeof options === "boolean" ? options : !!options?.capture;
     const once = typeof options === "object" && options !== null && !!options.once;
+    // `AbortSignal` auto-removal is driven from the native EventTarget in C++,
+    // so it would bypass our JS `parentPortRemoveEventListener` wrapper and
+    // leak the event-loop refcount our capture forwarder holds on `self`.
+    // Strip the signal from the options we pass inward and re-implement abort
+    // ourselves via an abort listener that routes through the JS remove path.
+    const signal =
+      typeof options === "object" && options !== null ? ((options as AddEventListenerOptions).signal ?? null) : null;
+    if (signal && signal.aborted) return;
     const slot = listenerSlot(type, capture);
     let bucket = trackedByListener.get(listener as object);
     if (bucket?.has(slot)) {
@@ -254,7 +275,7 @@ function fakeParentPort() {
           releaseListener();
         }
       }
-      (listener as EventListener).$call(fake, event);
+      invokeListener(listener, event);
     };
     const entry: TrackEntry = { wrapped, once };
     if (!bucket) {
@@ -262,13 +283,24 @@ function fakeParentPort() {
       trackedByListener.set(listener as object, bucket);
     }
     bucket.set(slot, entry);
-    parentPortTarget.addEventListener(type, wrapped, options);
+    const innerOptions: boolean | AddEventListenerOptions =
+      typeof options === "object" && options !== null ? { ...options, signal: undefined } : (options ?? false);
+    parentPortTarget.addEventListener(type, wrapped, innerOptions);
     acquireListener();
+    if (signal) {
+      signal.addEventListener(
+        "abort",
+        () => {
+          parentPortRemoveEventListener(type, listener, { capture });
+        },
+        { once: true },
+      );
+    }
   }
 
   function parentPortRemoveEventListener(
     type: string,
-    listener: EventListener | null,
+    listener: EventListener | EventListenerObject | null,
     options?: boolean | EventListenerOptions,
   ): void {
     if (listener === null || listener === undefined) return;

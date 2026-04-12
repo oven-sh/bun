@@ -1,5 +1,6 @@
 #include <node_api.h>
 
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -102,6 +103,22 @@ static napi_value test_uv_once(napi_env env, napi_callback_info info) {
   return ret;
 }
 
+// Test uv_thread_self — regression test for #29223.
+// ffi-napi calls uv_thread_self during NAPI module init; Bun used to panic
+// because uv_thread_self was a stubbed libuv symbol on POSIX.
+static napi_value test_thread_self(napi_env env, napi_callback_info info) {
+  // Call uv_thread_self twice — both from the current (main) thread. They
+  // must refer to the same thread per uv_thread_equal.
+  uv_thread_t a = uv_thread_self();
+  uv_thread_t b = uv_thread_self();
+
+  napi_value ret;
+  // pthread_equal returns non-zero for equal threads. Return a boolean so
+  // the JS side can check it without caring about uv_thread_t layout.
+  napi_get_boolean(env, pthread_equal(a, b) != 0, &ret);
+  return ret;
+}
+
 // Test uv_hrtime
 static napi_value test_hrtime(napi_env env, napi_callback_info info) {
   uint64_t time1 = uv_hrtime();
@@ -149,6 +166,9 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_uv_once, NULL, &fn);
   napi_set_named_property(env, exports, "testUvOnce", fn);
+
+  napi_create_function(env, NULL, 0, test_thread_self, NULL, &fn);
+  napi_set_named_property(env, exports, "testThreadSelf", fn);
 
   napi_create_function(env, NULL, 0, test_hrtime, NULL, &fn);
   napi_set_named_property(env, exports, "testHrtime", fn);

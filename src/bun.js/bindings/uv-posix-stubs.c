@@ -1745,12 +1745,6 @@ UV_EXTERN int uv_thread_join(uv_thread_t* tid)
     __builtin_unreachable();
 }
 
-UV_EXTERN uv_thread_t uv_thread_self(void)
-{
-    __bun_throw_not_implemented("uv_thread_self");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_thread_setaffinity(uv_thread_t* tid,
     char* cpumask,
     char* oldmask,

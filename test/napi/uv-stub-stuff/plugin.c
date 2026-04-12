@@ -2089,12 +2089,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_thread_self") == 0) {
-
-    uv_thread_self();
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_thread_setaffinity") == 0) {
     uv_thread_t *arg0 = {0};
     char *arg1 = {0};

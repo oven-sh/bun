@@ -57,6 +57,13 @@ UV_EXTERN void uv_once(uv_once_t* guard, void (*callback)(void))
         abort();
 }
 
+// Copy-pasted from libuv (src/unix/thread.c).
+// uv_thread_t is pthread_t on POSIX (see uv/unix.h).
+UV_EXTERN uv_thread_t uv_thread_self(void)
+{
+    return pthread_self();
+}
+
 UV_EXTERN uint64_t uv_hrtime(void)
 {
     return uv__hrtime(UV_CLOCK_PRECISE);

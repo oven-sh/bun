@@ -91,6 +91,12 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(nativeModule.testUvOnce()).toBe(1);
   });
 
+  // Regression test for #29223: ffi-napi calls uv_thread_self during NAPI
+  // module init. Used to panic because it was a stubbed libuv symbol.
+  test("uv_thread_self (#29223)", () => {
+    expect(nativeModule.testThreadSelf()).toBe(true);
+  });
+
   test("hrtime", () => {
     const result = nativeModule.testHrtime();
 

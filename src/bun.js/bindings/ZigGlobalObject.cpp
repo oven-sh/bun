@@ -2711,6 +2711,19 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     putDirectBuiltinFunction(vm, this, builtinNames.overridableRequirePrivateName(), commonJSOverridableRequireCodeGenerator(vm), 0);
 
+    // Override the stock WebKit `requestImportModule` builtin on the
+    // JSModuleLoader with a version that correctly waits for an in-flight
+    // top-level-await evaluation before resolving. The stock builtin sets
+    // `entry.evaluated = true` synchronously at the start of async
+    // evaluation, which causes a concurrent dynamic `import()` of the same
+    // module to take a fast path and return the namespace before the TLA
+    // completes. See https://github.com/oven-sh/bun/issues/29221.
+    //
+    // The JSC C++ `JSModuleLoader::requestImportModule` looks this function
+    // up dynamically by its private-name property, so installing our version
+    // here replaces both C++-initiated and JS-initiated dynamic imports.
+    this->moduleLoader()->putDirectBuiltinFunction(vm, this, vm.propertyNames->builtinNames().requestImportModulePublicName(), moduleLoaderOverridesRequestImportModuleCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontEnum);
+
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.resolveSyncPrivateName(), 1, functionImportMeta__resolveSyncPrivate, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.createInternalModuleByIdPrivateName(), 1, InternalModuleRegistry::jsCreateInternalModuleById, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);

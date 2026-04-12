@@ -96,11 +96,7 @@ test("parent messages do not fire self.onmessage in a node:worker_threads worker
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 
@@ -168,11 +164,7 @@ test("parentPort delivers each parent message exactly once to every listener var
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
 
@@ -239,11 +231,7 @@ test("parentPort.off removes a listener (#29211)", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stderr: cleanStderr(stderr), exitCode }).toEqual({ stderr: "", exitCode: 0 });
   // `handler` should fire exactly once — it unsubscribes itself on the

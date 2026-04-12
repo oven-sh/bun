@@ -1319,6 +1319,7 @@ pub const Error = enum(i32) {
         return switch (eai) {
             @as(std.posix.system.EAI, @enumFromInt(0)) => return null,
             .ADDRFAMILY => Error.EBADFAMILY,
+            .AGAIN => Error.ETIMEOUT, // Temporary failure in name resolution; matches Node and the Windows/libuv path above.
             .BADFLAGS => Error.EBADFLAGS, // Invalid hints
             .FAIL => Error.EBADRESP,
             .FAMILY => Error.EBADFAMILY,

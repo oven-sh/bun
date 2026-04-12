@@ -167,53 +167,69 @@ function fakeParentPort() {
   let parentPortOnMessageErrorWrapper: ((event: Event) => void) | null = null;
   let parentPortOnMessageErrorHandler: ((event: MessageEvent) => unknown) | null = null;
 
-  let listenerCount = 0;
+  // Separate counters per event type — installing a `message` listener on
+  // `self` keeps the event loop alive (via `onDidChangeListenerImpl` in
+  // `BunWorkerGlobalScope.cpp`, which only tracks `messageEvent`), so a
+  // worker that only registers a `messageerror` handler must NOT pull in the
+  // `message` forwarder.
+  let messageListenerCount = 0;
+  let messageErrorListenerCount = 0;
   let messageForwarder: ((event: Event) => void) | null = null;
   let messageErrorForwarder: ((event: Event) => void) | null = null;
 
-  function installForwarders() {
+  const makeForwarder = (type: "message" | "messageerror") => (event: Event) => {
+    // Stop the native dispatch from reaching `self.onmessage` and any
+    // `self.addEventListener('message', …)` handlers — in Node parent
+    // messages are only visible through `parentPort`, not through the
+    // global scope.
+    event.stopImmediatePropagation();
+    const messageEvent = event as MessageEvent;
+    // Preserve `ports` so `worker.postMessage(data, [port])` still surfaces
+    // the transferred MessagePort(s) to `parentPort` listeners.
+    const nativePorts = messageEvent.ports;
+    const clone = new MessageEvent(type, {
+      data: messageEvent.data,
+      ports: nativePorts && nativePorts.length > 0 ? $Array.from(nativePorts) : undefined,
+    });
+    parentPortTarget.dispatchEvent(clone);
+  };
+
+  function installMessageForwarder() {
     if (messageForwarder !== null) return;
-    const makeForwarder = (type: "message" | "messageerror") => (event: Event) => {
-      // Stop the native dispatch from reaching `self.onmessage` and any
-      // `self.addEventListener('message', …)` handlers — in Node parent
-      // messages are only visible through `parentPort`, not through the
-      // global scope.
-      event.stopImmediatePropagation();
-      const messageEvent = event as MessageEvent;
-      // Preserve `ports` so `worker.postMessage(data, [port])` still surfaces
-      // the transferred MessagePort(s) to `parentPort` listeners.
-      const nativePorts = messageEvent.ports;
-      const clone = new MessageEvent(type, {
-        data: messageEvent.data,
-        ports: nativePorts && nativePorts.length > 0 ? $Array.from(nativePorts) : undefined,
-      });
-      parentPortTarget.dispatchEvent(clone);
-    };
     messageForwarder = makeForwarder("message");
-    messageErrorForwarder = makeForwarder("messageerror");
     // Capture phase so we run before any user-installed bubbling listener
     // on the global scope (if any).
     self.addEventListener("message", messageForwarder, { capture: true });
-    self.addEventListener("messageerror", messageErrorForwarder, { capture: true });
   }
-
-  function uninstallForwarders() {
+  function uninstallMessageForwarder() {
     if (messageForwarder === null) return;
     self.removeEventListener("message", messageForwarder, { capture: true } as any);
-    self.removeEventListener("messageerror", messageErrorForwarder!, { capture: true } as any);
     messageForwarder = null;
+  }
+  function installMessageErrorForwarder() {
+    if (messageErrorForwarder !== null) return;
+    messageErrorForwarder = makeForwarder("messageerror");
+    self.addEventListener("messageerror", messageErrorForwarder, { capture: true });
+  }
+  function uninstallMessageErrorForwarder() {
+    if (messageErrorForwarder === null) return;
+    self.removeEventListener("messageerror", messageErrorForwarder, { capture: true } as any);
     messageErrorForwarder = null;
   }
 
-  function acquireListener() {
-    if (listenerCount++ === 0) {
-      installForwarders();
+  function acquireListener(type: "message" | "messageerror") {
+    if (type === "message") {
+      if (messageListenerCount++ === 0) installMessageForwarder();
+    } else {
+      if (messageErrorListenerCount++ === 0) installMessageErrorForwarder();
     }
   }
 
-  function releaseListener() {
-    if (listenerCount > 0 && --listenerCount === 0) {
-      uninstallForwarders();
+  function releaseListener(type: "message" | "messageerror") {
+    if (type === "message") {
+      if (messageListenerCount > 0 && --messageListenerCount === 0) uninstallMessageForwarder();
+    } else {
+      if (messageErrorListenerCount > 0 && --messageErrorListenerCount === 0) uninstallMessageErrorForwarder();
     }
   }
 
@@ -261,9 +277,9 @@ function fakeParentPort() {
     // Only `message` / `messageerror` events are dispatched on `self` by the
     // native worker runtime — all other event types (`close`, `error`, …)
     // live purely on `parentPortTarget` and don't need the capture forwarder
-    // at all. Gating on `tracksForwarder` stops us from installing the
-    // forwarder (and leaking `listenerCount`) for unrelated event types.
-    const tracksForwarder = type === "message" || type === "messageerror";
+    // at all.
+    const forwarderType: "message" | "messageerror" | null =
+      type === "message" ? "message" : type === "messageerror" ? "messageerror" : null;
     const slot = listenerSlot(type, capture);
     let bucket = trackedByListener.get(listener as object);
     if (bucket?.$has(slot)) {
@@ -278,7 +294,7 @@ function fakeParentPort() {
         if (bucketNow?.$get(slot) === entry) {
           bucketNow.$delete(slot);
           if (bucketNow.$size === 0) trackedByListener.delete(listener as object);
-          if (tracksForwarder) releaseListener();
+          if (forwarderType !== null) releaseListener(forwarderType);
         }
       }
       invokeListener(listener, event);
@@ -292,7 +308,7 @@ function fakeParentPort() {
     const innerOptions: boolean | AddEventListenerOptions =
       typeof options === "object" && options !== null ? { ...options, signal: undefined } : (options ?? false);
     parentPortTarget.addEventListener(type, wrapped, innerOptions);
-    if (tracksForwarder) acquireListener();
+    if (forwarderType !== null) acquireListener(forwarderType);
     if (signal) {
       signal.addEventListener(
         "abort",
@@ -319,7 +335,8 @@ function fakeParentPort() {
     bucket.$delete(slot);
     if (bucket.$size === 0) trackedByListener.delete(listener as object);
     parentPortTarget.removeEventListener(type, entry.wrapped, options);
-    if (type === "message" || type === "messageerror") releaseListener();
+    if (type === "message") releaseListener("message");
+    else if (type === "messageerror") releaseListener("messageerror");
   }
 
   Object.defineProperty(fake, "onmessage", {
@@ -331,7 +348,7 @@ function fakeParentPort() {
       if (parentPortOnMessageWrapper !== null) {
         parentPortTarget.removeEventListener("message", parentPortOnMessageWrapper);
         parentPortOnMessageWrapper = null;
-        releaseListener();
+        releaseListener("message");
       }
       parentPortOnMessageHandler = typeof value === "function" ? value : null;
       if (parentPortOnMessageHandler !== null) {
@@ -346,7 +363,7 @@ function fakeParentPort() {
           }
         };
         parentPortTarget.addEventListener("message", parentPortOnMessageWrapper);
-        acquireListener();
+        acquireListener("message");
       }
     },
   });
@@ -359,7 +376,7 @@ function fakeParentPort() {
       if (parentPortOnMessageErrorWrapper !== null) {
         parentPortTarget.removeEventListener("messageerror", parentPortOnMessageErrorWrapper);
         parentPortOnMessageErrorWrapper = null;
-        releaseListener();
+        releaseListener("messageerror");
       }
       parentPortOnMessageErrorHandler = typeof value === "function" ? value : null;
       if (parentPortOnMessageErrorHandler !== null) {
@@ -374,7 +391,7 @@ function fakeParentPort() {
           }
         };
         parentPortTarget.addEventListener("messageerror", parentPortOnMessageErrorWrapper);
-        acquireListener();
+        acquireListener("messageerror");
       }
     },
   });
@@ -424,13 +441,22 @@ function fakeParentPort() {
     value: parentPortTarget.dispatchEvent.bind(parentPortTarget),
   });
 
-  Object.defineProperty(fake, "removeListener", {
-    value: parentPortRemoveEventListener,
+  // `addListener`/`removeListener` must NOT bypass the `injectFakeEmitter`
+  // wrapping layer: `parentPort.on('message', fn)` wraps `fn` into a callback
+  // and stores `fn[wrappedListener] = callback`. A matching
+  // `parentPort.removeListener('message', fn)` has to resolve the wrapped
+  // callback before calling `removeEventListener`, otherwise it would try to
+  // remove `fn` itself (which was never registered) and silently leak the
+  // event-loop refcount held by our capture forwarder. `fake.on`/`fake.off`
+  // — inherited from `MessagePort.prototype` via `injectFakeEmitter` — do
+  // that resolution correctly, so we alias to them.
+  Object.defineProperty(fake, "addListener", {
+    value: (MessagePort.prototype as any).on,
     enumerable: false,
   });
 
-  Object.defineProperty(fake, "addListener", {
-    value: parentPortAddEventListener,
+  Object.defineProperty(fake, "removeListener", {
+    value: (MessagePort.prototype as any).off,
     enumerable: false,
   });
 

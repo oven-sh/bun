@@ -2091,23 +2091,26 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     $stream: ReadableStream;
 
     #onClose() {
-      // Capture the controller BEFORE clearing the WeakRef — otherwise
-      // `deref?.()` on the cleared field always yields undefined and the
-      // `callClose` enqueue below never runs. This used to be harmless
-      // because BYOB reads could not reach the close path at all, but
-      // with BYOB now wired through #pull, a pending readIntoRequest would
-      // hang forever if the native layer closed out-of-band via this
-      // callback (connection reset, transport EOF) instead of through a
-      // pull returning isClosed=true.
-      var controller = this.#controller?.deref?.();
+      // Intentionally no direct callClose enqueue here. The historical
+      // ordering (clearing #controller BEFORE deref) silently left the
+      // `if (controller)` branch unreachable, so the close signal was
+      // actually delivered the next time `#pull` runs and hits its
+      // `if (!handle || this.#closed)` guard at the top. Reinstating the
+      // direct enqueue introduced a FIFO race with in-flight async pulls
+      // on aarch64 — the callClose microtask would run before the pull
+      // success callback, closing the controller, then the pull callback
+      // would call `controller.enqueue(...)` on the closed controller and
+      // throw an unhandled rejection, causing fetch.upgrade to hang
+      // waiting for a close-frame that was silently dropped.
+      //
+      // BYOB consumers are unaffected: they drain via #pull just like
+      // default readers, and the next pull's top-level `#closed` guard
+      // still triggers a callClose.
       this.#closed = true;
       this.#controller = undefined;
       this.$data = undefined;
 
       $putByIdDirectPrivate(this, "stream", undefined);
-      if (controller) {
-        $enqueueJob(callClose, controller);
-      }
     }
 
     #getInternalBuffer(chunkSize) {

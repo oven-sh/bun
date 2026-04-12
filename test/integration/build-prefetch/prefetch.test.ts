@@ -1,8 +1,8 @@
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 const repoRoot = join(import.meta.dirname, "..", "..", "..");
 const prefetch = join(repoRoot, "scripts", "build", "prefetch.ts");

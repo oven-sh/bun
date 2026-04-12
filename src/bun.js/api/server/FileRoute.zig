@@ -314,7 +314,8 @@ const StreamTransfer = struct {
 
     state: packed struct(u8) {
         has_ended_response: bool = false,
-        _: u7 = 0,
+        finished: bool = false,
+        _: u6 = 0,
     } = .{},
     const log = Output.scoped(.StreamTransfer, .visible);
 
@@ -517,7 +518,11 @@ const StreamTransfer = struct {
 
     fn finish(this: *StreamTransfer) void {
         log("finish", .{});
-        // lets make sure that we detach the response
+        // onAborted and onReaderDone/onReaderError can both reach here for the
+        // same transfer; the second call must not consume another ref.
+        if (this.state.finished) return;
+        this.state.finished = true;
+
         this.resp.clearOnWritable();
         this.resp.clearAborted();
         this.resp.clearTimeout();
@@ -536,7 +541,12 @@ const StreamTransfer = struct {
 
     fn onAborted(this: *StreamTransfer, _: AnyResponse) void {
         log("onAborted", .{});
-        this.state.has_ended_response = true;
+        if (!this.state.has_ended_response) {
+            this.state.has_ended_response = true;
+            // The socket is gone, so we can't write a response — but we still
+            // owe the server a pending_requests decrement and the route deref.
+            this.route.onResponseComplete(this.resp);
+        }
         this.finish();
     }
 

@@ -78,7 +78,10 @@ public:
     void exportKey(KeyFormat, CryptoKey&, Ref<DeferredPromise>&&);
     void wrapKey(JSC::JSGlobalObject&, KeyFormat, CryptoKey&, CryptoKey& wrappingKey, AlgorithmIdentifier&& wrapAlgorithm, Ref<DeferredPromise>&&);
     void unwrapKey(JSC::JSGlobalObject&, KeyFormat, BufferSource&& wrappedKey, CryptoKey& unwrappingKey, AlgorithmIdentifier&& unwrapAlgorithm, AlgorithmIdentifier&& unwrappedKeyAlgorithm, bool extractable, Vector<CryptoKeyUsage>&&, Ref<DeferredPromise>&&);
-    bool supports(JSC::JSGlobalObject&, const String& operation, AlgorithmIdentifier&&);
+    // WICG "Modern Algorithms in the Web Cryptography API" defines this as a
+    // static on the interface object, not an instance method. It is exposed
+    // in JS as `SubtleCrypto.supports(operation, algorithm)`.
+    static bool supports(JSC::JSGlobalObject&, const String& operation, AlgorithmIdentifier&&);
 
 private:
     explicit SubtleCrypto(ScriptExecutionContext*);

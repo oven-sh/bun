@@ -87,7 +87,21 @@ static ExceptionOr<CryptoAlgorithmIdentifier> toHashIdentifier(JSGlobalObject& s
     auto digestParams = normalizeCryptoAlgorithmParameters(state, algorithmIdentifier, Operations::Digest);
     if (digestParams.hasException())
         return digestParams.releaseException();
-    return digestParams.returnValue()->identifier;
+    auto identifier = digestParams.returnValue()->identifier;
+    // SHA-3 is only implemented as a top-level digest operation in this
+    // slice of the WICG "Modern Algorithms" spec. It is NOT yet wired into
+    // OpenSSLUtilities::digestAlgorithm(), CryptoKeyHMAC::getKeyLengthFromHash(),
+    // or SerializedScriptValue, so accepting SHA-3 as a hash sub-algorithm for
+    // HMAC / RSA / ECDSA would create broken CryptoKey instances that crash
+    // at sign() or postMessage() time. Reject the name up front so callers
+    // get a clean NotSupportedError at importKey()/generateKey() time and can
+    // use supports() to progressively adopt it when the rest of the plumbing
+    // lands.
+    if (identifier == CryptoAlgorithmIdentifier::SHA3_256
+        || identifier == CryptoAlgorithmIdentifier::SHA3_384
+        || identifier == CryptoAlgorithmIdentifier::SHA3_512)
+        return Exception { NotSupportedError };
+    return identifier;
 }
 
 static bool isRSAESPKCSWebCryptoDeprecated(JSGlobalObject& state)

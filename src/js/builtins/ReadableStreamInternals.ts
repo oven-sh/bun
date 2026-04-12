@@ -2215,6 +2215,19 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       if ($isPromise(result)) {
         return result.$then(
           result => {
+            // If `reader.cancel()` closed the stream while this pull was
+            // in flight, `controller.enqueue` (invoked from
+            // `#onNativeReadableStreamResult`) would fire an internal
+            // assertion in debug/ASAN and push to an orphaned queue in
+            // release. `#cancel` doesn't set `this.#closed`, so we can't
+            // rely on the `#closed` guard below — check the actual stream
+            // state instead. Mirrors the guard already on the rejection
+            // branch.
+            const stream = $getByIdDirectPrivate(controller, "controlledReadableStream");
+            if (!stream || $getByIdDirectPrivate(stream, "state") !== $streamReadable) {
+              this.$data = undefined;
+              return;
+            }
             this.$data = this.#onNativeReadableStreamResult(result, view, closer[0], controller);
             if (this.#closed) {
               this.$data = undefined;

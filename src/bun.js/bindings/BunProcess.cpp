@@ -262,44 +262,33 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     return release;
 }
 
-// Dispatches a lifecycle event. If the user replaced `process.emit` with a
-// custom function (e.g. signal-exit's monkey-patch), that function is called
-// so user overrides are honored — matching Node.js. Otherwise we dispatch
-// directly through the internal EventEmitter, bypassing the JS-visible
-// `emit` binding's `emitForBindings` path. That path gates on
-// `scriptExecutionContext()` being alive, which it may not be during natural
-// shutdown — a critical difference that would otherwise silently drop
-// lifecycle listeners (e.g. test harnesses' mustCall exit handlers).
-static void callProcessEmit(JSC::JSGlobalObject* globalObject, Process* process, ASCIILiteral eventName, JSC::JSValue exitCodeArg)
+// If the user replaced `process.emit` with a custom function (e.g.
+// signal-exit's monkey-patch), returns that function. Otherwise returns
+// empty. We intentionally use `getDirect` so only values set directly on
+// the process instance are returned — we must NOT route through the
+// default prototype emit binding (`emitForBindings`), which gates on
+// `scriptExecutionContext()` being alive and silently drops events
+// during natural shutdown.
+static JSC::JSValue userEmitOverride(JSC::VM& vm, Process* process)
+{
+    JSC::JSValue emitValue = process->getDirect(vm, JSC::Identifier::fromString(vm, "emit"_s));
+    if (!emitValue) return {};
+    if (JSC::getCallData(emitValue).type == JSC::CallData::Type::None) return {};
+    return emitValue;
+}
+
+// Invoke a user-installed `process.emit` override with (eventName, arg).
+// Caller must have already checked there is one.
+static void callUserEmitOverride(JSC::JSGlobalObject* globalObject, Process* process, JSC::JSValue emitValue, ASCIILiteral eventName, JSC::JSValue arg)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto eventIdent = JSC::Identifier::fromString(vm, eventName);
 
-    // Only honor an override installed directly on the process instance.
-    // `getDirect` skips the prototype chain and static hash tables, so it
-    // only finds values the user put there with `process.emit = fn`. The
-    // default prototype `emit` is the native JSEventEmitter binding, which
-    // goes through `emitForBindings` and drops events when the script
-    // context is being torn down during shutdown — we must NOT rely on
-    // that path for exit/beforeExit.
-    JSC::JSValue emitValue = process->getDirect(vm, JSC::Identifier::fromString(vm, "emit"_s));
-    JSC::CallData callData = emitValue ? JSC::getCallData(emitValue) : JSC::CallData();
-
-    if (callData.type == JSC::CallData::Type::None) {
-        // No user override (or it's not callable). Dispatch through the
-        // internal emitter directly, matching pre-fix semantics for the
-        // default path.
-        JSC::MarkedArgumentBuffer args;
-        args.append(exitCodeArg);
-        process->wrapped().emit(eventIdent, args);
-    } else {
-        // User replaced process.emit — invoke their function.
-        JSC::MarkedArgumentBuffer callArgs;
-        callArgs.append(JSC::jsString(vm, String(eventName)));
-        callArgs.append(exitCodeArg);
-        JSC::profiledCall(globalObject, JSC::ProfilingReason::API, emitValue, callData, process, callArgs);
-    }
+    auto callData = JSC::getCallData(emitValue);
+    JSC::MarkedArgumentBuffer args;
+    args.append(JSC::jsString(vm, String(eventName)));
+    args.append(arg);
+    JSC::profiledCall(globalObject, JSC::ProfilingReason::API, emitValue, callData, process, args);
 
     if (auto* exception = scope.exception()) {
         if (!vm.isTerminationException(exception)) {
@@ -315,14 +304,27 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     if (processIsExiting)
         return;
     processIsExiting = true;
+    auto& emitter = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
 
     if (vm.hasTerminationRequest() || vm.hasExceptionsAfterHandlingTraps())
         return;
 
+    auto event = Identifier::fromString(vm, "exit"_s);
+    JSC::JSValue userEmit = userEmitOverride(vm, process);
+    if (!userEmit && !emitter.hasEventListeners(event)) {
+        return;
+    }
     process->putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(true), 0);
 
-    callProcessEmit(globalObject, process, "exit"_s, jsNumber(exitCode));
+    if (userEmit) {
+        callUserEmitOverride(globalObject, process, userEmit, "exit"_s, jsNumber(exitCode));
+        return;
+    }
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(jsNumber(exitCode));
+    emitter.emit(event, arguments);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -838,10 +840,23 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     auto& vm = JSC::getVM(globalObject);
     auto* process = globalObject->processObject();
     Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
-    callProcessEmit(globalObject, process, "beforeExit"_s, jsNumber(exitCode));
-    if (globalObject->m_nextTickQueue) {
-        auto nextTickQueue = globalObject->m_nextTickQueue.get();
-        nextTickQueue->drain(vm, globalObject);
+
+    auto event = Identifier::fromString(vm, "beforeExit"_s);
+    JSC::JSValue userEmit = userEmitOverride(vm, process);
+    bool fired = false;
+    if (userEmit) {
+        callUserEmitOverride(globalObject, process, userEmit, "beforeExit"_s, jsNumber(exitCode));
+        fired = true;
+    } else {
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsNumber(exitCode));
+        fired = process->wrapped().emit(event, arguments);
+    }
+    if (fired) {
+        if (globalObject->m_nextTickQueue) {
+            auto nextTickQueue = globalObject->m_nextTickQueue.get();
+            nextTickQueue->drain(vm, globalObject);
+        }
     }
 }
 

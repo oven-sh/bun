@@ -46,14 +46,30 @@ struct KeccakState {
 };
 
 static constexpr uint64_t kKeccakRoundConstants[24] = {
-    0x0000000000000001ULL, 0x0000000000008082ULL, 0x800000000000808aULL,
-    0x8000000080008000ULL, 0x000000000000808bULL, 0x0000000080000001ULL,
-    0x8000000080008081ULL, 0x8000000000008009ULL, 0x000000000000008aULL,
-    0x0000000000000088ULL, 0x0000000080008009ULL, 0x000000008000000aULL,
-    0x000000008000808bULL, 0x800000000000008bULL, 0x8000000000008089ULL,
-    0x8000000000008003ULL, 0x8000000000008002ULL, 0x8000000000000080ULL,
-    0x000000000000800aULL, 0x800000008000000aULL, 0x8000000080008081ULL,
-    0x8000000000008080ULL, 0x0000000080000001ULL, 0x8000000080008008ULL,
+    0x0000000000000001ULL,
+    0x0000000000008082ULL,
+    0x800000000000808aULL,
+    0x8000000080008000ULL,
+    0x000000000000808bULL,
+    0x0000000080000001ULL,
+    0x8000000080008081ULL,
+    0x8000000000008009ULL,
+    0x000000000000008aULL,
+    0x0000000000000088ULL,
+    0x0000000080008009ULL,
+    0x000000008000000aULL,
+    0x000000008000808bULL,
+    0x800000000000008bULL,
+    0x8000000000008089ULL,
+    0x8000000000008003ULL,
+    0x8000000000008002ULL,
+    0x8000000000000080ULL,
+    0x000000000000800aULL,
+    0x800000008000000aULL,
+    0x8000000080008081ULL,
+    0x8000000000008080ULL,
+    0x0000000080000001ULL,
+    0x8000000080008008ULL,
 };
 
 static inline uint64_t rotl64(uint64_t x, unsigned n)
@@ -79,10 +95,30 @@ static void keccakF1600(KeccakState& state)
         // ρ and π steps (in-place along the 24-step trail)
         uint64_t prev = state.lanes[1];
         static constexpr std::pair<int, int> piRho[24] = {
-            { 10, 1 }, { 7, 3 }, { 11, 6 }, { 17, 10 }, { 18, 15 }, { 3, 21 },
-            { 5, 28 }, { 16, 36 }, { 8, 45 }, { 21, 55 }, { 24, 2 }, { 4, 14 },
-            { 15, 27 }, { 23, 41 }, { 19, 56 }, { 13, 8 }, { 12, 25 }, { 2, 43 },
-            { 20, 62 }, { 14, 18 }, { 22, 39 }, { 9, 61 }, { 6, 20 }, { 1, 44 },
+            { 10, 1 },
+            { 7, 3 },
+            { 11, 6 },
+            { 17, 10 },
+            { 18, 15 },
+            { 3, 21 },
+            { 5, 28 },
+            { 16, 36 },
+            { 8, 45 },
+            { 21, 55 },
+            { 24, 2 },
+            { 4, 14 },
+            { 15, 27 },
+            { 23, 41 },
+            { 19, 56 },
+            { 13, 8 },
+            { 12, 25 },
+            { 2, 43 },
+            { 20, 62 },
+            { 14, 18 },
+            { 22, 39 },
+            { 9, 61 },
+            { 6, 20 },
+            { 1, 44 },
         };
         for (const auto& step : piRho) {
             uint64_t rotated = rotl64(prev, static_cast<unsigned>(step.second));
@@ -129,7 +165,7 @@ static inline void storeLE64(uint8_t* bytes, uint64_t v)
 struct Sha3Context {
     KeccakState state {};
     // Input bytes buffered before the next permutation.
-    uint8_t buffer[144] { }; // enough for SHA3-224's 144-byte rate (largest)
+    uint8_t buffer[144] {}; // enough for SHA3-224's 144-byte rate (largest)
     size_t bufferLength = 0;
     size_t rateBytes = 0;
     size_t digestLength = 0;

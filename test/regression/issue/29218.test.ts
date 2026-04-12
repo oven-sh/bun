@@ -25,8 +25,7 @@ describe("crypto.subtle SHA-3", () => {
       abc: "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532",
     },
     "SHA3-384": {
-      empty:
-        "0c63a75b845e4f7d01107d852e4c2485c51a50aaaa94fc61995e71bbee983a2ac3713831264adb47fb6bd1e058d5f004",
+      empty: "0c63a75b845e4f7d01107d852e4c2485c51a50aaaa94fc61995e71bbee983a2ac3713831264adb47fb6bd1e058d5f004",
       abc: "ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b298d88cea927ac7f539f1edf228376d25",
     },
     "SHA3-512": {

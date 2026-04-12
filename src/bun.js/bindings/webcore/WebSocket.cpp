@@ -572,7 +572,14 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         } else {
             unixSocketPathString = pathname.left(colon).toString();
             auto requestPath = pathname.substring(colon + 1);
-            resource = makeString(requestPath.isEmpty() ? "/"_s : requestPath, m_url.queryWithLeadingQuestionMark());
+            // Ensure origin-form per RFC 7230 §5.3.1 (leading '/').
+            if (requestPath.isEmpty()) {
+                resource = makeString('/', m_url.queryWithLeadingQuestionMark());
+            } else if (requestPath.startsWith('/')) {
+                resource = makeString(requestPath, m_url.queryWithLeadingQuestionMark());
+            } else {
+                resource = makeString('/', requestPath, m_url.queryWithLeadingQuestionMark());
+            }
         }
         if (unixSocketPathString.isEmpty()) {
             m_state = CLOSED;

@@ -813,61 +813,118 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
 // https://wicg.github.io/webcrypto-modern-algos/#SubtleCrypto-method-supports
 //
 // Synchronously report whether this SubtleCrypto implementation supports
-// a given (operation, algorithm) pair. Mirrors the normalization step of
-// the relevant algorithm dispatch: if the algorithm is recognised and its
-// parameter dictionary is well-formed for the requested operation, return
-// true; otherwise return false. Exceptions thrown by normalization (e.g.
-// TypeError for malformed input) are swallowed and surfaced as false so
-// callers can use supports() purely for feature detection.
+// a given (operation, algorithm) pair. supports() has to match the exact
+// dispatch logic of the corresponding method so that callers can use it for
+// progressive enhancement without hitting runtime NotSupportedError for
+// algorithms that supports() promised. Any exception produced by the
+// normalization step (or the subsequent method-specific checks) is swallowed
+// and surfaced as false — supports() itself never rejects or throws other
+// than for missing required arguments.
+static bool normalizesWithoutException(JSGlobalObject& state, WebCore::SubtleCrypto::AlgorithmIdentifier& alg, Operations op)
+{
+    auto& vm = state.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // normalizeCryptoAlgorithmParameters takes the identifier by value;
+    // we clone the variant so callers can retry with a different op.
+    WebCore::SubtleCrypto::AlgorithmIdentifier copy = alg;
+    auto params = normalizeCryptoAlgorithmParameters(state, WTF::move(copy), op);
+    if (scope.exception()) {
+        scope.clearException();
+        return false;
+    }
+    return !params.hasException();
+}
+
 bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation, AlgorithmIdentifier&& algorithmIdentifier)
 {
     auto& vm = state.vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    Operations op;
+    // Simple cases: the operation maps to a single normalize bucket. The
+    // method's runtime behaviour is then "normalize succeeded → run", so
+    // supports() returns true iff normalization succeeds.
     if (operation == "encrypt"_s)
-        op = Operations::Encrypt;
-    else if (operation == "decrypt"_s)
-        op = Operations::Decrypt;
-    else if (operation == "sign"_s)
-        op = Operations::Sign;
-    else if (operation == "verify"_s)
-        op = Operations::Verify;
-    else if (operation == "digest"_s)
-        op = Operations::Digest;
-    else if (operation == "generateKey"_s)
-        op = Operations::GenerateKey;
-    else if (operation == "deriveBits"_s)
-        op = Operations::DeriveBits;
-    else if (operation == "deriveKey"_s)
-        op = Operations::DeriveBits; // deriveKey reuses DeriveBits normalization
-    else if (operation == "importKey"_s)
-        op = Operations::ImportKey;
-    else if (operation == "exportKey"_s)
-        op = Operations::ImportKey; // exportKey has no dedicated normalization; accept anything importable
-    else if (operation == "wrapKey"_s)
-        op = Operations::WrapKey;
-    else if (operation == "unwrapKey"_s)
-        op = Operations::UnwrapKey;
-    else if (operation == "getPublicKey"_s)
-        op = Operations::ImportKey; // getPublicKey applies to asymmetric keys; re-use importKey normalization
-    else if (operation == "encapsulateBits"_s || operation == "encapsulateKey"_s
-        || operation == "decapsulateBits"_s || operation == "decapsulateKey"_s) {
-        // KEM operations are not yet implemented.
-        return false;
-    } else {
-        // Unknown operation name.
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::Encrypt);
+    if (operation == "decrypt"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::Decrypt);
+    if (operation == "sign"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::Sign);
+    if (operation == "verify"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::Verify);
+    if (operation == "digest"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::Digest);
+    if (operation == "generateKey"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::GenerateKey);
+    if (operation == "deriveBits"_s || operation == "deriveKey"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::DeriveBits);
+    if (operation == "importKey"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::ImportKey);
+
+    // exportKey has no dedicated normalization — the real exportKey() only
+    // checks the CryptoKey's algorithm against isSupportedExportKey(). To
+    // make supports() answer symmetric questions ("can this algorithm be
+    // exported?"), we need to first recognise the algorithm at all and then
+    // run it through the same isSupportedExportKey() gate. Algorithms like
+    // HKDF/PBKDF2 that normalize as importable but are explicitly excluded
+    // from isSupportedExportKey() must report false.
+    if (operation == "exportKey"_s) {
+        // Resolve the algorithm name to an identifier without running any
+        // operation-specific validation.
+        if (std::holds_alternative<String>(algorithmIdentifier)) {
+            auto identifier = CryptoAlgorithmRegistry::singleton().identifier(std::get<String>(algorithmIdentifier));
+            if (!identifier)
+                return false;
+            return isSupportedExportKey(state, *identifier);
+        }
+        // Dictionary form: pull out the "name" field.
+        auto& value = std::get<JSC::Strong<JSC::JSObject>>(algorithmIdentifier);
+        JSValue nameValue = value.get()->get(&state, vm.propertyNames->name);
+        if (scope.exception()) {
+            scope.clearException();
+            return false;
+        }
+        if (!nameValue.isString())
+            return false;
+        auto name = nameValue.toWTFString(&state);
+        if (scope.exception()) {
+            scope.clearException();
+            return false;
+        }
+        auto identifier = CryptoAlgorithmRegistry::singleton().identifier(name);
+        if (!identifier)
+            return false;
+        return isSupportedExportKey(state, *identifier);
+    }
+
+    // wrapKey/unwrapKey dispatch in the real implementations:
+    //   wrapKey:  try WrapKey normalization; on failure, fall back to Encrypt.
+    //   unwrapKey: try UnwrapKey normalization; on failure, fall back to Decrypt.
+    // supports() must mirror that two-step fallback or it produces false
+    // negatives for AES-GCM/CBC/CTR/CFB and RSA-OAEP as wrapping algorithms.
+    if (operation == "wrapKey"_s) {
+        if (normalizesWithoutException(state, algorithmIdentifier, Operations::WrapKey))
+            return true;
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::Encrypt);
+    }
+    if (operation == "unwrapKey"_s) {
+        if (normalizesWithoutException(state, algorithmIdentifier, Operations::UnwrapKey))
+            return true;
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::Decrypt);
+    }
+
+    // Operations introduced by the WICG "Modern Algorithms" spec that this
+    // slice does not implement yet. They flip to true in follow-up PRs.
+    if (operation == "getPublicKey"_s
+        || operation == "encapsulateBits"_s
+        || operation == "encapsulateKey"_s
+        || operation == "decapsulateBits"_s
+        || operation == "decapsulateKey"_s) {
         return false;
     }
 
-    auto params = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), op);
-    if (scope.exception()) {
-        scope.clearException();
-        return false;
-    }
-    if (params.hasException())
-        return false;
-    return true;
+    // Unknown operation.
+    return false;
 }
 
 void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)

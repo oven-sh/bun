@@ -6,7 +6,15 @@
 // detection method `crypto.subtle.supports(operation, algorithm)`.
 //
 // Spec: https://wicg.github.io/webcrypto-modern-algos/
+//
+// Test coverage mirrors the intent of the Web Platform Tests that ship with
+// the spec (WebCryptoAPI/digest/sha3.tentative.https.any.js and
+// WebCryptoAPI/idlharness.*). Digest vectors are the NIST FIPS 202
+// Cryptographic Algorithm Validation Program vectors used by those WPTs, and
+// the `supports()` cases exercise the progressive-enhancement semantics that
+// the modern-algos spec defines in its "supports" algorithm.
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 
 const te = new TextEncoder();
 
@@ -15,9 +23,18 @@ function hex(buf: ArrayBuffer | Uint8Array): string {
   return Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
 }
 
+// Map the Web Crypto SHA-3 algorithm name to the name Node.js's OpenSSL
+// bindings use, so we can cross-check SubtleCrypto output against a second
+// independent implementation of the same primitive.
+const nodeAlg = {
+  "SHA3-256": "sha3-256",
+  "SHA3-384": "sha3-384",
+  "SHA3-512": "sha3-512",
+} as const;
+
 describe("crypto.subtle SHA-3", () => {
-  // NIST FIPS 202 / Cryptographic Algorithm Validation Program test vectors
-  // for the empty message and for the ASCII string "abc".
+  // NIST FIPS 202 test vectors for the empty message and for the ASCII
+  // string "abc". These are the same vectors the WPT uses.
   // https://csrc.nist.gov/projects/cryptographic-algorithm-validation-program/secure-hashing
   const vectors = {
     "SHA3-256": {
@@ -46,30 +63,40 @@ describe("crypto.subtle SHA-3", () => {
       expect(hex(out)).toBe(vec.abc);
     });
 
-    test(`${alg} digests a long message longer than one Keccak rate`, async () => {
-      // Longer than the largest SHA-3 rate (72 bytes for SHA3-512) to exercise
-      // multi-block absorption inside the sponge.
+    test(`${alg} digests a multi-block message identically to node:crypto`, async () => {
+      // 1024 bytes is longer than every SHA-3 sponge rate (the largest rate
+      // is SHA3-256's 136 bytes; SHA3-512 uses the smallest rate at 72
+      // bytes), so this input is guaranteed to span multiple blocks for all
+      // three variants and exercise multi-block absorption. Cross-check
+      // against node:crypto (which uses OpenSSL) instead of hard-coding a
+      // hex string, so both implementations must agree.
       const buf = new Uint8Array(1024);
       for (let i = 0; i < buf.length; i++) buf[i] = i & 0xff;
+
       const out = await crypto.subtle.digest(alg, buf);
+      const reference = createHash(nodeAlg[alg as keyof typeof nodeAlg]).update(buf).digest();
+      expect(hex(out)).toBe(reference.toString("hex"));
 
       const expectedLen = { "SHA3-256": 32, "SHA3-384": 48, "SHA3-512": 64 }[alg as keyof typeof vectors];
       expect(out.byteLength).toBe(expectedLen);
+    });
 
-      // Stability: hashing the same input twice must produce identical output.
-      const again = await crypto.subtle.digest(alg, buf);
-      expect(hex(again)).toBe(hex(out));
+    test(`${alg} is deterministic across calls`, async () => {
+      const buf = te.encode("the quick brown fox jumps over the lazy dog");
+      const a = await crypto.subtle.digest(alg, buf);
+      const b = await crypto.subtle.digest(alg, buf);
+      expect(hex(a)).toBe(hex(b));
     });
   }
 
   test("SHA-3 digest accepts a dictionary algorithm identifier", async () => {
     const out = await crypto.subtle.digest({ name: "SHA3-256" }, te.encode("abc"));
-    expect(hex(out)).toBe(vectors["SHA3-256"].abc);
+    expect(hex(out)).toBe("3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532");
   });
 
   test("SHA-3 digest is case-insensitive on the algorithm name", async () => {
     const out = await crypto.subtle.digest("sha3-256", te.encode("abc"));
-    expect(hex(out)).toBe(vectors["SHA3-256"].abc);
+    expect(hex(out)).toBe("3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532");
   });
 
   test("unknown SHA-3 variant is rejected with NotSupportedError", async () => {
@@ -87,19 +114,20 @@ describe("crypto.subtle.supports", () => {
     expect(crypto.subtle.supports.length).toBe(2);
   });
 
-  test("returns true for supported (operation, algorithm) pairs", () => {
-    // Classic Web Crypto algorithms that existed before this slice must
-    // continue to report true, so supports() is a safe feature-detect for
-    // everything Bun exposes.
+  test("returns true for classic algorithms that existed before this slice", () => {
+    // Every algorithm Bun already supported must continue to report true so
+    // that supports() is a safe feature-detect for the whole API surface.
+    expect(crypto.subtle.supports("digest", "SHA-1")).toBe(true);
     expect(crypto.subtle.supports("digest", "SHA-256")).toBe(true);
     expect(crypto.subtle.supports("digest", "SHA-384")).toBe(true);
     expect(crypto.subtle.supports("digest", "SHA-512")).toBe(true);
     expect(crypto.subtle.supports("generateKey", { name: "AES-GCM", length: 256 })).toBe(true);
     expect(crypto.subtle.supports("importKey", "AES-GCM")).toBe(true);
-    expect(crypto.subtle.supports("wrapKey", { name: "AES-KW" })).toBe(true);
+    expect(crypto.subtle.supports("importKey", "PBKDF2")).toBe(true);
+    expect(crypto.subtle.supports("deriveBits", { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(), info: new Uint8Array() })).toBe(true);
   });
 
-  test("reports true for SHA3-256/384/512 digest", () => {
+  test("returns true for SHA-3 digest", () => {
     expect(crypto.subtle.supports("digest", "SHA3-256")).toBe(true);
     expect(crypto.subtle.supports("digest", "SHA3-384")).toBe(true);
     expect(crypto.subtle.supports("digest", "SHA3-512")).toBe(true);
@@ -108,6 +136,71 @@ describe("crypto.subtle.supports", () => {
   test("accepts dictionary-form algorithm identifiers", () => {
     expect(crypto.subtle.supports("digest", { name: "SHA3-256" })).toBe(true);
     expect(crypto.subtle.supports("digest", { name: "SHA-256" })).toBe(true);
+  });
+
+  describe("mirrors dispatch-time fallback", () => {
+    test("wrapKey with AES-KW uses the dedicated WrapKey path", () => {
+      expect(crypto.subtle.supports("wrapKey", "AES-KW")).toBe(true);
+      expect(crypto.subtle.supports("wrapKey", { name: "AES-KW" })).toBe(true);
+    });
+
+    test("wrapKey with an encryption algorithm is reported via the Encrypt fallback", () => {
+      // wrapKey() in the real implementation tries WrapKey normalization
+      // and, on NotSupportedError, falls back to Encrypt normalization so
+      // that AES-GCM/CBC/CTR/CFB and RSA-OAEP can be used as wrapping
+      // algorithms. supports() must mirror that fallback or it reports
+      // false for operations that actually succeed.
+      expect(crypto.subtle.supports("wrapKey", { name: "AES-GCM", iv: new Uint8Array(12) })).toBe(true);
+      expect(crypto.subtle.supports("wrapKey", { name: "AES-CBC", iv: new Uint8Array(16) })).toBe(true);
+      expect(crypto.subtle.supports("wrapKey", { name: "AES-CTR", counter: new Uint8Array(16), length: 64 })).toBe(true);
+      expect(crypto.subtle.supports("wrapKey", { name: "RSA-OAEP" })).toBe(true);
+    });
+
+    test("unwrapKey with a decryption algorithm is reported via the Decrypt fallback", () => {
+      // Symmetric to the wrapKey case, with Decrypt as the fallback.
+      expect(crypto.subtle.supports("unwrapKey", "AES-KW")).toBe(true);
+      expect(crypto.subtle.supports("unwrapKey", { name: "AES-GCM", iv: new Uint8Array(12) })).toBe(true);
+      expect(crypto.subtle.supports("unwrapKey", { name: "AES-CBC", iv: new Uint8Array(16) })).toBe(true);
+      expect(crypto.subtle.supports("unwrapKey", { name: "RSA-OAEP" })).toBe(true);
+    });
+
+    test("wrapKey/unwrapKey reject algorithms that are neither WrapKey nor en/decryptable", () => {
+      expect(crypto.subtle.supports("wrapKey", "HKDF")).toBe(false);
+      expect(crypto.subtle.supports("wrapKey", "PBKDF2")).toBe(false);
+      expect(crypto.subtle.supports("wrapKey", "SHA-256")).toBe(false);
+      expect(crypto.subtle.supports("unwrapKey", "HKDF")).toBe(false);
+      expect(crypto.subtle.supports("unwrapKey", "SHA-256")).toBe(false);
+    });
+  });
+
+  describe("exportKey", () => {
+    test("reports true for exportable algorithms", () => {
+      // Matches isSupportedExportKey() in SubtleCrypto.cpp. Note that
+      // Bun registers AES-CFB under the "AES-CFB-8" name, matching the
+      // original WebKit spelling.
+      for (const alg of ["AES-GCM", "AES-CBC", "AES-CTR", "AES-CFB-8", "AES-KW", "HMAC", "ECDSA", "ECDH", "Ed25519", "X25519"]) {
+        expect(crypto.subtle.supports("exportKey", alg)).toBe(true);
+      }
+    });
+
+    test("reports false for key-derivation algorithms that are not exportable", () => {
+      // HKDF and PBKDF2 normalize as importable but isSupportedExportKey()
+      // excludes them, and the real exportKey() rejects with
+      // NotSupportedError. supports() must match that behaviour so
+      // progressive-enhancement callers do not hit false positives.
+      expect(crypto.subtle.supports("exportKey", "HKDF")).toBe(false);
+      expect(crypto.subtle.supports("exportKey", "PBKDF2")).toBe(false);
+    });
+
+    test("reports false for hash-only algorithms", () => {
+      expect(crypto.subtle.supports("exportKey", "SHA-256")).toBe(false);
+      expect(crypto.subtle.supports("exportKey", "SHA3-256")).toBe(false);
+    });
+
+    test("reports false for unknown algorithms", () => {
+      expect(crypto.subtle.supports("exportKey", "bogus")).toBe(false);
+      expect(crypto.subtle.supports("exportKey", { name: "bogus" })).toBe(false);
+    });
   });
 
   test("returns false for unknown algorithms", () => {
@@ -120,22 +213,32 @@ describe("crypto.subtle.supports", () => {
     expect(crypto.subtle.supports("not-a-real-op", "SHA-256")).toBe(false);
   });
 
-  test("returns false for KEM operations that are not yet implemented", () => {
-    // encapsulateKey/Bits and decapsulateKey/Bits come with ML-KEM in a
-    // later slice of the WICG spec. They must report false for now so that
-    // callers can progressively adopt them.
+  test("returns false for modern-algos operations that are not yet implemented", () => {
+    // encapsulateKey/Bits, decapsulateKey/Bits, and getPublicKey are new
+    // surface introduced by the WICG spec. They must report false for now
+    // so callers can progressively adopt them; they will flip to true in
+    // follow-up PRs as each algorithm lands.
     expect(crypto.subtle.supports("encapsulateKey", "ML-KEM-768")).toBe(false);
     expect(crypto.subtle.supports("encapsulateBits", "ML-KEM-768")).toBe(false);
     expect(crypto.subtle.supports("decapsulateKey", "ML-KEM-768")).toBe(false);
     expect(crypto.subtle.supports("decapsulateBits", "ML-KEM-768")).toBe(false);
+    expect(crypto.subtle.supports("getPublicKey", "RSA-PSS")).toBe(false);
+    expect(crypto.subtle.supports("getPublicKey", "Ed25519")).toBe(false);
+    // getPublicKey is conceptually asymmetric-only; even if it were
+    // implemented, symmetric algorithms must never report true.
+    expect(crypto.subtle.supports("getPublicKey", "AES-GCM")).toBe(false);
+    expect(crypto.subtle.supports("getPublicKey", "HMAC")).toBe(false);
   });
 
   test("returns false (not a throw) for malformed algorithm input", () => {
-    // supports() must never throw, even for obviously bad input — that is
-    // the point of a synchronous feature-detect method.
+    // supports() must never throw for any well-formed call, even with
+    // obviously bad input — that is the point of a synchronous
+    // feature-detect method.
     expect(crypto.subtle.supports("digest", null as any)).toBe(false);
     expect(crypto.subtle.supports("digest", 42 as any)).toBe(false);
     expect(crypto.subtle.supports("digest", [] as any)).toBe(false);
+    expect(crypto.subtle.supports("exportKey", null as any)).toBe(false);
+    expect(crypto.subtle.supports("exportKey", {} as any)).toBe(false);
   });
 
   test("throws when called with fewer than two arguments", () => {
@@ -146,5 +249,28 @@ describe("crypto.subtle.supports", () => {
     expect(() => crypto.subtle.supports()).toThrow();
     // @ts-expect-error
     expect(() => crypto.subtle.supports("digest")).toThrow();
+  });
+
+  test("supports() answers match what the underlying method would do", async () => {
+    // End-to-end cross-check: for each (op, alg) pair that supports()
+    // reports true, the real method must not throw NotSupportedError for
+    // well-formed input. This is the property the modern-algos spec relies
+    // on for progressive enhancement.
+    const buf = te.encode("hello");
+    for (const alg of ["SHA-1", "SHA-256", "SHA-384", "SHA-512", "SHA3-256", "SHA3-384", "SHA3-512"]) {
+      expect(crypto.subtle.supports("digest", alg)).toBe(true);
+      const out = await crypto.subtle.digest(alg, buf);
+      expect(out).toBeInstanceOf(ArrayBuffer);
+    }
+
+    // And the negative: every op/alg pair that reports false must actually
+    // reject at runtime.
+    expect(crypto.subtle.supports("digest", "MD5")).toBe(false);
+    await expect(crypto.subtle.digest("MD5", buf)).rejects.toMatchObject({ name: "NotSupportedError" });
+
+    expect(crypto.subtle.supports("exportKey", "HKDF")).toBe(false);
+    // importKey for HKDF to get an actual CryptoKey, then exportKey must reject.
+    const hkdfKey = await crypto.subtle.importKey("raw", buf, "HKDF", false, ["deriveBits"]);
+    await expect(crypto.subtle.exportKey("raw", hkdfKey)).rejects.toMatchObject({ name: "NotSupportedError" });
   });
 });

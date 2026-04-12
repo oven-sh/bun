@@ -38,14 +38,6 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
-// Shared symbol that `injectFakeEmitter.on`/`.once` stash on the user-supplied
-// listener, pointing at the wrapped callback actually registered with
-// `addEventListener`. `fakeParentPort`'s `parentPortRemoveEventListener` must
-// follow this indirection when the user mixes DOM-style `removeEventListener`
-// with Node-style `on` registration, or the registered wrapper will be left
-// in place and its loop-ref will leak.
-const wrappedListener = Symbol("wrappedListener");
-
 function injectFakeEmitter(Class) {
   function messageEventHandler(event: MessageEvent) {
     return event.data;
@@ -54,6 +46,8 @@ function injectFakeEmitter(Class) {
   function errorEventHandler(event: ErrorEvent) {
     return event.error;
   }
+
+  const wrappedListener = Symbol("wrappedListener");
 
   function wrapped(run, listener) {
     const callback = function (event) {
@@ -333,22 +327,13 @@ function fakeParentPort() {
   ): void {
     if (listener === null || listener === undefined) return;
     const capture = typeof options === "boolean" ? options : !!options?.capture;
-    // If the listener was registered via `parentPort.on('message', fn)` then
-    // `injectFakeEmitter.on` wrapped it into a callback and stashed that
-    // callback on `fn[wrappedListener]`. A direct
-    // `parentPort.removeEventListener('message', fn)` needs to resolve that
-    // indirection to find the real tracking entry — otherwise it would
-    // silently no-op and leak the forwarder's event-loop ref. Node's
-    // `NodeEventTarget` unifies all six registration/removal APIs in one
-    // registry, so cross-API removal is a supported pattern.
-    const resolved = (listener as any)[wrappedListener] ?? listener;
-    const bucket = trackedByListener.get(resolved as object);
+    const bucket = trackedByListener.get(listener as object);
     if (!bucket) return;
     const slot = listenerSlot(type, capture);
     const entry = bucket.$get(slot);
     if (!entry) return;
     bucket.$delete(slot);
-    if (bucket.$size === 0) trackedByListener.delete(resolved as object);
+    if (bucket.$size === 0) trackedByListener.delete(listener as object);
     parentPortTarget.removeEventListener(type, entry.wrapped, options);
     if (type === "message") releaseListener("message");
     else if (type === "messageerror") releaseListener("messageerror");

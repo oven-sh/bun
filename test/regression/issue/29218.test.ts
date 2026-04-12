@@ -120,9 +120,9 @@ describe("crypto.subtle SHA-3", () => {
       await expect(
         crypto.subtle.importKey("raw", new Uint8Array(32), { name: "HMAC", hash: alg }, true, ["sign"]),
       ).rejects.toMatchObject({ name: "NotSupportedError" });
-      await expect(
-        crypto.subtle.generateKey({ name: "HMAC", hash: alg }, true, ["sign"]),
-      ).rejects.toMatchObject({ name: "NotSupportedError" });
+      await expect(crypto.subtle.generateKey({ name: "HMAC", hash: alg }, true, ["sign"])).rejects.toMatchObject({
+        name: "NotSupportedError",
+      });
       await expect(
         crypto.subtle.generateKey(
           { name: "RSA-PSS", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: alg },
@@ -188,9 +188,7 @@ describe("SubtleCrypto.supports", () => {
       // false for operations that actually succeed.
       expect(SubtleCrypto.supports("wrapKey", { name: "AES-GCM", iv: new Uint8Array(12) })).toBe(true);
       expect(SubtleCrypto.supports("wrapKey", { name: "AES-CBC", iv: new Uint8Array(16) })).toBe(true);
-      expect(SubtleCrypto.supports("wrapKey", { name: "AES-CTR", counter: new Uint8Array(16), length: 64 })).toBe(
-        true,
-      );
+      expect(SubtleCrypto.supports("wrapKey", { name: "AES-CTR", counter: new Uint8Array(16), length: 64 })).toBe(true);
       expect(SubtleCrypto.supports("wrapKey", { name: "RSA-OAEP" })).toBe(true);
     });
 

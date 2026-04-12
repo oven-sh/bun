@@ -25,10 +25,10 @@ export function findPackageJSON(specifier: string | URL, base?: string | URL) {
   }
 
   // Convert file:// URLs to paths
-  if (typeof specifier === "string" && specifier.startsWith("file://")) {
+  if (specifier.startsWith("file://")) {
     specifier = fileURLToPath(specifier);
   }
-  if (typeof base === "string" && base.startsWith("file://")) {
+  if (base !== undefined && base.startsWith("file://")) {
     base = fileURLToPath(base);
   }
 
@@ -76,7 +76,13 @@ export function findPackageJSON(specifier: string | URL, base?: string | URL) {
     if (base === undefined) {
       throw $ERR_INVALID_ARG_VALUE("specifier", specifier, "base is required for relative specifiers");
     }
-    const baseDir = path.dirname(base);
+    // If base is a directory use it directly, otherwise take its parent
+    let baseDir: string;
+    try {
+      baseDir = fs.statSync(base).isDirectory() ? base : path.dirname(base);
+    } catch {
+      baseDir = path.dirname(base);
+    }
     startDir = path.resolve(baseDir, specifier);
   } else {
     // Absolute specifier

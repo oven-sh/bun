@@ -48,7 +48,7 @@ export async function requestImportModule(
     return this.getModuleNamespaceObject(mod);
   }
 
-  entry = await this.requestSatisfy(entry, parameters, fetcher, new Set());
+  entry = await this.requestSatisfy(entry, parameters, fetcher, new $Set());
 
   // Fast path 2: another caller raced us through requestSatisfy and already
   // finished (or is in the middle of) evaluating.

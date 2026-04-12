@@ -355,7 +355,16 @@ pub fn transpileSourceCode(
                     .allocator = null,
                     .source_code = switch (comptime flags) {
                         .print_source_and_clone => bun.String.init(jsc_vm.allocator.dupe(u8, source.contents) catch unreachable),
-                        .print_source => bun.String.init(source.contents),
+                        // .print_source returns a borrow that the caller keeps
+                        // alive until it calls module_loader.resetArena(). For
+                        // virtual sources (data:/blob: URLs, eval) the contents
+                        // live in caller-owned memory that will be freed when
+                        // fetchWithoutOnLoadPlugins returns, so copy into the
+                        // arena to tie lifetime to resetArena() instead.
+                        .print_source => bun.String.init(if (virtual_source != null)
+                            bun.handleOom(allocator.dupe(u8, source.contents))
+                        else
+                            source.contents),
                         else => @compileError("unreachable"),
                     },
                     .specifier = input_specifier,
@@ -1100,8 +1109,9 @@ pub export fn Bun__transpileFile(
             switch (err) {
                 error.AsyncModule => {
                     bun.assert(promise != null);
-                    // AsyncModule owns parse_result whose source.contents
-                    // may alias this buffer; prevent the defer from freeing it.
+                    // Ownership of the decoded body transfers to AsyncModule:
+                    // parse_result.source.contents aliases this buffer and is
+                    // freed by AsyncModule.deinit -> ParseResult.deinit.
                     data_url_body_to_free = null;
                     return promise;
                 },

@@ -128,4 +128,20 @@ console.log(m.x);`,
     expect(stdout).toBe("42\n");
     expect(exitCode).toBe(0);
   });
+
+  test("uncaught error thrown inside data URL module reports correctly", async () => {
+    // Exercises the .print_source exception-display path which re-reads the
+    // data URL body. ASAN catches any use-after-free here.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `await import("data:text/javascript,throw new Error('boom-from-data-url')");`],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("boom-from-data-url");
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  });
 }); // describe.concurrent

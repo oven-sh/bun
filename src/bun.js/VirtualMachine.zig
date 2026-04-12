@@ -1577,14 +1577,6 @@ pub fn fetchWithoutOnLoadPlugins(
     };
     const module_type: options.ModuleType = if (lr.package_json) |pkg| pkg.module_type else .unknown;
 
-    // .print_source returns a non-owning borrow of source.contents.
-    // For data URLs, the body would be freed by the defer above while
-    // the caller still holds the borrow. Null it out to prevent UAF;
-    // the body is small inline JS and only leaks during exception display.
-    if (comptime flags == .print_source) {
-        data_url_body_to_free = null;
-    }
-
     // .print_source, which is used by exceptions avoids duplicating the entire source code
     // but that means we have to be careful of the lifetime of the source code
     // so we only want to reset the arena once its done freeing it.

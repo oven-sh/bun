@@ -114,6 +114,16 @@ export function readableStreamPipeTo(stream, sink) {
 export function acquireReadableStreamDefaultReader(stream) {
   var start = $getByIdDirectPrivate(stream, "start");
   if (start) {
+    // Clear the one-shot lazy start BEFORE invoking — every other call
+    // site (getReader, readableStreamTee) does this. Previously this
+    // function left the slot live, which was harmless as long as no
+    // code path after `acquireReadableStreamDefaultReader` ever called
+    // the callback a second time. With BYOB readers now also routing
+    // through the lazy start (see getReader), a sequence like
+    // `pipeTo().catch(...); getReader({ mode: "byob" })` would run the
+    // lazy native start twice, calling `handle.start()` twice and
+    // throwing "ReadableStream already has a controller".
+    $putByIdDirectPrivate(stream, "start", undefined);
     start.$call(stream);
   }
 

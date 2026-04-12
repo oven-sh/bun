@@ -52,11 +52,7 @@ globalThis.order.push("tla-end");
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Expected ordering: the TLA module runs to completion first (tla-start
   // then tla-end), then BOTH .then() handlers fire in import order.
@@ -106,11 +102,7 @@ export function fn() { return "ok"; }
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe(`[[1,3,"function"],[2,3,"function"],[3,3,"function"],[4,3,"function"],[5,3,"function"]]`);
   expect(cleanStderr(stderr)).toBe("");

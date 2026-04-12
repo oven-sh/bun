@@ -25,9 +25,11 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test.concurrent("parent messages do not fire self.onmessage in a node:worker_threads worker (#29211)", async () => {
-  using dir = tempDir("issue-29211-self-onmessage", {
-    "worker.mjs": String.raw`
+test.concurrent(
+  "parent messages do not fire self.onmessage in a node:worker_threads worker (#29211)",
+  async () => {
+    using dir = tempDir("issue-29211-self-onmessage", {
+      "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
       globalThis.self = globalThis;
 
@@ -61,7 +63,7 @@ test.concurrent("parent messages do not fire self.onmessage in a node:worker_thr
         }
       });
     `,
-    "main.mjs": String.raw`
+      "main.mjs": String.raw`
       import { Worker } from 'node:worker_threads';
       const w = new Worker(new URL('./worker.mjs', import.meta.url));
       const result = await new Promise((resolve, reject) => {
@@ -77,38 +79,42 @@ test.concurrent("parent messages do not fire self.onmessage in a node:worker_thr
       await w.terminate();
       console.log(JSON.stringify(result));
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), String(dir) + "/main.mjs"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), String(dir) + "/main.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Four parent messages were posted (three data + one 'report'). The
-  // `parentPort.on('message', (msg) => onmessage({data:msg}))` forwarding
-  // listener runs once per incoming parent message and manually calls
-  // handleMessage, so handleMessage should run exactly 4 times — not 8
-  // (the pre-fix behavior where `self.onmessage` also auto-fired on every
-  // parent message, doubling every dispatch).
-  //
-  // Listeners on the global scope — via `self.addEventListener('message', …)`
-  // or `globalThis.addEventListener('message', …)` — must never fire for
-  // parent messages (Node semantics).
-  expect(JSON.parse(stdout.trim())).toEqual({
-    handleMessageCalls: 4,
-    selfAddListenerCalls: 0,
-    globalAddListenerCalls: 0,
-  });
-  expect(exitCode).toBe(0);
-}, 30000);
+    // Four parent messages were posted (three data + one 'report'). The
+    // `parentPort.on('message', (msg) => onmessage({data:msg}))` forwarding
+    // listener runs once per incoming parent message and manually calls
+    // handleMessage, so handleMessage should run exactly 4 times — not 8
+    // (the pre-fix behavior where `self.onmessage` also auto-fired on every
+    // parent message, doubling every dispatch).
+    //
+    // Listeners on the global scope — via `self.addEventListener('message', …)`
+    // or `globalThis.addEventListener('message', …)` — must never fire for
+    // parent messages (Node semantics).
+    expect(JSON.parse(stdout.trim())).toEqual({
+      handleMessageCalls: 4,
+      selfAddListenerCalls: 0,
+      globalAddListenerCalls: 0,
+    });
+    expect(exitCode).toBe(0);
+  },
+  30000,
+);
 
-test.concurrent("parentPort delivers each parent message exactly once to every listener variant (#29211)", async () => {
-  using dir = tempDir("issue-29211-listener-variants", {
-    "worker.mjs": String.raw`
+test.concurrent(
+  "parentPort delivers each parent message exactly once to every listener variant (#29211)",
+  async () => {
+    using dir = tempDir("issue-29211-listener-variants", {
+      "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
 
       const counts = {
@@ -127,7 +133,7 @@ test.concurrent("parentPort delivers each parent message exactly once to every l
         }
       });
     `,
-    "main.mjs": String.raw`
+      "main.mjs": String.raw`
       import { Worker } from 'node:worker_threads';
       const w = new Worker(new URL('./worker.mjs', import.meta.url));
       const result = await new Promise((resolve, reject) => {
@@ -144,34 +150,38 @@ test.concurrent("parentPort delivers each parent message exactly once to every l
       await w.terminate();
       console.log(JSON.stringify(result));
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), String(dir) + "/main.mjs"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), String(dir) + "/main.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Each listener variant must see exactly 6 deliveries — one per message
-  // posted. Pre-fix, `parentPort.onmessage` was 0 (never fired at all
-  // because the parentPort getter/setter aliased `self.onmessage` but the
-  // parent message only went to the global event target, not through the
-  // onmessage handler slot on the same target after an event handler was
-  // assigned via the parentPort proxy).
-  expect(JSON.parse(stdout.trim())).toEqual({
-    on: 6,
-    addEventListener: 6,
-    onmessage: 6,
-  });
-  expect(exitCode).toBe(0);
-}, 30000);
+    // Each listener variant must see exactly 6 deliveries — one per message
+    // posted. Pre-fix, `parentPort.onmessage` was 0 (never fired at all
+    // because the parentPort getter/setter aliased `self.onmessage` but the
+    // parent message only went to the global event target, not through the
+    // onmessage handler slot on the same target after an event handler was
+    // assigned via the parentPort proxy).
+    expect(JSON.parse(stdout.trim())).toEqual({
+      on: 6,
+      addEventListener: 6,
+      onmessage: 6,
+    });
+    expect(exitCode).toBe(0);
+  },
+  30000,
+);
 
-test.concurrent("parentPort.off removes a listener (#29211)", async () => {
-  using dir = tempDir("issue-29211-off", {
-    "worker.mjs": String.raw`
+test.concurrent(
+  "parentPort.off removes a listener (#29211)",
+  async () => {
+    using dir = tempDir("issue-29211-off", {
+      "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
 
       let fired = 0;
@@ -194,7 +204,7 @@ test.concurrent("parentPort.off removes a listener (#29211)", async () => {
         }
       });
     `,
-    "main.mjs": String.raw`
+      "main.mjs": String.raw`
       import { Worker } from 'node:worker_threads';
       const w = new Worker(new URL('./worker.mjs', import.meta.url));
       const result = await new Promise((resolve, reject) => {
@@ -210,26 +220,30 @@ test.concurrent("parentPort.off removes a listener (#29211)", async () => {
       await w.terminate();
       console.log(JSON.stringify(result));
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), String(dir) + "/main.mjs"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), String(dir) + "/main.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // `handler` should fire exactly once — it unsubscribes itself on the
-  // first invocation — then stay silent for the remaining messages.
-  expect(JSON.parse(stdout.trim())).toEqual({ fired: 1 });
-  expect(exitCode).toBe(0);
-}, 30000);
+    // `handler` should fire exactly once — it unsubscribes itself on the
+    // first invocation — then stay silent for the remaining messages.
+    expect(JSON.parse(stdout.trim())).toEqual({ fired: 1 });
+    expect(exitCode).toBe(0);
+  },
+  30000,
+);
 
-test.concurrent("transferred MessagePorts are still reachable via parentPort listeners (#29211)", async () => {
-  using dir = tempDir("issue-29211-ports", {
-    "worker.mjs": String.raw`
+test.concurrent(
+  "transferred MessagePorts are still reachable via parentPort listeners (#29211)",
+  async () => {
+    using dir = tempDir("issue-29211-ports", {
+      "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
       parentPort.on('message', (_msg, ports) => {
         // Node passes ports as a second argument; the DOM-style MessageEvent
@@ -249,7 +263,7 @@ test.concurrent("transferred MessagePorts are still reachable via parentPort lis
         incomingPort.postMessage('hello-from-worker');
       });
     `,
-    "main.mjs": String.raw`
+      "main.mjs": String.raw`
       import { Worker, MessageChannel } from 'node:worker_threads';
       const w = new Worker(new URL('./worker.mjs', import.meta.url));
       const { port1, port2 } = new MessageChannel();
@@ -267,28 +281,32 @@ test.concurrent("transferred MessagePorts are still reachable via parentPort lis
       await w.terminate();
       console.log(JSON.stringify(result));
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), String(dir) + "/main.mjs"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), String(dir) + "/main.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // The transferred port must reach the parentPort listener via `event.ports`
-  // and must be usable for round-trip messaging. Before the port-preservation
-  // fix, `event.ports` was an empty array and the transferred MessagePort was
-  // silently dropped.
-  expect(JSON.parse(stdout.trim())).toEqual({ ok: true, echoed: "reply:hello-from-worker" });
-  expect(exitCode).toBe(0);
-}, 30000);
+    // The transferred port must reach the parentPort listener via `event.ports`
+    // and must be usable for round-trip messaging. Before the port-preservation
+    // fix, `event.ports` was an empty array and the transferred MessagePort was
+    // silently dropped.
+    expect(JSON.parse(stdout.trim())).toEqual({ ok: true, echoed: "reply:hello-from-worker" });
+    expect(exitCode).toBe(0);
+  },
+  30000,
+);
 
-test.concurrent("parentPort.addEventListener accepts an EventListenerObject (#29211)", async () => {
-  using dir = tempDir("issue-29211-listener-object", {
-    "worker.mjs": String.raw`
+test.concurrent(
+  "parentPort.addEventListener accepts an EventListenerObject (#29211)",
+  async () => {
+    using dir = tempDir("issue-29211-listener-object", {
+      "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
       const listener = {
         fired: 0,
@@ -301,7 +319,7 @@ test.concurrent("parentPort.addEventListener accepts an EventListenerObject (#29
       };
       parentPort.addEventListener('message', listener);
     `,
-    "main.mjs": String.raw`
+      "main.mjs": String.raw`
       import { Worker } from 'node:worker_threads';
       const w = new Worker(new URL('./worker.mjs', import.meta.url));
       const result = await new Promise((resolve, reject) => {
@@ -314,27 +332,31 @@ test.concurrent("parentPort.addEventListener accepts an EventListenerObject (#29
       await w.terminate();
       console.log(JSON.stringify(result));
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), String(dir) + "/main.mjs"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), String(dir) + "/main.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Three parent messages — the EventListenerObject's `handleEvent` should
-  // run once per message (3 times). Pre-fix, the wrapper unconditionally
-  // invoked `listener.$call` which throws on a non-function.
-  expect(JSON.parse(stdout.trim())).toEqual({ fired: 3 });
-  expect(exitCode).toBe(0);
-}, 30000);
+    // Three parent messages — the EventListenerObject's `handleEvent` should
+    // run once per message (3 times). Pre-fix, the wrapper unconditionally
+    // invoked `listener.$call` which throws on a non-function.
+    expect(JSON.parse(stdout.trim())).toEqual({ fired: 3 });
+    expect(exitCode).toBe(0);
+  },
+  30000,
+);
 
-test.concurrent("parentPort.addEventListener with AbortSignal exits cleanly after abort (#29211)", async () => {
-  using dir = tempDir("issue-29211-abort-signal", {
-    "worker.mjs": String.raw`
+test.concurrent(
+  "parentPort.addEventListener with AbortSignal exits cleanly after abort (#29211)",
+  async () => {
+    using dir = tempDir("issue-29211-abort-signal", {
+      "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
       // Add a parentPort listener tied to an AbortSignal, then abort it
       // immediately. After abort, the worker should have zero parentPort
@@ -347,7 +369,7 @@ test.concurrent("parentPort.addEventListener with AbortSignal exits cleanly afte
       parentPort.addEventListener('message', () => {}, { signal: ac.signal });
       ac.abort();
     `,
-    "main.mjs": String.raw`
+      "main.mjs": String.raw`
       import { Worker } from 'node:worker_threads';
       const w = new Worker(new URL('./worker.mjs', import.meta.url));
       const exitCode = await new Promise((resolve, reject) => {
@@ -359,36 +381,40 @@ test.concurrent("parentPort.addEventListener with AbortSignal exits cleanly afte
       });
       console.log(JSON.stringify({ exitCode }));
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), String(dir) + "/main.mjs"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), String(dir) + "/main.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // The worker must exit naturally (exit code 0), not be killed by the
-  // 3-second timeout (which would report -1). Pre-fix, the capture
-  // forwarder stayed installed after AbortSignal detached the wrapped
-  // listener, pinning the event loop and forcing the terminate fallback.
-  expect(JSON.parse(stdout.trim())).toEqual({ exitCode: 0 });
-  expect(exitCode).toBe(0);
-}, 30000);
+    // The worker must exit naturally (exit code 0), not be killed by the
+    // 3-second timeout (which would report -1). Pre-fix, the capture
+    // forwarder stayed installed after AbortSignal detached the wrapped
+    // listener, pinning the event loop and forcing the terminate fallback.
+    expect(JSON.parse(stdout.trim())).toEqual({ exitCode: 0 });
+    expect(exitCode).toBe(0);
+  },
+  30000,
+);
 
-test.concurrent("parentPort listener for non-message events does not block parent messages (#29211)", async () => {
-  // Regression for a gating bug in `parentPortAddEventListener`: registering
-  // a listener for a non-message event (e.g. via `parentPort.once('close',
-  // …)` or `.on('error', …)`) used to bump `listenerCount`, which in turn
-  // installed the capture-phase `message` forwarder on `self`. The forwarder
-  // re-dispatched every incoming message on `parentPortTarget` — but that
-  // target had no 'message' listener, so all parent messages were silently
-  // dropped. Only listeners for 'message' / 'messageerror' should install
-  // the forwarder.
-  using dir = tempDir("issue-29211-non-message-event", {
-    "worker.mjs": String.raw`
+test.concurrent(
+  "parentPort listener for non-message events does not block parent messages (#29211)",
+  async () => {
+    // Regression for a gating bug in `parentPortAddEventListener`: registering
+    // a listener for a non-message event (e.g. via `parentPort.once('close',
+    // …)` or `.on('error', …)`) used to bump `listenerCount`, which in turn
+    // installed the capture-phase `message` forwarder on `self`. The forwarder
+    // re-dispatched every incoming message on `parentPortTarget` — but that
+    // target had no 'message' listener, so all parent messages were silently
+    // dropped. Only listeners for 'message' / 'messageerror' should install
+    // the forwarder.
+    using dir = tempDir("issue-29211-non-message-event", {
+      "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
       // Register a non-message listener FIRST. This must not affect message
       // delivery.
@@ -401,7 +427,7 @@ test.concurrent("parentPort listener for non-message events does not block paren
         }
       });
     `,
-    "main.mjs": String.raw`
+      "main.mjs": String.raw`
       import { Worker } from 'node:worker_threads';
       const w = new Worker(new URL('./worker.mjs', import.meta.url));
       const result = await new Promise((resolve, reject) => {
@@ -416,31 +442,35 @@ test.concurrent("parentPort listener for non-message events does not block paren
       await w.terminate();
       console.log(JSON.stringify(result));
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), String(dir) + "/main.mjs"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), String(dir) + "/main.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // All three parent messages should reach the 'message' listener — the
-  // earlier 'close' listener must not route anything into the forwarder.
-  expect(JSON.parse(stdout.trim())).toEqual({ received: 3 });
-  expect(exitCode).toBe(0);
-}, 30000);
+    // All three parent messages should reach the 'message' listener — the
+    // earlier 'close' listener must not route anything into the forwarder.
+    expect(JSON.parse(stdout.trim())).toEqual({ received: 3 });
+    expect(exitCode).toBe(0);
+  },
+  30000,
+);
 
-test.concurrent("parentPort.removeListener unsubscribes through the wrapped-listener slot (#29211)", async () => {
-  // `parentPort.on('message', fn)` wraps `fn` into a callback (setting
-  // `fn[wrappedListener] = callback`) and registers the callback. A matching
-  // `parentPort.removeListener('message', fn)` must resolve the wrapped
-  // callback before calling `removeEventListener`, or `handler` stays
-  // subscribed and its loop-ref is never released.
-  using dir = tempDir("issue-29211-removelistener", {
-    "worker.mjs": String.raw`
+test.concurrent(
+  "parentPort.removeListener unsubscribes through the wrapped-listener slot (#29211)",
+  async () => {
+    // `parentPort.on('message', fn)` wraps `fn` into a callback (setting
+    // `fn[wrappedListener] = callback`) and registers the callback. A matching
+    // `parentPort.removeListener('message', fn)` must resolve the wrapped
+    // callback before calling `removeEventListener`, or `handler` stays
+    // subscribed and its loop-ref is never released.
+    using dir = tempDir("issue-29211-removelistener", {
+      "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
       let fired = 0;
       function handler(msg) {
@@ -459,7 +489,7 @@ test.concurrent("parentPort.removeListener unsubscribes through the wrapped-list
       }
       parentPort.on('message', handler);
     `,
-    "main.mjs": String.raw`
+      "main.mjs": String.raw`
       import { Worker } from 'node:worker_threads';
       const w = new Worker(new URL('./worker.mjs', import.meta.url));
       w.on('error', e => { console.error('worker error', e); process.exit(2); });
@@ -482,38 +512,42 @@ test.concurrent("parentPort.removeListener unsubscribes through the wrapped-list
       console.log(JSON.stringify(result));
       process.exit(0);
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), String(dir) + "/main.mjs"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), String(dir) + "/main.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // `handler` fired exactly once — for the 'remove-me' command that removed
-  // it. After that it should be detached, so 'fired' must stay at 1 even
-  // though three more messages were posted. Pre-fix, `removeListener`
-  // bypassed the wrapped-listener lookup, `handler` stayed subscribed, and
-  // 'fired' reached 4.
-  expect(JSON.parse(stdout.trim())).toEqual({ fired: 1 });
-  expect(exitCode).toBe(0);
-}, 30000);
+    // `handler` fired exactly once — for the 'remove-me' command that removed
+    // it. After that it should be detached, so 'fired' must stay at 1 even
+    // though three more messages were posted. Pre-fix, `removeListener`
+    // bypassed the wrapped-listener lookup, `handler` stayed subscribed, and
+    // 'fired' reached 4.
+    expect(JSON.parse(stdout.trim())).toEqual({ fired: 1 });
+    expect(exitCode).toBe(0);
+  },
+  30000,
+);
 
-test.concurrent("parentPort.onmessageerror alone does not keep the event loop alive (#29211)", async () => {
-  // Registering only a `messageerror` handler on parentPort must NOT install
-  // the capture-phase `message` forwarder on `self`. Pre-fix, both forwarders
-  // were installed as a pair — so a worker that only cared about
-  // `messageerror` would pin `m_messageEventCount` on the global scope
-  // forever and hang after its module finished executing.
-  using dir = tempDir("issue-29211-onmessageerror-only", {
-    "worker.mjs": String.raw`
+test.concurrent(
+  "parentPort.onmessageerror alone does not keep the event loop alive (#29211)",
+  async () => {
+    // Registering only a `messageerror` handler on parentPort must NOT install
+    // the capture-phase `message` forwarder on `self`. Pre-fix, both forwarders
+    // were installed as a pair — so a worker that only cared about
+    // `messageerror` would pin `m_messageEventCount` on the global scope
+    // forever and hang after its module finished executing.
+    using dir = tempDir("issue-29211-onmessageerror-only", {
+      "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
       parentPort.onmessageerror = () => {};
     `,
-    "main.mjs": String.raw`
+      "main.mjs": String.raw`
       import { Worker } from 'node:worker_threads';
       const w = new Worker(new URL('./worker.mjs', import.meta.url));
       const exitCode = await new Promise((resolve, reject) => {
@@ -526,17 +560,19 @@ test.concurrent("parentPort.onmessageerror alone does not keep the event loop al
       });
       console.log(JSON.stringify({ exitCode }));
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), String(dir) + "/main.mjs"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), String(dir) + "/main.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(JSON.parse(stdout.trim())).toEqual({ exitCode: 0 });
-  expect(exitCode).toBe(0);
-}, 30000);
+    expect(JSON.parse(stdout.trim())).toEqual({ exitCode: 0 });
+    expect(exitCode).toBe(0);
+  },
+  30000,
+);

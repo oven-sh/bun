@@ -384,7 +384,7 @@ pub const ReadFile = struct {
 
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
         if (!this.could_block or (this.size > 0 and this.size != Blob.max_size))
-            this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, this.size + 16) catch |err| {
+            this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, this.size +| 16) catch |err| {
                 this.errno = err;
                 this.onFinish();
                 return;

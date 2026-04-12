@@ -9,7 +9,7 @@
 //
 // because the hook lookup couldn't resolve which sequence owned the call
 // when more than one concurrent sequence was active.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("onTestFinished works inside concurrent tests", async () => {
@@ -51,11 +51,7 @@ test("onTestFinished works inside concurrent tests", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const output = stdout + stderr;
   expect(output).not.toContain("Cannot call onTestFinished");
   expect(output).toContain("4 pass");
@@ -89,11 +85,7 @@ test("onTestFinished works inside concurrent tests via --concurrent flag", async
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const output = stdout + stderr;
   expect(output).not.toContain("Cannot call onTestFinished");
   expect(output).toContain("2 pass");

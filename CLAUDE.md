@@ -305,19 +305,15 @@ If output from these commands looks wrong — mis-parsed annotation HTML, confus
 When you want the complete picture — especially when responding to a review or checking whether anyone requested changes — use `bun run pr:comments`. It fetches all three GitHub endpoints (`/issues/N/comments`, `/pulls/N/reviews`, `/pulls/N/comments`) and prints them in one chronological listing, each labelled with its actual type (issue comment, review verdict, line comment, reply, suggestion block).
 
 ```bash
-bun run pr:comments                    # current branch's PR
+bun run pr:comments                    # current branch's PR — XML, resolved threads hidden
 bun run pr:comments 28838              # by PR number
 bun run pr:comments '#28838'           # also works
 bun run pr:comments https://github.com/oven-sh/bun/pull/28838
+bun run pr:comments --include-resolved # also show threads already marked resolved
 
 # Machine-readable output for jq pipelines — one object per entry with
-# { when, user, kind, location?, body, url?, resolved?, outdated? }.
-# resolved/outdated come from GraphQL reviewThreads and are present only
-# on line comments / replies whose thread state was successfully fetched
-# (omitted on issue comments, review verdicts, and on GraphQL fetch
-# failure), so `resolved == false` unambiguously means "confirmed open
-# thread". No header, no truncation. The PR is optional here too
-# (defaults to the current branch's PR).
+# { when, user, tag, state?, suggestion?, location?, body, url?, resolved?, outdated? }.
+# Resolved threads and bot noise (robobun's CI status comment, CodeRabbit
+# body-level summaries) are filtered out; --include-resolved restores the former.
 bun run pr:comments --json | jq '.[] | select(.user == "Jarred-Sumner")'
-bun run pr:comments --json | jq '[.[] | select(.resolved == false)]'   # still open
 ```

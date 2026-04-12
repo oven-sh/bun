@@ -74,7 +74,9 @@ describe("crypto.subtle SHA-3", () => {
       for (let i = 0; i < buf.length; i++) buf[i] = i & 0xff;
 
       const out = await crypto.subtle.digest(alg, buf);
-      const reference = createHash(nodeAlg[alg as keyof typeof nodeAlg]).update(buf).digest();
+      const reference = createHash(nodeAlg[alg as keyof typeof nodeAlg])
+        .update(buf)
+        .digest();
       expect(hex(out)).toBe(reference.toString("hex"));
 
       const expectedLen = { "SHA3-256": 32, "SHA3-384": 48, "SHA3-512": 64 }[alg as keyof typeof vectors];
@@ -124,7 +126,14 @@ describe("crypto.subtle.supports", () => {
     expect(crypto.subtle.supports("generateKey", { name: "AES-GCM", length: 256 })).toBe(true);
     expect(crypto.subtle.supports("importKey", "AES-GCM")).toBe(true);
     expect(crypto.subtle.supports("importKey", "PBKDF2")).toBe(true);
-    expect(crypto.subtle.supports("deriveBits", { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(), info: new Uint8Array() })).toBe(true);
+    expect(
+      crypto.subtle.supports("deriveBits", {
+        name: "HKDF",
+        hash: "SHA-256",
+        salt: new Uint8Array(),
+        info: new Uint8Array(),
+      }),
+    ).toBe(true);
   });
 
   test("returns true for SHA-3 digest", () => {
@@ -152,7 +161,9 @@ describe("crypto.subtle.supports", () => {
       // false for operations that actually succeed.
       expect(crypto.subtle.supports("wrapKey", { name: "AES-GCM", iv: new Uint8Array(12) })).toBe(true);
       expect(crypto.subtle.supports("wrapKey", { name: "AES-CBC", iv: new Uint8Array(16) })).toBe(true);
-      expect(crypto.subtle.supports("wrapKey", { name: "AES-CTR", counter: new Uint8Array(16), length: 64 })).toBe(true);
+      expect(crypto.subtle.supports("wrapKey", { name: "AES-CTR", counter: new Uint8Array(16), length: 64 })).toBe(
+        true,
+      );
       expect(crypto.subtle.supports("wrapKey", { name: "RSA-OAEP" })).toBe(true);
     });
 
@@ -178,7 +189,18 @@ describe("crypto.subtle.supports", () => {
       // Matches isSupportedExportKey() in SubtleCrypto.cpp. Note that
       // Bun registers AES-CFB under the "AES-CFB-8" name, matching the
       // original WebKit spelling.
-      for (const alg of ["AES-GCM", "AES-CBC", "AES-CTR", "AES-CFB-8", "AES-KW", "HMAC", "ECDSA", "ECDH", "Ed25519", "X25519"]) {
+      for (const alg of [
+        "AES-GCM",
+        "AES-CBC",
+        "AES-CTR",
+        "AES-CFB-8",
+        "AES-KW",
+        "HMAC",
+        "ECDSA",
+        "ECDH",
+        "Ed25519",
+        "X25519",
+      ]) {
         expect(crypto.subtle.supports("exportKey", alg)).toBe(true);
       }
     });

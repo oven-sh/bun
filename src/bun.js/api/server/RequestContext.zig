@@ -890,8 +890,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             // Honor an incoming Range: header for whole-file responses. We
             // don't compose Range with a user-supplied .slice() because the
             // Content-Range arithmetic gets ambiguous; the slice path keeps
-            // its existing slice-as-range behavior.
-            if (is_regular and this.blob.Blob.offset == 0 and this.range != .none) {
+            // its existing slice-as-range behavior. `offset == 0` alone is
+            // insufficient — `Bun.file(p).slice(0, n)` has offset 0 — so we
+            // also require the unset-size sentinel that only an unsliced file
+            // blob carries.
+            if (is_regular and this.blob.Blob.offset == 0 and original_size == Blob.max_size and this.range != .none) {
                 switch (this.range.resolve(stat_size)) {
                     .none => {},
                     .satisfiable => |r| {
@@ -2192,6 +2195,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                             this.sendfile.offset + (this.sendfile.remain -| 1),
                         }) catch "bytes */*",
                 );
+                if (this.sendfile.total > 0) resp.writeHeader("accept-ranges", "bytes");
                 this.flags.needs_content_range = false;
             }
         }

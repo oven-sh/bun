@@ -640,3 +640,20 @@ describe.each([
     expect(await res.text()).toBe(body);
   });
 });
+
+test("Range header cannot escape a Bun.file().slice(0, n) window via fetch handler", async () => {
+  const dir = tempDirWithFiles("range-slice-escape-", {
+    "f.bin": Buffer.from(Array.from({ length: 256 }, (_, i) => i)),
+  });
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response(Bun.file(join(dir, "f.bin")).slice(0, 100)),
+  });
+  const res = await fetch(server.url, { headers: { Range: "bytes=200-220" } });
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  // Range must be ignored for sliced blobs: serve the 100-byte slice, never bytes 200-220.
+  expect(bytes.length).toBe(100);
+  expect(bytes[0]).toBe(0);
+  expect(bytes[99]).toBe(99);
+  expect(res.headers.get("content-range")).not.toContain("/256");
+});

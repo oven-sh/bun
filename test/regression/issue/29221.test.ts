@@ -92,13 +92,11 @@ export function fn() { return "ok"; }
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe(`[[1,3,"function"],[2,3,"function"],[3,3,"function"],[4,3,"function"],[5,3,"function"]]`);
+    expect(stdout.trim()).toBe(
+      `[[1,3,"function"],[2,3,"function"],[3,3,"function"],[4,3,"function"],[5,3,"function"]]`,
+    );
     // Failure mode for #20489/#22367 is a TDZ error on the child; assert
     // explicitly that no uninitialized-binding error reached stderr in
     // addition to the exitCode check below.

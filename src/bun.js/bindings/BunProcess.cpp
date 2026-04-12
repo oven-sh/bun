@@ -278,8 +278,10 @@ static JSC::JSValue userEmitOverride(JSC::VM& vm, Process* process)
 }
 
 // Invoke a user-installed `process.emit` override with (eventName, arg).
-// Caller must have already checked there is one.
-static void callUserEmitOverride(JSC::JSGlobalObject* globalObject, Process* process, JSC::JSValue emitValue, ASCIILiteral eventName, JSC::JSValue arg)
+// Caller must have already checked there is one. Returns true if the
+// override returned a truthy value — matching Node's `process.emit`
+// convention where true means 'listeners fired'.
+static bool callUserEmitOverride(JSC::JSGlobalObject* globalObject, Process* process, JSC::JSValue emitValue, ASCIILiteral eventName, JSC::JSValue arg)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -288,14 +290,17 @@ static void callUserEmitOverride(JSC::JSGlobalObject* globalObject, Process* pro
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsString(vm, String(eventName)));
     args.append(arg);
-    JSC::profiledCall(globalObject, JSC::ProfilingReason::API, emitValue, callData, process, args);
+    JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, emitValue, callData, process, args);
 
     if (auto* exception = scope.exception()) {
         if (!vm.isTerminationException(exception)) {
             Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         }
         (void)scope.tryClearException();
+        return false;
     }
+
+    return result.toBoolean(globalObject);
 }
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
@@ -847,8 +852,7 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     JSC::JSValue userEmit = userEmitOverride(vm, process);
     bool fired = false;
     if (userEmit) {
-        callUserEmitOverride(globalObject, process, userEmit, "beforeExit"_s, jsNumber(exitCode));
-        fired = true;
+        fired = callUserEmitOverride(globalObject, process, userEmit, "beforeExit"_s, jsNumber(exitCode));
     } else {
         MarkedArgumentBuffer arguments;
         arguments.append(jsNumber(exitCode));

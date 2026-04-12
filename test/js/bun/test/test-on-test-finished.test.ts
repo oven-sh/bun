@@ -68,26 +68,32 @@ describe("async onTestFinished", () => {
   });
 });
 
-// Test that onTestFinished throws proper error in concurrent tests
-describe("onTestFinished errors", () => {
-  test.concurrent("cannot be called in concurrent test 1", () => {
-    expect(() => {
-      onTestFinished(() => {
-        console.log("should not run");
-      });
-    }).toThrow(
-      "Cannot call onTestFinished() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent.",
-    );
+// https://github.com/oven-sh/bun/issues/29236 — onTestFinished() is
+// callable from inside a concurrent test. Each sequence accumulates its
+// own hooks and runs them at the end of that sequence.
+describe("onTestFinished in concurrent tests", () => {
+  const a_output: string[] = [];
+  const b_output: string[] = [];
+
+  test.concurrent("test a", async () => {
+    onTestFinished(() => {
+      a_output.push("a-finished");
+    });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    a_output.push("a-body");
   });
 
-  test.concurrent("cannot be called in concurrent test 2", () => {
-    expect(() => {
-      onTestFinished(() => {
-        console.log("should not run");
-      });
-    }).toThrow(
-      "Cannot call onTestFinished() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent.",
-    );
+  test.concurrent("test b", async () => {
+    onTestFinished(() => {
+      b_output.push("b-finished");
+    });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    b_output.push("b-body");
+  });
+
+  test("verify each sequence ran its own hook", () => {
+    expect(a_output).toEqual(["a-body", "a-finished"]);
+    expect(b_output).toEqual(["b-body", "b-finished"]);
   });
 });
 

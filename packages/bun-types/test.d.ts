@@ -378,7 +378,9 @@ declare module "bun:test" {
    * This is useful for cleanup tasks that need to run at the very end of a test,
    * after all other hooks have completed.
    *
-   * Can only be called inside a test, not in describe blocks.
+   * Can only be called inside a test, not in describe blocks. Works inside
+   * concurrent tests — each call is attached to the specific concurrent test
+   * whose body is currently executing.
    *
    * @example
    * test("my test", () => {

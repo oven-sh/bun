@@ -165,10 +165,14 @@ static inline void storeLE64(uint8_t* bytes, uint64_t v)
 struct Sha3Context {
     KeccakState state {};
     // Input bytes buffered before the next permutation. Sized for the largest
-    // FIPS 202 fixed-output rate (144 bytes for SHA3-224, which is not
-    // registered here); the three variants this file ships only need up to
-    // SHA3-256's 136-byte rate. The extra room lets future SHA3-224 /
-    // SHAKE128 support reuse this struct without a resize.
+    // fixed-output FIPS 202 rate, which is SHA3-224's 144 bytes (not yet
+    // registered); the three variants this file ships only need up to
+    // SHA3-256's 136-byte rate. XOF variants are NOT representable with this
+    // struct as-is: SHAKE128's rate is 168 bytes (would overflow this
+    // buffer), and both SHAKE variants also need a different digestLength
+    // model because their output is variable-length. Adding SHAKE support
+    // requires resizing this buffer and teaching sha3Final to squeeze across
+    // multiple rate-sized blocks.
     uint8_t buffer[144] {};
     size_t bufferLength = 0;
     size_t rateBytes = 0;

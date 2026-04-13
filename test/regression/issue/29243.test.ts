@@ -162,3 +162,58 @@ bar();`,
   expect(stdout).toBe("bar();\n");
   expect(exitCode).toBe(0);
 });
+
+// `for await (x of y)` at module scope hits a different parse-time error
+// than `await EXPR`, so it needs the same dead-code tolerance.
+test("bun build --format=cjs drops an unreachable top-level for await loop", async () => {
+  using dir = tempDir("issue-29243-dead-for-await", {
+    "entry.js": `if (false) {
+  for await (const x of someIter) {
+    console.log(x);
+  }
+}
+bar();`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--minify", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.exited,
+  ]);
+
+  expect(stdout).toBe("bar();\n");
+  expect(exitCode).toBe(0);
+});
+
+test("bun build --format=cjs still rejects a live top-level for await loop", async () => {
+  using dir = tempDir("issue-29243-live-for-await", {
+    "entry.js": `for await (const x of someIter) {
+  console.log(x);
+}`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+
+  expect(stderr).toContain(
+    `Top-level await is currently not supported with the "cjs" output format`,
+  );
+  expect(exitCode).not.toBe(0);
+});

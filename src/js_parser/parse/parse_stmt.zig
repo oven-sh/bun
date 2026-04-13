@@ -769,7 +769,15 @@ pub fn ParseStmt(
             var isForAwait = p.lexer.isContextualKeyword("await");
             if (isForAwait) {
                 const await_range = p.lexer.range();
-                if (p.fn_or_arrow_data_parse.allow_await != .allow_expr) {
+                // At module scope in a non-ESM target we only know whether a
+                // `for await` loop is truly illegal after DCE has run (it may
+                // live inside a dead `if (false)` branch). Accept it here and
+                // rely on the visit pass to raise a targeted error if a live
+                // `for await` survives.
+                const tolerate_top_level =
+                    p.fn_or_arrow_data_parse.allow_await == .allow_ident and
+                    p.fn_or_arrow_data_parse.is_top_level;
+                if (p.fn_or_arrow_data_parse.allow_await != .allow_expr and !tolerate_top_level) {
                     try p.log.addRangeError(p.source, await_range, "Cannot use \"await\" outside an async function");
                     isForAwait = false;
                 } else {

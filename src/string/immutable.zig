@@ -2387,6 +2387,36 @@ pub const CodePoint = i32;
 
 const string = []const u8;
 
+/// SIMD-accelerated iterator that yields slices of text between ANSI escape sequences.
+/// The C++ side uses ANSI::findEscapeCharacter (SIMD) and ANSI::consumeANSI.
+pub const ANSIIterator = extern struct {
+    input: [*]const u8,
+    input_len: usize,
+    cursor: usize,
+    slice_ptr: ?[*]const u8,
+    slice_len: usize,
+
+    pub fn init(input: []const u8) ANSIIterator {
+        return .{
+            .input = input.ptr,
+            .input_len = input.len,
+            .cursor = 0,
+            .slice_ptr = null,
+            .slice_len = 0,
+        };
+    }
+
+    /// Returns the next slice of non-ANSI text, or null when done.
+    pub fn next(self: *ANSIIterator) ?[]const u8 {
+        if (Bun__ANSI__next(self)) {
+            return (self.slice_ptr orelse return null)[0..self.slice_len];
+        }
+        return null;
+    }
+
+    extern fn Bun__ANSI__next(it: *ANSIIterator) bool;
+};
+
 const escapeHTML_ = @import("./immutable/escapeHTML.zig");
 const escapeRegExp_ = @import("./escapeRegExp.zig");
 const paths_ = @import("./immutable/paths.zig");

@@ -15,7 +15,7 @@ pub const Param = struct {
     pub const List = std.MultiArrayList(Param);
 };
 
-dir: StoredFileDescriptorType = .invalid,
+dir: FD = .invalid,
 routes: Routes,
 loaded_routes: bool = false,
 allocator: std.mem.Allocator,
@@ -731,23 +731,22 @@ pub const Route = struct {
 
         if (abs_path_str.len == 0) {
             var file: std.fs.File = undefined;
-            var needs_close = false;
+            var needs_close = true;
             defer if (needs_close) file.close();
             if (entry.cache.fd.unwrapValid()) |valid| {
                 file = valid.stdFile();
+                needs_close = false;
             } else {
                 var parts = [_]string{ entry.dir, entry.base() };
                 abs_path_str = FileSystem.instance.absBuf(&parts, &route_file_buf);
                 route_file_buf[abs_path_str.len] = 0;
                 const buf = route_file_buf[0..abs_path_str.len :0];
                 file = std.fs.openFileAbsoluteZ(buf, .{ .mode = .read_only }) catch |err| {
+                    needs_close = false;
                     log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} opening route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
                     return null;
                 };
                 FileSystem.setMaxFd(file.handle);
-
-                needs_close = FileSystem.instance.fs.needToCloseFiles();
-                if (!needs_close) entry.cache.fd = .fromStdFile(file);
             }
 
             const _abs = bun.getFdPath(.fromStdFile(file), &route_file_buf) catch |err| {
@@ -904,11 +903,11 @@ const MockRequestContextType = struct {
 };
 
 pub const MockServer = struct {
-    watchloop_handle: ?StoredFileDescriptorType = null,
+    watchloop_handle: ?FD = null,
     watcher: Watcher = Watcher{},
 
     pub const Watcher = struct {
-        watchloop_handle: ?StoredFileDescriptorType = null,
+        watchloop_handle: ?FD = null,
         pub fn start(_: *Watcher) anyerror!void {}
     };
 };
@@ -1900,11 +1899,11 @@ const FileSystem = Fs.FileSystem;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const HashedString = bun.HashedString;
 const Logger = bun.logger;
 const Output = bun.Output;
 const PathString = bun.PathString;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const default_allocator = bun.default_allocator;
 const api = bun.schema.api;
 

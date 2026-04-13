@@ -10,8 +10,8 @@ on:
   merge_group:
 env:
   BUN_VERSION: "1.3.2"
-  LLVM_VERSION: "19.1.7"
-  LLVM_VERSION_MAJOR: "19"
+  LLVM_VERSION: "21.1.8"
+  LLVM_VERSION_MAJOR: "21"
 
 jobs:
   autofix:
@@ -35,7 +35,6 @@ jobs:
       - name: Setup Dependencies
         run: |
           bun install
-          bun scripts/glob-sources.mjs
       - name: Format Code
         run: |
           # Start prettier in background with prefixed output
@@ -105,5 +104,4 @@ jobs:
       - name: Ban Words
         run: |
           bun ./test/internal/ban-words.test.ts
-          git rm -f cmake/sources/*.txt || true
       - uses: autofix-ci/action@635ffb0c9798bd160680f18fd73371e355b85f27

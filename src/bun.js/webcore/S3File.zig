@@ -371,7 +371,7 @@ pub const S3BlobStatTask = struct {
                 try this.promise.resolve(this.global, .true);
             },
             .failure => |err| {
-                try this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
+                try this.promise.reject(this.global, err.toJSWithAsyncStack(this.global, this.store.data.s3.path(), this.promise.get()));
             },
         }
     }
@@ -384,7 +384,7 @@ pub const S3BlobStatTask = struct {
                 try this.promise.resolve(this.global, JSValue.jsNumber(stat_result.size));
             },
             .not_found, .failure => |err| {
-                try this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
+                try this.promise.reject(this.global, err.toJSWithAsyncStack(this.global, this.store.data.s3.path(), this.promise.get()));
             },
         }
     }
@@ -403,7 +403,7 @@ pub const S3BlobStatTask = struct {
                 )).toJS(globalThis));
             },
             .not_found, .failure => |err| {
-                try this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
+                try this.promise.reject(globalThis, err.toJSWithAsyncStack(globalThis, this.store.data.s3.path(), this.promise.get()));
             },
         }
     }
@@ -421,7 +421,7 @@ pub const S3BlobStatTask = struct {
         const path = s3_store.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3ExistsResolved), this, if (env.getHttpProxy(true, null, null)) |proxy| proxy.href else null, s3_store.request_payer);
         return promise;
     }
     pub fn stat(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSTerminated!JSValue {
@@ -437,7 +437,7 @@ pub const S3BlobStatTask = struct {
         const path = s3_store.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3StatResolved), this, if (env.getHttpProxy(true, null, null)) |proxy| proxy.href else null, s3_store.request_payer);
         return promise;
     }
     pub fn size(globalThis: *jsc.JSGlobalObject, blob: *Blob) bun.JSTerminated!JSValue {
@@ -453,7 +453,7 @@ pub const S3BlobStatTask = struct {
         const path = s3_store.path();
         const env = globalThis.bunVM().transpiler.env;
 
-        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null)) |proxy| proxy.href else null, s3_store.request_payer);
+        try S3.stat(credentials, path, @ptrCast(&S3BlobStatTask.onS3SizeResolved), this, if (env.getHttpProxy(true, null, null)) |proxy| proxy.href else null, s3_store.request_payer);
         return promise;
     }
 

@@ -1,6 +1,6 @@
-ARG LLVM_VERSION="19"
-ARG REPORTED_LLVM_VERSION="19.1.7"
-ARG OLD_BUN_VERSION="1.1.38"
+ARG LLVM_VERSION="21"
+ARG REPORTED_LLVM_VERSION="21.1.8"
+ARG OLD_BUN_VERSION="1.3.1"
 ARG BUILDKITE_AGENT_TAGS="queue=linux,os=linux,arch=${TARGETARCH}"
 
 FROM --platform=$BUILDPLATFORM ubuntu:20.04 as base-arm64
@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    wget curl git python3 python3-pip ninja-build \
    software-properties-common apt-transport-https \
    ca-certificates gnupg lsb-release unzip \
-   libxml2-dev ruby ruby-dev bison gawk perl make golang ccache \
+   libxml2-dev ruby ruby-dev bison gawk perl make golang ccache qemu-user-static \
    && add-apt-repository ppa:ubuntu-toolchain-r/test \
    && apt-get update \
    && apt-get install -y gcc-13 g++-13 libgcc-13-dev libstdc++-13-dev \
@@ -100,6 +100,16 @@ RUN --mount=type=tmpfs,target=/tmp \
       unzip /tmp/bun.zip -d /tmp/bun && \
       mv /tmp/bun/*/bun /usr/bin/bun && \
       chmod +x /usr/bin/bun'
+
+# Node — build scripts run under node (see scripts/build.ts). Version must
+# match scripts/bootstrap.sh nodejs_version_exact() so container and bare-
+# metal agents use the same runtime. .tar.gz (not .xz) to match bootstrap.sh
+# and avoid needing xz-utils.
+ARG NODE_VERSION="24.3.0"
+RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "x64"; fi) && \
+    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${ARCH}.tar.gz" \
+      | tar -xz -C /usr/local --strip-components=1 && \
+    node --version
 
 ENV LLVM_VERSION=${REPORTED_LLVM_VERSION}
 

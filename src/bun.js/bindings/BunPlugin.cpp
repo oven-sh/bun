@@ -7,7 +7,7 @@
 #include "helpers.h"
 #include "ZigGlobalObject.h"
 
-#include <JavaScriptCore/CatchScope.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -557,10 +557,10 @@ static WTF::String resolveModuleSpecifier(
     if (url.isValid() && url.protocolIsFile()) {
         auto fromString = url.fileSystemPath();
         BunString from = Bun::toString(fromString);
-        auto catchScope = DECLARE_CATCH_SCOPE(vm);
+        auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true, false));
-        if (catchScope.exception()) {
-            catchScope.clearException();
+        if (topExceptionScope.exception()) {
+            (void)topExceptionScope.tryClearException();
         }
 
         if (result && result.isString()) {
@@ -602,6 +602,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     if (callframe->argumentCount() < 1) {
         scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) requires a module and function"_s));
+        return {};
+    }
+
+    if (!callframe->argument(0).isString()) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) requires a module name string"_s));
         return {};
     }
 
@@ -697,14 +702,13 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                             JSC::PropertyNameArrayBuilder originalNamesBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
                             moduleNamespaceObject->getOwnPropertyNames(moduleNamespaceObject, globalObject, originalNamesBuilder, DontEnumPropertiesMode::Exclude);
                             RETURN_IF_EXCEPTION(scope, {});
-                            
                             size_t numProperties = originalNamesBuilder.size();
                             for (size_t i = 0; i < numProperties; i++) {
                                 Identifier name = originalNamesBuilder[i];
-                                auto catchScope = DECLARE_CATCH_SCOPE(vm);
+                                auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                                 JSValue originalValue = moduleNamespaceObject->get(globalObject, name);
-                                if (catchScope.exception()) {
-                                    catchScope.clearException();
+                                if (scope.exception()) [[unlikely]] {
+                                    (void)scope.tryClearException();
                                     originalValue = jsUndefined();
                                 }
                                 // Convert Identifier to String for storage
@@ -727,10 +731,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
                                 for (auto& name : names) {
                                     // consistent with regular esm handling code
-                                    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+                                    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                                     JSValue value = object->get(globalObject, name);
                                     if (scope.exception()) [[unlikely]] {
-                                        scope.clearException();
+                                        (void)scope.tryClearException();
                                         value = jsUndefined();
                                     }
                                     moduleNamespaceObject->overrideExportValue(globalObject, name, value);
@@ -770,10 +774,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
                 for (size_t i = 0; i < names.size(); i++) {
                     Identifier name = names[i];
-                    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+                    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                     JSValue value = object->get(globalObject, name);
-                    if (catchScope.exception()) {
-                        catchScope.clearException();
+                    if (scope.exception()) [[unlikely]] {
+                        (void)scope.tryClearException();
                         value = jsUndefined();
                     }
                     moduleNamespaceObject->overrideExportValue(globalObject, name, value);
@@ -837,11 +841,11 @@ static void restoreSingleModuleMock(Zig::GlobalObject* globalObject, const WTF::
 
         // Restore all original export values
         for (auto& exportEntry : savedExports) {
-            auto catchScope = DECLARE_CATCH_SCOPE(vm);
+            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             auto identifier = Identifier::fromString(vm, exportEntry.key);
             namespaceObject->overrideExportValue(globalObject, identifier, exportEntry.value.get());
-            if (catchScope.exception()) {
-                catchScope.clearException();
+            if (topExceptionScope.exception()) {
+                (void)topExceptionScope.tryClearException();
             }
         }
         
@@ -1024,12 +1028,16 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
 
         JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
         const auto& builtinNames = WebCore::builtinNames(vm);
+        auto* pathJS = Bun::toJS(globalObject, *path);
+        RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
             vm, builtinNames.pathPublicName(),
-            Bun::toJS(globalObject, *path));
+            pathJS);
+        auto* importerJS = Bun::toJS(globalObject, *importer);
+        RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
             vm, builtinNames.importerPublicName(),
-            Bun::toJS(globalObject, *importer));
+            importerJS);
         arguments.append(paramsObject);
 
         auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
@@ -1252,6 +1260,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     global->onResolvePlugins.namespaces.clear();
 
     delete global->onLoadPlugins.virtualModules;
+    global->onLoadPlugins.virtualModules = nullptr;
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

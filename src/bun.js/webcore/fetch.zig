@@ -240,7 +240,7 @@ fn fetchImpl(
     };
     var url_type = URLType.remote;
 
-    var ssl_config: ?*SSLConfig = null;
+    var ssl_config: ?SSLConfig.SharedPtr = null;
     var reject_unauthorized = vm.getTLSRejectUnauthorized();
     var check_server_identity: JSValue = .zero;
 
@@ -273,10 +273,9 @@ fn fetchImpl(
             range = null;
         }
 
-        if (ssl_config) |conf| {
-            ssl_config = null;
+        if (ssl_config) |*conf| {
             conf.deinit();
-            bun.default_allocator.destroy(conf);
+            ssl_config = null;
         }
     }
 
@@ -372,19 +371,6 @@ fn fetchImpl(
     }
     url_proxy_buffer = url.href;
 
-    if (url_str.hasPrefixComptime("data:")) {
-        var url_slice = url_str.toUTF8WithoutRef(allocator);
-        defer url_slice.deinit();
-
-        var data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
-            const err = globalThis.createError("failed to fetch the data URL", .{});
-            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
-        };
-        data_url.url = url_str;
-
-        return dataURLResponse(data_url, globalThis, allocator);
-    }
-
     // **Start with the harmless ones.**
 
     // "method"
@@ -479,9 +465,8 @@ fn fetchImpl(
                             is_error = true;
                             return .zero;
                         }) |config| {
-                            const ssl_config_object = bun.handleOom(bun.default_allocator.create(SSLConfig));
-                            ssl_config_object.* = config;
-                            break :extract_ssl_config ssl_config_object;
+                            // Intern via GlobalRegistry for deduplication and pointer equality
+                            break :extract_ssl_config SSLConfig.GlobalRegistry.intern(config);
                         }
                     }
                 }
@@ -1123,14 +1108,14 @@ fn fetchImpl(
     }
     if (body.needsToReadFile()) {
         prepare_body: {
-            const opened_fd_res: bun.sys.Maybe(bun.FileDescriptor) = switch (body.store().?.data.file.pathlike) {
+            const opened_fd_res: bun.sys.Maybe(bun.FD) = switch (body.store().?.data.file.pathlike) {
                 .fd => |fd| bun.sys.dup(fd),
                 .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), if (Environment.isWindows) bun.O.RDONLY else bun.O.RDONLY | bun.O.NOCTTY, 0),
             };
 
             const opened_fd = switch (opened_fd_res) {
                 .err => |err| {
-                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis) catch return .zero);
                     is_error = true;
                     return rejected_value;
                 },
@@ -1202,7 +1187,7 @@ fn fetchImpl(
             switch (res) {
                 .err => |err| {
                     is_error = true;
-                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis));
+                    const rejected_value = JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err.toJS(globalThis) catch return .zero);
                     body.detach();
 
                     return rejected_value;

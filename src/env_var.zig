@@ -64,6 +64,12 @@ pub const BUN_POSTGRES_SOCKET_MONITOR_READER = New(kind.string, "BUN_POSTGRES_SO
 pub const BUN_RUNTIME_TRANSPILER_CACHE_PATH = New(kind.string, "BUN_RUNTIME_TRANSPILER_CACHE_PATH", .{});
 pub const BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR = New(kind.boolean, "BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR", .{ .default = false });
 pub const BUN_TCC_OPTIONS = New(kind.string, "BUN_TCC_OPTIONS", .{});
+/// Standard C compiler environment variable for include paths (colon-separated).
+/// Used by bun:ffi's TinyCC integration for systems like NixOS.
+pub const C_INCLUDE_PATH = PlatformSpecificNew(kind.string, "C_INCLUDE_PATH", null, .{});
+/// Standard C compiler environment variable for library paths (colon-separated).
+/// Used by bun:ffi's TinyCC integration for systems like NixOS.
+pub const LIBRARY_PATH = PlatformSpecificNew(kind.string, "LIBRARY_PATH", null, .{});
 pub const BUN_TMPDIR = New(kind.string, "BUN_TMPDIR", .{});
 pub const BUN_TRACK_LAST_FN_NAME = New(kind.boolean, "BUN_TRACK_LAST_FN_NAME", .{ .default = false });
 pub const BUN_TRACY_PATH = New(kind.string, "BUN_TRACY_PATH", .{});
@@ -98,6 +104,10 @@ pub const JENKINS_URL = New(kind.string, "JENKINS_URL", .{});
 pub const MI_VERBOSE = New(kind.boolean, "MI_VERBOSE", .{ .default = false });
 pub const NO_COLOR = New(kind.boolean, "NO_COLOR", .{ .default = false });
 pub const NODE_CHANNEL_FD = New(kind.string, "NODE_CHANNEL_FD", .{});
+/// Set by HostProcess.zig when spawning the WebView host subprocess. The
+/// child's cli.zig checks this before anything else and hands off to C++
+/// Bun__WebView__hostMain. Never returns — no JSC, no VM.
+pub const BUN_INTERNAL_WEBVIEW_HOST = New(kind.string, "BUN_INTERNAL_WEBVIEW_HOST", .{});
 pub const NODE_PRESERVE_SYMLINKS_MAIN = New(kind.boolean, "NODE_PRESERVE_SYMLINKS_MAIN", .{ .default = false });
 pub const NODE_USE_SYSTEM_CA = New(kind.boolean, "NODE_USE_SYSTEM_CA", .{ .default = false });
 pub const npm_lifecycle_event = New(kind.string, "npm_lifecycle_event", .{});

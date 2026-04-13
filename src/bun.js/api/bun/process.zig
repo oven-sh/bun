@@ -84,8 +84,13 @@ pub const ProcessExitHandler = struct {
             LifecycleScriptSubprocess,
             ShellSubprocess,
             ProcessHandle,
+            MultiRunProcessHandle,
             SecurityScanSubprocess,
+            WebViewHostProcess,
+            ChromeProcess,
             SyncProcess,
+            CronRegisterJob,
+            CronRemoveJob,
         },
     );
 
@@ -111,6 +116,10 @@ pub const ProcessExitHandler = struct {
                 const subprocess = this.ptr.as(ProcessHandle);
                 subprocess.onProcessExit(process, status, rusage);
             },
+            @field(TaggedPointer.Tag, @typeName(MultiRunProcessHandle)) => {
+                const subprocess = this.ptr.as(MultiRunProcessHandle);
+                subprocess.onProcessExit(process, status, rusage);
+            },
             @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
                 const subprocess = this.ptr.as(ShellSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
@@ -118,6 +127,22 @@ pub const ProcessExitHandler = struct {
             @field(TaggedPointer.Tag, @typeName(SecurityScanSubprocess)) => {
                 const subprocess = this.ptr.as(SecurityScanSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(WebViewHostProcess)) => {
+                const subprocess = this.ptr.as(WebViewHostProcess);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(ChromeProcess)) => {
+                const subprocess = this.ptr.as(ChromeProcess);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(CronRegisterJob)) => {
+                const cron_job = this.ptr.as(CronRegisterJob);
+                cron_job.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(CronRemoveJob)) => {
+                const cron_job = this.ptr.as(CronRemoveJob);
+                cron_job.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(SyncProcess)) => {
                 const subprocess = this.ptr.as(SyncProcess);
@@ -732,7 +757,7 @@ pub const WaiterThread = if (Environment.isPosix) WaiterThreadPosix else struct 
 // We use a single thread to call waitpid() in a loop.
 const WaiterThreadPosix = struct {
     started: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-    eventfd: if (Environment.isLinux) bun.FileDescriptor else u0 = undefined,
+    eventfd: if (Environment.isLinux) bun.FD else u0 = undefined,
 
     js_process: ProcessQueue = .{},
 
@@ -973,7 +998,7 @@ pub const PosixSpawnOptions = struct {
     stdin: Stdio = .ignore,
     stdout: Stdio = .ignore,
     stderr: Stdio = .ignore,
-    ipc: ?bun.FileDescriptor = null,
+    ipc: ?bun.FD = null,
     extra_fds: []const Stdio = &.{},
     cwd: []const u8 = "",
     detached: bool = false,
@@ -1003,7 +1028,7 @@ pub const PosixSpawnOptions = struct {
         ignore: void,
         buffer: void,
         ipc: void,
-        pipe: bun.FileDescriptor,
+        pipe: bun.FD,
         // TODO: remove this entry, it doesn't seem to be used
         dup2: struct { out: bun.jsc.Subprocess.StdioKind, to: bun.jsc.Subprocess.StdioKind },
     };
@@ -1027,7 +1052,7 @@ pub const WindowsSpawnResult = struct {
         unavailable: void,
 
         buffer: *bun.windows.libuv.Pipe,
-        buffer_fd: bun.FileDescriptor,
+        buffer_fd: bun.FD,
     };
 
     pub fn toProcess(
@@ -1055,7 +1080,7 @@ pub const WindowsSpawnOptions = struct {
     stdin: Stdio = .ignore,
     stdout: Stdio = .ignore,
     stderr: Stdio = .ignore,
-    ipc: ?bun.FileDescriptor = null,
+    ipc: ?bun.FD = null,
     extra_fds: []const Stdio = &.{},
     cwd: []const u8 = "",
     detached: bool = false,
@@ -1078,12 +1103,14 @@ pub const WindowsSpawnOptions = struct {
         ignore: void,
         buffer: *bun.windows.libuv.Pipe,
         ipc: *bun.windows.libuv.Pipe,
-        pipe: bun.FileDescriptor,
+        pipe: bun.FD,
         dup2: struct { out: bun.jsc.Subprocess.StdioKind, to: bun.jsc.Subprocess.StdioKind },
 
         pub fn deinit(this: *const Stdio) void {
-            if (this.* == .buffer) {
-                bun.default_allocator.destroy(this.buffer);
+            switch (this.*) {
+                .buffer => |pipe| pipe.closeAndDestroy(),
+                .ipc => |pipe| pipe.closeAndDestroy(),
+                else => {},
             }
         }
     };
@@ -1101,11 +1128,11 @@ pub const WindowsSpawnOptions = struct {
 pub const PosixSpawnResult = struct {
     pid: pid_t = 0,
     pidfd: ?PidFDType = null,
-    stdin: ?bun.FileDescriptor = null,
-    stdout: ?bun.FileDescriptor = null,
-    stderr: ?bun.FileDescriptor = null,
-    ipc: ?bun.FileDescriptor = null,
-    extra_pipes: std.array_list.Managed(bun.FileDescriptor) = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator),
+    stdin: ?bun.FD = null,
+    stdout: ?bun.FD = null,
+    stderr: ?bun.FD = null,
+    ipc: ?bun.FD = null,
+    extra_pipes: std.array_list.Managed(bun.FD) = std.array_list.Managed(bun.FD).init(bun.default_allocator),
 
     memfds: [3]bool = .{ false, false, false },
 
@@ -1268,12 +1295,12 @@ pub fn spawnProcessPosix(
         try actions.chdir(options.cwd);
     }
     var spawned = PosixSpawnResult{};
-    var extra_fds = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator);
+    var extra_fds = std.array_list.Managed(bun.FD).init(bun.default_allocator);
     errdefer extra_fds.deinit();
     var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
     const allocator = stack_fallback.get();
-    var to_close_at_end = std.array_list.Managed(bun.FileDescriptor).init(allocator);
-    var to_set_cloexec = std.array_list.Managed(bun.FileDescriptor).init(allocator);
+    var to_close_at_end = std.array_list.Managed(bun.FD).init(allocator);
+    var to_set_cloexec = std.array_list.Managed(bun.FD).init(allocator);
     defer {
         for (to_set_cloexec.items) |fd| {
             _ = bun.sys.setCloseOnExec(fd);
@@ -1286,7 +1313,7 @@ pub fn spawnProcessPosix(
         to_close_at_end.clearAndFree();
     }
 
-    var to_close_on_error = std.array_list.Managed(bun.FileDescriptor).init(allocator);
+    var to_close_on_error = std.array_list.Managed(bun.FD).init(allocator);
 
     errdefer {
         for (to_close_on_error.items) |fd| {
@@ -1304,7 +1331,7 @@ pub fn spawnProcessPosix(
     }
 
     const stdio_options: [3]PosixSpawnOptions.Stdio = .{ options.stdin, options.stdout, options.stderr };
-    const stdios: [3]*?bun.FileDescriptor = .{ &spawned.stdin, &spawned.stdout, &spawned.stderr };
+    const stdios: [3]*?bun.FD = .{ &spawned.stdin, &spawned.stdout, &spawned.stderr };
 
     var dup_stdout_to_stderr: bool = false;
 
@@ -1357,7 +1384,7 @@ pub fn spawnProcessPosix(
                     }
                 }
 
-                const fds: [2]bun.FileDescriptor = brk: {
+                const fds: [2]bun.FD = brk: {
                     const pair = if (!options.no_sigpipe) try bun.sys.socketpairForShell(
                         std.posix.AF.UNIX,
                         std.posix.SOCK.STREAM,
@@ -1372,36 +1399,22 @@ pub fn spawnProcessPosix(
                     break :brk .{ pair[if (i == 0) 1 else 0], pair[if (i == 0) 0 else 1] };
                 };
 
-                if (i == 0) {
-                    // their copy of stdin should be readable
-                    _ = std.c.shutdown(@intCast(fds[1].cast()), std.posix.SHUT.WR);
-
-                    // our copy of stdin should be writable
-                    _ = std.c.shutdown(@intCast(fds[0].cast()), std.posix.SHUT.RD);
-
-                    if (comptime Environment.isMac) {
-                        // macOS seems to default to around 8 KB for the buffer size
-                        // this is comically small.
-                        // TODO: investigate if this should be adjusted on Linux.
-                        const so_recvbuf: c_int = 1024 * 512;
-                        const so_sendbuf: c_int = 1024 * 512;
+                // Note: we intentionally do NOT call shutdown() on the
+                // socketpair fds. On SOCK_STREAM socketpairs, shutdown(fd, SHUT_WR)
+                // sends a FIN to the peer, which causes programs that poll the
+                // write end for readability (e.g. Python's asyncio connect_write_pipe)
+                // to interpret it as "connection closed" and tear down their transport.
+                // The socketpair is already used unidirectionally by convention.
+                if (comptime Environment.isMac) {
+                    // macOS seems to default to around 8 KB for the buffer size
+                    // this is comically small.
+                    // TODO: investigate if this should be adjusted on Linux.
+                    const so_recvbuf: c_int = 1024 * 512;
+                    const so_sendbuf: c_int = 1024 * 512;
+                    if (i == 0) {
                         _ = std.c.setsockopt(fds[1].cast(), std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, &so_recvbuf, @sizeOf(c_int));
                         _ = std.c.setsockopt(fds[0].cast(), std.posix.SOL.SOCKET, std.posix.SO.SNDBUF, &so_sendbuf, @sizeOf(c_int));
-                    }
-                } else {
-
-                    // their copy of stdout or stderr should be writable
-                    _ = std.c.shutdown(@intCast(fds[1].cast()), std.posix.SHUT.RD);
-
-                    // our copy of stdout or stderr should be readable
-                    _ = std.c.shutdown(@intCast(fds[0].cast()), std.posix.SHUT.WR);
-
-                    if (comptime Environment.isMac) {
-                        // macOS seems to default to around 8 KB for the buffer size
-                        // this is comically small.
-                        // TODO: investigate if this should be adjusted on Linux.
-                        const so_recvbuf: c_int = 1024 * 512;
-                        const so_sendbuf: c_int = 1024 * 512;
+                    } else {
                         _ = std.c.setsockopt(fds[0].cast(), std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, &so_recvbuf, @sizeOf(c_int));
                         _ = std.c.setsockopt(fds[1].cast(), std.posix.SOL.SOCKET, std.posix.SO.SNDBUF, &so_sendbuf, @sizeOf(c_int));
                     }
@@ -1447,7 +1460,7 @@ pub fn spawnProcessPosix(
                 try actions.open(fileno, path, bun.O.RDWR | bun.O.CREAT, 0o664);
             },
             .ipc, .buffer => {
-                const fds: [2]bun.FileDescriptor = try bun.sys.socketpair(
+                const fds: [2]bun.FD = try bun.sys.socketpair(
                     std.posix.AF.UNIX,
                     std.posix.SOCK.STREAM,
                     0,
@@ -1499,7 +1512,7 @@ pub fn spawnProcessPosix(
         .result => |pid| {
             spawned.pid = pid;
             spawned.extra_pipes = extra_fds;
-            extra_fds = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator);
+            extra_fds = std.array_list.Managed(bun.FD).init(bun.default_allocator);
 
             if (comptime Environment.isLinux) {
                 // If it's spawnSync and we want to block the entire thread
@@ -1624,9 +1637,10 @@ pub fn spawnProcessWindows(
                 stdio.flags = uv.UV_INHERIT_FD;
                 stdio.data.fd = fd_i;
             },
-            .ipc => |my_pipe| {
-                // ipc option inside stdin, stderr or stdout are not supported
-                bun.default_allocator.destroy(my_pipe);
+            .ipc => {
+                // ipc option inside stdin, stderr or stdout is not supported.
+                // Don't free the pipe here — the caller owns it and will
+                // clean it up via WindowsSpawnOptions.deinit().
                 stdio.flags = uv.UV_IGNORE;
             },
             .ignore => {
@@ -1800,7 +1814,7 @@ pub const sync = struct {
         stdin: Stdio = .ignore,
         stdout: Stdio = .inherit,
         stderr: Stdio = .inherit,
-        ipc: ?bun.FileDescriptor = null,
+        ipc: ?bun.FD = null,
         cwd: []const u8 = "",
         detached: bool = false,
 
@@ -1824,7 +1838,7 @@ pub const sync = struct {
                     .ignore => .ignore,
                     .buffer => .{
                         .buffer = if (Environment.isWindows)
-                            bun.handleOom(bun.default_allocator.create(bun.windows.libuv.Pipe)),
+                            bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)),
                     },
                 };
             }
@@ -2120,7 +2134,7 @@ pub const sync = struct {
             std.array_list.Managed(u8).init(bun.default_allocator),
             std.array_list.Managed(u8).init(bun.default_allocator),
         };
-        var out_fds = [2]bun.FileDescriptor{ process.stdout orelse bun.invalid_fd, process.stderr orelse bun.invalid_fd };
+        var out_fds = [2]bun.FD{ process.stdout orelse bun.invalid_fd, process.stderr orelse bun.invalid_fd };
         var success = false;
         defer {
             // If we're going to return an error,
@@ -2146,7 +2160,7 @@ pub const sync = struct {
             }
         }
 
-        var out_fds_to_wait_for = [2]bun.FileDescriptor{
+        var out_fds_to_wait_for = [2]bun.FD{
             process.stdout orelse bun.invalid_fd,
             process.stderr orelse bun.invalid_fd,
         };
@@ -2251,7 +2265,11 @@ pub const sync = struct {
 };
 
 const std = @import("std");
+const MultiRunProcessHandle = @import("../../../cli/multi_run.zig").ProcessHandle;
 const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
+
+const CronRegisterJob = @import("../cron.zig").CronRegisterJob;
+const CronRemoveJob = @import("../cron.zig").CronRemoveJob;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -2260,6 +2278,9 @@ const PosixSpawn = bun.spawn;
 const Maybe = bun.sys.Maybe;
 const ShellSubprocess = bun.shell.ShellSubprocess;
 const uv = bun.windows.libuv;
+
+const ChromeProcess = bun.api.ChromeProcess;
+const WebViewHostProcess = bun.api.WebViewHostProcess;
 
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const SecurityScanSubprocess = bun.install.SecurityScanSubprocess;

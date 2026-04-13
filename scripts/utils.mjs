@@ -1837,6 +1837,13 @@ export function getTailscale() {
     }
   }
 
+  if (isWindows) {
+    const tailscaleExe = "C:\\Program Files\\Tailscale\\tailscale.exe";
+    if (existsSync(tailscaleExe)) {
+      return tailscaleExe;
+    }
+  }
+
   return "tailscale";
 }
 
@@ -2043,7 +2050,7 @@ export function getShell() {
 }
 
 /**
- * @typedef {"aws" | "google"} Cloud
+ * @typedef {"aws" | "google" | "azure"} Cloud
  */
 
 /** @type {Cloud | undefined} */
@@ -2137,6 +2144,37 @@ export async function isGoogleCloud() {
 }
 
 /**
+ * @returns {Promise<boolean | undefined>}
+ */
+export async function isAzure() {
+  if (typeof detectedCloud === "string") {
+    return detectedCloud === "azure";
+  }
+
+  async function detectAzure() {
+    // Azure IMDS (Instance Metadata Service) — the official way to detect Azure VMs.
+    // https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service
+    const { error, body } = await curl("http://169.254.169.254/metadata/instance?api-version=2021-02-01", {
+      headers: { "Metadata": "true" },
+      retries: 1,
+    });
+    if (!error && body) {
+      try {
+        const metadata = JSON.parse(body);
+        if (metadata?.compute?.azEnvironment) {
+          return true;
+        }
+      } catch {}
+    }
+  }
+
+  if (await detectAzure()) {
+    detectedCloud = "azure";
+    return true;
+  }
+}
+
+/**
  * @returns {Promise<Cloud | undefined>}
  */
 export async function getCloud() {
@@ -2150,6 +2188,10 @@ export async function getCloud() {
 
   if (await isGoogleCloud()) {
     return "google";
+  }
+
+  if (await isAzure()) {
+    return "azure";
   }
 }
 
@@ -2175,6 +2217,10 @@ export async function getCloudMetadata(name, cloud) {
   } else if (cloud === "google") {
     url = new URL(name, "http://metadata.google.internal/computeMetadata/v1/instance/");
     headers = { "Metadata-Flavor": "Google" };
+  } else if (cloud === "azure") {
+    // Azure IMDS uses a single JSON endpoint; individual fields are extracted by the caller.
+    url = new URL("http://169.254.169.254/metadata/instance?api-version=2021-02-01");
+    headers = { "Metadata": "true" };
   } else {
     throw new Error(`Unsupported cloud: ${inspect(cloud)}`);
   }
@@ -2193,7 +2239,25 @@ export async function getCloudMetadata(name, cloud) {
  * @param {Cloud} [cloud]
  * @returns {Promise<string | undefined>}
  */
-export function getCloudMetadataTag(tag, cloud) {
+export async function getCloudMetadataTag(tag, cloud) {
+  cloud ??= await getCloud();
+
+  if (cloud === "azure") {
+    // Azure IMDS returns all tags in a single JSON response.
+    // Tags are in compute.tagsList as [{name, value}, ...].
+    const body = await getCloudMetadata("", cloud);
+    if (!body) return;
+    try {
+      const metadata = JSON.parse(body);
+      const tags = metadata?.compute?.tagsList;
+      if (Array.isArray(tags)) {
+        const entry = tags.find(t => t.name === tag);
+        return entry?.value;
+      }
+    } catch {}
+    return;
+  }
+
   const metadata = {
     "aws": `tags/instance/${tag}`,
     "google": `labels/${tag.replace(":", "-")}`,
@@ -2681,30 +2745,21 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
       input: content,
       stdio: ["pipe", "ignore", "pipe"],
       encoding: "utf-8",
-      timeout: 5_000,
+      timeout: 30_000,
     },
   );
   if (status === 0) {
     return;
   }
-  if (attempt > 0) {
-    const cause = error ?? signal ?? `code ${status}`;
-    throw new Error(`Failed to create annotation: ${label}`, { cause });
+  const cause = error?.message || signal || (status == null ? "timed out" : `exit code ${status}`);
+  if (attempt === 0) {
+    console.error(`buildkite-agent annotate failed for '${label}' (${cause}), retrying...`);
+    return reportAnnotationToBuildKite({ context, label, content, style, priority, attempt: attempt + 1 });
   }
-  const errorContent = formatAnnotationToHtml({
-    title: "annotation error",
-    content: stderr || "",
-    source: "buildkite",
-    level: "error",
-  });
-  reportAnnotationToBuildKite({
-    context,
-    label: `${label}-error`,
-    content: errorContent,
-    style,
-    priority,
-    attempt: attempt + 1,
-  });
+  // Annotations are best-effort: log and move on rather than throwing, which
+  // would abort the test runner mid-suite over a cosmetic failure.
+  console.error(`buildkite-agent annotate failed for '${label}' after retry (${cause}), giving up`);
+  if (stderr) console.error(stderr);
 }
 
 /**
@@ -2747,10 +2802,24 @@ export function toYaml(obj, indent = 0) {
         value.includes("#") ||
         value.includes("'") ||
         value.includes('"') ||
+        value.includes("\\") ||
         value.includes("\n") ||
-        value.includes("*"))
+        value.includes("*") ||
+        value.includes("&") ||
+        value.includes("!") ||
+        value.includes("|") ||
+        value.includes(">") ||
+        value.includes("%") ||
+        value.includes("@") ||
+        value.includes("`") ||
+        value.includes("{") ||
+        value.includes("}") ||
+        value.includes("[") ||
+        value.includes("]") ||
+        value.includes(",") ||
+        value.includes(";"))
     ) {
-      result += `${spaces}${key}: "${value.replace(/"/g, '\\"')}"\n`;
+      result += `${spaces}${key}: "${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"\n`;
       continue;
     }
     result += `${spaces}${key}: ${value}\n`;
@@ -2978,6 +3047,7 @@ const emojiMap = {
   release: ["🏆", "trophy"],
   gear: ["⚙️", "gear"],
   clipboard: ["📋", "clipboard"],
+  package: ["📦", "package"],
   rocket: ["🚀", "rocket"],
   openbsd: ["🐡", "openbsd"],
   netbsd: ["🚩", "netbsd"],

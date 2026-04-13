@@ -237,8 +237,11 @@ pub const RuntimeTranspilerStore = struct {
         threadlocal var source_code_printer: ?*js_printer.BufferPrinter = null;
 
         pub fn dispatchToMainThread(this: *TranspilerJob) void {
-            this.vm.transpiler_store.queue.push(this);
-            this.vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.createFrom(&this.vm.transpiler_store));
+            const vm = this.vm;
+            const transpiler_store = &vm.transpiler_store;
+            transpiler_store.queue.push(this);
+            // Another thread may free `this` at any time after .push, so we cannot use it any more.
+            vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.createFrom(transpiler_store));
         }
 
         pub fn runFromJSThread(this: *TranspilerJob) bun.JSError!void {
@@ -315,6 +318,7 @@ pub const RuntimeTranspilerStore = struct {
             var cache = jsc.RuntimeTranspilerCache{
                 .output_code_allocator = allocator,
                 .sourcemap_allocator = bun.default_allocator,
+                .esm_record_allocator = bun.default_allocator,
             };
             var log = logger.Log.init(allocator);
             defer {
@@ -330,7 +334,7 @@ pub const RuntimeTranspilerStore = struct {
             transpiler.macro_context = null;
             transpiler.linker.resolver = &transpiler.resolver;
 
-            var fd: ?StoredFileDescriptorType = null;
+            var fd: ?FD = null;
             var package_json: ?*PackageJSON = null;
             const hash = bun.Watcher.getHash(path.text);
 
@@ -362,7 +366,7 @@ pub const RuntimeTranspilerStore = struct {
             //
             var should_close_input_file_fd = fd == null;
 
-            var input_file_fd: StoredFileDescriptorType = .invalid;
+            var input_file_fd: FD = .invalid;
 
             const is_main = vm.main.len == path.text.len and
                 vm.main_hash == hash and
@@ -385,6 +389,7 @@ pub const RuntimeTranspilerStore = struct {
                 .macro_remappings = macro_remappings,
                 .jsx = transpiler.options.jsx,
                 .emit_decorator_metadata = transpiler.options.emit_decorator_metadata,
+                .experimental_decorators = transpiler.options.experimental_decorators,
                 .virtual_source = null,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
@@ -471,6 +476,10 @@ pub const RuntimeTranspilerStore = struct {
                     dumpSourceString(vm, specifier, entry.output_code.byteSlice());
                 }
 
+                // TODO: module_info is only needed for standalone ESM bytecode.
+                // For now, skip it entirely in the runtime transpiler.
+                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
+
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
                     .source_code = switch (entry.output_code) {
@@ -483,6 +492,7 @@ pub const RuntimeTranspilerStore = struct {
                         },
                     },
                     .is_commonjs_module = entry.metadata.module_type == .cjs,
+                    .module_info = module_info,
                     .tag = this.resolved_source.tag,
                 };
 
@@ -541,6 +551,11 @@ pub const RuntimeTranspilerStore = struct {
                 printer = source_code_printer.?.*;
             }
 
+            const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
+            // TODO: module_info is only needed for standalone ESM bytecode.
+            // For now, skip it entirely in the runtime transpiler.
+            const module_info: ?*analyze_transpiled_module.ModuleInfo = null;
+
             {
                 var mapper = vm.sourceMapHandler(&printer);
                 defer source_code_printer.?.* = printer;
@@ -550,7 +565,9 @@ pub const RuntimeTranspilerStore = struct {
                     &printer,
                     .esm_ascii,
                     mapper.get(),
+                    module_info,
                 ) catch |err| {
+                    if (module_info) |mi| mi.destroy();
                     this.parse_error = err;
                     return;
                 };
@@ -589,7 +606,8 @@ pub const RuntimeTranspilerStore = struct {
             this.resolved_source = ResolvedSource{
                 .allocator = null,
                 .source_code = source_code,
-                .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
+                .is_commonjs_module = is_commonjs_module,
+                .module_info = if (module_info) |mi| @ptrCast(mi.asDeserialized()) else null,
                 .tag = this.resolved_source.tag,
             };
         }
@@ -597,6 +615,7 @@ pub const RuntimeTranspilerStore = struct {
 };
 
 const Fs = @import("../fs.zig");
+const analyze_transpiled_module = @import("../analyze_transpiled_module.zig");
 const node_fallbacks = @import("../node_fallbacks.zig");
 const std = @import("std");
 const AsyncModule = @import("./AsyncModule.zig").AsyncModule;
@@ -611,8 +630,8 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const bun = @import("bun");
 const Async = bun.Async;
 const Environment = bun.Environment;
+const FD = bun.FD;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const String = bun.String;
 const Transpiler = bun.Transpiler;
 const js_ast = bun.ast;

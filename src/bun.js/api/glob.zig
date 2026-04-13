@@ -44,7 +44,7 @@ const ScanOpts = struct {
             const cwd = switch (bun.sys.getcwd((&path_buf))) {
                 .result => |cwd| cwd,
                 .err => |err| {
-                    const errJs = err.toJS(globalThis);
+                    const errJs = try err.toJS(globalThis);
                     return globalThis.throwValue(errJs);
                 },
             };
@@ -135,9 +135,9 @@ pub const WalkTask = struct {
         syscall: Syscall.Error,
         unknown: anyerror,
 
-        pub fn toJS(this: Err, globalThis: *JSGlobalObject) JSValue {
+        pub fn toJS(this: Err, globalThis: *JSGlobalObject) bun.JSError!JSValue {
             return switch (this) {
-                .syscall => |err| err.toJS(globalThis),
+                .syscall => |err| try err.toJS(globalThis),
                 .unknown => |err| ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
@@ -179,8 +179,7 @@ pub const WalkTask = struct {
         defer this.deinit();
 
         if (this.err) |err| {
-            const errJs = err.toJS(this.global);
-            try promise.reject(this.global, errJs);
+            try promise.rejectWithAsyncStack(this.global, err.toJS(this.global));
             return;
         }
 
@@ -237,7 +236,7 @@ fn makeGlobWalker(
             only_files,
         )) {
             .err => |err| {
-                return globalThis.throwValue(err.toJS(globalThis));
+                return globalThis.throwValue(try err.toJS(globalThis));
             },
             else => {},
         }
@@ -254,7 +253,7 @@ fn makeGlobWalker(
         only_files,
     )) {
         .err => |err| {
-            return globalThis.throwValue(err.toJS(globalThis));
+            return globalThis.throwValue(try err.toJS(globalThis));
         },
         else => {},
     }
@@ -345,7 +344,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.Call
 
     switch (try globWalker.walk()) {
         .err => |err| {
-            return globalThis.throwValue(err.toJS(globalThis));
+            return globalThis.throwValue(try err.toJS(globalThis));
         },
         .result => {},
     }

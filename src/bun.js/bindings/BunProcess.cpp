@@ -15,7 +15,7 @@
 #include "ErrorCode+List.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
-#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSMap.h"
@@ -296,7 +296,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObj
     return true;
 }
 
-extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*, int32_t*);
+extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
@@ -434,7 +434,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     }
 
     CString utf8;
-    int32_t linuxMemfdToClose = -1;
 
     // Support embedded .node files
     // See StandaloneModuleGraph.zig for what this "$bunfs" thing is
@@ -446,7 +445,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     bool deleteAfter = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
-        if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr, &linuxMemfdToClose)) {
+        if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
             filename = bunStr.transferToWTFString();
             deleteAfter = !filename.startsWith("/proc/"_s);
         }
@@ -482,20 +481,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
                 delete[] dupeZ;
             }
         }
-        ASSERT(linuxMemfdToClose == -1);
 #else
         if (deleteAfter) {
             deleteAfter = false;
             Bun__unlink(utf8.data(), utf8.length());
         }
-#if OS(LINUX)
-        if (linuxMemfdToClose != -1) {
-            close(linuxMemfdToClose);
-            linuxMemfdToClose = -1;
-        }
-#else
-        ASSERT(linuxMemfdToClose == -1);
-#endif
 #endif
     };
 
@@ -1162,7 +1152,8 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
     auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
     if (!context) [[unlikely]]
         return;
-    // signal handlers can be run on any thread
+    // uv_signal_t callbacks fire on the uv_run thread (JS thread), but defer to avoid
+    // re-entering JS from inside the libuv poll loop
     context->postTaskConcurrently([signalNumber](ScriptExecutionContext& context) {
         Bun__onSignalForJS(signalNumber, jsCast<Zig::GlobalObject*>(context.jsGlobalObject()));
     });
@@ -1200,10 +1191,10 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     // if there is an uncaughtExceptionCaptureCallback, call it and consider the exception handled
     auto capture = process->getUncaughtExceptionCaptureCallback();
     if (!capture.isEmpty() && !capture.isUndefinedOrNull()) {
-        auto scope = DECLARE_CATCH_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
-            scope.clearException();
+            (void)scope.tryClearException();
             // if an exception is thrown in the uncaughtException handler, we abort
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             Bun__Process__exit(lexicalGlobalObject, 1);
@@ -1264,7 +1255,7 @@ extern "C" JSC::EncodedJSValue Bun__noSideEffectsToString(JSC::VM& vm, JSC::JSGl
 extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason, JSC::EncodedJSValue promise)
 {
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto warning = JSC::createError(globalObject, "Unhandled promise rejection. This error originated either by "
                                                   "throwing inside of an async function without a catch block, "
                                                   "or by rejecting a promise which was not handled with .catch(). "
@@ -1316,7 +1307,7 @@ extern "C" bool Bun__VM__allowRejectionHandledWarning(void* vm);
 
 extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue promise)
 {
-    auto scope = DECLARE_CATCH_SCOPE(JSC::getVM(lexicalGlobalObject));
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(lexicalGlobalObject));
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -1517,7 +1508,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         signalToContextIdsMap->set(signalNumber, signal_handle);
                     }
                 } else {
-                    if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end()) {
+                    if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && eventEmitter.listenerCount(eventName) == 0) {
 
 #if !OS(WINDOWS)
                         if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
@@ -2340,7 +2331,7 @@ extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGl
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
@@ -2355,7 +2346,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdioWriteStream, callData, globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) {
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        scope.clearException();
+        (void)scope.tryClearException();
         return jsUndefined();
     }
 
@@ -2403,7 +2394,7 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
@@ -2416,7 +2407,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStdinStream, callData, globalObject, args);
     if (auto* exception = scope.exception()) {
         Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        scope.clearException();
+        (void)scope.tryClearException();
         return jsUndefined();
     }
     return result;
@@ -2493,13 +2484,30 @@ static JSValue constructPid(VM& vm, JSObject* processObject)
     return jsNumber(getpid());
 }
 
-static JSValue constructPpid(VM& vm, JSObject* processObject)
+JSC_DEFINE_CUSTOM_GETTER(processPpid, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
+    // Always call the syscall so the value reflects reparenting
+    // (e.g. after the original parent dies and the child is
+    // reparented to init). Matches Node.js behavior.
 #if OS(WINDOWS)
-    return jsNumber(uv_os_getppid());
+    return JSValue::encode(jsNumber(uv_os_getppid()));
 #else
-    return jsNumber(getppid());
+    return JSValue::encode(jsNumber(getppid()));
 #endif
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessPpid, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
+{
+    // Match Node.js: writing to process.ppid replaces the live
+    // accessor with the written value on this object, so
+    // subsequent reads return what was written.
+    JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(JSValue::decode(thisValue));
+    if (!thisObject) {
+        return false;
+    }
+    auto& vm = JSC::getVM(globalObject);
+    thisObject->putDirect(vm, propertyName, JSValue::decode(encodedValue), 0);
+    return true;
 }
 
 static JSValue constructArgv0(VM& vm, JSObject* processObject)
@@ -2822,7 +2830,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     auto groups = callFrame->argument(0);
     Bun::V::validateArray(scope, globalObject, groups, "groups"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
-    auto groupsArray = JSC::jsDynamicCast<JSC::JSArray*>(groups);
+    auto* groupsArray = JSC::jsDynamicCast<JSC::JSArray*>(groups);
+    if (!groupsArray) [[unlikely]] {
+        // validateArray uses JSC::isArray() which accepts Proxy->Array, but jsDynamicCast returns null.
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "groups"_s, "Array"_s, groups);
+    }
     auto count = groupsArray->length();
     gid_t groupsStack[64];
     if (count > 64) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "groups.length"_s, 0, 64, groups);
@@ -4025,7 +4037,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   openStdin                        Process_functionOpenStdin                           Function 0
   pid                              constructPid                                        PropertyCallback
   platform                         constructPlatform                                   PropertyCallback
-  ppid                             constructPpid                                       PropertyCallback
+  ppid                             processPpid                                         CustomAccessor
   reallyExit                       Process_functionReallyExit                          Function 1
   ref                              Process_ref                                         Function 1
   release                          constructProcessReleaseObject                       PropertyCallback

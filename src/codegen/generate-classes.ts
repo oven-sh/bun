@@ -1296,7 +1296,8 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
     /** View the file name of the JS file that called this function
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    const char* fileName = sourceOrigin.string().utf8().data();
+    auto fileNameUTF8 = sourceOrigin.string().utf8();
+    const char* fileName = fileNameUTF8.data();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
       lastFileName = fileName;
@@ -1304,7 +1305,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
 
     JSC::EncodedJSValue result = ${symbolName(typeName, fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame${proto[name].passThis ? ", JSValue::encode(thisObject)" : ""});
 
-    ASSERT_WITH_MESSAGE(!JSValue::decode(result).isEmpty() or DECLARE_CATCH_SCOPE(vm).exception() != 0, \"${typeName}.${proto[name].fn} returned an empty value without an exception\");
+    ASSERT_WITH_MESSAGE(!JSValue::decode(result).isEmpty() or DECLARE_TOP_EXCEPTION_SCOPE(vm).exception() != 0, \"${typeName}.${proto[name].fn} returned an empty value without an exception\");
 
     ${
       !proto[name].DOMJIT
@@ -1387,7 +1388,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     Object.keys(callbacks).length ||
     obj.hasPendingActivity ||
     [...Object.values(klass), ...Object.values(proto)].find(a => !!a.cache)
-      ? "DECLARE_VISIT_CHILDREN;\ntemplate<typename Visitor> void visitAdditionalChildren(Visitor&);\nDECLARE_VISIT_OUTPUT_CONSTRAINTS;\n"
+      ? "DECLARE_VISIT_CHILDREN;\ntemplate<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);\nDECLARE_VISIT_OUTPUT_CONSTRAINTS;\n"
       : "";
   const sizeEstimator = "static size_t estimatedSize(JSCell* cell, VM& vm);";
 
@@ -1623,7 +1624,7 @@ visitor.reportExtraMemoryVisited(size);
 }`
         : ""
     }
-    thisObject->visitAdditionalChildren<Visitor>(visitor);
+    thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(${name});
@@ -1631,7 +1632,7 @@ DEFINE_VISIT_CHILDREN(${name});
 
 
 template<typename Visitor>
-void ${name}::visitAdditionalChildren(Visitor& visitor)
+void ${name}::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
   ${name}* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
@@ -1641,14 +1642,14 @@ void ${name}::visitAdditionalChildren(Visitor& visitor)
     ${hasPendingActivity ? "visitor.addOpaqueRoot(this->wrapped());" : ""}
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(${name});
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(${name});
 
 template<typename Visitor>
 void ${name}::visitOutputConstraintsImpl(JSCell *cell, Visitor& visitor)
 {
     ${name}* thisObject = jsCast<${name}*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    thisObject->visitAdditionalChildren<Visitor>(visitor);
+    thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(${name});

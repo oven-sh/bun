@@ -9,7 +9,7 @@ pub const ParseResult = struct {
     loader: options.Loader,
     ast: js_ast.Ast,
     already_bundled: AlreadyBundled = .none,
-    input_fd: ?StoredFileDescriptorType = null,
+    input_fd: ?FD = null,
     empty: bool = false,
     pending_imports: _resolver.PendingResolution.List = .{},
 
@@ -266,8 +266,15 @@ pub const PluginRunner = struct {
         // Our super slow way of cloning the string into memory owned by jsc
         const combined_string = std.fmt.allocPrint(this.allocator, "{f}:{f}", .{ user_namespace, file_path }) catch unreachable;
         var out_ = bun.String.init(combined_string);
-        const jsval = out_.toJS(this.global_object);
-        const out = jsval.toBunString(this.global_object) catch @panic("unreachable");
+        defer out_.deref();
+        const jsval = out_.toJS(this.global_object) catch |err| {
+            this.allocator.free(combined_string);
+            return jsc.ErrorableString.err(err, this.global_object.tryTakeException() orelse .js_undefined);
+        };
+        const out = jsval.toBunString(this.global_object) catch |err| {
+            this.allocator.free(combined_string);
+            return jsc.ErrorableString.err(err, this.global_object.tryTakeException() orelse .js_undefined);
+        };
         this.allocator.free(combined_string);
         return jsc.ErrorableString.ok(out);
     }
@@ -464,6 +471,7 @@ pub const Transpiler = struct {
                         transpiler.options.jsx = tsconfig.jsx;
                     }
                     transpiler.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
+                    transpiler.options.experimental_decorators = tsconfig.experimental_decorators;
                 }
             }
         }
@@ -476,16 +484,10 @@ pub const Transpiler = struct {
     pub fn runEnvLoader(this: *Transpiler, skip_default_env: bool) !void {
         switch (this.options.env.behavior) {
             .prefix, .load_all, .load_all_without_inlining => {
-                // Step 1. Load the project root.
-                const dir_info = this.resolver.readDirInfo(this.fs.top_level_dir) catch return orelse return;
-
-                if (dir_info.tsconfig_json) |tsconfig| {
-                    this.options.jsx = tsconfig.mergeJSX(this.options.jsx);
-                }
-
-                const dir = dir_info.getEntries(this.resolver.generation) orelse return;
-
-                // Process always has highest priority.
+                // Process always has highest priority. Load process env vars
+                // unconditionally before attempting directory traversal, so
+                // that inherited environment variables are always available
+                // even when a parent directory is not readable.
                 const was_production = this.options.production;
                 try this.env.loadProcess();
                 const has_production_env = this.env.isProduction();
@@ -493,6 +495,18 @@ pub const Transpiler = struct {
                     this.options.setProduction(true);
                     this.resolver.opts.setProduction(true);
                 }
+
+                // Load the project root for .env file discovery. If the cwd
+                // (or a parent) is unreadable, readDirInfo may return null;
+                // bail out of .env file loading in that case, but process
+                // env vars were already loaded above.
+                const dir_info = this.resolver.readDirInfo(this.fs.top_level_dir) catch return orelse return;
+
+                if (dir_info.tsconfig_json) |tsconfig| {
+                    this.options.jsx = tsconfig.mergeJSX(this.options.jsx);
+                }
+
+                const dir = dir_info.getEntries(this.resolver.generation) orelse return;
 
                 if (this.options.isTest() or this.env.isTest()) {
                     try this.env.load(dir, this.options.env.files, .@"test", skip_default_env);
@@ -580,7 +594,7 @@ pub const Transpiler = struct {
 
     pub const BuildResolveResultPair = struct {
         written: usize,
-        input_fd: ?StoredFileDescriptorType,
+        input_fd: ?FD,
         empty: bool = false,
     };
 
@@ -619,7 +633,7 @@ pub const Transpiler = struct {
         };
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .yaml, .text => {
+            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .yaml, .json5, .text, .md => {
                 var result = transpiler.parse(
                     ParseOptions{
                         .allocator = transpiler.allocator,
@@ -631,6 +645,7 @@ pub const Transpiler = struct {
                         .macro_remappings = transpiler.options.macro_remap,
                         .jsx = resolve_result.jsx,
                         .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
+                        .experimental_decorators = resolve_result.flags.experimental_decorators,
                     },
                     client_entry_point_,
                 ) orelse {
@@ -776,6 +791,7 @@ pub const Transpiler = struct {
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
         runtime_transpiler_cache: ?*bun.jsc.RuntimeTranspilerCache,
+        module_info: ?*analyze_transpiled_module.ModuleInfo,
     ) !usize {
         const tracer = if (enable_source_map)
             bun.perf.trace("JSPrinter.printWithSourceMap")
@@ -865,6 +881,7 @@ pub const Transpiler = struct {
                         .inline_require_and_import_errors = false,
                         .import_meta_ref = ast.import_meta_ref,
                         .runtime_transpiler_cache = runtime_transpiler_cache,
+                        .module_info = module_info,
                         .target = transpiler.options.target,
                         .print_dce_annotations = transpiler.options.emit_dce_annotations,
                         .hmr_ref = ast.wrapper_ref,
@@ -893,6 +910,7 @@ pub const Transpiler = struct {
             false,
             null,
             null,
+            null,
         );
     }
 
@@ -903,6 +921,7 @@ pub const Transpiler = struct {
         writer: Writer,
         comptime format: js_printer.Format,
         handler: js_printer.SourceMapHandler,
+        module_info: ?*analyze_transpiled_module.ModuleInfo,
     ) !usize {
         if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS.get()) {
             return transpiler.printWithSourceMapMaybe(
@@ -914,6 +933,7 @@ pub const Transpiler = struct {
                 false,
                 handler,
                 result.runtime_transpiler_cache,
+                module_info,
             );
         }
         return transpiler.printWithSourceMapMaybe(
@@ -925,17 +945,18 @@ pub const Transpiler = struct {
             true,
             handler,
             result.runtime_transpiler_cache,
+            module_info,
         );
     }
 
     pub const ParseOptions = struct {
         allocator: std.mem.Allocator,
-        dirname_fd: StoredFileDescriptorType,
-        file_descriptor: ?StoredFileDescriptorType = null,
+        dirname_fd: FD,
+        file_descriptor: ?FD = null,
         file_hash: ?u32 = null,
 
         /// On exception, we might still want to watch the file.
-        file_fd_ptr: ?*StoredFileDescriptorType = null,
+        file_fd_ptr: ?*FD = null,
 
         path: Fs.Path,
         loader: options.Loader,
@@ -947,6 +968,7 @@ pub const Transpiler = struct {
         inject_jest_globals: bool = false,
         set_breakpoint_on_first_line: bool = false,
         emit_decorator_metadata: bool = false,
+        experimental_decorators: bool = false,
         remove_cjs_module_wrapper: bool = false,
 
         dont_bundle_twice: bool = false,
@@ -1001,7 +1023,7 @@ pub const Transpiler = struct {
         const path = this_parse.path;
         const loader = this_parse.loader;
 
-        var input_fd: ?StoredFileDescriptorType = null;
+        var input_fd: ?FD = null;
 
         const source: *const logger.Source = &brk: {
             if (this_parse.virtual_source) |virtual_source| {
@@ -1087,6 +1109,10 @@ pub const Transpiler = struct {
                 var opts = js_parser.Parser.Options.init(jsx, loader);
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
+                // emitDecoratorMetadata implies legacy/experimental decorators, as it only
+                // makes sense with TypeScript's legacy decorator system (reflect-metadata).
+                // TC39 standard decorators have their own metadata mechanism.
+                opts.features.standard_decorators = !loader.isTypeScript() or !(this_parse.experimental_decorators or this_parse.emit_decorator_metadata);
                 opts.features.allow_runtime = transpiler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = transpiler.options.trim_unused_imports orelse loader.isTypeScript();
@@ -1115,6 +1141,8 @@ pub const Transpiler = struct {
                 opts.features.dead_code_elimination = transpiler.options.dead_code_elimination;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
                 opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
+                opts.features.repl_mode = transpiler.options.repl_mode;
+                opts.repl_mode = transpiler.options.repl_mode;
 
                 if (transpiler.macro_context == null) {
                     transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);
@@ -1180,7 +1208,7 @@ pub const Transpiler = struct {
                 };
             },
             // TODO: use lazy export AST
-            inline .toml, .yaml, .json, .jsonc => |kind| {
+            inline .toml, .yaml, .json, .jsonc, .json5 => |kind| {
                 var expr = if (kind == .jsonc)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
@@ -1191,6 +1219,8 @@ pub const Transpiler = struct {
                     TOML.parse(source, transpiler.log, allocator, false) catch return null
                 else if (kind == .yaml)
                     YAML.parse(source, transpiler.log, allocator) catch return null
+                else if (kind == .json5)
+                    JSON5.parse(source, transpiler.log, allocator) catch return null
                 else
                     @compileError("unreachable");
 
@@ -1326,6 +1356,39 @@ pub const Transpiler = struct {
             .text => {
                 const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
                     .data = source.contents,
+                }, logger.Loc.Empty);
+                const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
+                    .value = js_ast.StmtOrExpr{ .expr = expr },
+                    .default_name = js_ast.LocRef{
+                        .loc = logger.Loc{},
+                        .ref = Ref.None,
+                    },
+                }, logger.Loc{ .start = 0 });
+                var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                stmts[0] = stmt;
+                var parts = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                parts[0] = js_ast.Part{ .stmts = stmts };
+
+                return ParseResult{
+                    .ast = js_ast.Ast.fromParts(parts),
+                    .source = source.*,
+                    .loader = loader,
+                    .input_fd = input_fd,
+                };
+            },
+            .md => {
+                const html = bun.md.renderToHtml(source.contents, allocator) catch {
+                    transpiler.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        transpiler.allocator,
+                        "Failed to render markdown to HTML",
+                        .{},
+                    ) catch {};
+                    return null;
+                };
+                const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
+                    .data = html,
                 }, logger.Loc.Empty);
                 const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
@@ -1577,6 +1640,7 @@ const Fs = @import("./fs.zig");
 const MimeType = @import("./http/MimeType.zig");
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 const Router = @import("./router.zig");
+const analyze_transpiled_module = @import("./analyze_transpiled_module.zig");
 const runtime = @import("./runtime.zig");
 const std = @import("std");
 const DataURL = @import("./resolver/data_url.zig").DataURL;
@@ -1594,12 +1658,12 @@ const Resolver = _resolver.Resolver;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
 const Global = bun.Global;
 const JSON = bun.json;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const default_allocator = bun.default_allocator;
 const js_parser = bun.js_parser;
 const js_printer = bun.js_printer;
@@ -1607,6 +1671,7 @@ const jsc = bun.jsc;
 const logger = bun.logger;
 const strings = bun.strings;
 const api = bun.schema.api;
+const JSON5 = bun.interchange.json5.JSON5Parser;
 const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
 const default_macro_js_value = jsc.JSValue.zero;

@@ -90,6 +90,12 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--cpu-prof                        Start CPU profiler and write profile to disk on exit") catch unreachable,
     clap.parseParam("--cpu-prof-name <STR>             Specify the name of the CPU profile file") catch unreachable,
     clap.parseParam("--cpu-prof-dir <STR>              Specify the directory where the CPU profile will be saved") catch unreachable,
+    clap.parseParam("--cpu-prof-md                     Output CPU profile in markdown format (grep-friendly, designed for LLM analysis)") catch unreachable,
+    clap.parseParam("--cpu-prof-interval <STR>         Specify the sampling interval in microseconds for CPU profiling (default: 1000)") catch unreachable,
+    clap.parseParam("--heap-prof                       Generate V8 heap snapshot on exit (.heapsnapshot)") catch unreachable,
+    clap.parseParam("--heap-prof-name <STR>            Specify the name of the heap profile file") catch unreachable,
+    clap.parseParam("--heap-prof-dir <STR>             Specify the directory where the heap profile will be saved") catch unreachable,
+    clap.parseParam("--heap-prof-md                    Generate markdown heap profile on exit (for CLI analysis)") catch unreachable,
     clap.parseParam("--if-present                      Exit without an error if the entrypoint does not exist") catch unreachable,
     clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
     clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
@@ -118,6 +124,8 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
     clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
+    clap.parseParam("--cron-title <STR>               Title for cron execution mode") catch unreachable,
+    clap.parseParam("--cron-period <STR>              Cron period for cron execution mode") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -125,6 +133,9 @@ pub const auto_or_run_params = [_]ParamType{
     clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
     clap.parseParam("--workspaces                      Run a script in all workspace packages (from the \"workspaces\" field in package.json)") catch unreachable,
+    clap.parseParam("--parallel                        Run multiple scripts concurrently with Foreman-style output") catch unreachable,
+    clap.parseParam("--sequential                      Run multiple scripts sequentially with Foreman-style output") catch unreachable,
+    clap.parseParam("--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)") catch unreachable,
 };
 
 pub const auto_only_params = [_]ParamType{
@@ -166,14 +177,17 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
     clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
     clap.parseParam("--metafile <STR>?                Write a JSON file with metadata about the build") catch unreachable,
+    clap.parseParam("--metafile-md <STR>?             Write a markdown file with a visualization of the module graph (LLM-friendly)") catch unreachable,
     clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
     clap.parseParam("--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs") catch unreachable,
     clap.parseParam("--footer <STR>                   Add a footer to the bundled output such as // built with bun!") catch unreachable,
-    clap.parseParam("--format <STR>                   Specifies the module format to build to. \"esm\", \"cjs\" and \"iife\" are supported. Defaults to \"esm\".") catch unreachable,
+    clap.parseParam("--format <STR>                   Specifies the module format to build to. \"esm\", \"cjs\" and \"iife\" are supported. Defaults to \"esm\", or \"cjs\" with --bytecode.") catch unreachable,
     clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
     clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
     clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
     clap.parseParam("-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
+    clap.parseParam("--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '<empty>' for opaque specifiers. Default is '*' (allow all).") catch unreachable,
+    clap.parseParam("--reject-unresolved              Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time.") catch unreachable,
     clap.parseParam("--packages <STR>                 Add dependencies to bundle or keep them external. \"external\", \"bundle\" is supported. Defaults to \"bundle\".") catch unreachable,
     clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
     clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
@@ -210,6 +224,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
     clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
     clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
+    clap.parseParam("--retry <NUMBER>                 Default retry count for all tests, overridden by per-test { retry: N }") catch unreachable,
     clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
     clap.parseParam("--only                           Run only tests that are marked with \"test.only()\" or \"describe.only()\"") catch unreachable,
     clap.parseParam("--pass-with-no-tests             Exit with code 0 when no tests are found") catch unreachable,
@@ -226,6 +241,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
     clap.parseParam("--only-failures                  Only display test failures, hiding passing tests.") catch unreachable,
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
+    clap.parseParam("--path-ignore-patterns <STR>...   Glob patterns for test file paths to ignore.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -447,6 +463,9 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.filters = args.options("--filter");
         ctx.workspaces = args.flag("--workspaces");
         ctx.if_present = args.flag("--if-present");
+        ctx.parallel = args.flag("--parallel");
+        ctx.sequential = args.flag("--sequential");
+        ctx.no_exit_on_error = args.flag("--no-exit-on-error");
 
         if (args.option("--elide-lines")) |elide_lines| {
             if (elide_lines.len > 0) {
@@ -529,6 +548,11 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.test_options.coverage.reports_directory = dir;
         }
 
+        if (args.options("--path-ignore-patterns").len > 0) {
+            ctx.test_options.path_ignore_patterns = args.options("--path-ignore-patterns");
+            ctx.test_options.path_ignore_patterns_from_cli = true;
+        }
+
         if (args.option("--bail")) |bail| {
             if (bail.len > 0) {
                 ctx.test_options.bail = std.fmt.parseInt(u32, bail, 10) catch |e| {
@@ -553,6 +577,18 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Global.exit(1);
                 };
             }
+        }
+        if (args.option("--retry")) |retry_count| {
+            if (retry_count.len > 0) {
+                ctx.test_options.retry = std.fmt.parseInt(u32, retry_count, 10) catch |e| {
+                    Output.prettyErrorln("<r><red>error<r>: --retry expects a number: {s}", .{@errorName(e)});
+                    Global.exit(1);
+                };
+            }
+        }
+        if (ctx.test_options.retry != 0 and ctx.test_options.repeat_count != 0) {
+            Output.prettyErrorln("<r><red>error<r>: --retry cannot be used with --rerun-each", .{});
+            Global.exit(1);
         }
         if (args.option("--test-name-pattern")) |namePattern| {
             ctx.test_options.test_filter_pattern = namePattern;
@@ -797,6 +833,23 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.runtime_options.dns_result_order = order;
         }
 
+        const has_cron_title = args.option("--cron-title");
+        const has_cron_period = args.option("--cron-period");
+        if (has_cron_title) |t| {
+            ctx.runtime_options.cron_title = t;
+        }
+        if (has_cron_period) |p| {
+            ctx.runtime_options.cron_period = p;
+        }
+        if ((has_cron_title != null) != (has_cron_period != null)) {
+            Output.errGeneric("--cron-title and --cron-period must be provided together", .{});
+            Global.exit(1);
+        }
+        if (has_cron_title != null and (ctx.runtime_options.cron_title.len == 0 or ctx.runtime_options.cron_period.len == 0)) {
+            Output.errGeneric("--cron-title and --cron-period must not be empty", .{});
+            Global.exit(1);
+        }
+
         if (args.option("--inspect")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{} }
@@ -804,8 +857,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Command.Debugger{ .enable = .{
                     .path_or_port = inspect_flag,
                 } };
-
-            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-wait")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -816,8 +867,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .path_or_port = inspect_flag,
                     .wait_for_connection = true,
                 } };
-
-            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-brk")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -830,11 +879,15 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .wait_for_connection = true,
                     .set_breakpoint_on_first_line = true,
                 } };
-
-            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
 
-        if (args.flag("--cpu-prof")) {
+        const cpu_prof_flag = args.flag("--cpu-prof");
+        const cpu_prof_md_flag = args.flag("--cpu-prof-md");
+
+        // --cpu-prof-md alone enables profiling with markdown format
+        // --cpu-prof alone enables profiling with JSON format
+        // Both flags together enable profiling with both formats
+        if (cpu_prof_flag or cpu_prof_md_flag) {
             ctx.runtime_options.cpu_prof.enabled = true;
             if (args.option("--cpu-prof-name")) |name| {
                 ctx.runtime_options.cpu_prof.name = name;
@@ -842,13 +895,56 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (args.option("--cpu-prof-dir")) |dir| {
                 ctx.runtime_options.cpu_prof.dir = dir;
             }
+            // md_format is true if --cpu-prof-md is passed (regardless of --cpu-prof)
+            ctx.runtime_options.cpu_prof.md_format = cpu_prof_md_flag;
+            // json_format is true if --cpu-prof is passed (regardless of --cpu-prof-md)
+            ctx.runtime_options.cpu_prof.json_format = cpu_prof_flag;
+            if (args.option("--cpu-prof-interval")) |interval_str| {
+                ctx.runtime_options.cpu_prof.interval = std.fmt.parseInt(u32, interval_str, 10) catch 1000;
+            }
         } else {
-            // Warn if --cpu-prof-name or --cpu-prof-dir is used without --cpu-prof
+            // Warn if --cpu-prof-name or --cpu-prof-dir is used without a profiler flag
             if (args.option("--cpu-prof-name")) |_| {
-                Output.warn("--cpu-prof-name requires --cpu-prof to be enabled", .{});
+                Output.warn("--cpu-prof-name requires --cpu-prof or --cpu-prof-md to be enabled", .{});
             }
             if (args.option("--cpu-prof-dir")) |_| {
-                Output.warn("--cpu-prof-dir requires --cpu-prof to be enabled", .{});
+                Output.warn("--cpu-prof-dir requires --cpu-prof or --cpu-prof-md to be enabled", .{});
+            }
+            if (args.option("--cpu-prof-interval")) |_| {
+                Output.warn("--cpu-prof-interval requires --cpu-prof or --cpu-prof-md to be enabled", .{});
+            }
+        }
+
+        const heap_prof_v8 = args.flag("--heap-prof");
+        const heap_prof_md = args.flag("--heap-prof-md");
+
+        if (heap_prof_v8 and heap_prof_md) {
+            // Both flags specified - warn and use markdown format
+            Output.warn("Both --heap-prof and --heap-prof-md specified; using --heap-prof-md (markdown format)", .{});
+            ctx.runtime_options.heap_prof.enabled = true;
+            ctx.runtime_options.heap_prof.text_format = true;
+            if (args.option("--heap-prof-name")) |name| {
+                ctx.runtime_options.heap_prof.name = name;
+            }
+            if (args.option("--heap-prof-dir")) |dir| {
+                ctx.runtime_options.heap_prof.dir = dir;
+            }
+        } else if (heap_prof_v8 or heap_prof_md) {
+            ctx.runtime_options.heap_prof.enabled = true;
+            ctx.runtime_options.heap_prof.text_format = heap_prof_md;
+            if (args.option("--heap-prof-name")) |name| {
+                ctx.runtime_options.heap_prof.name = name;
+            }
+            if (args.option("--heap-prof-dir")) |dir| {
+                ctx.runtime_options.heap_prof.dir = dir;
+            }
+        } else {
+            // Warn if --heap-prof-name or --heap-prof-dir is used without --heap-prof or --heap-prof-md
+            if (args.option("--heap-prof-name")) |_| {
+                Output.warn("--heap-prof-name requires --heap-prof or --heap-prof-md to be enabled", .{});
+            }
+            if (args.option("--heap-prof-dir")) |_| {
+                Output.warn("--heap-prof-dir requires --heap-prof or --heap-prof-md to be enabled", .{});
             }
         }
 
@@ -919,7 +1015,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 args.flag("--debug-no-minify");
         }
 
-        // TODO: support --format=esm
         if (ctx.bundler_options.bytecode) {
             ctx.bundler_options.output_format = .cjs;
             ctx.args.target = .bun;
@@ -954,6 +1049,21 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 externals[i] = external;
             }
             opts.external = externals;
+        }
+
+        if (args.flag("--reject-unresolved") and args.options("--allow-unresolved").len > 0) {
+            Output.prettyErrorln("<r><red>error<r>: --reject-unresolved and --allow-unresolved cannot be used together", .{});
+            Global.crash();
+        } else if (args.flag("--reject-unresolved")) {
+            ctx.bundler_options.allow_unresolved = &.{};
+        } else if (args.options("--allow-unresolved").len > 0) {
+            const raw = args.options("--allow-unresolved");
+            var allow = try allocator.alloc([]const u8, raw.len);
+            for (raw, 0..) |val, i| {
+                // "<empty>" sentinel represents the empty-string pattern (for matching opaque specifiers)
+                allow[i] = if (strings.eqlComptime(val, "<empty>")) "" else val;
+            }
+            ctx.bundler_options.allow_unresolved = allow;
         }
 
         if (args.option("--packages")) |packages| {
@@ -1132,6 +1242,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Using --windows-hide-console is only available when compiling on Windows", .{});
                 Global.crash();
             }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-hide-console requires a Windows compile target", .{});
+                Global.crash();
+            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-hide-console requires --compile", .{});
                 Global.crash();
@@ -1141,6 +1255,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.option("--windows-icon")) |path| {
             if (!Environment.isWindows) {
                 Output.errGeneric("Using --windows-icon is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-icon requires a Windows compile target", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1154,6 +1272,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Using --windows-title is only available when compiling on Windows", .{});
                 Global.crash();
             }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-title requires a Windows compile target", .{});
+                Global.crash();
+            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-title requires --compile", .{});
                 Global.crash();
@@ -1163,6 +1285,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.option("--windows-publisher")) |publisher| {
             if (!Environment.isWindows) {
                 Output.errGeneric("Using --windows-publisher is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-publisher requires a Windows compile target", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1176,6 +1302,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Using --windows-version is only available when compiling on Windows", .{});
                 Global.crash();
             }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-version requires a Windows compile target", .{});
+                Global.crash();
+            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-version requires --compile", .{});
                 Global.crash();
@@ -1187,6 +1317,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.errGeneric("Using --windows-description is only available when compiling on Windows", .{});
                 Global.crash();
             }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-description requires a Windows compile target", .{});
+                Global.crash();
+            }
             if (!ctx.bundler_options.compile) {
                 Output.errGeneric("--windows-description requires --compile", .{});
                 Global.crash();
@@ -1196,6 +1330,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.option("--windows-copyright")) |copyright| {
             if (!Environment.isWindows) {
                 Output.errGeneric("Using --windows-copyright is only available when compiling on Windows", .{});
+                Global.crash();
+            }
+            if (ctx.bundler_options.compile_target.os != .windows) {
+                Output.errGeneric("--windows-copyright requires a Windows compile target", .{});
                 Global.crash();
             }
             if (!ctx.bundler_options.compile) {
@@ -1221,6 +1359,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 bun.handleOom(allocator.dupeZ(u8, metafile))
             else
                 "meta.json";
+        }
+
+        if (args.option("--metafile-md")) |metafile_md| {
+            // If --metafile-md is passed without a value, default to "meta.md"
+            ctx.bundler_options.metafile_md = if (metafile_md.len > 0)
+                bun.handleOom(allocator.dupeZ(u8, metafile_md))
+            else
+                "meta.md";
         }
 
         if (args.option("--root")) |root_dir| {
@@ -1249,9 +1395,18 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
 
             ctx.bundler_options.output_format = format;
-            if (format != .cjs and ctx.bundler_options.bytecode) {
-                Output.errGeneric("format must be 'cjs' when bytecode is true. Eventually we'll add esm support as well.", .{});
-                Global.exit(1);
+            if (ctx.bundler_options.bytecode) {
+                if (format != .cjs and format != .esm) {
+                    Output.errGeneric("format must be 'cjs' or 'esm' when bytecode is true.", .{});
+                    Global.exit(1);
+                }
+                // ESM bytecode requires --compile because module_info (import/export metadata)
+                // is only available in compiled binaries. Without it, JSC must parse the file
+                // twice (once for module analysis, once for bytecode), which is a deopt.
+                if (format == .esm and !ctx.bundler_options.compile) {
+                    Output.errGeneric("ESM bytecode requires --compile. Use --format=cjs for bytecode without --compile.", .{});
+                    Global.exit(1);
+                }
             }
         }
 

@@ -10,7 +10,7 @@ pub const AsyncModule = struct {
     specifier: string = "",
     referrer: string = "",
     string_buf: []u8 = &[_]u8{},
-    fd: ?StoredFileDescriptorType = null,
+    fd: ?FD = null,
     package_json: ?*PackageJSON = null,
     loader: api.Loader,
     hash: u32 = std.math.maxInt(u32),
@@ -417,7 +417,7 @@ pub const AsyncModule = struct {
         jsc.markBinding(@src());
         var specifier = specifier_;
         var referrer = referrer_;
-        var scope: jsc.CatchScope = undefined;
+        var scope: jsc.TopExceptionScope = undefined;
         scope.init(globalThis, @src());
         defer {
             specifier.deref();
@@ -694,6 +694,7 @@ pub const AsyncModule = struct {
                 &printer,
                 .esm_ascii,
                 mapper.get(),
+                null,
             );
         }
 
@@ -765,8 +766,8 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const bun = @import("bun");
 const Async = bun.Async;
 const Environment = bun.Environment;
+const FD = bun.FD;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const String = bun.String;
 const logger = bun.logger;
 const strings = bun.strings;

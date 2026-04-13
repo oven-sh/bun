@@ -19,6 +19,8 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
 pub const StaticRoute = @import("./server/StaticRoute.zig");
 pub const FileRoute = @import("./server/FileRoute.zig");
+pub const FileResponseStream = @import("./server/FileResponseStream.zig");
+pub const RangeRequest = @import("./server/RangeRequest.zig");
 
 pub const AnyRoute = union(enum) {
     /// Serve a static file
@@ -1330,7 +1332,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return jsc.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.activeSocketsCount())))));
         }
 
-        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) jsc.JSValue {
+        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
             switch (this.config.address) {
                 .unix => |unix| {
                     var value = bun.String.cloneUTF8(unix);
@@ -1429,7 +1431,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             @panic("unreachable");
         }
 
-        pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) jsc.JSValue {
+        pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
             _ = this;
             return bun.String.static(if (ssl_enabled) "https" else "http").toJS(globalThis);
         }
@@ -1549,6 +1551,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 this.vm.removeListeningSocketForWatchMode(listener.socket().fd());
 
             this.notifyInspectorServerStopped();
+
+            if (this.config.address == .unix) {
+                const path = this.config.address.unix;
+                if (path.len > 0 and path[0] != 0) {
+                    _ = bun.sys.unlink(path);
+                }
+            }
 
             if (!abrupt) {
                 listener.close();
@@ -1784,7 +1793,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                             else => |e| {
                                 var sys_err = bun.sys.Error.fromCode(e, .listen);
                                 sys_err.path = unix;
-                                error_instance = sys_err.toJS(globalThis);
+                                error_instance = sys_err.toJS(globalThis) catch return;
                             },
                         }
                     },

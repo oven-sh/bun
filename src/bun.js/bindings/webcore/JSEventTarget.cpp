@@ -241,7 +241,7 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
         errorInstance->putDirect(vm, vm.propertyNames->type, jsString(vm, WTF::move(type)));
         Bun::Process::emitWarningErrorInstance(lexicalGlobalObject, errorInstance);
         if (throwScope.exception()) [[unlikely]]
-            throwScope.clearException();
+            (void)throwScope.tryClearException();
     }
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addEventListenerForBindings(WTF::move(type), WTF::move(listener), WTF::move(options)); }));
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -319,7 +319,7 @@ void JSEventTarget::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<JSEventTarget*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSEventTarget);
@@ -330,7 +330,7 @@ void JSEventTarget::visitOutputConstraints(JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<JSEventTarget*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 template void JSEventTarget::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);

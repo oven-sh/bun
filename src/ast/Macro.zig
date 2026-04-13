@@ -320,9 +320,8 @@ pub const Runner = struct {
                 .Null => return Expr.init(E.Null, E.Null{}, this.caller.loc),
                 .Private => {
                     this.is_top_level = false;
-                    const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
-                    if (_entry.found_existing) {
-                        return _entry.value_ptr.*;
+                    if (this.visited.get(value)) |cached| {
+                        return cached;
                     }
 
                     var blob_: ?*const jsc.WebCore.Blob = null;
@@ -470,9 +469,8 @@ pub const Runner = struct {
                     return Expr.init(E.String, E.String.init(out_slice), this.caller.loc);
                 },
                 .Promise => {
-                    const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
-                    if (_entry.found_existing) {
-                        return _entry.value_ptr.*;
+                    if (this.visited.get(value)) |cached| {
+                        return cached;
                     }
 
                     const promise = value.asAnyPromise() orelse @panic("Unexpected promise type");
@@ -494,7 +492,7 @@ pub const Runner = struct {
                     this.is_top_level = false;
                     const result = try this.run(promise_result);
 
-                    _entry.value_ptr.* = result;
+                    this.visited.put(this.allocator, value, result) catch unreachable;
                     return result;
                 },
                 else => {},

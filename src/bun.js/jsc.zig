@@ -81,8 +81,8 @@ pub const Weak = @import("./Weak.zig").Weak;
 pub const WeakRefType = @import("./Weak.zig").WeakRefType;
 pub const Exception = @import("./bindings/Exception.zig").Exception;
 pub const SourceProvider = @import("./bindings/SourceProvider.zig").SourceProvider;
-pub const CatchScope = @import("./bindings/CatchScope.zig").CatchScope;
-pub const ExceptionValidationScope = @import("./bindings/CatchScope.zig").ExceptionValidationScope;
+pub const TopExceptionScope = @import("./bindings/TopExceptionScope.zig").TopExceptionScope;
+pub const ExceptionValidationScope = @import("./bindings/TopExceptionScope.zig").ExceptionValidationScope;
 pub const MarkedArgumentBuffer = @import("./bindings/MarkedArgumentBuffer.zig").MarkedArgumentBuffer;
 pub const RegularExpression = @import("./bindings/RegularExpression.zig").RegularExpression;
 

@@ -41,7 +41,7 @@ pub const UnixOrHost = union(enum) {
         host: []const u8,
         port: u16,
     },
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
 
     pub fn clone(this: UnixOrHost) UnixOrHost {
         switch (this) {
@@ -91,7 +91,7 @@ pub fn reload(this: *Listener, globalObject: *jsc.JSGlobalObject, callframe: *js
         return globalObject.throw("Expected \"socket\" object", .{});
     };
 
-    const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.is_server);
+    const handlers = try Handlers.fromJS(globalObject, socket_obj, this.handlers.mode == .server);
     this.handlers.deinit();
     this.handlers = handlers;
 
@@ -430,6 +430,9 @@ fn doStop(this: *Listener, force_close: bool) void {
     if (this.listener == .none) return;
     const listener = this.listener;
 
+    // Unlink before any close path (including ctx.deinit below) can release the fd.
+    if (listener == .uws) this.unlinkUnixSocketPath();
+
     defer switch (listener) {
         .uws => |socket| socket.close(this.ssl),
         .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
@@ -463,11 +466,26 @@ pub fn finalize(this: *Listener) callconv(.c) void {
     const listener = this.listener;
     this.listener = .none;
     switch (listener) {
-        .uws => |socket| socket.close(this.ssl),
+        .uws => |socket| {
+            this.unlinkUnixSocketPath();
+            socket.close(this.ssl);
+        },
         .namedPipe => |namedPipe| if (Environment.isWindows) namedPipe.closePipeAndDeinit(),
         .none => {},
     }
     this.deinit();
+}
+
+/// Match Node.js/libuv: unlink the unix socket file before closing the listening fd.
+/// Unlinking after close would race with another process creating a socket at the same path.
+fn unlinkUnixSocketPath(this: *const Listener) void {
+    if (this.connection != .unix) return;
+    const path = this.connection.unix;
+    // Abstract sockets (Linux) start with a NUL byte and have no filesystem entry.
+    if (path.len == 0 or path[0] == 0) return;
+    const buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(buf);
+    _ = bun.sys.unlink(bun.path.z(path, buf));
 }
 
 pub fn deinit(this: *Listener) void {
@@ -527,11 +545,7 @@ pub fn getPort(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
 pub fn getFD(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
     switch (this.listener) {
         .uws => |uws_listener| {
-            switch (this.ssl) {
-                inline else => |ssl| {
-                    return uws_listener.socket(ssl).fd().toJSWithoutMakingLibUVOwned();
-                },
-            }
+            return uws_listener.socket(false).fd().toJSWithoutMakingLibUVOwned();
         },
         else => return JSValue.jsNumber(-1),
     }
@@ -644,9 +658,25 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                     bun.assert(prev.this_value != .zero);
                     prev.handlers = handlers_ptr;
                     bun.assert(prev.socket.socket == .detached);
+                    // Free old resources before reassignment to prevent memory leaks
+                    // when sockets are reused for reconnection (common with MongoDB driver)
+                    if (prev.connection) |old_connection| {
+                        old_connection.deinit();
+                    }
                     prev.connection = connection;
+                    if (prev.flags.owned_protos) {
+                        if (prev.protos) |old_protos| {
+                            bun.default_allocator.free(old_protos);
+                        }
+                    }
                     prev.protos = if (ssl) |s| s.takeProtos() else null;
+                    if (prev.server_name) |old_server_name| {
+                        bun.default_allocator.free(old_server_name);
+                    }
                     prev.server_name = if (ssl) |s| s.takeServerName() else null;
+                    if (prev.socket_context) |old_socket_context| {
+                        old_socket_context.deinit(true); // TLS socket context
+                    }
                     prev.socket_context = null;
                     break :blk prev;
                 } else TLSSocket.new(.{
@@ -757,7 +787,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
 
     const handlers_ptr = bun.handleOom(handlers.vm.allocator.create(Handlers));
     handlers_ptr.* = handlers.*;
-    handlers_ptr.is_server = false;
+    handlers_ptr.mode = .client;
 
     var promise = jsc.JSPromise.create(globalObject);
     const promise_value = promise.toJS();
@@ -779,9 +809,25 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 }
                 prev.handlers = handlers_ptr;
                 bun.assert(prev.socket.socket == .detached);
+                // Free old resources before reassignment to prevent memory leaks
+                // when sockets are reused for reconnection (common with MongoDB driver)
+                if (prev.connection) |old_connection| {
+                    old_connection.deinit();
+                }
                 prev.connection = connection;
+                if (prev.flags.owned_protos) {
+                    if (prev.protos) |old_protos| {
+                        bun.default_allocator.free(old_protos);
+                    }
+                }
                 prev.protos = if (ssl) |s| s.takeProtos() else null;
+                if (prev.server_name) |old_server_name| {
+                    bun.default_allocator.free(old_server_name);
+                }
                 prev.server_name = if (ssl) |s| s.takeServerName() else null;
+                if (prev.socket_context) |old_socket_context| {
+                    old_socket_context.deinit(is_ssl_enabled);
+                }
                 prev.socket_context = socket_context;
                 break :blk prev;
             } else bun.new(SocketType, .{
@@ -798,7 +844,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             SocketType.js.dataSetCached(socket.getThisValue(globalObject), globalObject, default_data);
             socket.flags.allow_half_open = socket_config.allowHalfOpen;
             socket.doConnect(connection) catch {
-                socket.handleConnectError(@intFromEnum(if (port == null) bun.sys.SystemErrno.ENOENT else bun.sys.SystemErrno.ECONNREFUSED));
+                socket.handleConnectError(@intFromEnum(if (port == null) bun.sys.SystemErrno.ENOENT else bun.sys.SystemErrno.ECONNREFUSED)) catch {};
                 if (maybe_previous == null) socket.deref();
                 return promise_value;
             };
@@ -819,6 +865,9 @@ pub fn getsockname(this: *Listener, globalThis: *jsc.JSGlobalObject, callFrame: 
     }
 
     const out = callFrame.argumentsAsArray(1)[0];
+    if (!out.isObject()) {
+        return globalThis.throwInvalidArguments("Expected object", .{});
+    }
     const socket = this.listener.uws;
 
     var buf: [64]u8 = [_]u8{0} ** 64;
@@ -830,8 +879,8 @@ pub fn getsockname(this: *Listener, globalThis: *jsc.JSGlobalObject, callFrame: 
         else => return .js_undefined,
     };
     const family_js = switch (address_bytes.len) {
-        4 => bun.String.static("IPv4").toJS(globalThis),
-        16 => bun.String.static("IPv6").toJS(globalThis),
+        4 => try bun.String.static("IPv4").toJS(globalThis),
+        16 => try bun.String.static("IPv6").toJS(globalThis),
         else => return .js_undefined,
     };
     const address_js = ZigString.init(bun.fmt.formatIp(address_zig, &text_buf) catch unreachable).toJS(globalThis);

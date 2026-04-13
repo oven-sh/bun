@@ -42,6 +42,7 @@ pub const Config = struct {
     minify_identifiers: bool = false,
     minify_syntax: bool = false,
     no_macros: bool = false,
+    repl_mode: bool = false,
 
     pub fn fromJS(this: *Config, globalThis: *jsc.JSGlobalObject, object: jsc.JSValue, allocator: std.mem.Allocator) bun.JSError!void {
         if (object.isUndefinedOrNull()) {
@@ -243,6 +244,10 @@ pub const Config = struct {
 
         if (try object.getBooleanLoose(globalThis, "deadCodeElimination")) |flag| {
             this.dead_code_elimination = flag;
+        }
+
+        if (try object.getBooleanLoose(globalThis, "replMode")) |flag| {
+            this.repl_mode = flag;
         }
 
         if (try object.getTruthy(globalThis, "minify")) |minify| {
@@ -510,6 +515,8 @@ pub const TransformTask = struct {
             .path = source.path,
             .virtual_source = &source,
             .replace_exports = this.replace_exports,
+            .experimental_decorators = if (this.tsconfig) |ts| ts.experimental_decorators else false,
+            .emit_decorator_metadata = if (this.tsconfig) |ts| ts.emit_decorator_metadata else false,
         };
 
         const parse_result = this.transpiler.parse(parse_options, null) orelse {
@@ -561,7 +568,7 @@ pub const TransformTask = struct {
                 break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed");
             };
 
-            try promise.reject(this.global, error_value);
+            try promise.rejectWithAsyncStack(this.global, error_value);
             return;
         }
 
@@ -569,16 +576,18 @@ pub const TransformTask = struct {
     }
 
     fn finish(this: *TransformTask, promise: *jsc.JSPromise) bun.JSTerminated!void {
-        return promise.resolve(this.global, this.output_code.transferToJS(this.global));
+        const value = this.output_code.transferToJS(this.global) catch |e| {
+            return promise.reject(this.global, this.global.takeException(e));
+        };
+        return promise.resolve(this.global, value);
     }
 
     pub fn deinit(this: *TransformTask) void {
         this.log.deinit();
         this.input_code.deinitAndUnprotect();
         this.output_code.deref();
-        if (this.tsconfig) |tsconfig| {
-            tsconfig.deinit();
-        }
+        // tsconfig is owned by JSTranspiler, not by TransformTask.
+        // Do not free it here — JSTranspiler.deinit handles it.
         this.js_instance.deref();
         bun.destroy(this);
     }
@@ -652,6 +661,9 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     });
     errdefer {
         this.config.log.deinit();
+        if (this.config.tsconfig) |tsconfig| {
+            tsconfig.deinit();
+        }
         this.arena.deinit();
         this.ref_count.clearWithoutDestructor();
         bun.destroy(this);
@@ -698,7 +710,8 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         transpiler.options.macro_remap = config.macro_map;
     }
 
-    transpiler.options.dead_code_elimination = config.dead_code_elimination;
+    // REPL mode disables DCE to preserve expressions like `42`
+    transpiler.options.dead_code_elimination = config.dead_code_elimination and !config.repl_mode;
     transpiler.options.minify_whitespace = config.minify_whitespace;
 
     // Keep defaults for these
@@ -717,6 +730,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     transpiler.options.inlining = config.runtime.inlining;
     transpiler.options.hot_module_reloading = config.runtime.hot_module_reloading;
     transpiler.options.react_fast_refresh = false;
+    transpiler.options.repl_mode = config.repl_mode;
 
     return this;
 }
@@ -734,13 +748,54 @@ pub fn deinit(this: *JSTranspiler) void {
         this.buffer_writer.?.buffer.deinit();
     }
 
+    if (this.config.tsconfig) |tsconfig| {
+        tsconfig.deinit();
+    }
     this.arena.deinit();
     bun.destroy(this);
 }
 
+/// Check if code looks like an object literal that would be misinterpreted as a block
+/// Returns true if code starts with { (after whitespace) and doesn't end with ;
+/// This matches Node.js REPL behavior for object literal disambiguation
+fn isLikelyObjectLiteral(code: []const u8) bool {
+    // Skip leading whitespace
+    var start: usize = 0;
+    while (start < code.len and (code[start] == ' ' or code[start] == '\t' or code[start] == '\n' or code[start] == '\r')) {
+        start += 1;
+    }
+
+    // Check if starts with {
+    if (start >= code.len or code[start] != '{') {
+        return false;
+    }
+
+    // Skip trailing whitespace
+    var end: usize = code.len;
+    while (end > 0 and (code[end - 1] == ' ' or code[end - 1] == '\t' or code[end - 1] == '\n' or code[end - 1] == '\r')) {
+        end -= 1;
+    }
+
+    // Check if ends with semicolon - if so, it's likely a block statement
+    if (end > 0 and code[end - 1] == ';') {
+        return false;
+    }
+
+    return true;
+}
+
 fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []const u8, loader: ?Loader, macro_js_ctx: Transpiler.MacroJSValueType) ?Transpiler.ParseResult {
     const name = this.config.default_loader.stdinName();
-    const source = &logger.Source.initPathString(name, code);
+
+    // In REPL mode, wrap potential object literals in parentheses
+    // If code starts with { and doesn't end with ; it might be an object literal
+    // that would otherwise be parsed as a block statement
+    const processed_code: []const u8 = if (this.config.repl_mode and isLikelyObjectLiteral(code))
+        std.fmt.allocPrint(allocator, "({s})", .{code}) catch code
+    else
+        code;
+
+    const source = &logger.Source.initPathString(name, processed_code);
 
     const jsx = if (this.config.tsconfig != null)
         this.config.tsconfig.?.mergeJSX(this.transpiler.options.jsx)
@@ -758,7 +813,8 @@ fn getParseResult(this: *JSTranspiler, allocator: std.mem.Allocator, code: []con
         .virtual_source = source,
         .replace_exports = this.config.runtime.replace_exports,
         .macro_js_ctx = macro_js_ctx,
-        // .allocator = this.
+        .experimental_decorators = if (this.config.tsconfig) |ts| ts.experimental_decorators else false,
+        .emit_decorator_metadata = if (this.config.tsconfig) |ts| ts.emit_decorator_metadata else false,
     };
 
     return this.transpiler.parse(parse_options, null);
@@ -826,6 +882,7 @@ pub fn scan(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callframe: *js
     const named_imports_value = try namedImportsToJS(
         globalThis,
         parse_result.ast.import_records.slice(),
+        this.config.trim_unused_imports orelse false,
     );
 
     const named_exports_value = try namedExportsToJS(
@@ -1012,20 +1069,30 @@ fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExpo
     return bun.String.toJSArray(global, names);
 }
 
-fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecord) bun.JSError!jsc.JSValue {
+fn namedImportsToJS(global: *JSGlobalObject, import_records: []const ImportRecord, trim_unused_imports: bool) bun.JSError!jsc.JSValue {
     const path_label = jsc.ZigString.static("path");
     const kind_label = jsc.ZigString.static("kind");
 
-    const array = try jsc.JSValue.createEmptyArray(global, import_records.len);
+    var count: u32 = 0;
+    for (import_records) |record| {
+        if (record.flags.is_internal) continue;
+        if (trim_unused_imports and record.flags.is_unused) continue;
+        count += 1;
+    }
+
+    const array = try jsc.JSValue.createEmptyArray(global, count);
     array.ensureStillAlive();
 
-    for (import_records, 0..) |record, i| {
+    var i: u32 = 0;
+    for (import_records) |record| {
         if (record.flags.is_internal) continue;
+        if (trim_unused_imports and record.flags.is_unused) continue;
 
         array.ensureStillAlive();
         const path = jsc.ZigString.init(record.path.text).toJS(global);
         const kind = jsc.ZigString.init(record.kind.label()).toJS(global);
-        try array.putIndex(global, @as(u32, @truncate(i)), try jsc.JSValue.createObject2(global, path_label, kind_label, path, kind));
+        try array.putIndex(global, i, try jsc.JSValue.createObject2(global, path_label, kind_label, path, kind));
+        i += 1;
     }
 
     return array;
@@ -1117,6 +1184,7 @@ pub fn scanImports(this: *JSTranspiler, globalThis: *jsc.JSGlobalObject, callfra
     const named_imports_value = try namedImportsToJS(
         globalThis,
         this.scan_pass_result.import_records.items,
+        this.config.trim_unused_imports orelse false,
     );
     return named_imports_value;
 }

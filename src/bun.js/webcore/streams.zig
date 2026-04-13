@@ -38,7 +38,7 @@ pub const Start = union(Tag) {
                 return jsc.JSValue.jsNumber(@as(Blob.SizeType, @intCast(chunk)));
             },
             .err => |err| {
-                return globalThis.throwValue(err.toJS(globalThis));
+                return globalThis.throwValue(try err.toJS(globalThis));
             },
             .owned_and_done => |list| {
                 return jsc.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis);
@@ -234,7 +234,7 @@ pub const Result = union(Tag) {
         pub fn toJSWeak(this: *const @This(), globalObject: *jsc.JSGlobalObject) struct { jsc.JSValue, WasStrong } {
             return switch (this.*) {
                 .Error => |err| {
-                    return .{ err.toJS(globalObject), WasStrong.Weak };
+                    return .{ err.toJS(globalObject) catch return .{ .zero, WasStrong.Weak }, WasStrong.Weak };
                 },
                 .JSValue => .{ this.JSValue, WasStrong.Strong },
                 .WeakJSValue => .{ this.WeakJSValue, WasStrong.Weak },
@@ -380,7 +380,7 @@ pub const Result = union(Tag) {
             defer promise.toJS().unprotect();
             switch (result) {
                 .err => |err| {
-                    promise.reject(globalThis, err.toJS(globalThis)) catch {}; // TODO: properly propagate exception upwards
+                    promise.rejectWithAsyncStack(globalThis, err.toJS(globalThis)) catch {}; // TODO: properly propagate exception upwards
                 },
                 .done => {
                     promise.resolve(globalThis, .false) catch {}; // TODO: properly propagate exception upwards
@@ -393,7 +393,7 @@ pub const Result = union(Tag) {
 
         pub fn toJS(this: Writable, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
-                .err => |err| jsc.JSPromise.rejectedPromise(globalThis, err.toJS(globalThis)).toJS(),
+                .err => |err| jsc.JSPromise.rejectedPromise(globalThis, err.toJS(globalThis) catch return .zero).toJS(),
 
                 .owned => |len| jsc.JSValue.jsNumber(len),
                 .owned_and_done => |len| jsc.JSValue.jsNumber(len),
@@ -536,7 +536,7 @@ pub const Result = union(Tag) {
                     break :brk js_err;
                 };
                 result.* = .{ .temporary = .{} };
-                promise.reject(globalThis, value) catch {}; // TODO: properly propagate exception upwards
+                promise.rejectWithAsyncStack(globalThis, value) catch {}; // TODO: properly propagate exception upwards
             },
             .done => {
                 promise.resolve(globalThis, .false) catch {}; // TODO: properly propagate exception upwards

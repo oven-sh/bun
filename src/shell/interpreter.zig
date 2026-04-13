@@ -64,7 +64,7 @@ pub const Syscall = bun.sys;
 pub const WorkPoolTask = jsc.WorkPoolTask;
 pub const WorkPool = jsc.WorkPool;
 
-pub const Pipe = [2]bun.FileDescriptor;
+pub const Pipe = [2]bun.FD;
 pub const SmolList = shell.SmolList;
 
 pub const GlobWalker = bun.glob.BunGlobWalkerZ;
@@ -136,13 +136,13 @@ pub const StateKind = enum(u8) {
 ///
 /// If you want to write to the file descriptor, you call `.write()`, if `being_written` is true it will duplicate the file descriptor.
 pub const CowFd = struct {
-    __fd: bun.FileDescriptor,
+    __fd: bun.FD,
     refcount: u32 = 1,
     being_used: bool = false,
 
     const debug = bun.Output.scoped(.CowFd, .hidden);
 
-    pub fn init(fd: bun.FileDescriptor) *CowFd {
+    pub fn init(fd: bun.FD) *CowFd {
         const this = bun.handleOom(bun.default_allocator.create(CowFd));
         this.* = .{
             .__fd = fd,
@@ -280,6 +280,17 @@ pub const Interpreter = struct {
     exit_code: ?ExitCode = 0,
     this_jsvalue: JSValue = .zero,
 
+    /// Tracks which resources have been cleaned up to avoid double-free.
+    /// When the interpreter finishes normally via finish(), it cleans up
+    /// the runtime resources (IO, shell env) and sets this to .runtime_cleaned.
+    /// The GC finalizer then only cleans up what remains (args, interpreter itself).
+    cleanup_state: enum(u8) {
+        /// Nothing has been cleaned up yet - need full cleanup
+        needs_full_cleanup,
+        /// Runtime resources (IO, shell env) have been cleaned up via finish()
+        runtime_cleaned,
+    } = .needs_full_cleanup,
+
     __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
     estimated_size_for_gc: usize = 0,
 
@@ -352,7 +363,7 @@ pub const Interpreter = struct {
         /// Always has zero-sentinel
         __prev_cwd: std.array_list.Managed(u8),
         __cwd: std.array_list.Managed(u8),
-        cwd_fd: bun.FileDescriptor,
+        cwd_fd: bun.FD,
 
         async_pids: SmolList(pid_t, 4) = SmolList(pid_t, 4).zeroes,
 
@@ -748,7 +759,8 @@ pub const Interpreter = struct {
             jsobjs.deinit();
             if (export_env) |*ee| ee.deinit();
             if (cwd) |*cc| cc.deref();
-            shargs.deinit();
+            // Note: Don't call shargs.deinit() here - interpreter.finalize() will do it
+            // since interpreter.args points to shargs after init() succeeds.
             interpreter.finalize();
             return error.JSError;
         }
@@ -780,13 +792,14 @@ pub const Interpreter = struct {
         out_parser: *?bun.shell.Parser,
         out_lex_result: *?shell.LexResult,
     ) !ast.Script {
+        const jsobjs_len: u32 = @intCast(jsobjs.len);
         const lex_result = brk: {
             if (bun.strings.isAllASCII(script)) {
-                var lexer = bun.shell.LexerAscii.new(arena_allocator, script, jsstrings_to_escape);
+                var lexer = bun.shell.LexerAscii.new(arena_allocator, script, jsstrings_to_escape, jsobjs_len);
                 try lexer.lex();
                 break :brk lexer.get_result();
             }
-            var lexer = bun.shell.LexerUnicode.new(arena_allocator, script, jsstrings_to_escape);
+            var lexer = bun.shell.LexerUnicode.new(arena_allocator, script, jsstrings_to_escape, jsobjs_len);
             try lexer.lex();
             break :brk lexer.get_result();
         };
@@ -1142,7 +1155,7 @@ pub const Interpreter = struct {
         _ = callframe; // autofix
 
         if (this.setupIOBeforeRun().asErr()) |e| {
-            defer this.#deinitFromExec();
+            defer this.#derefRootShellAndIOIfNeeded(true);
             const shellerr = bun.shell.ShellErr.newSys(e);
             return try throwShellErr(&shellerr, .{ .js = globalThis.bunVM().event_loop });
         }
@@ -1221,6 +1234,11 @@ pub const Interpreter = struct {
     }
 
     fn #derefRootShellAndIOIfNeeded(this: *ThisInterpreter, free_buffered_io: bool) void {
+        // Check if already cleaned up to prevent double-free
+        if (this.cleanup_state == .runtime_cleaned) {
+            return;
+        }
+
         if (free_buffered_io) {
             // Can safely be called multiple times.
             if (this.root_shell._buffered_stderr == .owned) {
@@ -1239,10 +1257,26 @@ pub const Interpreter = struct {
         }
 
         this.this_jsvalue = .zero;
+        // Mark that runtime resources have been cleaned up
+        this.cleanup_state = .runtime_cleaned;
     }
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
-        this.#derefRootShellAndIOIfNeeded(true);
+        log("Interpreter(0x{x}) deinitFromFinalizer (cleanup_state={s})", .{ @intFromPtr(this), @tagName(this.cleanup_state) });
+
+        switch (this.cleanup_state) {
+            .needs_full_cleanup => {
+                // The interpreter never finished normally (e.g., early error or never started),
+                // so we need to clean up IO and shell env here
+                this.root_io.deref();
+                this.root_shell.deinitImpl(false, true);
+            },
+            .runtime_cleaned => {
+                // finish() already cleaned up IO and shell env via #derefRootShellAndIOIfNeeded,
+                // nothing more to do for those resources
+            },
+        }
+
         this.keep_alive.disable();
         this.args.deinit();
         this.allocator.destroy(this);
@@ -1551,7 +1585,7 @@ pub fn MaybeChild(comptime T: type) type {
     };
 }
 
-pub fn closefd(fd: bun.FileDescriptor) void {
+pub fn closefd(fd: bun.FD) void {
     if (fd.closeAllowingBadFileDescriptor(null)) |err| {
         log("ERR closefd: {f}\n", .{err});
     }
@@ -1703,7 +1737,7 @@ pub const ShellSyscall = struct {
         }
         if (ResolvePath.Platform.posix.isAbsolute(to[0..to.len])) {
             const dirpath = brk: {
-                if (@TypeOf(dirfd) == bun.FileDescriptor) break :brk switch (Syscall.getFdPath(dirfd, buf)) {
+                if (@TypeOf(dirfd) == bun.FD) break :brk switch (Syscall.getFdPath(dirfd, buf)) {
                     .result => |path| path,
                     .err => |e| return .{ .err = e.withFd(dirfd) },
                 };
@@ -1718,7 +1752,7 @@ pub const ShellSyscall = struct {
         if (ResolvePath.Platform.isAbsolute(.windows, to[0..to.len])) return .{ .result = to };
 
         const dirpath = brk: {
-            if (@TypeOf(dirfd) == bun.FileDescriptor) break :brk switch (Syscall.getFdPath(dirfd, buf)) {
+            if (@TypeOf(dirfd) == bun.FD) break :brk switch (Syscall.getFdPath(dirfd, buf)) {
                 .result => |path| path,
                 .err => |e| return .{ .err = e.withFd(dirfd) },
             };
@@ -1734,7 +1768,7 @@ pub const ShellSyscall = struct {
         return .{ .result = joined };
     }
 
-    pub fn statat(dir: bun.FileDescriptor, path_: [:0]const u8) Maybe(bun.Stat) {
+    pub fn statat(dir: bun.FD, path_: [:0]const u8) Maybe(bun.Stat) {
         if (bun.Environment.isWindows) {
             const buf: *bun.PathBuffer = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(buf);
@@ -1754,7 +1788,7 @@ pub const ShellSyscall = struct {
 
     /// Same thing as bun.sys.openat on posix
     /// On windows it will convert paths for us
-    pub fn openat(dir: bun.FileDescriptor, path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    pub fn openat(dir: bun.FD, path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FD) {
         if (bun.Environment.isWindows) {
             if (flags & bun.O.DIRECTORY != 0) {
                 if (ResolvePath.Platform.posix.isAbsolute(path[0..path.len])) {
@@ -1794,7 +1828,7 @@ pub const ShellSyscall = struct {
         return .{ .result = fd };
     }
 
-    pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FD) {
         const fd = switch (Syscall.open(file_path, flags, perm)) {
             .result => |fd| fd,
             .err => |e| return .{ .err = e },
@@ -1805,7 +1839,7 @@ pub const ShellSyscall = struct {
         return .{ .result = fd };
     }
 
-    pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
+    pub fn dup(fd: bun.FD) Maybe(bun.FD) {
         if (bun.Environment.isWindows) {
             return switch (Syscall.dup(fd)) {
                 .result => |duped_fd| duped_fd.makeLibUVOwnedForSyscall(.dup, .close_on_fail),
@@ -1989,7 +2023,7 @@ pub fn FlagParser(comptime Opts: type) type {
     };
 }
 
-pub fn isPollable(fd: bun.FileDescriptor, mode: bun.Mode) bool {
+pub fn isPollable(fd: bun.FD, mode: bun.Mode) bool {
     return switch (bun.Environment.os) {
         .windows, .wasm => false,
         .linux => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),

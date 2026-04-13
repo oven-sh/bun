@@ -32,7 +32,7 @@ pub const ArrayBuffer = extern struct {
 
     /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
     /// Do not use this for pipes, however tempting it may seem.
-    pub fn toJSBufferFromFd(fd: bun.FileDescriptor, size: usize, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn toJSBufferFromFd(fd: bun.FD, size: usize, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         const buffer_value = Bun__createUint8ArrayForCopy(globalObject, null, size, true);
         if (buffer_value == .zero) {
             return .zero;
@@ -58,7 +58,7 @@ pub const ArrayBuffer = extern struct {
                     }
                 },
                 .err => |err| {
-                    return globalObject.throwValue(err.toJS(globalObject)) catch .zero;
+                    return globalObject.throwValue(err.toJS(globalObject) catch return .zero) catch .zero;
                 },
             }
         }
@@ -71,11 +71,11 @@ pub const ArrayBuffer = extern struct {
     extern fn ArrayBuffer__fromSharedMemfd(fd: i64, globalObject: *jsc.JSGlobalObject, byte_offset: usize, byte_length: usize, total_size: usize, jsc.JSValue.JSType) jsc.JSValue;
     pub const toArrayBufferFromSharedMemfd = ArrayBuffer__fromSharedMemfd;
 
-    pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+    pub fn toJSBufferFromMemfd(fd: bun.FD, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         const stat = switch (bun.sys.fstat(fd)) {
             .err => |err| {
                 fd.close();
-                return globalObject.throwValue(err.toJS(globalObject));
+                return globalObject.throwValue(try err.toJS(globalObject));
             },
             .result => |fstat| fstat,
         };
@@ -112,7 +112,7 @@ pub const ArrayBuffer = extern struct {
                 return JSBuffer__fromMmap(globalObject, buf.ptr, buf.len);
             },
             .err => |err| {
-                return globalObject.throwValue(err.toJS(globalObject));
+                return globalObject.throwValue(err.toJS(globalObject) catch return .zero) catch return .zero;
             },
         }
     }

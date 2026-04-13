@@ -375,7 +375,7 @@ pub const JSPasswordObject = struct {
                     .err => {
                         const error_instance = this.value.toErrorInstance(global);
                         bun.destroy(this);
-                        try promise.reject(global, error_instance);
+                        try promise.rejectWithAsyncStack(global, error_instance);
                     },
                     .hash => |value| {
                         const js_string = jsc.ZigString.init(value).toJS(global);
@@ -587,7 +587,7 @@ pub const JSPasswordObject = struct {
                     .err => {
                         const error_instance = this.value.toErrorInstance(global);
                         bun.destroy(this);
-                        try promise.reject(global, error_instance);
+                        try promise.rejectWithAsyncStack(global, error_instance);
                     },
                     .pass => |pass| {
                         bun.destroy(this);

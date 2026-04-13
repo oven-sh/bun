@@ -160,10 +160,11 @@ int us_socket_is_established(int ssl, struct us_socket_t *s) {
 void us_connecting_socket_free(int ssl, struct us_connecting_socket_t *c) {
     // we can't just free c immediately, as it may be enqueued in the dns_ready_head list
     // instead, we move it to a close list and free it after the iteration
+    struct us_loop_t *loop = c->context->loop;
     us_internal_socket_context_unlink_connecting_socket(ssl, c->context, c);
 
-    c->next = c->context->loop->data.closed_connecting_head;
-    c->context->loop->data.closed_connecting_head = c;
+    c->next = loop->data.closed_connecting_head;
+    loop->data.closed_connecting_head = c;
 }
 
 void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
@@ -186,16 +187,39 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
         // if we have no error, we have to set that we were aborted aka we called close
         c->error = ECONNABORTED;
     }
-    c->context->on_connect_error(c, c->error);
+    struct us_socket_context_t *context = c->context;
+
+    if (c->pending_resolve_callback) {
+        // The DNS callback has not been drained. Try to remove c from the
+        // request's notify list so it never fires. Returns 0 if the result is
+        // already set (the callback has fired or is about to), in which case
+        // after_resolve will see c->closed and finish teardown.
+        if (c->addrinfo_req && Bun__addrinfo_cancel(c->addrinfo_req, c)) {
+#ifdef _WIN32
+            context->loop->uv_loop->active_handles--;
+#else
+            context->loop->num_polls--;
+#endif
+            c->pending_resolve_callback = 0;
+            Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
+            c->addrinfo_req = 0;
+            context->on_connect_error(c, c->error);
+            us_connecting_socket_free(ssl, c);
+            /* drop the ref us_socket_context_connect took alongside
+             * pending_resolve_callback = 1; after_resolve will not run for c */
+            us_socket_context_unref(ssl, context);
+        } else {
+            context->on_connect_error(c, c->error);
+        }
+        return;
+    }
+
     if(c->addrinfo_req) {
         Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED);
         c->addrinfo_req = 0;
     }
-    // we can only schedule the socket to be freed if there is no pending callback
-    // otherwise, the callback will see that the socket is closed and will free it
-    if (!c->pending_resolve_callback) {
-        us_connecting_socket_free(ssl, c);
-    }
+    context->on_connect_error(c, c->error);
+    us_connecting_socket_free(ssl, c);
 }
 
 struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, void *reason) {

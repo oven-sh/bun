@@ -326,9 +326,9 @@ pub fn getNackPacket(mode: Mode) []const u8 {
 pub const Socket = uws.NewSocketHandler(false);
 
 pub const Handle = struct {
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     js: jsc.JSValue,
-    pub fn init(fd: bun.FileDescriptor, js: jsc.JSValue) @This() {
+    pub fn init(fd: bun.FD, js: jsc.JSValue) @This() {
         js.protect();
         return .{ .fd = fd, .js = js };
     }
@@ -450,7 +450,7 @@ pub const SendQueue = struct {
     mode: Mode,
     internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
     incoming: IncomingBuffer,
-    incoming_fd: ?bun.FileDescriptor = null,
+    incoming_fd: ?bun.FD = null,
 
     socket: SocketUnion,
     owner: SendQueueOwner,
@@ -663,17 +663,14 @@ pub const SendQueue = struct {
                 log("IPC call continueSend() from onAckNack retry", .{});
                 return this.continueSend(global, .new_message_appended);
             }
-            // too many retries; give up
+            // too many retries; give up - emit warning if possible
             var warning = bun.String.static("Handle did not reach the receiving process correctly");
             var warning_name = bun.String.static("SentHandleNotReceivedWarning");
-            global.emitWarning(
-                warning.transferToJS(global),
-                warning_name.transferToJS(global),
-                .js_undefined,
-                .js_undefined,
-            ) catch |e| {
-                _ = global.takeException(e);
-            };
+            if (warning.transferToJS(global)) |warning_js| {
+                if (warning_name.transferToJS(global)) |warning_name_js| {
+                    global.emitWarning(warning_js, warning_name_js, .js_undefined, .js_undefined) catch {};
+                } else |_| {}
+            } else |_| {}
             // (fall through to success code in order to consume the message and continue sending)
         }
         // consume the message and continue sending
@@ -830,7 +827,7 @@ pub const SendQueue = struct {
 
     /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it may
     /// call _onWriteComplete later.
-    fn _write(this: *SendQueue, data: []const u8, fd: ?bun.FileDescriptor) void {
+    fn _write(this: *SendQueue, data: []const u8, fd: ?bun.FD) void {
         log("SendQueue#_write len {d}", .{data.len});
         const socket = this.getSocket() orelse {
             this._onWriteComplete(-1);
@@ -924,15 +921,15 @@ pub const SendQueue = struct {
         return .success;
     }
 
-    pub fn windowsConfigureClient(this: *SendQueue, pipe_fd: bun.FileDescriptor) !void {
+    pub fn windowsConfigureClient(this: *SendQueue, pipe_fd: bun.FD) !void {
         log("configureClient", .{});
-        const ipc_pipe = bun.handleOom(bun.default_allocator.create(uv.Pipe));
+        const ipc_pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe));
         ipc_pipe.init(uv.Loop.get(), true).unwrap() catch |err| {
-            bun.default_allocator.destroy(ipc_pipe);
+            bun.destroy(ipc_pipe);
             return err;
         };
         ipc_pipe.open(pipe_fd).unwrap() catch |err| {
-            bun.default_allocator.destroy(ipc_pipe);
+            ipc_pipe.closeAndDestroy();
             return err;
         };
         ipc_pipe.unref();
@@ -1037,7 +1034,7 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *jsc.JSGlobalObject, callFrame: *j
 
     if (status == .failure) {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
-        ex.put(globalObject, jsc.ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
+        ex.put(globalObject, jsc.ZigString.static("syscall"), try bun.String.static("write").toJS(globalObject));
         return doSendErr(globalObject, callback, ex, from);
     }
 

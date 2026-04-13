@@ -417,6 +417,16 @@ pub const Archiver = struct {
                     const path: [:0]bun.OSPathChar = normalized_buf[0..normalized.len :0];
                     if (path.len == 0 or path.len == 1 and path[0] == '.') continue;
 
+                    // Skip entries whose normalized path is absolute on Windows.
+                    // `openatWindows` ignores `dir_fd` for absolute inputs (drive
+                    // letter or UNC), so without this guard a tar entry could
+                    // resolve outside the extraction directory. On POSIX the
+                    // tokenize-on-'/' step already strips any leading separators,
+                    // so `normalizeBufT` cannot produce an absolute output.
+                    if (comptime Environment.isWindows) {
+                        if (std.fs.path.isAbsoluteWindowsWTF16(path)) continue :loop;
+                    }
+
                     if (options.npm and Environment.isWindows) {
                         // When writing files on Windows, translate the characters to their
                         // 0xf000 higher-encoded versions.
@@ -460,13 +470,13 @@ pub const Archiver = struct {
                             if (comptime Environment.isWindows) {
                                 try bun.MakePath.makePath(u16, dir, path);
                             } else {
-                                std.posix.mkdiratZ(dir_fd, pathname, @intCast(mode)) catch |err| {
+                                std.posix.mkdiratZ(dir_fd, path, @intCast(mode)) catch |err| {
                                     // It's possible for some tarballs to return a directory twice, with and
                                     // without `./` in the beginning. So if it already exists, continue to the
                                     // next entry.
                                     if (err == error.PathAlreadyExists or err == error.NotDir) continue;
                                     bun.makePath(dir, std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                    std.posix.mkdiratZ(dir_fd, pathname, 0o777) catch {};
+                                    std.posix.mkdiratZ(dir_fd, path, 0o777) catch {};
                                 };
                             }
                         },
@@ -670,7 +680,7 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const FileDescriptorType = bun.FileDescriptor;
+const FileDescriptorType = bun.FD;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
 const c = bun.c;

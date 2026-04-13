@@ -295,9 +295,9 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJS(globalObject),
+                    .err => |err| err.toJSWithAsyncStack(globalObject, promise) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
                     .result => |*res| brk: {
-                        break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
+                        break :brk globalObject.toJS(res) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
                     },
                 };
                 promise_value.ensureStillAlive();
@@ -399,9 +399,9 @@ pub const Async = struct {
                 var promise_value = this.promise.value();
                 var promise = this.promise.get();
                 const result = switch (this.result) {
-                    .err => |err| err.toJS(globalObject),
+                    .err => |err| err.toJSWithAsyncStack(globalObject, promise) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
                     .result => |*res| brk: {
-                        break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
+                        break :brk globalObject.toJS(res) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
                     },
                 };
                 promise_value.ensureStillAlive();
@@ -667,9 +667,9 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             var promise_value = this.promise.value();
             var promise = this.promise.get();
             const result = switch (this.result) {
-                .err => |err| err.toJS(globalObject),
+                .err => |err| err.toJSWithAsyncStack(globalObject, promise) catch |e| return promise.reject(globalObject, globalObject.takeException(e)),
                 .result => |*res| brk: {
-                    break :brk globalObject.toJS(res) catch return promise.reject(globalObject, error.JSError);
+                    break :brk globalObject.toJS(res) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
                 },
             };
             promise_value.ensureStillAlive();
@@ -949,7 +949,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     result_list_queue: ResultListEntry.Queue = ResultListEntry.Queue{},
 
     /// All the subtasks will use this fd to open files
-    root_fd: FileDescriptor = bun.invalid_fd,
+    root_fd: FD = bun.invalid_fd,
 
     /// This isued when joining the file paths for error messages
     root_path: PathString = PathString.empty,
@@ -1217,13 +1217,13 @@ pub const AsyncReaddirRecursiveTask = struct {
         const success = this.pending_err == null;
         var promise_value = this.promise.value();
         var promise = this.promise.get();
-        const result = if (this.pending_err) |*err| err.toJS(globalObject) else brk: {
+        const result = if (this.pending_err) |*err| (err.toJSWithAsyncStack(globalObject, promise) catch |e| return promise.reject(globalObject, globalObject.takeException(e))) else brk: {
             const res = switch (this.result_list) {
                 .with_file_types => |*res| Return.Readdir{ .with_file_types = res.moveToUnmanaged().items },
                 .buffers => |*res| Return.Readdir{ .buffers = res.moveToUnmanaged().items },
                 .files => |*res| Return.Readdir{ .files = res.moveToUnmanaged().items },
             };
-            break :brk res.toJS(globalObject) catch return promise.reject(globalObject, error.JSError);
+            break :brk res.toJS(globalObject) catch |e| return promise.reject(globalObject, globalObject.takeException(e));
         };
         promise_value.ensureStillAlive();
 
@@ -1325,7 +1325,7 @@ pub const Arguments = struct {
     };
 
     pub const Writev = struct {
-        fd: FileDescriptor,
+        fd: FD,
         buffers: jsc.Node.VectorArrayBuffer,
         position: ?u52 = 0,
 
@@ -1377,7 +1377,7 @@ pub const Arguments = struct {
     };
 
     pub const Readv = struct {
-        fd: FileDescriptor,
+        fd: FD,
         buffers: jsc.Node.VectorArrayBuffer,
         position: ?u52 = 0,
 
@@ -1431,7 +1431,7 @@ pub const Arguments = struct {
     };
 
     pub const FTruncate = struct {
-        fd: FileDescriptor,
+        fd: FD,
         len: ?jsc.WebCore.Blob.SizeType = null,
 
         pub fn deinit(this: @This()) void {
@@ -1509,7 +1509,7 @@ pub const Arguments = struct {
     };
 
     pub const Fchown = struct {
-        fd: FileDescriptor,
+        fd: FD,
         uid: uid_t,
         gid: gid_t,
 
@@ -1628,7 +1628,7 @@ pub const Arguments = struct {
     };
 
     pub const FChmod = struct {
-        fd: FileDescriptor,
+        fd: FD,
         mode: Mode = 0x777,
 
         pub fn deinit(_: *const @This()) void {}
@@ -1742,7 +1742,7 @@ pub const Arguments = struct {
     };
 
     pub const Fstat = struct {
-        fd: FileDescriptor,
+        fd: FD,
         big_int: bool = false,
 
         pub fn deinit(_: @This()) void {}
@@ -2259,7 +2259,7 @@ pub const Arguments = struct {
     };
 
     pub const Close = struct {
-        fd: FileDescriptor,
+        fd: FD,
 
         pub fn deinit(_: Close) void {}
         pub fn toThreadSafe(_: Close) void {}
@@ -2341,7 +2341,7 @@ pub const Arguments = struct {
     pub const Utimes = Lutimes;
 
     pub const Futimes = struct {
-        fd: FileDescriptor,
+        fd: FD,
         atime: TimeLike,
         mtime: TimeLike,
 
@@ -2403,7 +2403,7 @@ pub const Arguments = struct {
     /// the end of the file.
     /// @since v0.0.2
     pub const Write = struct {
-        fd: FileDescriptor,
+        fd: FD,
         buffer: StringOrBuffer,
         // buffer_val: jsc.JSValue = jsc.JSValue.zero,
         offset: u64 = 0,
@@ -2508,7 +2508,7 @@ pub const Arguments = struct {
     };
 
     pub const Read = struct {
-        fd: FileDescriptor,
+        fd: FD,
         buffer: Buffer,
         offset: u64,
         length: u64,
@@ -2739,7 +2739,7 @@ pub const Arguments = struct {
         /// Encoded at the time of construction.
         data: StringOrBuffer,
 
-        dirfd: FileDescriptor,
+        dirfd: FD,
 
         signal: ?*AbortSignal = null,
 
@@ -2968,7 +2968,7 @@ pub const Arguments = struct {
     };
 
     pub const FdataSync = struct {
-        fd: FileDescriptor,
+        fd: FD,
 
         pub fn deinit(_: FdataSync) void {}
         pub fn toThreadSafe(self: *const @This()) void {
@@ -3102,13 +3102,13 @@ pub const Arguments = struct {
     };
 
     pub const WriteEv = struct {
-        fd: FileDescriptor,
+        fd: FD,
         buffers: []const ArrayBuffer,
         position: ReadPosition,
     };
 
     pub const ReadEv = struct {
-        fd: FileDescriptor,
+        fd: FD,
         buffers: []ArrayBuffer,
         position: ReadPosition,
     };
@@ -3120,7 +3120,7 @@ pub const Arguments = struct {
     pub const WatchFile = StatWatcher.Arguments;
 
     pub const Fsync = struct {
-        fd: FileDescriptor,
+        fd: FD,
 
         pub fn deinit(_: Fsync) void {}
         pub fn toThreadSafe(_: *const @This()) void {}
@@ -3159,9 +3159,9 @@ pub const StringOrUndefined = union(enum) {
     string: bun.String,
     none: void,
 
-    pub fn toJS(this: *StringOrUndefined, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+    pub fn toJS(this: *StringOrUndefined, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return switch (this.*) {
-            .string => this.string.transferToJS(globalObject),
+            .string => try this.string.transferToJS(globalObject),
             .none => .js_undefined,
         };
     }
@@ -3408,7 +3408,7 @@ pub const NodeFS = struct {
     }
 
     // since we use a 64 KB stack buffer, we should not let this function get inlined
-    pub noinline fn copyFileUsingReadWriteLoop(src: [:0]const u8, dest: [:0]const u8, src_fd: FileDescriptor, dest_fd: FileDescriptor, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
+    pub noinline fn copyFileUsingReadWriteLoop(src: [:0]const u8, dest: [:0]const u8, src_fd: FD, dest_fd: FD, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
         var stack_buf: [64 * 1024]u8 = undefined;
         var buf_to_free: []u8 = &[_]u8{};
         var buf: []u8 = &stack_buf;
@@ -3482,7 +3482,7 @@ pub const NodeFS = struct {
     // This is relevant for `bun install`
     // However, sendfile() is supported across devices.
     // Only on Linux. There are constraints though. It cannot be used if the file type does not support
-    pub noinline fn copyFileUsingSendfileOnLinuxWithReadWriteFallback(src: [:0]const u8, dest: [:0]const u8, src_fd: FileDescriptor, dest_fd: FileDescriptor, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
+    pub noinline fn copyFileUsingSendfileOnLinuxWithReadWriteFallback(src: [:0]const u8, dest: [:0]const u8, src_fd: FD, dest_fd: FD, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
         while (true) {
             const amt = switch (bun.sys.sendfile(src_fd, dest_fd, std.math.maxInt(i32) - 1)) {
                 .err => {
@@ -4442,7 +4442,7 @@ pub const NodeFS = struct {
 
     fn readdirWithEntries(
         args: Arguments.Readdir,
-        fd: bun.FileDescriptor,
+        fd: bun.FD,
         basename: [:0]const u8,
         comptime ExpectedType: type,
         entries: *std.array_list.Managed(ExpectedType),
@@ -4499,10 +4499,19 @@ pub const NodeFS = struct {
                 switch (ExpectedType) {
                     jsc.Node.Dirent => {
                         dirent_path.ref();
+                        // On filesystems that return DT_UNKNOWN (e.g. FUSE, bind mounts),
+                        // fall back to lstat to determine the real file kind.
+                        const kind = if (current.kind == .unknown)
+                            switch (Syscall.lstatat(fd, current.name.sliceAssumeZ())) {
+                                .result => |st| bun.sys.kindFromMode(@intCast(st.mode)),
+                                .err => current.kind,
+                            }
+                        else
+                            current.kind;
                         entries.append(.{
                             .name = jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
                             .path = dirent_path,
-                            .kind = current.kind,
+                            .kind = kind,
                         }) catch |err| bun.handleOom(err);
                     },
                     Buffer => {
@@ -4627,6 +4636,9 @@ pub const NodeFS = struct {
                 break :brk bun.path.joinZBuf(buf, &path_parts, .auto);
             };
 
+            // Track effective kind - may be resolved from .unknown via stat
+            var effective_kind = current.kind;
+
             enqueue: {
                 switch (current.kind) {
                     // a symlink might be a directory or might not be
@@ -4646,6 +4658,24 @@ pub const NodeFS = struct {
 
                         async_task.enqueue(name_to_copy);
                     },
+                    // Some filesystems (e.g., Docker bind mounts, FUSE, NFS) return
+                    // DT_UNKNOWN for d_type. Use lstatat to determine the actual type.
+                    .unknown => {
+                        if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
+
+                        // Lazy stat to determine the actual kind (lstatat to not follow symlinks)
+                        const stat_result = bun.sys.lstatat(fd, current.name.sliceAssumeZ());
+                        switch (stat_result) {
+                            .result => |st| {
+                                const real_kind = bun.sys.kindFromMode(@intCast(st.mode));
+                                effective_kind = real_kind;
+                                if (real_kind == .directory or real_kind == .sym_link) {
+                                    async_task.enqueue(name_to_copy);
+                                }
+                            },
+                            .err => {}, // Skip entries we can't stat
+                        }
+                    },
                     else => {},
                 }
             }
@@ -4662,7 +4692,7 @@ pub const NodeFS = struct {
                     entries.append(.{
                         .name = bun.String.cloneUTF8(utf8_name),
                         .path = dirent_path_prev,
-                        .kind = current.kind,
+                        .kind = effective_kind,
                     }) catch |err| bun.handleOom(err);
                 },
                 Buffer => {
@@ -4697,7 +4727,7 @@ pub const NodeFS = struct {
         }
 
         stack.writeItem(root_basename) catch unreachable;
-        var root_fd: bun.FileDescriptor = bun.invalid_fd;
+        var root_fd: bun.FD = bun.invalid_fd;
 
         defer {
             // all other paths are relative to the root directory
@@ -4774,6 +4804,9 @@ pub const NodeFS = struct {
                     break :brk bun.path.joinZBuf(buf, &path_parts, .auto);
                 };
 
+                // Track effective kind - may be resolved from .unknown via stat
+                var effective_kind = current.kind;
+
                 enqueue: {
                     switch (current.kind) {
                         // a symlink might be a directory or might not be
@@ -4785,6 +4818,24 @@ pub const NodeFS = struct {
                         => {
                             if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
                             stack.writeItem(basename_allocator.dupeZ(u8, name_to_copy) catch break :enqueue) catch break :enqueue;
+                        },
+                        // Some filesystems (e.g., Docker bind mounts, FUSE, NFS) return
+                        // DT_UNKNOWN for d_type. Use lstatat to determine the actual type.
+                        .unknown => {
+                            if (current.name.len + 1 + name_to_copy.len > bun.MAX_PATH_BYTES) break :enqueue;
+
+                            // Lazy stat to determine the actual kind (lstatat to not follow symlinks)
+                            const stat_result = bun.sys.lstatat(fd, current.name.sliceAssumeZ());
+                            switch (stat_result) {
+                                .result => |st| {
+                                    const real_kind = bun.sys.kindFromMode(@intCast(st.mode));
+                                    effective_kind = real_kind;
+                                    if (real_kind == .directory or real_kind == .sym_link) {
+                                        stack.writeItem(basename_allocator.dupeZ(u8, name_to_copy) catch break :enqueue) catch break :enqueue;
+                                    }
+                                },
+                                .err => {}, // Skip entries we can't stat
+                            }
                         },
                         else => {},
                     }
@@ -4801,7 +4852,7 @@ pub const NodeFS = struct {
                         entries.append(.{
                             .name = jsc.WebCore.encoding.toBunString(utf8_name, args.encoding),
                             .path = dirent_path_prev,
-                            .kind = current.kind,
+                            .kind = effective_kind,
                         }) catch |err| bun.handleOom(err);
                     },
                     Buffer => {
@@ -4951,7 +5002,7 @@ pub const NodeFS = struct {
 
     pub fn readFileWithOptions(this: *NodeFS, args: Arguments.ReadFile, comptime flavor: Flavor, comptime string_type: StringType) Maybe(Return.ReadFileWithOptions) {
         var path: [:0]const u8 = undefined;
-        const fd_maybe_windows: FileDescriptor = switch (args.path) {
+        const fd_maybe_windows: FD = switch (args.path) {
             .path => brk: {
                 path = args.path.path.sliceZ(&this.sync_error_buf);
 
@@ -5451,7 +5502,12 @@ pub const NodeFS = struct {
                     .path = args.path.slice(),
                 } };
 
-            var buf = bun.span(req.ptrAs([*:0]u8));
+            const result_ptr: ?[*:0]u8 = req.ptrAs(?[*:0]u8);
+            var buf = bun.span(result_ptr orelse return .{ .err = Syscall.Error{
+                .errno = @intFromEnum(bun.sys.E.NOENT),
+                .syscall = .realpath,
+                .path = args.path.slice(),
+            } });
 
             if (variant == .emulated) {
                 // remove the trailing slash
@@ -5571,7 +5627,7 @@ pub const NodeFS = struct {
                     // One of the path components was not a directory.
                     // This error is unreachable if `sub_path` does not contain a path separator.
                     error.NotDir => .NOTDIR,
-                    // On Windows, file paths must be valid Unicode.
+                    // On Windows, file paths must be valid WTF-8.
                     error.InvalidUtf8 => .INVAL,
                     error.InvalidWtf8 => .INVAL,
 
@@ -6525,7 +6581,7 @@ pub const NodeFS = struct {
                 const wbuf = bun.os_path_buffer_pool.get();
                 defer bun.os_path_buffer_pool.put(wbuf);
                 const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), wbuf, wbuf.len, 0);
-                if (len == 0) {
+                if (len == 0 or len >= wbuf.len) {
                     return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse dst_enoent_maybe;
                 }
                 const flags = if (stat_ & windows.FILE_ATTRIBUTE_DIRECTORY != 0)
@@ -6966,7 +7022,6 @@ const FileSystem = @import("../../fs.zig").FileSystem;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
-const FileDescriptor = bun.FileDescriptor;
 const Mode = bun.Mode;
 const PathString = bun.PathString;
 const c = bun.c;

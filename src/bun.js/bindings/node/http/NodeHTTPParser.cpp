@@ -315,7 +315,7 @@ int HTTPParser::onMessageBegin()
 {
     JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSHTTPParser* thisParser = m_thisParser;
 
@@ -379,7 +379,7 @@ int HTTPParser::onHeaderField(const char* at, size_t length)
 {
     JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     int rv = trackHeader(length);
     if (rv != 0) {
@@ -452,7 +452,7 @@ int HTTPParser::onHeadersComplete()
 {
     JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSHTTPParser* thisParser = m_thisParser;
 
     m_headersCompleted = true;
@@ -494,9 +494,9 @@ int HTTPParser::onHeadersComplete()
     } else {
         auto headers = createHeaders(globalObject);
         RETURN_IF_EXCEPTION(scope, -1);
-        args.set(A_HEADERS, headers);
+        args.at(A_HEADERS) = headers;
         if (m_parserData.type == HTTP_REQUEST) {
-            args.set(A_URL, m_url.toString(globalObject));
+            args.at(A_URL) = m_url.toString(globalObject);
         }
     }
 
@@ -504,21 +504,21 @@ int HTTPParser::onHeadersComplete()
     m_numValues = 0;
 
     if (m_parserData.type == HTTP_REQUEST) {
-        args.set(A_METHOD, jsNumber(m_parserData.method));
+        args.at(A_METHOD) = jsNumber(m_parserData.method);
     }
 
     if (m_parserData.type == HTTP_RESPONSE) {
-        args.set(A_STATUS_CODE, jsNumber(m_parserData.status_code));
-        args.set(A_STATUS_MESSAGE, m_statusMessage.toString(globalObject));
+        args.at(A_STATUS_CODE) = jsNumber(m_parserData.status_code);
+        args.at(A_STATUS_MESSAGE) = m_statusMessage.toString(globalObject);
     }
 
-    args.set(A_VERSION_MAJOR, jsNumber(m_parserData.http_major));
-    args.set(A_VERSION_MINOR, jsNumber(m_parserData.http_minor));
+    args.at(A_VERSION_MAJOR) = jsNumber(m_parserData.http_major);
+    args.at(A_VERSION_MINOR) = jsNumber(m_parserData.http_minor);
 
     bool shouldKeepAlive = llhttp_should_keep_alive(&m_parserData);
 
-    args.set(A_SHOULD_KEEP_ALIVE, jsBoolean(shouldKeepAlive));
-    args.set(A_UPGRADE, jsBoolean(m_parserData.upgrade));
+    args.at(A_SHOULD_KEEP_ALIVE) = jsBoolean(shouldKeepAlive);
+    args.at(A_UPGRADE) = jsBoolean(m_parserData.upgrade);
 
     CallData callData = getCallData(onHeadersCompleteCallback);
 
@@ -540,7 +540,7 @@ int HTTPParser::onBody(const char* at, size_t length)
     JSGlobalObject* lexicalGlobalObject = m_globalObject;
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSValue onBodyCallback = m_thisParser->get(lexicalGlobalObject, Identifier::from(vm, kOnBody));
     RETURN_IF_EXCEPTION(scope, 0);
@@ -571,7 +571,7 @@ int HTTPParser::onMessageComplete()
 {
     JSGlobalObject* globalObject = m_globalObject;
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSHTTPParser* thisParser = m_thisParser;
 
     if (JSConnectionsList* connections = m_connectionsList.get()) {

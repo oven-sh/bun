@@ -1,193 +1,12 @@
 #include "root.h"
 #include "stripANSI.h"
+#include "ANSIHelpers.h"
 
+#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
-#include <wtf/text/StringBuilder.h>
-#include <wtf/SIMDHelpers.h>
 
 namespace Bun {
 using namespace WTF;
-
-template<typename Char>
-static inline bool isEscapeCharacter(const Char c)
-{
-    switch (c) {
-    case 0x1b: // escape
-    case 0x9b: // control sequence introducer
-    case 0x9d: // operating system command
-    case 0x90: // device control string
-    case 0x98: // start of string
-    case 0x9e: // privacy message
-    case 0x9f: // application program command
-        return true;
-    default:
-        return false;
-    }
-}
-
-template<typename Char>
-static const Char* findEscapeCharacter(const Char* const start, const Char* const end)
-{
-    static_assert(sizeof(Char) == 1 || sizeof(Char) == 2);
-    using SIMDType = std::conditional_t<sizeof(Char) == 1, uint8_t, uint16_t>;
-
-    constexpr size_t stride = SIMD::stride<SIMDType>;
-    // Matches 0x10-0x1f and 0x90-0x9f. These characters have a high
-    // probability of being escape characters.
-    constexpr auto escMask = SIMD::splat<SIMDType>(static_cast<SIMDType>(~0b10001111U));
-    constexpr auto escVector = SIMD::splat<SIMDType>(0b00010000);
-
-    auto it = start;
-    // Search for escape sequences using SIMD
-    // [Implementation note: aligning `it` did not improve performance]
-    for (; end - it >= stride; it += stride) {
-        const auto chunk = SIMD::load(reinterpret_cast<const SIMDType*>(it));
-        const auto chunkMasked = SIMD::bitAnd(chunk, escMask);
-        const auto chunkIsEsc = SIMD::equal(chunkMasked, escVector);
-        if (const auto index = SIMD::findFirstNonZeroIndex(chunkIsEsc)) {
-            return it + *index;
-        }
-    }
-
-    // Check remaining characters
-    for (; it != end; ++it) {
-        if (isEscapeCharacter(*it)) return it;
-    }
-    return nullptr;
-}
-
-// Consume an ANSI escape sequence that starts at `start`. Returns a pointer to
-// the first byte immediately following the escape sequence.
-//
-// If the ANSI escape sequence is immediately followed by another escape
-// sequence, this function will consume that one as well, and so on.
-template<typename Char>
-static const Char* consumeANSI(const Char* const start, const Char* const end)
-{
-    enum class State {
-        start,
-        gotEsc,
-        ignoreNextChar,
-        inCsi,
-        inOsc,
-        inOscGotEsc,
-        needSt,
-        needStGotEsc,
-    };
-
-    auto state = State::start;
-    for (auto it = start; it != end; ++it) {
-        const auto c = *it;
-        switch (state) {
-        case State::start:
-            switch (c) {
-            case 0x1b:
-                state = State::gotEsc;
-                break;
-            case 0x9b:
-                state = State::inCsi;
-                break;
-            case 0x9d:
-                state = State::inOsc;
-                break;
-            // Other sequences terminated by ST, from ECMA-48, 5th ed.
-            case 0x90: // device control string
-            case 0x98: // start of string
-            case 0x9e: // privacy message
-            case 0x9f: // application program command
-                state = State::needSt;
-                break;
-            default:
-                return it;
-            }
-            break;
-
-        case State::gotEsc:
-            switch (c) {
-            case '[':
-                state = State::inCsi;
-                break;
-            // Two-byte XTerm sequences
-            // https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
-            case ' ':
-            case '#':
-            case '%':
-            case '(':
-            case ')':
-            case '*':
-            case '+':
-            case '.':
-            case '/':
-                state = State::ignoreNextChar;
-                break;
-            case ']':
-                state = State::inOsc;
-                break;
-            // Other sequences terminated by ST, from ECMA-48, 5th ed.
-            case 'P': // device control string
-            case 'X': // start of string
-            case '^': // privacy message
-            case '_': // application program command
-                state = State::needSt;
-            default:
-                // Otherwise, assume this is a one-byte sequence
-                state = State::start;
-            }
-            break;
-
-        case State::ignoreNextChar:
-            state = State::start;
-            break;
-
-        case State::inCsi:
-            // ECMA-48, 5th ed. §5.4 d)
-            if (c >= 0x40 && c <= 0x7e) {
-                state = State::start;
-            }
-            break;
-
-        case State::inOsc:
-            switch (c) {
-            case 0x1b:
-                state = State::inOscGotEsc;
-                break;
-            case 0x9c: // ST
-            case 0x07: // XTerm can also end OSC with 0x07
-                state = State::start;
-                break;
-            }
-            break;
-
-        case State::inOscGotEsc:
-            if (c == '\\') {
-                state = State::start;
-            } else {
-                state = State::inOsc;
-            }
-            break;
-
-        case State::needSt:
-            switch (c) {
-            case 0x1b:
-                state = State::needStGotEsc;
-                break;
-            case 0x9c:
-                state = State::start;
-                break;
-            }
-            break;
-
-        case State::needStGotEsc:
-            if (c == '\\') {
-                state = State::start;
-            } else {
-                state = State::needSt;
-            }
-            break;
-        }
-    }
-    return end;
-}
 
 template<typename Char>
 static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
@@ -197,39 +16,115 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
         return std::nullopt;
     }
 
-    StringBuilder result;
-    bool foundANSI = false;
-
     auto start = input.data();
     const auto end = start + input.size();
 
+    // Lazy flat-buffer allocation: don't touch the buffer until we find an
+    // escape. For no-escape input we return std::nullopt and the caller
+    // reuses the original JSString with zero copies.
+    Vector<Char> buffer;
+    Char* cursor = nullptr;
+    bool foundANSI = false;
+
     while (start != end) {
-        const auto escPos = findEscapeCharacter(start, end);
+        const auto* escPos = ANSI::findEscapeCharacter(start, end);
         if (!escPos) {
-            // If no escape sequences found, return null to signal that the
-            // original string should be used.
-            if (!foundANSI) return std::nullopt;
-            // Append the rest of the string
-            result.append(std::span { start, end });
+            // No more escapes.
+            if (!foundANSI)
+                return std::nullopt;
+            // Copy the rest of the string.
+            const auto remaining = static_cast<size_t>(end - start);
+            memcpy(cursor, start, remaining * sizeof(Char));
+            cursor += remaining;
             break;
         }
 
-        // Lazily reserve capacity on first ESC found
-        if (!foundANSI) {
-            result.reserveCapacity(input.size());
+        // Lazily allocate the worst-case buffer on first ESC candidate. Guard
+        // on `cursor == nullptr` (not `!foundANSI`) so a broad-mask false
+        // positive that allocates the buffer doesn't reset the cursor on the
+        // next iteration when a real escape is finally found.
+        // POD types skip per-element initialization in Vector::grow.
+        if (cursor == nullptr) {
+            buffer.grow(input.size());
+            cursor = buffer.begin();
         }
 
-        // Append everything before the escape sequence
-        result.append(std::span { start, escPos });
-        const auto newPos = consumeANSI(escPos, end);
+        // Copy everything before the escape sequence.
+        if (escPos > start) {
+            const auto chunkLen = static_cast<size_t>(escPos - start);
+            memcpy(cursor, start, chunkLen * sizeof(Char));
+            cursor += chunkLen;
+        }
+
+        const auto* newPos = ANSI::consumeANSI(escPos, end);
+        if (newPos == escPos) {
+            // Broad-mask false positive — copy the byte literally.
+            *cursor++ = *escPos;
+            start = escPos + 1;
+            continue;
+        }
+
         ASSERT(newPos > start);
         ASSERT(newPos <= end);
         foundANSI = true;
         start = newPos;
     }
-    return result.toString();
+
+    const size_t reserved = buffer.size();
+    const size_t outputLen = static_cast<size_t>(cursor - buffer.begin());
+    const size_t waste = reserved - outputLen;
+    buffer.shrink(outputLen);
+
+    // Free the slack only if we wasted significantly: capacity > 2 * length OR
+    // waste > 1 KB. shrinkToFit() reallocates, so for small over-allocations
+    // the realloc cost outweighs the memory saved.
+    if (reserved > 2 * outputLen || waste * sizeof(Char) > 1024) {
+        buffer.shrinkToFit();
+    }
+
+    return String::adopt(std::move(buffer));
 }
 
+struct BunANSIIterator {
+    const unsigned char* input;
+    size_t input_len;
+    size_t cursor;
+    const unsigned char* slice_ptr;
+    size_t slice_len;
+};
+
+extern "C" bool Bun__ANSI__next(BunANSIIterator* it)
+{
+    auto start = it->input + it->cursor;
+    const auto end = it->input + it->input_len;
+
+    // Skip past any ANSI sequences at current position
+    while (start < end) {
+        const auto escPos = ANSI::findEscapeCharacter(start, end);
+        if (escPos != start) break;
+        const auto after = ANSI::consumeANSI(start, end);
+        if (after == start) {
+            start++;
+            break;
+        }
+        start = after;
+    }
+
+    if (start >= end) {
+        it->cursor = it->input_len;
+        it->slice_ptr = nullptr;
+        it->slice_len = 0;
+        return false;
+    }
+
+    const auto escPos = ANSI::findEscapeCharacter(start, end);
+    const auto slice_end = escPos ? escPos : end;
+
+    it->slice_ptr = start;
+    it->slice_len = slice_end - start;
+    it->cursor = slice_end - it->input;
+    return true;
+}
 JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStripANSI, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();

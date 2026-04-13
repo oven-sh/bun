@@ -180,6 +180,14 @@ pub const Integrity = extern struct {
         }
     }
 
+    /// Compute a sha512 integrity hash from raw bytes (e.g. a downloaded tarball).
+    pub fn forBytes(bytes: []const u8) Integrity {
+        const len = std.crypto.hash.sha2.Sha512.digest_length;
+        var value: [digest_buf_len]u8 = empty_digest_buf;
+        Crypto.SHA512.hash(bytes, value[0..len]);
+        return .{ .tag = .sha512, .value = value };
+    }
+
     pub fn verify(this: *const Integrity, bytes: []const u8) bool {
         return @call(bun.callmod_inline, verifyByTag, .{ this.tag, bytes, &this.value });
     }

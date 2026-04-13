@@ -15,7 +15,7 @@ binary_type: BinaryType = .Buffer,
 vm: *jsc.VirtualMachine,
 globalObject: *jsc.JSGlobalObject,
 active_connections: u32 = 0,
-is_server: bool,
+mode: SocketMode = .client,
 promise: jsc.Strong.Optional = .empty,
 
 protection_count: if (Environment.ci_assert) u32 else void = if (Environment.ci_assert) 0,
@@ -81,7 +81,7 @@ pub fn markInactive(this: *Handlers) void {
     Listener.log("markInactive", .{});
     this.active_connections -= 1;
     if (this.active_connections == 0) {
-        if (this.is_server) {
+        if (this.mode == .server) {
             const listen_socket: *Listener = @fieldParentPtr("handlers", this);
             // allow it to be GC'd once the last connection is closed and it's not listening anymore
             if (listen_socket.listener == .none) {
@@ -133,7 +133,7 @@ pub fn fromGenerated(
     var result: Handlers = .{
         .vm = globalObject.bunVM(),
         .globalObject = globalObject,
-        .is_server = is_server,
+        .mode = if (is_server) .server else .client,
         .binary_type = switch (generated.binary_type) {
             .arraybuffer => .ArrayBuffer,
             .buffer => .Buffer,
@@ -217,7 +217,7 @@ pub fn clone(this: *const Handlers) Handlers {
         .vm = this.vm,
         .globalObject = this.globalObject,
         .binary_type = this.binary_type,
-        .is_server = this.is_server,
+        .mode = this.mode,
     };
     inline for (callback_fields) |field| {
         @field(result, field) = @field(this, field);
@@ -230,7 +230,7 @@ pub fn clone(this: *const Handlers) Handlers {
 pub const SocketConfig = struct {
     hostname_or_unix: jsc.ZigString.Slice,
     port: ?u16 = null,
-    fd: ?bun.FileDescriptor = null,
+    fd: ?bun.FD = null,
     ssl: ?SSLConfig = null,
     handlers: Handlers,
     default_data: jsc.JSValue = .zero,
@@ -300,7 +300,7 @@ pub const SocketConfig = struct {
         if (result.fd != null) {
             // If a user passes a file descriptor then prefer it over hostname or unix
         } else if (generated.unix_.get()) |unix| {
-            bun.assertf(unix.length() > 0, "truthy bindgen string shouldn't be empty", .{});
+            if (unix.length() == 0) return global.throwInvalidArguments("Expected a non-empty \"unix\" path", .{});
             result.hostname_or_unix = unix.toUTF8(bun.default_allocator);
             const slice = result.hostname_or_unix.slice();
             if (strings.hasPrefixComptime(slice, "file://") or
@@ -312,7 +312,7 @@ pub const SocketConfig = struct {
                 result.hostname_or_unix = .init(bun.default_allocator, without_prefix);
             }
         } else if (generated.hostname.get()) |hostname| {
-            bun.assertf(hostname.length() > 0, "truthy bindgen string shouldn't be empty", .{});
+            if (hostname.length() == 0) return global.throwInvalidArguments("Expected a non-empty \"hostname\"", .{});
             result.hostname_or_unix = hostname.toUTF8(bun.default_allocator);
             const slice = result.hostname_or_unix.slice();
             result.port = generated.port orelse bun.URL.parse(slice).getPort() orelse {
@@ -346,6 +346,7 @@ const strings = bun.strings;
 const uws = bun.uws;
 const Listener = bun.api.Listener;
 const SSLConfig = bun.api.ServerConfig.SSLConfig;
+const SocketMode = bun.api.socket.SocketMode;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

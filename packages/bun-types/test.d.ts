@@ -2227,6 +2227,7 @@ declare module "bun:test" {
       mockResolvedValueOnce(value: ResolveType<T>): this;
       mockRejectedValue(value: RejectType<T>): this;
       mockRejectedValueOnce(value: RejectType<T>): this;
+      [Symbol.dispose](): void;
     }
 
     // export type MockMetadata<T, MetadataType = MockMetadataType> = {

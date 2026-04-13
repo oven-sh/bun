@@ -94,7 +94,7 @@ pub const LifecycleScriptSubprocess = struct {
         this.handleExit(process.status);
     }
 
-    fn resetOutputFlags(output: *OutputReader, fd: bun.FileDescriptor) void {
+    fn resetOutputFlags(output: *OutputReader, fd: bun.FD) void {
         output.flags.nonblocking = true;
         output.flags.socket = true;
         output.flags.memfd = false;
@@ -187,8 +187,8 @@ pub const LifecycleScriptSubprocess = struct {
             null,
         };
         if (Environment.isWindows) {
-            this.stdout.source = .{ .pipe = bun.handleOom(bun.default_allocator.create(uv.Pipe)) };
-            this.stderr.source = .{ .pipe = bun.handleOom(bun.default_allocator.create(uv.Pipe)) };
+            this.stdout.source = .{ .pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe)) };
+            this.stderr.source = .{ .pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe)) };
         }
         const spawn_options = bun.spawn.SpawnOptions{
             .stdin = if (this.foreground)
@@ -348,7 +348,7 @@ pub const LifecycleScriptSubprocess = struct {
                     if (this.optional) {
                         if (this.ctx) |ctx| {
                             ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].store(.done, .release);
-                            ctx.installer.onTaskComplete(ctx.entry_id, .fail);
+                            ctx.installer.onTaskComplete(ctx.entry_id, .skipped);
                         }
                         this.decrementPendingScriptTasks();
                         this.deinitAndDeletePackage();
@@ -454,7 +454,7 @@ pub const LifecycleScriptSubprocess = struct {
                 if (this.optional) {
                     if (this.ctx) |ctx| {
                         ctx.installer.store.entries.items(.step)[ctx.entry_id.get()].store(.done, .release);
-                        ctx.installer.onTaskComplete(ctx.entry_id, .fail);
+                        ctx.installer.onTaskComplete(ctx.entry_id, .skipped);
                     }
                     this.decrementPendingScriptTasks();
                     this.deinitAndDeletePackage();

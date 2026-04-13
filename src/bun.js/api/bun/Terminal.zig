@@ -31,16 +31,16 @@ pub const deref = RefCount.deref;
 ref_count: RefCount,
 
 /// The master side of the PTY (original fd, used for ioctl operations)
-master_fd: bun.FileDescriptor,
+master_fd: bun.FD,
 
 /// Duplicated master fd for reading
-read_fd: bun.FileDescriptor,
+read_fd: bun.FD,
 
 /// Duplicated master fd for writing
-write_fd: bun.FileDescriptor,
+write_fd: bun.FD,
 
 /// The slave side of the PTY (used by child processes)
-slave_fd: bun.FileDescriptor,
+slave_fd: bun.FD,
 
 /// Current terminal size
 cols: u16,
@@ -236,20 +236,16 @@ fn initTerminal(
     terminal.ref();
 
     // Store callbacks via generated gc setters (prevents GC of callbacks while terminal is alive)
+    // Note: callbacks were already validated in parseFromJS() and may be wrapped in AsyncContextFrame
+    // by withAsyncContextIfNeeded(), so we don't re-check isCallable() here
     if (options.data_callback) |cb| {
-        if (cb.isCell() and cb.isCallable()) {
-            js.gc.set(.data, this_value, globalObject, cb);
-        }
+        js.gc.set(.data, this_value, globalObject, cb);
     }
     if (options.exit_callback) |cb| {
-        if (cb.isCell() and cb.isCallable()) {
-            js.gc.set(.exit, this_value, globalObject, cb);
-        }
+        js.gc.set(.exit, this_value, globalObject, cb);
     }
     if (options.drain_callback) |cb| {
-        if (cb.isCell() and cb.isCallable()) {
-            js.gc.set(.drain, this_value, globalObject, cb);
-        }
+        js.gc.set(.drain, this_value, globalObject, cb);
     }
 
     return .{ .terminal = terminal, .js_value = this_value };
@@ -296,7 +292,7 @@ pub fn createFromSpawn(
 }
 
 /// Get the slave fd for subprocess to use
-pub fn getSlaveFd(this: *Terminal) bun.FileDescriptor {
+pub fn getSlaveFd(this: *Terminal) bun.FD {
     return this.slave_fd;
 }
 
@@ -311,10 +307,10 @@ pub fn closeSlaveFd(this: *Terminal) void {
 }
 
 const PtyResult = struct {
-    master: bun.FileDescriptor,
-    read_fd: bun.FileDescriptor,
-    write_fd: bun.FileDescriptor,
-    slave: bun.FileDescriptor,
+    master: bun.FD,
+    read_fd: bun.FD,
+    write_fd: bun.FD,
+    slave: bun.FD,
 };
 
 const CreatePtyError = error{ OpenPtyFailed, DupFailed, NotSupported };
@@ -622,7 +618,7 @@ pub fn write(
         .done => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
         .wrote => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
         .pending => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
-        .err => |err| globalObject.throwValue(err.toJS(globalObject)),
+        .err => |err| globalObject.throwValue(try err.toJS(globalObject)),
     };
 }
 
@@ -702,8 +698,7 @@ pub fn setRawMode(
 
     if (comptime Environment.isPosix) {
         // Use the existing TTY mode function
-        const mode: c_int = if (enabled) 1 else 0;
-        const tty_result = Bun__ttySetMode(this.master_fd.cast(), mode);
+        const tty_result = bun.tty.setMode(this.master_fd.cast(), if (enabled) .raw else .normal);
         if (tty_result != 0) {
             return globalObject.throw("Failed to set raw mode", .{});
         }
@@ -712,20 +707,17 @@ pub fn setRawMode(
     this.flags.raw_mode = enabled;
     return .js_undefined;
 }
-
-extern fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
-
 /// POSIX termios struct for terminal flags manipulation
 const Termios = if (Environment.isPosix) std.posix.termios else void;
 
 /// Get terminal attributes using tcgetattr
-fn getTermios(fd: bun.FileDescriptor) ?Termios {
+fn getTermios(fd: bun.FD) ?Termios {
     if (comptime !Environment.isPosix) return null;
     return std.posix.tcgetattr(fd.cast()) catch null;
 }
 
 /// Set terminal attributes using tcsetattr (TCSANOW = immediate)
-fn setTermios(fd: bun.FileDescriptor, termios_p: *const Termios) bool {
+fn setTermios(fd: bun.FD, termios_p: *const Termios) bool {
     if (comptime !Environment.isPosix) return false;
     std.posix.tcsetattr(fd.cast(), .NOW, termios_p.*) catch return false;
     return true;

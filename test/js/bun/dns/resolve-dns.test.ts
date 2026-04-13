@@ -112,4 +112,35 @@ describe("dns", () => {
       });
     });
   });
+
+  test("lookup with non-object second argument should not crash", async () => {
+    // Non-object cell values (like strings) passed as options should be ignored, not crash.
+    // @ts-expect-error
+    const result = await dns.lookup("localhost", "cat");
+    expect(result).toBeArray();
+    expect(result.length).toBeGreaterThan(0);
+    expect(isIP(result[0].address)).toBeGreaterThan(0);
+  });
+
+  describe("setServers", () => {
+    test("triple with non-int32 family (double) throws TypeError", () => {
+      // @ts-expect-error
+      expect(() => dns.setServers([[-9007199254740991, "8.8.8.8", 53]])).toThrow(TypeError);
+    });
+
+    test("triple with missing port (undefined) should not crash", () => {
+      // undefined port coerces to 0, which is a valid int32
+      // @ts-expect-error
+      expect(() => dns.setServers([[4, "8.8.8.8"]])).not.toThrow();
+    });
+
+    test("triple with missing family (undefined) throws TypeError", () => {
+      // @ts-expect-error
+      expect(() => dns.setServers([["8.8.8.8"]])).toThrow(TypeError);
+    });
+
+    test("valid triple should succeed", () => {
+      expect(() => dns.setServers([[4, "8.8.8.8", 53]])).not.toThrow();
+    });
+  });
 });

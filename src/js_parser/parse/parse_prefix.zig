@@ -93,10 +93,18 @@ pub fn ParsePrefix(
                 // A following identifier means `await IDENT`, which is
                 // normally not a valid continuation of an identifier
                 // expression — *except* when the follow-up identifier is a
-                // contextual keyword like `of` or `in` that the outer
-                // for-statement parser is depending on.
+                // contextual keyword that the outer parser is depending on:
+                //   - `of` : for-of (and for-of loops with `await` as the
+                //     loop variable name).
+                //   - `in` : for-in (`in` itself tokenizes as `.t_in`, but
+                //     be conservative in case that ever changes).
+                //   - `as` / `satisfies` : TypeScript infix type
+                //     operators. `await as SomeType` must stay as an
+                //     identifier cast so `parseSuffix` can consume `as`.
                 .t_identifier => !(strings.eqlComptime(p.lexer.raw(), "of") or
-                    strings.eqlComptime(p.lexer.raw(), "in")),
+                    strings.eqlComptime(p.lexer.raw(), "in") or
+                    strings.eqlComptime(p.lexer.raw(), "as") or
+                    strings.eqlComptime(p.lexer.raw(), "satisfies")),
                 else => false,
             };
         }

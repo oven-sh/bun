@@ -48,7 +48,7 @@ test("resolver does not attempt auto-install for invalid npm package names", asy
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("ok");
   expect(requests).toBe(0);
@@ -86,7 +86,7 @@ test("resolver still attempts auto-install for valid npm package names", async (
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("ok");
   expect(requests).toBeGreaterThan(0);

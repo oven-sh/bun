@@ -89,6 +89,10 @@ describe.if(!isWindows)("uv stubs", () => {
   test("should not crash when calling supported uv functions", async () => {
     const { stdout, exitCode } = await Bun.$`${bunExe()} run nocrash.ts`.cwd(tempdir).throws(false).quiet();
     expect(exitCode).toBe(0);
-    expect(stdout.toString()).toContain("HI!");
+    const out = stdout.toString();
+    expect(out).toContain("HI!");
+    // good_plugin.c exercises uv_thread_self/_equal/_join/_detach/_create/_create_ex
+    // — regression for #29260 (uv_thread_self panic loading ffi-napi).
+    expect(out).toContain("THREAD_OK");
   });
 });

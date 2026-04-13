@@ -46,11 +46,7 @@ test("#29264 bundler survives external + missing imports in same file", async ()
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // The fixture script must reach the `catch` and print DONE. Before
   // the fix, the process crashed inside `Bun.build` with a segfault

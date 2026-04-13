@@ -391,22 +391,32 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     if (provider) {
                         url = provider->sourceURL();
                         scriptId = static_cast<int>(provider->asID());
-
-                        bool isAbsolutePath = false;
-                        if (!url.isEmpty()) {
-                            if (url[0] == '/')
-                                isAbsolutePath = true;
-                            else if (url.length() >= 2 && url[1] == ':') {
-                                char firstChar = url[0];
-                                if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
-                                    isAbsolutePath = true;
-                            } else if (url.length() >= 2 && url[0] == '\\' && url[1] == '\\')
-                                isAbsolutePath = true;
-                        }
-
-                        if (isAbsolutePath)
-                            url = WTF::URL::fileURLWithFileSystemPath(url).string();
                     }
+
+                    // Absolute file path → `file://` URL. Chrome DevTools
+                    // expects `callFrame.url` to be a proper URL; leaving
+                    // the raw path breaks source-view resolution. We run
+                    // this AFTER the sourcemap callbacks below because the
+                    // callback (see FormatStackTraceForJS.cpp) unconditionally
+                    // rewrites its out-param back to the raw provider URL when
+                    // no sourcemap is found, which would undo an earlier
+                    // normalization. See #29240.
+                    auto normalizeURL = [](WTF::String& u) {
+                        if (u.isEmpty())
+                            return;
+                        bool isAbsolutePath = false;
+                        if (u[0] == '/') {
+                            isAbsolutePath = true;
+                        } else if (u.length() >= 2 && u[1] == ':') {
+                            char firstChar = u[0];
+                            if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
+                                isAbsolutePath = true;
+                        } else if (u.length() >= 2 && u[0] == '\\' && u[1] == '\\') {
+                            isAbsolutePath = true;
+                        }
+                        if (isAbsolutePath)
+                            u = WTF::URL::fileURLWithFileSystemPath(u).string();
+                    };
 
                     // Function definition location. JSC returns these 1-based;
                     // Node/Deno/Chrome DevTools emit them 0-based in the JSON.
@@ -438,6 +448,10 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                             : 0;
                     }
 
+                    // Normalize `url` to a `file://` URL now that any
+                    // sourcemap rewriting is done.
+                    normalizeURL(url);
+
                     if (frame.hasExpressionInfo()) {
                         // Sample position for positionTicks. Use a throwaway
                         // out-param so the sample remap can't clobber `url`
@@ -449,7 +463,10 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         // ProfileNode whose callFrame.url is a different file
                         // would mislocate the tick in Chrome DevTools.
                         JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
-                        WTF::String sampleURL = url;
+                        // Seed with the pre-normalized path so the sample
+                        // remap callback's comparison sees the same raw-vs-
+                        // raw values it uses internally.
+                        WTF::String sampleURL = provider ? WTF::String(provider->sourceURL()) : WTF::String();
                         if (provider) {
 #if USE(BUN_JSC_ADDITIONS)
                             auto& fn = vm.computeLineColumnWithSourcemap();
@@ -458,6 +475,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                             }
 #endif
                         }
+                        normalizeURL(sampleURL);
                         if (sourceMappedLineColumn.line > 0 && sampleURL == url)
                             sampleLine = static_cast<int>(sourceMappedLineColumn.line);
                     }

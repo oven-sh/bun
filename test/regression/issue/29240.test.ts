@@ -60,10 +60,16 @@ console.log("done");
 
   const profile = JSON.parse(readFileSync(join(String(dir), "out.cpuprofile"), "utf8"));
 
+  // callFrame.url must be a proper `file://` URL for absolute-path scripts —
+  // Chrome DevTools and other cpuprofile viewers won't resolve source views
+  // from bare paths. Matches Node's `file:///path/to/script.js` format.
   const scriptNodes = profile.nodes.filter(
-    (n: any) => typeof n.callFrame.url === "string" && n.callFrame.url.endsWith("script.js"),
+    (n: any) => typeof n.callFrame.url === "string" && n.callFrame.url.endsWith("/script.js"),
   );
   expect(scriptNodes.length).toBeGreaterThan(0);
+  for (const n of scriptNodes) {
+    expect(n.callFrame.url).toStartWith("file://");
+  }
 
   const fibNodes = scriptNodes.filter((n: any) => n.callFrame.functionName === "fibonacci");
   expect(fibNodes.length).toBeGreaterThan(0);
@@ -188,11 +194,15 @@ console.log("result", hot() > 0);
   const profile = JSON.parse(readFileSync(join(String(dir), "out.cpuprofile"), "utf8"));
 
   // After sourcemap remapping, callFrame.url should be the ORIGINAL .ts URL
-  // (not a transpiled-bundle `bun://` / `file://...js` URL).
+  // (not a transpiled-bundle `bun://` / `file://...js` URL), and must still
+  // be wrapped in a `file://` scheme for tool compatibility.
   const scriptNodes = profile.nodes.filter(
-    (n: any) => typeof n.callFrame.url === "string" && n.callFrame.url.endsWith("script.ts"),
+    (n: any) => typeof n.callFrame.url === "string" && n.callFrame.url.endsWith("/script.ts"),
   );
   expect(scriptNodes.length).toBeGreaterThan(0);
+  for (const n of scriptNodes) {
+    expect(n.callFrame.url).toStartWith("file://");
+  }
 
   // `fibonacci` is defined on line 1 of the ORIGINAL TS source. After the
   // sourcemap is applied, callFrame.lineNumber must be 0 (0-indexed).

@@ -140,12 +140,11 @@ console.log("done");
   // Keying on (functionName, url, lineNumber, columnNumber) must collapse
   // repeated calls of the same function — the exact guarantee the issue
   // reporter asked for so cross-runtime cpuprofile code can merge nodes.
-  // (The `url` field may appear in two forms — `/abs/path.js` vs
-  // `file:///abs/path.js` — depending on how the provider's sourceURL
-  // surfaces; that's a pre-existing URL-normalization quirk not in scope
-  // for this issue. The line/column merge key is what matters.)
   const uniqueFibKeys = new Set(
-    fibNodes.map((n: any) => `${n.callFrame.functionName}|${n.callFrame.lineNumber}|${n.callFrame.columnNumber}`),
+    fibNodes.map(
+      (n: any) =>
+        `${n.callFrame.functionName}|${n.callFrame.url}|${n.callFrame.lineNumber}|${n.callFrame.columnNumber}`,
+    ),
   );
   expect(uniqueFibKeys.size).toBe(1);
 });

@@ -463,9 +463,15 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         // ProfileNode whose callFrame.url is a different file
                         // would mislocate the tick in Chrome DevTools.
                         JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
-                        // Seed with the pre-normalized path so the sample
-                        // remap callback's comparison sees the same raw-vs-
-                        // raw values it uses internally.
+                        // Seed with the raw provider URL (NOT empty). If the
+                        // sourcemap callback is a no-op — BUN_JSC_ADDITIONS
+                        // off, fn null, or the provider has no sourcemap —
+                        // sampleURL stays at this seed, and normalizeURL()
+                        // below converts it to the same `file://` form as
+                        // `url`, letting the `sampleURL == url` guard pass
+                        // for plain .js files. Seeding empty would silently
+                        // suppress positionTicks for every non-sourcemapped
+                        // script.
                         WTF::String sampleURL = provider ? WTF::String(provider->sourceURL()) : WTF::String();
                         if (provider) {
 #if USE(BUN_JSC_ADDITIONS)

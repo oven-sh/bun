@@ -16,6 +16,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/URL.h>
 #include <algorithm>
+#include <limits>
 
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText);
@@ -66,10 +67,19 @@ struct ProfileNode {
     WTF::String functionName;
     WTF::String url;
     int scriptId;
+    // lineNumber/columnNumber are the location where the function is DEFINED
+    // (matching Node/Deno/Chrome DevTools), stored as 0-indexed values ready
+    // for JSON emission. -1 means "unknown".
     int lineNumber;
     int columnNumber;
     int hitCount;
     WTF::Vector<int> children;
+    // Per-line sample counts for this node, keyed by 1-indexed source line.
+    // Emitted as `positionTicks` in the JSON output when non-empty, matching
+    // the Chrome DevTools CPU profile format used by Node and Deno.
+    // Lines are guaranteed non-zero, so the default IntHashTraits (which reserve
+    // 0 and -1 as empty/deleted sentinels) are safe here.
+    WTF::HashMap<int, int, WTF::IntHash<int>> positionTicks;
 };
 
 WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
@@ -160,8 +170,13 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
             WTF::String functionName;
             WTF::String url;
             int scriptId = 0;
-            int lineNumber = -1;
-            int columnNumber = -1;
+            // Function-definition line/column (0-indexed for JSON emit, matching
+            // Node/Deno/Chrome DevTools). -1 means "unknown".
+            int functionDefLine = -1;
+            int functionDefColumn = -1;
+            // Current-sample line (1-indexed) — fed to positionTicks when this
+            // frame is the top of the stack. 0 means "unknown".
+            int sampleLine = 0;
 
             // Get function name - displayName works for all frame types
             functionName = frame.displayName(vm);
@@ -200,8 +215,36 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                     }
                 }
 
+                // Function definition location. JSC returns these 1-based;
+                // Node/Deno/Chrome DevTools emit them 0-based in the JSON.
+                int rawFunctionStartLine = frame.functionStartLine();
+                unsigned rawFunctionStartColumn = frame.functionStartColumn();
+                if (rawFunctionStartLine > 0 && rawFunctionStartColumn != std::numeric_limits<unsigned>::max()) {
+                    JSC::LineColumn functionStartLineColumn {
+                        static_cast<unsigned>(rawFunctionStartLine),
+                        rawFunctionStartColumn,
+                    };
+                    WTF::String functionDefURL = url;
+                    if (provider) {
+#if USE(BUN_JSC_ADDITIONS)
+                        auto& fn = vm.computeLineColumnWithSourcemap();
+                        if (fn) {
+                            fn(vm, provider, functionStartLineColumn, functionDefURL);
+                        }
+#endif
+                    }
+                    // Emit 0-indexed, clamping at 0 so we never underflow.
+                    functionDefLine = functionStartLineColumn.line > 0
+                        ? static_cast<int>(functionStartLineColumn.line) - 1
+                        : 0;
+                    functionDefColumn = functionStartLineColumn.column > 0
+                        ? static_cast<int>(functionStartLineColumn.column) - 1
+                        : 0;
+                }
+
                 if (frame.hasExpressionInfo()) {
-                    // Apply sourcemap if available
+                    // Current sample position (what line inside the function
+                    // was executing). Apply sourcemap if available.
                     JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
                     if (provider) {
 #if USE(BUN_JSC_ADDITIONS)
@@ -211,13 +254,16 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                         }
 #endif
                     }
-                    lineNumber = static_cast<int>(sourceMappedLineColumn.line);
-                    columnNumber = static_cast<int>(sourceMappedLineColumn.column);
+                    // positionTicks lines are 1-indexed in the Chrome format;
+                    // semanticLocation.line is already 1-based.
+                    if (sourceMappedLineColumn.line > 0)
+                        sampleLine = static_cast<int>(sourceMappedLineColumn.line);
                 }
             }
 
-            // Create a unique key for this frame based on parent + callFrame
-            // This creates separate nodes for the same function in different call paths
+            // Create a unique key for this frame based on parent + callFrame.
+            // line/column here identify the function's DEFINITION, so all samples
+            // of the same function under the same parent collapse to one node.
             WTF::StringBuilder keyBuilder;
             keyBuilder.append(currentParentId);
             keyBuilder.append(':');
@@ -227,9 +273,9 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
             keyBuilder.append(':');
             keyBuilder.append(scriptId);
             keyBuilder.append(':');
-            keyBuilder.append(lineNumber);
+            keyBuilder.append(functionDefLine);
             keyBuilder.append(':');
-            keyBuilder.append(columnNumber);
+            keyBuilder.append(functionDefColumn);
 
             WTF::String key = keyBuilder.toString();
 
@@ -245,8 +291,8 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                 node.functionName = functionName;
                 node.url = url;
                 node.scriptId = scriptId;
-                node.lineNumber = lineNumber;
-                node.columnNumber = columnNumber;
+                node.lineNumber = functionDefLine;
+                node.columnNumber = functionDefColumn;
                 node.hitCount = 0;
 
                 nodes.append(WTF::move(node));
@@ -262,9 +308,13 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 
             currentParentId = nodeId;
 
-            // If this is the top frame, increment hit count
+            // If this is the top frame, increment hit count and record the
+            // sample line in positionTicks (matching Node/Deno/Chrome DevTools).
             if (i == 0) {
                 nodes[nodeId - 1].hitCount++;
+                if (sampleLine > 0) {
+                    nodes[nodeId - 1].positionTicks.add(sampleLine, 0).iterator->value++;
+                }
             }
         }
 
@@ -311,6 +361,26 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                 }
             }
             nodeObj->setValue("children"_s, childrenArray);
+        }
+
+        // Per-line sample counts (Chrome DevTools format). Emit sorted by line
+        // for deterministic output.
+        if (!node.positionTicks.isEmpty()) {
+            WTF::Vector<std::pair<int, int>> sortedTicks;
+            sortedTicks.reserveInitialCapacity(node.positionTicks.size());
+            for (auto& entry : node.positionTicks)
+                sortedTicks.append({ entry.key, entry.value });
+            std::sort(sortedTicks.begin(), sortedTicks.end(), [](const auto& a, const auto& b) {
+                return a.first < b.first;
+            });
+            auto positionTicksArray = JSON::Array::create();
+            for (auto& [line, ticks] : sortedTicks) {
+                auto tickObj = JSON::Object::create();
+                tickObj->setInteger("line"_s, line);
+                tickObj->setInteger("ticks"_s, ticks);
+                positionTicksArray->pushValue(tickObj);
+            }
+            nodeObj->setValue("positionTicks"_s, positionTicksArray);
         }
 
         nodesArray->pushValue(nodeObj);
@@ -638,8 +708,11 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                 WTF::String functionName = frame.displayName(vm);
                 WTF::String url;
                 int scriptId = 0;
-                int lineNumber = -1;
-                int columnNumber = -1;
+                // Function-definition line/column (0-indexed) for callFrame.
+                int functionDefLine = -1;
+                int functionDefColumn = -1;
+                // Current-sample line (1-indexed) for positionTicks.
+                int sampleLine = 0;
 
                 if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
                     auto sourceProviderAndID = frame.sourceProviderAndID();
@@ -664,6 +737,32 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                             url = WTF::URL::fileURLWithFileSystemPath(url).string();
                     }
 
+                    // Function definition location. JSC returns these 1-based;
+                    // Node/Deno/Chrome DevTools emit them 0-based in the JSON.
+                    int rawFunctionStartLine = frame.functionStartLine();
+                    unsigned rawFunctionStartColumn = frame.functionStartColumn();
+                    if (rawFunctionStartLine > 0 && rawFunctionStartColumn != std::numeric_limits<unsigned>::max()) {
+                        JSC::LineColumn functionStartLineColumn {
+                            static_cast<unsigned>(rawFunctionStartLine),
+                            rawFunctionStartColumn,
+                        };
+                        WTF::String functionDefURL = url;
+                        if (provider) {
+#if USE(BUN_JSC_ADDITIONS)
+                            auto& fn = vm.computeLineColumnWithSourcemap();
+                            if (fn) {
+                                fn(vm, provider, functionStartLineColumn, functionDefURL);
+                            }
+#endif
+                        }
+                        functionDefLine = functionStartLineColumn.line > 0
+                            ? static_cast<int>(functionStartLineColumn.line) - 1
+                            : 0;
+                        functionDefColumn = functionStartLineColumn.column > 0
+                            ? static_cast<int>(functionStartLineColumn.column) - 1
+                            : 0;
+                    }
+
                     if (frame.hasExpressionInfo()) {
                         JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
                         if (provider) {
@@ -673,11 +772,13 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                                 fn(vm, provider, sourceMappedLineColumn, url);
 #endif
                         }
-                        lineNumber = static_cast<int>(sourceMappedLineColumn.line);
-                        columnNumber = static_cast<int>(sourceMappedLineColumn.column);
+                        if (sourceMappedLineColumn.line > 0)
+                            sampleLine = static_cast<int>(sourceMappedLineColumn.line);
                     }
                 }
 
+                // line/column here identify the function's DEFINITION, so all
+                // samples of the same function under the same parent collapse.
                 WTF::StringBuilder keyBuilder;
                 keyBuilder.append(currentParentId);
                 keyBuilder.append(':');
@@ -687,9 +788,9 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                 keyBuilder.append(':');
                 keyBuilder.append(scriptId);
                 keyBuilder.append(':');
-                keyBuilder.append(lineNumber);
+                keyBuilder.append(functionDefLine);
                 keyBuilder.append(':');
-                keyBuilder.append(columnNumber);
+                keyBuilder.append(functionDefColumn);
 
                 WTF::String key = keyBuilder.toString();
 
@@ -704,8 +805,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     node.functionName = functionName;
                     node.url = url;
                     node.scriptId = scriptId;
-                    node.lineNumber = lineNumber;
-                    node.columnNumber = columnNumber;
+                    node.lineNumber = functionDefLine;
+                    node.columnNumber = functionDefColumn;
                     node.hitCount = 0;
 
                     nodes.append(WTF::move(node));
@@ -718,8 +819,11 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
                 currentParentId = nodeId;
 
-                if (i == 0)
+                if (i == 0) {
                     nodes[nodeId - 1].hitCount++;
+                    if (sampleLine > 0)
+                        nodes[nodeId - 1].positionTicks.add(sampleLine, 0).iterator->value++;
+                }
             }
 
             samples.append(currentParentId);
@@ -759,6 +863,26 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         childrenArray->pushInteger(childId);
                 }
                 nodeObj->setValue("children"_s, childrenArray);
+            }
+
+            // Per-line sample counts (Chrome DevTools format). Emit sorted by
+            // line for deterministic output.
+            if (!node.positionTicks.isEmpty()) {
+                WTF::Vector<std::pair<int, int>> sortedTicks;
+                sortedTicks.reserveInitialCapacity(node.positionTicks.size());
+                for (auto& entry : node.positionTicks)
+                    sortedTicks.append({ entry.key, entry.value });
+                std::sort(sortedTicks.begin(), sortedTicks.end(), [](const auto& a, const auto& b) {
+                    return a.first < b.first;
+                });
+                auto positionTicksArray = JSON::Array::create();
+                for (auto& [line, ticks] : sortedTicks) {
+                    auto tickObj = JSON::Object::create();
+                    tickObj->setInteger("line"_s, line);
+                    tickObj->setInteger("ticks"_s, ticks);
+                    positionTicksArray->pushValue(tickObj);
+                }
+                nodeObj->setValue("positionTicks"_s, positionTicksArray);
             }
 
             nodesArray->pushValue(nodeObj);

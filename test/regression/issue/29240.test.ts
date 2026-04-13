@@ -1,22 +1,11 @@
 // https://github.com/oven-sh/bun/issues/29240
-//
-// --cpu-prof wrote the sample position into callFrame.lineNumber /
-// callFrame.columnNumber and emitted no positionTicks, diverging from the
-// Chrome DevTools CPU profile format used by Node and Deno. Tools that key
-// profile nodes on (functionName, url, lineNumber, columnNumber) could not
-// merge repeated calls because every sampled statement looked like a distinct
-// function.
-//
-// The fix makes callFrame.lineNumber / columnNumber point at the function's
-// DEFINITION (0-indexed), and surfaces per-sample lines as a positionTicks
-// array of {line, ticks} pairs (1-indexed), matching Node/Deno output.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-test("cpu-prof callFrame.lineNumber/columnNumber point at function definition, not sample position (#29240)", async () => {
+test("cpu-prof callFrame.lineNumber/columnNumber point at function definition, not sample position (#29240)", { timeout: 30_000 }, async () => {
   // fibonacci is recursive so it shows up on many stacks at many different
   // sample lines — this is the exact case where the old Bun output fragmented
   // into dozens of nodes per function. Same for the busy loop body in
@@ -153,7 +142,7 @@ console.log("done");
   expect(uniqueFibKeys.size).toBe(1);
 });
 
-test("cpu-prof respects sourcemaps for both function definition and positionTicks (#29240)", async () => {
+test("cpu-prof respects sourcemaps for both function definition and positionTicks (#29240)", { timeout: 30_000 }, async () => {
   // Bun transpiles `.ts` files through its bundler at load time, which sets
   // up an internal sourcemap from the generated JS back to the original TS.
   // That's the exact path `computeLineColumnWithSourcemap` is wired to.

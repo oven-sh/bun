@@ -430,8 +430,15 @@ export function modulePrototypeLoad(this: JSCommonJSModule, filename: string) {
   const Module = require("node:module");
   const path = require("node:path");
 
+  // Update `filename`, `path` (= `m_dirname`, drives `__dirname`), and
+  // `paths` before dispatching: the .js handler goes through the native
+  // evaluate() path, which reads `this.path` for the module's __dirname.
+  // Without this, `__dirname` would stay at whatever the constructor was
+  // given, not where the file actually lives.
+  const dirname = path.dirname(filename);
   this.filename = filename;
-  this.paths = Module._nodeModulePaths(path.dirname(filename));
+  this.path = dirname;
+  this.paths = Module._nodeModulePaths(dirname);
 
   // Find the longest-matching registered extension, mirroring Node's
   // `findLongestRegisteredExtension` in lib/internal/modules/cjs/loader.js.

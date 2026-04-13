@@ -1204,13 +1204,18 @@ pub fn VisitStmt(
                 // live when we reach it in reachable control flow at module
                 // scope so we don't silently drop the diagnostic for loops
                 // whose body happens not to contain any `await` expressions.
-                // `parseStmt.t_for` has already stored the correct `await`
-                // range in `p.top_level_await_keyword`, so leave that alone
-                // and only flip the flag.
+                // Overwrite `top_level_await_keyword` with the range parse
+                // captured for this loop so that the post-visit diagnostic
+                // points at the live `for await` keyword, not at some
+                // later-parsed dead `await` that the parse pass last wrote.
                 if (data.is_await and
                     !p.is_control_flow_dead and
-                    p.fn_or_arrow_data_visit.is_outside_fn_or_arrow)
+                    p.fn_or_arrow_data_visit.is_outside_fn_or_arrow and
+                    !p.has_live_top_level_await)
                 {
+                    if (data.await_range.len > 0) {
+                        p.top_level_await_keyword = data.await_range;
+                    }
                     p.has_live_top_level_await = true;
                 }
 

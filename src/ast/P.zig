@@ -6852,13 +6852,9 @@ pub fn NewParser_(
             this.require_transposer = @TypeOf(this.require_transposer).init(this);
             this.require_resolve_transposer = @TypeOf(this.require_resolve_transposer).init(this);
 
-            // We always mark the top-level fn_or_arrow data as top-level so
-            // that parsePrefix can record `top_level_await_keyword` even when
-            // the output format doesn't support TLA. This lets DCE prune
-            // unreachable `await` branches before we reject the file.
-            this.fn_or_arrow_data_parse.is_top_level = true;
             if (opts.features.top_level_await or comptime only_scan_imports_and_do_not_visit) {
                 this.fn_or_arrow_data_parse.allow_await = .allow_expr;
+                this.fn_or_arrow_data_parse.is_top_level = true;
             }
 
             if (comptime !is_typescript_enabled) {

@@ -310,3 +310,86 @@ return;`,
   expect(stdout).toContain("return");
   expect(exitCode).toBe(0);
 });
+
+// In TypeScript, `ident!` is the postfix non-null assertion operator.
+// `await` used as an identifier followed by `!` must stay as an identifier
+// use; upgrading on `.t_exclamation` would break this.
+test("bun build --format=cjs leaves a TS `await!` identifier use alone", async () => {
+  using dir = tempDir("issue-29243-ts-await-bang", {
+    "entry.ts": `var await = Promise.resolve(1);
+globalThis.output = await!.then(console.log);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.ts", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  // The `!` is a TypeScript postfix assertion and must drop out of the
+  // JavaScript output entirely. `await` stays as a plain identifier.
+  expect(stdout).toContain("var await =");
+  expect(stdout).toContain(".then(console.log)");
+  expect(exitCode).toBe(0);
+});
+
+// `for (await of someIter)` uses `await` as a loop-variable name and `of` as
+// the for-of contextual keyword. Upgrading on the trailing identifier would
+// eat `of` as the await operand and break for-of detection.
+test("bun build --format=cjs keeps `for (await of ...)` parsing as for-of", async () => {
+  using dir = tempDir("issue-29243-for-await-of", {
+    "entry.js": `globalThis.output = [];
+for (await of [1, 2, 3]) {
+  globalThis.output.push(await);
+}`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toContain("for (await of");
+  expect(stdout).toContain("globalThis.output.push(await)");
+  expect(exitCode).toBe(0);
+});
+
+// A live top-level `for await` loop followed by a dead `if (false) { await
+// ... }` used to point the CJS-TLA diagnostic squiggle at the dead `await`
+// because the parse pass used last-write-wins on `top_level_await_keyword`.
+// Now the visit pass overwrites it with the for-await's stored range.
+test("bun build --format=cjs points a live for-await diagnostic at the live await, not a later dead one", async () => {
+  using dir = tempDir("issue-29243-for-await-drift", {
+    "entry.js": `for await (const x of someIter) {
+  console.log(x);
+}
+if (false) {
+  await import("node:fs");
+}`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // Column 5 points at the `a` of the live for-await's `await`; column 3
+  // would point at the dead `await` on line 5.
+  expect(stderr).toContain("entry.js:1:5");
+  expect(stderr).toContain(`Top-level await is currently not supported with the "cjs" output format`);
+  expect(exitCode).not.toBe(0);
+});

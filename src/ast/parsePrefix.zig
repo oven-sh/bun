@@ -8,23 +8,54 @@ pub fn ParsePrefix(
         const is_jsx_enabled = P.is_jsx_enabled;
         const is_typescript_enabled = P.is_typescript_enabled;
 
-        /// Tokens for which `await TOKEN` cannot be parsed as `identifier
-        /// TOKEN`, i.e. where `await` must be interpreted as the `await`
-        /// keyword rather than a plain identifier. Used at module scope in
-        /// targets where top-level await is nominally disallowed, so that
-        /// DCE gets a chance to eliminate unreachable branches before we
-        /// reject the file.
+        /// True iff the parser is currently parsing a statement or
+        /// expression that is itself at module top level — i.e. walking up
+        /// the scope stack reaches the module `entry` scope without ever
+        /// crossing a function body, function args, arrow, class body,
+        /// class name, or class static init scope. Block and with scopes
+        /// don't count as crossings because statements like `if (false)
+        /// { await import(x); }` are still logically module-scope code.
+        fn isAtModuleScope(p: *P) bool {
+            var scope: ?*js_ast.Scope = p.current_scope;
+            while (scope) |s| : (scope = s.parent) {
+                switch (s.kind) {
+                    .entry => return true,
+                    .function_args,
+                    .function_body,
+                    .class_body,
+                    .class_name,
+                    .class_static_init,
+                    => return false,
+                    else => {},
+                }
+            }
+            return false;
+        }
+
+        /// Returns true when the current lexer position immediately after an
+        /// `await` identifier unambiguously forces `await` to be interpreted
+        /// as the `await` keyword rather than a plain identifier. Used at
+        /// actual module scope in targets where top-level await is nominally
+        /// disallowed, so DCE gets a chance to eliminate unreachable branches
+        /// before we reject the file.
         ///
         /// Notably left out:
         ///   - Template literals (`t_no_substitution_template_literal`,
-        ///     `t_template_head`): `var await = String.raw; await` followed
-        ///     by a backtick is a tagged template call on the identifier,
-        ///     so the identifier interpretation is still valid.
+        ///     `t_template_head`): a backtick after an identifier forms a
+        ///     tagged template call, so the identifier interpretation is
+        ///     still valid (`var await = String.raw; await` + backtick).
+        ///   - `.t_exclamation`: in TypeScript `ident!` is the postfix
+        ///     non-null assertion, so `await!.foo` must stay as an identifier
+        ///     use of `await`.
         ///   - Operators that can bind an identifier on the left (`+`, `-`,
         ///     `*`, `/`, `(`, `[`, `.`, etc.): always ambiguous; don't
         ///     upgrade.
-        fn tokenStartsAwaitExpr(tok: T) bool {
-            return switch (tok) {
+        ///   - A following `.t_identifier` whose raw text is `of` or `in`:
+        ///     `for (await of arr)` and `for (await in obj)` use `await` as
+        ///     a loop variable name; upgrading would eat the contextual
+        ///     keyword and break for-of / for-in detection.
+        fn tokenStartsAwaitExpr(p: *P) bool {
+            return switch (p.lexer.token) {
                 // Statement/expression keywords that can only start a new
                 // expression (they can't continue an identifier expression).
                 .t_import,
@@ -48,15 +79,17 @@ pub fn ParsePrefix(
                 .t_string_literal,
                 .t_numeric_literal,
                 .t_big_integer_literal,
-                // Prefix-only operators that can't follow an identifier.
-                .t_exclamation,
+                // `~` is always a prefix unary operator; it can never follow
+                // an identifier.
                 .t_tilde,
-                // A following identifier means `await IDENT`, which is not a
-                // valid identifier continuation (you can't have two
-                // identifiers in a row at expression level). This also
-                // captures `yield` and `await` as identifiers.
-                .t_identifier,
                 => true,
+                // A following identifier means `await IDENT`, which is
+                // normally not a valid continuation of an identifier
+                // expression — *except* when the follow-up identifier is a
+                // contextual keyword like `of` or `in` that the outer
+                // for-statement parser is depending on.
+                .t_identifier => !(strings.eqlComptime(p.lexer.raw(), "of") or
+                    strings.eqlComptime(p.lexer.raw(), "in")),
                 else => false,
             };
         }
@@ -161,22 +194,29 @@ pub fn ParsePrefix(
                 },
 
                 .is_await => {
-                    // At module scope in a non-ESM target (`allow_ident`), if
-                    // `await` is followed on the same line by a token that
-                    // clearly starts an expression — i.e. one that could
-                    // never be a valid continuation of an identifier —
+                    // If we're at the actual module top-level (the current
+                    // scope has no parent) in a non-ESM target (`allow_ident`)
+                    // and `await` is followed on the same line by a token
+                    // that clearly starts an expression — i.e. one that
+                    // could never be a valid continuation of an identifier —
                     // upgrade to parsing an `await` expression anyway. DCE
                     // then has a chance to drop the branch before we reject
                     // it. If a live await survives DCE, the visit pass emits
                     // a CJS-TLA error instead. (A newline after `await` is
                     // left alone because `await\nfoo` can be two statements
-                    // via ASI.)
+                    // via ASI.) Checking `current_scope.parent == null`
+                    // instead of `fn_or_arrow_data_parse.is_top_level` makes
+                    // this robust against sub-parsers that inherit but never
+                    // reset the flag: every nested construct (function
+                    // bodies, arrow args, class fields, etc.) has already
+                    // pushed its own scope at this point.
+                    const at_module_scope = isAtModuleScope(p);
                     const should_upgrade_to_await_expr =
                         p.fn_or_arrow_data_parse.allow_await == .allow_ident and
-                        p.fn_or_arrow_data_parse.is_top_level and
+                        at_module_scope and
                         !p.lexer.has_newline_before and
                         AsyncPrefixExpression.find(raw) == .is_await and
-                        tokenStartsAwaitExpr(p.lexer.token);
+                        tokenStartsAwaitExpr(p);
                     const effective_allow_await: AwaitOrYield = if (should_upgrade_to_await_expr)
                         .allow_expr
                     else
@@ -190,7 +230,7 @@ pub fn ParsePrefix(
                             if (AsyncPrefixExpression.find(raw) != .is_await) {
                                 p.log.addRangeError(p.source, name_range, "The keyword \"await\" cannot be escaped") catch unreachable;
                             } else {
-                                if (p.fn_or_arrow_data_parse.is_top_level) {
+                                if (p.fn_or_arrow_data_parse.is_top_level or at_module_scope) {
                                     p.top_level_await_keyword = name_range;
                                 }
 

@@ -48,7 +48,8 @@ test.skipIf(!isMacOS && !isWindows)(
 
     // Each fresh process exercises the lazy-load race at most once, so run
     // many processes. The race is intermittent (~1 in 5 on a buggy build) —
-    // with this many tries, a regression reliably surfaces as exit code 139.
+    // with this many tries, a regression reliably surfaces as a non-zero
+    // exit code (often 139 on Unix, an access-violation code on Windows).
     async function run(i: number) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "repro.js"],

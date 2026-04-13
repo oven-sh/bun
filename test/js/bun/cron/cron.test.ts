@@ -255,12 +255,12 @@ describe.skipIf(!hasAnyCronBackend)("cross-platform API consistency", () => {
         // The important thing: the script path ends in the caller dir's worker.ts, not the cwd.
         expect(plist).toMatch(/bun-cron-caller-rel[^<]*[\\/]worker\.ts/);
         // The script path itself must not reference the other-cwd directory.
-        // (--cwd will correctly contain the registration-time cwd, which is allowed.)
+        // (WorkingDirectory will correctly contain the registration-time cwd, which is allowed.)
         const scriptPathMatch = plist.match(/<string>([^<]*worker\.ts)<\/string>/);
         expect(scriptPathMatch).not.toBeNull();
         expect(scriptPathMatch![1]).not.toContain("bun-cron-other-cwd");
-        // --cwd must capture the registration-time cwd
-        const cwdMatch = plist.match(/<string>--cwd=([^<]+)<\/string>/);
+        // WorkingDirectory must capture the registration-time cwd
+        const cwdMatch = plist.match(/<key>WorkingDirectory<\/key>\s*<string>([^<]+)<\/string>/);
         expect(cwdMatch).not.toBeNull();
         expect(cwdMatch![1]).toContain("bun-cron-other-cwd");
       } else if (hasCrontab) {
@@ -281,8 +281,10 @@ describe.skipIf(!hasAnyCronBackend)("cross-platform API consistency", () => {
         const scriptPathMatch = query.match(/"([^"]*worker\.ts)"/);
         expect(scriptPathMatch).not.toBeNull();
         expect(scriptPathMatch![1]).not.toContain("bun-cron-other-cwd");
-        // --cwd must capture the registration-time cwd
-        expect(query).toMatch(/--cwd="[^"]*bun-cron-other-cwd/);
+        // WorkingDirectory must capture the registration-time cwd
+        const cwdMatch = query.match(/<WorkingDirectory>([^<]+)<\/WorkingDirectory>/);
+        expect(cwdMatch).not.toBeNull();
+        expect(cwdMatch![1]).toContain("bun-cron-other-cwd");
       }
     } finally {
       await Bun.cron.remove("test-xplat-caller-rel");

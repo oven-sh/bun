@@ -181,9 +181,7 @@ describe("Bun.cron API", () => {
 
   test("malformed file:// URL string throws ERR_INVALID_URL", () => {
     // Unclosed IPv6 bracket -> WTF::URL parser rejects -> pathFromFileURL returns Dead
-    expect(() => Bun.cron("file://[", "@daily", "t")).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_URL" }),
-    );
+    expect(() => Bun.cron("file://[", "@daily", "t")).toThrow(expect.objectContaining({ code: "ERR_INVALID_URL" }));
   });
 });
 

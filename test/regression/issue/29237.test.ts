@@ -48,11 +48,7 @@ test.skipIf(isWindows)("execFileSync/spawnSync/execSync honor runtime mutations 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Surface any subprocess stderr on assertion failure for diagnosis.
   if (exitCode !== 0) console.error("fixture stderr:", stderr);

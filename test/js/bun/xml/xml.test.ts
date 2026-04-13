@@ -395,7 +395,7 @@ describe("Bun.XML.parse", () => {
     });
 
     test("very long tag name", () => {
-      const name = "a" + Buffer.alloc(5000, "b").toString();
+      const name = "a" + "b".repeat(5000);
       expect(parse(`<${name}>x</${name}>`)).toEqual({ [name]: "x" });
     });
 
@@ -605,12 +605,6 @@ describe("Bun.XML.parse security", () => {
 
     test("billion laughs does not expand", () => {
       let dtd = '<!ENTITY lol "lol">';
-      for (let i = 1; i <= 9; i++) {
-        const prev = `&lol${i === 1 ? "" : i - 1};`;
-        dtd += `<!ENTITY lol${i} "${Buffer.alloc(10, "").fill(prev).toString() || prev.repeat(10)}">`;
-      }
-      // Simpler: build manually since Buffer fill with multi-byte is awkward.
-      dtd = '<!ENTITY lol "lol">';
       let ref = "&lol;";
       for (let i = 1; i <= 9; i++) {
         dtd += `<!ENTITY lol${i} "${ref}${ref}${ref}${ref}${ref}${ref}${ref}${ref}${ref}${ref}">`;
@@ -624,7 +618,7 @@ describe("Bun.XML.parse security", () => {
     test("quadratic blowup via single large entity referenced many times", () => {
       // Even with a predefined entity, referencing it N times must be linear.
       const n = 5000;
-      const body = Buffer.alloc(n * 5, "&amp;").toString();
+      const body = "&amp;".repeat(n);
       const start = Bun.nanoseconds();
       const result = parse(`<r>${body}</r>`) as any;
       const elapsed_ms = (Bun.nanoseconds() - start) / 1e6;
@@ -642,9 +636,7 @@ describe("Bun.XML.parse security", () => {
   describe("DOCTYPE abuse", () => {
     test("deeply nested internal subset does not recurse unboundedly", () => {
       const depth = 2000;
-      const open = Buffer.alloc(depth, "<").toString();
-      const close = Buffer.alloc(depth, ">").toString();
-      const xml = `<!DOCTYPE r [${open}${close}]><r>x</r>`;
+      const xml = `<!DOCTYPE r [${"<".repeat(depth)}${">".repeat(depth)}]><r>x</r>`;
       expect(safe(xml).ok).toBe(true);
       expect(parse(xml)).toEqual({ r: "x" });
     });
@@ -665,7 +657,7 @@ describe("Bun.XML.parse security", () => {
   describe("depth / width exhaustion", () => {
     test("element depth bomb raises a catchable error", () => {
       const depth = 200_000;
-      const xml = Buffer.alloc(depth * 3, "<a>").toString() + Buffer.alloc(depth * 4, "</a>").toString();
+      const xml = "<a>".repeat(depth) + "</a>".repeat(depth);
       expect(() => parse(xml)).toThrow();
     });
 
@@ -804,7 +796,7 @@ describe("Bun.XML.parse security", () => {
     });
 
     test("extremely long digit sequence is rejected, not overflowed", () => {
-      const digits = Buffer.alloc(200, "9").toString();
+      const digits = "9".repeat(200);
       expect(() => parse(`<r>&#${digits};</r>`)).toThrow(SyntaxError);
     });
 

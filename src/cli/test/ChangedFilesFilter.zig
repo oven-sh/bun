@@ -10,8 +10,6 @@
 //!
 //! Only those test entry points are returned.
 
-const ChangedFilesFilter = @This();
-
 pub const Result = struct {
     /// The filtered list of test files. Slice of the original `test_files`
     /// allocation, owned by the caller.
@@ -404,11 +402,9 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
 const Transpiler = bun.Transpiler;
+const jsc = bun.jsc;
 const logger = bun.logger;
 const strings = bun.strings;
-
-const Command = bun.cli.Command;
-const jsc = bun.jsc;
-
 const BundleV2 = bun.bundle_v2.BundleV2;
+const Command = bun.cli.Command;
 const Index = bun.ast.Index;

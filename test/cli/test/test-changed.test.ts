@@ -154,10 +154,7 @@ describe.concurrent("bun test --changed", () => {
     appendFileSync(join(String(dir), "shared.ts"), "// touched\n");
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
-    expect(ranFiles(stderr, ["one.test.ts", "two.test.ts", "three.test.ts"])).toEqual([
-      "one.test.ts",
-      "two.test.ts",
-    ]);
+    expect(ranFiles(stderr, ["one.test.ts", "two.test.ts", "three.test.ts"])).toEqual(["one.test.ts", "two.test.ts"]);
     expect(exitCode).toBe(0);
   });
 

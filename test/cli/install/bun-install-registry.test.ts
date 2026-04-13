@@ -1124,9 +1124,7 @@ describe("bundledDependencies", () => {
       async function check() {
         // Top-level sibling must be the 2.x line (satisfies ^2.0.0), hoisted
         // to the root. It must never be the bundled transitive's 1.0.0.
-        const topSibling = await file(
-          join(packageDir, "node_modules", "no-deps", "package.json"),
-        ).json();
+        const topSibling = await file(join(packageDir, "node_modules", "no-deps", "package.json")).json();
         expect(topSibling).toEqual({ name: "no-deps", version: "2.0.0" });
 
         // Bundled transitive is isolated inside the bundle.
@@ -1157,9 +1155,7 @@ describe("bundledDependencies", () => {
           expect(lock).toMatch(
             /"bundled-sibling\/bundled-inner":\s*\[\s*"bundled-inner@1\.0\.0"[^\]]*"bundled":\s*true/,
           );
-          expect(lock).toMatch(
-            /"bundled-sibling\/bundled-inner\/no-deps":\s*\[\s*"no-deps@1\.0\.0"/,
-          );
+          expect(lock).toMatch(/"bundled-sibling\/bundled-inner\/no-deps":\s*\[\s*"no-deps@1\.0\.0"/);
           // Top-level no-deps is the 2.x sibling.
           expect(lock).toMatch(/"no-deps":\s*\[\s*"no-deps@2\.0\.0"/);
         }

@@ -335,7 +335,12 @@ describe.concurrent("bun test --changed", () => {
   });
 });
 
-describe("bun test --changed --watch", () => {
+// On Windows, `bun test --watch` runs as a parent watcher-manager that
+// respawns a child process on change (rather than exec()-in-place), which
+// makes this test's stderr-stream sync points racy there. The 15 cases
+// above fully cover the --changed filtering logic on Windows; this case
+// only verifies composition with --watch.
+describe.skipIf(isWindows)("bun test --changed --watch", () => {
   test("restarts and reruns only affected tests when a dependency changes", async () => {
     using dir = tempDir("test-changed-watch", {
       "package.json": JSON.stringify({ name: "watch", type: "module" }),

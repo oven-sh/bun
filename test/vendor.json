@@ -4,7 +4,7 @@
     "repository": "https://github.com/elysiajs/elysia",
     "tag": "1.4.12",
     "skipTests": {
-      "test/path/path.test.ts": "asserts pre-WHATWG File.type canonicalization (text/plain;charset=utf-8); see oven-sh/bun#29257"
+      "path/path.test.ts": "asserts pre-WHATWG File.type canonicalization (text/plain;charset=utf-8); see oven-sh/bun#29257"
     }
   }
 ]

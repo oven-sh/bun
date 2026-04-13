@@ -1087,6 +1087,100 @@ describe("bundledDependencies", () => {
       await check();
     });
 
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) sibling of bundled dep resolves to its own declared range (#29263)`, async () => {
+      // A package declares a direct dependency `no-deps: ^2.0.0` AND a bundled
+      // dependency `bundled-inner` whose transitive `no-deps: 1.0.0` has the same
+      // name but a different version. The direct (non-bundled) dep must resolve
+      // to its own declared range, not to the bundled transitive's version.
+      //
+      // Layout expected:
+      //   node_modules/no-deps@2.0.0                                 ← sibling
+      //   node_modules/bundled-sibling@1.0.0
+      //   node_modules/bundled-sibling/node_modules/bundled-inner    ← bundled
+      //   node_modules/bundled-sibling/node_modules/bundled-inner/
+      //     node_modules/no-deps@1.0.0                               ← transitive
+
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "bundled-sibling-test",
+          dependencies: {
+            "bundled-sibling": "1.0.0",
+          },
+        }),
+      );
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      async function check() {
+        // Top-level sibling must be the 2.x line (satisfies ^2.0.0), hoisted
+        // to the root. It must never be the bundled transitive's 1.0.0.
+        const topSibling = await file(
+          join(packageDir, "node_modules", "no-deps", "package.json"),
+        ).json();
+        expect(topSibling).toEqual({ name: "no-deps", version: "2.0.0" });
+
+        // Bundled transitive is isolated inside the bundle.
+        expect(
+          await file(
+            join(
+              packageDir,
+              "node_modules",
+              "bundled-sibling",
+              "node_modules",
+              "bundled-inner",
+              "node_modules",
+              "no-deps",
+              "package.json",
+            ),
+          ).json(),
+        ).toEqual({ name: "no-deps", version: "1.0.0" });
+
+        if (textLockfile) {
+          const lock = await file(join(packageDir, "bun.lock")).text();
+          // Before #29263 was fixed, the writer created a scoped
+          // `bundled-sibling/no-deps` entry pointing at the bundled transitive
+          // (no-deps@1.0.0) instead of hoisting the sibling to the root. The
+          // sibling is now hoisted, so there must be no scoped entry at all.
+          expect(lock).not.toMatch(/"bundled-sibling\/no-deps":/);
+          // And the bundled transitive must be nested inside the bundle, with
+          // its own nested no-deps@1.0.0 scope.
+          expect(lock).toMatch(
+            /"bundled-sibling\/bundled-inner":\s*\[\s*"bundled-inner@1\.0\.0"[^\]]*"bundled":\s*true/,
+          );
+          expect(lock).toMatch(
+            /"bundled-sibling\/bundled-inner\/no-deps":\s*\[\s*"no-deps@1\.0\.0"/,
+          );
+          // Top-level no-deps is the 2.x sibling.
+          expect(lock).toMatch(/"no-deps":\s*\[\s*"no-deps@2\.0\.0"/);
+        }
+      }
+
+      await check();
+
+      // A second install must produce the same result (no regression on re-read).
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      await check();
+    });
+
     test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) git dependencies`, async () => {
       await Promise.all([
         write(

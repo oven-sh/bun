@@ -14,6 +14,15 @@ pub fn ParsePrefix(
         /// targets where top-level await is nominally disallowed, so that
         /// DCE gets a chance to eliminate unreachable branches before we
         /// reject the file.
+        ///
+        /// Notably left out:
+        ///   - Template literals (`t_no_substitution_template_literal`,
+        ///     `t_template_head`): `var await = String.raw; await` followed
+        ///     by a backtick is a tagged template call on the identifier,
+        ///     so the identifier interpretation is still valid.
+        ///   - Operators that can bind an identifier on the left (`+`, `-`,
+        ///     `*`, `/`, `(`, `[`, `.`, etc.): always ambiguous; don't
+        ///     upgrade.
         fn tokenStartsAwaitExpr(tok: T) bool {
             return switch (tok) {
                 // Statement/expression keywords that can only start a new
@@ -30,10 +39,13 @@ pub fn ParsePrefix(
                 .t_null,
                 .t_true,
                 .t_false,
+                // `await { ... }` only has an identifier-continuation
+                // interpretation via ASI (two separate statements), which
+                // nobody writes intentionally. esbuild treats `await { ... }`
+                // as an await expression and so do we.
+                .t_open_brace,
                 // Literals that can't sit next to a bare identifier.
                 .t_string_literal,
-                .t_no_substitution_template_literal,
-                .t_template_head,
                 .t_numeric_literal,
                 .t_big_integer_literal,
                 // Prefix-only operators that can't follow an identifier.

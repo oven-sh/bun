@@ -986,7 +986,17 @@ pub fn VisitExpr(
                 p.await_target = e_.value.data;
                 e_.value = p.visitExpr(e_.value);
                 if (!p.is_control_flow_dead and p.fn_or_arrow_data_visit.is_outside_fn_or_arrow) {
-                    p.has_live_top_level_await = true;
+                    // Record the first live top-level `await` so a later
+                    // CJS-top-level-await diagnostic points at an `await`
+                    // that actually survived DCE rather than one that got
+                    // eliminated.
+                    if (!p.has_live_top_level_await) {
+                        p.top_level_await_keyword = .{
+                            .loc = expr.loc,
+                            .len = @as(i32, @intCast("await".len)),
+                        };
+                        p.has_live_top_level_await = true;
+                    }
                 }
                 return expr;
             }

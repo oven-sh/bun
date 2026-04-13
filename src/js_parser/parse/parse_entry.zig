@@ -650,11 +650,15 @@ pub const Parser = struct {
             p.top_level_await_keyword = logger.Range.None;
         } else if (!p.options.features.top_level_await) {
             // A live top-level await survived DCE, but the configured output
-            // format does not support top-level await. Emit a targeted error.
-            try p.log.addRangeError(
+            // format does not support top-level await. Emit a targeted error
+            // pointing at the surviving `await` (visitExpr.e_await rewrites
+            // `top_level_await_keyword` to a live range before we get here).
+            try p.log.addRangeErrorFmt(
                 p.source,
                 p.top_level_await_keyword,
-                "Top-level await is currently not supported with the \"cjs\" output format",
+                p.allocator,
+                "Top-level await is currently not supported with the \"{s}\" output format",
+                .{@tagName(p.options.output_format)},
             );
         }
 

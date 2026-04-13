@@ -1960,14 +1960,18 @@ fn NewPrinter(
                     p.printClauseAlias(item.alias);
                 }
             } else if (comptime as == .export_from) {
-                // In `export { x } from 'mod'`, the "name" on the left of `as` refers
-                // to an export of the other module. ECMAScript allows this to be a
-                // string literal (`export { "a b c" } from 'mod'`), so we must use
-                // `printClauseAlias` rather than `printIdentifier` here. The symbol
-                // does not participate in local renaming.
-                p.printClauseAlias(name);
+                // In `export { x } from 'mod'`, the "name" on the left of `as`
+                // refers to an export of the other module, not a local binding.
+                // It's stored as the raw source text on `item.original_name`
+                // (ECMAScript allows this to be a string literal like `"a b c"`)
+                // and the item's ref points to a synthesized intermediate symbol
+                // whose display name may be mangled by a minifier. We must print
+                // `original_name` via `printClauseAlias` so string literals stay
+                // quoted and mangling can't corrupt the foreign-module name.
+                const from_name = if (item.original_name.len > 0) item.original_name else name;
+                p.printClauseAlias(from_name);
 
-                if (!strings.eql(name, item.alias)) {
+                if (!strings.eql(from_name, item.alias)) {
                     p.print(" as ");
                     p.addSourceMapping(item.alias_loc);
                     p.printClauseAlias(item.alias);

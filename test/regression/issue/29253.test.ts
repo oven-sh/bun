@@ -40,6 +40,13 @@ test("new Module() instances inherit load() (#29253)", () => {
   // registration in getModulePrototypeObject were reverted, the other
   // assertions above would still pass — so guard that code path too.
   expect(typeof Module.prototype.load).toBe("function");
+
+  // `.name` is set via the `$overriddenName = "load"` annotation on
+  // the builtin. Without that annotation, JSC derives the name from
+  // the source identifier ("modulePrototypeLoad"), which matters for
+  // any code that introspects function names.
+  expect(m.load.name).toBe("load");
+  expect(Module.prototype.load.name).toBe("load");
 });
 
 test.concurrent("new Module().load(filename) reads and evaluates the file (#29253)", async () => {

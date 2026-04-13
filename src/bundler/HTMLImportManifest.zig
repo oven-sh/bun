@@ -201,7 +201,11 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
                     }
                     break :brk ch.final_rel_path;
                 },
-                ch.isolated_hash,
+                // The HTML chunk's body embeds the hashed paths of its JS/CSS
+                // chunks, so its etag must change when those do. `isolated_hash`
+                // by design excludes those substitutions; the placeholder hash
+                // folds them in via `appendIsolatedHashesForImportedChunks`.
+                ch.template.placeholder.hash orelse ch.isolated_hash,
                 ch.content.loader(),
                 if (ch.entry_point.is_entry_point)
                     .@"entry-point"

@@ -91,6 +91,11 @@ pub const VM = opaque {
         return JSC__VM__collectAsync(vm);
     }
 
+    extern fn JSC__VM__collectAsyncFull(vm: *VM) void;
+    pub fn collectAsyncFull(vm: *VM) void {
+        return JSC__VM__collectAsyncFull(vm);
+    }
+
     extern fn JSC__VM__setExecutionForbidden(vm: *VM, forbidden: bool) void;
     pub fn setExecutionForbidden(vm: *VM, forbidden: bool) void {
         JSC__VM__setExecutionForbidden(vm, forbidden);

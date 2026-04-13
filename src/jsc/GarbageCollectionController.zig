@@ -24,6 +24,7 @@ gc_timer: *uws.Timer = undefined,
 gc_last_heap_size: usize = 0,
 gc_last_heap_size_on_repeating_timer: usize = 0,
 heap_size_didnt_change_for_repeating_timer_ticks_count: u8 = 0,
+idle_full_gcs_fired: u8 = 0,
 gc_timer_state: GCTimerState = GCTimerState.pending,
 gc_repeating_timer: *uws.Timer = undefined,
 gc_timer_interval: i32 = 0,
@@ -111,19 +112,49 @@ pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting:
 
 pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.c) void {
     var this = timer.as(*GarbageCollectionController);
+    if (this.disabled) return;
     const prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
-    this.performGC();
-    this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
-    if (prev_heap_size == this.gc_last_heap_size_on_repeating_timer) {
+    var vm = this.bunVM().jsc_vm;
+    const current = vm.blockBytesAllocated();
+    this.gc_last_heap_size_on_repeating_timer = current;
+    this.gc_last_heap_size = current;
+
+    // Reduction mode: previous tick fired collectAsyncFull(); decide whether
+    // to fire one more or converge. V8 MemoryReducer caps at 2 majors per idle.
+    if (this.idle_full_gcs_fired > 0) {
+        if (current > prev_heap_size) {
+            this.idle_full_gcs_fired = 0;
+            this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+            vm.collectAsync();
+            this.updateGCRepeatTimer(.fast);
+        } else if (prev_heap_size - current > (1 << 20) and this.idle_full_gcs_fired < 2) {
+            this.idle_full_gcs_fired += 1;
+            vm.collectAsyncFull();
+        } else {
+            this.idle_full_gcs_fired = 0;
+            this.updateGCRepeatTimer(.slow);
+        }
+        return;
+    }
+
+    if (prev_heap_size == current) {
         this.heap_size_didnt_change_for_repeating_timer_ticks_count +|= 1;
         if (this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30) {
-            // make the timer interval longer
-            this.updateGCRepeatTimer(.slow);
+            // 30 stable ticks of Eden GCs. collectAsync() never escalates to
+            // Full here because Heap::updateAllocationLimits ratchets
+            // m_maxHeapSize on every Eden, so the 1/3 promotion ratio decays
+            // instead of crossing. Fire an explicit Full so old-gen +
+            // age-based CodeBlock jettison run before we go to the 30s interval.
+            this.idle_full_gcs_fired = 1;
+            vm.collectAsyncFull();
+            return;
         }
     } else {
         this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
         this.updateGCRepeatTimer(.fast);
     }
+
+    vm.collectAsync();
 }
 
 pub fn processGCTimer(this: *GarbageCollectionController) void {

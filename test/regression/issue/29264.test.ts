@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/29264
@@ -11,7 +11,7 @@ import { join } from "node:path";
 // import_records from `graph.ast`, which was still at `JSAst.empty`, and
 // crashed with "index out of bounds: index 0, len 0" (segfault in release).
 test("#29264 bundler survives external + missing imports in same file", async () => {
-  const dir = tempDirWithFiles("issue-29264", {
+  using dir = tempDir("issue-29264", {
     "index.js": `
       import "src";
       import "./src";
@@ -21,7 +21,7 @@ test("#29264 bundler survives external + missing imports in same file", async ()
   let caught: any = null;
   try {
     await Bun.build({
-      entrypoints: [join(dir, "index.js")],
+      entrypoints: [join(String(dir), "index.js")],
       plugins: [
         {
           name: "mark-bare-external",

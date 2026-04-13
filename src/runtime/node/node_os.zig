@@ -368,6 +368,15 @@ pub fn getPriority(global: *jsc.JSGlobalObject, pid: i32) bun.JSError!i32 {
 
 pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
     // In Node.js, this is a wrapper around uv_os_homedir.
+    //
+    // The public `os.homedir()` entry point honors live mutations of `HOME`
+    // (POSIX) / `USERPROFILE` (Windows). That check lives in
+    // `src/js/node/os.ts` so it reads `process.env` on every call instead of
+    // using Bun's cached env-var accessor, which snapshots at first read.
+    //
+    // This function is the fallback path when the env var is not set, and it
+    // is also called directly by `userInfo()` — which must ignore `HOME` and
+    // return the passwd entry, matching Node's behavior.
     if (Environment.isWindows) {
         var out: bun.PathBuffer = undefined;
         var size: usize = out.len;
@@ -376,14 +385,6 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
         }
         return bun.String.cloneUTF8(out[0..size]);
     } else {
-
-        // The posix implementation of uv_os_homedir first checks the HOME
-        // environment variable, then falls back to reading the passwd entry.
-        if (bun.env_var.HOME.get()) |home| {
-            if (home.len > 0)
-                return bun.String.init(home);
-        }
-
         // From libuv:
         // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
         // > is frequently 1024 or 4096, so we can just use that directly. The pwent

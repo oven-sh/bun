@@ -3,6 +3,8 @@
 #include "root.h"
 #include "sqlite3.h"
 
+#include <mutex>
+
 #if !OS(WINDOWS)
 #include <dlfcn.h>
 #else
@@ -220,10 +222,12 @@ static const char* sqlite3_lib_path = "sqlite3";
 
 static HMODULE sqlite3_handle = nullptr;
 
-static int lazyLoadSQLite()
+// Serialize the one-time lazy load across threads. Without this, one thread
+// can set `sqlite3_handle` and begin populating the function pointer table
+// while another observes the non-null handle, skips the load, and calls a
+// still-null function pointer — segfault. See issue #29275.
+static int lazyLoadSQLiteImpl()
 {
-    if (sqlite3_handle)
-        return 0;
 #if OS(WINDOWS)
     sqlite3_handle = LoadLibraryA(sqlite3_lib_path);
 #else
@@ -311,6 +315,16 @@ static int lazyLoadSQLite()
     }
 
     return 0;
+}
+
+static int lazyLoadSQLite()
+{
+    static std::once_flag onceFlag;
+    static int result = -1;
+    std::call_once(onceFlag, [] {
+        result = lazyLoadSQLiteImpl();
+    });
+    return result;
 }
 
 #if OS(WINDOWS)

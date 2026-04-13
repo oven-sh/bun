@@ -11,10 +11,10 @@
 // DEFINITION (0-indexed), and surfaces per-sample lines as a positionTicks
 // array of {line, ticks} pairs (1-indexed), matching Node/Deno output.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 test("cpu-prof callFrame.lineNumber/columnNumber point at function definition, not sample position (#29240)", async () => {
   // fibonacci is recursive so it shows up on many stacks at many different
@@ -118,9 +118,7 @@ console.log("done");
   // gets recorded). Each entry is {line, ticks} with line 1-indexed inside
   // the source file and ticks being positive integers that sum to the node's
   // hitCount.
-  const nodesWithTicks = scriptNodes.filter(
-    (n: any) => Array.isArray(n.positionTicks) && n.positionTicks.length > 0,
-  );
+  const nodesWithTicks = scriptNodes.filter((n: any) => Array.isArray(n.positionTicks) && n.positionTicks.length > 0);
   expect(nodesWithTicks.length).toBeGreaterThan(0);
 
   for (const node of nodesWithTicks) {

@@ -72,11 +72,7 @@ test("new Module().load(filename) reads and evaluates the file (#29253)", async 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("TypeError");
   expect(stderr).not.toContain("Error");
@@ -125,11 +121,7 @@ test("Module.prototype.load honors an overridden Module.wrapper (#29253)", async
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("TypeError");
   expect(stderr).not.toContain("ReferenceError");
@@ -172,11 +164,7 @@ test("new Module().load populates filename/paths/loaded (#29253)", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("TypeError");
   expect(stderr).not.toContain("Error:");

@@ -355,6 +355,12 @@ pub fn mimeType(this: *VirtualMachine, str: []const u8) ?bun.http.MimeType {
     return this.rareData().mimeTypeFromString(this.allocator, str);
 }
 
+/// Interning lookup for Blob/File `type` that preserves the raw MIME
+/// string (no charset substitution). See `rare_data.mimeTypeInternedValue`.
+pub fn mimeTypeInternedValue(this: *VirtualMachine, str: []const u8) ?[]const u8 {
+    return this.rareData().mimeTypeInternedValue(this.allocator, str);
+}
+
 pub fn onAfterEventLoop(this: *VirtualMachine) void {
     if (this.after_event_loop_callback) |cb| {
         const ctx = this.after_event_loop_callback_ctx;

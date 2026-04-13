@@ -15,7 +15,9 @@ describe("structuredClone with Blob and File", () => {
       const cloned = structuredClone(blob);
       expect(cloned).toBeInstanceOf(Blob);
       expect(cloned.size).toBe(11);
-      expect(cloned.type).toBe("text/plain;charset=utf-8");
+      // Per WHATWG File API, `text/plain` must NOT be canonicalized to
+      // `text/plain;charset=utf-8` — see #29257.
+      expect(cloned.type).toBe("text/plain");
 
       const originalText = await blob.text();
       const clonedText = await cloned.text();
@@ -63,11 +65,11 @@ describe("structuredClone with Blob and File", () => {
 
       expect(cloned.first).toBeInstanceOf(Blob);
       expect(cloned.first.size).toBe(5);
-      expect(cloned.first.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.first.type).toBe("text/plain");
 
       expect(cloned.second).toBeInstanceOf(Blob);
       expect(cloned.second.size).toBe(5);
-      expect(cloned.second.type).toBe("text/html;charset=utf-8");
+      expect(cloned.second.type).toBe("text/html");
     });
 
     test("deeply nested Blob", () => {
@@ -92,7 +94,7 @@ describe("structuredClone with Blob and File", () => {
       expect(cloned).toBeInstanceOf(File);
       expect(cloned.name).toBe("test.txt");
       expect(cloned.size).toBe(7);
-      expect(cloned.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.type).toBe("text/plain");
       expect(cloned.lastModified).toBe(1234567890000);
     });
 
@@ -103,7 +105,7 @@ describe("structuredClone with Blob and File", () => {
       expect(cloned).toBeInstanceOf(File);
       expect(cloned.name).toBe("test.txt");
       expect(cloned.size).toBe(7);
-      expect(cloned.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.type).toBe("text/plain");
       expect(cloned.lastModified).toBeGreaterThan(0);
     });
 
@@ -125,7 +127,7 @@ describe("structuredClone with Blob and File", () => {
       expect(cloned.file).toBeInstanceOf(File);
       expect(cloned.file.name).toBe("test.txt");
       expect(cloned.file.size).toBe(4);
-      expect(cloned.file.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.file.type).toBe("text/plain");
     });
 
     test("multiple Files in object", () => {
@@ -136,11 +138,11 @@ describe("structuredClone with Blob and File", () => {
 
       expect(cloned.txt).toBeInstanceOf(File);
       expect(cloned.txt.name).toBe("hello.txt");
-      expect(cloned.txt.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.txt.type).toBe("text/plain");
 
       expect(cloned.html).toBeInstanceOf(File);
       expect(cloned.html.name).toBe("world.html");
-      expect(cloned.html.type).toBe("text/html;charset=utf-8");
+      expect(cloned.html.type).toBe("text/html");
     });
   });
 
@@ -153,12 +155,12 @@ describe("structuredClone with Blob and File", () => {
 
       expect(cloned.blob).toBeInstanceOf(Blob);
       expect(cloned.blob.size).toBe(12);
-      expect(cloned.blob.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.blob.type).toBe("text/plain");
 
       expect(cloned.file).toBeInstanceOf(File);
       expect(cloned.file.name).toBe("test.txt");
       expect(cloned.file.size).toBe(12);
-      expect(cloned.file.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.file.type).toBe("text/plain");
     });
 
     test("array with mixed Blob and File", () => {

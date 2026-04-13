@@ -1829,8 +1829,11 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
                         }
                         blob.content_type_was_set = true;
 
-                        if (globalThis.bunVM().mimeType(slice)) |mime| {
-                            blob.content_type = mime.value;
+                        // WHATWG File API: the stored `type` must be the
+                        // lowercased input verbatim — do NOT canonicalize into
+                        // charset-appended forms like `text/plain;charset=utf-8`.
+                        if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
+                            blob.content_type = interned;
                             break :inner;
                         }
                         const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
@@ -1929,8 +1932,10 @@ pub fn constructBunFile(
                             break :inner;
                         }
                         blob.content_type_was_set = true;
-                        if (vm.mimeType(str.slice())) |entry| {
-                            blob.content_type = entry.value;
+                        // WHATWG File API: preserve the lowercased input
+                        // verbatim; do not canonicalize to charset-appended forms.
+                        if (vm.mimeTypeInternedValue(slice)) |interned| {
+                            blob.content_type = interned;
                             break :inner;
                         }
                         const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
@@ -2323,11 +2328,14 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
                 if (strings.isAllASCII(slice)) {
                     if (this.content_type_allocated) {
                         bun.default_allocator.free(this.content_type);
+                        this.content_type_allocated = false;
                     }
                     this.content_type_was_set = true;
 
-                    if (globalThis.bunVM().mimeType(slice)) |mime| {
-                        this.content_type = mime.value;
+                    // WHATWG File API: preserve the lowercased input
+                    // verbatim; do not canonicalize to charset-appended forms.
+                    if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
+                        this.content_type = interned;
                     } else {
                         const content_type_buf = bun.handleOom(bun.default_allocator.alloc(u8, slice.len));
                         this.content_type = strings.copyLowercase(slice, content_type_buf);
@@ -2666,11 +2674,14 @@ pub fn getWriter(
                     if (strings.isAllASCII(slice)) {
                         if (this.content_type_allocated) {
                             bun.default_allocator.free(this.content_type);
+                            this.content_type_allocated = false;
                         }
                         this.content_type_was_set = true;
 
-                        if (globalThis.bunVM().mimeType(slice)) |mime| {
-                            this.content_type = mime.value;
+                        // WHATWG File API: preserve the lowercased input
+                        // verbatim; do not canonicalize to charset-appended forms.
+                        if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
+                            this.content_type = interned;
                         } else {
                             const content_type_buf = bun.handleOom(bun.default_allocator.alloc(u8, slice.len));
                             this.content_type = strings.copyLowercase(slice, content_type_buf);
@@ -2926,8 +2937,10 @@ pub fn getSlice(
                     break :inner;
                 }
 
-                if (globalThis.bunVM().mimeType(slice)) |mime| {
-                    content_type = mime.value;
+                // WHATWG File API: preserve the lowercased input
+                // verbatim; do not canonicalize to charset-appended forms.
+                if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
+                    content_type = interned;
                     break :inner;
                 }
 
@@ -3354,8 +3367,10 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
                                 }
                                 blob.content_type_was_set = true;
 
-                                if (globalThis.bunVM().mimeType(slice)) |mime| {
-                                    blob.content_type = mime.value;
+                                // WHATWG File API: preserve the lowercased input
+                                // verbatim; do not canonicalize to charset-appended forms.
+                                if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
+                                    blob.content_type = interned;
                                     break :inner;
                                 }
                                 const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
@@ -3522,9 +3537,12 @@ pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
     duped.setNotHeapAllocated();
     if (duped.content_type_allocated and duped.isHeapAllocated() and !include_content_type) {
 
-        // for now, we just want to avoid a use-after-free here
-        if (jsc.VirtualMachine.get().mimeType(duped.content_type)) |mime| {
-            duped.content_type = mime.value;
+        // for now, we just want to avoid a use-after-free here.
+        // Use the interned value so the content_type isn't silently
+        // canonicalized into a charset-appended form (which would break
+        // WHATWG File API semantics).
+        if (jsc.VirtualMachine.get().mimeTypeInternedValue(duped.content_type)) |interned| {
+            duped.content_type = interned;
         } else {
             // TODO: fix this
             // this is a bug.

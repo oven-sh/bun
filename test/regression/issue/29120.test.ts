@@ -62,10 +62,15 @@ function readCodeSignature(buf: Buffer): CodeSig | null {
       if (cmdsize < 16) return null;
       const dataoff = buf.readUInt32LE(p + 8);
       const datasize = buf.readUInt32LE(p + 12);
+      // The region the header advertises must be physically present on disk —
+      // a truncated signature would otherwise pass the SuperBlob checks below.
+      if (dataoff + datasize > buf.length) return null;
       // SuperBlob: magic(4 BE) length(4 BE) count(4 BE)
-      if (dataoff + 8 > buf.length) return null;
+      if (dataoff + 12 > buf.length) return null;
       const superBlobMagic = buf.readUInt32BE(dataoff);
       const superBlobLength = buf.readUInt32BE(dataoff + 4);
+      // And the SuperBlob itself must fit in the file.
+      if (superBlobLength < 12 || dataoff + superBlobLength > buf.length) return null;
       return { dataoff, datasize, superBlobMagic, superBlobLength };
     }
     p += cmdsize;

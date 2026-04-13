@@ -8,6 +8,47 @@ pub fn ParsePrefix(
         const is_jsx_enabled = P.is_jsx_enabled;
         const is_typescript_enabled = P.is_typescript_enabled;
 
+        /// Tokens for which `await TOKEN` cannot be parsed as `identifier
+        /// TOKEN`, i.e. where `await` must be interpreted as the `await`
+        /// keyword rather than a plain identifier. Used at module scope in
+        /// targets where top-level await is nominally disallowed, so that
+        /// DCE gets a chance to eliminate unreachable branches before we
+        /// reject the file.
+        fn tokenStartsAwaitExpr(tok: T) bool {
+            return switch (tok) {
+                // Statement/expression keywords that can only start a new
+                // expression (they can't continue an identifier expression).
+                .t_import,
+                .t_function,
+                .t_class,
+                .t_new,
+                .t_typeof,
+                .t_void,
+                .t_delete,
+                .t_this,
+                .t_super,
+                .t_null,
+                .t_true,
+                .t_false,
+                // Literals that can't sit next to a bare identifier.
+                .t_string_literal,
+                .t_no_substitution_template_literal,
+                .t_template_head,
+                .t_numeric_literal,
+                .t_big_integer_literal,
+                // Prefix-only operators that can't follow an identifier.
+                .t_exclamation,
+                .t_tilde,
+                // A following identifier means `await IDENT`, which is not a
+                // valid identifier continuation (you can't have two
+                // identifiers in a row at expression level). This also
+                // captures `yield` and `await` as identifiers.
+                .t_identifier,
+                => true,
+                else => false,
+            };
+        }
+
         fn t_super(noalias p: *P, level: Level) anyerror!Expr {
             const loc = p.lexer.loc();
             const l = @intFromEnum(level);
@@ -108,7 +149,28 @@ pub fn ParsePrefix(
                 },
 
                 .is_await => {
-                    switch (p.fn_or_arrow_data_parse.allow_await) {
+                    // At module scope in a non-ESM target (`allow_ident`), if
+                    // `await` is followed on the same line by a token that
+                    // clearly starts an expression — i.e. one that could
+                    // never be a valid continuation of an identifier —
+                    // upgrade to parsing an `await` expression anyway. DCE
+                    // then has a chance to drop the branch before we reject
+                    // it. If a live await survives DCE, the visit pass emits
+                    // a CJS-TLA error instead. (A newline after `await` is
+                    // left alone because `await\nfoo` can be two statements
+                    // via ASI.)
+                    const should_upgrade_to_await_expr =
+                        p.fn_or_arrow_data_parse.allow_await == .allow_ident and
+                        p.fn_or_arrow_data_parse.is_top_level and
+                        !p.lexer.has_newline_before and
+                        AsyncPrefixExpression.find(raw) == .is_await and
+                        tokenStartsAwaitExpr(p.lexer.token);
+                    const effective_allow_await: AwaitOrYield = if (should_upgrade_to_await_expr)
+                        .allow_expr
+                    else
+                        p.fn_or_arrow_data_parse.allow_await;
+
+                    switch (effective_allow_await) {
                         .forbid_all => {
                             p.log.addRangeError(p.source, name_range, "The keyword \"await\" cannot be used here") catch unreachable;
                         },
@@ -123,6 +185,17 @@ pub fn ParsePrefix(
                                 if (p.fn_or_arrow_data_parse.track_arrow_arg_errors) {
                                     p.fn_or_arrow_data_parse.arrow_arg_errors.invalid_expr_await = name_range;
                                 }
+
+                                // Propagate the upgrade to nested expression
+                                // parses so `await (a + await b)` is handled
+                                // cleanly as a single await expression.
+                                const saved_allow_await = p.fn_or_arrow_data_parse.allow_await;
+                                if (should_upgrade_to_await_expr) {
+                                    p.fn_or_arrow_data_parse.allow_await = .allow_expr;
+                                }
+                                defer if (should_upgrade_to_await_expr) {
+                                    p.fn_or_arrow_data_parse.allow_await = saved_allow_await;
+                                };
 
                                 const value = try p.parseExpr(.prefix);
                                 if (p.lexer.token == T.t_asterisk_asterisk) {
@@ -816,6 +889,7 @@ const T = js_lexer.T;
 
 const js_parser = bun.js_parser;
 const AsyncPrefixExpression = js_parser.AsyncPrefixExpression;
+const AwaitOrYield = js_parser.AwaitOrYield;
 const DeferredErrors = js_parser.DeferredErrors;
 const FnOrArrowDataParse = js_parser.FnOrArrowDataParse;
 const JSXTransformType = js_parser.JSXTransformType;

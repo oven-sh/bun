@@ -985,6 +985,9 @@ pub fn VisitExpr(
                 const e_ = expr.data.e_await;
                 p.await_target = e_.value.data;
                 e_.value = p.visitExpr(e_.value);
+                if (!p.is_control_flow_dead and p.fn_or_arrow_data_visit.is_outside_fn_or_arrow) {
+                    p.has_live_top_level_await = true;
+                }
                 return expr;
             }
             pub fn e_yield(p: *P, expr: Expr, _: ExprIn) Expr {

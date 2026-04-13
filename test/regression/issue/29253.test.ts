@@ -20,21 +20,17 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import Module from "node:module";
 
-test("Module.prototype.load is a function (#29253)", () => {
-  // The one the ticket is about: the stub on the instance prototype.
-  expect(typeof Module.prototype.load).toBe("function");
-
-  // An instance created via `new Module(...)` must inherit `.load`.
+test("new Module() instances inherit load() (#29253)", () => {
+  // The ticket: `targetModule.load(targetModule.id)` on a freshly
+  // constructed Module was throwing "load is not a function" because
+  // the instance prototype had no `load` method.
   const m = new Module("/tmp/does-not-matter-29253.js", null);
   expect(typeof m.load).toBe("function");
-});
 
-test("Module.prototype is the instance prototype (#29253)", () => {
-  // Node guarantees these are the same object — so patching
-  // `Module.prototype.foo` is visible on every instance. Several
-  // libraries (next.js, requizzle, etc.) rely on this.
-  const m = new Module("/tmp/does-not-matter-29253-proto.js", null);
-  expect(Object.getPrototypeOf(m)).toBe(Module.prototype);
+  // And it should be inherited from the prototype chain, not an own
+  // property on every instance (which would be wasteful).
+  expect(Object.prototype.hasOwnProperty.call(m, "load")).toBe(false);
+  expect(typeof Object.getPrototypeOf(m).load).toBe("function");
 });
 
 test("new Module().load(filename) reads and evaluates the file (#29253)", async () => {
@@ -165,6 +161,108 @@ test("new Module().load populates filename/paths/loaded (#29253)", async () => {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("TypeError");
+  expect(stderr).not.toContain("Error:");
+  expect(exitCode).toBe(0);
+  expect(stdout.trim()).toBe("ok");
+});
+
+// Retry guard: a thrown extension handler must NOT leave the module
+// permanently marked `loaded`, otherwise the next `.load(...)` call on
+// the same instance would hit the "Module already loaded" assert and
+// make failure recovery impossible.
+test("failed load() clears loaded so the instance can be retried (#29253)", async () => {
+  using dir = tempDir("issue-29253-retry", {
+    "broken.js": `throw new Error("boom");`,
+    "good.js": `module.exports = 'good-exports';`,
+    "driver.js": `
+      const Module = require("node:module");
+      const path = require("node:path");
+
+      const broken = path.resolve(__dirname, "broken.js");
+      const good = path.resolve(__dirname, "good.js");
+      const m = new Module(broken, module);
+
+      let threw = false;
+      try {
+        m.load(broken);
+      } catch (e) {
+        threw = true;
+        if (!String(e).includes("boom")) throw new Error("unexpected error: " + e);
+      }
+      if (!threw) throw new Error("expected load() to throw");
+      if (m.loaded) throw new Error("loaded should be false after a failed load()");
+
+      // Now reuse the instance with a good file — must not hit the
+      // "Module already loaded" guard.
+      m.load(good);
+      if (m.exports !== 'good-exports') throw new Error("retry exports mismatch: " + m.exports);
+      console.log("ok");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "driver.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+
+  expect(stderr).not.toContain("Module already loaded");
+  expect(exitCode).toBe(0);
+  expect(stdout.trim()).toBe("ok");
+});
+
+// Compound-extension dispatch: `Module._extensions['.test.js']` must win
+// over `Module._extensions['.js']` when `.load()` is called on a file
+// ending in `.test.js`. `path.extname` alone would return `.js` and
+// silently bypass the compound handler.
+test("load() picks the longest registered extension handler (#29253)", async () => {
+  using dir = tempDir("issue-29253-ext", {
+    "foo.test.js": `module.exports = 'raw-source-never-loaded';`,
+    "driver.js": `
+      const Module = require("node:module");
+      const path = require("node:path");
+
+      const target = path.resolve(__dirname, "foo.test.js");
+      Module._extensions['.test.js'] = function (module, filename) {
+        module.exports = { hookedBy: '.test.js', filename };
+      };
+
+      try {
+        const m = new Module(target, module);
+        m.load(target);
+        if (m.exports.hookedBy !== '.test.js') {
+          throw new Error("handler not used; exports=" + JSON.stringify(m.exports));
+        }
+      } finally {
+        delete Module._extensions['.test.js'];
+      }
+      console.log("ok");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "driver.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
 
   expect(stderr).not.toContain("TypeError");
   expect(stderr).not.toContain("Error:");

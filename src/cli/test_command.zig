@@ -1560,7 +1560,7 @@ pub const TestCommand = struct {
                 Global.exit(1);
             };
             changed_module_graph_files = result.module_graph_files;
-            if (result.changed_count == 0) {
+            if (result.test_files.len == 0 and result.changed_count == 0) {
                 Output.prettyError("<r><d>--changed:<r> no changed files, nothing to run\n", .{});
                 pass_with_no_tests_from_changed = true;
             } else if (result.test_files.len == 0) {

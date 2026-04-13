@@ -1635,10 +1635,13 @@ pub const BundleV2 = struct {
     /// used by `bun test --changed` to walk import records and compute which
     /// test entry points transitively depend on a given set of source files.
     ///
-    /// The returned BundleV2 and its graph are allocated on a fresh
-    /// ThreadLocalArena; the caller should dupe anything it needs and then
-    /// release it with `deinitWithoutFreeingArena()` followed by
-    /// `graph.heap.deinit()`.
+    /// The returned BundleV2, its ThreadLocalArena, and its worker pool are
+    /// intentionally left alive for the remainder of the process. Tearing
+    /// the pool down via `deinitWithoutFreeingArena()` blocks on worker
+    /// shutdown and contends with the runtime VM's own parse threads; the
+    /// sole caller exec()s (watch mode) or exits shortly after, so the leak
+    /// is bounded. Dupe anything you need out of the graph before returning
+    /// to the caller.
     pub fn scanModuleGraphFromCLI(
         transpiler: *Transpiler,
         alloc: std.mem.Allocator,

@@ -135,6 +135,9 @@ pub fn filter(
         for (graph_files.items) |p| allocator.free(p);
         graph_files.deinit(allocator);
     }
+    // Reserve once so the dupe+append below cannot leak a duped path if the
+    // list ever needed to grow and failed.
+    try graph_files.ensureTotalCapacityPrecise(allocator, sources.len);
 
     for (sources, 0..) |*source, idx| {
         const index = Index.init(@as(u32, @intCast(idx)));
@@ -149,7 +152,7 @@ pub fn filter(
         path_to_index.putAssumeCapacity(path_text, @intCast(idx));
         // Copy out of the bundler's arena so the caller can use these paths
         // after the BundleV2 heap is gone.
-        try graph_files.append(allocator, try allocator.dupe(u8, path_text));
+        graph_files.appendAssumeCapacity(try allocator.dupe(u8, path_text));
     }
 
     for (import_records, 0..) |records, idx| {
@@ -275,16 +278,21 @@ fn getChangedFiles(
             var unstaged = try runGit(allocator, git_path, top_level_dir, &.{ "diff", "--name-only", "--" });
             defer unstaged.stdout.deinit();
             defer unstaged.stderr.deinit();
-            try appendPaths(&set, git_root, unstaged.stdout.items);
+            if (unstaged.ok) {
+                try appendPaths(&set, git_root, unstaged.stdout.items);
+            }
 
             var staged = try runGit(allocator, git_path, top_level_dir, &.{ "diff", "--name-only", "--cached", "--" });
             defer staged.stdout.deinit();
             defer staged.stderr.deinit();
-            try appendPaths(&set, git_root, staged.stdout.items);
+            if (staged.ok) {
+                try appendPaths(&set, git_root, staged.stdout.items);
+            }
         }
 
-        // Untracked files.
-        var untracked = try runGit(allocator, git_path, top_level_dir, &.{ "ls-files", "--others", "--exclude-standard" });
+        // Untracked files. `--full-name` forces repo-root-relative output
+        // regardless of our cwd, matching `git diff --name-only` above.
+        var untracked = try runGit(allocator, git_path, top_level_dir, &.{ "ls-files", "--others", "--exclude-standard", "--full-name" });
         defer untracked.stdout.deinit();
         defer untracked.stderr.deinit();
         if (untracked.ok) {
@@ -324,9 +332,14 @@ fn runGit(
     cwd: []const u8,
     args: []const []const u8,
 ) std.mem.Allocator.Error!GitResult {
-    var argv = try std.array_list.Managed([]const u8).initCapacity(allocator, args.len + 1);
+    var argv = try std.array_list.Managed([]const u8).initCapacity(allocator, args.len + 3);
     defer argv.deinit();
     argv.appendAssumeCapacity(git_path);
+    // `core.quotePath` (on by default) wraps non-ASCII filenames in quotes
+    // and emits octal escapes. We want raw UTF-8 paths so they match the
+    // bundler's resolved paths byte-for-byte.
+    argv.appendAssumeCapacity("-c");
+    argv.appendAssumeCapacity("core.quotePath=off");
     argv.appendSliceAssumeCapacity(args);
 
     const proc = bun.spawnSync(&.{

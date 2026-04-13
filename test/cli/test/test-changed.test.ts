@@ -9,7 +9,10 @@ import { join } from "node:path";
 setDefaultTimeout(30_000);
 
 // Keep git from reading the developer's global config and make commits
-// deterministic across machines.
+// deterministic across machines. Used both for the `git` helper below and
+// for every spawned `bun test --changed` process, since that process
+// itself shells out to git and would otherwise inherit the developer's
+// excludes/config.
 const gitEnv = {
   ...bunEnv,
   GIT_CONFIG_NOSYSTEM: "1",
@@ -44,7 +47,7 @@ async function runTestChanged(
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--changed", ...extra],
     cwd,
-    env: bunEnv,
+    env: gitEnv,
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
@@ -208,7 +211,7 @@ describe.concurrent("bun test --changed", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--changed=HEAD~1"],
       cwd: String(dir),
-      env: bunEnv,
+      env: gitEnv,
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -255,13 +258,40 @@ describe.concurrent("bun test --changed", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--changed"],
       cwd: join(String(dir), "app"),
-      env: bunEnv,
+      env: gitEnv,
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(ranFiles(stderr, ["sub.test.ts", "untouched.test.ts"])).toEqual(["sub.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("untracked test file in a subdirectory is picked up", async () => {
+    // `git ls-files --others` prints cwd-relative paths unless --full-name
+    // is passed; this exercises that path join.
+    using dir = tempDir("test-changed-subdir-untracked", {
+      "package.json": JSON.stringify({ name: "root" }),
+      "app/package.json": JSON.stringify({ name: "app", type: "module" }),
+      "app/base.test.ts": `import { test, expect } from "bun:test";\ntest("base", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    writeFileSync(
+      join(String(dir), "app", "brand-new.test.ts"),
+      `import { test, expect } from "bun:test";\ntest("brand-new", () => expect(1).toBe(1));\n`,
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed"],
+      cwd: join(String(dir), "app"),
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(ranFiles(stderr, ["base.test.ts", "brand-new.test.ts"])).toEqual(["brand-new.test.ts"]);
     expect(exitCode).toBe(0);
   });
 
@@ -319,7 +349,7 @@ describe("bun test --changed --watch", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
       cwd: String(dir),
-      env: bunEnv,
+      env: gitEnv,
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",

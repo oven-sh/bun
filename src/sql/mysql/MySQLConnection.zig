@@ -873,9 +873,10 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
         // intermediate EOF packets between param definitions and column definitions,
         // and after column definitions. We must consume these EOF packets and only
         // finalize the prepared statement after the trailing EOF is consumed.
-        // Per MySQL protocol spec, 0xFE is only an EOF when payload length < 9;
-        // otherwise it's a length-encoded integer prefix.
-        if (!this.#capabilities.CLIENT_DEPRECATE_EOF and header_length < 9 and @as(PacketType, @enumFromInt(first_byte)) == .EOF) {
+        // Disambiguation from a 0xFE length-prefixed row: any 0xFE packet below
+        // the 16 MB max-packet marker (0xFFFFFF) is an EOF. See handleResultSet
+        // for the full rationale.
+        if (!this.#capabilities.CLIENT_DEPRECATE_EOF and header_length < 0xFFFFFF and @as(PacketType, @enumFromInt(first_byte)) == .EOF) {
             var eof = EOFPacket{};
             try eof.decode(reader);
             this.checkIfPreparedStatementIsDone(statement);

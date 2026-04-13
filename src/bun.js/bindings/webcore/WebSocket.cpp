@@ -378,7 +378,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const String& protocol)
 {
-    return create(context, url, Vector<String> { 1, protocol });
+    return create(context, url, Vector<String> { protocol });
 }
 
 ExceptionOr<void> WebSocket::connect(const String& url)
@@ -388,7 +388,7 @@ ExceptionOr<void> WebSocket::connect(const String& url)
 
 ExceptionOr<void> WebSocket::connect(const String& url, const String& protocol)
 {
-    return connect(url, Vector<String> { 1, protocol }, std::nullopt);
+    return connect(url, Vector<String> { protocol }, std::nullopt);
 }
 
 static String resourceName(const URL& url)
@@ -462,9 +462,10 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };
     }
 
-    bool is_secure = m_url.protocolIs("wss"_s) || m_url.protocolIs("https"_s);
+    bool is_unix = m_url.protocolIs("ws+unix"_s) || m_url.protocolIs("wss+unix"_s);
+    bool is_secure = m_url.protocolIs("wss"_s) || m_url.protocolIs("https"_s) || m_url.protocolIs("wss+unix"_s);
 
-    if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure) {
+    if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure && !is_unix) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
         updateHasPendingActivity();
@@ -550,8 +551,50 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     // tag and corrupt the HTTP upgrade request build in Zig.
     String hostString = m_url.host().toString();
     auto resource = resourceName(m_url);
+    String unixSocketPathString;
+    if (is_unix) {
+        // ws+unix:///path/to/sock.sock[:/request/path][?query]
+        // The URL pathname is "/path/to/sock.sock:/request/path". Split on the
+        // first ':' into the socket path and the HTTP request path, matching
+        // the npm `ws` package's ws+unix: handling. Anything after the first
+        // colon becomes the request path; if there is no colon the request
+        // path is "/" (plus any query string).
+        auto pathname = m_url.path();
+        if (pathname.isEmpty()) {
+            m_state = CLOSED;
+            updateHasPendingActivity();
+            return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
+        }
+        size_t colon = pathname.find(':');
+        if (colon == notFound) {
+            unixSocketPathString = pathname.toString();
+            resource = makeString('/', m_url.queryWithLeadingQuestionMark());
+        } else {
+            unixSocketPathString = pathname.left(colon).toString();
+            auto requestPath = pathname.substring(colon + 1);
+            // Ensure origin-form per RFC 7230 §5.3.1 (leading '/').
+            if (requestPath.isEmpty()) {
+                resource = makeString('/', m_url.queryWithLeadingQuestionMark());
+            } else if (requestPath.startsWith('/')) {
+                resource = makeString(requestPath, m_url.queryWithLeadingQuestionMark());
+            } else {
+                resource = makeString('/', requestPath, m_url.queryWithLeadingQuestionMark());
+            }
+        }
+        if (unixSocketPathString.isEmpty()) {
+            m_state = CLOSED;
+            updateHasPendingActivity();
+            return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
+        }
+        // Host header defaults to "localhost" over a unix socket, matching
+        // Node's http.request({ socketPath }) and the npm `ws` package.
+        if (hostString.isEmpty()) {
+            hostString = "localhost"_s;
+        }
+    }
     BunString host = Bun::toString(hostString);
     BunString path = Bun::toString(resource);
+    BunString unixSocketPath = Bun::toString(unixSocketPathString);
     BunString clientProtocolString = Bun::toString(protocolString);
     uint16_t port = is_secure ? 443 : 80;
     if (auto userPort = m_url.port()) {
@@ -589,6 +632,12 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
 
     // Determine connection type based on proxy usage and TLS requirements
     bool hasProxy = proxyConfig.has_value();
+
+    // Unix domain sockets are local; proxies do not apply.
+    if (is_unix) {
+        proxyConfig = std::nullopt;
+        hasProxy = false;
+    }
 
     // Check NO_PROXY even for explicitly-provided proxies
     if (hasProxy) {
@@ -664,7 +713,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
             sslConfig, is_secure,
-            targetAuthorization.isEmpty() ? nullptr : &targetAuth);
+            targetAuthorization.isEmpty() ? nullptr : &targetAuth,
+            is_unix ? &unixSocketPath : nullptr);
     } else {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
@@ -676,7 +726,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
             sslConfig, is_secure,
-            targetAuthorization.isEmpty() ? nullptr : &targetAuth);
+            targetAuthorization.isEmpty() ? nullptr : &targetAuth,
+            is_unix ? &unixSocketPath : nullptr);
     }
 
     proxyHeaderValues.clear();

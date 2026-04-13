@@ -133,6 +133,8 @@ test.concurrent("new Module().load populates filename/paths/loaded (#29253)", as
 
       const target = path.resolve(__dirname, "leaf.js");
       const m = new Module(target, module);
+      // paths must come from Module._nodeModulePaths(dirname(filename)).
+      const expectedPaths = Module._nodeModulePaths(path.dirname(target));
 
       // Pre-load state: loaded=false, no filename.
       if (m.loaded !== false) throw new Error("pre-load 'loaded' should be false, got " + m.loaded);
@@ -141,7 +143,9 @@ test.concurrent("new Module().load populates filename/paths/loaded (#29253)", as
 
       if (m.loaded !== true) throw new Error("post-load 'loaded' should be true");
       if (m.filename !== target) throw new Error("filename mismatch: " + m.filename);
-      if (!Array.isArray(m.paths)) throw new Error("paths should be an array");
+      if (JSON.stringify(m.paths) !== JSON.stringify(expectedPaths)) {
+        throw new Error("paths mismatch: " + JSON.stringify(m.paths) + " vs " + JSON.stringify(expectedPaths));
+      }
       if (m.exports !== 'ok') throw new Error("exports mismatch: " + m.exports);
       console.log("ok");
     `,

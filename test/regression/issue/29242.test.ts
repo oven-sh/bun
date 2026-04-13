@@ -106,10 +106,7 @@ test.concurrent("transpiler preserves string literal names under --minify-identi
   // is a synthesized intermediate that a minifier may rename. Printing
   // `original_name` (the raw source text) keeps re-exports correct.
   using dir = tempDir("issue-29242-minify", {
-    "input.ts": [
-      `export { "a b c" as aliased } from './mod';`,
-      `export { foo as bar } from './mod';`,
-    ].join("\n"),
+    "input.ts": [`export { "a b c" as aliased } from './mod';`, `export { foo as bar } from './mod';`].join("\n"),
   });
 
   await using proc = Bun.spawn({

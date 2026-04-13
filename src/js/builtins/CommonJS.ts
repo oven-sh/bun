@@ -416,55 +416,6 @@ export function createRequireCache() {
   return proxy;
 }
 
-// `Module.prototype.load(filename)` — used by packages like `requizzle` that
-// construct `new Module(...)` directly and expect Node's module-loader shape.
-// Mirrors Node's lib/internal/modules/cjs/loader.js `Module.prototype.load`.
-$visibility = "Private";
-export function modulePrototypeLoad(this: JSCommonJSModule, filename: string) {
-  // Match Node's `assert(!this.loaded, 'Module already loaded')` so a
-  // caller that catches the error and checks `e.code === 'ERR_ASSERTION'`
-  // behaves the same way on both runtimes.
-  const assert = require("node:assert");
-  assert(!this.loaded, "Module already loaded");
-
-  const Module = require("node:module");
-  const path = require("node:path");
-
-  this.filename = filename;
-  this.paths = Module._nodeModulePaths(path.dirname(filename));
-
-  // Find the longest-matching registered extension, mirroring Node's
-  // `findLongestRegisteredExtension` in lib/internal/modules/cjs/loader.js.
-  // `path.extname` only returns the trailing suffix, so it would miss
-  // compound extensions like `.test.js` or `.esm.js`.
-  const basename = path.basename(filename);
-  const extensions = Module._extensions;
-  let handler: any;
-  let startDot = basename.indexOf(".");
-  while (startDot !== -1 && startDot !== basename.length - 1) {
-    const suffix = basename.slice(startDot);
-    handler = extensions[suffix];
-    if (handler) break;
-    startDot = basename.indexOf(".", startDot + 1);
-  }
-  if (!handler) {
-    handler = extensions[".js"];
-  }
-
-  // Don't let a throw from the handler leave the module permanently
-  // marked "loaded" — otherwise a retry would hit the assert above.
-  // `module._compile` sets `hasEvaluated=true` before running user code,
-  // which is what `loaded` reflects, so we reset it on failure.
-  try {
-    handler.$call(extensions, this, filename);
-  } catch (e) {
-    this.loaded = false;
-    throw e;
-  }
-
-  this.loaded = true;
-}
-
 type WrapperMutate = (start: string, end: string) => void;
 export function getWrapperArrayProxy(onMutate: WrapperMutate) {
   const wrapper = ["(function(exports,require,module,__filename,__dirname){", "})"];

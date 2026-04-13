@@ -3541,13 +3541,15 @@ pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
     if (this.store != null) this.store.?.ref();
     var duped = this.*;
     duped.setNotHeapAllocated();
+    // NOTE: both branches below are currently unreachable — `setNotHeapAllocated`
+    // above zeroes the ref count so `duped.isHeapAllocated()` is always false.
+    // That means neither the use-after-free workaround (first branch) nor the
+    // `content_type` duplication for `include_content_type=true` (second branch)
+    // ever runs at runtime. Left in place because fixing both guards (e.g. by
+    // checking `this.isHeapAllocated()` instead) would activate previously-dead
+    // behavior and is out of scope for the WHATWG-compliance fix; it needs
+    // its own testing and is tracked as a separate follow-up.
     if (duped.content_type_allocated and duped.isHeapAllocated() and !include_content_type) {
-
-        // NOTE: this block is currently unreachable — `setNotHeapAllocated`
-        // above zeroes the ref count so `duped.isHeapAllocated()` is
-        // always false. Left in place because fixing the guard is a
-        // separate change that risks activating previously-dead behavior.
-        //
         // for now, we just want to avoid a use-after-free here
         if (jsc.VirtualMachine.get().mimeType(duped.content_type)) |mime| {
             duped.content_type = mime.value;

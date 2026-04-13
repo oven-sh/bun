@@ -3548,7 +3548,10 @@ pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
     // ever runs at runtime. Left in place because fixing both guards (e.g. by
     // checking `this.isHeapAllocated()` instead) would activate previously-dead
     // behavior and is out of scope for the WHATWG-compliance fix; it needs
-    // its own testing and is tracked as a separate follow-up.
+    // its own testing and is tracked as a separate follow-up. If/when the
+    // guards are revived, `jsc.VirtualMachine.get().mimeType(duped.content_type)`
+    // below must be swapped for `mimeTypeInternedValue` or it will silently
+    // re-introduce the charset canonicalization this PR removes elsewhere.
     if (duped.content_type_allocated and duped.isHeapAllocated() and !include_content_type) {
         // for now, we just want to avoid a use-after-free here
         if (jsc.VirtualMachine.get().mimeType(duped.content_type)) |mime| {

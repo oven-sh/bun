@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
-import { tmpdir } from "node:os";
 import { bunEnv, bunExe, isWindows } from "harness";
+import { tmpdir } from "node:os";
 
 it("offset should work in Bun.file() #4963", async () => {
   const filename = tmpdir() + "/bun.test.offset.txt";

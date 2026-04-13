@@ -146,7 +146,10 @@ describe("Bun.cron API", () => {
     expect(() => Bun.cron("./test.ts", "abc * * * *", "test-bad")).toThrow(/cron expression/i);
   });
 
-  test("throws with percent sign in path", async () => {
+  // Percent-sign validation is specific to Linux crontab embedding
+  // (cron turns % into newline). macOS/Windows XML-escape the path and
+  // impose no such restriction.
+  test.skipIf(!isLinux)("throws with percent sign in path (Linux)", async () => {
     using dir = tempDir("bun-cron-test", {
       "test%file.ts": `export default { scheduled() {} };`,
     });

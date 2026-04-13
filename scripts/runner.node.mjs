@@ -1773,9 +1773,12 @@ async function getVendorTests(cwd) {
           }
 
           if (typeof skipTests === "object") {
+            // `readdirSync` yields platform-native separators on Windows
+            // (`\`). Normalize to `/` so vendor.json keys are portable.
+            const normalized = path.replace(/\\/g, "/");
             for (const [glob, reason] of Object.entries(skipTests)) {
               const pattern = new RegExp(`^${glob.replace(/\*/g, ".*")}$`);
-              if (pattern.test(path) && reason) {
+              if (pattern.test(normalized) && reason) {
                 return false;
               }
             }

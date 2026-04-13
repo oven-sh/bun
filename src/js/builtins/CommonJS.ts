@@ -421,32 +421,48 @@ export function createRequireCache() {
 // Mirrors Node's lib/internal/modules/cjs/loader.js `Module.prototype.load`.
 $visibility = "Private";
 export function modulePrototypeLoad(this: JSCommonJSModule, filename: string) {
-  if (this.loaded) {
-    throw new Error("Module already loaded");
-  }
+  // Match Node's `assert(!this.loaded, 'Module already loaded')` so a
+  // caller that catches the error and checks `e.code === 'ERR_ASSERTION'`
+  // behaves the same way on both runtimes.
+  const assert = require("node:assert");
+  assert(!this.loaded, "Module already loaded");
 
   const Module = require("node:module");
   const path = require("node:path");
-  const fs = require("node:fs");
 
   this.filename = filename;
   this.paths = Module._nodeModulePaths(path.dirname(filename));
 
-  const ext = path.extname(filename);
+  // Find the longest-matching registered extension, mirroring Node's
+  // `findLongestRegisteredExtension` in lib/internal/modules/cjs/loader.js.
+  // `path.extname` only returns the trailing suffix, so it would miss
+  // compound extensions like `.test.js` or `.esm.js`.
+  const basename = path.basename(filename);
   const extensions = Module._extensions;
-  const handler = extensions[ext] || extensions[".js"];
-  handler.$call(extensions, this, filename);
+  let handler: any;
+  let startDot = basename.indexOf(".");
+  while (startDot !== -1 && startDot !== basename.length - 1) {
+    const suffix = basename.slice(startDot);
+    handler = extensions[suffix];
+    if (handler) break;
+    startDot = basename.indexOf(".", startDot + 1);
+  }
+  if (!handler) {
+    handler = extensions[".js"];
+  }
+
+  // Don't let a throw from the handler leave the module permanently
+  // marked "loaded" — otherwise a retry would hit the assert above.
+  // `module._compile` sets `hasEvaluated=true` before running user code,
+  // which is what `loaded` reflects, so we reset it on failure.
+  try {
+    handler.$call(extensions, this, filename);
+  } catch (e) {
+    this.loaded = false;
+    throw e;
+  }
 
   this.loaded = true;
-}
-
-// `Module._extensions['.js']` — reads file, runs it through `module._compile`
-// (which honors the current (possibly overridden) `Module.wrap`).
-$visibility = "Private";
-export function modulePrototypeLoadJSExtension(this: any, module: JSCommonJSModule, filename: string) {
-  const fs = require("node:fs");
-  const content = fs.readFileSync(filename, "utf8");
-  module._compile(content, filename);
 }
 
 type WrapperMutate = (start: string, end: string) => void;

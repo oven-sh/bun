@@ -765,25 +765,16 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
 
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
-    // `Module.prototype` must be the SAME object that sits in the prototype
-    // chain of instances created via `new Module(...)`. Otherwise, assigning
-    // `Module.prototype.foo = ...` won't affect instances, and methods added
-    // to the real instance prototype (e.g. `load`) won't be visible via
-    // `Module.prototype`. Packages like `requizzle` depend on this.
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    auto* structure = globalObject->CommonJSModuleObjectStructure();
-    auto* prototype = structure->storedPrototypeObject();
+    auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
 
-    // Expose `require` on the public prototype. Instance-level `require` is
-    // set per-instance during module evaluation, so the prototype accessor
-    // is only hit for instances constructed outside the normal loader path.
-    if (!prototype->getDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName())) {
-        prototype->putDirectCustomAccessor(
-            vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
-            JSC::CustomGetterSetter::create(vm, getterRequireFunction,
-                setterRequireFunction),
-            0);
-    }
+    prototype->putDirectCustomAccessor(
+        vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
+        JSC::CustomGetterSetter::create(vm, getterRequireFunction,
+            setterRequireFunction),
+        0);
+
+    prototype->putDirect(vm, Identifier::fromString(vm, "_compile"_s), globalObject->modulePrototypeUnderscoreCompileFunction());
 
     return prototype;
 }

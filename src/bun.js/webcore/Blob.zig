@@ -1832,6 +1832,13 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
                         // WHATWG File API: the stored `type` must be the
                         // lowercased input verbatim — do NOT canonicalize into
                         // charset-appended forms like `text/plain;charset=utf-8`.
+                        //
+                        // `blob` may have come from `get()` → `dupe()`, which
+                        // shallow-copies a parent's `content_type_allocated=true`
+                        // flag along with an aliased pointer. Reset the flag
+                        // before overwriting so we don't mark a static slice
+                        // (or a future copyLowercase buffer) with stale state.
+                        blob.content_type_allocated = false;
                         if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
                             blob.content_type = interned;
                             break :inner;
@@ -1934,6 +1941,11 @@ pub fn constructBunFile(
                         blob.content_type_was_set = true;
                         // WHATWG File API: preserve the lowercased input
                         // verbatim; do not canonicalize to charset-appended forms.
+                        //
+                        // `findOrCreateFileFromPath` can return a duped blob
+                        // (standalone module graph path), which shallow-copies
+                        // `content_type_allocated=true`. Reset before overwrite.
+                        blob.content_type_allocated = false;
                         if (vm.mimeTypeInternedValue(slice)) |interned| {
                             blob.content_type = interned;
                             break :inner;
@@ -3375,6 +3387,12 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
                                 // WHATWG File API: preserve the lowercased input
                                 // verbatim; do not canonicalize to charset-appended forms.
+                                //
+                                // `blob` came from `get()` which may shallow-copy
+                                // a parent's `content_type_allocated=true` via
+                                // `dupe()`. Reset before overwrite so we do not
+                                // mark a static slice as owned.
+                                blob.content_type_allocated = false;
                                 if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
                                     blob.content_type = interned;
                                     break :inner;

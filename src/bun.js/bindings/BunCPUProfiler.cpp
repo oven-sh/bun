@@ -217,6 +217,11 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 
                 // Function definition location. JSC returns these 1-based;
                 // Node/Deno/Chrome DevTools emit them 0-based in the JSON.
+                // We remap this (not the sample position) through the
+                // sourcemap callback so callFrame.url/line/column all agree
+                // on the function's DEFINITION site — bundled/transpiled
+                // scripts then report the original source for the node while
+                // positionTicks reports original-source sample lines.
                 int rawFunctionStartLine = frame.functionStartLine();
                 unsigned rawFunctionStartColumn = frame.functionStartColumn();
                 if (rawFunctionStartLine > 0 && rawFunctionStartColumn != std::numeric_limits<unsigned>::max()) {
@@ -224,12 +229,14 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                         static_cast<unsigned>(rawFunctionStartLine),
                         rawFunctionStartColumn,
                     };
-                    WTF::String functionDefURL = url;
                     if (provider) {
 #if USE(BUN_JSC_ADDITIONS)
                         auto& fn = vm.computeLineColumnWithSourcemap();
                         if (fn) {
-                            fn(vm, provider, functionStartLineColumn, functionDefURL);
+                            // `url` is the out-param — on a successful remap
+                            // it becomes the original-source URL, matching
+                            // the line/column we're emitting.
+                            fn(vm, provider, functionStartLineColumn, url);
                         }
 #endif
                     }
@@ -244,13 +251,18 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 
                 if (frame.hasExpressionInfo()) {
                     // Current sample position (what line inside the function
-                    // was executing). Apply sourcemap if available.
+                    // was executing). Apply sourcemap if available, but keep
+                    // the URL we already resolved for the function definition
+                    // — a throwaway out-param ensures the sample remap can't
+                    // clobber `url` with the sample's source file (which, for
+                    // inlined helpers, may differ from the function's).
                     JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
                     if (provider) {
 #if USE(BUN_JSC_ADDITIONS)
                         auto& fn = vm.computeLineColumnWithSourcemap();
                         if (fn) {
-                            fn(vm, provider, sourceMappedLineColumn, url);
+                            WTF::String scratchURL = url;
+                            fn(vm, provider, sourceMappedLineColumn, scratchURL);
                         }
 #endif
                     }
@@ -739,6 +751,9 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
                     // Function definition location. JSC returns these 1-based;
                     // Node/Deno/Chrome DevTools emit them 0-based in the JSON.
+                    // The definition (not the sample position) is remapped
+                    // through the sourcemap callback so callFrame.url and
+                    // callFrame.line/column agree on the function's source.
                     int rawFunctionStartLine = frame.functionStartLine();
                     unsigned rawFunctionStartColumn = frame.functionStartColumn();
                     if (rawFunctionStartLine > 0 && rawFunctionStartColumn != std::numeric_limits<unsigned>::max()) {
@@ -746,12 +761,13 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                             static_cast<unsigned>(rawFunctionStartLine),
                             rawFunctionStartColumn,
                         };
-                        WTF::String functionDefURL = url;
                         if (provider) {
 #if USE(BUN_JSC_ADDITIONS)
                             auto& fn = vm.computeLineColumnWithSourcemap();
                             if (fn) {
-                                fn(vm, provider, functionStartLineColumn, functionDefURL);
+                                // `url` is the out-param — on a successful
+                                // remap it becomes the original-source URL.
+                                fn(vm, provider, functionStartLineColumn, url);
                             }
 #endif
                         }
@@ -764,12 +780,17 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     }
 
                     if (frame.hasExpressionInfo()) {
+                        // Sample position for positionTicks — a throwaway
+                        // out-param ensures the sample remap can't clobber
+                        // `url` with a different file than the definition.
                         JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
                         if (provider) {
 #if USE(BUN_JSC_ADDITIONS)
                             auto& fn = vm.computeLineColumnWithSourcemap();
-                            if (fn)
-                                fn(vm, provider, sourceMappedLineColumn, url);
+                            if (fn) {
+                                WTF::String scratchURL = url;
+                                fn(vm, provider, sourceMappedLineColumn, scratchURL);
+                            }
 #endif
                         }
                         if (sourceMappedLineColumn.line > 0)

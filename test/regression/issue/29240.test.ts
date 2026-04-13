@@ -126,18 +126,21 @@ console.log("done");
     for (const entry of node.positionTicks) {
       expect(typeof entry.line).toBe("number");
       expect(typeof entry.ticks).toBe("number");
-      // Lines are 1-indexed and must fall within the script (29 source lines).
+      // Lines are 1-indexed and must fall within the script body
+      // (27 content lines; last line is `console.log("done")`).
       expect(entry.line).toBeGreaterThan(0);
-      expect(entry.line).toBeLessThanOrEqual(29);
+      expect(entry.line).toBeLessThanOrEqual(27);
       expect(entry.ticks).toBeGreaterThan(0);
       sum += entry.ticks;
     }
-    // positionTicks only records the top frame of each sample, so its total
-    // must equal hitCount for that node.
-    expect(sum).toBe(node.hitCount);
+    // positionTicks only records samples that had expression info — which
+    // is most but not all of them. Its total is therefore bounded above by
+    // the node's hitCount and bounded below by 1 (we filtered for > 0).
+    expect(sum).toBeGreaterThan(0);
+    expect(sum).toBeLessThanOrEqual(node.hitCount);
   }
 
-  // Keying on (functionName, lineNumber, columnNumber) must collapse
+  // Keying on (functionName, url, lineNumber, columnNumber) must collapse
   // repeated calls of the same function — the exact guarantee the issue
   // reporter asked for so cross-runtime cpuprofile code can merge nodes.
   // (The `url` field may appear in two forms — `/abs/path.js` vs
@@ -148,4 +151,95 @@ console.log("done");
     fibNodes.map((n: any) => `${n.callFrame.functionName}|${n.callFrame.lineNumber}|${n.callFrame.columnNumber}`),
   );
   expect(uniqueFibKeys.size).toBe(1);
+});
+
+test("cpu-prof respects sourcemaps for both function definition and positionTicks (#29240)", async () => {
+  // Bun transpiles `.ts` files through its bundler at load time, which sets
+  // up an internal sourcemap from the generated JS back to the original TS.
+  // That's the exact path `computeLineColumnWithSourcemap` is wired to.
+  // A TS-specific type annotation forces the transpile step (a plain JS file
+  // can be loaded raw), giving us a reliable way to exercise the sourcemap
+  // codepath in the CPU profiler without hand-rolling a .js.map file.
+  using dir = tempDir("issue-29240-sourcemap", {
+    "script.ts": `function fibonacci(n: number): number {
+  if (n < 2) return n;
+  return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+function hot(): number {
+  let total = 0;
+  const deadline = performance.now() + 200;
+  while (performance.now() < deadline) {
+    for (let i = 0; i < 40; i++) {
+      total += fibonacci(20);
+    }
+  }
+  return total;
+}
+
+console.log("result", hot() > 0);
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir=.", "--cpu-prof-name=out.cpuprofile", "script.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("result true\n");
+  expect(exitCode).toBe(0);
+
+  const files = readdirSync(String(dir)).filter(f => f.endsWith(".cpuprofile"));
+  expect(files).toEqual(["out.cpuprofile"]);
+
+  const profile = JSON.parse(readFileSync(join(String(dir), "out.cpuprofile"), "utf8"));
+
+  // After sourcemap remapping, callFrame.url should be the ORIGINAL .ts URL
+  // (not a transpiled-bundle `bun://` / `file://...js` URL).
+  const scriptNodes = profile.nodes.filter(
+    (n: any) => typeof n.callFrame.url === "string" && n.callFrame.url.endsWith("script.ts"),
+  );
+  expect(scriptNodes.length).toBeGreaterThan(0);
+
+  // `fibonacci` is defined on line 1 of the ORIGINAL TS source. After the
+  // sourcemap is applied, callFrame.lineNumber must be 0 (0-indexed).
+  const fibNodes = scriptNodes.filter((n: any) => n.callFrame.functionName === "fibonacci");
+  expect(fibNodes.length).toBeGreaterThan(0);
+  for (const n of fibNodes) {
+    expect(n.callFrame.lineNumber).toBe(0);
+  }
+
+  // `hot` is defined on line 6 of the ORIGINAL TS source → 0-indexed 5.
+  const hotNodes = scriptNodes.filter((n: any) => n.callFrame.functionName === "hot");
+  expect(hotNodes.length).toBeGreaterThan(0);
+  for (const n of hotNodes) {
+    expect(n.callFrame.lineNumber).toBe(5);
+  }
+
+  // positionTicks line numbers must also be remapped to the ORIGINAL TS —
+  // within the 17 content lines of script.ts above. If positionTicks surfaced
+  // transpiled-source lines, this would drift into high numbers.
+  const nodesWithTicks = scriptNodes.filter((n: any) => Array.isArray(n.positionTicks) && n.positionTicks.length > 0);
+  expect(nodesWithTicks.length).toBeGreaterThan(0);
+  for (const node of nodesWithTicks) {
+    for (const entry of node.positionTicks) {
+      expect(entry.line).toBeGreaterThan(0);
+      expect(entry.line).toBeLessThanOrEqual(17);
+      expect(entry.ticks).toBeGreaterThan(0);
+    }
+  }
+
+  // Crucially, tools keying on (url, lineNumber, columnNumber) must see the
+  // same triplet for every fibonacci node — same URL (the original .ts),
+  // same definition line/column. If the sourcemap-mapped URL and line/column
+  // were ever computed from different remap calls, recursive fibonacci would
+  // fragment into multiple keys.
+  const fibKeys = new Set(
+    fibNodes.map((n: any) => `${n.callFrame.url}|${n.callFrame.lineNumber}|${n.callFrame.columnNumber}`),
+  );
+  expect(fibKeys.size).toBe(1);
 });

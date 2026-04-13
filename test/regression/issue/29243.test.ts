@@ -209,3 +209,55 @@ test("bun build --format=cjs still rejects a live top-level for await loop", asy
   expect(stderr).toContain(`Top-level await is currently not supported with the "cjs" output format`);
   expect(exitCode).not.toBe(0);
 });
+
+// A default parameter is not at module top level, so `await EXPR` inside
+// a non-async function's default value must not be silently upgraded to an
+// await expression just because the enclosing file is at module scope.
+test("bun build --format=cjs rejects await in a default parameter of a non-async function", async () => {
+  using dir = tempDir("issue-29243-default-param", {
+    "entry.js": `function foo(x = await import("node:fs")) {
+  return x;
+}
+module.exports = foo;`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`"await" can only be used inside an "async" function`);
+  expect(exitCode).not.toBe(0);
+});
+
+// A dead `await` shouldn't interfere with a top-level `return` statement
+// in a CJS file; both are legal in CJS and the presence of the dead await
+// is just DCE fodder.
+test("bun build --format=cjs allows a top-level return alongside a dead top-level await", async () => {
+  using dir = tempDir("issue-29243-dead-await-and-return", {
+    "entry.js": `if (false) {
+  await import("node:fs");
+}
+module.exports = 42;
+return;`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toContain("module.exports = 42");
+  expect(stdout).toContain("return");
+  expect(exitCode).toBe(0);
+});

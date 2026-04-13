@@ -590,6 +590,7 @@ describe.skipIf(!hasCrontab)("cron registration (Linux)", () => {
 
     const commandLine = lines[markerIdx + 1];
     expect(commandLine).toStartWith("15 3 * * 0 ");
+    expect(commandLine).toMatch(/--cwd='[^']+'/);
     expect(commandLine).toContain("--cron-title=test-format");
     expect(commandLine).toContain("--cron-period='15 3 * * 0'");
     expect(commandLine).toContain(`${dir}/job.ts`);

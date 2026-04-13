@@ -991,7 +991,15 @@ function normalizeSpawnArguments(file, args, options) {
     if (value !== undefined) {
       validateArgumentNullCheck(key, `options.env['${key}']`);
       validateArgumentNullCheck(value, `options.env['${key}']`);
-      bunEnv[key] = value;
+      // On Windows, env keys are case-insensitive but `process.env` iterates
+      // with the OS's canonical casing (e.g. "Path"). Bun.spawnSync's PATH
+      // lookup for argv[0] does a case-sensitive match on "PATH", so rename
+      // the PATH entry here to keep command resolution working.
+      if (process.platform === "win32" && StringPrototypeToUpperCase.$call(key) === "PATH") {
+        bunEnv["PATH"] = value;
+      } else {
+        bunEnv[key] = value;
+      }
     }
   }
 

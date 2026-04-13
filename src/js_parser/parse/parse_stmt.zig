@@ -767,23 +767,47 @@ pub fn ParseStmt(
 
             // "for await (let x of y) {}"
             var isForAwait = p.lexer.isContextualKeyword("await");
+            var for_await_range: logger.Range = logger.Range.None;
             if (isForAwait) {
                 const await_range = p.lexer.range();
-                // At module scope in a non-ESM target we only know whether a
-                // `for await` loop is truly illegal after DCE has run (it may
-                // live inside a dead `if (false)` branch). Accept it here and
-                // rely on the visit pass to raise a targeted error if a live
-                // `for await` survives.
+                for_await_range = await_range;
+                // At the actual module top-level in a non-ESM target we only
+                // know whether a `for await` loop is truly illegal after DCE
+                // has run (it may live inside a dead `if (false)` branch).
+                // Accept it here and rely on the visit pass to raise a
+                // targeted error if a live `for await` survives.
+                //
+                // We're at module scope iff walking up the scope stack hits
+                // the module `entry` without crossing a function / class /
+                // arrow scope. Block scopes (including the one `t_for` just
+                // pushed) don't count.
+                const at_module_scope = at_module_scope: {
+                    var s: ?*js_ast.Scope = p.current_scope;
+                    while (s) |curr| : (s = curr.parent) {
+                        switch (curr.kind) {
+                            .entry => break :at_module_scope true,
+                            .function_args,
+                            .function_body,
+                            .class_body,
+                            .class_name,
+                            .class_static_init,
+                            => break :at_module_scope false,
+                            else => {},
+                        }
+                    }
+                    break :at_module_scope false;
+                };
                 const tolerate_top_level =
                     p.fn_or_arrow_data_parse.allow_await == .allow_ident and
-                    p.fn_or_arrow_data_parse.is_top_level;
+                    at_module_scope;
                 if (p.fn_or_arrow_data_parse.allow_await != .allow_expr and !tolerate_top_level) {
                     try p.log.addRangeError(p.source, await_range, "Cannot use \"await\" outside an async function");
                     isForAwait = false;
+                    for_await_range = logger.Range.None;
                 } else {
                     // TODO: improve error handling here
                     //                 didGenerateError := p.markSyntaxFeature(compat.ForAwait, awaitRange)
-                    if (p.fn_or_arrow_data_parse.is_top_level) {
+                    if (p.fn_or_arrow_data_parse.is_top_level or at_module_scope) {
                         p.top_level_await_keyword = await_range;
                         // p.markSyntaxFeature(compat.TopLevelAwait, awaitRange)
                     }
@@ -874,7 +898,7 @@ pub fn ParseStmt(
                 try p.lexer.expect(.t_close_paren);
                 var stmtOpts = ParseStatementOptions{};
                 const body = try p.parseStmt(&stmtOpts);
-                return p.s(S.ForOf{ .is_await = isForAwait, .init = init_ orelse unreachable, .value = value, .body = body }, loc);
+                return p.s(S.ForOf{ .is_await = isForAwait, .init = init_ orelse unreachable, .value = value, .body = body, .await_range = for_await_range }, loc);
             }
 
             // Detect for-in loops

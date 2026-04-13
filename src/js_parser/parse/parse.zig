@@ -336,15 +336,6 @@ pub fn Parse(
             var old_fn_or_arrow_data = std.mem.toBytes(p.fn_or_arrow_data_parse);
             p.fn_or_arrow_data_parse.arrow_arg_errors = arrowArgErrors;
             p.fn_or_arrow_data_parse.track_arrow_arg_errors = true;
-            // We're parsing what may be an arrow function's argument list,
-            // not the module top level. Clear `is_top_level` so the
-            // module-scope-only `await` identifier upgrade in parsePrefix
-            // doesn't fire inside a default parameter expression. The
-            // `track_arrow_arg_errors` safety net doesn't catch this case
-            // because the marker gets written onto `p.fn_or_arrow_data_parse`
-            // and then discarded on restore, while the arrow-arg error
-            // detector inspects a disconnected local copy.
-            p.fn_or_arrow_data_parse.is_top_level = false;
 
             // Scan over the comma-separated arguments or expressions
             while (p.lexer.token != .t_close_paren) {

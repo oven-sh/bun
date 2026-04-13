@@ -1193,6 +1193,23 @@ pub fn VisitStmt(
                 try stmts.append(stmt.*);
             }
             pub fn s_for_of(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.ForOf) !void {
+                // A `for await (… of …)` loop counts as a top-level `await`
+                // for the purposes of CJS-TLA error reporting. Record it as
+                // live when we reach it in reachable control flow at module
+                // scope so we don't silently drop the diagnostic for loops
+                // whose body happens not to contain any `await` expressions.
+                if (data.is_await and
+                    !p.is_control_flow_dead and
+                    p.fn_or_arrow_data_visit.is_outside_fn_or_arrow and
+                    !p.has_live_top_level_await)
+                {
+                    p.top_level_await_keyword = .{
+                        .loc = stmt.loc,
+                        .len = @as(i32, @intCast("for".len)),
+                    };
+                    p.has_live_top_level_await = true;
+                }
+
                 p.pushScopeForVisitPass(.block, stmt.loc) catch unreachable;
                 defer p.popScope();
                 _ = p.visitForLoopInit(data.init, true);

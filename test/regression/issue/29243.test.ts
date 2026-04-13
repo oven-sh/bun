@@ -235,6 +235,55 @@ module.exports = foo;`,
   expect(exitCode).not.toBe(0);
 });
 
+// Arrow function argument lists go through `parseParenExpr`, which is a
+// different path from `parseFn`. It also has to clear `is_top_level` when
+// saving the parser state so the module-scope `await` upgrade doesn't
+// leak into default parameter expressions of non-async arrow functions.
+test("bun build --format=cjs rejects await in a default parameter of a non-async arrow", async () => {
+  using dir = tempDir("issue-29243-arrow-default-param", {
+    "entry.js": `const fn = (x = await import("node:fs")) => x;
+module.exports = fn;`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`"await" can only be used inside an "async" function`);
+  expect(exitCode).not.toBe(0);
+});
+
+// The live `for await` diagnostic should underline the `await` keyword, not
+// the `for` keyword. Locks in the range that `parseStmt` captured.
+test("bun build --format=cjs underlines the await token of a live for-await loop", async () => {
+  using dir = tempDir("issue-29243-for-await-range", {
+    "entry.js": `for await (const x of someIter) {
+  console.log(x);
+}`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // Column 5 points at the `a` of `await`; column 1 would point at `for`.
+  expect(stderr).toContain("entry.js:1:5");
+  expect(stderr).toContain(`Top-level await is currently not supported with the "cjs" output format`);
+  expect(exitCode).not.toBe(0);
+});
+
 // A dead `await` shouldn't interfere with a top-level `return` statement
 // in a CJS file; both are legal in CJS and the presence of the dead await
 // is just DCE fodder.

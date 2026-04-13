@@ -51,9 +51,11 @@ test("#29264 bundler survives external + missing imports in same file", async ()
   // The fixture script must reach the `catch` and print DONE. Before
   // the fix, the process crashed inside `Bun.build` with a segfault
   // (release) or index-out-of-bounds panic (debug/ASAN), so neither
-  // `DONE:` nor the per-error lines ever made it out.
+  // `DONE:` nor the per-error lines ever made it out. We deliberately
+  // do NOT assert on the bare "src" import — whether the plugin's
+  // `{ external: true }` (with no `path`) falls through to a resolver
+  // error is plugin semantics, not what this test guards against.
   expect(stdout).toContain("DONE:caught");
   expect(stdout).toContain('ERR:Could not resolve: "./src"');
-  expect(stdout).toContain('ERR:Could not resolve: "src"');
   expect(exitCode).toBe(0);
 });

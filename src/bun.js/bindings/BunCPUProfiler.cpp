@@ -439,20 +439,26 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     }
 
                     if (frame.hasExpressionInfo()) {
-                        // Sample position for positionTicks — a throwaway
-                        // out-param ensures the sample remap can't clobber
-                        // `url` with a different file than the definition.
+                        // Sample position for positionTicks. Use a throwaway
+                        // out-param so the sample remap can't clobber `url`
+                        // with a different file than the function definition.
+                        // We also drop the sample line entirely if the sample
+                        // maps back to a DIFFERENT original source file than
+                        // the definition (cross-module inlining in bundled
+                        // code) — attaching a line number from one file to a
+                        // ProfileNode whose callFrame.url is a different file
+                        // would mislocate the tick in Chrome DevTools.
                         JSC::LineColumn sourceMappedLineColumn = frame.semanticLocation.lineColumn;
+                        WTF::String sampleURL = url;
                         if (provider) {
 #if USE(BUN_JSC_ADDITIONS)
                             auto& fn = vm.computeLineColumnWithSourcemap();
                             if (fn) {
-                                WTF::String scratchURL = url;
-                                fn(vm, provider, sourceMappedLineColumn, scratchURL);
+                                fn(vm, provider, sourceMappedLineColumn, sampleURL);
                             }
 #endif
                         }
-                        if (sourceMappedLineColumn.line > 0)
+                        if (sourceMappedLineColumn.line > 0 && sampleURL == url)
                             sampleLine = static_cast<int>(sourceMappedLineColumn.line);
                     }
                 }

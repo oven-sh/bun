@@ -120,6 +120,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             target_is_secure: bool,
             // Target URL authorization (Basic auth from ws://user:pass@host)
             target_authorization: ?*const bun.String,
+            // Unix domain socket path for ws+unix:// / wss+unix:// (null for TCP)
+            unix_socket_path: ?*const bun.String,
         ) callconv(.c) ?*HTTPClient {
             const vm = global.bunVM();
 
@@ -152,6 +154,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var target_authorization_slice: ?jsc.ZigString.Slice = null;
             defer if (target_authorization_slice) |s| s.deinit();
             if (target_authorization) |ta| target_authorization_slice = ta.toUTF8(allocator);
+
+            var unix_socket_path_slice: ?jsc.ZigString.Slice = null;
+            defer if (unix_socket_path_slice) |s| s.deinit();
+            if (unix_socket_path) |usp| unix_socket_path_slice = usp.toUTF8(allocator);
 
             const using_proxy = proxy_host != null;
 
@@ -305,6 +311,44 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                         }
                     }
                 }
+            }
+
+            // Unix domain socket path (ws+unix:// / wss+unix://)
+            if (unix_socket_path_slice) |usp| {
+                if (Socket.connectUnixAnon(
+                    usp.slice(),
+                    connect_ctx,
+                    client,
+                    false,
+                )) |socket| {
+                    client.tcp = socket;
+                    if (client.state == .failed) {
+                        client.deref();
+                        return null;
+                    }
+                    bun.analytics.Features.WebSocket += 1;
+
+                    if (comptime ssl) {
+                        // SNI uses the URL host (defaulted to "localhost" in
+                        // C++ when absent), mirroring the TCP path below. A
+                        // user-supplied Host header does NOT affect SNI; use
+                        // `tls: { checkServerIdentity }` or put the hostname
+                        // in the URL (wss+unix://name/path) to verify against
+                        // a specific certificate name.
+                        if (host_slice.slice().len > 0 and !strings.isIPAddress(host_slice.slice())) {
+                            client.hostname = bun.default_allocator.dupeZ(u8, host_slice.slice()) catch "";
+                        }
+                    }
+
+                    client.tcp.timeout(120);
+                    client.state = .reading;
+                    // +1 for cpp_websocket
+                    client.ref();
+                    return client;
+                } else |_| {
+                    client.deref();
+                }
+                return null;
             }
 
             if (Socket.connectPtr(

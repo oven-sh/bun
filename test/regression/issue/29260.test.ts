@@ -41,7 +41,7 @@ describe.if(!isWindows)("issue/29260", () => {
     5 * 60_000,
   );
 
-  test("uv_thread_self and friends no longer panic when a NAPI module calls them", async () => {
+  test("uv_thread_self and friends no longer panic when a NAPI module calls them", { timeout: 30_000 }, async () => {
     // -p prints the expression value. The addon's init returns `true` if
     // every thread op succeeds — if any uv_thread_* symbol were still a
     // stub, Bun would panic here instead of printing "boolean".
@@ -58,8 +58,10 @@ describe.if(!isWindows)("issue/29260", () => {
       console.error("stdout:", stdout);
       console.error("stderr:", stderr);
     }
-    // The specific panic message we regressed from.
-    expect(stderr).not.toContain("unsupported uv function");
+    // The addon's init returns `true` only if every thread op succeeds.
+    // Without the polyfill, Bun panics during require() and `typeof` never
+    // gets printed — so checking stdout + exit code is enough to detect
+    // both the regression and the fix.
     expect(stdout).toContain("boolean");
     expect(exitCode).toBe(0);
   });

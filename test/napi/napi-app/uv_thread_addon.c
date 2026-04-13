@@ -13,6 +13,10 @@ static void thread_entry(void *arg) {
   *counter = 42;
 }
 
+// For the detach sub-test: the caller returns before this runs, so we
+// must NOT touch anything from the caller's stack. No-op instead.
+static void thread_entry_detach(void *arg) { (void)arg; }
+
 static napi_value fail(napi_env env, const char *msg) {
   napi_throw_error(env, NULL, msg);
   return NULL;
@@ -54,8 +58,7 @@ NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
   }
 
   // uv_thread_detach: spawn, detach, the thread cleans up on its own.
-  counter = 0;
-  if (uv_thread_create(&tid, thread_entry, &counter) != 0) {
+  if (uv_thread_create(&tid, thread_entry_detach, NULL) != 0) {
     return fail(env, "uv_thread_create (detach) failed");
   }
   if (uv_thread_detach(&tid) != 0) {

@@ -352,11 +352,12 @@ pub const CronRegisterJob = struct {
             \\    <array>
             \\        <string>{s}</string>
             \\        <string>run</string>
-            \\        <string>--cwd={s}</string>
             \\        <string>--cron-title={s}</string>
             \\        <string>--cron-period={s}</string>
             \\        <string>{s}</string>
             \\    </array>
+            \\    <key>WorkingDirectory</key>
+            \\    <string>{s}</string>
             \\    <key>StartCalendarInterval</key>
             \\{s}
             \\    <key>StandardOutPath</key>
@@ -366,7 +367,7 @@ pub const CronRegisterJob = struct {
             \\</dict>
             \\</plist>
             \\
-        , .{ xml_title, xml_bun, xml_cwd, xml_title, xml_sched, xml_path, calendar_xml, xml_title, xml_title }) catch {
+        , .{ xml_title, xml_bun, xml_title, xml_sched, xml_path, xml_cwd, calendar_xml, xml_title, xml_title }) catch {
             this.setErr("Out of memory", .{});
             this.finish();
             return;
@@ -489,18 +490,27 @@ pub const CronRegisterJob = struct {
             bun.default_allocator.free(abs_path);
             return globalObject.throw("Failed to get current working directory", .{});
         };
-        // Validate cwd has no single quotes (shell escaping in crontab) or
-        // percent signs (cron interprets % as newline before the shell sees it)
-        for (cwd_owned) |c| {
-            if (c == '\'') {
-                bun.default_allocator.free(cwd_owned);
-                bun.default_allocator.free(abs_path);
-                return globalObject.throwInvalidArguments("Working directory must not contain single quotes", .{});
-            }
-            if (c == '%') {
-                bun.default_allocator.free(cwd_owned);
-                bun.default_allocator.free(abs_path);
-                return globalObject.throwInvalidArguments("Working directory must not contain percent signs (cron interprets % as newline)", .{});
+        // On Linux the cwd is embedded inside a single-quoted shell token in a
+        // crontab line, so validate characters that would break out of that
+        // context. macOS and Windows use the scheduler's native WorkingDirectory
+        // field (XML-escaped) and need no such restriction.
+        if (comptime bun.Environment.isLinux) {
+            for (cwd_owned) |c| {
+                if (c == '\'') {
+                    bun.default_allocator.free(cwd_owned);
+                    bun.default_allocator.free(abs_path);
+                    return globalObject.throwInvalidArguments("Working directory must not contain single quotes", .{});
+                }
+                if (c == '%') {
+                    bun.default_allocator.free(cwd_owned);
+                    bun.default_allocator.free(abs_path);
+                    return globalObject.throwInvalidArguments("Working directory must not contain percent signs (cron interprets % as newline)", .{});
+                }
+                if (c == '\n' or c == '\r') {
+                    bun.default_allocator.free(cwd_owned);
+                    bun.default_allocator.free(abs_path);
+                    return globalObject.throwInvalidArguments("Working directory must not contain newlines", .{});
+                }
             }
         }
 
@@ -1639,12 +1649,13 @@ fn cronToTaskXml(
         \\  <Actions>
         \\    <Exec>
         \\      <Command>{s}</Command>
-        \\      <Arguments>run --cwd="{s}" --cron-title={s} --cron-period="{s}" "{s}"</Arguments>
+        \\      <Arguments>run --cron-title={s} --cron-period="{s}" "{s}"</Arguments>
+        \\      <WorkingDirectory>{s}</WorkingDirectory>
         \\    </Exec>
         \\  </Actions>
         \\</Task>
         \\
-    , .{ xml_bun, xml_cwd, xml_title, xml_sched, xml_path });
+    , .{ xml_bun, xml_title, xml_sched, xml_path, xml_cwd });
     defer allocator.free(action_xml);
     try xml.appendSlice(action_xml);
 

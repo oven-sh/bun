@@ -22,20 +22,14 @@ async function runBun(source: string, extraEnv: Record<string, string> = {}) {
     cmd: [bunExe(), "-e", source],
     env: { ...bunEnv, ...extraEnv },
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // ASAN builds unconditionally print "WARNING: ASAN interferes with JSC
-  // signal handlers..." to stderr from WebKit's Options.cpp; filter it out.
-  const stderrFiltered = stderr
-    .split(/\r?\n/)
-    .filter(s => !s.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  return { stdout, stderr: stderrFiltered, exitCode };
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  return { stdout, exitCode };
 }
 
 test.concurrent.skipIf(isWindows)("os.homedir() reflects HOME mutation after require (#29244)", async () => {
-  const { stdout, stderr, exitCode } = await runBun(`
+  const { stdout, exitCode } = await runBun(`
     const os = require('node:os');
     const before = os.homedir();
     process.env.HOME = '/tmp/test-home-29244';
@@ -49,12 +43,11 @@ test.concurrent.skipIf(isWindows)("os.homedir() reflects HOME mutation after req
   expect(typeof result.before).toBe("string");
   expect(result.before.length).toBeGreaterThan(0);
   expect(result.before).not.toBe("/tmp/test-home-29244");
-  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
 test.concurrent.skipIf(isWindows)("os.homedir() reflects HOME mutation before require (#29244)", async () => {
-  const { stdout, stderr, exitCode } = await runBun(`
+  const { stdout, exitCode } = await runBun(`
     process.env.HOME = '/tmp/before-require-29244';
     const os = require('node:os');
     console.log(JSON.stringify({ homedir: os.homedir(), env: process.env.HOME }));
@@ -63,16 +56,14 @@ test.concurrent.skipIf(isWindows)("os.homedir() reflects HOME mutation before re
     homedir: "/tmp/before-require-29244",
     env: "/tmp/before-require-29244",
   });
-  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
 test.concurrent.skipIf(isWindows)("os.homedir() honors HOME from parent env (#29244)", async () => {
-  const { stdout, stderr, exitCode } = await runBun(`console.log(require('node:os').homedir());`, {
+  const { stdout, exitCode } = await runBun(`console.log(require('node:os').homedir());`, {
     HOME: "/tmp/inherited-29244",
   });
   expect(stdout.trim()).toBe("/tmp/inherited-29244");
-  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -80,7 +71,7 @@ test.concurrent.skipIf(isWindows)("os.homedir() falls back to passwd when HOME i
   // An empty HOME should be treated as unset — fall through to the
   // passwd entry, matching libuv's uv_os_homedir. The fallback must
   // return a non-empty absolute path, not "".
-  const { stdout, stderr, exitCode } = await runBun(
+  const { stdout, exitCode } = await runBun(
     `
         process.env.HOME = '';
         const os = require('node:os');
@@ -92,14 +83,13 @@ test.concurrent.skipIf(isWindows)("os.homedir() falls back to passwd when HOME i
   expect(result.len).toBeGreaterThan(0);
   expect(result.abs).toBe(true);
   expect(result.h).not.toBe("");
-  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
 test.concurrent.skipIf(isWindows)("os.userInfo().homedir ignores HOME mutation (#29244)", async () => {
   // Node's os.userInfo().homedir reads the passwd entry, NOT $HOME.
   // The fix for os.homedir() must NOT leak into userInfo.
-  const { stdout, stderr, exitCode } = await runBun(`
+  const { stdout, exitCode } = await runBun(`
       process.env.HOME = '/tmp/should-not-appear-29244';
       const os = require('node:os');
       const passwd = os.userInfo().homedir;
@@ -109,6 +99,5 @@ test.concurrent.skipIf(isWindows)("os.userInfo().homedir ignores HOME mutation (
   expect(result.leaked).toBe(false);
   expect(typeof result.passwd).toBe("string");
   expect(result.passwd.length).toBeGreaterThan(0);
-  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

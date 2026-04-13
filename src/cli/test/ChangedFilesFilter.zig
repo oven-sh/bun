@@ -105,6 +105,11 @@ pub fn filter(
             .total_tests = test_files.len,
         };
     };
+    // The bundler's ThreadLocalArena and worker pool are intentionally
+    // left in place for the remainder of the process. `bun test --watch`
+    // exec()s a fresh process on each reload, so nothing accumulates
+    // across restarts; tearing the pool down here blocks on worker
+    // shutdown and competes with the runtime VM's own parse threads.
 
     const sources = bundle.graph.input_files.items(.source);
     const import_records = bundle.graph.ast.items(.import_records);
@@ -157,23 +162,13 @@ pub fn filter(
         }
     }
 
-    // Identify which source indexes correspond to test entry points so we can
-    // check BFS results against them. `bundle.graph.entry_points` preserves
-    // the order of `entry_points`, but an entry point that failed to resolve
-    // is skipped, so we map by path rather than by position.
-    var entry_index_to_test_slot = std.AutoHashMap(u32, usize).init(allocator);
-    defer entry_index_to_test_slot.deinit();
-    for (bundle.graph.entry_points.items) |entry_index| {
-        const path_text = sources[entry_index.get()].path.text;
-        // `test_files` is typically small enough that a linear lookup is fine
-        // (matching the overall cost of building the graph). Match by
-        // identity against the PathString slices we passed in.
-        for (test_files, 0..) |tf, slot| {
-            if (strings.eql(tf.slice(), path_text)) {
-                try entry_index_to_test_slot.put(entry_index.get(), slot);
-                break;
-            }
-        }
+    // Map the original test_files slot -> bundler source index. An entry
+    // point that failed to resolve is skipped by enqueueEntryPoints, so
+    // match by absolute path via path_to_index rather than by position.
+    const slot_to_source = try allocator.alloc(?u32, test_files.len);
+    defer allocator.free(slot_to_source);
+    for (test_files, slot_to_source) |tf, *out| {
+        out.* = path_to_index.get(tf.slice());
     }
 
     // BFS backward from every changed file that participates in the graph.
@@ -207,19 +202,9 @@ pub fn filter(
     // affected, or (b) the test file itself is in the changed set (covers
     // test files that failed to enter the graph for any reason).
     var write: usize = 0;
-    for (test_files, 0..) |tf, slot| {
-        var keep = changed_files.contains(tf.slice());
-
-        if (!keep) {
-            // Find the entry index that corresponds to this slot.
-            var iter = entry_index_to_test_slot.iterator();
-            while (iter.next()) |e| {
-                if (e.value_ptr.* == slot) {
-                    if (affected.isSet(e.key_ptr.*)) keep = true;
-                    break;
-                }
-            }
-        }
+    for (test_files, slot_to_source) |tf, maybe_source| {
+        const keep = changed_files.contains(tf.slice()) or
+            (if (maybe_source) |src| affected.isSet(src) else false);
 
         if (keep) {
             test_files[write] = tf;
@@ -261,7 +246,9 @@ fn getChangedFiles(
         defer result.stdout.deinit();
         defer result.stderr.deinit();
         if (!result.ok) {
-            if (result.stderr.items.len > 0) {
+            if (result.spawn_failed) {
+                // runGit already printed the spawn error.
+            } else if (result.stderr.items.len > 0) {
                 Output.errGeneric("--changed: {s}", .{strings.trim(result.stderr.items, " \r\n\t")});
             } else {
                 Output.errGeneric("--changed requires running inside a git repository", .{});
@@ -323,6 +310,10 @@ fn getChangedFiles(
 
 const GitResult = struct {
     ok: bool,
+    /// Set when the git process could not be spawned at all. The failure
+    /// has already been reported; callers should not print a second
+    /// "not a git repo" style message.
+    spawn_failed: bool = false,
     stdout: std.array_list.Managed(u8),
     stderr: std.array_list.Managed(u8),
 };
@@ -354,6 +345,7 @@ fn runGit(
         Output.errGeneric("--changed: failed to spawn git: {s}", .{@errorName(err)});
         return .{
             .ok = false,
+            .spawn_failed = true,
             .stdout = .init(allocator),
             .stderr = .init(allocator),
         };
@@ -364,6 +356,7 @@ fn runGit(
             Output.errGeneric("--changed: failed to spawn git: {f}", .{err});
             return .{
                 .ok = false,
+                .spawn_failed = true,
                 .stdout = .init(allocator),
                 .stderr = .init(allocator),
             };

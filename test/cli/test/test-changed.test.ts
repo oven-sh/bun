@@ -1,6 +1,10 @@
 import { spawnSync } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+
+// Each case spawns a full `bun test` process; give the concurrent group
+// headroom on slow ASAN/CI machines.
+setDefaultTimeout(30_000);
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -209,10 +213,9 @@ describe.concurrent("bun test --changed", () => {
       stderr: "pipe",
       stdin: "ignore",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("a.test.ts:");
     expect(ranFiles(stderr, names)).toEqual(["a.test.ts"]);
-    expect(stdout).toBeDefined();
     expect(exitCode).toBe(0);
   });
 
@@ -295,9 +298,10 @@ describe.concurrent("bun test --changed", () => {
     initRepo(String(dir));
     appendFileSync(join(String(dir), "good.ts"), "// touched\n");
 
-    const { stderr } = await runTestChanged(String(dir));
+    const { stderr, exitCode } = await runTestChanged(String(dir));
     expect(stderr).toContain("good.test.ts:");
     expect(stderr).not.toContain("bad.test.ts:");
+    expect(exitCode).toBe(0);
   });
 });
 

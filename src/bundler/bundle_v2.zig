@@ -1636,8 +1636,9 @@ pub const BundleV2 = struct {
     /// test entry points transitively depend on a given set of source files.
     ///
     /// The returned BundleV2 and its graph are allocated on a fresh
-    /// ThreadLocalArena; the caller is expected to let them leak for the
-    /// lifetime of the process (this runs once during test startup).
+    /// ThreadLocalArena; the caller should dupe anything it needs and then
+    /// release it with `deinitWithoutFreeingArena()` followed by
+    /// `graph.heap.deinit()`.
     pub fn scanModuleGraphFromCLI(
         transpiler: *Transpiler,
         alloc: std.mem.Allocator,
@@ -1659,10 +1660,17 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        try this.enqueueEntryPoints(.normal, entry_points);
+        // enqueueEntryPoints schedules the runtime task before any fallible
+        // allocation. If a later allocation fails we must still drain the
+        // pool so workers aren't left holding pointers into the caller's
+        // stack-allocated Transpiler.
+        this.enqueueEntryPoints(.normal, entry_points) catch |err| {
+            this.waitForParse();
+            return err;
+        };
 
-        // Even if entry point resolution produced errors we still wait for all
-        // enqueued parse tasks to finish so the graph is consistent.
+        // Even if entry point resolution produced errors we still wait for
+        // all enqueued parse tasks to finish so the graph is consistent.
         this.waitForParse();
 
         return this;

@@ -1550,6 +1550,11 @@ pub const TestCommand = struct {
             ctx.allocator.free(changed_module_graph_files);
         }
         const test_files: []PathString = if (ctx.test_options.changed) |changed_since| brk: {
+            // If the Scanner found nothing, fall through to the existing
+            // "no tests found" error path rather than treating it as a
+            // --changed success.
+            if (all_test_files.len == 0) break :brk all_test_files;
+
             const result = ChangedFilesFilter.filter(ctx, vm, all_test_files, changed_since) catch |err| {
                 Output.err(err, "--changed: unable to determine affected tests", .{});
                 Global.exit(1);

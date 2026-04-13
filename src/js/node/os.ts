@@ -41,8 +41,12 @@ function homedirFactory(bindingHomedir) {
     };
   }
   return function homedir() {
+    // Empty string is falsy in JS, so `home &&` already excludes it; we
+    // deliberately don't pass "" through — that matches libuv's
+    // uv_os_homedir, which treats HOME="" as unset and falls through to
+    // the passwd entry.
     const home = Bun.env["HOME"];
-    if (home && home.length > 0) return home;
+    if (home) return home;
     return bindingHomedir();
   };
 }

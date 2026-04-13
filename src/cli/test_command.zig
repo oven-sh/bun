@@ -1600,18 +1600,6 @@ pub const TestCommand = struct {
             }
         }
 
-        // With --changed, only a subset of test files (possibly none) runs,
-        // so the module loader won't naturally add every source file to the
-        // watcher. Seed it from the module graph before running tests so
-        // editing any local source file — including files only reachable
-        // from tests that were filtered out — still triggers a restart
-        // under --watch.
-        if (ctx.test_options.changed != null and vm.isWatcherEnabled()) {
-            for (changed_module_graph_files) |path| {
-                _ = vm.bun_watcher.addFileByPathSlow(path, vm.transpiler.options.loader(std.fs.path.extension(path)));
-            }
-        }
-
         if (test_files.len > 0) {
             // Randomize the order of test files if --randomize flag is set
             if (random) |rand| {
@@ -1619,6 +1607,28 @@ pub const TestCommand = struct {
             }
 
             runAllTests(reporter, vm, test_files, ctx.allocator);
+        }
+
+        // With --changed, only a subset of test files (possibly none) runs,
+        // so the module loader won't naturally add every source file to the
+        // watcher. Seed it from the module graph so editing any local source
+        // file — including files only reachable from tests that were
+        // filtered out — still triggers a restart under --watch.
+        //
+        // This must happen AFTER runAllTests: during the run the module
+        // loader registers loaded files with a readable fd, which
+        // RuntimeTranspilerStore reuses on the next load. On macOS
+        // addFileByPathSlow opens with O_EVTONLY (not readable); seeding
+        // first would hand that fd to the transpiler. Seeding after means
+        // loaded files are already present (indexOf early-returns) and only
+        // the never-loaded filtered-out subgraph gets an O_EVTONLY entry,
+        // which the transpiler never touches. The test harness syncs on the
+        // "Ran N tests" summary (printed after this), so seeding completes
+        // before the next file edit.
+        if (ctx.test_options.changed != null and vm.isWatcherEnabled()) {
+            for (changed_module_graph_files) |path| {
+                _ = vm.bun_watcher.addFileByPathSlow(path, vm.transpiler.options.loader(std.fs.path.extension(path)));
+            }
         }
 
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();

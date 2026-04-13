@@ -1602,8 +1602,10 @@ pub const TestCommand = struct {
 
         // With --changed, only a subset of test files (possibly none) runs,
         // so the module loader won't naturally add every source file to the
-        // watcher. Seed it from the module graph so editing any local source
-        // file still triggers a restart under --watch.
+        // watcher. Seed it from the module graph before running tests so
+        // editing any local source file — including files only reachable
+        // from tests that were filtered out — still triggers a restart
+        // under --watch.
         if (ctx.test_options.changed != null and vm.isWatcherEnabled()) {
             for (changed_module_graph_files) |path| {
                 _ = vm.bun_watcher.addFileByPathSlow(path, vm.transpiler.options.loader(std.fs.path.extension(path)));

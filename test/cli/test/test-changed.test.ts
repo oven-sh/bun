@@ -306,7 +306,7 @@ describe.concurrent("bun test --changed", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--changed"],
       cwd: String(dir),
-      env: { ...bunEnv, GIT_CEILING_DIRECTORIES: String(dir), GIT_DIR: join(String(dir), "no-such-git-dir") },
+      env: { ...gitEnv, GIT_CEILING_DIRECTORIES: String(dir), GIT_DIR: join(String(dir), "no-such-git-dir") },
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
@@ -359,8 +359,8 @@ describe("bun test --changed --watch", () => {
     const decoder = new TextDecoder();
     let buf = "";
 
-    async function waitFor(needle: string): Promise<void> {
-      while (!buf.includes(needle)) {
+    async function waitFor(needle: string, from = 0): Promise<void> {
+      while (!buf.slice(from).includes(needle)) {
         const { value, done } = await reader.read();
         if (done) throw new Error(`stream closed before seeing ${JSON.stringify(needle)}\n${buf}`);
         buf += decoder.decode(value, { stream: true });
@@ -377,19 +377,20 @@ describe("bun test --changed --watch", () => {
     const before = buf.length;
     appendFileSync(join(String(dir), "dep-a.ts"), "// touched\n");
 
-    await waitFor("wa.test.ts:");
+    await waitFor("wa.test.ts:", before);
     const afterA = buf.slice(before);
     expect(afterA).toContain("wa.test.ts:");
     expect(afterA).not.toContain("wb.test.ts:");
 
-    // Touch dep-b.ts as well: next restart should also run wb.test.ts
-    // (both are now uncommitted).
+    // Touch dep-b.ts as well: next restart should run BOTH wa and wb
+    // (both deps are now uncommitted).
     const before2 = buf.length;
     appendFileSync(join(String(dir), "dep-b.ts"), "// touched\n");
 
-    await waitFor("wb.test.ts:");
+    await waitFor("wb.test.ts:", before2);
+    await waitFor("wa.test.ts:", before2);
     const afterB = buf.slice(before2);
-    expect(afterB).toContain("wb.test.ts:");
+    expect(ranFiles(afterB, ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts", "wb.test.ts"]);
 
     proc.kill();
     reader.releaseLock();

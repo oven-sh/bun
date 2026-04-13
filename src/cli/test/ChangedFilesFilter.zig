@@ -59,6 +59,16 @@ pub fn filter(
         };
     }
 
+    // With a clean working tree and no --watch, nothing can be affected and
+    // there is no watcher to seed, so skip the module-graph scan entirely.
+    if (changed_files.count() == 0 and ctx.debug.hot_reload != .watch) {
+        return .{
+            .test_files = test_files[0..0],
+            .changed_count = 0,
+            .total_tests = test_files.len,
+        };
+    }
+
     // Convert PathString list to []const []const u8 for the bundler.
     const entry_points = try allocator.alloc([]const u8, test_files.len);
     defer allocator.free(entry_points);
@@ -273,20 +283,20 @@ fn getChangedFiles(
         defer diff.stdout.deinit();
         defer diff.stderr.deinit();
         if (diff.ok) {
-            try appendPaths(&set, git_root, diff.stdout.items);
+            appendPaths(&set, git_root, diff.stdout.items);
         } else {
             var unstaged = try runGit(allocator, git_path, top_level_dir, &.{ "diff", "--name-only", "--" });
             defer unstaged.stdout.deinit();
             defer unstaged.stderr.deinit();
             if (unstaged.ok) {
-                try appendPaths(&set, git_root, unstaged.stdout.items);
+                appendPaths(&set, git_root, unstaged.stdout.items);
             }
 
             var staged = try runGit(allocator, git_path, top_level_dir, &.{ "diff", "--name-only", "--cached", "--" });
             defer staged.stdout.deinit();
             defer staged.stderr.deinit();
             if (staged.ok) {
-                try appendPaths(&set, git_root, staged.stdout.items);
+                appendPaths(&set, git_root, staged.stdout.items);
             }
         }
 
@@ -296,21 +306,23 @@ fn getChangedFiles(
         defer untracked.stdout.deinit();
         defer untracked.stderr.deinit();
         if (untracked.ok) {
-            try appendPaths(&set, git_root, untracked.stdout.items);
+            appendPaths(&set, git_root, untracked.stdout.items);
         }
     } else {
         var diff = try runGit(allocator, git_path, top_level_dir, &.{ "diff", "--name-only", since, "--" });
         defer diff.stdout.deinit();
         defer diff.stderr.deinit();
         if (!diff.ok) {
-            if (diff.stderr.items.len > 0) {
+            if (diff.spawn_failed) {
+                // runGit already printed the spawn error.
+            } else if (diff.stderr.items.len > 0) {
                 Output.errGeneric("--changed: {s}", .{strings.trim(diff.stderr.items, " \r\n\t")});
             } else {
                 Output.errGeneric("--changed: git diff against {f} failed", .{bun.fmt.quote(since)});
             }
             return error.GitFailed;
         }
-        try appendPaths(&set, git_root, diff.stdout.items);
+        appendPaths(&set, git_root, diff.stdout.items);
     }
 
     return set;
@@ -388,7 +400,7 @@ fn appendPaths(
     set: *bun.StringSet,
     git_root: []const u8,
     stdout: []const u8,
-) std.mem.Allocator.Error!void {
+) void {
     var buf: bun.PathBuffer = undefined;
     var it = std.mem.tokenizeAny(u8, stdout, "\r\n");
     while (it.next()) |line| {
@@ -397,7 +409,10 @@ fn appendPaths(
         const abs = bun.path.joinAbsStringBuf(git_root, &buf, &[_][]const u8{rel}, .auto);
         // Skip deletions; the bundler can only parse files that exist.
         if (!bun.sys.exists(abs)) continue;
-        try set.insert(abs);
+        // `StringSet.insert` dupes the key internally; abort on OOM rather
+        // than propagating so the set can never be left holding a pointer
+        // into our stack `buf` on the errdefer cleanup path.
+        bun.handleOom(set.insert(abs));
     }
 }
 

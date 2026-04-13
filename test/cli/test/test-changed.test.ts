@@ -367,28 +367,28 @@ describe("bun test --changed --watch", () => {
       }
     }
 
-    // Initial run: nothing changed.
+    // Initial run: nothing changed. Wait for the summary so the watcher is
+    // fully seeded before we touch anything.
     await waitFor("no changed files");
+    await waitFor("Ran 0 tests");
     expect(buf).not.toContain("wa.test.ts:");
     expect(buf).not.toContain("wb.test.ts:");
 
-    // Touch dep-a.ts: watcher restarts the process, --changed now sees an
-    // uncommitted change to dep-a.ts and should run only wa.test.ts.
+    // Touch dep-a.ts: watcher restarts, --changed now sees an uncommitted
+    // change to dep-a.ts and should run only wa.test.ts. Sync on the
+    // end-of-run summary rather than the file header so the child is
+    // quiescent (watcher seeded, tests done) before the next touch.
     const before = buf.length;
     appendFileSync(join(String(dir), "dep-a.ts"), "// touched\n");
-
-    await waitFor("wa.test.ts:", before);
+    await waitFor("Ran 1 test across 1 file", before);
     const afterA = buf.slice(before);
-    expect(afterA).toContain("wa.test.ts:");
-    expect(afterA).not.toContain("wb.test.ts:");
+    expect(ranFiles(afterA, ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts"]);
 
-    // Touch dep-b.ts as well: next restart should run BOTH wa and wb
-    // (both deps are now uncommitted).
+    // Touch dep-b.ts as well: next restart should run BOTH wa and wb since
+    // both deps are now uncommitted.
     const before2 = buf.length;
     appendFileSync(join(String(dir), "dep-b.ts"), "// touched\n");
-
-    await waitFor("wb.test.ts:", before2);
-    await waitFor("wa.test.ts:", before2);
+    await waitFor("Ran 2 tests across 2 files", before2);
     const afterB = buf.slice(before2);
     expect(ranFiles(afterB, ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts", "wb.test.ts"]);
 

@@ -282,12 +282,14 @@ fn getChangedFiles(
         var diff = try runGit(allocator, git_path, top_level_dir, &.{ "diff", "--name-only", "HEAD", "--" });
         defer diff.stdout.deinit();
         defer diff.stderr.deinit();
+        if (diff.spawn_failed) return error.GitFailed;
         if (diff.ok) {
             appendPaths(&set, git_root, diff.stdout.items);
         } else {
             var unstaged = try runGit(allocator, git_path, top_level_dir, &.{ "diff", "--name-only", "--" });
             defer unstaged.stdout.deinit();
             defer unstaged.stderr.deinit();
+            if (unstaged.spawn_failed) return error.GitFailed;
             if (unstaged.ok) {
                 appendPaths(&set, git_root, unstaged.stdout.items);
             }
@@ -295,6 +297,7 @@ fn getChangedFiles(
             var staged = try runGit(allocator, git_path, top_level_dir, &.{ "diff", "--name-only", "--cached", "--" });
             defer staged.stdout.deinit();
             defer staged.stderr.deinit();
+            if (staged.spawn_failed) return error.GitFailed;
             if (staged.ok) {
                 appendPaths(&set, git_root, staged.stdout.items);
             }
@@ -305,6 +308,7 @@ fn getChangedFiles(
         var untracked = try runGit(allocator, git_path, top_level_dir, &.{ "ls-files", "--others", "--exclude-standard", "--full-name" });
         defer untracked.stdout.deinit();
         defer untracked.stderr.deinit();
+        if (untracked.spawn_failed) return error.GitFailed;
         if (untracked.ok) {
             appendPaths(&set, git_root, untracked.stdout.items);
         }

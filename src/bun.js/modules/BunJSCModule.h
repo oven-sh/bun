@@ -47,6 +47,7 @@
 #include "ZigSourceProvider.h"
 #include "mimalloc.h"
 extern "C" char* mi_stats_get_json(size_t, char*);
+extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
 
 #include <JavaScriptCore/ControlFlowProfiler.h>
 
@@ -220,7 +221,7 @@ createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 
 JSC_DECLARE_HOST_FUNCTION(functionMemoryUsageStatistics);
 JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
-    (JSGlobalObject * globalObject, CallFrame*))
+    (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
 
     auto& vm = JSC::getVM(globalObject);
@@ -363,6 +364,26 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
         mi_free(json);
         object->putDirect(vm, Identifier::fromString(vm, "mimalloc"_s),
             parsed.isEmpty() ? jsNull() : parsed);
+    }
+
+    // heapStats({ dump: true | "blocks" }) -> per-heap/per-page (and per-block) live snapshot.
+    JSValue arg0 = callFrame->argument(0);
+    if (arg0.isObject()) {
+        JSValue dump = arg0.getObject()->get(globalObject, Identifier::fromString(vm, "dump"_s));
+        if (dump.toBoolean(globalObject)) {
+            const bool includeBlocks = dump.isString() && dump.toWTFString(globalObject) == "blocks"_s;
+            #if BUN_DEBUG
+            const bool hashAddresses = false;
+            #else
+            const bool hashAddresses = true;
+            #endif
+            if (char* json = mi_heap_dump_json(includeBlocks, hashAddresses)) {
+                JSValue parsed = JSONParse(globalObject, String::fromUTF8(json));
+                mi_free(json);
+                object->putDirect(vm, Identifier::fromString(vm, "mimallocDump"_s),
+                    parsed.isEmpty() ? jsNull() : parsed);
+            }
+        }
     }
 
     return JSValue::encode(object);

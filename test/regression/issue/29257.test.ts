@@ -71,6 +71,15 @@ test("Bun.file(path, { type: 'text/plain' }).type is preserved verbatim", () => 
   expect(file.type).toBe("text/plain");
 });
 
+test("Blob.prototype.slice(start, end, type) preserves the type verbatim", () => {
+  // Covers the `getSlice` / `getSliceFrom` path in Blob.zig. This hits
+  // the interning fast-path and also exercises the fix to the
+  // `content_type_was_set` flag computation in `getSliceFrom`.
+  const parent = new Blob(["hello world"]);
+  const slice = parent.slice(0, 5, "text/plain");
+  expect(slice.type).toBe("text/plain");
+});
+
 test("Bun.s3.file(path, { type: 'text/plain' }).type is preserved verbatim", () => {
   // Covers the S3File constructor paths in S3File.zig (same bug, different
   // file). The object is never actually touched over the network — we only

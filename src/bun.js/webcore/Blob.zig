@@ -2854,13 +2854,13 @@ pub fn getSliceFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, relativeStart:
         blob.content_type = content_type;
     }
     blob.content_type_allocated = content_type_was_allocated;
-    // A user-supplied `content_type` argument to `.slice(start, end, type)`
-    // may come from the interning table (static, not allocated) — the
-    // previous `or content_type_was_allocated` condition missed that case
-    // and left the slice's `content_type_was_set` false, so HTTP serving
-    // of the slice fell back to the store MIME type. Check the string
-    // length directly instead.
-    blob.content_type_was_set = this.content_type_was_set or blob.content_type.len > 0;
+    // The slice's `content_type_was_set` is true if the parent already
+    // had one set *or* the caller of `.slice(start, end, type)` passed a
+    // non-empty `type` argument. Checking the argument slice directly
+    // (rather than the old `content_type_was_allocated` flag) is required
+    // for the interned path, which points at a static slice and leaves
+    // `content_type_was_allocated` false.
+    blob.content_type_was_set = this.content_type_was_set or content_type.len > 0;
 
     var blob_ = Blob.new(blob);
     return blob_.toJS(globalThis);

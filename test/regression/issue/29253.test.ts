@@ -32,6 +32,14 @@ test("new Module() instances inherit load() (#29253)", () => {
   // property on every instance (which would be wasteful).
   expect(Object.prototype.hasOwnProperty.call(m, "load")).toBe(false);
   expect(typeof Object.getPrototypeOf(m).load).toBe("function");
+
+  // `require("module").prototype` is a separate disposable object from
+  // the instance prototype (see the header comment). It also needs to
+  // expose `load` so code that does `typeof Module.prototype.load` or
+  // `Module.prototype.load = wrapper` sees a function. If the C++
+  // registration in getModulePrototypeObject were reverted, the other
+  // assertions above would still pass — so guard that code path too.
+  expect(typeof Module.prototype.load).toBe("function");
 });
 
 test.concurrent("new Module().load(filename) reads and evaluates the file (#29253)", async () => {

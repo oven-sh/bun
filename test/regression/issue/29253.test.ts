@@ -210,11 +210,7 @@ test("failed load() clears loaded so the instance can be retried (#29253)", asyn
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("Module already loaded");
   expect(exitCode).toBe(0);
@@ -258,11 +254,7 @@ test("load() picks the longest registered extension handler (#29253)", async () 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("TypeError");
   expect(stderr).not.toContain("Error:");

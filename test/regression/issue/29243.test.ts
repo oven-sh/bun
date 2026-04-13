@@ -183,10 +183,7 @@ bar();`,
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.exited,
-  ]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout).toBe("bar();\n");
   expect(exitCode).toBe(0);
@@ -207,13 +204,8 @@ test("bun build --format=cjs still rejects a live top-level for await loop", asy
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain(
-    `Top-level await is currently not supported with the "cjs" output format`,
-  );
+  expect(stderr).toContain(`Top-level await is currently not supported with the "cjs" output format`);
   expect(exitCode).not.toBe(0);
 });

@@ -57,13 +57,13 @@ test.skipIf(!isMacOS && !isWindows)(
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { i, stdout: stdout.trim(), exitCode };
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { i, stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
     }
 
     const RUNS = 40;
     const BATCH = 8;
-    const failures: { i: number; stdout: string; exitCode: number }[] = [];
+    const failures: { i: number; stdout: string; stderr: string; exitCode: number }[] = [];
     for (let start = 0; start < RUNS; start += BATCH) {
       const batch = await Promise.all(Array.from({ length: Math.min(BATCH, RUNS - start) }, (_u, k) => run(start + k)));
       for (const r of batch) {

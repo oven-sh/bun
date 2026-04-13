@@ -10,8 +10,8 @@
 // uv_thread_create, uv_thread_join, uv_thread_detach, uv_thread_create_ex)
 // and verifies they work. A require() of the module would panic Bun if
 // any of them regress back to a stub.
-import { beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "bun";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -52,11 +52,7 @@ describe.if(!isWindows)("issue/29260", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Diagnose before the assertion so test output is useful on failure.
     if (exitCode !== 0 || !stdout.includes("boolean")) {
       console.error("stdout:", stdout);

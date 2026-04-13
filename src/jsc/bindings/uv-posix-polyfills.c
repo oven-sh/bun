@@ -138,4 +138,80 @@ UV_EXTERN void uv_mutex_unlock(uv_mutex_t* mutex)
         abort();
 }
 
+// Copy-pasted from libuv (src/unix/thread.c)
+UV_EXTERN uv_thread_t uv_thread_self(void)
+{
+    return pthread_self();
+}
+
+// Copy-pasted from libuv (src/unix/thread.c)
+UV_EXTERN int uv_thread_equal(const uv_thread_t* t1, const uv_thread_t* t2)
+{
+    return pthread_equal(*t1, *t2);
+}
+
+// Copy-pasted from libuv (src/unix/thread.c)
+UV_EXTERN int uv_thread_join(uv_thread_t* tid)
+{
+    return UV__ERR(pthread_join(*tid, NULL));
+}
+
+// Copy-pasted from libuv (src/unix/thread.c)
+UV_EXTERN int uv_thread_detach(uv_thread_t* tid)
+{
+    return UV__ERR(pthread_detach(*tid));
+}
+
+// Copy-pasted from libuv (src/unix/thread.c), with stack size tuning omitted.
+// The libuv version rounds a requested stack size up to a page boundary and
+// clamps it to a minimum; here we fall through to pthread defaults when no
+// size is requested and just honor the requested size otherwise.
+UV_EXTERN int uv_thread_create_ex(uv_thread_t* tid,
+    const uv_thread_options_t* params,
+    uv_thread_cb entry,
+    void* arg)
+{
+    int err;
+    pthread_attr_t* attr;
+    pthread_attr_t attr_storage;
+    size_t stack_size;
+
+    /* Used to squelch a -Wcast-function-type warning. */
+    union {
+        void (*in)(void*);
+        void* (*out)(void*);
+    } f;
+
+    stack_size = (params != NULL && (params->flags & UV_THREAD_HAS_STACK_SIZE))
+        ? params->stack_size
+        : 0;
+
+    attr = NULL;
+    if (stack_size > 0) {
+        attr = &attr_storage;
+
+        if (pthread_attr_init(attr))
+            abort();
+
+        if (pthread_attr_setstacksize(attr, stack_size))
+            abort();
+    }
+
+    f.in = entry;
+    err = pthread_create(tid, attr, f.out, arg);
+
+    if (attr != NULL)
+        pthread_attr_destroy(attr);
+
+    return UV__ERR(err);
+}
+
+// Copy-pasted from libuv (src/unix/thread.c)
+UV_EXTERN int uv_thread_create(uv_thread_t* tid, uv_thread_cb entry, void* arg)
+{
+    uv_thread_options_t params;
+    params.flags = UV_THREAD_NO_FLAGS;
+    return uv_thread_create_ex(tid, &params, entry, arg);
+}
+
 #endif

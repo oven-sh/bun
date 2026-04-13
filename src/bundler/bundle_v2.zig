@@ -1630,6 +1630,44 @@ pub const BundleV2 = struct {
         };
     }
 
+    /// Build only the parse graph for the given entry points and return the
+    /// BundleV2 instance. No linking or code generation is performed; this is
+    /// used by `bun test --changed` to walk import records and compute which
+    /// test entry points transitively depend on a given set of source files.
+    ///
+    /// The returned BundleV2 and its graph are allocated on a fresh
+    /// ThreadLocalArena; the caller is expected to let them leak for the
+    /// lifetime of the process (this runs once during test startup).
+    pub fn scanModuleGraphFromCLI(
+        transpiler: *Transpiler,
+        alloc: std.mem.Allocator,
+        event_loop: EventLoop,
+        entry_points: []const []const u8,
+    ) !*BundleV2 {
+        var this = try BundleV2.init(
+            transpiler,
+            null,
+            alloc,
+            event_loop,
+            false,
+            null,
+            .init(),
+        );
+        this.unique_key = generateUniqueKey();
+
+        if (this.transpiler.log.hasErrors()) {
+            return error.BuildFailed;
+        }
+
+        try this.enqueueEntryPoints(.normal, entry_points);
+
+        // Even if entry point resolution produced errors we still wait for all
+        // enqueued parse tasks to finish so the graph is consistent.
+        this.waitForParse();
+
+        return this;
+    }
+
     pub fn generateFromBakeProductionCLI(
         entry_points: bake.production.EntryPointMap,
         server_transpiler: *Transpiler,

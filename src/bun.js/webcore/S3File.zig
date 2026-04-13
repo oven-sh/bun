@@ -283,8 +283,10 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
                             break :inner;
                         }
                         blob.content_type_was_set = true;
-                        if (globalObject.bunVM().mimeType(str.slice())) |entry| {
-                            blob.content_type = entry.value;
+                        // WHATWG File API: preserve the lowercased input
+                        // verbatim; do not canonicalize to charset-appended forms.
+                        if (globalObject.bunVM().mimeTypeInternedValue(slice)) |interned| {
+                            blob.content_type = interned;
                             break :inner;
                         }
                         const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
@@ -327,8 +329,10 @@ pub fn constructS3FileWithS3Credentials(
                             break :inner;
                         }
                         blob.content_type_was_set = true;
-                        if (globalObject.bunVM().mimeType(str.slice())) |entry| {
-                            blob.content_type = entry.value;
+                        // WHATWG File API: preserve the lowercased input
+                        // verbatim; do not canonicalize to charset-appended forms.
+                        if (globalObject.bunVM().mimeTypeInternedValue(slice)) |interned| {
+                            blob.content_type = interned;
                             break :inner;
                         }
                         const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));

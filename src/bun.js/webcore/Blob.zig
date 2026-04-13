@@ -2854,7 +2854,13 @@ pub fn getSliceFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, relativeStart:
         blob.content_type = content_type;
     }
     blob.content_type_allocated = content_type_was_allocated;
-    blob.content_type_was_set = this.content_type_was_set or content_type_was_allocated;
+    // A user-supplied `content_type` argument to `.slice(start, end, type)`
+    // may come from the interning table (static, not allocated) — the
+    // previous `or content_type_was_allocated` condition missed that case
+    // and left the slice's `content_type_was_set` false, so HTTP serving
+    // of the slice fell back to the store MIME type. Check the string
+    // length directly instead.
+    blob.content_type_was_set = this.content_type_was_set or blob.content_type.len > 0;
 
     var blob_ = Blob.new(blob);
     return blob_.toJS(globalThis);
@@ -3537,12 +3543,14 @@ pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
     duped.setNotHeapAllocated();
     if (duped.content_type_allocated and duped.isHeapAllocated() and !include_content_type) {
 
-        // for now, we just want to avoid a use-after-free here.
-        // Use the interned value so the content_type isn't silently
-        // canonicalized into a charset-appended form (which would break
-        // WHATWG File API semantics).
-        if (jsc.VirtualMachine.get().mimeTypeInternedValue(duped.content_type)) |interned| {
-            duped.content_type = interned;
+        // NOTE: this block is currently unreachable — `setNotHeapAllocated`
+        // above zeroes the ref count so `duped.isHeapAllocated()` is
+        // always false. Left in place because fixing the guard is a
+        // separate change that risks activating previously-dead behavior.
+        //
+        // for now, we just want to avoid a use-after-free here
+        if (jsc.VirtualMachine.get().mimeType(duped.content_type)) |mime| {
+            duped.content_type = mime.value;
         } else {
             // TODO: fix this
             // this is a bug.

@@ -56,13 +56,25 @@ test("File/Blob type is lowercased (per WHATWG spec)", () => {
 
 test("uncommon MIME types still round-trip unchanged", () => {
   // Types not in the interning table take the copyLowercase path. They
-  // should also round-trip verbatim (lowercased).
+  // should also round-trip verbatim (lowercased) — check both the File
+  // and Blob constructor paths since they share logic but are separate
+  // call sites in src/bun.js/webcore/Blob.zig.
   const file = new File([], "x", { type: "application/x-custom-type" });
   expect(file.type).toBe("application/x-custom-type");
+  const blob = new Blob([], { type: "application/x-custom-type" });
+  expect(blob.type).toBe("application/x-custom-type");
 });
 
 test("Bun.file(path, { type: 'text/plain' }).type is preserved verbatim", () => {
   // Covers the `constructBunFile` path in Blob.zig.
   const file = Bun.file(import.meta.path, { type: "text/plain" });
+  expect(file.type).toBe("text/plain");
+});
+
+test("Bun.s3.file(path, { type: 'text/plain' }).type is preserved verbatim", () => {
+  // Covers the S3File constructor paths in S3File.zig (same bug, different
+  // file). The object is never actually touched over the network — we only
+  // check that the `type` field is set from our argument verbatim.
+  const file = Bun.s3.file("test.txt", { type: "text/plain" });
   expect(file.type).toBe("text/plain");
 });

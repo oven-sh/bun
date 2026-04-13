@@ -1505,10 +1505,13 @@ pub const LinkerContext = struct {
             );
         }
 
-        // Mix in hashes for referenced asset paths (i.e. the "file" loader)
+        // Mix in hashes for content referenced via output pieces. JS chunks
+        // express cross-chunk dependencies via `cross_chunk_imports` above, but
+        // HTML (and CSS) chunks only reference other chunks through pieces, so
+        // recurse on those too.
         switch (chunk.intermediate_output) {
-            .pieces => |pieces| for (pieces.slice()) |piece| {
-                if (piece.query.kind == .asset) {
+            .pieces => |pieces| for (pieces.slice()) |piece| switch (piece.query.kind) {
+                .asset => {
                     var from_chunk_dir = std.fs.path.dirnamePosix(chunk.final_rel_path) orelse "";
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
@@ -1523,7 +1526,15 @@ pub const LinkerContext = struct {
                         },
                         .source_index => {},
                     }
-                }
+                },
+                .chunk => c.appendIsolatedHashesForImportedChunks(hash, chunks, piece.query.index, chunk_visit_map),
+                .scb => c.appendIsolatedHashesForImportedChunks(
+                    hash,
+                    chunks,
+                    c.graph.files.items(.entry_point_chunk_index)[piece.query.index],
+                    chunk_visit_map,
+                ),
+                .none, .html_import => {},
             },
             else => {},
         }

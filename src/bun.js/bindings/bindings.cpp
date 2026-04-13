@@ -4359,7 +4359,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         uint32_t j = 0;
 
         // if "." is the only character, it will search for an empty string twice.
-        if (pathString.characterAt(0) == '.') {
+        if (pathString.codeUnitAt(0) == '.') {
             auto* currPropObject = currProp.toObject(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             currProp = currPropObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
@@ -4370,7 +4370,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         }
 
         while (i < length) {
-            char16_t ic = pathString.characterAt(i);
+            char16_t ic = pathString.codeUnitAt(i);
             while (ic == '[' || ic == ']' || ic == '.') {
                 i += 1;
                 if (i == length) {
@@ -4392,7 +4392,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                 }
 
                 char16_t previous = ic;
-                ic = pathString.characterAt(i);
+                ic = pathString.codeUnitAt(i);
                 if (previous == '.' && ic == '.') {
                     auto* currPropObject = currProp.toObject(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -4406,14 +4406,14 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
             }
 
             j = i;
-            char16_t jc = pathString.characterAt(j);
+            char16_t jc = pathString.codeUnitAt(j);
             while (!(jc == '[' || jc == ']' || jc == '.')) {
                 j += 1;
                 if (j == length) {
                     // break and search for property
                     break;
                 }
-                jc = pathString.characterAt(j);
+                jc = pathString.codeUnitAt(j);
             }
 
             String propNameStr = pathString.substring(i, j - i);

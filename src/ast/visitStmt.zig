@@ -1200,19 +1200,17 @@ pub fn VisitStmt(
             }
             pub fn s_for_of(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.ForOf) !void {
                 // A `for await (… of …)` loop counts as a top-level `await`
-                // for the purposes of CJS-TLA error reporting. Record it as
+                // for the purposes of CJS-TLA error reporting. Mark it as
                 // live when we reach it in reachable control flow at module
                 // scope so we don't silently drop the diagnostic for loops
                 // whose body happens not to contain any `await` expressions.
+                // `parseStmt.t_for` has already stored the correct `await`
+                // range in `p.top_level_await_keyword`, so leave that alone
+                // and only flip the flag.
                 if (data.is_await and
                     !p.is_control_flow_dead and
-                    p.fn_or_arrow_data_visit.is_outside_fn_or_arrow and
-                    !p.has_live_top_level_await)
+                    p.fn_or_arrow_data_visit.is_outside_fn_or_arrow)
                 {
-                    p.top_level_await_keyword = .{
-                        .loc = stmt.loc,
-                        .len = @as(i32, @intCast("for".len)),
-                    };
                     p.has_live_top_level_await = true;
                 }
 

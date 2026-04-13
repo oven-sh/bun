@@ -70,15 +70,14 @@ test("new Module().load(filename) reads and evaluates the file (#29253)", async 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("TypeError");
-  expect(stderr).not.toContain("Error");
-  expect(exitCode).toBe(0);
-
   const result = JSON.parse(stdout.trim());
   expect(result.loaded).toBe(true);
   expect(result.filename).toMatch(/target\.js$/);
   expect(result.exports.answer).toBe(42);
   expect(result.exports.filename).toBe(result.filename);
+  expect(stderr).not.toContain("TypeError");
+  expect(stderr).not.toContain("Error");
+  expect(exitCode).toBe(0);
 });
 
 test("Module.prototype.load honors an overridden Module.wrapper (#29253)", async () => {
@@ -119,10 +118,10 @@ test("Module.prototype.load honors an overridden Module.wrapper (#29253)", async
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stdout.trim()).toBe("number");
   expect(stderr).not.toContain("TypeError");
   expect(stderr).not.toContain("ReferenceError");
   expect(exitCode).toBe(0);
-  expect(stdout.trim()).toBe("number");
 });
 
 test("new Module().load populates filename/paths/loaded (#29253)", async () => {
@@ -162,10 +161,10 @@ test("new Module().load populates filename/paths/loaded (#29253)", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stdout.trim()).toBe("ok");
   expect(stderr).not.toContain("TypeError");
   expect(stderr).not.toContain("Error:");
   expect(exitCode).toBe(0);
-  expect(stdout.trim()).toBe("ok");
 });
 
 // Retry guard: a thrown extension handler must NOT leave the module
@@ -212,9 +211,9 @@ test("failed load() clears loaded so the instance can be retried (#29253)", asyn
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stdout.trim()).toBe("ok");
   expect(stderr).not.toContain("Module already loaded");
   expect(exitCode).toBe(0);
-  expect(stdout.trim()).toBe("ok");
 });
 
 // Compound-extension dispatch: `Module._extensions['.test.js']` must win
@@ -256,8 +255,8 @@ test("load() picks the longest registered extension handler (#29253)", async () 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stdout.trim()).toBe("ok");
   expect(stderr).not.toContain("TypeError");
   expect(stderr).not.toContain("Error:");
   expect(exitCode).toBe(0);
-  expect(stdout.trim()).toBe("ok");
 });

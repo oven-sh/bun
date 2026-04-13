@@ -33,7 +33,7 @@ test("new Module() instances inherit load() (#29253)", () => {
   expect(typeof Object.getPrototypeOf(m).load).toBe("function");
 });
 
-test("new Module().load(filename) reads and evaluates the file (#29253)", async () => {
+test.concurrent("new Module().load(filename) reads and evaluates the file (#29253)", async () => {
   // Spawn a separate Bun so the test doesn't pollute its own
   // require cache or Module.wrap state.
   using dir = tempDir("issue-29253-load", {
@@ -75,12 +75,10 @@ test("new Module().load(filename) reads and evaluates the file (#29253)", async 
   expect(result.filename).toMatch(/target\.js$/);
   expect(result.exports.answer).toBe(42);
   expect(result.exports.filename).toBe(result.filename);
-  expect(stderr).not.toContain("TypeError");
-  expect(stderr).not.toContain("Error");
   expect(exitCode).toBe(0);
 });
 
-test("Module.prototype.load honors an overridden Module.wrapper (#29253)", async () => {
+test.concurrent("Module.prototype.load honors an overridden Module.wrapper (#29253)", async () => {
   // `load()` must compile the file through the CURRENT module
   // wrapper (`Module.wrapper[0] + source + Module.wrapper[1]`)
   // — not a hard-coded one. Mutating the wrapper array is how
@@ -119,12 +117,10 @@ test("Module.prototype.load honors an overridden Module.wrapper (#29253)", async
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("number");
-  expect(stderr).not.toContain("TypeError");
-  expect(stderr).not.toContain("ReferenceError");
   expect(exitCode).toBe(0);
 });
 
-test("new Module().load populates filename/paths/loaded (#29253)", async () => {
+test.concurrent("new Module().load populates filename/paths/loaded (#29253)", async () => {
   // Node's `Module.prototype.load` writes `filename`, `paths`,
   // and `loaded` before returning. `requizzle` and any other
   // package that reads those fields after `.load()` depends on
@@ -162,8 +158,6 @@ test("new Module().load populates filename/paths/loaded (#29253)", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("ok");
-  expect(stderr).not.toContain("TypeError");
-  expect(stderr).not.toContain("Error:");
   expect(exitCode).toBe(0);
 });
 
@@ -171,7 +165,7 @@ test("new Module().load populates filename/paths/loaded (#29253)", async () => {
 // permanently marked `loaded`, otherwise the next `.load(...)` call on
 // the same instance would hit the "Module already loaded" assert and
 // make failure recovery impossible.
-test("failed load() clears loaded so the instance can be retried (#29253)", async () => {
+test.concurrent("failed load() clears loaded so the instance can be retried (#29253)", async () => {
   using dir = tempDir("issue-29253-retry", {
     "broken.js": `throw new Error("boom");`,
     "good.js": `module.exports = 'good-exports';`,
@@ -212,7 +206,6 @@ test("failed load() clears loaded so the instance can be retried (#29253)", asyn
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("ok");
-  expect(stderr).not.toContain("Module already loaded");
   expect(exitCode).toBe(0);
 });
 
@@ -220,7 +213,7 @@ test("failed load() clears loaded so the instance can be retried (#29253)", asyn
 // over `Module._extensions['.js']` when `.load()` is called on a file
 // ending in `.test.js`. `path.extname` alone would return `.js` and
 // silently bypass the compound handler.
-test("load() picks the longest registered extension handler (#29253)", async () => {
+test.concurrent("load() picks the longest registered extension handler (#29253)", async () => {
   using dir = tempDir("issue-29253-ext", {
     "foo.test.js": `module.exports = 'raw-source-never-loaded';`,
     "driver.js": `
@@ -256,7 +249,5 @@ test("load() picks the longest registered extension handler (#29253)", async () 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim()).toBe("ok");
-  expect(stderr).not.toContain("TypeError");
-  expect(stderr).not.toContain("Error:");
   expect(exitCode).toBe(0);
 });

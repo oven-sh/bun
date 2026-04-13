@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test("onTestFinished works inside concurrent tests", async () => {
+test.concurrent("onTestFinished works inside concurrent tests", async () => {
   using dir = tempDir("issue-29236-on-test-finished-concurrent", {
     "concurrent.test.ts": /* ts */ `
       import { expect, onTestFinished, test } from "bun:test";
@@ -46,7 +46,7 @@ test("onTestFinished works inside concurrent tests", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("onTestFinished works inside concurrent tests via --concurrent flag", async () => {
+test.concurrent("onTestFinished works inside concurrent tests via --concurrent flag", async () => {
   using dir = tempDir("issue-29236-on-test-finished-cli", {
     "plain.test.ts": /* ts */ `
       import { expect, onTestFinished, test } from "bun:test";
@@ -84,7 +84,7 @@ test("onTestFinished works inside concurrent tests via --concurrent flag", async
 // resolve which concurrent sequence it belongs to. The error message should
 // tell the user to hoist the call before the first await — not to remove
 // .concurrent or use describe(), which was the pre-fix wording.
-test("error message after yielding await in concurrent test tells users to hoist", async () => {
+test.concurrent("error message after yielding await in concurrent test tells users to hoist", async () => {
   using dir = tempDir("issue-29236-after-await-error", {
     "after-await.test.ts": /* ts */ `
       import { onTestFinished, test } from "bun:test";

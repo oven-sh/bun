@@ -419,6 +419,7 @@ export function createRequireCache() {
 // `Module.prototype.load(filename)` — used by packages like `requizzle` that
 // construct `new Module(...)` directly and expect Node's module-loader shape.
 // Mirrors Node's lib/internal/modules/cjs/loader.js `Module.prototype.load`.
+$overriddenName = "load";
 $visibility = "Private";
 export function modulePrototypeLoad(this: JSCommonJSModule, filename: string) {
   // Match Node's `assert(!this.loaded, 'Module already loaded')` so a

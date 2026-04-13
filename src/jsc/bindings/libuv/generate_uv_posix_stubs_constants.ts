@@ -1,6 +1,5 @@
 export const test_skipped = [
   "uv_getrusage_thread",
-  "uv_thread_detach",
   "uv_thread_getname",
   "uv_thread_getpriority",
   "uv_thread_setname",

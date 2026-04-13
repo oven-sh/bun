@@ -12,10 +12,11 @@
 // crashed before jsdoc got a chance to run.
 //
 // The fix adds `Module.prototype.load` as a real method on the
-// prototype shared by instances created via `new Module(...)`
-// and unifies `require("module").prototype` with that same
-// prototype, so patching one is reflected in the other (Node
-// semantics).
+// prototype backing `new Module(...)` instances, and also puts it
+// on `require("module").prototype` so Node-compat property lookups
+// see a function in both places. (The two objects are still
+// distinct — full prototype unification is deferred because the
+// existing `_compile` CustomAccessor depends on the instance cast.)
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import Module from "node:module";

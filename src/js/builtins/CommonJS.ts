@@ -449,6 +449,14 @@ export function modulePrototypeLoad(this: JSCommonJSModule, filename: string) {
   let handler: any;
   let startDot = basename.indexOf(".");
   while (startDot !== -1 && startDot !== basename.length - 1) {
+    // Skip a leading dot so dotfiles like `.gitignore` don't match a
+    // handler registered for the full filename. Node's
+    // findLongestRegisteredExtension and Bun's native Zig equivalent
+    // both do this.
+    if (startDot === 0) {
+      startDot = basename.indexOf(".", 1);
+      continue;
+    }
     const suffix = basename.slice(startDot);
     handler = extensions[suffix];
     if (handler) break;

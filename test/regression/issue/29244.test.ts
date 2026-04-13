@@ -10,8 +10,9 @@
 // reads passwd directly and does NOT honor HOME in Node — that behavior
 // must be preserved.
 //
-// Run in a subprocess: mutating process.env.HOME in-process would affect
-// the test runner's own state.
+// Each test spawns its own subprocess so mutating process.env.HOME can't
+// bleed into the test runner — and therefore can't bleed between tests,
+// which is why they run concurrently.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
@@ -33,7 +34,7 @@ async function runBun(source: string, extraEnv: Record<string, string> = {}) {
   return { stdout, stderr: stderrFiltered, exitCode };
 }
 
-test.skipIf(isWindows)("os.homedir() reflects HOME mutation after require (#29244)", async () => {
+test.concurrent.skipIf(isWindows)("os.homedir() reflects HOME mutation after require (#29244)", async () => {
   const { stdout, stderr, exitCode } = await runBun(`
     const os = require('node:os');
     const before = os.homedir();
@@ -41,8 +42,6 @@ test.skipIf(isWindows)("os.homedir() reflects HOME mutation after require (#2924
     const after = os.homedir();
     console.log(JSON.stringify({ before, after, env: process.env.HOME }));
   `);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
   const result = JSON.parse(stdout);
   expect(result.after).toBe("/tmp/test-home-29244");
   expect(result.env).toBe("/tmp/test-home-29244");
@@ -50,32 +49,34 @@ test.skipIf(isWindows)("os.homedir() reflects HOME mutation after require (#2924
   expect(typeof result.before).toBe("string");
   expect(result.before.length).toBeGreaterThan(0);
   expect(result.before).not.toBe("/tmp/test-home-29244");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("os.homedir() reflects HOME mutation before require (#29244)", async () => {
+test.concurrent.skipIf(isWindows)("os.homedir() reflects HOME mutation before require (#29244)", async () => {
   const { stdout, stderr, exitCode } = await runBun(`
     process.env.HOME = '/tmp/before-require-29244';
     const os = require('node:os');
     console.log(JSON.stringify({ homedir: os.homedir(), env: process.env.HOME }));
   `);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
   expect(JSON.parse(stdout)).toEqual({
     homedir: "/tmp/before-require-29244",
     env: "/tmp/before-require-29244",
   });
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("os.homedir() honors HOME from parent env (#29244)", async () => {
+test.concurrent.skipIf(isWindows)("os.homedir() honors HOME from parent env (#29244)", async () => {
   const { stdout, stderr, exitCode } = await runBun(`console.log(require('node:os').homedir());`, {
     HOME: "/tmp/inherited-29244",
   });
+  expect(stdout.trim()).toBe("/tmp/inherited-29244");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
-  expect(stdout.trim()).toBe("/tmp/inherited-29244");
 });
 
-test.skipIf(isWindows)("os.homedir() falls back to passwd when HOME is empty (#29244)", async () => {
+test.concurrent.skipIf(isWindows)("os.homedir() falls back to passwd when HOME is empty (#29244)", async () => {
   // An empty HOME should be treated as unset — fall through to the
   // passwd entry, matching libuv's uv_os_homedir. The fallback must
   // return a non-empty absolute path, not "".
@@ -87,15 +88,15 @@ test.skipIf(isWindows)("os.homedir() falls back to passwd when HOME is empty (#2
         console.log(JSON.stringify({ h, len: h.length, abs: h.startsWith('/') }));
       `,
   );
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
   const result = JSON.parse(stdout);
   expect(result.len).toBeGreaterThan(0);
   expect(result.abs).toBe(true);
   expect(result.h).not.toBe("");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
-test.skipIf(isWindows)("os.userInfo().homedir ignores HOME mutation (#29244)", async () => {
+test.concurrent.skipIf(isWindows)("os.userInfo().homedir ignores HOME mutation (#29244)", async () => {
   // Node's os.userInfo().homedir reads the passwd entry, NOT $HOME.
   // The fix for os.homedir() must NOT leak into userInfo.
   const { stdout, stderr, exitCode } = await runBun(`
@@ -104,10 +105,10 @@ test.skipIf(isWindows)("os.userInfo().homedir ignores HOME mutation (#29244)", a
       const passwd = os.userInfo().homedir;
       console.log(JSON.stringify({ passwd, leaked: passwd === '/tmp/should-not-appear-29244' }));
     `);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
   const result = JSON.parse(stdout);
   expect(result.leaked).toBe(false);
   expect(typeof result.passwd).toBe("string");
   expect(result.passwd.length).toBeGreaterThan(0);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

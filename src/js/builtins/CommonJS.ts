@@ -416,6 +416,39 @@ export function createRequireCache() {
   return proxy;
 }
 
+// `Module.prototype.load(filename)` — used by packages like `requizzle` that
+// construct `new Module(...)` directly and expect Node's module-loader shape.
+// Mirrors Node's lib/internal/modules/cjs/loader.js `Module.prototype.load`.
+$visibility = "Private";
+export function modulePrototypeLoad(this: JSCommonJSModule, filename: string) {
+  if (this.loaded) {
+    throw new Error("Module already loaded");
+  }
+
+  const Module = require("node:module");
+  const path = require("node:path");
+  const fs = require("node:fs");
+
+  this.filename = filename;
+  this.paths = Module._nodeModulePaths(path.dirname(filename));
+
+  const ext = path.extname(filename);
+  const extensions = Module._extensions;
+  const handler = extensions[ext] || extensions[".js"];
+  handler.$call(extensions, this, filename);
+
+  this.loaded = true;
+}
+
+// `Module._extensions['.js']` — reads file, runs it through `module._compile`
+// (which honors the current (possibly overridden) `Module.wrap`).
+$visibility = "Private";
+export function modulePrototypeLoadJSExtension(this: any, module: JSCommonJSModule, filename: string) {
+  const fs = require("node:fs");
+  const content = fs.readFileSync(filename, "utf8");
+  module._compile(content, filename);
+}
+
 type WrapperMutate = (start: string, end: string) => void;
 export function getWrapperArrayProxy(onMutate: WrapperMutate) {
   const wrapper = ["(function(exports,require,module,__filename,__dirname){", "})"];

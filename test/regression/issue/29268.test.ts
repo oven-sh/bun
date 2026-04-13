@@ -219,12 +219,7 @@ function createManticoreMock(opts: { deprecateEof: boolean; info?: string }) {
             // End-of-result terminator with MORE_RESULTS flag: tells the
             // client a second result set is coming on the same COM_QUERY.
             socket.write(
-              buildTerminator(
-                seq++,
-                opts.deprecateEof,
-                SERVER_STATUS_AUTOCOMMIT | SERVER_MORE_RESULTS_EXISTS,
-                info,
-              ),
+              buildTerminator(seq++, opts.deprecateEof, SERVER_STATUS_AUTOCOMMIT | SERVER_MORE_RESULTS_EXISTS, info),
             );
 
             // --- Second result set: SHOW META ---

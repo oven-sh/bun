@@ -462,27 +462,10 @@ pub const CronRegisterJob = struct {
             return globalObject.throwInvalidArguments("Failed to resolve path", .{});
         };
 
-        // Validate path has no single quotes (shell escaping in crontab) or
-        // percent signs (cron interprets % as newline before the shell sees it)
-        for (abs_path) |c| {
-            if (c == '\'') {
-                bun.default_allocator.free(abs_path);
-                return globalObject.throwInvalidArguments("Path must not contain single quotes", .{});
-            }
-            if (c == '%') {
-                bun.default_allocator.free(abs_path);
-                return globalObject.throwInvalidArguments("Path must not contain percent signs (cron interprets % as newline)", .{});
-            }
-        }
-
         const bun_exe = bun.selfExePath() catch {
             bun.default_allocator.free(abs_path);
             return globalObject.throw("Failed to get bun executable path", .{});
         };
-        if (bun.strings.indexOfAny(bun_exe, "'%") != null) {
-            bun.default_allocator.free(abs_path);
-            return globalObject.throwInvalidArguments("Bun executable path '{s}' contains characters (' or %) that cannot be safely embedded in a crontab entry", .{bun_exe});
-        }
 
         // Capture caller's working directory so the cron job runs with the same
         // cwd as registration time (matching Lambda bootstrap's --cwd pattern).
@@ -490,26 +473,29 @@ pub const CronRegisterJob = struct {
             bun.default_allocator.free(abs_path);
             return globalObject.throw("Failed to get current working directory", .{});
         };
-        // On Linux the cwd is embedded inside a single-quoted shell token in a
-        // crontab line, so validate characters that would break out of that
-        // context. macOS and Windows use the scheduler's native WorkingDirectory
-        // field (XML-escaped) and need no such restriction.
+
+        // On Linux these values are embedded inside single-quoted shell tokens
+        // on a crontab line, so reject characters that would break out of that
+        // context: single-quote (ends the token), percent (cron turns % into a
+        // newline before the shell sees it), and newline/CR (splits the entry).
+        // macOS and Windows go through XML-escaped native fields and need no
+        // such restriction.
         if (comptime bun.Environment.isLinux) {
-            for (cwd_owned) |c| {
-                if (c == '\'') {
+            const checks = [_]struct { label: []const u8, value: []const u8 }{
+                .{ .label = "Script path", .value = abs_path },
+                .{ .label = "Bun executable path", .value = bun_exe },
+                .{ .label = "Working directory", .value = cwd_owned },
+            };
+            for (checks) |chk| {
+                if (bun.strings.indexOfAny(chk.value, "'%\n\r")) |i| {
+                    const bad = chk.value[i];
                     bun.default_allocator.free(cwd_owned);
                     bun.default_allocator.free(abs_path);
-                    return globalObject.throwInvalidArguments("Working directory must not contain single quotes", .{});
-                }
-                if (c == '%') {
-                    bun.default_allocator.free(cwd_owned);
-                    bun.default_allocator.free(abs_path);
-                    return globalObject.throwInvalidArguments("Working directory must not contain percent signs (cron interprets % as newline)", .{});
-                }
-                if (c == '\n' or c == '\r') {
-                    bun.default_allocator.free(cwd_owned);
-                    bun.default_allocator.free(abs_path);
-                    return globalObject.throwInvalidArguments("Working directory must not contain newlines", .{});
+                    return switch (bad) {
+                        '\'' => globalObject.throwInvalidArguments("{s} must not contain single quotes", .{chk.label}),
+                        '%' => globalObject.throwInvalidArguments("{s} must not contain percent signs (cron interprets % as newline)", .{chk.label}),
+                        else => globalObject.throwInvalidArguments("{s} must not contain newlines", .{chk.label}),
+                    };
                 }
             }
         }

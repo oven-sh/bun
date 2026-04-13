@@ -265,13 +265,16 @@ describe.skipIf(!hasAnyCronBackend)("cross-platform API consistency", () => {
         expect(cwdMatch![1]).toContain("bun-cron-other-cwd");
       } else if (hasCrontab) {
         const crontab = Bun.spawnSync({ cmd: [Bun.which("crontab")!, "-l"], stdout: "pipe" }).stdout.toString();
-        expect(crontab).toMatch(/bun-cron-caller-rel[^\n]*[\\/]worker\.ts/);
+        // Isolate this job's crontab line so unrelated entries can't satisfy the regexes.
+        const entry = crontab.split("\n").find(l => l.includes("--cron-title=test-xplat-caller-rel"));
+        expect(entry).toBeDefined();
+        expect(entry!).toMatch(/bun-cron-caller-rel[^\n]*[\\/]worker\.ts/);
         // The script path must not reference the other-cwd directory.
-        const scriptPathMatch = crontab.match(/'([^']*worker\.ts)'/);
+        const scriptPathMatch = entry!.match(/'([^']*worker\.ts)'/);
         expect(scriptPathMatch).not.toBeNull();
         expect(scriptPathMatch![1]).not.toContain("bun-cron-other-cwd");
         // --cwd must capture the registration-time cwd
-        expect(crontab).toMatch(/--cwd='[^']*bun-cron-other-cwd/);
+        expect(entry!).toMatch(/--cwd='[^']*bun-cron-other-cwd/);
       } else if (hasSchtasks) {
         const query = Bun.spawnSync({
           cmd: ["schtasks", "/query", "/tn", "bun-cron-test-xplat-caller-rel", "/xml"],

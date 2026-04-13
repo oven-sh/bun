@@ -1926,6 +1926,10 @@ fn NewPrinter(
             return printClauseItemAs(p, item, .@"export");
         }
 
+        fn printExportFromClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
+            return printClauseItemAs(p, item, .export_from);
+        }
+
         fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.enum_literal)) void {
             const name = p.renamer.nameForSymbol(item.name.ref.?);
 
@@ -1949,6 +1953,19 @@ fn NewPrinter(
                 }
             } else if (comptime as == .@"export") {
                 p.printIdentifier(name);
+
+                if (!strings.eql(name, item.alias)) {
+                    p.print(" as ");
+                    p.addSourceMapping(item.alias_loc);
+                    p.printClauseAlias(item.alias);
+                }
+            } else if (comptime as == .export_from) {
+                // In `export { x } from 'mod'`, the "name" on the left of `as` refers
+                // to an export of the other module. ECMAScript allows this to be a
+                // string literal (`export { "a b c" } from 'mod'`), so we must use
+                // `printClauseAlias` rather than `printIdentifier` here. The symbol
+                // does not participate in local renaming.
+                p.printClauseAlias(name);
 
                 if (!strings.eql(name, item.alias)) {
                     p.print(" as ");
@@ -4216,7 +4233,7 @@ fn NewPrinter(
                             p.printNewline();
                             p.printIndent();
                         }
-                        p.printExportClauseItem(item);
+                        p.printExportFromClauseItem(item);
                     }
 
                     if (!s.is_single_line) {

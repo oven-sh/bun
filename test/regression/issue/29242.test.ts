@@ -11,7 +11,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test.concurrent("re-export with string literal local name (export { 'x y z' } from 'mod')", async () => {
+test.concurrent("re-export with string literal local name (export { 'a b c' } from 'mod')", async () => {
   using dir = tempDir("issue-29242-bare", {
     "a.mjs": `export { "a b c" } from './b.mjs';`,
     "b.mjs": `const a = 1;\nexport { a as "a b c" };`,
@@ -95,9 +95,9 @@ test.concurrent.each([
   for (const frag of mustContain) {
     expect(stdout).toContain(frag);
   }
-  // No unquoted `a b c` or `x y z` anywhere.
-  expect(stdout).not.toMatch(/(^|[^"])a b c(?!")/);
-  expect(stdout).not.toMatch(/(^|[^"])x y z(?!")/);
+  // No unquoted `a b c` or `x y z` anywhere (guard quote-style agnostic).
+  expect(stdout).not.toMatch(/(^|[^"'])a b c(?!["'])/);
+  expect(stdout).not.toMatch(/(^|[^"'])x y z(?!["'])/);
   expect(exitCode).toBe(0);
 });
 
@@ -120,6 +120,6 @@ test.concurrent("transpiler preserves string literal names under --minify-identi
   expect(stderr).not.toContain("SyntaxError");
   expect(stdout).toContain(`"a b c" as aliased`);
   expect(stdout).toContain(`foo as bar`);
-  expect(stdout).not.toMatch(/(^|[^"])a b c(?!")/);
+  expect(stdout).not.toMatch(/(^|[^"'])a b c(?!["'])/);
   expect(exitCode).toBe(0);
 });

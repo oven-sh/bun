@@ -17,26 +17,14 @@ foo();`,
   });
 
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "build",
-      "entry.js",
-      "--minify",
-      "--format=cjs",
-      "--define",
-      "TEST=false",
-    ],
+    cmd: [bunExe(), "build", "entry.js", "--minify", "--format=cjs", "--define", "TEST=false"],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
   expect(stdout).toBe("foo();\n");
@@ -57,14 +45,9 @@ foo();`,
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain(
-    `Top-level await is currently not supported with the "cjs" output format`,
-  );
+  expect(stderr).toContain(`Top-level await is currently not supported with the "cjs" output format`);
   expect(exitCode).not.toBe(0);
 });
 
@@ -82,11 +65,7 @@ globalThis.output = await;`,
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
   expect(stdout).toContain("var await = 42");
@@ -109,10 +88,7 @@ test("await inside a non-async function nested in a CJS file still reports a use
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain(`"await" can only be used inside an "async" function`);
   expect(exitCode).not.toBe(0);

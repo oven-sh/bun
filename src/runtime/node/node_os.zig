@@ -411,11 +411,18 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
             if (ret == @intFromEnum(bun.sys.E.INTR))
                 continue;
 
-            // If the system call wants more memory, double it.
+            // If the system call wants more memory, double it. On the first
+            // ERANGE, `string_bytes` still points to the on-stack 4096-byte
+            // buffer, so the free must be guarded by the same pointer check
+            // used in the `defer` above. Between the free and the new alloc
+            // we reset `string_bytes` to the stack buffer so that if the
+            // alloc fails, `defer`'s pointer check prevents a double-free /
+            // free-of-dangling-pointer.
             if (ret == @intFromEnum(bun.sys.E.RANGE)) {
                 const len = string_bytes.len;
-                bun.default_allocator.free(string_bytes);
-                string_bytes = "";
+                if (string_bytes.ptr != &stack_string_bytes)
+                    bun.default_allocator.free(string_bytes);
+                string_bytes = &stack_string_bytes;
                 string_bytes = try bun.default_allocator.alloc(u8, len * 2);
                 continue;
             }

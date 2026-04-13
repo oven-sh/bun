@@ -168,8 +168,11 @@ fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *jsc.VM, t
 
     switch (this.gc_timer_state) {
         .run_on_next_tick => {
-            // When memory usage is not stable, run the GC more.
-            if (this_heap_size != prev) {
+            // Only growth signals activity. A decrease is the async GC we just
+            // requested freeing memory; treating it as activity would cancel
+            // reduction mode via updateGCRepeatTimer(.fast) and prevent the
+            // slow-interval transition from ever being reached.
+            if (this_heap_size > prev) {
                 this.scheduleGCTimer();
                 this.updateGCRepeatTimer(.fast);
             } else {
@@ -179,7 +182,7 @@ fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *jsc.VM, t
             this.gc_last_heap_size = this_heap_size;
         },
         .pending => {
-            if (this_heap_size != prev) {
+            if (this_heap_size > prev) {
                 this.updateGCRepeatTimer(.fast);
 
                 if (this_heap_size > prev * 2) {

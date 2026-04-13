@@ -226,11 +226,20 @@ console.log("result", hot() > 0);
   const nodesWithTicks = scriptNodes.filter((n: any) => Array.isArray(n.positionTicks) && n.positionTicks.length > 0);
   expect(nodesWithTicks.length).toBeGreaterThan(0);
   for (const node of nodesWithTicks) {
+    let sum = 0;
     for (const entry of node.positionTicks) {
       expect(entry.line).toBeGreaterThan(0);
       expect(entry.line).toBeLessThanOrEqual(17);
       expect(entry.ticks).toBeGreaterThan(0);
+      sum += entry.ticks;
     }
+    // Same aggregate invariant as the plain-JS test: positionTicks only
+    // records top-frame samples that had expression info, so its total is
+    // bounded above by the node's hitCount. Guards against a sourcemap-path
+    // regression that could inflate ticks (e.g. mistakenly recording ticks
+    // for non-top frames or for frames with stale sample lines).
+    expect(sum).toBeGreaterThan(0);
+    expect(sum).toBeLessThanOrEqual(node.hitCount);
   }
 
   // Crucially, tools keying on (url, lineNumber, columnNumber) must see the

@@ -711,12 +711,24 @@ declare module "bun:test" {
     unreachable(msg?: string | Error): never;
 
     /**
-     * Ensures that an assertion is made
+     * Ensures that an assertion is made.
+     *
+     * Not supported in concurrent tests — use `test.serial` or remove
+     * `.concurrent` from the enclosing test. Unlike `onTestFinished()`,
+     * this cannot be resolved to the owning sequence across `await`
+     * boundaries, so it throws unconditionally rather than silently
+     * miscounting.
      */
     hasAssertions(): void;
 
     /**
-     * Ensures that a specific number of assertions are made
+     * Ensures that a specific number of assertions are made.
+     *
+     * Not supported in concurrent tests — use `test.serial` or remove
+     * `.concurrent` from the enclosing test. Unlike `onTestFinished()`,
+     * this cannot be resolved to the owning sequence across `await`
+     * boundaries, so it throws unconditionally rather than silently
+     * miscounting.
      */
     assertions(neededAssertions: number): void;
   }

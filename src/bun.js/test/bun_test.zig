@@ -233,8 +233,10 @@ pub const BunTest = struct {
     ///
     /// During synchronous JS execution (including drained microtasks), the
     /// top of this stack tells `getCurrentStateData` which concurrent
-    /// sequence the calling code belongs to, so hooks like `onTestFinished`
-    /// and `expect.assertions` resolve to the correct test.
+    /// sequence the calling code belongs to, so `onTestFinished()` resolves
+    /// to the correct test. `expect.assertions()` / `expect.hasAssertions()`
+    /// / snapshot matchers intentionally do not use this stack — see
+    /// `expect.zig` for why they reject concurrent-test calls outright.
     current_callback_stack: std.array_list.Managed(RefDataValue),
 
     phase: enum {

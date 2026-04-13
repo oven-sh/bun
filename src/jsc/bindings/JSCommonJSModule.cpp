@@ -821,6 +821,16 @@ public:
             clientData(vm)->builtinNames().requireNativeModulePrivateName(),
             0,
             jsFunctionRequireNativeModule, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
+
+        // `Module.prototype.load(filename)` — needed for packages like
+        // `requizzle` that construct `new Module(...)` directly and call
+        // `.load()` on it. Mirrors Node's cjs loader semantics.
+        this->putDirectBuiltinFunction(
+            vm,
+            globalObject,
+            JSC::Identifier::fromString(vm, "load"_s),
+            WebCore::commonJSModulePrototypeLoadCodeGenerator(vm),
+            0);
     }
 };
 

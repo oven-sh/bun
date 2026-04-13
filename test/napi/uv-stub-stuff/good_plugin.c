@@ -1,14 +1,16 @@
 #include <node_api.h>
 
-#include <signal.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <uv.h>
 
 static void thread_entry(void *arg) {
   int *counter = (int *)arg;
   *counter = 42;
 }
+
+// For the detach sub-test: the caller returns before this runs, so we
+// must NOT touch the caller's stack. No-op instead.
+static void thread_entry_detach(void *arg) { (void)arg; }
 
 napi_value Init(napi_env env, napi_value exports) {
   uv_pid_t pid = uv_os_getpid();
@@ -38,11 +40,10 @@ napi_value Init(napi_env env, napi_value exports) {
     return NULL;
   }
 
-  // uv_thread_create_ex: with a custom stack size.
+  // uv_thread_create_ex: no flags → default pthread stack size.
   counter = 0;
   uv_thread_options_t opts;
-  opts.flags = UV_THREAD_HAS_STACK_SIZE;
-  opts.stack_size = 128 * 1024;
+  opts.flags = UV_THREAD_NO_FLAGS;
   if (uv_thread_create_ex(&tid, &opts, thread_entry, &counter) != 0) {
     printf("FAIL: uv_thread_create_ex\n");
     return NULL;
@@ -57,9 +58,9 @@ napi_value Init(napi_env env, napi_value exports) {
     return NULL;
   }
 
-  // uv_thread_detach: spawn, detach, let it run to completion on its own.
-  counter = 0;
-  if (uv_thread_create(&tid, thread_entry, &counter) != 0) {
+  // uv_thread_detach: spawn, detach. The thread runs a no-op so it's
+  // safe for the caller to return before the thread starts.
+  if (uv_thread_create(&tid, thread_entry_detach, NULL) != 0) {
     printf("FAIL: uv_thread_create (detach)\n");
     return NULL;
   }

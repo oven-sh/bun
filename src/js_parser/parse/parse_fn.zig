@@ -160,6 +160,12 @@ pub fn ParseFn(
             else
                 AwaitOrYield.allow_ident;
 
+            // We're inside a nested function's argument list, not at module
+            // top level. Clear `is_top_level` so the module-scope-only
+            // `await` identifier upgrade in parsePrefix doesn't fire inside
+            // default parameter values of non-async functions.
+            p.fn_or_arrow_data_parse.is_top_level = false;
+
             // Don't suggest inserting "async" before anything if "await" is found
             p.fn_or_arrow_data_parse.needs_async_loc = logger.Loc.Empty;
 

@@ -926,7 +926,13 @@ pub fn VisitStmt(
                     const where = where: {
                         if (p.esm_export_keyword.len > 0) {
                             break :where p.esm_export_keyword;
-                        } else if (p.top_level_await_keyword.len > 0) {
+                        } else if (p.top_level_await_keyword.len > 0 and p.options.features.top_level_await) {
+                            // `top_level_await_keyword` may be populated from a
+                            // dead-branch parse-time discovery in CJS targets
+                            // where TLA isn't supported. Only treat it as an
+                            // ESM signal when the feature is actually on —
+                            // otherwise a dead `if (false) { await ... }` plus
+                            // a top-level `return` would wrongly be rejected.
                             break :where p.top_level_await_keyword;
                         } else {
                             break :where logger.Range.None;

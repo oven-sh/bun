@@ -46,6 +46,7 @@
 #include "JSDOMConvertBase.h"
 #include "ZigSourceProvider.h"
 #include "mimalloc.h"
+extern "C" char* mi_stats_get_json(size_t, char*);
 
 #include <JavaScriptCore/ControlFlowProfiler.h>
 
@@ -355,6 +356,14 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     }
 #endif
 #endif
+
+    mi_collect(false);
+    if (char* json = mi_stats_get_json(0, nullptr)) {
+        JSValue parsed = JSONParse(globalObject, String::fromUTF8(json));
+        mi_free(json);
+        object->putDirect(vm, Identifier::fromString(vm, "mimalloc"_s),
+            parsed.isEmpty() ? jsNull() : parsed);
+    }
 
     return JSValue::encode(object);
 }

@@ -134,18 +134,24 @@ test.concurrent("new Module().load populates filename/paths/loaded (#29253)", as
   // and `loaded` before returning. `requizzle` and any other
   // package that reads those fields after `.load()` depends on
   // this, even if it doesn't touch the wrapper.
+  // The leaf file sits in a subdir, and the Module is constructed with
+  // a DIFFERENT id from the load path. This matters: the C++ constructor
+  // initializes \`m_dirname\` from the id, so if \`load()\` doesn't
+  // update \`this.path\` from the filename, \`__dirname\` inside the
+  // loaded file would be stale (dirname of the constructor id instead
+  // of dirname of the load path).
   using dir = tempDir("issue-29253-fields", {
-    "leaf.js": `module.exports = 'ok';`,
+    "sub/leaf.js": `module.exports = { msg: 'ok', seen_dirname: __dirname, seen_filename: __filename };`,
     "driver.js": `
       const Module = require("node:module");
       const path = require("node:path");
 
-      const target = path.resolve(__dirname, "leaf.js");
-      const m = new Module(target, module);
-      // paths must come from Module._nodeModulePaths(dirname(filename)).
+      const target = path.resolve(__dirname, "sub/leaf.js");
+      // Deliberately pass a DIFFERENT id to the constructor.
+      const m = new Module(path.resolve(__dirname, "unrelated/placeholder.js"), module);
       const expectedPaths = Module._nodeModulePaths(path.dirname(target));
 
-      // Pre-load state: loaded=false, no filename.
+      // Pre-load state: loaded=false.
       if (m.loaded !== false) throw new Error("pre-load 'loaded' should be false, got " + m.loaded);
 
       m.load(target);
@@ -155,7 +161,18 @@ test.concurrent("new Module().load populates filename/paths/loaded (#29253)", as
       if (JSON.stringify(m.paths) !== JSON.stringify(expectedPaths)) {
         throw new Error("paths mismatch: " + JSON.stringify(m.paths) + " vs " + JSON.stringify(expectedPaths));
       }
-      if (m.exports !== 'ok') throw new Error("exports mismatch: " + m.exports);
+      if (m.exports.msg !== 'ok') throw new Error("exports.msg mismatch: " + m.exports.msg);
+      // __filename inside the loaded file must match the load path.
+      if (m.exports.seen_filename !== target) {
+        throw new Error("seen_filename mismatch: " + m.exports.seen_filename + " vs " + target);
+      }
+      // __dirname inside the loaded file must be the dirname of the
+      // LOAD path, not the dirname of the constructor id. This is the
+      // regression: previously load() only set this.filename, so
+      // __dirname stayed at the constructor's dirname.
+      if (m.exports.seen_dirname !== path.dirname(target)) {
+        throw new Error("seen_dirname mismatch: " + m.exports.seen_dirname + " vs " + path.dirname(target));
+      }
       console.log("ok");
     `,
   });

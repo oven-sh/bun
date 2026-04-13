@@ -17,25 +17,14 @@ foo();`,
   });
 
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "build",
-      "entry.js",
-      "--minify",
-      "--format=cjs",
-      "--define",
-      "TEST=false",
-    ],
+    cmd: [bunExe(), "build", "entry.js", "--minify", "--format=cjs", "--define", "TEST=false"],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.exited,
-  ]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout).toBe("foo();\n");
   expect(exitCode).toBe(0);
@@ -55,14 +44,9 @@ foo();`,
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain(
-    `Top-level await is currently not supported with the "cjs" output format`,
-  );
+  expect(stderr).toContain(`Top-level await is currently not supported with the "cjs" output format`);
   expect(exitCode).not.toBe(0);
 });
 
@@ -80,10 +64,7 @@ globalThis.output = await;`,
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.exited,
-  ]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout).toContain("var await = 42");
   expect(stdout).toContain("globalThis.output = await");
@@ -105,10 +86,7 @@ test("await inside a non-async function nested in a CJS file still reports a use
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain(`"await" can only be used inside an "async" function`);
   expect(exitCode).not.toBe(0);
@@ -132,10 +110,7 @@ foo();`,
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.exited,
-  ]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout).toBe("foo();\n");
   expect(exitCode).toBe(0);
@@ -146,9 +121,7 @@ foo();`,
 // misparse it as an await expression.
 test("await as a tagged-template call identifier keeps working in CJS", async () => {
   using dir = tempDir("issue-29243-tagged-template", {
-    "entry.js":
-      "var await = String.raw;\n" +
-      "globalThis.output = await`hello ${1 + 1} world`;\n",
+    "entry.js": "var await = String.raw;\n" + "globalThis.output = await`hello ${1 + 1} world`;\n",
   });
 
   await using proc = Bun.spawn({
@@ -159,10 +132,7 @@ test("await as a tagged-template call identifier keeps working in CJS", async ()
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.exited,
-  ]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout).toContain("var await = String.raw");
   expect(exitCode).toBe(0);
@@ -187,10 +157,7 @@ bar();`,
     stdout: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.exited,
-  ]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout).toBe("bar();\n");
   expect(exitCode).toBe(0);

@@ -394,6 +394,34 @@ if (false) {
   expect(exitCode).not.toBe(0);
 });
 
+// TypeScript `as` and `satisfies` are contextual infix operators that
+// appear immediately after an identifier. `await as SomeType` uses `await`
+// as an identifier; upgrading on the following `.t_identifier` would eat
+// `as` as the await operand and leave `SomeType` dangling.
+test("bun build --format=cjs leaves TS `await as T` / `await satisfies T` identifier uses alone", async () => {
+  using dir = tempDir("issue-29243-ts-as-satisfies", {
+    "entry.ts": `var await = Promise.resolve(1);
+const viaAs = await as Promise<number>;
+const viaSatisfies = await satisfies unknown;
+globalThis.output = [viaAs, viaSatisfies];`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.ts", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toContain("var await = Promise.resolve(1)");
+  expect(stdout).toContain("viaAs = await");
+  expect(stdout).toContain("viaSatisfies = await");
+  expect(exitCode).toBe(0);
+});
+
 // `.entry` is overloaded: it marks both the true module scope and
 // TypeScript namespace / enum bodies. Namespace bodies set
 // `scope.ts_namespace`, and must be treated as function-like nested

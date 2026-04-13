@@ -393,3 +393,32 @@ if (false) {
   expect(stderr).toContain(`Top-level await is currently not supported with the "cjs" output format`);
   expect(exitCode).not.toBe(0);
 });
+
+// `.entry` is overloaded: it marks both the true module scope and
+// TypeScript namespace / enum bodies. Namespace bodies set
+// `scope.ts_namespace`, and must be treated as function-like nested
+// scopes — `await` inside them has identifier semantics just like pre-PR,
+// and the CJS-TLA path must not fire for awaits that live in a namespace.
+test("bun build --format=cjs treats TS namespace bodies as not-at-module-scope", async () => {
+  using dir = tempDir("issue-29243-ts-namespace", {
+    "entry.ts": `namespace NS {
+  var await = 42;
+  export const val = await + 1;
+}
+module.exports = NS;`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.ts", "--format=cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toContain("var await = 42");
+  expect(stdout).toContain("NS.val = await + 1");
+  expect(exitCode).toBe(0);
+});

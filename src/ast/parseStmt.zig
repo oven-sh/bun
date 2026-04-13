@@ -778,14 +778,17 @@ pub fn ParseStmt(
                 // targeted error if a live `for await` survives.
                 //
                 // We're at module scope iff walking up the scope stack hits
-                // the module `entry` without crossing a function / class /
-                // arrow scope. Block scopes (including the one `t_for` just
-                // pushed) don't count.
+                // the real module `entry` without crossing a function /
+                // class / arrow scope or a TS namespace / enum body. The
+                // `entry` scope kind is overloaded and namespace / enum
+                // bodies set `ts_namespace != null`; those are function-
+                // like nested contexts, not module top-level. Block scopes
+                // (including the one `t_for` just pushed) don't count.
                 const at_module_scope = at_module_scope: {
                     var s: ?*js_ast.Scope = p.current_scope;
                     while (s) |curr| : (s = curr.parent) {
                         switch (curr.kind) {
-                            .entry => break :at_module_scope true,
+                            .entry => break :at_module_scope curr.ts_namespace == null,
                             .function_args,
                             .function_body,
                             .class_body,

@@ -5,10 +5,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-test(
-  "cpu-prof callFrame.lineNumber/columnNumber point at function definition, not sample position (#29240)",
-  { timeout: 30_000 },
-  async () => {
+test("cpu-prof callFrame.lineNumber/columnNumber point at function definition, not sample position (#29240)", async () => {
     // fibonacci is recursive so it shows up on many stacks at many different
     // sample lines — this is the exact case where the old Bun output fragmented
     // into dozens of nodes per function. Same for the busy loop body in
@@ -146,10 +143,7 @@ console.log("done");
   },
 );
 
-test(
-  "cpu-prof respects sourcemaps for both function definition and positionTicks (#29240)",
-  { timeout: 30_000 },
-  async () => {
+test("cpu-prof respects sourcemaps for both function definition and positionTicks (#29240)", async () => {
     // Bun transpiles `.ts` files through its bundler at load time, which sets
     // up an internal sourcemap from the generated JS back to the original TS.
     // That's the exact path `computeLineColumnWithSourcemap` is wired to.

@@ -8,7 +8,7 @@
 // On Linux libsqlite3 is statically linked (LAZY_LOAD_SQLITE=0), so there is
 // no lazy-load race to hit. The test is gated to the platforms that have
 // the code path being exercised.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 
 test.skipIf(!isMacOS && !isWindows)(
@@ -57,11 +57,7 @@ test.skipIf(!isMacOS && !isWindows)(
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, , exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { i, stdout: stdout.trim(), exitCode };
     }
 
@@ -69,9 +65,7 @@ test.skipIf(!isMacOS && !isWindows)(
     const BATCH = 8;
     const failures: { i: number; stdout: string; exitCode: number }[] = [];
     for (let start = 0; start < RUNS; start += BATCH) {
-      const batch = await Promise.all(
-        Array.from({ length: Math.min(BATCH, RUNS - start) }, (_u, k) => run(start + k)),
-      );
+      const batch = await Promise.all(Array.from({ length: Math.min(BATCH, RUNS - start) }, (_u, k) => run(start + k)));
       for (const r of batch) {
         if (r.exitCode !== 0 || r.stdout !== "ok") failures.push(r);
       }

@@ -91,7 +91,7 @@ const bundles = {
 // from npm and canary builds don't have it published, bringing back the same
 // fetcher-flakiness the skip was supposed to eliminate.
 test.skipIf(!isMacOS || !isArm64).each(Object.entries(bundles))(
-  "bun build --compile --target=bun-darwin-arm64 produces a valid code signature (%s bundle) (#29120)",
+  "bun build --compile --target=bun-darwin-arm64 produces a valid code signature (%s bundle)",
   async (label, source) => {
     using dir = tempDir(`issue-29120-${label}`, {
       "app.ts": source,
@@ -107,40 +107,30 @@ test.skipIf(!isMacOS || !isArm64).each(Object.entries(bundles))(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    void stdout;
 
-    if (exitCode !== 0) {
-      console.error(`[29120] build failed:\n${stderr}`);
-    }
+    // Always dump stdout+stderr: failures on CI runners are invisible without
+    // this, and the logs are tiny.
+    console.error(`[29120 ${label}] build exit=${exitCode}`);
+    if (stdout.length) console.error(`[29120 ${label}] stdout:\n${stdout}`);
+    if (stderr.length) console.error(`[29120 ${label}] stderr:\n${stderr}`);
+
     expect(exitCode).toBe(0);
 
     const buf = readFileSync(out);
     const sig = readCodeSignature(buf);
-    if (!sig) {
-      console.error(`[29120] readCodeSignature returned null; binary size=${buf.length}`);
-    }
+    console.error(
+      `[29120 ${label}] file=${buf.length} sig=${sig ? JSON.stringify({ ...sig, superBlobMagicHex: "0x" + sig.superBlobMagic.toString(16) }) : "null"}`,
+    );
     expect(sig).not.toBeNull();
     if (!sig) return;
 
-    // Diagnostics — if any assertion below fails, these go to stderr so a
-    // CI log reader can see what went wrong without reproducing locally.
-    console.error(
-      `[29120] bundle=${label} size=${buf.length} dataoff=${sig.dataoff} ` +
-        `datasize=${sig.datasize} superBlobMagic=0x${sig.superBlobMagic.toString(16)} ` +
-        `superBlobLength=${sig.superBlobLength}`,
-    );
-
     // 1. The magic at `dataoff` must be a valid embedded-signature SuperBlob.
-    //    If signing was skipped or the wrong bytes ended up there, this won't
-    //    match and macOS would reject the binary outright.
     expect(sig.superBlobMagic).toBe(CSMAGIC_EMBEDDED_SIGNATURE);
 
     // 2. The size the header advertises must be at least as big as the actual
-    //    SuperBlob — otherwise the signature is truncated on disk. This is the
-    //    exact failure mode from #29120 where `LC_CODE_SIGNATURE.datasize`
-    //    (197,488) was smaller than `SuperBlob.length` (537,138) and macOS
-    //    killed the process with SIGKILL on startup. This is the core invariant
-    //    the fix must preserve.
+    //    SuperBlob — this is the exact regression from #29120 where
+    //    `LC_CODE_SIGNATURE.datasize` (197,488) was smaller than
+    //    `SuperBlob.length` (537,138) and macOS killed the process on startup.
     expect(sig.datasize).toBeGreaterThanOrEqual(sig.superBlobLength);
   },
 );

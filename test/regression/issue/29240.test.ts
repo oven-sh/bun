@@ -49,7 +49,7 @@ console.log("done");
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // The script must run cleanly. Stderr may contain the debug-build ASAN
   // warning, so we only assert that stdout/exitCode look right.
   expect(stdout).toBe("done\n");
@@ -111,8 +111,10 @@ console.log("done");
   // positionTicks: at least one node from the script must have a populated
   // positionTicks array (the hot loop is long enough that SOME sampled line
   // gets recorded). Each entry is {line, ticks} with line 1-indexed inside
-  // the source file and ticks being positive integers that sum to the node's
-  // hitCount.
+  // the source file and ticks being positive integers whose sum is bounded
+  // above by the node's hitCount — only top-frame samples with expression
+  // info contribute, so a JIT frame without expression info can bump
+  // hitCount without adding a tick.
   const nodesWithTicks = scriptNodes.filter((n: any) => Array.isArray(n.positionTicks) && n.positionTicks.length > 0);
   expect(nodesWithTicks.length).toBeGreaterThan(0);
 

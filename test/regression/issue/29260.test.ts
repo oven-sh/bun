@@ -41,7 +41,7 @@ describe.if(!isWindows)("issue/29260", () => {
     5 * 60_000,
   );
 
-  test("uv_thread_self and friends no longer panic when a NAPI module calls them", { timeout: 30_000 }, async () => {
+  test("uv_thread_self and friends no longer panic when a NAPI module calls them", async () => {
     // -p prints the expression value. The addon's init returns `true` if
     // every thread op succeeds — if any uv_thread_* symbol were still a
     // stub, Bun would panic here instead of printing "boolean".

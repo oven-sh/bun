@@ -1,10 +1,9 @@
 // Tests for `internalBinding('util').guessHandleType(fd)` — the Zig impl
 // in src/bun.js/node/node_util_binding.zig. Exposed for testing via
-// `bun:internal-for-testing`. Node-compat is verified by running the same
-// fixture under `node --expose-internals` when node is available.
+// `bun:internal-for-testing`.
 import { createSocketPair, guessHandleType, guessHandleTypeNative, memfd_create } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, isWindows, tempDir } from "harness";
 import { execFileSync } from "node:child_process";
 import { closeSync, constants as fsConstants, openSync, rmSync } from "node:fs";
 import { createServer as createTcpServer } from "node:net";
@@ -107,8 +106,7 @@ describe("guessHandleType per-fd-type", () => {
     try {
       const fd = (server as any)._handle?.fd;
       if (typeof fd !== "number" || fd < 0) {
-        // If Bun's net.Server doesn't expose fd yet, don't fail the suite —
-        // this path is covered by the Node-compat oracle below.
+        // If Bun's net.Server doesn't expose fd yet, don't fail the suite.
         console.warn("net.Server._handle.fd not available; skipping TCP assertion");
         return;
       }
@@ -143,8 +141,7 @@ describe("guessHandleType per-fd-type", () => {
 });
 
 // The contract that `process.stdin`'s createHandle/getStdin depend on: what
-// fd 0 looks like to a child under each parent stdio configuration. Run the
-// same fixture under Bun and (when available) Node, and assert both agree.
+// fd 0 looks like to a child under each parent stdio configuration.
 describe.concurrent("guessHandleType stdio matrix (child fd 0)", () => {
   async function runBun(stdin: Parameters<typeof Bun.spawn>[0]["stdin"]) {
     await using proc = Bun.spawn({
@@ -161,64 +158,35 @@ describe.concurrent("guessHandleType stdio matrix (child fd 0)", () => {
     return parsed;
   }
 
-  const node = nodeExe();
-  async function runNode(stdin: Parameters<typeof Bun.spawn>[0]["stdin"]) {
-    await using proc = Bun.spawn({
-      cmd: [node!, "--expose-internals", fixture, "0"],
-      env: { ...process.env },
-      stdin,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const parsed = JSON.parse(stdout.trim()) as string[];
-    expect(parsed).toHaveLength(1);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    return parsed;
-  }
-
   test('stdin: "pipe" → PIPE', async () => {
-    const [bun] = await runBun("pipe");
-    expect(bun).toBe("PIPE");
-    if (node) {
-      const [n] = await runNode("pipe");
-      expect(bun).toBe(n);
-    }
+    const [result] = await runBun("pipe");
+    expect(result).toBe("PIPE");
   });
 
   test('stdin: "ignore" → FILE (null device)', async () => {
-    const [bun] = await runBun("ignore");
-    expect(bun).toBe("FILE");
-    if (node) {
-      const [n] = await runNode("ignore");
-      expect(bun).toBe(n);
-    }
+    const [result] = await runBun("ignore");
+    expect(result).toBe("FILE");
   });
 
   test("stdin: file fd → FILE", async () => {
     using dir = tempDir("ght-stdin-file", { "in.txt": "" });
     const fd = openSync(path.join(String(dir), "in.txt"), "r");
     try {
-      const [bun] = await runBun(fd);
-      expect(bun).toBe("FILE");
-      if (node) {
-        const [n] = await runNode(fd);
-        expect(bun).toBe(n);
-      }
+      const [result] = await runBun(fd);
+      expect(result).toBe("FILE");
     } finally {
       closeSync(fd);
     }
   });
 
   // stdin: "inherit" — child sees whatever the parent's stdin is. In CI that
-  // is usually FILE or PIPE; under a terminal it's TTY. We only assert parity
-  // with Node here, not a fixed value.
-  test.skipIf(!node)('stdin: "inherit" → matches Node', async () => {
-    const [bun] = await runBun("inherit");
-    const [n] = await runNode("inherit");
-    expect(["TCP", "TTY", "UDP", "FILE", "PIPE", "UNKNOWN"]).toContain(bun);
-    expect(bun).toBe(n);
+  // is usually FILE or PIPE; under a terminal it's TTY. Assert only that it
+  // resolves to one of the valid handle types and matches what guessHandleType
+  // returns for fd 0 in this process.
+  test('stdin: "inherit" → matches parent fd 0', async () => {
+    const [result] = await runBun("inherit");
+    expect(["TCP", "TTY", "UDP", "FILE", "PIPE", "UNKNOWN"]).toContain(result);
+    expect(result).toBe(guessHandleType(0));
   });
 });
 

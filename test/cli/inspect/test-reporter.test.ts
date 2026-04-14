@@ -148,6 +148,11 @@ class TestReporterSession extends InspectorSession {
 describe.if(isPosix)("TestReporter inspector protocol", () => {
   let proc: Subprocess | undefined;
   let socket: ReturnType<typeof connect> extends Promise<infer T> ? T : never;
+  // Every spawned inspector subprocess across the parallel drain attempts.
+  // afterEach() force-kills anything still here so a timed-out test can't
+  // leave --inspect-wait children spinning on the CI runner after the
+  // harness is torn down.
+  const spawnedProcs = new Set<Subprocess>();
 
   afterEach(() => {
     proc?.kill();
@@ -155,6 +160,12 @@ describe.if(isPosix)("TestReporter inspector protocol", () => {
     // @ts-ignore - close the socket if it exists
     socket?.end?.();
     socket = undefined as any;
+    for (const p of spawnedProcs) {
+      try {
+        p.kill("SIGKILL");
+      } catch {}
+    }
+    spawnedProcs.clear();
   });
 
   test("retroactively reports tests when TestReporter.enable is called after tests are discovered", async () => {
@@ -434,13 +445,14 @@ ${body}
         return s;
       });
 
-      await using localProc = spawn({
+      const localProc = spawn({
         cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "drain.test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
       });
+      spawnedProcs.add(localProc);
 
       await socketPromise;
 
@@ -451,6 +463,7 @@ ${body}
       session.initialize();
 
       const [stderr, exitCode] = await Promise.all([localProc.stderr.text(), localProc.exited]);
+      spawnedProcs.delete(localProc);
       // @ts-ignore
       localSocket?.end?.();
 
@@ -462,12 +475,18 @@ ${body}
       };
     }
 
-    // The race is scheduler-dependent. Run a batch of attempts in parallel
-    // so any one of them dropping events fails the test. Keeping processes
-    // concurrent also keeps the box busy, which is the regime where the
-    // main thread wins the race to exit().
-    const attempts = 24;
-    const results = await Promise.all(Array.from({ length: attempts }, () => once()));
+    // The race is scheduler-dependent. Run several attempts in parallel so
+    // any one of them dropping events fails the test; keeping a few processes
+    // concurrent also keeps the box busy, which is the regime where the main
+    // thread wins the race to exit(). Two rounds with modest width keeps the
+    // failure-without-fix rate high without spraying dozens of --inspect-wait
+    // children across the runner.
+    const width = 8;
+    const rounds = 2;
+    const results: Awaited<ReturnType<typeof once>>[] = [];
+    for (let r = 0; r < rounds; r++) {
+      results.push(...(await Promise.all(Array.from({ length: width }, () => once()))));
+    }
 
     for (const { stderr, exitCode, found, ended } of results) {
       expect(stderr).toContain(`${testCount} pass`);

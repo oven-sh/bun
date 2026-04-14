@@ -61,8 +61,14 @@ describe("Bun.cron.parse — invalid `from` argument", () => {
   );
 
   test("accepts the Date range boundary", () => {
-    expect(() => Bun.cron.parse("@hourly", 8.64e15)).not.toThrow();
-    expect(() => Bun.cron.parse("@hourly", -8.64e15)).not.toThrow();
+    // from = +8.64e15 is +275760-09-13T00:00:00Z; the next @hourly occurrence
+    // falls past the representable range → null, not an Invalid Date.
+    expect(Bun.cron.parse("@hourly", 8.64e15)).toBeNull();
+    // from = -8.64e15 is -271821-04-20T00:00:00Z; the next @hourly is 01:00,
+    // comfortably in range.
+    expect(Bun.cron.parse("@hourly", -8.64e15)?.toISOString()).toBe("-271821-04-20T01:00:00.000Z");
+    // Just inside the upper boundary: next @hourly lands exactly on 8.64e15.
+    expect(Bun.cron.parse("@hourly", 8.64e15 - 60_000)?.getTime()).toBe(8.64e15);
   });
 
   test("rejects an Invalid Date (consistent with numeric NaN)", () => {

@@ -653,8 +653,12 @@ pub fn generateChunksInParallel(
             // Create module_info output file for ESM bytecode — embedded by
             // --compile builds, or written as a .jsm sidecar next to .js/.jsc
             // when emitting to --outdir so the runtime loader can hand JSC
-            // pre-computed import/export metadata.
+            // pre-computed import/export metadata. Mirror the disk-write
+            // path: skip `.jsm` when bytecode generation failed, otherwise
+            // the supplementary slot for the missing `.jsc` stays unfilled
+            // and `OutputFileListBuilder.take()` asserts.
             const module_info_output_file: ?options.OutputFile = brk: {
+                if (bytecode_output_file == null) break :brk null;
                 if (c.options.generate_bytecode_cache and c.options.output_format == .esm) {
                     const loader: Loader = if (chunk.entry_point.is_entry_point)
                         c.parse_graph.input_files.items(.loader)[

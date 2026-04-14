@@ -386,7 +386,12 @@ pub fn transpileSourceCode(
             if (parse_result.already_bundled != .none) {
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 const module_info_slice = parse_result.already_bundled.moduleInfoSlice();
+                // `createFromCachedRecord` dupes the bytes into a buffer it
+                // owns (freed when the `ModuleInfoDeserialized` is evicted),
+                // so the raw `.jsm` bytes read by the transpiler are ours to
+                // free once deserialization succeeds or is skipped.
                 const module_info_deserialized: ?*anyopaque = if (module_info_slice.len > 0) blk: {
+                    defer bun.default_allocator.free(module_info_slice);
                     const mi = analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(module_info_slice, bun.default_allocator) orelse break :blk null;
                     break :blk @ptrCast(mi);
                 } else null;

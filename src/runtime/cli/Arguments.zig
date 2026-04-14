@@ -412,7 +412,13 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
                     break;
                 }
                 const parent = resolve_path.dirname(dir, .auto);
-                if (parent.len == 0 or strings.eql(parent, dir)) break;
+                // Stop at the filesystem root. On Windows, `dirname("C:\\")`
+                // returns `"C:"` (drive-relative, not absolute), so we also
+                // break when the parent is no longer absolute to avoid looping
+                // forever and tripping the joinAbs assert on non-absolute input.
+                if (parent.len == 0 or
+                    strings.eql(parent, dir) or
+                    !resolve_path.Platform.auto.isAbsolute(parent)) break;
                 dir = parent;
             }
             if (!found) {

@@ -1916,9 +1916,28 @@ function assertSession(session) {
 }
 hideFromStack(assertSession);
 
-function emitResponseNT(self, stream, headers, flags, rawheaders) {
-  self.emit("stream", stream, headers, flags, rawheaders);
-  stream.emit("response", headers, flags, rawheaders);
+function emitClientStreamHeaders(self, stream, headers, flags, rawheaders) {
+  const status = stream[bunHTTP2StreamStatus];
+  const header_status = headers[HTTP2_HEADER_STATUS];
+  if (header_status === HTTP_STATUS_CONTINUE) {
+    stream.emit("continue");
+  }
+
+  if ((status & StreamState.StreamResponded) !== 0) {
+    stream.emit("trailers", headers, flags, rawheaders);
+  } else {
+    if (header_status >= 100 && header_status < 200) {
+      stream.emit("headers", headers, flags, rawheaders);
+    } else {
+      stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
+      if (header_status === 421) {
+        // 421 Misdirected Request
+        removeOriginFromSet(self, stream);
+      }
+      self.emit("stream", stream, headers, flags, rawheaders);
+      stream.emit("response", headers, flags, rawheaders);
+    }
+  }
 }
 function pushToStreamInScope(stream, data) {
   const reqAsync = stream[kRequestAsyncResource];
@@ -3379,31 +3398,11 @@ class ClientHttp2Session extends Http2Session {
     ) {
       if (!self || typeof stream !== "object" || stream.rstCode) return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
-      const status = stream[bunHTTP2StreamStatus];
-      const header_status = headers[HTTP2_HEADER_STATUS];
-      if (header_status === HTTP_STATUS_CONTINUE) {
-        stream.emit("continue");
-      }
-
-      if ((status & StreamState.StreamResponded) !== 0) {
-        stream.emit("trailers", headers, flags, rawheaders);
+      const reqAsync = stream[kRequestAsyncResource];
+      if (reqAsync) {
+        reqAsync.runInAsyncScope(emitClientStreamHeaders, null, self, stream, headers, flags, rawheaders);
       } else {
-        if (header_status >= 100 && header_status < 200) {
-          stream.emit("headers", headers, flags, rawheaders);
-        } else {
-          stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
-          if (header_status === 421) {
-            // 421 Misdirected Request
-            removeOriginFromSet(self, stream);
-          }
-          const reqAsync = stream[kRequestAsyncResource];
-          if (reqAsync) {
-            reqAsync.runInAsyncScope(process.nextTick, null, emitResponseNT, self, stream, headers, flags, rawheaders);
-          } else {
-            self.emit("stream", stream, headers, flags, rawheaders);
-            stream.emit("response", headers, flags, rawheaders);
-          }
-        }
+        emitClientStreamHeaders(self, stream, headers, flags, rawheaders);
       }
     },
     localSettings(self: ClientHttp2Session, settings: Settings) {

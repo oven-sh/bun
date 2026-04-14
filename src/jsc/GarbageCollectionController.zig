@@ -99,12 +99,11 @@ pub fn onGCTimer(timer: *uws.Timer) callconv(.c) void {
 // When the heap size is increasing, we always switch to fast mode
 // When the heap size has been the same or less for 30 seconds, we switch to slow mode
 pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting: @Type(.enum_literal)) void {
-    if (setting == .fast) {
-        this.#idle_full_gcs_fired = 0;
-        this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
-        if (this.gc_repeating_timer_fast) return;
+    if (setting == .fast and !this.gc_repeating_timer_fast) {
         this.gc_repeating_timer_fast = true;
         this.gc_repeating_timer.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
+        this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+        this.#idle_full_gcs_fired = 0;
     } else if (setting == .slow and this.gc_repeating_timer_fast) {
         this.gc_repeating_timer_fast = false;
         this.gc_repeating_timer.set(this, onGCRepeatingTimer, 30_000, 30_000);
@@ -125,8 +124,9 @@ pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.c) void {
     // to fire one more or converge. V8 MemoryReducer caps at 2 majors per idle.
     if (this.#idle_full_gcs_fired > 0) {
         if (current > prev_heap_size) {
+            this.#idle_full_gcs_fired = 0;
+            this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
             vm.collectAsync();
-            this.updateGCRepeatTimer(.fast);
         } else if (prev_heap_size - current > (1 << 20) and this.#idle_full_gcs_fired < 2) {
             this.#idle_full_gcs_fired += 1;
             vm.collectAsyncFull();
@@ -138,7 +138,7 @@ pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.c) void {
         return;
     }
 
-    if (prev_heap_size == current) {
+    if (current <= prev_heap_size) {
         this.heap_size_didnt_change_for_repeating_timer_ticks_count +|= 1;
         if (this.gc_repeating_timer_fast and this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30) {
             // 30 stable fast ticks of Eden GCs. collectAsync() never escalates
@@ -151,6 +151,7 @@ pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.c) void {
             return;
         }
     } else {
+        this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
         this.updateGCRepeatTimer(.fast);
     }
 

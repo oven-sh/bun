@@ -28,14 +28,14 @@ test("issue #29311: minify prefers scientific notation when shorter", async () =
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
+  // stderr may carry ASAN warnings under debug builds, so don't assert
+  // it's empty — rely on exitCode + stdout shape instead.
+  const [stdout, _stderr, exitCode] = await Promise.all([
     proc.stdout.text(),
     proc.stderr.text(),
     proc.exited,
   ]);
-
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  void _stderr;
 
   // The bug: 1e300 was expanded to 301 digits. Guard against any regression
   // that re-introduces long runs of zeros in the minified output.
@@ -48,13 +48,16 @@ test("issue #29311: minify prefers scientific notation when shorter", async () =
   expect(stdout).toContain("1e-7");
   expect(stdout).toContain("1e5");
   expect(stdout).toContain("1e12");
-  expect(stdout).toContain(".5");
+  // `0.5` → `.5` specifically at the standalone call site. A substring
+  // match on `.5` would trivially pass because `1.5e20` also contains it.
+  expect(stdout).toContain("console.log(.5)");
+  expect(stdout).not.toContain("console.log(0.5)");
   expect(stdout).toContain("123");
   expect(stdout).toContain("3.14159");
   expect(stdout).toContain("-1e300");
-  // 1.5e20 and 15e19 are both 6 chars — tie goes to decimal/scientific
-  // depending on Zig's {e} output; both are acceptable.
-  expect(stdout).toMatch(/1\.5e20|15e19/);
+  // 1.5e20 (6 chars) is far shorter than the 21-digit decimal form.
+  expect(stdout).toContain("1.5e20");
+  expect(exitCode).toBe(0);
 
   // Sanity: the minified output should also be valid JavaScript that evaluates
   // to the same numbers, not something mangled.
@@ -64,14 +67,12 @@ test("issue #29311: minify prefers scientific notation when shorter", async () =
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [runStdout, runStderr, runExitCode] = await Promise.all([
+  const [runStdout, _runStderr, runExitCode] = await Promise.all([
     runProc.stdout.text(),
     runProc.stderr.text(),
     runProc.exited,
   ]);
-  // stderr may carry ASAN warnings under debug builds; only assert exit code.
-  void runStderr;
-  expect(runExitCode).toBe(0);
+  void _runStderr;
   expect(runStdout.split("\n").filter(Boolean)).toEqual([
     "1e+300",
     "0.00001",
@@ -84,6 +85,7 @@ test("issue #29311: minify prefers scientific notation when shorter", async () =
     "-1e+300",
     "150000000000000000000",
   ]);
+  expect(runExitCode).toBe(0);
 });
 
 // Non-minified output should preserve the historical `{d}` decimal form so
@@ -101,14 +103,14 @@ test("issue #29311: non-minified output keeps decimal form", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
+  const [stdout, _stderr, exitCode] = await Promise.all([
     proc.stdout.text(),
     proc.stderr.text(),
     proc.exited,
   ]);
+  void _stderr;
 
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
   // Without --minify, 1.5e20 stays in its full decimal form as before.
   expect(stdout).toContain("150000000000000000000");
+  expect(exitCode).toBe(0);
 });

@@ -1484,6 +1484,19 @@ fn NewPrinter(
             const floored: f64 = @floor(float);
             const remainder: f64 = (float - floored);
             const is_integer = remainder == 0;
+
+            // When minifying JS, let printFloatSmart compare `{d}` and `{e}`
+            // forms for every value — otherwise integer fast-paths below
+            // (e.g. `2000000000` → 10 chars) would bypass the `{e}` option
+            // (`2e9` → 3 chars). The explicit switch only shortens a handful
+            // of round powers of ten, missing the general case.
+            if ((p.options.minify_whitespace or p.options.minify_syntax) and
+                comptime !is_json)
+            {
+                p.printFloatSmart(float);
+                return;
+            }
+
             if (float < std.math.maxInt(u52) and is_integer) {
                 @setFloatMode(.optimized);
                 // In JavaScript, numbers are represented as 64 bit floats
@@ -1587,8 +1600,15 @@ fn NewPrinter(
         /// what esbuild does in its printer — without this, `1e300` expands
         /// to 301 digits.
         fn printFloatSmart(p: *Printer, float: f64) void {
-            // Non-minified output keeps the historical `{d}` shape so source
-            // maps / test snapshots that assume decimal form still match.
+            // JSON numbers can't have a bare leading `.` (`.5` is not valid
+            // JSON) and our JSON callers don't need the extra byte savings,
+            // so the optimisation is limited to JS output. Non-minified JS
+            // also keeps the historical `{d}` shape so source maps / test
+            // snapshots that assume decimal form still match.
+            if (comptime is_json) {
+                p.fmt("{d}", .{float}) catch {};
+                return;
+            }
             if (!p.options.minify_whitespace and !p.options.minify_syntax) {
                 p.fmt("{d}", .{float}) catch {};
                 return;

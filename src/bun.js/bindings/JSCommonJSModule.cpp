@@ -951,12 +951,13 @@ void populateESMExports(
     // Bun's interpretation of the "__esModule" annotation:
     //
     //   The ESM `default` binding is always set to the whole `module.exports`
-    //   object, matching Node.js behavior.
+    //   value, matching Node.js behavior.
     //
     //   The name `"default"` is always reserved for the synthetic ESM default
     //   binding and is filtered out of named exports on every path (see the
-    //   `vm.propertyNames->defaultKeyword` checks below). Symbols, private
-    //   names, and `constructor` are also filtered on every path.
+    //   `vm.propertyNames->defaultKeyword` checks below). Symbols and private
+    //   names are also filtered everywhere. The slow property-name paths
+    //   additionally filter `constructor`.
     //
     //   When `__esModule` is present and truthy, `__esModule` itself is
     //   omitted from the named exports, and the slow path iterates
@@ -1003,7 +1004,7 @@ void populateESMExports(
             if (canPerformFastEnumeration(structure)) {
                 exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     auto key = entry.key();
-                    if (key->isSymbol() || key == esModuleMarker || key == vm.propertyNames->defaultKeyword || key == vm.propertyNames->constructor.impl())
+                    if (key->isSymbol() || key == esModuleMarker || key == vm.propertyNames->defaultKeyword)
                         return true;
 
                     JSValue value = exports->getDirect(entry.offset());
@@ -1059,7 +1060,7 @@ void populateESMExports(
         } else if (canPerformFastEnumeration(structure)) {
             exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                 auto key = entry.key();
-                if (key->isSymbol() || key == vm.propertyNames->defaultKeyword || key == vm.propertyNames->constructor.impl())
+                if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
                     return true;
 
                 JSValue value = exports->getDirect(entry.offset());
@@ -1113,7 +1114,7 @@ void populateESMExports(
         }
     }
 
-    // Always assign the whole module.exports object as the ESM default binding.
+    // Always assign the whole module.exports value as the ESM default binding.
     exportNames.append(vm.propertyNames->defaultKeyword);
     exportValues.append(result);
 }

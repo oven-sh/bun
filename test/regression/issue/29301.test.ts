@@ -37,9 +37,20 @@ test("addEventListener/removeEventListener on a shared target doesn't leak", asy
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // Drain stderr alongside stdout. ASAN builds emit `WARNING: ASAN
+  // interferes with JSC signal handlers...` and leak reports there; if
+  // we don't read it the ~64KB pipe buffer fills and the subprocess
+  // deadlocks on its next write.
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const { before, after } = JSON.parse(stdout.trim());
+  // Guard before JSON.parse so a subprocess crash surfaces stderr +
+  // exit code in the failure instead of an opaque SyntaxError on "".
+  const trimmed = stdout.trim();
+  if (trimmed === "") {
+    throw new Error(`subprocess produced no stdout (exitCode=${exitCode})\n--- stderr ---\n${stderr}`);
+  }
+
+  const { before, after } = JSON.parse(trimmed);
   const growthMB = (after - before) / 1024 / 1024;
 
   // Before the fix, growth was ~42MB for 500k add/remove pairs on top of

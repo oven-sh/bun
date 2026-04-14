@@ -7,48 +7,54 @@ import { join } from "path";
 // `bunfig.toml` at the project root was ignored when running `bun` from a
 // subdirectory, which broke `preload` (and every other config entry) in
 // monorepos where commands are invoked from inside a package directory.
-test.skipIf(process.platform === "win32")("preload in bunfig.toml is respected when cwd is a subdirectory", async () => {
-  using dir = tempDir("bun-issue-29308", {
-    "bunfig.toml": `preload = ["./preload.ts"]\n`,
-    "preload.ts": `console.log("preload script executed!");\n`,
-    "packages/pkg1/package.json": `{"name":"pkg1","version":"0.0.0"}\n`,
-    "packages/pkg1/src/index.ts": `console.log("hello from pkg1");\n`,
-  });
+test.skipIf(process.platform === "win32")(
+  "preload in bunfig.toml is respected when cwd is a subdirectory",
+  async () => {
+    using dir = tempDir("bun-issue-29308", {
+      "bunfig.toml": `preload = ["./preload.ts"]\n`,
+      "preload.ts": `console.log("preload script executed!");\n`,
+      "packages/pkg1/package.json": `{"name":"pkg1","version":"0.0.0"}\n`,
+      "packages/pkg1/src/index.ts": `console.log("hello from pkg1");\n`,
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "src/index.ts"],
-    env: bunEnv,
-    cwd: join(String(dir), "packages", "pkg1"),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "src/index.ts"],
+      env: bunEnv,
+      cwd: join(String(dir), "packages", "pkg1"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toBe("preload script executed!\nhello from pkg1\n");
-  expect(exitCode).toBe(0);
-});
+    expect(stdout).toBe("preload script executed!\nhello from pkg1\n");
+    expect(exitCode).toBe(0);
+  },
+);
 
-test.skipIf(process.platform === "win32")("bunfig.toml preload with relative path works from project root", async () => {
-  using dir = tempDir("bun-issue-29308-root", {
-    "bunfig.toml": `preload = ["./preload.ts"]\n`,
-    "preload.ts": `console.log("preload script executed!");\n`,
-    "src/index.ts": `console.log("hello from root");\n`,
-  });
+test.skipIf(process.platform === "win32")(
+  "bunfig.toml preload with relative path works from project root",
+  async () => {
+    using dir = tempDir("bun-issue-29308-root", {
+      "bunfig.toml": `preload = ["./preload.ts"]\n`,
+      "preload.ts": `console.log("preload script executed!");\n`,
+      "src/index.ts": `console.log("hello from root");\n`,
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "src/index.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "src/index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toBe("preload script executed!\nhello from root\n");
-  expect(exitCode).toBe(0);
-});
+    expect(stdout).toBe("preload script executed!\nhello from root\n");
+    expect(exitCode).toBe(0);
+  },
+);
 
 // Guard against the ancestor walk stopping at a DIRECTORY named bunfig.toml.
 // Without the regular-file check, existsZ would treat the directory as a hit

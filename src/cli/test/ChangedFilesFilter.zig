@@ -252,9 +252,10 @@ pub const trigger_file_env_var = "BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE";
 
 /// Make sure the trigger-file env var is set (generating a fresh temp
 /// path if this is the first process in the --watch chain) and wire up
-/// the hot-reloader collector to record changed paths into `set`. The
-/// returned path is what the watcher will write to before each restart.
-pub fn initWatchTrigger(allocator: std.mem.Allocator, set: *bun.StringSet) void {
+/// the hot-reloader collector to record changed paths. The collector
+/// and the path string intentionally live for the rest of the process;
+/// --watch exec()s on reload so nothing accumulates across restarts.
+pub fn initWatchTrigger(allocator: std.mem.Allocator) void {
     if (bun.Environment.isWindows) {
         // Windows --watch restarts via TerminateProcess + parent
         // respawn with the parent's (unchanged) env, so a setenv in
@@ -283,6 +284,8 @@ pub fn initWatchTrigger(allocator: std.mem.Allocator, set: *bun.StringSet) void 
         break :brk fresh;
     };
 
+    const set = bun.handleOom(allocator.create(bun.StringSet));
+    set.* = bun.StringSet.init(allocator);
     jsc.hot_reloader.watch_changed_paths = set;
     jsc.hot_reloader.watch_changed_trigger_file = path;
 }
@@ -297,19 +300,20 @@ extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int
 fn consumeWatchTrigger(allocator: std.mem.Allocator) ?bun.StringSet {
     if (bun.Environment.isWindows) return null;
 
-    const trigger_path = bun.getenvZ(trigger_file_env_var) orelse return null;
-    if (trigger_path.len == 0) return null;
+    const trigger_path_raw = bun.getenvZ(trigger_file_env_var) orelse return null;
+    if (trigger_path_raw.len == 0) return null;
+    const trigger_path = bun.handleOom(allocator.dupeZ(u8, trigger_path_raw));
+    defer allocator.free(trigger_path);
 
-    const contents = std.fs.cwd().readFileAlloc(
-        allocator,
-        trigger_path,
-        32 * 1024 * 1024,
-    ) catch return null;
+    const contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), trigger_path, allocator)) {
+        .result => |bytes| bytes,
+        .err => return null,
+    };
     defer allocator.free(contents);
     // Consume-once: the next restart writes a fresh list. If the
     // process restarts for any other reason (crash + auto-reload) it
     // should fall back to git, not re-read a stale list.
-    std.fs.cwd().deleteFile(trigger_path) catch {};
+    _ = bun.sys.unlink(trigger_path);
 
     var set = bun.StringSet.init(allocator);
     var it = std.mem.tokenizeAny(u8, contents, "\r\n");

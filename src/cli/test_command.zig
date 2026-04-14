@@ -1599,9 +1599,7 @@ pub const TestCommand = struct {
             // runAllTests (separate concern; see O_EVTONLY comment
             // below).
             if (ctx.test_options.changed != null and vm.hot_reload == .watch) {
-                const trigger_set = bun.handleOom(ctx.allocator.create(bun.StringSet));
-                trigger_set.* = bun.StringSet.init(ctx.allocator);
-                ChangedFilesFilter.initWatchTrigger(ctx.allocator, trigger_set);
+                ChangedFilesFilter.initWatchTrigger(ctx.allocator);
             }
 
             switch (vm.hot_reload) {

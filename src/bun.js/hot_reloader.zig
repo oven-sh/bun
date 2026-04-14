@@ -94,6 +94,11 @@ fn recordChangedPath(path: []const u8) void {
 /// process (after exec()) can consume them. Best-effort: if the write
 /// fails, the new process falls back to querying git.
 fn flushChangedPathsForReload() void {
+    // `watch_changed_trigger_file` is never set on Windows (see
+    // `ChangedFilesFilter.initWatchTrigger`), so this body would be
+    // dead there anyway; guarding lets us use POSIX path types below.
+    if (Environment.isWindows) return;
+
     const set = watch_changed_paths orelse return;
     const dest = watch_changed_trigger_file orelse return;
     if (set.count() == 0) return;
@@ -104,11 +109,7 @@ fn flushChangedPathsForReload() void {
         buf.appendSlice(p) catch return;
         buf.append('\n') catch return;
     }
-    std.fs.cwd().writeFile(.{
-        .sub_path = dest,
-        .data = buf.items,
-        .flags = .{ .truncate = true },
-    }) catch {};
+    _ = bun.sys.File.writeFile(bun.FD.cwd(), dest, buf.items);
 }
 
 extern fn BunDebugger__willHotReload() void;

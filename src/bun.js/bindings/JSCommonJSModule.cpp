@@ -951,8 +951,7 @@ void populateESMExports(
     // Bun's interpretation of the "__esModule" annotation:
     //
     //   The ESM `default` binding is always set to the whole `module.exports`
-    //   object, matching Node.js behavior. The `__esModule` annotation only
-    //   affects whether `__esModule` itself appears as a named export.
+    //   object, matching Node.js behavior.
     //
     //   The name `"default"` is always reserved for the synthetic ESM default
     //   binding and is filtered out of named exports on every path (see the
@@ -960,8 +959,12 @@ void populateESMExports(
     //   names are also filtered everywhere. The slow property-name paths
     //   additionally filter `constructor`.
     //
-    //   When `__esModule` is present and truthy, we additionally filter it
-    //   from named exports (it is accessible via `.default.__esModule`).
+    //   When `__esModule` is present and truthy, `__esModule` itself is
+    //   omitted from the named exports, and the slow path iterates
+    //   enumerable-only own properties. When `__esModule` is absent, the slow
+    //   path iterates all own property names (including non-enumerable) so
+    //   plain `module.exports = { ... }` modules expose their keys; see
+    //   https://github.com/oven-sh/bun/issues/4432.
     //
     // https://stackoverflow.com/questions/50943704/whats-the-purpose-of-object-definepropertyexports-esmodule-value-0
     // https://github.com/nodejs/node/issues/40891

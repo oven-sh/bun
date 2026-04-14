@@ -246,6 +246,16 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addEventListenerForBindings(WTF::move(type), WTF::move(listener), WTF::move(options)); }));
     RETURN_IF_EXCEPTION(throwScope, {});
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
+    // Report the listener's native memory footprint to JSC so that GC runs
+    // proportional to listener traffic. addEventListener allocates a
+    // JSEventListener + RegisteredEventListener + vector growth that isn't
+    // otherwise visible to JSC. Without this, tight add/remove loops (e.g.
+    // `AbortSignal` composed via `AbortSignal.any` across long-lived
+    // workloads — https://github.com/oven-sh/bun/issues/29301) accumulate
+    // native memory faster than JSC schedules a collection.
+    // Size is larger than minExtraMemory (256) so the call actually
+    // registers rather than being dropped in the fast path.
+    vm.heap.deprecatedReportExtraMemory(512);
     return result;
 }
 

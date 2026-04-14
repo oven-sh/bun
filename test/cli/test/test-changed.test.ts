@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -13,10 +13,16 @@ setDefaultTimeout(30_000);
 // for every spawned `bun test --changed` process, since that process
 // itself shells out to git and would otherwise inherit the developer's
 // excludes/config.
+//
+// GIT_CONFIG_GLOBAL must point at a real (empty) file: pointing at the
+// null device works on most platforms, but git on some Windows builds
+// rejects "NUL" with "unable to access 'NUL': Invalid argument".
+const emptyGitConfig = join(tmpdirSync(), "empty.gitconfig");
+writeFileSync(emptyGitConfig, "");
 const gitEnv = {
   ...bunEnv,
   GIT_CONFIG_NOSYSTEM: "1",
-  GIT_CONFIG_GLOBAL: isWindows ? "NUL" : "/dev/null",
+  GIT_CONFIG_GLOBAL: emptyGitConfig,
   GIT_AUTHOR_NAME: "Test",
   GIT_AUTHOR_EMAIL: "test@example.com",
   GIT_COMMITTER_NAME: "Test",

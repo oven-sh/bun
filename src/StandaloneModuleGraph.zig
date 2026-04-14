@@ -1349,11 +1349,11 @@ pub const StandaloneModuleGraph = struct {
     }
 
     /// Hint to the kernel that the embedded `__BUN`/`.bun` source pages are
-    /// no longer needed after the entrypoint has been parsed. The pages are
-    /// clean file-backed COW, so re-reads (lazy require, stack-trace lookup)
-    /// fault back in transparently. On Linux MADV_DONTNEED evicts immediately
-    /// (~100 MB RSS for typical compiled binaries); on macOS it is advisory
-    /// only. No-op when not running as a compiled standalone binary.
+    /// unlikely to be accessed again after the entrypoint has been parsed.
+    /// The pages are clean file-backed COW, so any later read (lazy require,
+    /// stack-trace source lookup) faults back in transparently from the
+    /// executable on disk. Only applies when running as a compiled
+    /// standalone binary.
     pub fn hintSourcePagesDontNeed() void {
         if (comptime Environment.isWindows) return;
 

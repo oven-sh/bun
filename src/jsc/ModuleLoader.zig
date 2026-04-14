@@ -385,6 +385,11 @@ pub fn transpileSourceCode(
 
             if (parse_result.already_bundled != .none) {
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
+                const module_info_slice = parse_result.already_bundled.moduleInfoSlice();
+                const module_info_deserialized: ?*anyopaque = if (module_info_slice.len > 0) blk: {
+                    const mi = analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(module_info_slice, bun.default_allocator) orelse break :blk null;
+                    break :blk @ptrCast(mi);
+                } else null;
                 return ResolvedSource{
                     .allocator = null,
                     .source_code = bun.String.cloneLatin1(source.contents),
@@ -394,6 +399,7 @@ pub fn transpileSourceCode(
                     .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
                     .bytecode_cache_size = bytecode_slice.len,
                     .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
+                    .module_info = module_info_deserialized,
                 };
             }
 

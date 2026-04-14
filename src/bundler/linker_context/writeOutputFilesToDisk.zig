@@ -297,6 +297,70 @@ pub fn writeOutputFilesToDisk(
             break :brk null;
         };
 
+        // For ESM bytecode, write a .jsm sidecar containing the serialized
+        // module_info blob so the runtime loader can skip re-parsing during
+        // JSC's analyze phase.
+        const module_info_output_file: ?options.OutputFile = brk: {
+            if (c.options.generate_bytecode_cache and c.options.output_format == .esm and chunk.content == .javascript) {
+                const mi_bytes = chunk.content.javascript.module_info_bytes orelse break :brk null;
+                var fdpath: bun.PathBuffer = undefined;
+                @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
+                fdpath[chunk.final_rel_path.len..][0..bun.module_info_extension.len].* = bun.module_info_extension.*;
+                const full_path = fdpath[0 .. chunk.final_rel_path.len + bun.module_info_extension.len];
+
+                switch (jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
+                    &pathbuf,
+                    .{
+                        .data = .{
+                            .buffer = .{
+                                .buffer = .{
+                                    .ptr = @constCast(mi_bytes.ptr),
+                                    .len = @as(u32, @truncate(mi_bytes.len)),
+                                    .byte_len = @as(u32, @truncate(mi_bytes.len)),
+                                },
+                            },
+                        },
+                        .encoding = .buffer,
+                        .mode = if (chunk.flags.is_executable) 0o755 else 0o644,
+
+                        .dirfd = .fromStdDir(root_dir),
+                        .file = .{
+                            .path = .{
+                                .string = bun.PathString.init(full_path),
+                            },
+                        },
+                    },
+                )) {
+                    .result => {},
+                    .err => |err| {
+                        c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{f} writing module info for chunk {f}", .{
+                            err,
+                            bun.fmt.quote(chunk.final_rel_path),
+                        }) catch unreachable;
+                        return error.WriteFailed;
+                    },
+                }
+
+                break :brk options.OutputFile.init(.{
+                    .output_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.module_info_extension, .{chunk.final_rel_path}) catch unreachable,
+                    .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.module_info_extension, .{chunk.final_rel_path}) catch unreachable,
+                    .input_loader = .file,
+                    .hash = if (chunk.template.placeholder.hash != null) bun.hash(mi_bytes) else null,
+                    .output_kind = .module_info,
+                    .loader = .file,
+                    .size = @as(u32, @truncate(mi_bytes.len)),
+                    .display_size = @as(u32, @truncate(mi_bytes.len)),
+                    .data = .{
+                        .saved = 0,
+                    },
+                    .side = null,
+                    .entry_point_index = null,
+                    .is_executable = false,
+                });
+            }
+            break :brk null;
+        };
+
         switch (jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
             &pathbuf,
             .{
@@ -340,6 +404,11 @@ pub fn writeOutputFilesToDisk(
         else
             null;
 
+        const module_info_index: ?u32 = if (module_info_output_file != null)
+            try output_files.insertForSourcemapOrBytecode(module_info_output_file.?)
+        else
+            null;
+
         const output_kind = if (chunk.content == .css)
             .asset
         else if (chunk.entry_point.is_entry_point)
@@ -359,6 +428,7 @@ pub fn writeOutputFilesToDisk(
             .loader = chunk.content.loader(),
             .source_map_index = source_map_index,
             .bytecode_index = bytecode_index,
+            .module_info_index = module_info_index,
             .size = @as(u32, @truncate(code_result.buffer.len)),
             .display_size = @as(u32, @truncate(display_size)),
             .is_executable = chunk.flags.is_executable,

@@ -25,8 +25,9 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
     const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
-    // Create ModuleInfo for ESM bytecode in --compile builds
-    const generate_module_info = c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile;
+    // Create ModuleInfo for ESM bytecode — needed for both --compile (embedded)
+    // and sidecar (.jsm next to .js/.jsc) builds so JSC can skip re-parsing.
+    const generate_module_info = c.options.generate_bytecode_cache and c.options.output_format == .esm;
     const loader = c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index];
     const is_typescript = loader.isTypeScript();
     const module_info: ?*analyze_transpiled_module.ModuleInfo = if (generate_module_info)

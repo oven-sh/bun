@@ -308,7 +308,7 @@ pub fn generateChunksInParallel(
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
     // those placeholders with the resolved paths and serialize.
-    if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile) {
+    if (c.options.generate_bytecode_cache and c.options.output_format == .esm) {
         // Build map from unique_key -> final resolved path
         const b = @as(*bun.bundle_v2.BundleV2, @fieldParentPtr("linker", c));
         var unique_key_to_path = bun.StringHashMap([]const u8).init(c.allocator());
@@ -650,9 +650,12 @@ pub fn generateChunksInParallel(
                 break :brk null;
             };
 
-            // Create module_info output file for ESM bytecode in --compile builds
+            // Create module_info output file for ESM bytecode — embedded by
+            // --compile builds, or written as a .jsm sidecar next to .js/.jsc
+            // when emitting to --outdir so the runtime loader can hand JSC
+            // pre-computed import/export metadata.
             const module_info_output_file: ?options.OutputFile = brk: {
-                if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile) {
+                if (c.options.generate_bytecode_cache and c.options.output_format == .esm) {
                     const loader: Loader = if (chunk.entry_point.is_entry_point)
                         c.parse_graph.input_files.items(.loader)[
                             chunk.entry_point.source_index
@@ -663,8 +666,8 @@ pub fn generateChunksInParallel(
                     if (chunk.content == .javascript and loader.isJavaScriptLike()) {
                         if (chunk.content.javascript.module_info_bytes) |module_info_bytes| {
                             break :brk options.OutputFile.init(.{
-                                .output_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.module-info", .{chunk.final_rel_path})),
-                                .input_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}.module-info", .{chunk.final_rel_path})),
+                                .output_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.module_info_extension, .{chunk.final_rel_path})),
+                                .input_path = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.module_info_extension, .{chunk.final_rel_path})),
                                 .input_loader = .js,
                                 .hash = if (chunk.template.placeholder.hash != null) bun.hash(module_info_bytes) else null,
                                 .output_kind = .module_info,

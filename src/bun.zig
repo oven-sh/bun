@@ -3500,6 +3500,7 @@ pub fn getTotalMemorySize() usize {
 }
 
 pub const bytecode_extension = ".jsc";
+pub const module_info_extension = ".jsm";
 
 /// An typed index into an array or other structure.
 /// maxInt is reserved for an empty state.

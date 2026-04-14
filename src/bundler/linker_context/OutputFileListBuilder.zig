@@ -94,8 +94,9 @@ pub fn calculateOutputFileListCapacity(c: *const bun.bundle_v2.LinkerContext, ch
         break :bytecode_count bytecode_count;
     } else 0;
 
-    // module_info is generated for ESM bytecode in --compile builds
-    const module_info_count = if (c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile) bytecode_count else 0;
+    // module_info is generated for ESM bytecode — in --compile builds (embedded)
+    // and in --outdir builds (emitted as a .jsm sidecar next to .js/.jsc).
+    const module_info_count = if (c.options.generate_bytecode_cache and c.options.output_format == .esm) bytecode_count else 0;
 
     const additional_output_files_count = if (c.options.compile_to_standalone_html) 0 else c.parse_graph.additional_output_files.items.len;
     return .{ @intCast(chunks.len + source_map_count + bytecode_count + module_info_count + additional_output_files_count), @intCast(source_map_count + bytecode_count + module_info_count) };

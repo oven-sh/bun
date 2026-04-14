@@ -126,18 +126,37 @@ pub const Bunfig = struct {
                 while (array.next()) |item| {
                     try this.expectString(item);
                     if (item.data.e_string.len() > 0)
-                        preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
+                        preloads.appendAssumeCapacity(try this.resolvePreloadPath(allocator, try item.data.e_string.string(allocator)));
                 }
                 this.ctx.preloads = preloads.items;
             } else if (expr.data == .e_string) {
                 if (expr.data.e_string.len() > 0) {
                     var preloads = try allocator.alloc(string, 1);
-                    preloads[0] = try expr.data.e_string.string(allocator);
+                    preloads[0] = try this.resolvePreloadPath(allocator, try expr.data.e_string.string(allocator));
                     this.ctx.preloads = preloads;
                 }
             } else if (expr.data != .e_null) {
                 try this.addError(expr.loc, "Expected preload to be an array");
             }
+        }
+
+        /// Resolve a preload entry so it works regardless of the command's
+        /// current working directory. Relative paths are resolved against the
+        /// directory containing the bunfig.toml; package specifiers and
+        /// already-absolute paths are passed through unchanged.
+        fn resolvePreloadPath(this: *Parser, allocator: std.mem.Allocator, entry: string) !string {
+            if (entry.len == 0) return entry;
+            if (entry[0] != '.') return entry;
+            if (entry.len == 1) return entry;
+            const second = entry[1];
+            if (second != '/' and second != '\\' and !(second == '.' and entry.len > 2 and (entry[2] == '/' or entry[2] == '\\'))) {
+                return entry;
+            }
+            const bunfig_dir = std.fs.path.dirname(this.source.path.text) orelse return entry;
+            var buf: bun.PathBuffer = undefined;
+            const parts = [_]string{ bunfig_dir, entry };
+            const joined = resolve_path.joinAbsStringBuf(bunfig_dir, &buf, &parts, .auto);
+            return try allocator.dupe(u8, joined);
         }
 
         fn loadEnvConfig(this: *Parser, expr: js_ast.Expr) !void {
@@ -1299,6 +1318,7 @@ const JSONParser = bun.json;
 const default_allocator = bun.default_allocator;
 const js_ast = bun.ast;
 const logger = bun.logger;
+const resolve_path = bun.path;
 const strings = bun.strings;
 const PackageManager = bun.install.PackageManager;
 const api = bun.schema.api;

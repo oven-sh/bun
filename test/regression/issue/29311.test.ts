@@ -2,9 +2,6 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/29311
-// Minifier expanded scientific-notation floats into their full decimal form
-// even when the scientific form was strictly shorter (`1e300` became 301
-// digits). Pick whichever representation is shorter, matching esbuild.
 test("issue #29311: minify prefers scientific notation when shorter", async () => {
   using dir = tempDir("issue-29311-minify", {
     "index.js": [

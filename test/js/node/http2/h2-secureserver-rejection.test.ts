@@ -9,5 +9,6 @@ test("Http2SecureServer has captureRejectionSymbol handler matching Http2Server"
   const sym = (EventEmitter as any).captureRejectionSymbol;
   expect(typeof (secure as any)[sym]).toBe("function");
   expect((secure as any)[sym]).toBe((plain as any)[sym]);
+  plain.close();
   secure.close();
 });

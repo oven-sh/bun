@@ -1,9 +1,9 @@
 // Regression test for https://github.com/oven-sh/bun/issues/29286
 //
 // `bun build --bytecode --format=esm --target=bun --outdir` should emit:
-//   - dist/index.js  (ESM bundle with `// @bun @bytecode` header)
-//   - dist/index.jsc (serialized JSC bytecode)
-//   - dist/index.jsm (serialized module_info for analyze-phase skipping)
+//   - dist/index.js     (ESM bundle with `// @bun @bytecode` header)
+//   - dist/index.js.jsc (serialized JSC bytecode)
+//   - dist/index.js.jsm (serialized module_info for analyze-phase skipping)
 //
 // Before the fix this combination errored out with:
 //   "ESM bytecode requires --compile"

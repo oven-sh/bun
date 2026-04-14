@@ -25,7 +25,17 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
     const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
-    const loader = c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index];
+    // Mirror the loader fallback used in the bytecode/sourcemap emission paths
+    // (`generateChunksInParallel`, `writeOutputFilesToDisk`, and
+    // `OutputFileListBuilder.calculateOutputFileListCapacity`): non-entry
+    // chunks are treated as `.js`. Using the entry-point's original source
+    // loader here would skip ModuleInfo for split chunks and desync from the
+    // capacity reservation, reintroducing the slot/accounting mismatch this
+    // gate is meant to prevent.
+    const loader: bun.Loader = if (chunk.entry_point.is_entry_point)
+        c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index]
+    else
+        .js;
     const is_typescript = loader.isTypeScript();
     // Create ModuleInfo for ESM bytecode — needed for both --compile (embedded)
     // and sidecar (.jsm next to .js/.jsc) builds so JSC can skip re-parsing.

@@ -1,5 +1,5 @@
 import { inspect } from "node:util";
-import { isPrivileged, spawnSafe, which } from "./utils.mjs";
+import { isPrivileged, spawnSafe, spawnScp, spawnSsh, spawnSshSafe, which } from "./utils.mjs";
 
 /**
  * @link https://tart.run/
@@ -33,8 +33,8 @@ export const tart = {
   },
 
   /**
-   * @typedef {"sequoia" | "sonoma" | "ventura" | "monterey"} TartDistro
-   * @typedef {`ghcr.io/cirruslabs/macos-${TartDistro}-xcode`} TartImage
+   * @typedef {"tahoe" | "sequoia" | "sonoma" | "ventura" | "monterey"} TartDistro
+   * @typedef {`ghcr.io/cirruslabs/macos-${TartDistro}-base`} TartImage
    * @link https://github.com/orgs/cirruslabs/packages?repo_name=macos-image-templates
    */
 
@@ -48,6 +48,7 @@ export const tart = {
       throw new Error(`Unsupported platform: ${inspect(platform)}`);
     }
     const distros = {
+      "26": "tahoe",
       "15": "sequoia",
       "14": "sonoma",
       "13": "ventura",
@@ -55,9 +56,9 @@ export const tart = {
     };
     const distro = distros[release];
     if (!distro) {
-      throw new Error(`Unsupported macOS release: ${distro}`);
+      throw new Error(`Unsupported macOS release: ${release}`);
     }
-    return `ghcr.io/cirruslabs/macos-${distro}-xcode`;
+    return `ghcr.io/cirruslabs/macos-${distro}-base`;
   },
 
   /**
@@ -87,6 +88,9 @@ export const tart = {
       json: true,
       throwOnError: error => !/does not exist/i.test(inspect(error)),
     });
+    if (!result) {
+      return undefined;
+    }
     return {
       Name: name,
       ...result,
@@ -260,9 +264,14 @@ export const tart = {
       await spawnScp({ ...connectOptions, source, destination });
     };
 
-    const rdp = async () => {
-      const connectOptions = await connect();
-      await spawnRdp({ ...connectOptions });
+    const snapshot = async label => {
+      // tart can't push a running VM — stop first, then push to ghcr. Auth via
+      // TART_REGISTRY_USERNAME / TART_REGISTRY_PASSWORD (set by the image-build
+      // pipeline; tart reads them directly, no `tart login` needed).
+      await this.stopVm(name);
+      const remote = `ghcr.io/oven-sh/${label}`;
+      await this.spawn(["push", name, remote]);
+      return remote;
     };
 
     const close = async () => {
@@ -276,6 +285,7 @@ export const tart = {
       spawnSafe: execSafe,
       attach,
       upload,
+      snapshot,
       close,
       [Symbol.asyncDispose]: close,
     };

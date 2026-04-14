@@ -42,7 +42,9 @@ test("issue #29311: minify prefers scientific notation when shorter", async () =
 
   // Each value should be in whichever form is shortest. `3.14159` and `123`
   // stay decimal; everything else collapses to scientific / leading-dot.
-  expect(stdout).toContain("1e300");
+  // Anchor `1e300` to its standalone call site so the presence of `-1e300`
+  // can't trivially satisfy this assertion.
+  expect(stdout).toContain("console.log(1e300)");
   expect(stdout).toContain("1e-5");
   expect(stdout).toContain("1e-7");
   expect(stdout).toContain("1e5");
@@ -118,22 +120,19 @@ test("issue #29311: non-minified output keeps decimal form", async () => {
 // The optimisation fires when either `minify_whitespace` OR `minify_syntax`
 // is on. Guard that each flag standalone also collapses `1e300`, so wiring
 // that accidentally required both flags together wouldn't slip through.
-test.each([["--minify-syntax"], ["--minify-whitespace"]])(
-  "issue #29311: %s alone still shortens 1e300",
-  async flag => {
-    using dir = tempDir(`issue-29311${flag}`, {
-      "index.js": "console.log(1e300);",
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", flag, `${dir}/index.js`],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    void _stderr;
-    expect(stdout).toContain("1e300");
-    expect(stdout).not.toMatch(/0{20,}/);
-    expect(exitCode).toBe(0);
-  },
-);
+test.each([["--minify-syntax"], ["--minify-whitespace"]])("issue #29311: %s alone still shortens 1e300", async flag => {
+  using dir = tempDir(`issue-29311${flag}`, {
+    "index.js": "console.log(1e300);",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", flag, `${dir}/index.js`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  void _stderr;
+  expect(stdout).toContain("1e300");
+  expect(stdout).not.toMatch(/0{20,}/);
+  expect(exitCode).toBe(0);
+});

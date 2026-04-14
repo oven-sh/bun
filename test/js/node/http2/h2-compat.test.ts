@@ -30,6 +30,6 @@ test("Http2Stream.state.weight defaults to 16 per RFC 9113", async () => {
   } finally {
     client.close();
     server.close();
-    await once(server, "close");
+    await once(server, "close").catch(() => {});
   }
 });

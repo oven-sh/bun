@@ -1593,6 +1593,17 @@ pub const TestCommand = struct {
         if (test_files.len > 0 or (ctx.test_options.changed != null and all_test_files.len > 0)) {
             vm.hot_reload = ctx.debug.hot_reload;
 
+            // Install the --changed trigger collector BEFORE the watcher
+            // thread starts so a file edit during runAllTests is still
+            // recorded. The addFileByPathSlow seeding stays after
+            // runAllTests (separate concern; see O_EVTONLY comment
+            // below).
+            if (ctx.test_options.changed != null and vm.hot_reload == .watch) {
+                const trigger_set = bun.handleOom(ctx.allocator.create(bun.StringSet));
+                trigger_set.* = bun.StringSet.init(ctx.allocator);
+                ChangedFilesFilter.initWatchTrigger(ctx.allocator, trigger_set);
+            }
+
             switch (vm.hot_reload) {
                 .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm, null),
                 .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm, null),
@@ -1629,16 +1640,6 @@ pub const TestCommand = struct {
             for (changed_module_graph_files) |path| {
                 _ = vm.bun_watcher.addFileByPathSlow(path, vm.transpiler.options.loader(std.fs.path.extension(path)));
             }
-
-            // Have the watcher record which file(s) triggered each
-            // restart so the next process can narrow the changed-file
-            // set to just those (instead of re-querying git and
-            // re-running every test affected by any uncommitted change).
-            // This lives for the rest of the process; `--watch` exec()s
-            // on reload, so it never accumulates across restarts.
-            const trigger_set = bun.handleOom(ctx.allocator.create(bun.StringSet));
-            trigger_set.* = bun.StringSet.init(ctx.allocator);
-            jsc.hot_reloader.watch_changed_paths = trigger_set;
         }
 
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();

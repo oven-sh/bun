@@ -73,11 +73,16 @@ pub const WatchReloader = NewHotReloader(VirtualMachine, jsc.EventLoop, true);
 ///
 /// Set by `test_command.zig` on the main thread before the watcher thread
 /// starts; after that point only the watcher thread touches it. Its
-/// contents are serialized into `BUN_INTERNAL_TEST_CHANGED_TRIGGER` via
-/// `setenv` immediately before `reloadProcess` so they survive exec().
+/// contents are written to `watch_changed_trigger_file` immediately
+/// before `reloadProcess`; the new process reads and deletes that file.
 pub var watch_changed_paths: ?*bun.StringSet = null;
 
-const trigger_env_var = "BUN_INTERNAL_TEST_CHANGED_TRIGGER";
+/// Absolute path of the temp file `flushChangedPathsForReload` writes
+/// the changed-path list into. The same path is exported via the
+/// `BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE` env var so the restarted
+/// process can find it. Set alongside `watch_changed_paths` by
+/// `test_command.zig`; the string must outlive the process.
+pub var watch_changed_trigger_file: ?[:0]const u8 = null;
 
 fn recordChangedPath(path: []const u8) void {
     const set = watch_changed_paths orelse return;
@@ -85,25 +90,26 @@ fn recordChangedPath(path: []const u8) void {
     bun.handleOom(set.insert(path));
 }
 
-fn exportChangedPathsToEnv() void {
-    // Windows `--watch` restarts via TerminateProcess + parent respawn;
-    // setenv in the dying child cannot reach the new child, so we fall
-    // back to re-querying git there (the pre-existing behaviour).
-    if (Environment.isWindows) return;
-
+/// Write the recorded changed paths to the trigger file so the next
+/// process (after exec()) can consume them. Best-effort: if the write
+/// fails, the new process falls back to querying git.
+fn flushChangedPathsForReload() void {
     const set = watch_changed_paths orelse return;
+    const dest = watch_changed_trigger_file orelse return;
     if (set.count() == 0) return;
 
     var buf = std.array_list.Managed(u8).init(bun.default_allocator);
+    defer buf.deinit();
     for (set.keys()) |p| {
         buf.appendSlice(p) catch return;
         buf.append('\n') catch return;
     }
-    const joined = buf.toOwnedSliceSentinel(0) catch return;
-    _ = setenv(trigger_env_var, joined.ptr, 1);
+    std.fs.cwd().writeFile(.{
+        .sub_path = dest,
+        .data = buf.items,
+        .flags = .{ .truncate = true },
+    }) catch {};
 }
-
-extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 
 extern fn BunDebugger__willHotReload() void;
 
@@ -252,7 +258,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         if (this.reloader.ctx.rare_data) |rare|
                             rare.closeAllListenSocketsForWatchMode();
                     }
-                    exportChangedPathsToEnv();
+                    flushChangedPathsForReload();
                     bun.reloadProcess(bun.default_allocator, clear_screen, false);
                     unreachable;
                 }

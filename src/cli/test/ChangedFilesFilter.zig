@@ -243,27 +243,76 @@ pub fn filter(
     };
 }
 
-/// Name of the env var the watcher writes changed paths into before
-/// exec()ing. Kept in sync with `hot_reloader.zig`.
-const trigger_env_var = "BUN_INTERNAL_TEST_CHANGED_TRIGGER";
+/// Env var carrying the absolute path of the temp file that the
+/// previous process's watcher wrote its changed-path list into before
+/// exec()ing. Set once by `initWatchTrigger` in the first process and
+/// inherited through every restart. The value is a short path, never
+/// the list itself, so there is no env size concern.
+pub const trigger_file_env_var = "BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE";
 
-/// If the watcher recorded which files triggered this restart, parse the
-/// newline-separated absolute-path list out of the env var and return
-/// the set. Returns null if the env var is absent or empty.
-///
-/// The env var is intentionally left set: calling libc `unsetenv` here
-/// would desync `std.os.environ` (a fixed-length slice captured at
-/// startup) from libc's shifted `environ`, leaving a null entry that
-/// crashes the next `env_loader.loadProcess`. The next watcher restart
-/// overwrites it via `setenv` anyway, so staleness is not a concern.
+/// Make sure the trigger-file env var is set (generating a fresh temp
+/// path if this is the first process in the --watch chain) and wire up
+/// the hot-reloader collector to record changed paths into `set`. The
+/// returned path is what the watcher will write to before each restart.
+pub fn initWatchTrigger(allocator: std.mem.Allocator, set: *bun.StringSet) void {
+    if (bun.Environment.isWindows) {
+        // Windows --watch restarts via TerminateProcess + parent
+        // respawn with the parent's (unchanged) env, so a setenv in
+        // the first child would not reach subsequent children. Fall
+        // back to re-querying git on each restart there for now.
+        return;
+    }
+
+    const path: [:0]const u8 = if (bun.getenvZ(trigger_file_env_var)) |existing|
+        bun.handleOom(allocator.dupeZ(u8, existing))
+    else brk: {
+        var rng = std.Random.DefaultPrng.init(@as(u64, @bitCast(std.time.milliTimestamp())) ^
+            @as(u64, @intCast(std.c.getpid())));
+        const tmpdir = bun.fs.FileSystem.RealFS.tmpdirPath();
+        const fresh = bun.handleOom(std.fmt.allocPrintSentinel(
+            allocator,
+            "{s}{c}.bun-test-changed-{x}.trigger",
+            .{ strings.withoutTrailingSlash(tmpdir), std.fs.path.sep, rng.random().int(u64) },
+            0,
+        ));
+        // Export once so every exec()'d descendant inherits the same
+        // path. Adding (not removing) an env var is safe w.r.t.
+        // `std.os.environ`; it simply won't be visible to code that
+        // iterates the startup-captured slice in this process.
+        _ = setenv(trigger_file_env_var, fresh.ptr, 1);
+        break :brk fresh;
+    };
+
+    jsc.hot_reloader.watch_changed_paths = set;
+    jsc.hot_reloader.watch_changed_trigger_file = path;
+}
+
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+
+/// If the previous process's watcher recorded which files triggered
+/// this restart, read the newline-separated absolute-path list out of
+/// the trigger file, delete the file, and return the set. Returns null
+/// if the file is absent, empty, or every path no longer exists (in
+/// which case the caller falls back to querying git).
 fn consumeWatchTrigger(allocator: std.mem.Allocator) ?bun.StringSet {
     if (bun.Environment.isWindows) return null;
 
-    const raw = bun.getenvZ(trigger_env_var) orelse return null;
-    if (raw.len == 0) return null;
+    const trigger_path = bun.getenvZ(trigger_file_env_var) orelse return null;
+    if (trigger_path.len == 0) return null;
+
+    const contents = std.fs.cwd().readFileAlloc(
+        allocator,
+        trigger_path,
+        32 * 1024 * 1024,
+    ) catch return null;
+    defer allocator.free(contents);
+    // Consume-once: the next restart writes a fresh list. If the
+    // process restarts for any other reason (crash + auto-reload) it
+    // should fall back to git, not re-read a stale list.
+    std.fs.cwd().deleteFile(trigger_path) catch {};
 
     var set = bun.StringSet.init(allocator);
-    var it = std.mem.tokenizeAny(u8, raw, "\r\n");
+    var it = std.mem.tokenizeAny(u8, contents, "\r\n");
     while (it.next()) |path| {
         if (path.len == 0) continue;
         // The watcher may see a file disappear (delete/rename). A path

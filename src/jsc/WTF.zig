@@ -47,6 +47,10 @@ pub const WTF = struct {
         return error.InvalidDate;
     }
 
+    /// ECMA-262 §21.4.1.1 Date range bound (±8.64e15 ms). Mirrors WTF::maxECMAScriptTime;
+    /// a static_assert in wtf-bindings.cpp keeps them in sync.
+    pub const maxECMAScriptTime: f64 = 8.64e15;
+
     extern fn Bun__writeHTTPDate(buffer: *[32]u8, length: usize, timestampMs: u64) c_int;
 
     pub fn writeHTTPDate(buffer: *[32]u8, timestampMs: u64) []u8 {

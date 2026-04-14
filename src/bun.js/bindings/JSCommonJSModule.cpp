@@ -956,8 +956,9 @@ void populateESMExports(
     //
     //   The name `"default"` is always reserved for the synthetic ESM default
     //   binding and is filtered out of named exports on every path (see the
-    //   `vm.propertyNames->defaultKeyword` checks below). Symbols, private
-    //   names, and `constructor` are also filtered.
+    //   `vm.propertyNames->defaultKeyword` checks below). Symbols and private
+    //   names are also filtered everywhere. The slow property-name paths
+    //   additionally filter `constructor`.
     //
     //   When `__esModule` is present and truthy, we additionally filter it
     //   from named exports (it is accessible via `.default.__esModule`).

@@ -382,15 +382,56 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
             ctx.args.absolute_working_dir = try allocator.dupeZ(u8, cwd);
         }
 
-        var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
-        config_path_ = resolve_path.joinAbsStringBuf(
-            ctx.args.absolute_working_dir.?,
-            &config_buf,
-            &parts,
-            .auto,
-        );
-        config_buf[config_path_.len] = 0;
-        config_path = config_buf[0..config_path_.len :0];
+        if (auto_loaded) {
+            // When auto-loading, walk up the directory tree looking for a
+            // bunfig.toml. This lets commands run from a subdirectory of the
+            // project (e.g. a workspace package) pick up the project-root
+            // bunfig.toml, matching how package.json is resolved.
+            var dir: []const u8 = ctx.args.absolute_working_dir.?;
+            var found = false;
+            while (true) {
+                var parts = [_]string{ dir, config_path_ };
+                const joined = resolve_path.joinAbsStringBuf(
+                    dir,
+                    &config_buf,
+                    &parts,
+                    .auto,
+                );
+                config_buf[joined.len] = 0;
+                const candidate = config_buf[0..joined.len :0];
+                if (bun.sys.existsZ(candidate)) {
+                    config_path = candidate;
+                    found = true;
+                    break;
+                }
+                const parent = std.fs.path.dirname(dir) orelse break;
+                if (parent.len == dir.len) break;
+                dir = parent;
+            }
+            if (!found) {
+                // Fall back to the cwd-joined path so non-existent bunfig
+                // behaves the same as before (silent skip for auto_loaded).
+                var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
+                const joined = resolve_path.joinAbsStringBuf(
+                    ctx.args.absolute_working_dir.?,
+                    &config_buf,
+                    &parts,
+                    .auto,
+                );
+                config_buf[joined.len] = 0;
+                config_path = config_buf[0..joined.len :0];
+            }
+        } else {
+            var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
+            const joined = resolve_path.joinAbsStringBuf(
+                ctx.args.absolute_working_dir.?,
+                &config_buf,
+                &parts,
+                .auto,
+            );
+            config_buf[joined.len] = 0;
+            config_path = config_buf[0..joined.len :0];
+        }
     }
 
     loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd) catch |err| {

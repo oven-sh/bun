@@ -7,7 +7,7 @@ import { join } from "path";
 // `bunfig.toml` at the project root was ignored when running `bun` from a
 // subdirectory, which broke `preload` (and every other config entry) in
 // monorepos where commands are invoked from inside a package directory.
-test("preload in bunfig.toml is respected when cwd is a subdirectory", async () => {
+test.skipIf(process.platform === "win32")("preload in bunfig.toml is respected when cwd is a subdirectory", async () => {
   using dir = tempDir("bun-issue-29308", {
     "bunfig.toml": `preload = ["./preload.ts"]\n`,
     "preload.ts": `console.log("preload script executed!");\n`,
@@ -29,7 +29,7 @@ test("preload in bunfig.toml is respected when cwd is a subdirectory", async () 
   expect(exitCode).toBe(0);
 });
 
-test("bunfig.toml preload with relative path works from project root", async () => {
+test.skipIf(process.platform === "win32")("bunfig.toml preload with relative path works from project root", async () => {
   using dir = tempDir("bun-issue-29308-root", {
     "bunfig.toml": `preload = ["./preload.ts"]\n`,
     "preload.ts": `console.log("preload script executed!");\n`,

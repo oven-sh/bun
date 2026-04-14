@@ -1920,22 +1920,30 @@ pub const H2FrameParser = struct {
                 return null;
             }
 
-            if (this.isServer) {
-                if (header.name.len > 0 and header.name[0] == ':') {
-                    // RFC 9113 §8.3.1: invalid byte in :path is a malformed request
-                    if (strings.eqlComptime(header.name, ":path") and hasInvalidPathByte(header.value)) {
+            if (header.name.len > 0 and header.name[0] == ':') {
+                if (this.isServer) {
+                    if (strings.eqlComptime(header.name, ":path")) {
+                        // RFC 9113 §8.3.1: invalid byte in :path is a malformed request
+                        if (hasInvalidPathByte(header.value)) {
+                            this.endStream(stream, ErrorCode.PROTOCOL_ERROR);
+                            if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
+                            return null;
+                        }
+                    } else if (hasInvalidHeaderValueByte(header.value)) {
+                        // :method/:scheme/:authority with NUL/CR/LF — malformed request
                         this.endStream(stream, ErrorCode.PROTOCOL_ERROR);
                         if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
                         return null;
                     }
-                } else if (strings.eqlComptime(header.name, "content-length")) {
-                    // Track for RFC 9113 §8.6 content-length vs body validation
-                    stream.contentLength = std.fmt.parseInt(i64, header.value, 10) catch -1;
-                } else if (hasInvalidHeaderValueByte(header.value)) {
-                    // nghttp2 NGHTTP2_ERR_IGN_HTTP_HEADER: silently drop the header
-                    if (offset >= payload.len) break;
-                    continue;
                 }
+            } else if (hasInvalidHeaderValueByte(header.value)) {
+                // RFC 9113 §8.2.1: drop regular headers with NUL/CR/LF on both
+                // server and client (nghttp2 NGHTTP2_ERR_IGN_HTTP_HEADER).
+                if (offset >= payload.len) break;
+                continue;
+            } else if (this.isServer and strings.eqlComptime(header.name, "content-length")) {
+                // Track for RFC 9113 §8.6 content-length vs body validation
+                stream.contentLength = std.fmt.parseInt(i64, header.value, 10) catch -1;
             }
 
             // RFC 7540 Section 6.5.2: Calculate header list size

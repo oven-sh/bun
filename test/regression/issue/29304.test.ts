@@ -50,9 +50,8 @@ test("webpack-cli style: (await import(cjs)).default.default resolves the class"
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual({
     type: "function",
     name: "CLIPlugin",

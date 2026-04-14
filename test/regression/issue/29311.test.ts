@@ -114,3 +114,26 @@ test("issue #29311: non-minified output keeps decimal form", async () => {
   expect(stdout).toContain("150000000000000000000");
   expect(exitCode).toBe(0);
 });
+
+// The optimisation fires when either `minify_whitespace` OR `minify_syntax`
+// is on. Guard that each flag standalone also collapses `1e300`, so wiring
+// that accidentally required both flags together wouldn't slip through.
+test.each([["--minify-syntax"], ["--minify-whitespace"]])(
+  "issue #29311: %s alone still shortens 1e300",
+  async flag => {
+    using dir = tempDir(`issue-29311${flag}`, {
+      "index.js": "console.log(1e300);",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", flag, `${dir}/index.js`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void _stderr;
+    expect(stdout).toContain("1e300");
+    expect(stdout).not.toMatch(/0{20,}/);
+    expect(exitCode).toBe(0);
+  },
+);

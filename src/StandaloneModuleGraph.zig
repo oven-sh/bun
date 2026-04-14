@@ -1348,6 +1348,36 @@ pub const StandaloneModuleGraph = struct {
         comptime unreachable;
     }
 
+    /// Hint to the kernel that the embedded `__BUN`/`.bun` source pages are
+    /// no longer needed after the entrypoint has been parsed. The pages are
+    /// clean file-backed COW, so re-reads (lazy require, stack-trace lookup)
+    /// fault back in transparently. On Linux MADV_DONTNEED evicts immediately
+    /// (~100 MB RSS for typical compiled binaries); on macOS it is advisory
+    /// only. No-op when not running as a compiled standalone binary.
+    pub fn hintSourcePagesDontNeed() void {
+        if (comptime Environment.isWindows) return;
+
+        const bytes: []const u8 = if (comptime Environment.isMac)
+            Macho.getData() orelse return
+        else if (comptime Environment.isLinux)
+            ELF.getData() orelse return
+        else
+            return;
+
+        if (bytes.len == 0) return;
+
+        const page: usize = std.heap.pageSize();
+        const start = std.mem.alignBackward(usize, @intFromPtr(bytes.ptr), page);
+        const end = std.mem.alignForward(usize, @intFromPtr(bytes.ptr) + bytes.len, page);
+        const aligned_ptr: [*]align(std.heap.page_size_min) u8 = @ptrFromInt(start);
+
+        std.posix.madvise(aligned_ptr, end - start, std.posix.MADV.DONTNEED) catch |err| {
+            Output.debugWarn("hintSourcePagesDontNeed: madvise failed: {s}", .{@errorName(err)});
+            return;
+        };
+        Output.debugWarn("hintSourcePagesDontNeed: MADV_DONTNEED {d} bytes", .{end - start});
+    }
+
     /// Allocates a StandaloneModuleGraph on the heap, populates it from bytes, sets it globally, and returns the pointer.
     fn fromBytesAlloc(allocator: std.mem.Allocator, raw_bytes: []u8, offsets: Offsets) !*StandaloneModuleGraph {
         const graph_ptr = try allocator.create(StandaloneModuleGraph);

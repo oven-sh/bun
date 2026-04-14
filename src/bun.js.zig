@@ -460,6 +460,11 @@ pub const Run = struct {
             vm.tick();
         }
 
+        // Entrypoint has been parsed and microtasks drained — the embedded
+        // source pages are no longer on the hot path. No-op unless this is a
+        // compiled standalone binary.
+        bun.StandaloneModuleGraph.hintSourcePagesDontNeed();
+
         {
             if (this.vm.isWatcherEnabled()) {
                 vm.reportExceptionInHotReloadedModuleIfNeeded();

@@ -3149,10 +3149,13 @@ class ServerHttp2Session extends Http2Session {
     return this[bunHTTP2Socket]?.ref();
   }
   setTimeout(msecs, callback) {
+    if (this.destroyed) return this;
+    if (callback !== undefined) {
+      validateFunction(callback, "callback");
+    }
     const socket = this[bunHTTP2Socket];
     if (socket && typeof socket.setTimeout === "function") socket.setTimeout(msecs);
     if (callback !== undefined) {
-      validateFunction(callback, "callback");
       this.once("timeout", callback);
     }
     return this;
@@ -3596,10 +3599,13 @@ class ClientHttp2Session extends Http2Session {
     this.#parser?.setNextStreamID(id);
   }
   setTimeout(msecs, callback) {
+    if (this.destroyed) return this;
+    if (callback !== undefined) {
+      validateFunction(callback, "callback");
+    }
     const socket = this[bunHTTP2Socket];
     if (socket && typeof socket.setTimeout === "function") socket.setTimeout(msecs);
     if (callback !== undefined) {
-      validateFunction(callback, "callback");
       this.once("timeout", callback);
     }
     return this;

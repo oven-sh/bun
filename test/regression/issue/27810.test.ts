@@ -6,7 +6,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // .default should be module.exports (matching Node.js), not the
 // unwrapped exports.default value.
 
-test("dynamic import of CJS with __esModule gives module.exports as default", async () => {
+test.concurrent("dynamic import of CJS with __esModule gives module.exports as default", async () => {
   using dir = tempDir("issue-27810", {
     "config.cjs": `
       "use strict";
@@ -39,7 +39,7 @@ test("dynamic import of CJS with __esModule gives module.exports as default", as
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const results = JSON.parse(stdout.trim());
 
@@ -54,7 +54,7 @@ test("dynamic import of CJS with __esModule gives module.exports as default", as
   expect(exitCode).toBe(0);
 });
 
-test("static import of CJS with __esModule gives module.exports as default", async () => {
+test.concurrent("static import of CJS with __esModule gives module.exports as default", async () => {
   using dir = tempDir("issue-27810-static", {
     "config.cjs": `
       "use strict";
@@ -89,7 +89,7 @@ test("static import of CJS with __esModule gives module.exports as default", asy
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const results = JSON.parse(stdout.trim());
 
@@ -103,7 +103,7 @@ test("static import of CJS with __esModule gives module.exports as default", asy
   expect(exitCode).toBe(0);
 });
 
-test("CJS without __esModule still gives module.exports as default", async () => {
+test.concurrent("CJS without __esModule still gives module.exports as default", async () => {
   using dir = tempDir("issue-27810-no-marker", {
     "config.cjs": `
       function loadConfig(phase, dir) {
@@ -129,7 +129,7 @@ test("CJS without __esModule still gives module.exports as default", async () =>
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const results = JSON.parse(stdout.trim());
 

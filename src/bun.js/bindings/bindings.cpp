@@ -46,6 +46,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/JSArrayInlines.h"
+#include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/BigIntObject.h"
@@ -4377,7 +4378,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         uint32_t j = 0;
 
         // if "." is the only character, it will search for an empty string twice.
-        if (pathString.characterAt(0) == '.') {
+        if (pathString.codeUnitAt(0) == '.') {
             auto* currPropObject = currProp.toObject(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             currProp = currPropObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
@@ -4388,7 +4389,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         }
 
         while (i < length) {
-            char16_t ic = pathString.characterAt(i);
+            char16_t ic = pathString.codeUnitAt(i);
             while (ic == '[' || ic == ']' || ic == '.') {
                 i += 1;
                 if (i == length) {
@@ -4410,7 +4411,7 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                 }
 
                 char16_t previous = ic;
-                ic = pathString.characterAt(i);
+                ic = pathString.codeUnitAt(i);
                 if (previous == '.' && ic == '.') {
                     auto* currPropObject = currProp.toObject(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -4424,14 +4425,14 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
             }
 
             j = i;
-            char16_t jc = pathString.characterAt(j);
+            char16_t jc = pathString.codeUnitAt(j);
             while (!(jc == '[' || jc == ']' || jc == '.')) {
                 j += 1;
                 if (j == length) {
                     // break and search for property
                     break;
                 }
-                jc = pathString.characterAt(j);
+                jc = pathString.codeUnitAt(j);
             }
 
             String propNameStr = pathString.substring(i, j - i);
@@ -6464,6 +6465,58 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 
     return JSC::JSValue::encode(result);
+}
+
+extern "C" const JSC::EncodedJSValue* Bun__JSArray__getContiguousVector(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t* outLength)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = value.asCell();
+    if (!JSC::isJSArray(cell))
+        return nullptr;
+
+    JSC::JSArray* array = JSC::jsCast<JSC::JSArray*>(cell);
+    JSC::IndexingType indexing = array->indexingType();
+
+    // Int32 and Contiguous shapes both store boxed EncodedJSValue in the
+    // butterfly. Double / ArrayStorage / Undecided are excluded.
+    if (!hasInt32(indexing) && !hasContiguous(indexing))
+        return nullptr;
+
+    if (!array->canDoFastIndexedAccess())
+        return nullptr;
+
+    JSC::Butterfly* butterfly = array->butterfly();
+    uint32_t length = butterfly->publicLength();
+    ASSERT(length <= butterfly->vectorLength());
+
+    *outLength = length;
+    return reinterpret_cast<const JSC::EncodedJSValue*>(butterfly->contiguous().data());
+}
+
+// Revalidates that the array's butterfly storage has not changed since
+// getContiguousVector was called. Mirrors the check in JSC's fastArrayJoin
+// (ArrayPrototypeInlines.h) which bails to the generic path when a
+// side-effecting toString reallocated or transitioned the butterfly.
+extern "C" bool Bun__JSArray__contiguousVectorIsStillValid(
+    JSC::EncodedJSValue encodedValue,
+    const JSC::EncodedJSValue* expected,
+    uint32_t expectedLength)
+{
+    JSC::JSArray* array = JSC::jsCast<JSC::JSArray*>(JSC::JSValue::decode(encodedValue).asCell());
+    JSC::IndexingType indexing = array->indexingType();
+    if (!hasInt32(indexing) && !hasContiguous(indexing)) [[unlikely]]
+        return false;
+    if (!array->canDoFastIndexedAccess()) [[unlikely]]
+        return false;
+    JSC::Butterfly* butterfly = array->butterfly();
+    if (butterfly->publicLength() != expectedLength) [[unlikely]]
+        return false;
+    return reinterpret_cast<const JSC::EncodedJSValue*>(butterfly->contiguous().data()) == expected;
 }
 
 extern "C" void JSC__ArrayBuffer__ref(JSC::ArrayBuffer* self) { self->ref(); }

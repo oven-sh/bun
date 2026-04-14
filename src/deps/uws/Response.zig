@@ -514,6 +514,18 @@ pub const AnyResponse = union(enum) {
         }
     }
 
+    pub fn getNativeHandle(this: AnyResponse) bun.FD {
+        return switch (this) {
+            inline else => |resp| resp.getNativeHandle(),
+        };
+    }
+
+    pub fn prepareForSendfile(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.prepareForSendfile(),
+        };
+    }
+
     pub fn onWritable(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, u64, AnyResponse) bool, optional_data: UserDataType) void {
         const wrapper = struct {
             pub fn ssl_handler(user_data: UserDataType, offset: u64, resp: *uws.NewApp(true).Response) bool {

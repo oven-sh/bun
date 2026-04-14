@@ -3,17 +3,17 @@
 // bounded. AbortSignal goes through the same EventTarget listener path, so
 // exercising EventTarget directly covers both.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
-// Skipped on debug (ASAN) builds: sanitizer instrumentation slows the
-// loop ~50x, which gives JSC enough wall-clock time to run a GC under
-// its existing heap-growth heuristics — masking the regression signal
-// this PR's `reportExtraMemory` nudge addresses. Observed empirically:
-// unfixed and fixed debug builds produce near-identical RSS growth.
-// Release builds, where the loop finishes in ~1s and JSC doesn't get
-// scheduled to collect, are where the ~3x gap (~42MB unfixed vs ~15MB
-// fixed) shows up and this test can discriminate.
-test.skipIf(isDebug)("addEventListener/removeEventListener on a shared target doesn't leak", async () => {
+// Skipped on any sanitizer/debug build: ASAN (or the debug profile,
+// which also enables ASAN) slows the loop ~50x, which gives JSC enough
+// wall-clock time to run a GC under its existing heap-growth heuristics
+// and masks the regression signal this PR's `reportExtraMemory` nudge
+// addresses. Observed empirically: instrumented builds produce
+// near-identical RSS growth fixed vs unfixed. Release builds, where the
+// loop finishes in ~1s before JSC naturally collects, are where the
+// ~3x gap (~42MB unfixed vs ~15MB fixed) shows up.
+test.skipIf(isDebug || isASAN)("addEventListener/removeEventListener on a shared target doesn't leak", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

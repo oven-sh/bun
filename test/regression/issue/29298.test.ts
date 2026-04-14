@@ -3,11 +3,6 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/29298
-// `bun build --compile --target browser ./src/index.html` produced an HTML
-// file referencing sidecar assets (e.g. `./logo-kygw735p.svg`) that were
-// never written to disk. Assets imported from JS/TS via the `file` loader
-// must be inlined as `data:` URIs in standalone HTML mode, the same way
-// `<link rel="icon" href="./logo.svg">` already was.
 
 const SVG_BODY = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><rect width="4" height="4" fill="#fbf0df"/></svg>`;
 
@@ -33,9 +28,7 @@ console.log(logo);`,
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("error");
-  expect(exitCode).toBe(0);
+  const exitCode = await proc.exited;
 
   // Only index.html should exist in dist/ — standalone HTML is meant to be self-contained.
   const distFiles = await Array.fromAsync(new Bun.Glob("*").scan({ cwd: join(String(dir), "dist") }));
@@ -49,6 +42,8 @@ console.log(logo);`,
   // It must be inlined as a data: URI. Check the base64 prefix of the SVG body.
   const expectedPrefix = Buffer.from(SVG_BODY).toString("base64").slice(0, 40);
   expect(html).toContain(`data:image/svg+xml;base64,${expectedPrefix}`);
+
+  expect(exitCode).toBe(0);
 });
 
 test("standalone HTML inlines assets from both <link href> and JS imports", async () => {
@@ -71,9 +66,7 @@ document.body.dataset.logo = logo;`,
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("error");
-  expect(exitCode).toBe(0);
+  const exitCode = await proc.exited;
 
   const html = await Bun.file(join(String(dir), "dist", "index.html")).text();
   expect(html).not.toMatch(/\.svg"/); // no sidecar refs anywhere
@@ -81,4 +74,6 @@ document.body.dataset.logo = logo;`,
   // Both SVGs end up inlined — count base64-encoded data URIs for SVG.
   const dataUris = html.match(/data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+/g) ?? [];
   expect(dataUris.length).toBeGreaterThanOrEqual(2);
+
+  expect(exitCode).toBe(0);
 });

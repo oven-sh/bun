@@ -2423,18 +2423,23 @@ pub const H2FrameParser = struct {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Settings frame on connection stream", this.lastStreamID, true);
             return data.len;
         }
-        defer if (!isACK) this.sendSettingsACK();
+        // RFC 9113 §6.5: a SETTINGS_ACK confirms the settings were received
+        // and applied, so it must only be sent once the frame is accepted.
+        var needs_ack = !isACK;
+        defer if (needs_ack) this.sendSettingsACK();
 
         const settingByteSize = SettingsPayloadUnit.byteSize;
         if (frame.length > 0) {
             if (isACK or frame.length % settingByteSize != 0) {
                 log("invalid settings frame size", .{});
+                needs_ack = false;
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid settings frame size", this.lastStreamID, true);
                 return data.len;
             }
             const entry_count: u32 = @intCast(@divTrunc(frame.length, settingByteSize));
             if (entry_count > this.maxSettings) {
                 log("settings frame exceeds maxSettings ({} > {})", .{ entry_count, this.maxSettings });
+                needs_ack = false;
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.ENHANCE_YOUR_CALM, "SETTINGS frame exceeded maxSettings", this.lastStreamID, true);
                 return data.len;
             }

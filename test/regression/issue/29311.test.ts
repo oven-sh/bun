@@ -18,6 +18,12 @@ test("issue #29311: minify prefers scientific notation when shorter", async () =
       "console.log(3.14159);",
       "console.log(-1e300);",
       "console.log(1.5e20);",
+      // Integer fast-path coverage: `20000` and `2000000000` hit the
+      // `10001...99999` and `1_000_000_001...9_999_999_999` arms of the
+      // fast-path switch, which used to call formatUnsignedIntegerBetween
+      // and emit full decimal regardless of trailing zeros.
+      "console.log(20000);",
+      "console.log(2000000000);",
     ].join("\n"),
   });
 
@@ -44,6 +50,9 @@ test("issue #29311: minify prefers scientific notation when shorter", async () =
   expect(stdout).toContain("1e-7");
   expect(stdout).toContain("1e5");
   expect(stdout).toContain("1e12");
+  // Integer fast-path ranges (20000, 2000000000) must also pick scientific.
+  expect(stdout).toContain("2e4");
+  expect(stdout).toContain("2e9");
   // `0.5` → `.5` specifically at the standalone call site. A substring
   // match on `.5` would trivially pass because `1.5e20` also contains it.
   expect(stdout).toContain("console.log(.5)");
@@ -80,6 +89,8 @@ test("issue #29311: minify prefers scientific notation when shorter", async () =
     "3.14159",
     "-1e+300",
     "150000000000000000000",
+    "20000",
+    "2000000000",
   ]);
   expect(runExitCode).toBe(0);
 });

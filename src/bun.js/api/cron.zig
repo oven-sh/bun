@@ -489,12 +489,12 @@ pub const CronRegisterJob = struct {
             for (checks) |chk| {
                 if (bun.strings.indexOfAny(chk.value, "'%\n\r")) |i| {
                     const bad = chk.value[i];
-                    bun.default_allocator.free(cwd_owned);
-                    bun.default_allocator.free(abs_path);
+                    defer bun.default_allocator.free(cwd_owned);
+                    defer bun.default_allocator.free(abs_path);
                     return switch (bad) {
-                        '\'' => globalObject.throwInvalidArguments("{s} must not contain single quotes", .{chk.label}),
-                        '%' => globalObject.throwInvalidArguments("{s} must not contain percent signs (cron interprets % as newline)", .{chk.label}),
-                        else => globalObject.throwInvalidArguments("{s} must not contain newlines", .{chk.label}),
+                        '\'' => globalObject.throwInvalidArguments("{s} '{s}' must not contain single quotes", .{ chk.label, chk.value }),
+                        '%' => globalObject.throwInvalidArguments("{s} '{s}' must not contain percent signs (cron interprets % as newline)", .{ chk.label, chk.value }),
+                        else => globalObject.throwInvalidArguments("{s} '{s}' must not contain newlines", .{ chk.label, chk.value }),
                     };
                 }
             }

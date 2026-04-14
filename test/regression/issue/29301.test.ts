@@ -1,16 +1,7 @@
 // https://github.com/oven-sh/bun/issues/29301
-//
-// Workloads that repeatedly add and remove 'abort' listeners on a
-// long-lived AbortSignal (e.g. ydb-js-sdk, which composes each request's
-// signal via `AbortSignal.any([userSignal, ...])` and attaches a
-// per-request 'abort' listener) grew RSS without bound because the
-// native memory cost of each JSEventListener / RegisteredEventListener
-// allocation wasn't reported to JSC, so GC didn't kick in proportional
-// to listener churn.
-//
-// This test runs a tight add/remove loop on an EventTarget (the same
-// path AbortSignal takes) and asserts RSS doesn't grow unbounded across
-// many hundreds of thousands of listener churns.
+// Regression: listener add/remove churn on a long-lived target must keep RSS
+// bounded. AbortSignal goes through the same EventTarget listener path, so
+// exercising EventTarget directly covers both.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 

@@ -52,15 +52,33 @@ function readInterp(buf: Buffer): string | null {
   return null;
 }
 
+// Mirror of `hostUsesNixStoreInterpreter()` in src/elf.zig: true iff the
+// running bun would skip the FHS rewrite for this host. If any one signal is
+// already set, this file's tests cannot drive the decision (the first test
+// toggles it via `/etc/NIXOS`; the companion assumes the runtime returns false
+// so the rewrite fires). Test decisions must stay in lockstep with the
+// runtime's — if these two drift, tests pass/fail for the wrong reason.
+function hostLooksNix(): boolean {
+  if (existsSync("/etc/NIXOS")) return true;
+  if (existsSync("/gnu/store")) return true;
+  try {
+    const selfInterp = readInterp(readFileSync(bunExe()));
+    if (selfInterp && (selfInterp.startsWith("/nix/store/") || selfInterp.startsWith("/gnu/store/"))) {
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
 // Can we write to /etc? Root-owned in typical CI containers; read-only in
 // some sandboxes. Skip if we can't — the test isn't meaningful otherwise.
 function canWriteEtc() {
   if (!isLinux) return false;
   if (!patchelf) return false;
   if (!existsSync(ldso)) return false;
-  // Already on NixOS — /etc/NIXOS is real, test would be no-op and cleanup
-  // would be wrong.
-  if (existsSync("/etc/NIXOS")) return false;
+  // Already looks like Nix/Guix — test would be redundant, and writing
+  // `/etc/NIXOS` on top of real NixOS would clobber real system state.
+  if (hostLooksNix()) return false;
   try {
     const probe = "/etc/.bun-29290-probe";
     writeFileSync(probe, "");
@@ -134,11 +152,11 @@ test.skipIf(!canWriteEtc())(
   180_000,
 );
 
-// Companion: on NON-NixOS hosts, normalization from #24742 must still apply.
-// If the host has no `/etc/NIXOS` AND bun's own PT_INTERP is FHS, a template
-// with a /nix/store interpreter should be rewritten to the FHS path so the
-// compiled output runs on generic Linux.
-test.skipIf(!isLinux || !patchelf || !existsSync(ldso) || existsSync("/etc/NIXOS"))(
+// Companion: on NON-Nix/Guix hosts, normalization from #24742 must still
+// apply. If the host has no Nix/Guix markers AND bun's own PT_INTERP is FHS,
+// a template with a /nix/store interpreter should be rewritten to the FHS
+// path so the compiled output runs on generic Linux.
+test.skipIf(!isLinux || !patchelf || !existsSync(ldso) || hostLooksNix())(
   "bun build --compile still normalizes /nix/store -> FHS on non-Nix hosts",
   async () => {
     using dir = tempDir("fhs-host-interp", {

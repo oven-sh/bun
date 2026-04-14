@@ -41,7 +41,23 @@ function readInterp(buf: Buffer): string | null {
   return null;
 }
 
-test.skipIf(!isLinux || !patchelf || !existsSync(ldso))(
+// Mirror of `hostUsesNixStoreInterpreter()` in src/elf.zig. After #29290 the
+// normalization is skipped on Nix/Guix hosts — this assertion only holds on
+// non-Nix hosts. (The #29290 test covers the NixOS-host branch.)
+function hostLooksNix(): boolean {
+  if (!isLinux) return false;
+  if (existsSync("/etc/NIXOS")) return true;
+  if (existsSync("/gnu/store")) return true;
+  try {
+    const selfInterp = readInterp(readFileSync(bunExe()));
+    if (selfInterp && (selfInterp.startsWith("/nix/store/") || selfInterp.startsWith("/gnu/store/"))) {
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+test.skipIf(!isLinux || !patchelf || !existsSync(ldso) || hostLooksNix())(
   "bun build --compile normalizes /nix/store interpreter (#24742)",
   async () => {
     using dir = tempDir("nix-interp", {

@@ -146,13 +146,10 @@ pub const Bunfig = struct {
         /// already-absolute paths are passed through unchanged.
         fn resolvePreloadPath(this: *Parser, allocator: std.mem.Allocator, entry: string) !string {
             if (entry.len == 0) return entry;
-            if (entry[0] != '.') return entry;
-            if (entry.len == 1) return entry;
-            const second = entry[1];
-            if (second != '/' and second != '\\' and !(second == '.' and entry.len > 2 and (entry[2] == '/' or entry[2] == '\\'))) {
-                return entry;
-            }
-            const bunfig_dir = std.fs.path.dirname(this.source.path.text) orelse return entry;
+            if (std.fs.path.isAbsolute(entry)) return entry;
+            if (resolver.isPackagePath(entry)) return entry;
+            const bunfig_dir = resolve_path.dirname(this.source.path.text, .auto);
+            if (bunfig_dir.len == 0) return entry;
             var buf: bun.PathBuffer = undefined;
             const parts = [_]string{ bunfig_dir, entry };
             const joined = resolve_path.joinAbsStringBuf(bunfig_dir, &buf, &parts, .auto);

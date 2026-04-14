@@ -1126,19 +1126,14 @@ pub fn cronParse(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         }
     } else @as(f64, @floatFromInt(std.time.milliTimestamp()));
 
-    // Reject NaN and values outside the ECMAScript Date range (±8.64e15 ms,
-    // the same bound `new Date(ms)` enforces). Finite-but-out-of-range values
-    // reach WTF::msToGregorianDateTime's static_cast<int64_t> — UB once
-    // |ms| > INT64_MAX — yielding garbage date components that panic the
-    // @intCast to bit-index in next(). Infinity is caught by the > check.
-    if (std.math.isNan(from_ms) or @abs(from_ms) > 8.64e15)
+    // Out-of-range ms hits UB in WTF::msToGregorianDateTime's int64 cast and
+    // the resulting garbage components panic next()'s @intCast.
+    if (std.math.isNan(from_ms) or @abs(from_ms) > jsc.wtf.maxECMAScriptTime)
         return globalObject.throwInvalidArguments("Invalid date value", .{});
 
     const next_ms = (try parsed.next(globalObject, from_ms)) orelse return .null;
-    // next() advances past from_ms, so a from near the +8.64e15 boundary
-    // can yield a result just past it; return null rather than an Invalid
-    // Date so callers can rely on `result === null` for "no future match".
-    if (next_ms > 8.64e15) return .null;
+    // Return null (not Invalid Date) so callers can rely on `=== null` for "no future match".
+    if (next_ms > jsc.wtf.maxECMAScriptTime) return .null;
     return jsc.JSValue.fromDateNumber(globalObject, next_ms);
 }
 

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -22,10 +22,7 @@ test("preload in bunfig.toml is respected when cwd is a subdirectory", async () 
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.exited,
-  ]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout).toBe("preload script executed!\nhello from pkg1\n");
   expect(exitCode).toBe(0);
@@ -46,10 +43,7 @@ test("bunfig.toml preload with relative path works from project root", async () 
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.exited,
-  ]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   expect(stdout).toBe("preload script executed!\nhello from root\n");
   expect(exitCode).toBe(0);

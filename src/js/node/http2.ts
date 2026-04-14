@@ -3497,6 +3497,7 @@ class ClientHttp2Session extends Http2Session {
       if (alpnProtocol === false || (typeof alpnProtocol === "string" && alpnProtocol !== "h2")) {
         socket.end();
         this.emit("error", $ERR_HTTP2_ERROR("h2 is not supported"));
+        return;
       }
       this.#alpnProtocol = alpnProtocol || "h2";
     } else {

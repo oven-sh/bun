@@ -3240,9 +3240,15 @@ class ServerHttp2Session extends Http2Session {
     if (server) {
       server[kSessions].delete(this);
     }
+    let streamDestroyError: Error | undefined;
     if (typeof error === "number") {
       code = error;
       error = code !== NGHTTP2_NO_ERROR ? $ERR_HTTP2_SESSION_ERROR(code) : undefined;
+    } else {
+      // Only forward caller-supplied Error objects to streams. When destroy() is invoked with
+      // a numeric code (protocol error), streams should keep receiving ERR_HTTP2_STREAM_ERROR
+      // derived from that code via emitErrorToAllStreams -> emitStreamErrorNT.
+      streamDestroyError = error;
     }
 
     const socket = this[bunHTTP2Socket];
@@ -3255,7 +3261,7 @@ class ServerHttp2Session extends Http2Session {
     }
     const parser = this.#parser;
     if (parser) {
-      if (error !== undefined) this[bunHTTP2SessionDestroyError] = error;
+      if (streamDestroyError !== undefined) this[bunHTTP2SessionDestroyError] = streamDestroyError;
       parser.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
       parser.detach();
       this.#parser = null;

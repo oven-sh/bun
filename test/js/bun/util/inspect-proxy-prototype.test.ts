@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("Bun.inspect with throwing getter in Proxy prototype does not crash", () => {
   const proto = {

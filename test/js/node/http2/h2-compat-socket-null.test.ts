@@ -21,7 +21,9 @@ test("compat req.socket access after stream finish does not throw", async () => 
   const req = client.request({ ":path": "/" });
   req.resume();
   await once(req, "close");
-  await new Promise<void>(r => client.close(() => r()));
+  const { promise, resolve } = Promise.withResolvers<void>();
+  client.close(() => resolve());
+  await promise;
   server.close();
   await once(server, "close");
   expect(captured).toBeDefined();

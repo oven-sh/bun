@@ -16,7 +16,7 @@
 // https://github.com/oven-sh/bun/issues/29290
 
 import { expect, test } from "bun:test";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readFileSync, readSync } from "fs";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
 
@@ -54,7 +54,7 @@ function readInterp(buf: Buffer): string | null {
 
 // Read up to the first 4 KiB of a file (enough for PT_INTERP, which always
 // lives in the first ELF page). The bun binary is ~1.3 GB in debug builds,
-// so `readFileSync` here would be wasteful; mirror what the Zig helper does.
+// so `readFileSync` on it would be wasteful; mirror what the Zig helper does.
 function readHead(path: string, bytes = 4096): Buffer {
   const fd = openSync(path, "r");
   try {
@@ -104,7 +104,7 @@ test.skipIf(!isLinux || !patchelf || !existsSync(ldso) || hostLooksNix())(
       expect(r.stderr.toString()).toBe("");
       expect(r.exitCode).toBe(0);
     }
-    expect(readInterp(readFileSync(fakeNixBun))).toBe(fakeNixInterp);
+    expect(readInterp(readHead(fakeNixBun))).toBe(fakeNixInterp);
 
     // Force the spawned bun's host-detection to say "yes, Nix" without
     // mutating the shared rootfs. `BUN_DEBUG_FORCE_NIX_HOST=1` is a
@@ -134,7 +134,7 @@ test.skipIf(!isLinux || !patchelf || !existsSync(ldso) || hostLooksNix())(
     // On a NixOS host the output must keep the /nix/store interpreter from
     // the template — rewriting to FHS would point at a stub-ld that rejects
     // generic binaries and #29290 reappears.
-    const interp = readInterp(readFileSync(out));
+    const interp = readInterp(readHead(out));
     expect(interp).toBe(fakeNixInterp);
   },
   180_000,
@@ -186,7 +186,7 @@ test.skipIf(!isLinux || !patchelf || !existsSync(ldso) || hostLooksNix())(
     expect(r.exitCode).toBe(0);
 
     // Non-NixOS host → normalization kicks in → FHS path.
-    expect(readInterp(readFileSync(out))).toBe(ldso);
+    expect(readInterp(readHead(out))).toBe(ldso);
 
     // And the binary runs on this (non-NixOS) system.
     const run = Bun.spawnSync({ cmd: [out], env: bunEnv, stderr: "pipe", stdout: "pipe" });

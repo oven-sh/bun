@@ -1015,6 +1015,7 @@ pub const PackageInstaller = struct {
                             alias.slice(this.lockfile.buffers.string_bytes.items),
                             resolution,
                             context,
+                            patch_name_and_version_hash,
                         );
                     },
                     .remote_tarball => {

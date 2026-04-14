@@ -44,64 +44,10 @@ pub const Installer = struct {
 
     pub fn onPackageExtracted(this: *Installer, task_id: install.Task.Id) void {
         if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
-            const store = this.store;
-
-            const node_pkg_ids = store.nodes.items(.pkg_id);
-
-            const entries = store.entries.slice();
-            const entry_steps = entries.items(.step);
-            const entry_node_ids = entries.items(.node_id);
-
-            const pkgs = this.lockfile.packages.slice();
-            const pkg_names = pkgs.items(.name);
-            const pkg_name_hashes = pkgs.items(.name_hash);
-            const pkg_resolutions = pkgs.items(.resolution);
-
             for (removed.value.items) |install_ctx| {
                 const entry_id = install_ctx.isolated_package_install_context;
-
-                const node_id = entry_node_ids[entry_id.get()];
-                const pkg_id = node_pkg_ids[node_id.get()];
-                const pkg_name = pkg_names[pkg_id];
-                const pkg_name_hash = pkg_name_hashes[pkg_id];
-                const pkg_res = &pkg_resolutions[pkg_id];
-
-                const patch_info = bun.handleOom(this.packagePatchInfo(pkg_name, pkg_name_hash, pkg_res));
-
-                if (patch_info == .patch) {
-                    var log: bun.logger.Log = .init(this.manager.allocator);
-                    this.applyPackagePatch(entry_id, patch_info.patch, &log);
-                    if (log.hasErrors()) {
-                        // monotonic is okay because we haven't started the task yet (it isn't running
-                        // on another thread)
-                        entry_steps[entry_id.get()].store(.done, .monotonic);
-                        this.onTaskFail(entry_id, .{ .patching = log });
-                        continue;
-                    }
-                }
-
                 this.startTask(entry_id);
             }
-        }
-    }
-
-    pub fn applyPackagePatch(this: *Installer, entry_id: Store.Entry.Id, patch: PatchInfo.Patch, log: *bun.logger.Log) void {
-        const store = this.store;
-        const entry_node_ids = store.entries.items(.node_id);
-        const node_id = entry_node_ids[entry_id.get()];
-        const node_pkg_ids = store.nodes.items(.pkg_id);
-        const pkg_id = node_pkg_ids[node_id.get()];
-        const patch_task = install.PatchTask.newApplyPatchHash(
-            this.manager,
-            pkg_id,
-            patch.contents_hash,
-            patch.name_and_version_hash,
-        );
-        defer patch_task.deinit();
-        bun.handleOom(patch_task.apply());
-
-        if (patch_task.callback.apply.logger.hasErrors()) {
-            bun.handleOom(patch_task.callback.apply.logger.cloneToWithRecycled(log, true));
         }
     }
 

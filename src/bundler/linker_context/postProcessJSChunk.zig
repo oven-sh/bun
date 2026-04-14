@@ -25,11 +25,17 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
     const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
-    // Create ModuleInfo for ESM bytecode — needed for both --compile (embedded)
-    // and sidecar (.jsm next to .js/.jsc) builds so JSC can skip re-parsing.
-    const generate_module_info = c.options.generate_bytecode_cache and c.options.output_format == .esm;
     const loader = c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index];
     const is_typescript = loader.isTypeScript();
+    // Create ModuleInfo for ESM bytecode — needed for both --compile (embedded)
+    // and sidecar (.jsm next to .js/.jsc) builds so JSC can skip re-parsing.
+    // Gate on `loader.isJavaScriptLike()` to match `OutputFileListBuilder`'s
+    // capacity reservation, which only reserves supplementary slots for
+    // JS-like chunks. Without this gate a JSON/TOML/YAML entry point under
+    // `--bytecode --format=esm` would allocate a ModuleInfo that nothing
+    // downstream claims (in-memory path leaks it, disk path crashes the
+    // `take()` insertion assertion).
+    const generate_module_info = c.options.generate_bytecode_cache and c.options.output_format == .esm and loader.isJavaScriptLike();
     const module_info: ?*analyze_transpiled_module.ModuleInfo = if (generate_module_info)
         analyze_transpiled_module.ModuleInfo.create(bun.default_allocator, is_typescript) catch null
     else

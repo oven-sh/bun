@@ -54,7 +54,7 @@ This generates three files per chunk:
 - `dist/index.js.jsc` — Bytecode cache
 - `dist/index.js.jsm` — Serialized import/export metadata
 
-At runtime, `bun dist/index.js` picks up both sidecars automatically — top-level `await` works, and the engine skips re-parsing.
+At runtime, `bun dist/index.js` picks up both sidecars automatically — top-level `await` works, and the engine skips re-parsing. Ship `.js`, `.jsc`, and `.jsm` together: if `.jsm` is missing Bun still runs the `.js`, but ESM bytecode reuse silently degrades to a full parse.
 
 This is useful for containerized deployments where Bun is already installed: you get the bytecode startup win without embedding the runtime per service.
 

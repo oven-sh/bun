@@ -27,6 +27,13 @@ pub const ParseResult = struct {
         /// ESM bytecode sidecar. `module_info` is the optional serialized
         /// import/export metadata read from the `.jsm` sidecar — when
         /// present, JSC can skip re-parsing during the analyze phase.
+        ///
+        /// Ownership: these slices are intentionally not freed here. Both
+        /// buffers are handed to JSC (as `CachedBytecode` / deserialized
+        /// `ModuleInfoDeserialized`) whose destructors free them on module
+        /// eviction. Same lifetime model as the sibling `.bytecode_cjs`
+        /// variant — don't add a `deinit` without also tracing through
+        /// `ResolvedSource` consumers first.
         pub const BytecodeBundle = struct {
             bytecode: []u8,
             module_info: []u8 = &.{},

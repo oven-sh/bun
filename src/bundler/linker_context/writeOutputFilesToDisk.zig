@@ -299,10 +299,36 @@ pub fn writeOutputFilesToDisk(
 
         // For ESM bytecode, write a .jsm sidecar containing the serialized
         // module_info blob so the runtime loader can skip re-parsing during
-        // JSC's analyze phase.
+        // JSC's analyze phase. Mirror the .jsc loader gate above so the
+        // number of supplementary output files matches the capacity
+        // OutputFileListBuilder reserved. Also gate on bytecode success —
+        // an orphan .jsm without a matching .jsc is useless at runtime
+        // (the loader only reads .jsm after the .jsc load succeeds) and
+        // would leave one reserved bytecode slot unfilled, tripping
+        // OutputFileListBuilder.take()'s total-insertions assertion.
         const module_info_output_file: ?options.OutputFile = brk: {
+            if (bytecode_output_file == null) break :brk null;
             if (c.options.generate_bytecode_cache and c.options.output_format == .esm and chunk.content == .javascript) {
+                const mi_loader: Loader = if (chunk.entry_point.is_entry_point)
+                    c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index]
+                else
+                    .js;
+                if (!mi_loader.isJavaScriptLike()) break :brk null;
+
                 const mi_bytes = chunk.content.javascript.module_info_bytes orelse break :brk null;
+                // The bytes are owned by us (allocated by serializeModuleInfo with
+                // bun.default_allocator) and are not consumed downstream — the
+                // OutputFile below stores a .saved marker, not the buffer. Free
+                // them once the disk write completes, and null the chunk field
+                // so nothing else can reach in for a double-free.
+                defer {
+                    bun.default_allocator.free(mi_bytes);
+                    chunk.content.javascript.module_info_bytes = null;
+                }
+
+                const out_size: u32 = @as(u32, @truncate(mi_bytes.len));
+                const out_hash: ?u64 = if (chunk.template.placeholder.hash != null) bun.hash(mi_bytes) else null;
+
                 var fdpath: bun.PathBuffer = undefined;
                 @memcpy(fdpath[0..chunk.final_rel_path.len], chunk.final_rel_path);
                 fdpath[chunk.final_rel_path.len..][0..bun.module_info_extension.len].* = bun.module_info_extension.*;
@@ -315,8 +341,8 @@ pub fn writeOutputFilesToDisk(
                             .buffer = .{
                                 .buffer = .{
                                     .ptr = @constCast(mi_bytes.ptr),
-                                    .len = @as(u32, @truncate(mi_bytes.len)),
-                                    .byte_len = @as(u32, @truncate(mi_bytes.len)),
+                                    .len = out_size,
+                                    .byte_len = out_size,
                                 },
                             },
                         },
@@ -345,11 +371,11 @@ pub fn writeOutputFilesToDisk(
                     .output_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.module_info_extension, .{chunk.final_rel_path}) catch unreachable,
                     .input_path = std.fmt.allocPrint(bun.default_allocator, "{s}" ++ bun.module_info_extension, .{chunk.final_rel_path}) catch unreachable,
                     .input_loader = .file,
-                    .hash = if (chunk.template.placeholder.hash != null) bun.hash(mi_bytes) else null,
+                    .hash = out_hash,
                     .output_kind = .module_info,
                     .loader = .file,
-                    .size = @as(u32, @truncate(mi_bytes.len)),
-                    .display_size = @as(u32, @truncate(mi_bytes.len)),
+                    .size = out_size,
+                    .display_size = out_size,
                     .data = .{
                         .saved = 0,
                     },

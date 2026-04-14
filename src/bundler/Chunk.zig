@@ -662,7 +662,11 @@ pub const Chunk = struct {
         /// Mutated while sorting chunks in `computeChunks`
         css_chunks: []u32 = &.{},
 
-        /// Serialized ModuleInfo for ESM bytecode (--compile --bytecode --format=esm)
+        /// Serialized ModuleInfo for ESM bytecode (--bytecode --format=esm).
+        /// Embedded into the standalone binary in --compile builds, or written
+        /// as a .jsm sidecar next to the .js/.jsc bundle in --outdir builds.
+        /// Ownership: freed by whichever pipeline consumes it (in-memory
+        /// OutputFile buffer variant, or the disk-write path's defer).
         module_info_bytes: ?[]const u8 = null,
         /// Unserialized ModuleInfo for deferred serialization (after chunk paths are resolved)
         module_info: ?*analyze_transpiled_module.ModuleInfo = null,

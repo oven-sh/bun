@@ -16,7 +16,7 @@
 // https://github.com/oven-sh/bun/issues/29290
 
 import { expect, test } from "bun:test";
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
 

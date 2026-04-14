@@ -95,6 +95,7 @@ pub const BunSpawn = struct {
         pty_slave_fd: i32 = -1,
         flags: u16 = 0,
         reset_signals: bool = false,
+        sandbox: bun.spawn.SpawnOptions.Sandbox = .{},
 
         pub fn init() !Attr {
             return Attr{};
@@ -270,6 +271,7 @@ pub const PosixSpawn = struct {
         detached: bool = false,
         actions: ActionsList = .{},
         pty_slave_fd: i32 = -1,
+        sandbox: SpawnOptions.Sandbox.Extern = .{},
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -324,14 +326,17 @@ pub const PosixSpawn = struct {
     ) Maybe(pid_t) {
         const pty_slave_fd = if (attr) |a| a.pty_slave_fd else -1;
         const detached = if (attr) |a| a.detached else false;
+        const sandbox = if (attr) |a| a.sandbox else SpawnOptions.Sandbox{};
 
         // Use posix_spawn_bun when:
         // - Linux: always (uses vfork which is fast and safe)
-        // - macOS: only for PTY spawns (pty_slave_fd >= 0) because PTY setup requires
+        // - macOS: for PTY spawns (pty_slave_fd >= 0) because PTY setup requires
         //   setsid() + ioctl(TIOCSCTTY) before exec, which system posix_spawn can't do.
-        //   For non-PTY spawns on macOS, we use system posix_spawn which is safer
+        // - macOS: for sandbox spawns (sandbox.darwin_profile != null) because sandbox_init()
+        //   must be called after fork() but before exec(), which system posix_spawn can't do.
+        //   For non-PTY, non-sandbox spawns on macOS, we use system posix_spawn which is safer
         //   (Apple's posix_spawn uses a kernel fast-path that avoids fork() entirely).
-        const use_bun_spawn = Environment.isLinux or (Environment.isMac and pty_slave_fd >= 0);
+        const use_bun_spawn = Environment.isLinux or (Environment.isMac and (pty_slave_fd >= 0 or sandbox.darwin.profile != null));
 
         if (use_bun_spawn) {
             return BunSpawnRequest.spawn(
@@ -347,6 +352,7 @@ pub const PosixSpawn = struct {
                     .chdir_buf = if (actions) |a| a.chdir_buf else null,
                     .detached = detached,
                     .pty_slave_fd = pty_slave_fd,
+                    .sandbox = sandbox.toExtern(),
                 },
                 argv,
                 envp,

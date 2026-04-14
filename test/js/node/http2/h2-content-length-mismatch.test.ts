@@ -48,7 +48,10 @@ test("server accepts request with content-length, body, and trailers", async () 
 
   const client = http2.connect("http://127.0.0.1:" + port);
   try {
-    const req = client.request({ ":method": "POST", "content-length": "10" }, { endStream: false, waitForTrailers: true });
+    const req = client.request(
+      { ":method": "POST", "content-length": "10" },
+      { endStream: false, waitForTrailers: true },
+    );
     req.on("error", () => {});
     req.on("wantTrailers", () => req.sendTrailers({ "x-trailer": "ok" }));
     const { promise: closed, resolve } = Promise.withResolvers<void>();

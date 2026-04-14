@@ -3883,8 +3883,11 @@ class ClientHttp2Session extends Http2Session {
       if (headers == undefined) {
         headers = {};
       } else if (ArrayIsArray(headers)) {
+        if (headers.length % 2 !== 0) {
+          throw $ERR_INVALID_ARG_VALUE("headers", headers, "must have an even number of elements");
+        }
         sensitives = headers[sensitiveHeaders];
-        rawHeaders = headers;
+        rawHeaders = ArrayPrototypeSlice.$call(headers);
         headers = undefined;
       } else if (!$isObject(headers)) {
         throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);

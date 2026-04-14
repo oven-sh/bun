@@ -4055,6 +4055,9 @@ pub const H2FrameParser = struct {
             // Raw [k, v, k, v, ...] array form (Node.js raw headers). Preserves
             // duplicate ordering on the wire so the receiver's rawHeaders matches.
             const length = try headers_arg.getLength(globalObject);
+            if (length % 2 != 0) {
+                return globalObject.ERR(.INVALID_ARG_VALUE, "The argument 'headers' must have an even number of elements", .{}).throw();
+            }
             for (0..2) |ignore_pseudo_headers| {
                 var i: usize = 0;
                 while (i + 1 < length) : (i += 2) {
@@ -4146,6 +4149,9 @@ pub const H2FrameParser = struct {
                     const name_slice = header_name.toUTF8(bun.default_allocator);
                     defer name_slice.deinit();
                     const name = name_slice.slice();
+                    if (name.len > name_buffer.len) {
+                        return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Header name is too long", .{}).throw();
+                    }
 
                     const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
                         const exception = globalObject.toTypeError(.INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name});

@@ -941,6 +941,15 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
     //        causes like 50+ tests to break
     // this.eventLoop().tick();
 
+    // If an inspector frontend is attached, give the debugger thread a chance
+    // to flush any queued protocol messages to the socket before we exit().
+    // The debugger thread is detached, so exit() kills it mid-flight otherwise
+    // and the frontend misses the last events (e.g. TestReporter.end for the
+    // final tests in `bun test`).
+    if (this.debugger != null) {
+        jsc.Debugger.drain();
+    }
+
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
         Zig__GlobalObject__destructOnExit(this.global);

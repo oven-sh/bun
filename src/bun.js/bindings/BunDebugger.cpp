@@ -3,6 +3,7 @@
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
+#include <wtf/threads/BinarySemaphore.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 #include <JavaScriptCore/Debugger.h>
@@ -45,6 +46,14 @@ static PausedWait& pausedWait()
     static PausedWait instance;
     return instance;
 }
+
+// Number of inspector protocol messages that have been queued from the main
+// (inspected) thread to the debugger thread via sendMessageToDebuggerThread()
+// but have not yet been handed to the JS onMessage callback (which writes them
+// to the frontend socket). Used by Bun__debugger__drain() so the process doesn't
+// exit() while the detached debugger thread still has events to deliver — e.g.
+// the final TestReporter.end events when `bun test` finishes.
+static std::atomic<uint64_t> totalPendingDebuggerMessages { 0 };
 
 static bool waitingForConnection = false;
 extern "C" void Debugger__didConnect();
@@ -359,9 +368,11 @@ public:
             this->debuggerThreadMessages.swap(messages);
         }
 
+        size_t messageCount = messages.size();
+
         JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(jsBunDebuggerOnMessageFunction.get());
         MarkedArgumentBuffer arguments;
-        arguments.ensureCapacity(messages.size());
+        arguments.ensureCapacity(messageCount);
         auto& vm = debuggerGlobalObject->vm();
 
         for (auto& message : messages) {
@@ -371,6 +382,13 @@ public:
         messages.clear();
 
         JSC::call(debuggerGlobalObject, onMessageFn, arguments, "BunInspectorConnection::receiveMessagesOnDebuggerThread - onMessageFn"_s);
+
+        // Publish that these messages have been handed off to the socket so
+        // Bun__debugger__drain() can observe completion. Do this after
+        // JSC::call returns so we know socket.write() has been invoked for
+        // each message.
+        if (messageCount > 0)
+            totalPendingDebuggerMessages.fetch_sub(messageCount, std::memory_order_release);
     }
 
     void sendMessageToDebuggerThread(WTF::String&& inputMessage)
@@ -379,6 +397,8 @@ public:
             Locker<Lock> locker(debuggerThreadMessagesLock);
             debuggerThreadMessages.append(inputMessage);
         }
+
+        totalPendingDebuggerMessages.fetch_add(1, std::memory_order_release);
 
         if (this->debuggerThreadMessageScheduledCount++ == 0) {
             debuggerScriptExecutionContext->postTaskConcurrently([connection = this](ScriptExecutionContext& context) {
@@ -570,6 +590,37 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
     if (pauseOnStart) {
         waitingForConnection = true;
     }
+}
+
+// Called from the main (inspected) thread immediately before process exit.
+// Ensures any inspector protocol messages queued for the debugger thread have
+// been written to the frontend socket. Without this, exit() kills the detached
+// debugger thread while messages are still pending, and the frontend misses
+// the final events (most visibly the last TestReporter.start/end events from
+// `bun test`, which finish within the same event-loop iteration as the exit).
+extern "C" void Bun__debugger__drain()
+{
+    if (debuggerScriptExecutionContext == nullptr)
+        return;
+
+    if (totalPendingDebuggerMessages.load(std::memory_order_acquire) == 0)
+        return;
+
+    // Post a sentinel task to the debugger thread. Concurrent tasks are FIFO,
+    // so by the time this runs, any receiveMessagesOnDebuggerThread task posted
+    // before it has already completed (i.e. onMessageFn has written everything
+    // to the socket). The semaphore is heap-allocated and intentionally leaked:
+    // this runs right before exit(), and if the wait times out the debugger
+    // thread may still dereference it.
+    auto* done = new WTF::BinarySemaphore();
+    debuggerScriptExecutionContext->postTaskConcurrently([done](ScriptExecutionContext&) {
+        done->signal();
+    });
+
+    // Cap the wait so a wedged debugger thread can't block process exit.
+    // 250ms is far more than a handful of small messages over a local socket
+    // ever need; hitting the cap means something is broken, not merely slow.
+    done->waitFor(WTF::Seconds::fromMilliseconds(250));
 }
 
 extern "C" void BunDebugger__willHotReload()

@@ -258,5 +258,224 @@ describe("suite B", () => {
 
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);
-  });
+  }, 30000);
+
+  test("assigns non-colliding IDs when TestReporter.enable lands mid-collection", async () => {
+    // Regression: retroactivelyReportDiscoveredTests used a local counter
+    // starting at 0, while live collection (ScopeFunctions.call) used a
+    // separate file-static counter also starting at 0. If TestReporter.enable
+    // was processed after top-level describe() calls had added their scope
+    // entries but before the describe *callbacks* ran, the two describes got
+    // IDs 1 and 2 from the retroactive path, and then the three inner tests
+    // got IDs 1, 2, 3 from the live path — colliding.
+    //
+    // To hit that window deterministically the fixture blocks the main thread
+    // on a synchronous stdin read between the top-level describe() calls and
+    // the end of module evaluation. While it's blocked we send
+    // TestReporter.enable (which sits in the main thread's concurrent-task
+    // queue), then unblock by writing to stdin. The very next
+    // vm.eventLoop().tick() after module eval drains that queue and runs
+    // retroactive reporting against a tree that has describes but no tests.
+
+    using dir = tempDir("test-reporter-mid-collection", {
+      "mid.test.ts": `
+import { describe, test, expect } from "bun:test";
+import fs from "node:fs";
+
+describe("suite A", () => {
+  test("test A1", () => { expect(1).toBe(1); });
+  test("test A2", () => { expect(2).toBe(2); });
+});
+describe("suite B", () => {
+  test("test B1", () => { expect(3).toBe(3); });
+});
+
+// At this point both describes are in root_scope.entries with
+// test_id_for_debugger == 0, but their callbacks (which register the inner
+// test() calls) have not run yet. Tell the harness we've reached this point,
+// then block until it has queued TestReporter.enable.
+fs.writeSync(1, "READY\\n");
+fs.readSync(0, Buffer.alloc(1));
+`,
+    });
+
+    const socketPath = join(String(dir), `inspector-${Math.random().toString(36).substring(2)}.sock`);
+
+    const session = new TestReporterSession();
+    const framer = new SocketFramer((message: string) => {
+      session.onMessage(message);
+    });
+
+    const socketPromise = connect(`unix://${socketPath}`).then(s => {
+      socket = s;
+      session.socket = s;
+      session.framer = framer;
+      s.data = {
+        onData: framer.onData.bind(framer),
+      };
+      return s;
+    });
+
+    proc = spawn({
+      cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "mid.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "pipe",
+    });
+
+    await socketPromise;
+
+    session.enableInspector();
+    session.initialize();
+
+    // Wait until the fixture has registered both describes and parked on
+    // readSync(). It writes READY to stdout just before blocking.
+    {
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (!buf.includes("READY")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+      }
+      reader.releaseLock();
+    }
+
+    // Subprocess main thread is now blocked in readSync, so TestReporter.enable
+    // will sit in its concurrent-task queue until we unblock it — at which
+    // point the first vm.eventLoop().tick() after module eval drains the queue
+    // and runs retroactive reporting against a tree that has the two describes
+    // but no tests yet. We can't await an inspector response to enable here
+    // (the main thread that would answer is the one we've blocked); a short
+    // fixed delay is enough for the bytes to reach the subprocess's debugger
+    // thread and be posted to the main thread's queue, since the debugger
+    // thread itself is not blocked.
+    session.enableTestReporter();
+    await Bun.sleep(100);
+
+    // Unblock the synchronous stdin read so collection can proceed.
+    proc.stdin.write("\n");
+    proc.stdin.end();
+
+    // All three inner tests are synchronous, so once unblocked the subprocess
+    // finishes quickly. Wait for it to exit, then inspect everything we
+    // received — no open-ended waitForFoundTests here because when IDs
+    // collide the map never reaches size 5 and that path just burns the
+    // full timeout.
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    const foundTests = session.getFoundTests();
+    const testsArray = [...foundTests.values()];
+    const describes = testsArray.filter(t => t.type === "describe");
+    const tests = testsArray.filter(t => t.type === "test");
+
+    // Two describes + three tests, all with distinct IDs. Before the fix the
+    // tests overwrote the describes' IDs in this map and .size was 3.
+    expect({
+      size: foundTests.size,
+      describeNames: describes.map(d => d.name).sort(),
+      testNames: tests.map(t => t.name).sort(),
+    }).toEqual({
+      size: 5,
+      describeNames: ["suite A", "suite B"],
+      testNames: ["test A1", "test A2", "test B1"],
+    });
+
+    expect(session.getEndedTests().size).toBe(3);
+
+    expect(stderr).toContain("3 pass");
+    expect(exitCode).toBe(0);
+  }, 30000);
+
+  test("flushes pending inspector messages to the frontend before process exit", async () => {
+    // Regression test for a race where the final TestReporter.start/end
+    // events were dropped. The main thread queues inspector events for the
+    // detached debugger thread, then reaches phase=.done and calls exit()
+    // in the same event-loop iteration — killing the debugger thread before
+    // it could write the queued messages to the socket. The frontend would
+    // see the subprocess exit cleanly but miss the last few events.
+    //
+    // The fixture runs a handful of fast synchronous tests so their
+    // start/end events are all emitted back-to-back immediately before
+    // exit. Without draining on exit some of those events never reach this
+    // socket.
+
+    const testCount = 3;
+    const body = Array.from(
+      { length: testCount },
+      (_, i) => `test("t${i}", () => { expect(${i}).toBe(${i}); });`,
+    ).join("\n");
+
+    using dir = tempDir("test-reporter-drain", {
+      "drain.test.ts": `
+import { test, expect } from "bun:test";
+${body}
+`,
+    });
+
+    async function once() {
+      const socketPath = join(String(dir), `inspector-${Math.random().toString(36).substring(2)}.sock`);
+
+      const session = new TestReporterSession();
+      const framer = new SocketFramer((message: string) => {
+        session.onMessage(message);
+      });
+
+      let localSocket: ReturnType<typeof connect> extends Promise<infer T> ? T : never;
+      const socketPromise = connect(`unix://${socketPath}`).then(s => {
+        localSocket = s;
+        session.socket = s;
+        session.framer = framer;
+        s.data = {
+          onData: framer.onData.bind(framer),
+        };
+        return s;
+      });
+
+      await using localProc = spawn({
+        cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "drain.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      await socketPromise;
+
+      // Enable TestReporter *before* initialized so every test is reported via
+      // the normal (non-retroactive) path — we're isolating the exit-drain bug.
+      session.enableInspector();
+      session.enableTestReporter();
+      session.initialize();
+
+      const [stderr, exitCode] = await Promise.all([localProc.stderr.text(), localProc.exited]);
+      // @ts-ignore
+      localSocket?.end?.();
+
+      return {
+        stderr,
+        exitCode,
+        ended: session.getEndedTests(),
+        found: session.getFoundTests(),
+      };
+    }
+
+    // The race is scheduler-dependent. Run a batch of attempts in parallel
+    // so any one of them dropping events fails the test. Keeping processes
+    // concurrent also keeps the box busy, which is the regime where the
+    // main thread wins the race to exit().
+    const attempts = 24;
+    const results = await Promise.all(Array.from({ length: attempts }, () => once()));
+
+    for (const { stderr, exitCode, found, ended } of results) {
+      expect(stderr).toContain(`${testCount} pass`);
+      expect(found.size).toBe(testCount);
+      expect([...ended.values()].map(e => e.status)).toEqual(Array(testCount).fill("pass"));
+      expect(ended.size).toBe(testCount);
+      expect(exitCode).toBe(0);
+    }
+  }, 60000);
 });

@@ -309,6 +309,13 @@ fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]
     try Bunfig.parse(allocator, &source, ctx, cmd);
 }
 
+fn isRegularFile(path: [:0]const u8) bool {
+    return switch (bun.sys.stat(path)) {
+        .result => |st| bun.S.ISREG(@intCast(st.mode)),
+        .err => false,
+    };
+}
+
 fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
     var paths = [_]string{".bunfig.toml"};
 
@@ -399,13 +406,13 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
                 );
                 config_buf[joined.len] = 0;
                 const candidate = config_buf[0..joined.len :0];
-                if (bun.sys.existsZ(candidate)) {
+                if (isRegularFile(candidate)) {
                     config_path = candidate;
                     found = true;
                     break;
                 }
-                const parent = std.fs.path.dirname(dir) orelse break;
-                if (parent.len == dir.len) break;
+                const parent = resolve_path.dirname(dir, .auto);
+                if (parent.len == 0 or strings.eql(parent, dir)) break;
                 dir = parent;
             }
             if (!found) {

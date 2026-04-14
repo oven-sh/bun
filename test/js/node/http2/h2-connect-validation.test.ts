@@ -11,17 +11,22 @@ test("CONNECT method pseudo-header validation per RFC 9113 §8.5", async () => {
   const client = http2.connect("http://127.0.0.1:" + port);
   await once(client, "connect");
 
-  expect(() => client.request({ ":method": "CONNECT" })).toThrow(
-    expect.objectContaining({ code: "ERR_HTTP2_CONNECT_AUTHORITY" }),
-  );
-  expect(() => client.request({ ":method": "CONNECT", ":authority": "example.com:443", ":scheme": "https" })).toThrow(
-    expect.objectContaining({ code: "ERR_HTTP2_CONNECT_SCHEME" }),
-  );
-  expect(() => client.request({ ":method": "CONNECT", ":authority": "example.com:443", ":path": "/" })).toThrow(
-    expect.objectContaining({ code: "ERR_HTTP2_CONNECT_PATH" }),
-  );
-
-  client.destroy();
-  server.close();
-  await once(server, "close");
+  try {
+    expect(() => client.request({ ":method": "CONNECT" })).toThrow(
+      expect.objectContaining({ code: "ERR_HTTP2_CONNECT_AUTHORITY" }),
+    );
+    expect(() => client.request({ ":method": "CONNECT", ":authority": "" })).toThrow(
+      expect.objectContaining({ code: "ERR_HTTP2_CONNECT_AUTHORITY" }),
+    );
+    expect(() => client.request({ ":method": "CONNECT", ":authority": "example.com:443", ":scheme": "https" })).toThrow(
+      expect.objectContaining({ code: "ERR_HTTP2_CONNECT_SCHEME" }),
+    );
+    expect(() => client.request({ ":method": "CONNECT", ":authority": "example.com:443", ":path": "/" })).toThrow(
+      expect.objectContaining({ code: "ERR_HTTP2_CONNECT_PATH" }),
+    );
+  } finally {
+    client.destroy();
+    server.close();
+    await once(server, "close");
+  }
 });

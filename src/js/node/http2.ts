@@ -3856,7 +3856,7 @@ class ClientHttp2Session extends Http2Session {
             headers[":authority"] = authority;
           }
         }
-        if (headers[":scheme"] === undefined) {
+        if (!headers[":scheme"]) {
           let protocol: string = url.protocol || options?.protocol || "https:";
           switch (protocol) {
             case "https:":

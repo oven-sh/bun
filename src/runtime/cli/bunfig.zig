@@ -285,7 +285,8 @@ pub const Bunfig = struct {
             if (comptime cmd == .TestCommand) {
                 if (json.get("test")) |test_| {
                     if (test_.get("root")) |root| {
-                        const raw = root.asString(this.allocator) orelse "";
+                        try this.expectString(root);
+                        const raw = try root.data.e_string.string(this.allocator);
                         this.ctx.debug.test_directory = try this.resolveBunfigPath(this.allocator, raw);
                     }
 

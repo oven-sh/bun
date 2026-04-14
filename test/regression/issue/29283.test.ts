@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { connect, createServer } from "node:net";
 import { once } from "node:events";
+import { connect, createServer } from "node:net";
 
 // https://github.com/oven-sh/bun/issues/29283
 // https://github.com/oven-sh/bun/issues/12306

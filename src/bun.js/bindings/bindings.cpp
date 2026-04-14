@@ -2157,7 +2157,7 @@ extern "C" BunString URL__fileSystemPathFromURLString(BunString* input, int* err
     auto&& str = input->toWTFString();
     auto url = WTF::URL(str);
     if (!url.isValid()) {
-        *errorCode = 3;
+        *errorCode = 4;
         return BunString { BunStringTag::Dead, nullptr };
     }
     return fileURLToSystemPath(url, errorCode);

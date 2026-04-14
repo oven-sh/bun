@@ -43,11 +43,14 @@ pub const DOMURL = opaque {
     }
     /// Same validation as `fileSystemPath`, but for a URL string rather than
     /// a `DOMURL` object — so that `"file://..."` string inputs and `URL`
-    /// object inputs can be handled identically by callers.
-    pub fn fileSystemPathFromURLString(str: bun.String) ToFileSystemPathError!bun.String {
+    /// object inputs can be handled identically by callers. Additionally
+    /// returns `error.InvalidUrl` if the input does not parse as a URL at all.
+    pub const FromURLStringError = ToFileSystemPathError || error{InvalidUrl};
+    pub fn fileSystemPathFromURLString(str: bun.String) FromURLStringError!bun.String {
         var input = str;
         var error_code: c_int = 0;
         const path = URL__fileSystemPathFromURLString(&input, &error_code);
+        if (error_code == 4) return error.InvalidUrl;
         try mapFileSystemPathError(error_code);
         bun.assert(path.tag != .Dead);
         return path;

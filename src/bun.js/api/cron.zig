@@ -424,7 +424,7 @@ pub const CronRegisterJob = struct {
         if (!args[2].isString()) return globalObject.throwInvalidArguments("Bun.cron() expects a string title as the third argument", .{});
 
         const path_str: bun.String = blk: {
-            const result: jsc.DOMURL.ToFileSystemPathError!bun.String = path: {
+            const result: jsc.DOMURL.FromURLStringError!bun.String = path: {
                 if (args[0].as(jsc.DOMURL)) |domurl|
                     break :path domurl.fileSystemPath();
                 if (!args[0].isString())
@@ -439,6 +439,7 @@ pub const CronRegisterJob = struct {
                 error.NotFileUrl => return globalObject.ERR(.INVALID_URL_SCHEME, "Bun.cron() path URL must use the file: scheme", .{}).throw(),
                 error.InvalidPath => return globalObject.ERR(.INVALID_FILE_URL_PATH, "Bun.cron() path URL must be a valid file: path", .{}).throw(),
                 error.InvalidHost => return globalObject.ERR(.INVALID_FILE_URL_HOST, "Bun.cron() path URL host must be \"localhost\" or empty", .{}).throw(),
+                error.InvalidUrl => return globalObject.ERR(.INVALID_URL, "Bun.cron() received an invalid file: URL", .{}).throw(),
             };
             if (str.isEmpty()) {
                 str.deref();

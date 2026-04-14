@@ -9,9 +9,9 @@
 //   "ESM bytecode requires --compile"
 // and top-level `await` couldn't be combined with --bytecode unless the
 // whole runtime was embedded via --compile.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 test("issue #29286: --bytecode --format=esm --outdir emits .jsc + .jsm sidecars", async () => {
@@ -26,15 +26,7 @@ test("issue #29286: --bytecode --format=esm --outdir emits .jsc + .jsm sidecars"
   });
 
   await using build = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "build",
-      "./index.ts",
-      "--bytecode",
-      "--format=esm",
-      "--target=bun",
-      "--outdir=dist",
-    ],
+    cmd: [bunExe(), "build", "./index.ts", "--bytecode", "--format=esm", "--target=bun", "--outdir=dist"],
     env: bunEnv,
     cwd: String(dir),
     stderr: "pipe",
@@ -81,11 +73,7 @@ test("issue #29286: --bytecode --format=esm --outdir emits .jsc + .jsm sidecars"
     stdout: "pipe",
   });
 
-  const [runStdout, runStderr, runExit] = await Promise.all([
-    run.stdout.text(),
-    run.stderr.text(),
-    run.exited,
-  ]);
+  const [runStdout, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
 
   expect(runStdout.trim()).toBe("Server starting on port 3000");
   // ASAN adds a warning banner in debug builds; the bundle itself must
@@ -127,11 +115,7 @@ test("issue #29286: Bun.build({ bytecode: true, format: 'esm' }) no longer requi
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("ESM bytecode requires");
   expect(stdout).toContain("entry.js");

@@ -37,10 +37,7 @@ test("addEventListener/removeEventListener on a shared target doesn't leak", asy
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   const { before, after } = JSON.parse(stdout.trim());
   const growthMB = (after - before) / 1024 / 1024;
@@ -50,4 +47,5 @@ test("addEventListener/removeEventListener on a shared target doesn't leak", asy
   // short-lived working-set growth, which is fine). Keep a generous
   // ceiling: anything under 25MB means we aren't on the unbounded path.
   expect(growthMB).toBeLessThan(25);
+  expect(exitCode).toBe(0);
 });

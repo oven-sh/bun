@@ -160,6 +160,7 @@ describe("Bun.cron API", () => {
 
   // https://github.com/oven-sh/bun/issues/28295 — URL validation happens
   // synchronously before any backend is touched, so these run unconditionally.
+  // The string form and the URL-object form must validate identically.
   test("non-file URL object throws ERR_INVALID_URL_SCHEME", () => {
     expect(() => Bun.cron(new URL("https://example.com/job.ts"), "@daily", "t")).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_URL_SCHEME" }),
@@ -167,21 +168,29 @@ describe("Bun.cron API", () => {
   });
 
   // On Windows, file://host/path is a valid UNC path, so the host check is skipped.
-  test.skipIf(isWindows)("file URL object with remote host throws ERR_INVALID_FILE_URL_HOST", () => {
+  test.skipIf(isWindows)("file URL with remote host throws ERR_INVALID_FILE_URL_HOST", () => {
     expect(() => Bun.cron(new URL("file://remote-host/job.ts"), "@daily", "t")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_FILE_URL_HOST" }),
+    );
+    expect(() => Bun.cron("file://remote-host/job.ts", "@daily", "t")).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_FILE_URL_HOST" }),
     );
   });
 
-  test("file URL object with encoded slash throws ERR_INVALID_FILE_URL_PATH", () => {
+  test("file URL with encoded slash throws ERR_INVALID_FILE_URL_PATH", () => {
     expect(() => Bun.cron(new URL("file:///a%2Fb.ts"), "@daily", "t")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_FILE_URL_PATH" }),
+    );
+    expect(() => Bun.cron("file:///a%2Fb.ts", "@daily", "t")).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_FILE_URL_PATH" }),
     );
   });
 
-  test("malformed file:// URL string throws ERR_INVALID_URL", () => {
-    // Unclosed IPv6 bracket -> WTF::URL parser rejects -> pathFromFileURL returns Dead
-    expect(() => Bun.cron("file://[", "@daily", "t")).toThrow(expect.objectContaining({ code: "ERR_INVALID_URL" }));
+  test("malformed file:// URL string throws", () => {
+    // Unclosed IPv6 bracket -> WTF::URL parser rejects -> treated as non-file URL
+    expect(() => Bun.cron("file://[", "@daily", "t")).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_URL_SCHEME" }),
+    );
   });
 });
 

@@ -424,29 +424,27 @@ pub const CronRegisterJob = struct {
         if (!args[2].isString()) return globalObject.throwInvalidArguments("Bun.cron() expects a string title as the third argument", .{});
 
         const path_str: bun.String = blk: {
-            if (args[0].as(jsc.DOMURL)) |domurl| {
-                const str = domurl.fileSystemPath() catch |err| switch (err) {
-                    error.NotFileUrl => return globalObject.ERR(.INVALID_URL_SCHEME, "Bun.cron() path URL must use the file: scheme", .{}).throw(),
-                    error.InvalidPath => return globalObject.ERR(.INVALID_FILE_URL_PATH, "Bun.cron() path URL must be a valid file: path", .{}).throw(),
-                    error.InvalidHost => return globalObject.ERR(.INVALID_FILE_URL_HOST, "Bun.cron() path URL host must be \"localhost\" or empty", .{}).throw(),
-                };
-                if (str.isEmpty()) {
-                    str.deref();
-                    return globalObject.ERR(.INVALID_ARG_VALUE, "Bun.cron() path URL must not be empty", .{}).throw();
-                }
-                break :blk str;
-            }
-            if (!args[0].isString())
-                return globalObject.throwInvalidArguments("Bun.cron() expects a string or file URL path as the first argument", .{});
-            const raw = try args[0].toBunString(globalObject);
-            if (raw.hasPrefixComptime("file://")) {
+            const result: jsc.DOMURL.ToFileSystemPathError!bun.String = path: {
+                if (args[0].as(jsc.DOMURL)) |domurl|
+                    break :path domurl.fileSystemPath();
+                if (!args[0].isString())
+                    return globalObject.throwInvalidArguments("Bun.cron() expects a string or file URL path as the first argument", .{});
+                const raw = try args[0].toBunString(globalObject);
+                if (!raw.hasPrefixComptime("file://"))
+                    break :blk raw;
                 defer raw.deref();
-                const decoded = bun.jsc.URL.pathFromFileURL(raw);
-                if (decoded.tag == .Dead)
-                    return globalObject.ERR(.INVALID_URL, "Bun.cron() received an invalid file: URL", .{}).throw();
-                break :blk decoded;
+                break :path jsc.DOMURL.fileSystemPathFromURLString(raw);
+            };
+            const str = result catch |err| switch (err) {
+                error.NotFileUrl => return globalObject.ERR(.INVALID_URL_SCHEME, "Bun.cron() path URL must use the file: scheme", .{}).throw(),
+                error.InvalidPath => return globalObject.ERR(.INVALID_FILE_URL_PATH, "Bun.cron() path URL must be a valid file: path", .{}).throw(),
+                error.InvalidHost => return globalObject.ERR(.INVALID_FILE_URL_HOST, "Bun.cron() path URL host must be \"localhost\" or empty", .{}).throw(),
+            };
+            if (str.isEmpty()) {
+                str.deref();
+                return globalObject.ERR(.INVALID_ARG_VALUE, "Bun.cron() path URL must not be empty", .{}).throw();
             }
-            break :blk raw;
+            break :blk str;
         };
         defer path_str.deref();
         const schedule_str = try args[1].toBunString(globalObject);

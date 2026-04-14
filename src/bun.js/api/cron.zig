@@ -1126,7 +1126,12 @@ pub fn cronParse(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         }
     } else @as(f64, @floatFromInt(std.time.milliTimestamp()));
 
-    if (std.math.isNan(from_ms) or std.math.isInf(from_ms))
+    // Reject NaN and values outside the ECMAScript Date range (±8.64e15 ms,
+    // the same bound `new Date(ms)` enforces). Finite-but-out-of-range values
+    // reach WTF::msToGregorianDateTime's static_cast<int64_t> — UB once
+    // |ms| > INT64_MAX — yielding garbage date components that panic the
+    // @intCast to bit-index in next(). Infinity is caught by the > check.
+    if (std.math.isNan(from_ms) or @abs(from_ms) > 8.64e15)
         return globalObject.throwInvalidArguments("Invalid date value", .{});
 
     const next_ms = (try parsed.next(globalObject, from_ms)) orelse return .null;

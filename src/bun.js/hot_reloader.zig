@@ -64,6 +64,47 @@ pub const ImportWatcher = union(enum) {
 pub const HotReloader = NewHotReloader(VirtualMachine, jsc.EventLoop, false);
 pub const WatchReloader = NewHotReloader(VirtualMachine, jsc.EventLoop, true);
 
+/// When non-null, `onFileUpdate` records the absolute path of every file
+/// it sees change before triggering a reload. Used by `bun test --changed
+/// --watch` so the restarted process can narrow its changed-file set to
+/// what the watcher actually observed (instead of re-querying git, which
+/// would re-run every test affected by any uncommitted change, not just
+/// the one that was just edited).
+///
+/// Set by `test_command.zig` on the main thread before the watcher thread
+/// starts; after that point only the watcher thread touches it. Its
+/// contents are serialized into `BUN_INTERNAL_TEST_CHANGED_TRIGGER` via
+/// `setenv` immediately before `reloadProcess` so they survive exec().
+pub var watch_changed_paths: ?*bun.StringSet = null;
+
+const trigger_env_var = "BUN_INTERNAL_TEST_CHANGED_TRIGGER";
+
+fn recordChangedPath(path: []const u8) void {
+    const set = watch_changed_paths orelse return;
+    if (path.len == 0) return;
+    bun.handleOom(set.insert(path));
+}
+
+fn exportChangedPathsToEnv() void {
+    // Windows `--watch` restarts via TerminateProcess + parent respawn;
+    // setenv in the dying child cannot reach the new child, so we fall
+    // back to re-querying git there (the pre-existing behaviour).
+    if (Environment.isWindows) return;
+
+    const set = watch_changed_paths orelse return;
+    if (set.count() == 0) return;
+
+    var buf = std.array_list.Managed(u8).init(bun.default_allocator);
+    for (set.keys()) |p| {
+        buf.appendSlice(p) catch return;
+        buf.append('\n') catch return;
+    }
+    const joined = buf.toOwnedSliceSentinel(0) catch return;
+    _ = setenv(trigger_env_var, joined.ptr, 1);
+}
+
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+
 extern fn BunDebugger__willHotReload() void;
 
 pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime reload_immediately: bool) type {
@@ -211,6 +252,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         if (this.reloader.ctx.rare_data) |rare|
                             rare.closeAllListenSocketsForWatchMode();
                     }
+                    exportChangedPathsToEnv();
                     bun.reloadProcess(bun.default_allocator, clear_screen, false);
                     unreachable;
                 }
@@ -377,6 +419,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             debug("File changed: {s}", .{fs.relativeTo(file_path)});
 
                         if (event.op.write or event.op.delete or event.op.rename) {
+                            recordChangedPath(file_path);
                             if (comptime Environment.isMac) {
                                 if (event.op.rename) {
                                     // Special case for entrypoint: defer reload until we get
@@ -426,6 +469,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                     if (this.main.is_waiting_for_dir_change and this.main.dir_hash == current_hash) {
                                         if (bun.sys.faccessat(file_descriptors[event.index], std.fs.path.basename(this.main.file)) == .result) {
                                             this.main.is_waiting_for_dir_change = false;
+                                            recordChangedPath(this.main.file);
                                             current_task.append(this.main.hash);
                                         }
                                     }
@@ -494,6 +538,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                                 if (hash == file_hash) {
                                                     if (file_descriptors[entry_id].isValid()) {
                                                         if (prev_entry_id != entry_id) {
+                                                            recordChangedPath(path_string.slice());
                                                             current_task.append(hashes[entry_id]);
                                                             if (this.verbose)
                                                                 debug("Removing file: {s}", .{path_string.slice()});

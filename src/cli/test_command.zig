@@ -1629,6 +1629,16 @@ pub const TestCommand = struct {
             for (changed_module_graph_files) |path| {
                 _ = vm.bun_watcher.addFileByPathSlow(path, vm.transpiler.options.loader(std.fs.path.extension(path)));
             }
+
+            // Have the watcher record which file(s) triggered each
+            // restart so the next process can narrow the changed-file
+            // set to just those (instead of re-querying git and
+            // re-running every test affected by any uncommitted change).
+            // This lives for the rest of the process; `--watch` exec()s
+            // on reload, so it never accumulates across restarts.
+            const trigger_set = bun.handleOom(ctx.allocator.create(bun.StringSet));
+            trigger_set.* = bun.StringSet.init(ctx.allocator);
+            jsc.hot_reloader.watch_changed_paths = trigger_set;
         }
 
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();

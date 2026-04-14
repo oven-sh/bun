@@ -38,17 +38,28 @@ pub fn filter(
     const allocator = ctx.allocator;
     const top_level_dir = vm.transpiler.fs.top_level_dir;
 
-    var changed_files = getChangedFiles(allocator, top_level_dir, changed_since) catch |err| switch (err) {
-        error.GitNotFound => {
-            Output.errGeneric("<b>--changed<r> requires <b>git<r> to be installed and in PATH", .{});
-            Global.exit(1);
-        },
-        error.GitFailed => {
-            // getChangedFiles already printed the git error output.
-            Global.exit(1);
-        },
-        else => return err,
-    };
+    // If this process was restarted by the --watch file watcher, it
+    // recorded exactly which files changed in this env var before
+    // exec()ing. Use that as the changed-file set instead of re-querying
+    // git, so editing one file re-runs only the tests that reach that
+    // file rather than every test affected by any uncommitted change.
+    // (On Windows the watcher restarts via TerminateProcess + parent
+    // respawn, which cannot carry state, so this is POSIX-only; Windows
+    // falls through to git below.)
+    var changed_files = if (consumeWatchTrigger(allocator)) |trigger_set|
+        trigger_set
+    else
+        getChangedFiles(allocator, top_level_dir, changed_since) catch |err| switch (err) {
+            error.GitNotFound => {
+                Output.errGeneric("<b>--changed<r> requires <b>git<r> to be installed and in PATH", .{});
+                Global.exit(1);
+            },
+            error.GitFailed => {
+                // getChangedFiles already printed the git error output.
+                Global.exit(1);
+            },
+            else => return err,
+        };
     defer changed_files.deinit();
 
     if (test_files.len == 0) {
@@ -86,7 +97,6 @@ pub fn filter(
         Global.exit(1);
     };
     scan_transpiler.options.target = .bun;
-    scan_transpiler.options.entry_points = entry_points;
     // Do not follow bare specifiers into node_modules; changes there are not
     // considered local edits.
     scan_transpiler.options.packages = .external;
@@ -231,6 +241,46 @@ pub fn filter(
         .total_tests = test_files.len,
         .module_graph_files = try graph_files.toOwnedSlice(allocator),
     };
+}
+
+/// Name of the env var the watcher writes changed paths into before
+/// exec()ing. Kept in sync with `hot_reloader.zig`.
+const trigger_env_var = "BUN_INTERNAL_TEST_CHANGED_TRIGGER";
+
+/// If the watcher recorded which files triggered this restart, parse the
+/// newline-separated absolute-path list out of the env var and return
+/// the set. Returns null if the env var is absent or empty.
+///
+/// The env var is intentionally left set: calling libc `unsetenv` here
+/// would desync `std.os.environ` (a fixed-length slice captured at
+/// startup) from libc's shifted `environ`, leaving a null entry that
+/// crashes the next `env_loader.loadProcess`. The next watcher restart
+/// overwrites it via `setenv` anyway, so staleness is not a concern.
+fn consumeWatchTrigger(allocator: std.mem.Allocator) ?bun.StringSet {
+    if (bun.Environment.isWindows) return null;
+
+    const raw = bun.getenvZ(trigger_env_var) orelse return null;
+    if (raw.len == 0) return null;
+
+    var set = bun.StringSet.init(allocator);
+    var it = std.mem.tokenizeAny(u8, raw, "\r\n");
+    while (it.next()) |path| {
+        if (path.len == 0) continue;
+        // The watcher may see a file disappear (delete/rename). A path
+        // that no longer exists cannot appear in the module graph this
+        // run, so drop it; its importers will still be picked up if the
+        // importer file itself was touched.
+        if (!bun.sys.exists(path)) continue;
+        bun.handleOom(set.insert(path));
+    }
+    // If every triggering path was a deletion, fall back to git so the
+    // user at least gets the same behaviour as the initial run rather
+    // than "0 changed files, nothing to run".
+    if (set.count() == 0) {
+        set.deinit();
+        return null;
+    }
+    return set;
 }
 
 const GitError = error{ GitNotFound, GitFailed } || std.mem.Allocator.Error;

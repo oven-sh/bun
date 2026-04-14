@@ -361,7 +361,7 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
       cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
       cwd: String(dir),
       env: gitEnv,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
     });
@@ -395,13 +395,64 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
     const afterA = buf.slice(before);
     expect(ranFiles(afterA, ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts"]);
 
-    // Touch dep-b.ts as well: next restart should run BOTH wa and wb since
-    // both deps are now uncommitted.
+    // Touch dep-b.ts: dep-a is still uncommitted in git, but the watcher
+    // only saw dep-b change this restart, so only wb.test.ts should run.
     const before2 = buf.length;
     appendFileSync(join(String(dir), "dep-b.ts"), "// touched\n");
-    await waitFor("Ran 2 tests across 2 files", before2);
+    await waitFor("Ran 1 test across 1 file", before2);
     const afterB = buf.slice(before2);
-    expect(ranFiles(afterB, ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts", "wb.test.ts"]);
+    expect(ranFiles(afterB, ["wa.test.ts", "wb.test.ts"])).toEqual(["wb.test.ts"]);
+
+    proc.kill();
+    reader.releaseLock();
+  }, 60_000);
+
+  // Regression for: with two uncommitted test files, editing one of them
+  // during --changed --watch should only re-run that one, not both.
+  test("editing one of several dirty test files reruns only that one", async () => {
+    using dir = tempDir("test-changed-watch-narrow", {
+      "package.json": JSON.stringify({ name: "watch", type: "module" }),
+      "wa.test.ts": `import { test, expect } from "bun:test";\ntest("wa", () => expect(1).toBe(1));\n`,
+      "wb.test.ts": `import { test, expect } from "bun:test";\ntest("wb", () => expect(2).toBe(2));\n`,
+    });
+    initRepo(String(dir));
+    // Make both test files dirty (uncommitted) before starting the watcher.
+    appendFileSync(join(String(dir), "wa.test.ts"), "// dirty\n");
+    appendFileSync(join(String(dir), "wb.test.ts"), "// dirty\n");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--watch", "--no-clear-screen"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    async function waitFor(needle: string, from = 0): Promise<void> {
+      while (!buf.slice(from).includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`stream closed before seeing ${JSON.stringify(needle)}\n${buf}`);
+        buf += decoder.decode(value, { stream: true });
+      }
+    }
+
+    // Initial run: git reports both test files changed, so both run.
+    await waitFor("Ran 2 tests across 2 files");
+    expect(ranFiles(buf, ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts", "wb.test.ts"]);
+
+    // Now edit only wa.test.ts. The watcher passes exactly that path to
+    // the restarted process; wb.test.ts (though still dirty in git) is
+    // not in its DAG, so it must not re-run.
+    const before = buf.length;
+    appendFileSync(join(String(dir), "wa.test.ts"), "// touched again\n");
+    await waitFor("Ran 1 test across 1 file", before);
+    const after = buf.slice(before);
+    expect(ranFiles(after, ["wa.test.ts", "wb.test.ts"])).toEqual(["wa.test.ts"]);
 
     proc.kill();
     reader.releaseLock();

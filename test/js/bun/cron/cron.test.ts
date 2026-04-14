@@ -275,7 +275,8 @@ describe.skipIf(!hasAnyCronBackend)("cross-platform API consistency", () => {
       } else if (hasCrontab) {
         const crontab = Bun.spawnSync({ cmd: [Bun.which("crontab")!, "-l"], stdout: "pipe" }).stdout.toString();
         // Isolate this job's crontab line so unrelated entries can't satisfy the regexes.
-        const entry = crontab.split("\n").find(l => l.includes("--cron-title=test-xplat-caller-rel"));
+        // Trailing space anchors the title token (crontab format follows it with --cron-period).
+        const entry = crontab.split("\n").find(l => l.includes("--cron-title=test-xplat-caller-rel "));
         expect(entry).toBeDefined();
         expect(entry!).toMatch(/bun-cron-caller-rel[^\n]*[\\/]worker\.ts/);
         // The script path must not reference the other-cwd directory.

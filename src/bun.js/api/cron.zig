@@ -492,8 +492,11 @@ pub const CronRegisterJob = struct {
                     defer bun.default_allocator.free(cwd_owned);
                     defer bun.default_allocator.free(abs_path);
                     return switch (bad) {
-                        '\'' => globalObject.throwInvalidArguments("{s} '{s}' must not contain single quotes", .{ chk.label, chk.value }),
-                        '%' => globalObject.throwInvalidArguments("{s} '{s}' must not contain percent signs (cron interprets % as newline)", .{ chk.label, chk.value }),
+                        // Double-quote the path so an embedded single-quote
+                        // (the very character we're reporting) can't visually
+                        // terminate the delimiter.
+                        '\'' => globalObject.throwInvalidArguments("{s} \"{s}\" must not contain single quotes", .{ chk.label, chk.value }),
+                        '%' => globalObject.throwInvalidArguments("{s} \"{s}\" must not contain percent signs (cron interprets % as newline)", .{ chk.label, chk.value }),
                         // Don't embed the raw value here: a literal LF/CR in the
                         // error text would itself split/garble the message.
                         else => globalObject.throwInvalidArguments("{s} must not contain newlines or carriage returns", .{chk.label}),

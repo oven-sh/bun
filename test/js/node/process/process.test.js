@@ -274,7 +274,7 @@ it("process.versions", () => {
   // bumping a dep requires updating this test too).
   const expectedVersions = {
     boringssl: "4f4f5ef8ebc6e23cbf393428f0ab1b526773f7ac",
-    libarchive: "9525f90ca4bd14c7b335e2f8c84a4607b0af6bdf",
+    libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
     mimalloc: "9a5e1f52cdf4662f9590b69de104a4469140796f",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
     zlib: "886098f3f339617b4243b286f5ed364b9989e245",

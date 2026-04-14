@@ -347,10 +347,7 @@ pub const ReadFile = struct {
             // read up to 4k at a time if
             // they didn't explicitly set a size and we're reading from something that's not a regular file
         } else if (stat.size == 0 and this.could_block) {
-            this.size = if (this.max_length == Blob.max_size)
-                4096
-            else
-                this.max_length;
+            this.size = @min(this.max_length, 4096);
         }
 
         if (this.offset > 0) {
@@ -384,7 +381,7 @@ pub const ReadFile = struct {
 
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
         if (!this.could_block or (this.size > 0 and this.size != Blob.max_size))
-            this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, this.size + 16) catch |err| {
+            this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, this.size +| 16) catch |err| {
                 this.errno = err;
                 this.onFinish();
                 return;
@@ -669,10 +666,7 @@ pub const ReadFileUV = struct {
         } else if (stat.size == 0 and !this.is_regular_file) {
             // read up to 4k at a time if they didn't explicitly set a size and
             // we're reading from something that's not a regular file.
-            this.size = if (this.max_length == Blob.max_size)
-                4096
-            else
-                this.max_length;
+            this.size = @min(this.max_length, 4096);
         }
 
         if (this.offset > 0) {

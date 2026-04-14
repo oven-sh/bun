@@ -38,7 +38,7 @@ public:
 protected:
     InternalFieldObject(JSC::VM& vm, JSC::Structure* structure, int internalFieldCount)
         : Base(vm, structure)
-        , m_fields(internalFieldCount, JSC::WriteBarrier<JSC::Unknown>(vm, this, JSC::jsUndefined()))
+        , m_fields(WTF::FillWith {}, internalFieldCount, JSC::WriteBarrier<JSC::Unknown>(vm, this, JSC::jsUndefined()))
     {
     }
 

@@ -148,5 +148,92 @@ linker = "${linker}"
       expect(binStdout4).toContain("SUCCESS: Using platform-specific bin");
       expect(binExitCode4).toBe(0);
     });
+
+    // Regression: a package on the nativeDependencies list whose platform-specific
+    // optionalDependency does NOT contain the bin file at the expected path must
+    // fall back to linking the original package's bin. Previously the `seen` map
+    // was poisoned by the failed redirect attempt, so the retry silently no-op'd
+    // and `.bin/<cmd>` was never created (broke `bunx @anthropic-ai/claude-code`).
+    test(`falls back to main package bin when platform dep has no matching bin file with linker ${linker}`, async () => {
+      let env = { ...bunEnv };
+      const { packageDir, packageJson } = await verdaccio.createTestDir();
+      env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+      env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+
+      await writeFile(
+        join(packageDir, "bunfig.toml"),
+        `
+[install]
+cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
+registry = "${verdaccio.registryUrl()}"
+linker = "${linker}"
+`,
+      );
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "test-app",
+          version: "1.0.0",
+          dependencies: {
+            "test-native-binlink-fallback": "1.0.0",
+          },
+          nativeDependencies: ["test-native-binlink-fallback"],
+          trustedDependencies: ["test-native-binlink-fallback"],
+        }),
+      );
+
+      const installProc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [, installStderr, installExit] = await Promise.all([
+        installProc.stdout.text(),
+        installProc.stderr.text(),
+        installProc.exited,
+      ]);
+      expect(installStderr).not.toContain("error:");
+      expect(installExit).toBe(0);
+
+      const binProc = spawn({
+        cmd: [join(packageDir, "node_modules", ".bin", "fallback-cmd")],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "inherit",
+        env,
+      });
+      const [binStdout, binExitCode] = await Promise.all([binProc.stdout.text(), binProc.exited]);
+      expect(binStdout).toContain("SUCCESS: Using main package bin");
+      expect(binExitCode).toBe(0);
+
+      // Re-install with node_modules removed (lockfile-only path)
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      const installProc2 = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "inherit",
+        stdin: "ignore",
+        stderr: "inherit",
+        env,
+      });
+      expect(await installProc2.exited).toBe(0);
+
+      const binProc2 = spawn({
+        cmd: [join(packageDir, "node_modules", ".bin", "fallback-cmd")],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "inherit",
+        env,
+      });
+      const [binStdout2, binExitCode2] = await Promise.all([binProc2.stdout.text(), binProc2.exited]);
+      expect(binStdout2).toContain("SUCCESS: Using main package bin");
+      expect(binExitCode2).toBe(0);
+    });
   }
 });

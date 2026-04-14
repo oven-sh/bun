@@ -62,6 +62,7 @@ static constexpr auto supportedHttpMethods = makeArray<std::string_view>(
     "M-SEARCH",
     "MERGE",
     "MKACTIVITY",
+    "MKADDRESSBOOK",
     "MKCALENDAR",
     "MKCOL",
     "MOVE",

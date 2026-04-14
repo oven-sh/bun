@@ -12,7 +12,7 @@
 // path AbortSignal takes) and asserts RSS doesn't grow unbounded across
 // many hundreds of thousands of listener churns.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 test("addEventListener/removeEventListener on a shared target doesn't leak", async () => {
   await using proc = Bun.spawn({
@@ -55,8 +55,12 @@ test("addEventListener/removeEventListener on a shared target doesn't leak", asy
 
   // Before the fix, growth was ~42MB for 500k add/remove pairs on top of
   // a ~32MB baseline. After the fix RSS stays essentially flat (~15MB
-  // short-lived working-set growth, which is fine). Keep a generous
-  // ceiling: anything under 25MB means we aren't on the unbounded path.
-  expect(growthMB).toBeLessThan(25);
+  // short-lived working-set growth). Anything under the ceiling means
+  // we aren't on the unbounded path. ASAN adds per-allocation red-zones
+  // + shadow memory, so give that lane more headroom while still being
+  // well below the unbounded baseline (the regression would grow
+  // proportionally to ITER regardless of build mode).
+  const ceilingMB = isASAN ? 75 : 25;
+  expect(growthMB).toBeLessThan(ceilingMB);
   expect(exitCode).toBe(0);
 });

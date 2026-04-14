@@ -111,7 +111,7 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // everything after passes verbatim to lld-link. Our ldflags are all
   // pure linker options (/STACK, /DEF, /OPT, /errorlimit, system libs)
   // that clang-cl's driver doesn't recognize.
-  const wrap = `${q(cfg.bun)} ${q(streamPath)} link --console`;
+  const wrap = `${cfg.jsRuntime} ${q(streamPath)} link --console`;
   n.rule("link", {
     command: cfg.windows
       ? `${wrap} ${cxx} /nologo -fuse-ld=lld @$out.rsp /Fe$out /link $ldflags`
@@ -143,19 +143,22 @@ export interface CompileOpts {
   /** Original header the PCH was built from (needed for clang-cl /Yu). */
   pchHeader?: string;
   /**
-   * Extra implicit deps. Use for generated headers this specific .cpp needs.
-   * E.g. ErrorCode.cpp depends on ErrorCode+List.h.
+   * Extra implicit deps. Use for generated headers this specific .cpp needs
+   * (e.g. ErrorCode.cpp depends on ErrorCode+List.h), and for dep outputs
+   * (lib*.a) — local sub-builds rewrite forwarding headers as undeclared
+   * side effects, so the lib is the invalidation signal; order-only would
+   * lag one build behind.
    */
   implicitInputs?: string[];
   /**
    * Order-only deps. Must exist before compile, but mtime not tracked.
    * The compiler's .d depfile tracks ACTUAL header dependencies on
-   * subsequent builds — order-only is for "dep libs/headers must be
-   * extracted before first compile attempts to #include them".
+   * subsequent builds — order-only is for "header must be generated
+   * before first compile attempts to #include it".
    *
-   * Prefer this over implicitInputs for dep outputs: if you touch
-   * libJavaScriptCore.a, you don't want every .c file to recompile
-   * (.c files don't include JSC headers). The depfile knows better.
+   * Use for codegen headers (declared ninja outputs with restat, so
+   * depfile tracking is exact). Dep outputs (lib*.a) go in
+   * implicitInputs instead — see above.
    */
   orderOnlyInputs?: string[];
   /** Job pool override. */

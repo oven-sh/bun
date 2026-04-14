@@ -355,7 +355,7 @@ pub fn getAcceptedBy(this: *WindowsNamedPipe, server: *uv.Pipe, ssl_ctx: ?*Borin
     }
     return .success;
 }
-pub fn open(this: *WindowsNamedPipe, fd: bun.FileDescriptor, ssl_options: ?jsc.API.ServerConfig.SSLConfig) bun.sys.Maybe(void) {
+pub fn open(this: *WindowsNamedPipe, fd: bun.FD, ssl_options: ?jsc.API.ServerConfig.SSLConfig) bun.sys.Maybe(void) {
     bun.assert(this.pipe != null);
     this.flags.disconnected = true;
 

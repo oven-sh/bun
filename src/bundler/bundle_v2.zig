@@ -3392,6 +3392,18 @@ pub const BundleV2 = struct {
         if (resolve_result.last_error) |err| {
             debug("failed with error: {s}", .{@errorName(err)});
             resolve_result.resolve_queue.clearAndFree();
+
+            // Preserve the parsed import_records on the graph so any plugin
+            // onResolve tasks already dispatched for *other* records in this
+            // same file can still dereference
+            // `graph.ast.items(.import_records)[importer_source_index]` when
+            // they complete. Without this, the graph entry stays at
+            // JSAst.empty and the deferred plugin callback index-out-of-
+            // bounds crashes in BundleV2.onResolve / runResolver. The linker
+            // never runs because `transpiler.log.errors > 0` aborts the
+            // build before link time, so saving the AST is safe.
+            this.graph.ast.items(.import_records)[source_index.get()] = result.ast.import_records;
+
             parse_result.value = .{
                 .err = .{
                     .err = err,

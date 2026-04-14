@@ -404,10 +404,9 @@ fs.readSync(0, Buffer.alloc(1));
     // socket.
 
     const testCount = 3;
-    const body = Array.from(
-      { length: testCount },
-      (_, i) => `test("t${i}", () => { expect(${i}).toBe(${i}); });`,
-    ).join("\n");
+    const body = Array.from({ length: testCount }, (_, i) => `test("t${i}", () => { expect(${i}).toBe(${i}); });`).join(
+      "\n",
+    );
 
     using dir = tempDir("test-reporter-drain", {
       "drain.test.ts": `

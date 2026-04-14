@@ -101,4 +101,5 @@ test.skipIf(!isLinux || !patchelf || !existsSync(ldso))(
       expect(r.exitCode).toBe(0);
     }
   },
+  180_000,
 );

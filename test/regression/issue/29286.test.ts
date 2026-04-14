@@ -114,7 +114,9 @@ test("issue #29286: Bun.build({ bytecode: true, format: 'esm' }) no longer requi
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("ESM bytecode requires");
-  expect(stdout).toContain("entry.js");
+  // Match on comma-delimited tokens so `entry.js` isn't a false positive
+  // for the prefix of `entry.js.jsc` / `entry.js.jsm`.
+  expect(stdout).toMatch(/outputs: (entry\.js),/);
   expect(stdout).toContain("entry.js.jsc");
   expect(stdout).toContain("entry.js.jsm");
   expect(exitCode).toBe(0);

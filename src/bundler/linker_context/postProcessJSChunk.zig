@@ -117,9 +117,14 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
         // 1. Add declarations collected by DeclCollector during parallel part printing.
         // These come from the CONVERTED statements (after convertStmtsForChunk transforms
         // export default → var, strips exports, etc.), so they match what's actually printed.
-        for (chunk.compile_results_for_chunk) |cr| {
-            const decls = switch (cr) {
-                .javascript => |js| js.decls,
+        //
+        // The `decls` slice was handed over from `DeclCollector.decls.items` in
+        // `generateCompileResultForJSChunkImpl` and never consumed anywhere else;
+        // free it once we're done copying into ModuleInfo so repeated `Bun.build`
+        // calls don't accumulate the backing buffers.
+        for (chunk.compile_results_for_chunk) |*cr| {
+            const decls = switch (cr.*) {
+                .javascript => |*js| js.decls,
                 else => continue,
             };
             for (decls) |decl| {
@@ -129,6 +134,10 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                 };
                 const string_id = mi.str(decl.name) catch continue;
                 mi.addVar(string_id, var_kind) catch continue;
+            }
+            if (decls.len > 0) {
+                bun.default_allocator.free(decls);
+                cr.javascript.decls = &.{};
             }
         }
 

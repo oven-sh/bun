@@ -3371,7 +3371,7 @@ pub const Formatter = struct {
                         writer.writeAll("{}");
                     }
                 } else {
-                    this.depth -= 1;
+                    this.depth -|= 1;
 
                     if (iter.always_newline) {
                         this.indent -|= 1;

@@ -27,7 +27,7 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
-const { format: utilFormat } = require("node:util");
+const { inspect: utilInspect } = require("node:util");
 const kInspect = Symbol.for("nodejs.util.inspect.custom");
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const { STATUS_CODES } = require("internal/http");
@@ -2088,7 +2088,7 @@ class Http2Stream extends Duplex {
       readableState: this._readableState,
       writableState: this._writableState,
     };
-    return `Http2Stream ${utilFormat(obj)}`;
+    return `Http2Stream ${utilInspect(obj, opts)}`;
   }
 
   priority(options) {

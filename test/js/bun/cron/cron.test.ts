@@ -146,14 +146,20 @@ describe("Bun.cron API", () => {
     expect(() => Bun.cron("./test.ts", "abc * * * *", "test-bad")).toThrow(/cron expression/i);
   });
 
-  // Percent-sign validation is specific to Linux crontab embedding
-  // (cron turns % into newline). macOS/Windows XML-escape the path and
-  // impose no such restriction.
+  // Crontab-embedding validation is Linux-only (macOS/Windows XML-escape
+  // these values and impose no such restriction).
   test.skipIf(!isLinux)("throws with percent sign in path (Linux)", async () => {
     using dir = tempDir("bun-cron-test", {
       "test%file.ts": `export default { scheduled() {} };`,
     });
     expect(() => Bun.cron(`${dir}/test%file.ts`, "* * * * *", "test-bad")).toThrow(/percent/i);
+  });
+
+  test.skipIf(!isLinux)("throws with single quote in path (Linux)", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "test'file.ts": `export default { scheduled() {} };`,
+    });
+    expect(() => Bun.cron(`${dir}/test'file.ts`, "* * * * *", "test-bad")).toThrow(/single quote/i);
   });
 
   test("remove throws with invalid title characters", () => {
@@ -928,6 +934,7 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
       expect(plist).toContain("bun.cron.test-mac-reg");
       expect(plist).toContain("StartCalendarInterval");
       expect(plist).toContain("--cron-title=test-mac-reg");
+      expect(plist).toContain("<key>WorkingDirectory</key>");
       expect(queryLaunchdJob("test-mac-reg")).toBe(true);
     } finally {
       removeLaunchdJob("test-mac-reg");

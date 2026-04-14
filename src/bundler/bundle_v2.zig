@@ -3525,11 +3525,16 @@ pub const BundleV2 = struct {
                 result.output_files.items.len,
             });
 
+            // Bun.file() and import.meta.dir are only available in server-side targets.
+            // For browser targets, skip the file() accessor entirely since Bun.file
+            // doesn't exist and import.meta is invalid in classic (non-module) scripts.
+            const is_server_target = this.transpiler.options.target != .browser;
+
             // Create an unbound "Bun" symbol so we can reference it in generated code.
             // Add directly to the linker graph AST's symbol list (the linker graph's
             // Symbol.Map isn't populated until link(), but the AST symbols are available).
             const source_symbols = &this.linker.graph.ast.items(.symbols)[resolved_source_index];
-            const bun_ref = brk: {
+            const bun_ref = if (is_server_target) brk: {
                 var ref = Ref.init(
                     @truncate(source_symbols.len),
                     @truncate(resolved_source_index),
@@ -3543,7 +3548,7 @@ pub const BundleV2 = struct {
                 // Also add to module scope's generated list so link() picks it up
                 this.linker.graph.ast.items(.module_scope)[resolved_source_index].generated.append(alloc, ref) catch bun.outOfMemory();
                 break :brk ref;
-            };
+            } else Ref.None;
 
             // Build the result object: { entrypoint: {...}, files: [...] }
             var result_obj = E.Object{};
@@ -3576,8 +3581,11 @@ pub const BundleV2 = struct {
                 try file_obj.put(alloc, "size", Expr.init(E.Number, E.Number{ .value = @floatFromInt(of.size) }, loc));
 
                 // Generate: file: () => Bun.file(import.meta.dir + "/" + name)
-                const file_method = try makeFileAccessor(alloc, bun_ref, file_name, loc);
-                try file_obj.put(alloc, "file", file_method);
+                // Only for server-side targets — Bun.file and import.meta don't exist in browsers.
+                if (is_server_target) {
+                    const file_method = try makeFileAccessor(alloc, bun_ref, file_name, loc);
+                    try file_obj.put(alloc, "file", file_method);
+                }
 
                 const file_expr = Expr.init(E.Object, file_obj, loc);
                 try files_array.push(alloc, file_expr);

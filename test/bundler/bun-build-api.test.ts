@@ -1649,4 +1649,55 @@ console.log(JSON.stringify({
     });
     expect(exitCode).toBe(0);
   });
+
+  // When a browser-targeted sub-build (e.g. a service worker) contains a nested
+  // ?bundle import, the generated file() accessor must not use import.meta or
+  // Bun.file, since neither is available in browser scripts. import.meta is a
+  // syntax error in classic (non-module) scripts like service workers.
+  test("nested ?bundle inside browser-targeted sub-build omits import.meta", async () => {
+    const dir = tempDirWithFiles("bundle-nested-browser-no-import-meta", {
+      "app.ts": `export const greeting = "hello";`,
+      // The worker imports a nested ?bundle — this is the scenario where
+      // import.meta.dir would appear in the IIFE output and cause a SyntaxError.
+      "worker.ts": `
+        import bundle from "./app.ts?bundle" with { target: "browser" };
+        const names = bundle.files.map(f => f.name);
+        console.log(names.join(","));
+      `,
+      // The server imports the worker as a browser-targeted IIFE bundle.
+      "server.ts": `
+        import worker from "./worker.ts?bundle" with { target: "browser", format: "iife" };
+        const entry = worker.files.find(f => f.kind === "entry-point");
+        // Read the worker IIFE output and check for import.meta
+        const workerCode = await entry.file().text();
+        console.log(JSON.stringify({
+          hasImportMeta: workerCode.includes("import.meta"),
+          hasBunFile: workerCode.includes("Bun.file"),
+        }));
+      `,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "server.ts")],
+      outdir: join(dir, "dist"),
+      target: "bun",
+    });
+
+    expect(build.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "dist", "server.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const result = JSON.parse(stdout.trim());
+    // The worker IIFE must not contain import.meta or Bun.file
+    expect(result.hasImportMeta).toBe(false);
+    expect(result.hasBunFile).toBe(false);
+    expect(exitCode).toBe(0);
+  });
 });

@@ -1135,6 +1135,10 @@ pub fn cronParse(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         return globalObject.throwInvalidArguments("Invalid date value", .{});
 
     const next_ms = (try parsed.next(globalObject, from_ms)) orelse return .null;
+    // next() advances past from_ms, so a from near the +8.64e15 boundary
+    // can yield a result just past it; return null rather than an Invalid
+    // Date so callers can rely on `result === null` for "no future match".
+    if (next_ms > 8.64e15) return .null;
     return jsc.JSValue.fromDateNumber(globalObject, next_ms);
 }
 

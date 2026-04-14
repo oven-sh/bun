@@ -30,11 +30,7 @@ test("issue #29311: minify prefers scientific notation when shorter", async () =
 
   // stderr may carry ASAN warnings under debug builds, so don't assert
   // it's empty — rely on exitCode + stdout shape instead.
-  const [stdout, _stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   void _stderr;
 
   // The bug: 1e300 was expanded to 301 digits. Guard against any regression
@@ -103,11 +99,7 @@ test("issue #29311: non-minified output keeps decimal form", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, _stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   void _stderr;
 
   // Without --minify, 1.5e20 stays in its full decimal form as before.

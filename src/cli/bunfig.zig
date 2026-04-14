@@ -148,6 +148,20 @@ pub const Bunfig = struct {
             if (entry.len == 0) return entry;
             if (std.fs.path.isAbsolute(entry)) return entry;
             if (resolver.isPackagePath(entry)) return entry;
+            return this.resolveBunfigRelative(allocator, entry);
+        }
+
+        /// Resolve a filesystem path from the bunfig to an absolute path using
+        /// the directory containing the bunfig.toml. Unlike resolvePreloadPath,
+        /// bare names (e.g. "coverage") are treated as relative directories
+        /// rather than package specifiers. Absolute paths pass through.
+        fn resolveBunfigPath(this: *Parser, allocator: std.mem.Allocator, entry: string) !string {
+            if (entry.len == 0) return entry;
+            if (std.fs.path.isAbsolute(entry)) return entry;
+            return this.resolveBunfigRelative(allocator, entry);
+        }
+
+        fn resolveBunfigRelative(this: *Parser, allocator: std.mem.Allocator, entry: string) !string {
             const bunfig_dir = resolve_path.dirname(this.source.path.text, .auto);
             if (bunfig_dir.len == 0) return entry;
             var buf: bun.PathBuffer = undefined;
@@ -271,7 +285,8 @@ pub const Bunfig = struct {
             if (comptime cmd == .TestCommand) {
                 if (json.get("test")) |test_| {
                     if (test_.get("root")) |root| {
-                        this.ctx.debug.test_directory = root.asString(this.allocator) orelse "";
+                        const raw = root.asString(this.allocator) orelse "";
+                        this.ctx.debug.test_directory = try this.resolveBunfigPath(this.allocator, raw);
                     }
 
                     if (test_.get("preload")) |expr| {
@@ -299,7 +314,8 @@ pub const Bunfig = struct {
                             try this.expectString(junit_expr);
                             if (junit_expr.data.e_string.len() > 0) {
                                 this.ctx.test_options.reporters.junit = true;
-                                this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.string(allocator);
+                                const raw = try junit_expr.data.e_string.string(allocator);
+                                this.ctx.test_options.reporter_outfile = try this.resolveBunfigPath(allocator, raw);
                             }
                         }
                         if (expr.get("dots") orelse expr.get("dot")) |dots_expr| {
@@ -340,7 +356,8 @@ pub const Bunfig = struct {
 
                     if (test_.get("coverageDir")) |expr| {
                         try this.expectString(expr);
-                        this.ctx.test_options.coverage.reports_directory = try expr.data.e_string.string(allocator);
+                        const raw = try expr.data.e_string.string(allocator);
+                        this.ctx.test_options.coverage.reports_directory = try this.resolveBunfigPath(allocator, raw);
                     }
 
                     if (test_.get("coverageThreshold")) |expr| outer: {

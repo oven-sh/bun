@@ -340,10 +340,11 @@ const GitError = error{ GitNotFound, GitFailed } || std.mem.Allocator.Error;
 
 /// Return the set of changed files (absolute paths) according to git.
 ///
-/// With `since == ""` this is the union of unstaged, staged, and untracked
-/// files. With a ref, it is `git diff --name-only <since>`. Paths that do not
-/// exist on disk (deletions) are skipped since they cannot appear in the
-/// module graph.
+/// With `since == ""` this is the union of unstaged, staged, and
+/// untracked files. With a ref, it is `git diff --name-only <since>`
+/// unioned with untracked files (a brand-new file is "changed since"
+/// any prior commit). Paths that do not exist on disk (deletions) are
+/// skipped since they cannot appear in the module graph.
 fn getChangedFiles(
     allocator: std.mem.Allocator,
     top_level_dir: []const u8,
@@ -405,16 +406,6 @@ fn getChangedFiles(
                 appendPaths(&set, git_root, staged.stdout.items);
             }
         }
-
-        // Untracked files. `--full-name` forces repo-root-relative output
-        // regardless of our cwd, matching `git diff --name-only` above.
-        var untracked = try runGit(allocator, git_path, top_level_dir, &.{ "ls-files", "--others", "--exclude-standard", "--full-name" });
-        defer untracked.stdout.deinit();
-        defer untracked.stderr.deinit();
-        if (untracked.spawn_failed) return error.GitFailed;
-        if (untracked.ok) {
-            appendPaths(&set, git_root, untracked.stdout.items);
-        }
     } else {
         var diff = try runGit(allocator, git_path, top_level_dir, &.{ "diff", "--name-only", since, "--" });
         defer diff.stdout.deinit();
@@ -430,6 +421,22 @@ fn getChangedFiles(
             return error.GitFailed;
         }
         appendPaths(&set, git_root, diff.stdout.items);
+    }
+
+    // Untracked files are always considered changed — a brand-new file
+    // did not exist at HEAD or at `since`, so it is "changed since"
+    // either. `git diff --name-only` never reports untracked files, so
+    // supplement with ls-files in both branches above. `--full-name`
+    // forces repo-root-relative output regardless of our cwd, matching
+    // `git diff --name-only`.
+    {
+        var untracked = try runGit(allocator, git_path, top_level_dir, &.{ "ls-files", "--others", "--exclude-standard", "--full-name" });
+        defer untracked.stdout.deinit();
+        defer untracked.stderr.deinit();
+        if (untracked.spawn_failed) return error.GitFailed;
+        if (untracked.ok) {
+            appendPaths(&set, git_root, untracked.stdout.items);
+        }
     }
 
     return set;

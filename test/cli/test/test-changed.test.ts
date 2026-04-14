@@ -228,6 +228,38 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("--changed=<ref> includes untracked files", async () => {
+    using dir = tempDir("test-changed-ref-untracked", fixture);
+    initRepo(String(dir));
+
+    // Two commits so HEAD~1 is valid; working tree is clean.
+    appendFileSync(join(String(dir), "src", "helper.ts"), "// v2\n");
+    git(String(dir), "add", "-A");
+    git(String(dir), "commit", "-q", "-m", "v2");
+
+    // Create a brand-new untracked test file. It did not exist at
+    // HEAD~1, so it is "changed since HEAD~1" even though
+    // `git diff --name-only HEAD~1` never lists untracked files.
+    writeFileSync(
+      join(String(dir), "new.test.ts"),
+      `import { test, expect } from "bun:test";\ntest("new", () => expect(1).toBe(1));\n`,
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed=HEAD~1"],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // a.test.ts (helper.ts changed between HEAD~1 and HEAD) and the
+    // brand-new untracked file should both run.
+    expect(ranFiles(stderr, [...names, "new.test.ts"])).toEqual(["a.test.ts", "new.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("change inside node_modules does not select any test", async () => {
     using dir = tempDir("test-changed-nm", {
       "package.json": JSON.stringify({ name: "nm", type: "module" }),

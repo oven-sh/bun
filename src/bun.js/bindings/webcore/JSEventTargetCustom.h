@@ -42,9 +42,17 @@ public:
     }
 
     bool isNull() const { return !m_wrapped; }
-    EventTarget& wrapped() { ASSERT(m_wrapped); return *m_wrapped; }
+    EventTarget& wrapped()
+    {
+        ASSERT(m_wrapped);
+        return *m_wrapped;
+    }
 
-    operator JSC::JSObject&() { ASSERT(m_wrapper); return *m_wrapper; }
+    operator JSC::JSObject&()
+    {
+        ASSERT(m_wrapper);
+        return *m_wrapper;
+    }
 
 private:
     EventTarget* m_wrapped { nullptr };

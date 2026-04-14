@@ -3,9 +3,17 @@
 // bounded. AbortSignal goes through the same EventTarget listener path, so
 // exercising EventTarget directly covers both.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 
-test("addEventListener/removeEventListener on a shared target doesn't leak", async () => {
+// Skipped on debug (ASAN) builds: sanitizer instrumentation slows the
+// loop ~50x, which gives JSC enough wall-clock time to run a GC under
+// its existing heap-growth heuristics — masking the regression signal
+// this PR's `reportExtraMemory` nudge addresses. Observed empirically:
+// unfixed and fixed debug builds produce near-identical RSS growth.
+// Release builds, where the loop finishes in ~1s and JSC doesn't get
+// scheduled to collect, are where the ~3x gap (~42MB unfixed vs ~15MB
+// fixed) shows up and this test can discriminate.
+test.skipIf(isDebug)("addEventListener/removeEventListener on a shared target doesn't leak", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -44,14 +52,8 @@ test("addEventListener/removeEventListener on a shared target doesn't leak", asy
   const { before, after } = JSON.parse(trimmed);
   const growthMB = (after - before) / 1024 / 1024;
 
-  // Before the fix, growth was ~42MB for 500k add/remove pairs on top of
-  // a ~32MB baseline. After the fix RSS stays essentially flat (~15MB
-  // short-lived working-set growth). Anything under the ceiling means
-  // we aren't on the unbounded path. ASAN adds per-allocation red-zones
-  // + shadow memory, so give that lane more headroom while still being
-  // well below the unbounded baseline (the regression would grow
-  // proportionally to ITER regardless of build mode).
-  const ceilingMB = isASAN ? 75 : 25;
-  expect(growthMB).toBeLessThan(ceilingMB);
+  // Without fix: ~42MB. With fix: ~15MB. 25MB is well clear of the
+  // working-set noise while still inside the regression range.
+  expect(growthMB).toBeLessThan(25);
   expect(exitCode).toBe(0);
 });

@@ -950,14 +950,17 @@ void populateESMExports(
 
     // Bun's interpretation of the "__esModule" annotation:
     //
-    //   The default export is always set to the module.exports object,
-    //   matching Node.js behavior. The __esModule annotation only affects
-    //   whether __esModule itself appears as a named export.
+    //   The ESM `default` binding is always set to the whole `module.exports`
+    //   object, matching Node.js behavior. The `__esModule` annotation only
+    //   affects whether `__esModule` itself appears as a named export.
     //
-    //   When __esModule is present and truthy, we filter it from named
-    //   exports (it is accessible via .default.__esModule instead).
-    //   When __esModule is not present, all properties are exposed as
-    //   named exports.
+    //   The name `"default"` is always reserved for the synthetic ESM default
+    //   binding and is filtered out of named exports on every path (see the
+    //   `vm.propertyNames->defaultKeyword` checks below). Symbols, private
+    //   names, and `constructor` are also filtered.
+    //
+    //   When `__esModule` is present and truthy, we additionally filter it
+    //   from named exports (it is accessible via `.default.__esModule`).
     //
     // https://stackoverflow.com/questions/50943704/whats-the-purpose-of-object-definepropertyexports-esmodule-value-0
     // https://github.com/nodejs/node/issues/40891
@@ -965,7 +968,7 @@ void populateESMExports(
     // https://github.com/evanw/esbuild/issues/1591
     // https://github.com/oven-sh/bun/issues/3383
     // https://github.com/oven-sh/bun/issues/27810
-    bool needsToAssignDefault = true;
+    // https://github.com/oven-sh/bun/issues/29304
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* exports = result.getObject()) {
@@ -1107,10 +1110,9 @@ void populateESMExports(
         }
     }
 
-    if (needsToAssignDefault) {
-        exportNames.append(vm.propertyNames->defaultKeyword);
-        exportValues.append(result);
-    }
+    // Always assign the whole module.exports object as the ESM default binding.
+    exportNames.append(vm.propertyNames->defaultKeyword);
+    exportValues.append(result);
 }
 
 void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,

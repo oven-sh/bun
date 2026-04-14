@@ -1,59 +1,49 @@
 // https://github.com/oven-sh/bun/issues/29301
-// Regression: listener add/remove churn on a long-lived target must keep RSS
-// bounded. AbortSignal goes through the same EventTarget listener path, so
-// exercising EventTarget directly covers both.
+// Regression: addEventListener must report its native allocation cost to
+// JSC so GC is scheduled proportional to listener churn. `AbortSignal`
+// goes through the same EventTarget listener path, so exercising
+// EventTarget directly covers both.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe } from "harness";
 
-// Skipped on any sanitizer/debug build: ASAN (or the debug profile,
-// which also enables ASAN) slows the loop ~50x, which gives JSC enough
-// wall-clock time to run a GC under its existing heap-growth heuristics
-// and masks the regression signal this PR's `reportExtraMemory` nudge
-// addresses. Observed empirically: instrumented builds produce
-// near-identical RSS growth fixed vs unfixed. Release builds, where the
-// loop finishes in ~1s before JSC naturally collects, are where the
-// ~3x gap (~42MB unfixed vs ~15MB fixed) shows up.
-test.skipIf(isDebug || isASAN)("addEventListener/removeEventListener on a shared target doesn't leak", async () => {
+test("addEventListener reports native listener cost to JSC", async () => {
+  // Each successful addEventListener reports 512 bytes of extra memory
+  // to JSC, visible via `process.memoryUsage().external`. Without the
+  // fix, 10k adds produces zero delta; with the fix, ~5.12MB.
+  // Measured in a subprocess so baselines aren't contaminated by the
+  // test runner's own listener churn.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
-      "--smol",
       "-e",
       `
       const target = new EventTarget();
-      const ITER = 500_000;
-      const before = process.memoryUsage().rss;
-      for (let i = 0; i < ITER; i++) {
+      const before = process.memoryUsage().external;
+      for (let i = 0; i < 10000; i++) {
         const fn = () => {};
         target.addEventListener('abort', fn);
         target.removeEventListener('abort', fn);
       }
-      const after = process.memoryUsage().rss;
-      console.log(JSON.stringify({ before, after }));
+      const after = process.memoryUsage().external;
+      console.log(JSON.stringify({ before, after, delta: after - before }));
       `,
     ],
     env: bunEnv,
     stderr: "pipe",
   });
 
-  // Drain stderr alongside stdout. ASAN builds emit `WARNING: ASAN
-  // interferes with JSC signal handlers...` and leak reports there; if
-  // we don't read it the ~64KB pipe buffer fills and the subprocess
-  // deadlocks on its next write.
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Guard before JSON.parse so a subprocess crash surfaces stderr +
-  // exit code in the failure instead of an opaque SyntaxError on "".
   const trimmed = stdout.trim();
   if (trimmed === "") {
     throw new Error(`subprocess produced no stdout (exitCode=${exitCode})\n--- stderr ---\n${stderr}`);
   }
 
-  const { before, after } = JSON.parse(trimmed);
-  const growthMB = (after - before) / 1024 / 1024;
+  const { delta } = JSON.parse(trimmed);
 
-  // Without fix: ~42MB. With fix: ~15MB. 25MB is well clear of the
-  // working-set noise while still inside the regression range.
-  expect(growthMB).toBeLessThan(25);
+  // 10k addEventListener calls at 512 bytes each = 5,120,000 bytes.
+  // A generous lower bound that's still well clear of the zero the
+  // unfixed build produces.
+  expect(delta).toBeGreaterThan(1_000_000);
   expect(exitCode).toBe(0);
 });

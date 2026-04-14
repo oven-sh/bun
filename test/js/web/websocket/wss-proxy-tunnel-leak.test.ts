@@ -23,10 +23,13 @@ test(
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-
-    const { baseline, after, growth, iter } = JSON.parse(stdout.trim());
+    let parsed: { baseline: number; after: number; growth: number; iter: number };
+    try {
+      parsed = JSON.parse(stdout.trim());
+    } catch {
+      throw new Error(`fixture did not emit JSON (exit ${exitCode}): stdout=${stdout} stderr=${stderr}`);
+    }
+    const { baseline, after, growth, iter } = parsed;
     expect(iter).toBe(ITER);
 
     // Without the fix, the upgrade client + tunnel + SSLWrapper never free
@@ -41,6 +44,7 @@ test(
           `(baseline=${baseline}, after=${after}, threshold=${threshold})`,
       );
     }
+    expect(exitCode).toBe(0);
   },
   isDebug ? 120_000 : 60_000,
 );

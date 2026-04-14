@@ -32,6 +32,9 @@ if (process.argv[2] === "server") {
       const text = buf.toString();
       const eoh = text.indexOf("\r\n\r\n");
       if (eoh < 0) return; // wait for more — CONNECT may span multiple reads
+      // Removing the only 'data' listener leaves the socket in flowing mode;
+      // pause it so any bytes that arrive before pipe() is attached aren't lost.
+      client.pause();
       client.removeListener("data", onData);
       const first = text.slice(0, text.indexOf("\r\n"));
       const m = first.match(/^CONNECT\s+([^:]+):(\d+)\s+HTTP/);
@@ -46,6 +49,7 @@ if (process.argv[2] === "server") {
         if (rest.length) upstream.write(rest);
         client.pipe(upstream);
         upstream.pipe(client);
+        client.resume();
       });
       upstream.on("error", () => client.destroy());
       upstream.on("close", () => client.destroy());
@@ -64,15 +68,18 @@ if (process.argv[2] === "server") {
   await using child = Bun.spawn({
     cmd: [process.execPath, import.meta.path, "server"],
     env: process.env,
-    // Don't inherit — the parent test asserts stderr === "" on this process,
-    // and inherited fds would let server-side noise leak into that buffer.
+    // Don't inherit — keeps server-side noise out of this process's stdio so
+    // the parent test only sees the JSON growth report on stdout.
     stdout: "ignore",
     stderr: "ignore",
     ipc(msg) {
       ready.resolve(msg);
     },
   });
-  const { wss: wssPort, proxy: proxyPort } = await ready.promise;
+  const { wss: wssPort, proxy: proxyPort } = await Promise.race([
+    ready.promise,
+    child.exited.then(code => Promise.reject(new Error(`server fixture exited before sending ports (code ${code})`))),
+  ]);
   const wssUrl = `wss://localhost:${wssPort}/`;
   const proxyUrl = `http://127.0.0.1:${proxyPort}`;
 

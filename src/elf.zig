@@ -353,14 +353,16 @@ fn alignUp(value: u64, alignment: u64) u64 {
 /// that rejects generic binaries, and rewriting PT_INTERP to it would break
 /// locally-run `bun build --compile` output. See #29290.
 ///
-/// Checks:
-///   1. The running bun process's own PT_INTERP (via `/proc/self/exe`). NixOS
+/// Checks (any one is sufficient):
+///   1. `BUN_DEBUG_FORCE_NIX_HOST` — test-only override used by #29290's
+///      regression test to exercise this branch without writing to `/etc`.
+///   2. The running bun process's own PT_INTERP (via `/proc/self/exe`). NixOS
 ///      `autoPatchelfHook` rewrites installed binaries to `/nix/store/...`
 ///      loaders; this is the most precise signal.
-///   2. `/etc/NIXOS` — canonical NixOS marker, present on every NixOS system
+///   3. `/etc/NIXOS` — canonical NixOS marker, present on every NixOS system
 ///      regardless of how bun itself was installed (e.g. a statically-linked
 ///      bun built elsewhere).
-///   3. `/gnu/store` directory — Guix's equivalent of /nix/store.
+///   4. `/gnu/store` directory — Guix's equivalent of /nix/store.
 ///
 /// Result is cached — this is called once per `bun build --compile`.
 ///
@@ -373,6 +375,10 @@ fn hostUsesNixStoreInterpreter() bool {
     const cache = struct {
         var computed: std.atomic.Value(u8) = .init(0); // 0 unknown, 1 no, 2 yes
         fn check() bool {
+            // Test-only override: lets #29290's regression test force the
+            // Nix-host branch without mutating `/etc/NIXOS` on the shared
+            // rootfs (which would poison concurrent test workers).
+            if (bun.env_var.BUN_DEBUG_FORCE_NIX_HOST.get()) return true;
             if (selfInterpIsNixStore()) return true;
             // Canonical NixOS marker — present even when bun itself was not
             // installed via Nix (statically-linked bun, downloaded tarball).

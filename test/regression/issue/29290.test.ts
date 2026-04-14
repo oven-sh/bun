@@ -16,7 +16,7 @@
 // https://github.com/oven-sh/bun/issues/29290
 
 import { expect, test } from "bun:test";
-import { chmodSync, cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readFileSync, readSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
 
@@ -52,17 +52,29 @@ function readInterp(buf: Buffer): string | null {
   return null;
 }
 
+// Read up to the first 4 KiB of a file (enough for PT_INTERP, which always
+// lives in the first ELF page). The bun binary is ~1.3 GB in debug builds,
+// so `readFileSync` here would be wasteful; mirror what the Zig helper does.
+function readHead(path: string, bytes = 4096): Buffer {
+  const fd = openSync(path, "r");
+  try {
+    const buf = Buffer.alloc(bytes);
+    const n = readSync(fd, buf, 0, bytes, 0);
+    return buf.subarray(0, n);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 // Mirror of `hostUsesNixStoreInterpreter()` in src/elf.zig: true iff the
-// running bun would skip the FHS rewrite for this host. If any one signal is
-// already set, this file's tests cannot drive the decision (the first test
-// toggles it via `/etc/NIXOS`; the companion assumes the runtime returns false
-// so the rewrite fires). Test decisions must stay in lockstep with the
-// runtime's — if these two drift, tests pass/fail for the wrong reason.
+// running bun would skip the FHS rewrite for this host. Test decisions must
+// stay in lockstep with the runtime's — if these two drift, tests pass/fail
+// for the wrong reason.
 function hostLooksNix(): boolean {
   if (existsSync("/etc/NIXOS")) return true;
   if (existsSync("/gnu/store")) return true;
   try {
-    const selfInterp = readInterp(readFileSync(bunExe()));
+    const selfInterp = readInterp(readHead(bunExe()));
     if (selfInterp && (selfInterp.startsWith("/nix/store/") || selfInterp.startsWith("/gnu/store/"))) {
       return true;
     }
@@ -70,26 +82,7 @@ function hostLooksNix(): boolean {
   return false;
 }
 
-// Can we write to /etc? Root-owned in typical CI containers; read-only in
-// some sandboxes. Skip if we can't — the test isn't meaningful otherwise.
-function canWriteEtc() {
-  if (!isLinux) return false;
-  if (!patchelf) return false;
-  if (!existsSync(ldso)) return false;
-  // Already looks like Nix/Guix — test would be redundant, and writing
-  // `/etc/NIXOS` on top of real NixOS would clobber real system state.
-  if (hostLooksNix()) return false;
-  try {
-    const probe = "/etc/.bun-29290-probe";
-    writeFileSync(probe, "");
-    rmSync(probe, { force: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-test.skipIf(!canWriteEtc())(
+test.skipIf(!isLinux || !patchelf || !existsSync(ldso) || hostLooksNix())(
   "bun build --compile preserves /nix/store PT_INTERP on NixOS hosts (#29290)",
   async () => {
     using dir = tempDir("nix-host-interp", {
@@ -113,41 +106,36 @@ test.skipIf(!canWriteEtc())(
     }
     expect(readInterp(readFileSync(fakeNixBun))).toBe(fakeNixInterp);
 
-    // Mark the host as NixOS. The running bun reads `/etc/NIXOS` at
-    // `bun build --compile` time to decide whether to normalize PT_INTERP.
-    writeFileSync("/etc/NIXOS", "");
-    try {
-      const out = join(cwd, "out");
-      const r = Bun.spawnSync({
-        cmd: [
-          bunExe(),
-          "build",
-          "--compile",
-          "--compile-executable-path",
-          fakeNixBun,
-          join(cwd, "in.js"),
-          "--outfile",
-          out,
-        ],
-        env: bunEnv,
-        cwd,
-        stderr: "pipe",
-        stdout: "pipe",
-      });
-      const stderr = r.stderr.toString();
-      expect(stderr).not.toContain("error:");
-      expect(r.exitCode).toBe(0);
+    // Force the spawned bun's host-detection to say "yes, Nix" without
+    // mutating the shared rootfs. `BUN_DEBUG_FORCE_NIX_HOST=1` is a
+    // test-only hook in `hostUsesNixStoreInterpreter()` that short-circuits
+    // to true; scope is this one child process via the env map.
+    const out = join(cwd, "out");
+    const r = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--compile-executable-path",
+        fakeNixBun,
+        join(cwd, "in.js"),
+        "--outfile",
+        out,
+      ],
+      env: { ...bunEnv, BUN_DEBUG_FORCE_NIX_HOST: "1" },
+      cwd,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const stderr = r.stderr.toString();
+    expect(stderr).not.toContain("error:");
+    expect(r.exitCode).toBe(0);
 
-      // On a NixOS host the output must keep the /nix/store interpreter from
-      // the template — rewriting to FHS would point at a stub-ld that
-      // rejects generic binaries and #29290 reappears.
-      const interp = readInterp(readFileSync(out));
-      expect(interp).toBe(fakeNixInterp);
-    } finally {
-      try {
-        rmSync("/etc/NIXOS", { force: true });
-      } catch {}
-    }
+    // On a NixOS host the output must keep the /nix/store interpreter from
+    // the template — rewriting to FHS would point at a stub-ld that rejects
+    // generic binaries and #29290 reappears.
+    const interp = readInterp(readFileSync(out));
+    expect(interp).toBe(fakeNixInterp);
   },
   180_000,
 );

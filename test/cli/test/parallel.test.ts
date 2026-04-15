@@ -46,6 +46,7 @@ test("--parallel surfaces failures and exits non-zero", async () => {
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toContain("--parallel: 2 workers");
   expect(stderr).toContain("bad.test.js");
   expect(stderr).toContain("1 pass");
   expect(stderr).toContain("1 fail");
@@ -144,6 +145,7 @@ test("--isolate-recycle-after does not report recycles as crashes", async () => 
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toContain("--parallel: 2 workers");
   expect(stderr).not.toContain("crashed");
   expect(stderr).toContain("4 pass");
   expect(stderr).toContain("0 fail");
@@ -168,6 +170,7 @@ test("--parallel prints per-test lines contiguously per file", async () => {
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toContain("--parallel: 2 workers");
   // Per-test lines appear (matching serial output, not just per-file summary).
   expect(stderr).toContain("alpha-one");
   expect(stderr).toContain("alpha-two");
@@ -200,6 +203,7 @@ test("--parallel aggregates failure summary across workers", async () => {
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toContain("--parallel: 4 workers");
   expect(stderr).toContain("24 pass");
   expect(stderr).toContain("1 fail");
   // The repeat-at-end section reprints the failure line (so it appears twice).
@@ -221,7 +225,8 @@ test("--parallel --reporter=junit produces a merged report covering all files", 
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("--parallel: 2 workers");
   expect(exitCode).toBe(1);
 
   const xml = await Bun.file(String(dir) + "/out.xml").text();

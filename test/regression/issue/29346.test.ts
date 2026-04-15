@@ -6,19 +6,10 @@ import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/29346
 //
-// When a handle returned via an out-parameter lands in the first 2 GiB of
-// address space, `ffiRead.ptr(...)` boxes it through `JSValue.jsNumber(u64)`
-// which picks an Int32 encoding. The pre-fix `JSVALUE_TO_PTR` in FFI.h took
-// the double path for every non-null non-typed-array JSValue, which
-// sign-extended the Int32 into `0xFFFFFFFFxxxxxxxx` and segfaulted the
-// callee at `0xFFFFFFFFFFFFFFFF` on Linux x64. The fix (#25045) added an
-// explicit `JSVALUE_IS_INT32` branch; this test exercises exactly the
-// pattern described in the bug report (open → read handle via `ffiRead.ptr`
-// → pass back as `ptr` arg).
-//
-// Linux-only because reliably allocating a pointer inside the first 2 GiB
-// (so that `JSValue.jsNumber(u64)` picks the Int32 encoding) requires
-// `MAP_FIXED_NOREPLACE`.
+// Exercises the Int32 branch of `JSVALUE_TO_PTR`: open → read the handle
+// back with `ffiRead.ptr` (which picks an Int32 JSValue when the pointer
+// fits in 32 bits) → pass it in as a `ptr` arg. Linux-only because
+// landing a pointer inside the first 2 GiB needs `MAP_FIXED_NOREPLACE`.
 test.skipIf(!isLinux)("JS number argument marshals correctly as a `ptr`", async () => {
   using dir = tempDir("issue-29346", {
     "lib.c": `\

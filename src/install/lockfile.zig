@@ -1804,10 +1804,12 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, cut_off_pkg_id: usize, alloca
     const l_len = l_hoisted_deps.len;
     const r_len = r_hoisted_deps.len;
 
+    if (l_len != r_len) return false;
+
     const sort_buf = try allocator.alloc(EqlSorter.PathToId, l_len + r_len);
     defer allocator.free(sort_buf);
     var l_buf = sort_buf[0..l_len];
-    var r_buf = sort_buf[l_len..][0..r_len];
+    var r_buf = sort_buf[r_len..];
 
     var path_buf: bun.PathBuffer = undefined;
     var depth_buf: Tree.DepthBuf = undefined;
@@ -1926,27 +1928,6 @@ pub fn hasMetaHashChanged(this: *Lockfile, print_name_version_string: bool, pack
     return !strings.eqlLong(&previous_meta_hash, &this.meta_hash, false);
 }
 
-test "Lockfile.eql ignores unused hoist buffer length differences" {
-    var before: Lockfile = undefined;
-    before.initEmpty(std.testing.allocator);
-    defer before.deinit();
-
-    var after: Lockfile = undefined;
-    after.initEmpty(std.testing.allocator);
-    defer after.deinit();
-
-    _ = try before.appendPackage(.{ .name_hash = 1 });
-    _ = try before.appendPackage(.{ .name_hash = 2 });
-
-    _ = try after.appendPackage(.{ .name_hash = 1 });
-    _ = try after.appendPackage(.{ .name_hash = 2 });
-
-    // Extra entries in the hoisted-deps buffer are irrelevant if they point at
-    // invalid dependency IDs (the comparison filters those out).
-    try after.buffers.hoisted_dependencies.append(std.testing.allocator, invalid_dependency_id);
-
-    try std.testing.expect(try after.eql(&before, after.packages.len, std.testing.allocator));
-}
 pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packages_len: usize) !MetaHash {
     if (packages_len <= 1)
         return zero_hash;

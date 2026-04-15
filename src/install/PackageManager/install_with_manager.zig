@@ -762,8 +762,26 @@ pub fn installWithManager(
 
     if (manager.options.enable.frozen_lockfile and load_result != .not_found) frozen_lockfile: {
         if (load_result.loadedFromTextLockfile()) {
-            if (bun.handleOom(manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator))) {
-                break :frozen_lockfile;
+            const file = bun.sys.File.openat(bun.FD.cwd(), "bun.lock", bun.O.RDONLY, 0).unwrap() catch null;
+            if (file) |f| {
+                const disk_bytes = f.readToEnd(manager.allocator).unwrap() catch null;
+                if (disk_bytes) |disk| {
+                    defer manager.allocator.free(disk);
+
+                    var writer_allocating = std.Io.Writer.Allocating.init(manager.allocator);
+                    defer writer_allocating.deinit();
+                    const writer = &writer_allocating.writer;
+
+                    TextLockfile.Stringifier.saveFromBinary(manager.allocator, manager.lockfile, &load_result, &manager.options, writer) catch {};
+                    const generated_bytes = writer_allocating.toOwnedSlice() catch null;
+
+                    if (generated_bytes) |generated| {
+                        defer manager.allocator.free(generated);
+                        if (strings.eqlLong(disk, generated, false)) {
+                            break :frozen_lockfile;
+                        }
+                    }
+                }
             }
         } else {
             if (!(manager.lockfile.hasMetaHashChanged(PackageManager.verbose_install or manager.options.do.print_meta_hash_string, packages_len_before_install) catch false)) {

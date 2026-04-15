@@ -45,4 +45,5 @@ typedef (object or DOMString) AlgorithmIdentifier;
     Promise<any> exportKey(KeyFormat format, CryptoKey key);
     [CallWith=CurrentGlobalObject] Promise<any> wrapKey(KeyFormat format, CryptoKey key, CryptoKey wrappingKey, AlgorithmIdentifier wrapAlgorithm);
     [CallWith=CurrentGlobalObject] Promise<CryptoKey> unwrapKey(KeyFormat format, BufferSource wrappedKey, CryptoKey unwrappingKey, AlgorithmIdentifier unwrapAlgorithm, AlgorithmIdentifier unwrappedKeyAlgorithm, boolean extractable, sequence<CryptoKeyUsage> keyUsages);
+    [CallWith=CurrentGlobalObject] static boolean supports(DOMString operation, AlgorithmIdentifier algorithm);
 };

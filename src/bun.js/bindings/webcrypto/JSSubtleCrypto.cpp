@@ -126,6 +126,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_importKey);
 static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_exportKey);
 static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_wrapKey);
 static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_unwrapKey);
+static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoConstructorFunction_supports);
 
 // Attributes
 
@@ -180,6 +181,12 @@ template<> void JSSubtleCryptoDOMConstructor::initializeProperties(VM& vm, JSDOM
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSSubtleCrypto::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+
+    // WICG "Modern Algorithms in the Web Cryptography API" defines supports()
+    // as a static on the SubtleCrypto interface object, i.e.
+    // `SubtleCrypto.supports(...)` rather than `subtle.supports(...)`.
+    JSFunction* supportsFunction = JSFunction::create(vm, &globalObject, 2, "supports"_s, jsSubtleCryptoConstructorFunction_supports, ImplementationVisibility::Public);
+    putDirect(vm, Identifier::fromString(vm, "supports"_s), supportsFunction, 0);
 }
 
 /* Hash table for prototype */
@@ -596,6 +603,27 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_unwrapKeyBody(
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_unwrapKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_unwrapKeyBody>(*lexicalGlobalObject, *callFrame, "unwrapKey");
+}
+
+// WICG "Modern Algorithms in the Web Cryptography API" defines supports() as
+// a static on the SubtleCrypto interface object. It is installed in
+// JSSubtleCryptoDOMConstructor::initializeProperties() and does not live on
+// the prototype, so we do not go through IDLOperation<JSSubtleCrypto> (which
+// would require a SubtleCrypto `this`). The implementation does not touch
+// any instance state — it is a pure feature-detect over (operation, algorithm).
+JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoConstructorFunction_supports, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (callFrame->argumentCount() < 2) [[unlikely]]
+        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto operation = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
+    auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument1.value());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(SubtleCrypto::supports(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), operation, WTF::move(algorithm)))));
 }
 
 JSC::GCClient::IsoSubspace* JSSubtleCrypto::subspaceForImpl(JSC::VM& vm)

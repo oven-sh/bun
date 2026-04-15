@@ -2406,6 +2406,14 @@ private:
         case CryptoAlgorithmIdentifier::X25519:
             write(CryptoAlgorithmIdentifierTag::X25519);
             break;
+        case CryptoAlgorithmIdentifier::SHA3_256:
+        case CryptoAlgorithmIdentifier::SHA3_384:
+        case CryptoAlgorithmIdentifier::SHA3_512:
+            // SHA-3 algorithms are currently only used as digest functions and
+            // are not associated with serializable CryptoKey instances. If this
+            // changes (e.g. when HMAC/SHA-3 or KEM keys land), add new tags.
+            RELEASE_ASSERT_NOT_REACHED();
+            break;
         case CryptoAlgorithmIdentifier::None: {
             RELEASE_ASSERT_NOT_REACHED();
             break;

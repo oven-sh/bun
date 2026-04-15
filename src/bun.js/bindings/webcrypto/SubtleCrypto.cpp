@@ -87,7 +87,21 @@ static ExceptionOr<CryptoAlgorithmIdentifier> toHashIdentifier(JSGlobalObject& s
     auto digestParams = normalizeCryptoAlgorithmParameters(state, algorithmIdentifier, Operations::Digest);
     if (digestParams.hasException())
         return digestParams.releaseException();
-    return digestParams.returnValue()->identifier;
+    auto identifier = digestParams.returnValue()->identifier;
+    // SHA-3 is only implemented as a top-level digest operation in this
+    // slice of the WICG "Modern Algorithms" spec. It is NOT yet wired into
+    // OpenSSLUtilities::digestAlgorithm(), CryptoKeyHMAC::getKeyLengthFromHash(),
+    // or SerializedScriptValue, so accepting SHA-3 as a hash sub-algorithm for
+    // HMAC / RSA / ECDSA would create broken CryptoKey instances that crash
+    // at sign() or postMessage() time. Reject the name up front so callers
+    // get a clean NotSupportedError at importKey()/generateKey() time and can
+    // use supports() to progressively adopt it when the rest of the plumbing
+    // lands.
+    if (identifier == CryptoAlgorithmIdentifier::SHA3_256
+        || identifier == CryptoAlgorithmIdentifier::SHA3_384
+        || identifier == CryptoAlgorithmIdentifier::SHA3_512)
+        return Exception { NotSupportedError };
+    return identifier;
 }
 
 static bool isRSAESPKCSWebCryptoDeprecated(JSGlobalObject& state)
@@ -204,6 +218,9 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::SHA_256:
         case CryptoAlgorithmIdentifier::SHA_384:
         case CryptoAlgorithmIdentifier::SHA_512:
+        case CryptoAlgorithmIdentifier::SHA3_256:
+        case CryptoAlgorithmIdentifier::SHA3_384:
+        case CryptoAlgorithmIdentifier::SHA3_512:
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
@@ -381,6 +398,9 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::SHA_256:
         case CryptoAlgorithmIdentifier::SHA_384:
         case CryptoAlgorithmIdentifier::SHA_512:
+        case CryptoAlgorithmIdentifier::SHA3_256:
+        case CryptoAlgorithmIdentifier::SHA3_384:
+        case CryptoAlgorithmIdentifier::SHA3_512:
             return Exception { NotSupportedError };
         case CryptoAlgorithmIdentifier::None:
             return Exception { NotSupportedError };
@@ -801,6 +821,124 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
     };
 
     algorithm->digest(WTF::move(data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
+}
+
+// WICG "Modern Algorithms in the Web Cryptography API":
+// https://wicg.github.io/webcrypto-modern-algos/#SubtleCrypto-method-supports
+//
+// Synchronously report whether this SubtleCrypto implementation supports
+// a given (operation, algorithm) pair. supports() has to match the exact
+// dispatch logic of the corresponding method so that callers can use it for
+// progressive enhancement without hitting runtime NotSupportedError for
+// algorithms that supports() promised. Any exception produced by the
+// normalization step (or the subsequent method-specific checks) is swallowed
+// and surfaced as false — supports() itself never rejects or throws other
+// than for missing required arguments.
+static bool normalizesWithoutException(JSGlobalObject& state, WebCore::SubtleCrypto::AlgorithmIdentifier& alg, Operations op)
+{
+    auto& vm = state.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // normalizeCryptoAlgorithmParameters takes the identifier by value;
+    // we clone the variant so callers can retry with a different op.
+    WebCore::SubtleCrypto::AlgorithmIdentifier copy = alg;
+    auto params = normalizeCryptoAlgorithmParameters(state, WTF::move(copy), op);
+    if (scope.exception()) {
+        scope.clearException();
+        return false;
+    }
+    return !params.hasException();
+}
+
+bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation, AlgorithmIdentifier&& algorithmIdentifier)
+{
+    auto& vm = state.vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // Simple cases: the operation maps to a single normalize bucket. The
+    // method's runtime behaviour is then "normalize succeeded → run", so
+    // supports() returns true iff normalization succeeds.
+    if (operation == "encrypt"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::Encrypt);
+    if (operation == "decrypt"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::Decrypt);
+    if (operation == "sign"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::Sign);
+    if (operation == "verify"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::Verify);
+    if (operation == "digest"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::Digest);
+    if (operation == "generateKey"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::GenerateKey);
+    if (operation == "deriveBits"_s || operation == "deriveKey"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::DeriveBits);
+    if (operation == "importKey"_s)
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::ImportKey);
+
+    // exportKey has no dedicated normalization — the real exportKey() only
+    // checks the CryptoKey's algorithm against isSupportedExportKey(). To
+    // make supports() answer symmetric questions ("can this algorithm be
+    // exported?"), we need to first recognise the algorithm at all and then
+    // run it through the same isSupportedExportKey() gate. Algorithms like
+    // HKDF/PBKDF2 that normalize as importable but are explicitly excluded
+    // from isSupportedExportKey() must report false.
+    if (operation == "exportKey"_s) {
+        // Resolve the algorithm name to an identifier without running any
+        // operation-specific validation.
+        if (std::holds_alternative<String>(algorithmIdentifier)) {
+            auto identifier = CryptoAlgorithmRegistry::singleton().identifier(std::get<String>(algorithmIdentifier));
+            if (!identifier)
+                return false;
+            return isSupportedExportKey(state, *identifier);
+        }
+        // Dictionary form: pull out the "name" field.
+        auto& value = std::get<JSC::Strong<JSC::JSObject>>(algorithmIdentifier);
+        JSValue nameValue = value.get()->get(&state, vm.propertyNames->name);
+        if (scope.exception()) {
+            scope.clearException();
+            return false;
+        }
+        if (!nameValue.isString())
+            return false;
+        auto name = nameValue.toWTFString(&state);
+        if (scope.exception()) {
+            scope.clearException();
+            return false;
+        }
+        auto identifier = CryptoAlgorithmRegistry::singleton().identifier(name);
+        if (!identifier)
+            return false;
+        return isSupportedExportKey(state, *identifier);
+    }
+
+    // wrapKey/unwrapKey dispatch in the real implementations:
+    //   wrapKey:  try WrapKey normalization; on failure, fall back to Encrypt.
+    //   unwrapKey: try UnwrapKey normalization; on failure, fall back to Decrypt.
+    // supports() must mirror that two-step fallback or it produces false
+    // negatives for AES-GCM/CBC/CTR/CFB and RSA-OAEP as wrapping algorithms.
+    if (operation == "wrapKey"_s) {
+        if (normalizesWithoutException(state, algorithmIdentifier, Operations::WrapKey))
+            return true;
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::Encrypt);
+    }
+    if (operation == "unwrapKey"_s) {
+        if (normalizesWithoutException(state, algorithmIdentifier, Operations::UnwrapKey))
+            return true;
+        return normalizesWithoutException(state, algorithmIdentifier, Operations::Decrypt);
+    }
+
+    // Operations introduced by the WICG "Modern Algorithms" spec that this
+    // slice does not implement yet. They flip to true in follow-up PRs.
+    if (operation == "getPublicKey"_s
+        || operation == "encapsulateBits"_s
+        || operation == "encapsulateKey"_s
+        || operation == "decapsulateBits"_s
+        || operation == "decapsulateKey"_s) {
+        return false;
+    }
+
+    // Unknown operation.
+    return false;
 }
 
 void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)

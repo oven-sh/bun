@@ -1,4 +1,4 @@
-import { CString, dlopen, FFIType, ptr, read as ffiRead } from "bun:ffi";
+import { CString, dlopen, read as ffiRead, FFIType, ptr } from "bun:ffi";
 import { jscDescribe } from "bun:jsc";
 import { beforeAll, expect, test } from "bun:test";
 import { join } from "node:path";

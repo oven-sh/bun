@@ -2360,8 +2360,12 @@ function onExit(signal) {
   startGroup(label, () => {
     for (const proc of activeSubprocesses) {
       try {
+        // Windows: detached+unref so taskkill outlives our process.exit()
+        // below — CreateProcess is synchronous inside spawn(), so the child
+        // exists before this returns. Avoids serializing N×timeout under
+        // --parallel like spawnSync would.
         if (isWindows)
-          spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore", timeout: 5000 });
+          spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore", detached: true }).unref();
         else proc.kill(9);
       } catch {}
     }

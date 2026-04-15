@@ -1630,6 +1630,55 @@ pub const BundleV2 = struct {
         };
     }
 
+    /// Build only the parse graph for the given entry points and return the
+    /// BundleV2 instance. No linking or code generation is performed; this is
+    /// used by `bun test --changed` to walk import records and compute which
+    /// test entry points transitively depend on a given set of source files.
+    ///
+    /// The returned BundleV2, its ThreadLocalArena, and its worker pool are
+    /// intentionally left alive for the remainder of the process. Tearing
+    /// the pool down via `deinitWithoutFreeingArena()` blocks on worker
+    /// shutdown and contends with the runtime VM's own parse threads; the
+    /// sole caller exec()s (watch mode) or exits shortly after, so the leak
+    /// is bounded. Dupe anything you need out of the graph before returning
+    /// to the caller.
+    pub fn scanModuleGraphFromCLI(
+        transpiler: *Transpiler,
+        alloc: std.mem.Allocator,
+        event_loop: EventLoop,
+        entry_points: []const []const u8,
+    ) !*BundleV2 {
+        var this = try BundleV2.init(
+            transpiler,
+            null,
+            alloc,
+            event_loop,
+            false,
+            null,
+            .init(),
+        );
+        this.unique_key = generateUniqueKey();
+
+        if (this.transpiler.log.hasErrors()) {
+            return error.BuildFailed;
+        }
+
+        // enqueueEntryPoints schedules the runtime task before any fallible
+        // allocation. If a later allocation fails we must still drain the
+        // pool so workers aren't left holding pointers into the caller's
+        // stack-allocated Transpiler.
+        this.enqueueEntryPoints(.normal, entry_points) catch |err| {
+            this.waitForParse();
+            return err;
+        };
+
+        // Even if entry point resolution produced errors we still wait for
+        // all enqueued parse tasks to finish so the graph is consistent.
+        this.waitForParse();
+
+        return this;
+    }
+
     pub fn generateFromBakeProductionCLI(
         entry_points: bake.production.EntryPointMap,
         server_transpiler: *Transpiler,

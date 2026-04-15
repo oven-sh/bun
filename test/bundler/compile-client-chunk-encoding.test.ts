@@ -14,26 +14,15 @@ test("compiled client-side chunk with non-ASCII source can be imported on the se
     "index.html": `<!doctype html><html><head><script type="module" src="./client.ts"></script></head><body></body></html>\n`,
     "server.ts": `
 import index from "./index.html";
-import { join } from "path";
 void index;
-console.log("DEBUG: embeddedFiles.length=", Bun.embeddedFiles.length);
-for (const f of Bun.embeddedFiles) console.log("DEBUG: file=", (f as any).name);
 const js = Bun.embeddedFiles.find(f => (f as any).name?.endsWith(".js"));
 if (!js) throw new Error("no client chunk in embeddedFiles");
-console.log("DEBUG: chosen js name=", (js as any).name);
 const src = await js.text();
-console.log("DEBUG: src length=", src.length);
-console.log("DEBUG: src has JP=", src.includes("こんにちは"));
-console.log("DEBUG: src head=", src.slice(0, 80));
-console.log("DEBUG: import.meta.dir=", import.meta.dir);
-const importPath = join(import.meta.dir, (js as any).name);
-console.log("DEBUG: importPath=", importPath);
-try {
-  await import(importPath);
-} catch (e) {
-  console.log("IMPORT_ERROR:", String(e));
-  throw e;
-}
+if (!src.includes("こんにちは")) throw new Error("client chunk source is not raw UTF-8; test premise broken");
+// Use a relative specifier — dynamic import of the absolute bunfs path
+// fails on Windows because the mount uses backslashes (B:\\~BUN\\root)
+// that the module loader does not normalize back to bunfs's internal form.
+await import("./" + (js as any).name);
 `,
   });
 
@@ -48,13 +37,9 @@ try {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdoutB, stderrB, exitCodeB] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    console.log("BUILD stdout:", stdoutB);
-    console.log("BUILD stderr:", stderrB);
-    console.log("BUILD exitCode:", exitCodeB);
-    console.log("BUILD outfile exists:", existsSync(outfile));
-    expect(stderrB).not.toContain("error:");
-    expect(exitCodeB).toBe(0);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
   }
 
   await using proc = Bun.spawn({
@@ -65,9 +50,6 @@ try {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  console.log("RUN stdout:", stdout);
-  console.log("RUN stderr:", stderr);
-  console.log("RUN exitCode:", exitCode);
   expect(stderr).toBe("");
   expect(stdout).toContain("CLIENT_OUTPUT: こんにちは");
   expect(exitCode).toBe(0);

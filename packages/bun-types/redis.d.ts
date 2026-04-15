@@ -3355,7 +3355,8 @@ declare module "bun" {
     bitop(
       operation: "AND" | "OR" | "XOR" | "NOT" | "and" | "or" | "xor" | "not",
       destkey: RedisClient.KeyLike,
-      ...keys: RedisClient.KeyLike[]
+      key: RedisClient.KeyLike,
+      ...moreKeys: RedisClient.KeyLike[]
     ): Promise<number>;
 
     /**
@@ -3400,7 +3401,7 @@ declare module "bun" {
      * await redis.pfcount("hll"); // 2
      * ```
      */
-    pfcount(...keys: RedisClient.KeyLike[]): Promise<number>;
+    pfcount(key: RedisClient.KeyLike, ...moreKeys: RedisClient.KeyLike[]): Promise<number>;
 
     /**
      * Merge multiple HyperLogLog values into a single one
@@ -3795,7 +3796,7 @@ declare module "bun" {
      * @param ids The IDs of the entries to delete
      * @returns Promise that resolves with the number of entries actually deleted
      */
-    xdel(key: RedisClient.KeyLike, ...ids: string[]): Promise<number>;
+    xdel(key: RedisClient.KeyLike, id: string, ...moreIds: string[]): Promise<number>;
 
     /**
      * Trim a stream to a given size or minimum ID

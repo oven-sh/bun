@@ -1,4 +1,7 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { tempDirWithFiles } from "harness";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 describe.concurrent("bundler", () => {
@@ -107,7 +110,7 @@ console.log(favicon);
                 "loader": "js",
                 "isEntry": true,
                 "headers": {
-                  "etag": "14Q4Q7Mm8TM",
+                  "etag": "efKwB-6QGwk",
                   "content-type": "text/javascript;charset=utf-8"
                 }
               },
@@ -117,7 +120,7 @@ console.log(favicon);
                 "loader": "html",
                 "isEntry": true,
                 "headers": {
-                  "etag": "hZ3u5t2Rmuo",
+                  "etag": "sJJm55rxM4I",
                   "content-type": "text/html;charset=utf-8"
                 }
               },
@@ -127,7 +130,7 @@ console.log(favicon);
                 "loader": "css",
                 "isEntry": true,
                 "headers": {
-                  "etag": "0k_h5oYVQlA",
+                  "etag": "4B9l6JnTRAU",
                   "content-type": "text/css;charset=utf-8"
                 }
               },
@@ -287,7 +290,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "18fAEMlKmOw",
+                  "etag": "xAZoSOIIQJ8",
                 },
                 "input": "home.html",
                 "isEntry": true,
@@ -297,7 +300,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "_Qy4EtlcGvs",
+                  "etag": "uIE6dXgvM-4",
                 },
                 "input": "home.html",
                 "isEntry": true,
@@ -307,7 +310,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/css;charset=utf-8",
-                  "etag": "6qg2qb7a2qo",
+                  "etag": "ZTZtbLd3364",
                 },
                 "input": "home.html",
                 "isEntry": true,
@@ -322,7 +325,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "-3e3gOCTAZg",
+                  "etag": "INLwcb4oxw8",
                 },
                 "input": "about.html",
                 "isEntry": true,
@@ -332,7 +335,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "igL7YEH9e0I",
+                  "etag": "ZpqlG2wo2xo",
                 },
                 "input": "about.html",
                 "isEntry": true,
@@ -342,7 +345,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/css;charset=utf-8",
-                  "etag": "DE8kdBXWhVg",
+                  "etag": "x6pW8hAzxGI",
                 },
                 "input": "about.html",
                 "isEntry": true,
@@ -355,6 +358,41 @@ console.log("About manifest:", aboutHtml);
         ]
       `);
     },
+  });
+
+  // The HTML chunk's etag must change when only a referenced JS/CSS chunk
+  // changes; otherwise the browser 304s to a body that points at chunks the
+  // server no longer has.
+  test("html-import/etag-changes-with-referenced-chunks", async () => {
+    const dir = tempDirWithFiles("html-etag", {
+      "server.ts": `import m from "./index.html"; console.log(JSON.stringify(m));`,
+      "index.html": `<!doctype html><script type="module" src="./app.ts"></script>`,
+      "app.ts": `console.log(1);`,
+    });
+
+    async function buildAndReadManifest() {
+      const out = join(dir, "out");
+      const r = await Bun.build({ entrypoints: [join(dir, "server.ts")], outdir: out, target: "bun" });
+      expect(r.success).toBe(true);
+      const js = readFileSync(join(out, "server.js"), "utf8");
+      const m = js.match(/__jsonParse\("(.+?)"\)/s)!;
+      return JSON.parse(JSON.parse('"' + m[1] + '"')) as {
+        files: Array<{ loader: string; path: string; headers: { etag: string } }>;
+      };
+    }
+
+    const a = await buildAndReadManifest();
+    writeFileSync(join(dir, "app.ts"), `console.log(2);`);
+    const b = await buildAndReadManifest();
+
+    const htmlA = a.files.find(f => f.loader === "html")!;
+    const htmlB = b.files.find(f => f.loader === "html")!;
+    const jsA = a.files.find(f => f.loader === "js")!;
+    const jsB = b.files.find(f => f.loader === "js")!;
+
+    expect(jsA.path).not.toBe(jsB.path);
+    expect(htmlA.path).toBe(htmlB.path);
+    expect(htmlA.headers.etag).not.toBe(htmlB.headers.etag);
   });
 
   // Test that import with {type: 'file'} still works as a file import

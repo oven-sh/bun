@@ -801,3 +801,14 @@ it("should throw on empty unix path from truthy non-string value", () => {
   expect(() => Bun.listen({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
   expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
 });
+
+it("reading fd of a TLS listener should not crash", () => {
+  using listener = Bun.listen({
+    hostname: "localhost",
+    port: 0,
+    socket: { data() {}, open() {}, close() {} },
+    tls: { passphrase: "abc" },
+  });
+  expect(typeof listener.fd).toBe("number");
+  expect(listener.fd).toBeGreaterThanOrEqual(0);
+});

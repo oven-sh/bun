@@ -314,6 +314,8 @@ function parseArgs(argv: string[]): CliArgs {
     "nodejsAbiVersion",
     "zigCommit",
     "webkitVersion",
+    "pgoGenerate",
+    "pgoUse",
   ]);
 
   for (let i = 0; i < argv.length; i++) {

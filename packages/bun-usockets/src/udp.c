@@ -40,6 +40,10 @@ int us_udp_packet_buffer_payload_length(struct us_udp_packet_buffer_t *buf, int 
     return bsd_udp_packet_buffer_payload_length((struct udp_recvbuf *)buf, index);
 }
 
+int us_udp_packet_buffer_truncated(struct us_udp_packet_buffer_t *buf, int index) {
+    return bsd_udp_packet_buffer_truncated((struct udp_recvbuf *)buf, index);
+}
+
 int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengths, void** addresses, int num) {
     if (num == 0) return 0;
     int fd = us_poll_fd((struct us_poll_t *) s);
@@ -147,6 +151,7 @@ struct us_udp_socket_t *us_create_udp_socket(
     void (*data_cb)(struct us_udp_socket_t *, void *, int),
     void (*drain_cb)(struct us_udp_socket_t *),
     void (*close_cb)(struct us_udp_socket_t *),
+    void (*recv_error_cb)(struct us_udp_socket_t *, int),
     const char *host,
     unsigned short port,
     int flags,
@@ -182,6 +187,7 @@ struct us_udp_socket_t *us_create_udp_socket(
     udp->on_data = data_cb;
     udp->on_drain = drain_cb;
     udp->on_close = close_cb;
+    udp->on_recv_error = recv_error_cb;
     udp->next = NULL;
 
     us_poll_start((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);

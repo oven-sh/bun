@@ -1,4 +1,4 @@
-import { dlopen, FFIType, ptr, read as ffiRead } from "bun:ffi";
+import { dlopen, read as ffiRead, FFIType, ptr } from "bun:ffi";
 import { jscDescribe } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { isLinux, tempDir } from "harness";

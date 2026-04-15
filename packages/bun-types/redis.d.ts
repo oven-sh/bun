@@ -3830,7 +3830,9 @@ declare module "bun" {
     /**
      * Trim a stream to a given size or minimum ID
      * @param key The stream key
-     * @param args MAXLEN or MINID strategy, optional ~/= operator, threshold, optional LIMIT
+     * @param strategy MAXLEN (trim by length) or MINID (trim by minimum ID)
+     * @param threshold The threshold value, or "~"/"=" followed by the threshold in `options`
+     * @param options Optional ~/= operator (as the threshold), actual threshold, and LIMIT count
      * @returns Promise that resolves with the number of entries deleted
      *
      * @example
@@ -3839,7 +3841,12 @@ declare module "bun" {
      * await redis.xtrim("mystream", "MAXLEN", "~", 1000);
      * ```
      */
-    xtrim(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<number>;
+    xtrim(
+      key: RedisClient.KeyLike,
+      strategy: "MAXLEN" | "MINID" | "maxlen" | "minid",
+      threshold: string | number,
+      ...options: (string | number)[]
+    ): Promise<number>;
 
     /**
      * Acknowledge one or more messages as processed for a consumer group
@@ -3856,7 +3863,8 @@ declare module "bun" {
      * @param group The consumer group name
      * @param consumer The consumer that will claim the messages
      * @param minIdleTime Claim only messages idle for at least this many milliseconds
-     * @param args Message IDs and optional IDLE/TIME/RETRYCOUNT/FORCE/JUSTID modifiers
+     * @param id The first message ID to claim
+     * @param rest Additional message IDs and optional IDLE/TIME/RETRYCOUNT/FORCE/JUSTID modifiers
      * @returns Promise that resolves with the claimed entries
      */
     xclaim(
@@ -3864,7 +3872,8 @@ declare module "bun" {
       group: string,
       consumer: string,
       minIdleTime: number,
-      ...args: (string | number)[]
+      id: string,
+      ...rest: (string | number)[]
     ): Promise<any>;
 
     /**

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
 // When a WebSocket upgrade request is routed through onWebSocketUpgrade's

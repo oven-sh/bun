@@ -320,6 +320,10 @@ pub fn installIsolatedPackages(
                             break :dont_dedupe;
                         }
 
+                        if ((dedupe_dep.version.tag == .workspace) != (entry_dep.version.tag == .workspace)) {
+                            break :dont_dedupe;
+                        }
+
                         if (dedupe_dep.version.tag == .workspace and entry_dep.version.tag == .workspace) {
                             if (dedupe_dep.behavior.isWorkspace() != entry_dep.behavior.isWorkspace()) {
                                 break :dont_dedupe;

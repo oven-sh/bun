@@ -155,7 +155,7 @@ pub const Bunfig = struct {
         /// already-absolute paths are passed through unchanged.
         fn resolvePreloadPath(this: *Parser, allocator: std.mem.Allocator, entry: string) !string {
             if (entry.len == 0) return entry;
-            if (std.fs.path.isAbsolute(entry)) return entry;
+            if (resolve_path.Platform.auto.isAbsolute(entry)) return entry;
             if (resolver.isPackagePath(entry)) return entry;
             return this.resolveBunfigRelative(allocator, entry);
         }
@@ -166,7 +166,7 @@ pub const Bunfig = struct {
         /// rather than package specifiers. Absolute paths pass through.
         fn resolveBunfigPath(this: *Parser, allocator: std.mem.Allocator, entry: string) !string {
             if (entry.len == 0) return entry;
-            if (std.fs.path.isAbsolute(entry)) return entry;
+            if (resolve_path.Platform.auto.isAbsolute(entry)) return entry;
             return this.resolveBunfigRelative(allocator, entry);
         }
 
@@ -1070,7 +1070,8 @@ pub const Bunfig = struct {
                 if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
                     if (_bun.get("outdir")) |dir| {
                         try this.expectString(dir);
-                        this.bunfig.output_dir = try dir.data.e_string.string(allocator);
+                        const raw = try dir.data.e_string.string(allocator);
+                        this.bunfig.output_dir = try this.resolveBunfigPath(allocator, raw);
                     }
                 }
 

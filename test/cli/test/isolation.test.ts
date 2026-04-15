@@ -146,4 +146,107 @@ describe("bun test --isolate", () => {
     expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
     expect(exitCode).toBe(0);
   });
+
+  test("with --isolate, leaked outbound socket is closed before next file", async () => {
+    using dir = tempDir("isolate-socket", {
+      "a-connect.test.ts": `
+        import { test, expect } from "bun:test";
+        import net from "node:net";
+
+        test("leak a net.Socket", async () => {
+          const port = Number(process.env.PORT!);
+          const sock = net.connect(port, "127.0.0.1");
+          await new Promise<void>((resolve, reject) => {
+            sock.once("connect", () => resolve());
+            sock.once("error", reject);
+          });
+          expect(sock.readyState).toBe("open");
+          // intentionally not closing sock
+        });
+      `,
+      "b-check.test.ts": `
+        import { test, expect } from "bun:test";
+        import fs from "node:fs";
+
+        test("server saw the disconnect", async () => {
+          const closeFile = process.env.CLOSE_FILE!;
+          for (let i = 0; i < 200; i++) {
+            if (fs.existsSync(closeFile)) break;
+            await Bun.sleep(10);
+          }
+          expect(fs.existsSync(closeFile)).toBe(true);
+        });
+      `,
+    });
+
+    const closeFile = String(dir) + "/closed.txt";
+
+    const net = await import("node:net");
+    const fs = await import("node:fs");
+    const server = net.createServer(sock => {
+      sock.on("close", () => fs.writeFileSync(closeFile, "1"));
+    });
+    await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
+    const port = (server.address() as any).port;
+
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", "./a-connect.test.ts", "./b-check.test.ts"],
+        env: { ...bunEnv, PORT: String(port), CLOSE_FILE: closeFile },
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("with --isolate, leaked fs.watch is closed before next file", async () => {
+    using dir = tempDir("isolate-fswatch", {
+      "watched/.keep": "",
+      "a-watch.test.ts": `
+        import { test, expect } from "bun:test";
+        import fs from "node:fs";
+
+        test("leak an fs.watch", () => {
+          const w = fs.watch(process.env.WATCH_DIR!, () => {
+            fs.writeFileSync(process.env.FIRE_FILE!, "fired");
+          });
+          w.unref();
+          expect(w).toBeTruthy();
+          // intentionally not calling w.close()
+        });
+      `,
+      "b-mutate.test.ts": `
+        import { test, expect } from "bun:test";
+        import fs from "node:fs";
+
+        test("watcher from prior file does not fire", async () => {
+          fs.writeFileSync(process.env.WATCH_DIR! + "/poke.txt", String(Date.now()));
+          await Bun.sleep(100);
+          expect(fs.existsSync(process.env.FIRE_FILE!)).toBe(false);
+        });
+      `,
+    });
+
+    const watchDir = String(dir) + "/watched";
+    const fireFile = String(dir) + "/fired.txt";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a-watch.test.ts", "./b-mutate.test.ts"],
+      env: { ...bunEnv, WATCH_DIR: watchDir, FIRE_FILE: fireFile },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
 });

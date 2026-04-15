@@ -32,6 +32,9 @@ node_fs_stat_watcher_scheduler: ?bun.ptr.RefPtr(StatWatcherScheduler) = null,
 listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FD) = .{},
 listening_sockets_for_watch_mode_lock: bun.Mutex = .{},
 
+fs_watchers_for_isolation: std.ArrayListUnmanaged(*FSWatcher) = .{},
+stat_watchers_for_isolation: std.ArrayListUnmanaged(*StatWatcher) = .{},
+
 temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 
 aws_signature_cache: AWSSignatureCache = .{},
@@ -295,6 +298,35 @@ pub fn closeAllListenSocketsForWatchMode(this: *RareData) void {
         socket.close();
     }
     this.listening_sockets_for_watch_mode = .{};
+}
+
+pub fn addFSWatcherForIsolation(this: *RareData, watcher: *FSWatcher) void {
+    this.fs_watchers_for_isolation.append(bun.default_allocator, watcher) catch {};
+}
+
+pub fn removeFSWatcherForIsolation(this: *RareData, watcher: *FSWatcher) void {
+    if (std.mem.indexOfScalar(*FSWatcher, this.fs_watchers_for_isolation.items, watcher)) |i| {
+        _ = this.fs_watchers_for_isolation.swapRemove(i);
+    }
+}
+
+pub fn addStatWatcherForIsolation(this: *RareData, watcher: *StatWatcher) void {
+    this.stat_watchers_for_isolation.append(bun.default_allocator, watcher) catch {};
+}
+
+pub fn removeStatWatcherForIsolation(this: *RareData, watcher: *StatWatcher) void {
+    if (std.mem.indexOfScalar(*StatWatcher, this.stat_watchers_for_isolation.items, watcher)) |i| {
+        _ = this.stat_watchers_for_isolation.swapRemove(i);
+    }
+}
+
+pub fn closeAllWatchersForIsolation(this: *RareData) void {
+    while (this.fs_watchers_for_isolation.pop()) |watcher| {
+        watcher.detach();
+    }
+    while (this.stat_watchers_for_isolation.pop()) |watcher| {
+        watcher.close();
+    }
 }
 
 pub fn hotMap(this: *RareData, allocator: std.mem.Allocator) *HotMap {
@@ -763,6 +795,8 @@ const WebSocketDeflate = @import("../http/websocket_client/WebSocketDeflate.zig"
 const std = @import("std");
 const EditorContext = @import("../open.zig").EditorContext;
 const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+const StatWatcher = @import("./node/node_fs_stat_watcher.zig").StatWatcher;
+const FSWatcher = @import("./node/node_fs_watcher.zig").FSWatcher;
 const ValkeyContext = @import("../valkey/valkey.zig").ValkeyContext;
 
 const bun = @import("bun");

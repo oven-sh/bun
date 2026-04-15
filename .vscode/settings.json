@@ -25,6 +25,11 @@
   "git.autoRepositoryDetection": "openEditors",
   "git.ignoreSubmodules": true,
   "git.ignoreLimitWarning": true,
+
+  // Zig
+  // "zig.initialSetupDone": true,
+  // "zig.buildOption": "build",
+  "zig.zls.zigLibPath": "${workspaceFolder}/vendor/zig/lib",
   "zig.buildOnSaveArgs": [
     "-Dgenerated-code=./build/debug/codegen",
     "--watch",
@@ -168,5 +173,4 @@
   },
   "git.detectSubmodules": false,
   "bun.test.customScript": "./build/debug/bun-debug test",
-  "zig.libPath": "${workspaceFolder}/vendor/zig/lib",
 }

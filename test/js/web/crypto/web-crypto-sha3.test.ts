@@ -1,17 +1,12 @@
 import { describe, expect, it } from "bun:test";
 
-const hex = (buf: ArrayBuffer) =>
-  [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+const hex = (buf: ArrayBuffer) => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
 
 // NIST FIPS 202 test vectors
 const vectors = [
   ["SHA3-256", "", "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a"],
   ["SHA3-256", "abc", "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532"],
-  [
-    "SHA3-384",
-    "",
-    "0c63a75b845e4f7d01107d852e4c2485c51a50aaaa94fc61995e71bbee983a2ac3713831264adb47fb6bd1e058d5f004",
-  ],
+  ["SHA3-384", "", "0c63a75b845e4f7d01107d852e4c2485c51a50aaaa94fc61995e71bbee983a2ac3713831264adb47fb6bd1e058d5f004"],
   [
     "SHA3-384",
     "abc",
@@ -50,11 +45,7 @@ describe("crypto.subtle.digest SHA-3", () => {
 
 describe("HMAC with SHA-3", () => {
   it("generateKey + sign + verify with SHA3-256", async () => {
-    const key = await crypto.subtle.generateKey(
-      { name: "HMAC", hash: "SHA3-256" },
-      true,
-      ["sign", "verify"],
-    );
+    const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA3-256" }, true, ["sign", "verify"]);
     const data = new TextEncoder().encode("hello world");
     const sig = await crypto.subtle.sign("HMAC", key, data);
     expect(sig.byteLength).toBe(32);
@@ -67,24 +58,14 @@ describe("HMAC with SHA-3", () => {
 
   it("HMAC-SHA3-256 against NIST vector", async () => {
     const keyBytes = new Uint8Array(32).map((_, i) => i);
-    const key = await crypto.subtle.importKey(
-      "raw",
-      keyBytes,
-      { name: "HMAC", hash: "SHA3-256" },
-      false,
-      ["sign"],
-    );
+    const key = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA3-256" }, false, ["sign"]);
     const msg = new TextEncoder().encode("Sample message for keylen<blocklen");
     const sig = await crypto.subtle.sign("HMAC", key, msg);
     expect(hex(sig)).toBe("4fe8e202c4f058e8dddc23d8c34e467343e23555e24fc2f025d598f558f67205");
   });
 
   it("HMAC-SHA3-384 generateKey default length", async () => {
-    const key = await crypto.subtle.generateKey(
-      { name: "HMAC", hash: "SHA3-384" },
-      true,
-      ["sign"],
-    );
+    const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA3-384" }, true, ["sign"]);
     const raw = await crypto.subtle.exportKey("raw", key);
     expect(raw.byteLength).toBe(104);
   });

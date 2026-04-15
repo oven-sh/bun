@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import net from "node:net";
+import fs from "node:fs";
 
 // Two test files where the first leaks state and the second observes it.
 // Under --isolate the second file must see a clean world.
@@ -181,8 +183,6 @@ describe("bun test --isolate", () => {
 
     const closeFile = String(dir) + "/closed.txt";
 
-    const net = await import("node:net");
-    const fs = await import("node:fs");
     const server = net.createServer(sock => {
       sock.on("close", () => fs.writeFileSync(closeFile, "1"));
     });

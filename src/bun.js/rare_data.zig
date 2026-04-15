@@ -301,7 +301,7 @@ pub fn closeAllListenSocketsForWatchMode(this: *RareData) void {
 }
 
 pub fn addFSWatcherForIsolation(this: *RareData, watcher: *FSWatcher) void {
-    this.fs_watchers_for_isolation.append(bun.default_allocator, watcher) catch {};
+    this.fs_watchers_for_isolation.append(bun.default_allocator, watcher) catch bun.outOfMemory();
 }
 
 pub fn removeFSWatcherForIsolation(this: *RareData, watcher: *FSWatcher) void {
@@ -311,7 +311,7 @@ pub fn removeFSWatcherForIsolation(this: *RareData, watcher: *FSWatcher) void {
 }
 
 pub fn addStatWatcherForIsolation(this: *RareData, watcher: *StatWatcher) void {
-    this.stat_watchers_for_isolation.append(bun.default_allocator, watcher) catch {};
+    this.stat_watchers_for_isolation.append(bun.default_allocator, watcher) catch bun.outOfMemory();
 }
 
 pub fn removeStatWatcherForIsolation(this: *RareData, watcher: *StatWatcher) void {

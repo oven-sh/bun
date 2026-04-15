@@ -923,8 +923,7 @@ pub const CommandLineReporter = struct {
         if (buntest.reporter != null and buntest.reporter.?.worker_ipc_file_idx != null) {
             ParallelRunner.workerEmitTestDone(buntest.reporter.?.worker_ipc_file_idx.?, formatted_line);
         } else {
-            const output_writer = Output.errorWriter(); // unbuffered. buffered is errorWriterBuffered() / Output.flush()
-            output_writer.writeAll(formatted_line) catch {};
+            Output.errorWriter().writeAll(formatted_line) catch {};
         }
 
         var this: *CommandLineReporter = buntest.reporter orelse return; // command line reporter is missing! uh oh!
@@ -1506,12 +1505,6 @@ pub const TestCommand = struct {
             vm.global.vm().setControlFlowProfiler(true);
         }
 
-        if (ctx.test_options.test_worker) {
-            // Worker mode: skip discovery; files arrive over stdin and
-            // results go out over fd 3. Never returns.
-            try ParallelRunner.runAsWorker(reporter, vm, ctx);
-        }
-
         // For tests, we default to UTC time zone
         // unless the user inputs TZ="", in which case we use local time zone
         var TZ_NAME: string =
@@ -1524,6 +1517,12 @@ pub const TestCommand = struct {
 
         if (TZ_NAME.len > 0) {
             _ = vm.global.setTimeZone(&jsc.ZigString.init(TZ_NAME));
+        }
+
+        if (ctx.test_options.test_worker) {
+            // Worker mode: skip discovery; files arrive over stdin and
+            // results go out over fd 3. Never returns.
+            try ParallelRunner.runAsWorker(reporter, vm, ctx);
         }
 
         // Start the debugger before we scan for files
@@ -1678,6 +1677,7 @@ pub const TestCommand = struct {
         }
 
         var coverage_options = ctx.test_options.coverage;
+        var ran_parallel = false;
 
         if (test_files.len > 0) {
             // Randomize the order of test files if --randomize flag is set
@@ -1686,7 +1686,7 @@ pub const TestCommand = struct {
             }
 
             if (ctx.test_options.parallel > 0) {
-                try ParallelRunner.runAsCoordinator(reporter, vm, test_files, ctx, &coverage_options);
+                ran_parallel = try ParallelRunner.runAsCoordinator(reporter, vm, test_files, ctx, &coverage_options);
             } else {
                 runAllTests(reporter, vm, test_files, ctx.allocator);
             }
@@ -1818,7 +1818,7 @@ pub const TestCommand = struct {
         } else {
             Output.prettyError("\n", .{});
 
-            if (coverage_options.enabled and ctx.test_options.parallel == 0) {
+            if (coverage_options.enabled and !ran_parallel) {
                 switch (Output.enable_ansi_colors_stderr) {
                     inline else => |colors| switch (coverage_options.reporters.text) {
                         inline else => |console| switch (coverage_options.reporters.lcov) {

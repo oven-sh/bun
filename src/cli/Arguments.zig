@@ -623,20 +623,25 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.test_options.test_worker = args.flag("--test-worker");
 
         if (args.option("--parallel")) |parallel_str| {
-            ctx.test_options.parallel = if (parallel_str.len > 0)
+            const parsed: u32 = if (parallel_str.len > 0)
                 std.fmt.parseInt(u32, parallel_str, 10) catch {
-                    Output.prettyErrorln("<red>error<r>: --parallel expects a number, received \"{s}\"", .{parallel_str});
+                    Output.prettyErrorln("<red>error<r>: --parallel expects a positive integer, received \"{s}\"", .{parallel_str});
                     Global.exit(1);
                 }
             else
                 @max(bun.getThreadCount(), 1);
+            if (parsed == 0) {
+                Output.prettyErrorln("<red>error<r>: --parallel expects a positive integer, received \"0\"", .{});
+                Global.exit(1);
+            }
+            ctx.test_options.parallel = parsed;
             // --parallel implies --isolate inside each worker.
             ctx.test_options.isolate = true;
         }
 
         if (args.option("--isolate-recycle-after")) |recycle_str| {
             ctx.test_options.isolate_recycle_after = std.fmt.parseInt(u32, recycle_str, 10) catch {
-                Output.prettyErrorln("<red>error<r>: --isolate-recycle-after expects a number, received \"{s}\"", .{recycle_str});
+                Output.prettyErrorln("<red>error<r>: --isolate-recycle-after expects a non-negative integer, received \"{s}\"", .{recycle_str});
                 Global.exit(1);
             };
         }

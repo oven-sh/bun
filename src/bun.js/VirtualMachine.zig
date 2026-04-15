@@ -2419,7 +2419,13 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     this.overridden_main.deinit();
     this.entry_point_result.value.deinit();
     this.entry_point_result.cjs_set_value = false;
-    this.pending_internal_promise = null;
+    if (this.pending_internal_promise) |promise| {
+        // The preload-failure paths in reloadEntryPoint{,ForTestRunner}
+        // protect() this slot; without an explicit unprotect the old global's
+        // promise would survive the swap as a permanent root.
+        JSValue.fromCell(promise).unprotect();
+        this.pending_internal_promise = null;
+    }
     this.main = "";
     this.main_hash = 0;
     this.main_resolved_path.deref();

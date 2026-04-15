@@ -131,7 +131,11 @@ test("--parallel without N defaults to >1 workers", async () => {
     stdout: "pipe",
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toMatch(/--parallel: \d+ workers, 2 files/);
+  const m = stderr.match(/--parallel: (\d+) workers, 2 files/);
+  expect(m).toBeTruthy();
+  if (navigator.hardwareConcurrency > 1) {
+    expect(Number(m![1])).toBeGreaterThan(1);
+  }
   expect(exitCode).toBe(0);
 });
 
@@ -280,7 +284,7 @@ test("--parallel streams test results in realtime, not buffered per-file", async
     if (!firstSlowAt && /\(pass\) [ab]-slow/.test(acc)) firstSlowAt = now;
     if (firstFastAt && firstSlowAt) break;
   }
-  await proc.exited;
+  const exitCode = await proc.exited;
 
   expect(acc).toContain("--parallel: 2 workers");
   expect(firstFastAt).toBeGreaterThan(0);
@@ -288,7 +292,7 @@ test("--parallel streams test results in realtime, not buffered per-file", async
   // The slow result cannot arrive before ~600ms, so this proves the fast
   // result was not held back waiting for it.
   expect(firstFastAt).toBeLessThan(firstSlowAt - 300);
-  expect(await proc.exited).toBe(0);
+  expect(exitCode).toBe(0);
 });
 
 test("--parallel aggregates failure summary across workers", async () => {

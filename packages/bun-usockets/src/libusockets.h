@@ -318,7 +318,9 @@ void *us_socket_context_ext(int ssl, us_socket_context_r context);
 /* Closes all open sockets, including listen sockets. Does not invalidate the socket context. */
 void us_socket_context_close(int ssl, us_socket_context_r context);
 
-/* Iterate the loop's linked list of contexts. Returns NULL at the end. */
+/* Iterate the loop's linked list of contexts. Returns NULL at the end. The
+ * caller must own the loop (single-threaded access); does not pin the
+ * returned context against concurrent unlink/free. */
 struct us_socket_context_t *us_socket_context_next(us_socket_context_r context);
 
 /* Listen for connections. Acts as the main driving cog in a server. Will call set async callbacks. */

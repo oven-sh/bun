@@ -131,23 +131,26 @@ const WorkerPipe = struct {
     reader: bun.io.BufferedReader = bun.io.BufferedReader.init(WorkerPipe),
     worker: *Worker = undefined,
     role: enum { ipc, stdout, stderr },
-    line_buf: std.ArrayListUnmanaged(u8) = .empty,
+    line_buf: JSONLineBuffer = .{},
+
+    pub fn deinit(this: *WorkerPipe) void {
+        this.reader.deinit();
+        this.line_buf.deinit();
+    }
 
     pub fn onReadChunk(this: *WorkerPipe, chunk: []const u8, _: bun.io.ReadState) bool {
-        bun.handleOom(this.line_buf.appendSlice(bun.default_allocator, chunk));
-        while (std.mem.indexOfScalar(u8, this.line_buf.items, '\n')) |nl| {
-            const line = this.line_buf.items[0..nl];
-            this.worker.coord.onLine(this.worker, this.role, line);
-            const remaining = this.line_buf.items[nl + 1 ..];
-            std.mem.copyForwards(u8, this.line_buf.items[0..remaining.len], remaining);
-            this.line_buf.items.len = remaining.len;
+        this.line_buf.append(chunk);
+        while (this.line_buf.next()) |msg| {
+            this.worker.coord.onLine(this.worker, this.role, msg.data[0..msg.newline_pos]);
+            this.line_buf.consume(msg.newline_pos + 1);
         }
         return true;
     }
     pub fn onReaderDone(this: *WorkerPipe) void {
-        if (this.line_buf.items.len > 0) {
-            this.worker.coord.onLine(this.worker, this.role, this.line_buf.items);
-            this.line_buf.clearRetainingCapacity();
+        if (!this.line_buf.isEmpty()) {
+            const rest = this.line_buf.data.slice()[this.line_buf.head..];
+            this.worker.coord.onLine(this.worker, this.role, rest);
+            this.line_buf.consume(@intCast(rest.len));
         }
     }
     pub fn onReaderError(_: *WorkerPipe, _: bun.sys.Error) void {}
@@ -295,10 +298,10 @@ pub const Worker = struct {
     }
 
     fn dispatch(this: *Worker, file_idx: u32, file: []const u8) void {
+        this.coord.scratch.clearRetainingCapacity();
+        this.coord.scratch.writer(bun.default_allocator).print("run {d} {s}", .{ file_idx, file }) catch bun.outOfMemory();
+        this.send(this.coord.scratch.items);
         this.inflight = file_idx;
-        var buf: [4096]u8 = undefined;
-        const line = std.fmt.bufPrint(&buf, "run {d} {s}", .{ file_idx, file }) catch return;
-        this.send(line);
     }
 
     fn shutdown(this: *Worker) void {
@@ -441,7 +444,7 @@ pub const Coordinator = struct {
             .file_done => {
                 var nums: [9]u32 = undefined;
                 for (&nums) |*n| n.* = std.fmt.parseInt(u32, it.next() orelse return, 10) catch return;
-                const idx, const pass, const fail, const skip, const todo, const expectations, const skipped_label, const files, const unhandled = nums;
+                _, const pass, const fail, const skip, const todo, const expectations, const skipped_label, const files, const unhandled = nums;
 
                 const summary = this.reporter.summary();
                 summary.pass += pass;
@@ -452,7 +455,6 @@ pub const Coordinator = struct {
                 summary.skipped_because_label += skipped_label;
                 summary.files += files;
                 this.reporter.jest.unhandled_errors_between_tests += unhandled;
-                _ = idx;
 
                 this.live.setIdle(w.idx);
                 w.inflight = null;
@@ -526,6 +528,9 @@ pub const Coordinator = struct {
         }
 
         if (!this.bailed and (this.next_file < this.files.len or retry_idx != null)) {
+            w.ipc.deinit();
+            w.out.deinit();
+            w.err.deinit();
             w.ipc = .{ .role = .ipc };
             w.out = .{ .role = .stdout };
             w.err = .{ .role = .stderr };
@@ -538,10 +543,27 @@ pub const Coordinator = struct {
                     this.reporter.summary().files += 1;
                     this.files_done += 1;
                 }
+                if (this.live_workers == 0) {
+                    this.abortQueuedFiles("no live workers (respawn failed)");
+                }
                 return;
             };
             if (retry_idx) |idx| this.pending_retry[w.idx] = idx;
         }
+    }
+
+    /// Mark every not-yet-dispatched file as failed so `drive()` can exit
+    /// instead of spinning when no live worker remains to make progress.
+    fn abortQueuedFiles(this: *Coordinator, reason: []const u8) void {
+        while (this.next_file < this.files.len) : (this.next_file += 1) {
+            const rel = this.relPath(this.next_file);
+            Output.prettyError("<r><red>✗<r> <b>{s}<r> <d>({s})<r>\n", .{ rel, reason });
+            this.reporter.summary().fail += 1;
+            this.reporter.summary().files += 1;
+            this.crashed_files += 1;
+            this.files_done += 1;
+        }
+        Output.flush();
     }
 
     fn assignWorkOrRetry(this: *Coordinator, w: *Worker) void {
@@ -555,18 +577,21 @@ pub const Coordinator = struct {
     }
 };
 
+/// Returns true if files were actually run via the worker pool, false if it
+/// fell back to the sequential path (≤1 effective worker). The caller uses
+/// this to decide whether to run the serial coverage/JUnit reporters.
 pub fn runAsCoordinator(
     reporter: *CommandLineReporter,
     vm: *jsc.VirtualMachine,
     files: []const PathString,
     ctx: Command.Context,
     coverage_opts: *TestCommand.CodeCoverageOptions,
-) !void {
+) !bool {
     const allocator = ctx.allocator;
     const n: u32 = @min(ctx.test_options.parallel, @as(u32, @intCast(files.len)));
     if (n <= 1) {
-        // Nothing to parallelize; fall back to the sequential path.
-        return TestCommand.runAllTests(reporter, vm, files, allocator);
+        TestCommand.runAllTests(reporter, vm, files, allocator);
+        return false;
     }
 
     Output.prettyError("<r><d>--parallel: {d} workers, {d} files<r>\n", .{ n, files.len });
@@ -583,12 +608,12 @@ pub fn runAsCoordinator(
     }
     if (ctx.test_options.reporters.junit or coverage_opts.enabled) {
         const dir = try std.fmt.allocPrintSentinel(arena.allocator(), "{s}/bun-test-worker-{d}", .{ bun.fs.FileSystem.RealFS.getDefaultTempDir(), std.crypto.random.int(u32) }, 0);
-        if (std.fs.cwd().makePath(dir)) |_| {
-            worker_tmpdir = dir;
-            vm.transpiler.env.map.put("BUN_TEST_WORKER_TMP", dir) catch bun.outOfMemory();
-        } else |e| {
+        std.fs.cwd().makePath(dir) catch |e| {
             Output.err(e, "failed to create worker temp dir {s}", .{dir});
-        }
+            bun.Global.exit(1);
+        };
+        worker_tmpdir = dir;
+        vm.transpiler.env.map.put("BUN_TEST_WORKER_TMP", dir) catch bun.outOfMemory();
         // Coordinator's own JunitReporter would otherwise produce an empty
         // document and overwrite the merged one in writeJUnitReportIfNeeded.
         if (reporter.reporters.junit) |jr| {
@@ -639,6 +664,7 @@ pub fn runAsCoordinator(
         }
     }
     if (worker_tmpdir) |dir| std.fs.cwd().deleteTree(dir) catch {};
+    return true;
 }
 
 fn mergeJUnitFragments(paths: []const []const u8, outfile: []const u8, summary: *const TestRunner.Summary) void {
@@ -896,8 +922,7 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
     try argv.append(arena, "--isolate");
 
     try argv.append(arena, try printZ(arena, "--isolate-recycle-after={d}", .{opts.isolate_recycle_after}));
-    if (opts.default_timeout_ms != 5 * std.time.ms_per_s)
-        try argv.append(arena, try printZ(arena, "--timeout={d}", .{opts.default_timeout_ms}));
+    try argv.append(arena, try printZ(arena, "--timeout={d}", .{opts.default_timeout_ms}));
     if (opts.run_todo) try argv.append(arena, "--todo");
     if (opts.only) try argv.append(arena, "--only");
     if (opts.update_snapshots) try argv.append(arena, "--update-snapshots");
@@ -913,8 +938,7 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
         try argv.append(arena, try printZ(arena, "--rerun-each={d}", .{opts.repeat_count}));
     if (opts.retry > 0)
         try argv.append(arena, try printZ(arena, "--retry={d}", .{opts.retry}));
-    if (opts.max_concurrency != 20)
-        try argv.append(arena, try printZ(arena, "--max-concurrency={d}", .{opts.max_concurrency}));
+    try argv.append(arena, try printZ(arena, "--max-concurrency={d}", .{opts.max_concurrency}));
     if (opts.test_filter_pattern) |pattern| {
         try argv.append(arena, "-t");
         try argv.append(arena, (try arena.dupeZ(u8, pattern)).ptr);
@@ -981,18 +1005,16 @@ pub fn runAsWorker(
     var fmt_buf: [256]u8 = undefined;
     while (true) {
         const line = readLine(stdin, &stdin_buf) orelse break;
-        var rest = line;
-        const kind_str = takeWord(&rest) orelse continue;
-        const kind = std.meta.stringToEnum(Kind, kind_str) orelse continue;
+        var it = std.mem.tokenizeScalar(u8, line, ' ');
+        const kind = std.meta.stringToEnum(Kind, it.next() orelse continue) orelse continue;
         switch (kind) {
             .shutdown => {
                 workerFlushAggregates(reporter, vm, ctx, worker_tmp);
                 bun.Global.exit(0);
             },
             .run => {
-                const idx_str = takeWord(&rest) orelse continue;
-                const idx = std.fmt.parseInt(u32, idx_str, 10) catch continue;
-                const file = rest;
+                const idx = std.fmt.parseInt(u32, it.next() orelse continue, 10) catch continue;
+                const file = std.mem.trimLeft(u8, it.rest(), " ");
 
                 reporter.worker_ipc_file_idx = idx;
                 {
@@ -1068,17 +1090,23 @@ fn workerFlushAggregates(reporter: *CommandLineReporter, vm: *jsc.VirtualMachine
         if (reporter.reporters.junit) |junit| {
             const path = std.fmt.allocPrintSentinel(bun.default_allocator, "{s}/w{d}.xml", .{ dir, id }, 0) catch bun.outOfMemory();
             if (junit.current_file.len > 0) junit.endTestSuite() catch {};
-            junit.writeToFile(path) catch {};
-            line.clearRetainingCapacity();
-            line.writer(bun.default_allocator).print("junit_file {s}", .{path}) catch bun.outOfMemory();
-            writeIpcLine(line.items);
+            if (junit.writeToFile(path)) |_| {
+                line.clearRetainingCapacity();
+                line.writer(bun.default_allocator).print("junit_file {s}", .{path}) catch bun.outOfMemory();
+                writeIpcLine(line.items);
+            } else |e| {
+                Output.err(e, "failed to write JUnit fragment to {s}", .{path});
+            }
         }
         if (ctx.test_options.coverage.enabled) {
             const path = std.fmt.allocPrintSentinel(bun.default_allocator, "{s}/cov{d}.lcov", .{ dir, id }, 0) catch bun.outOfMemory();
-            reporter.writeLcovOnly(vm, &ctx.test_options.coverage, path) catch {};
-            line.clearRetainingCapacity();
-            line.writer(bun.default_allocator).print("coverage_file {s}", .{path}) catch bun.outOfMemory();
-            writeIpcLine(line.items);
+            if (reporter.writeLcovOnly(vm, &ctx.test_options.coverage, path)) |_| {
+                line.clearRetainingCapacity();
+                line.writer(bun.default_allocator).print("coverage_file {s}", .{path}) catch bun.outOfMemory();
+                writeIpcLine(line.items);
+            } else |e| {
+                Output.err(e, "failed to write coverage fragment to {s}", .{path});
+            }
         }
     }
 }
@@ -1126,16 +1154,6 @@ fn decodeHex(scratch: *std.ArrayListUnmanaged(u8), hex: []const u8) ?[]const u8 
     _ = std.fmt.hexToBytes(out, hex) catch return null;
     scratch.items.len += out.len;
     return scratch.items;
-}
-
-fn takeWord(rest: *[]const u8) ?[]const u8 {
-    var s = rest.*;
-    while (s.len > 0 and s[0] == ' ') s = s[1..];
-    if (s.len == 0) return null;
-    const end = std.mem.indexOfScalar(u8, s, ' ') orelse s.len;
-    const word = s[0..end];
-    rest.* = if (end < s.len) s[end + 1 ..] else s[end..];
-    return word;
 }
 
 fn writeIpcLine(line: []const u8) void {
@@ -1188,6 +1206,7 @@ fn readLine(fd: bun.FD, buf: *std.ArrayListUnmanaged(u8)) ?[]const u8 {
 
 const std = @import("std");
 const Command = @import("../../cli.zig").Command;
+const JSONLineBuffer = @import("../../bun.js/JSONLineBuffer.zig").JSONLineBuffer;
 
 const test_command = @import("../test_command.zig");
 const CommandLineReporter = test_command.CommandLineReporter;

@@ -542,7 +542,7 @@ fn onSequenceStarted(this: *Execution, sequence: *ExecutionSequence) void {
 
         if (this.bunTest().reporter) |reporter| {
             if (reporter.worker_ipc_file_idx) |file_idx| {
-                @import("../../cli/test/ParallelRunner.zig").workerEmitTestStart(file_idx, entry.base.name orelse "(unnamed)");
+                ParallelRunner.workerEmitTestStart(file_idx, entry.base.name orelse "(unnamed)");
             }
         }
 
@@ -689,3 +689,4 @@ const Execution = bun_test.Execution;
 const ExecutionEntry = bun_test.ExecutionEntry;
 const Order = bun_test.Order;
 const groupLog = bun_test.debug.group;
+const ParallelRunner = @import("../../cli/test/ParallelRunner.zig");

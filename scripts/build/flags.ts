@@ -354,6 +354,10 @@ export const globalFlags: Flag[] = [
       `-ffile-prefix-map=${c.cwd}=.`,
       `-ffile-prefix-map=${c.vendorDir}=vendor`,
       `-ffile-prefix-map=${c.cacheDir}=cache`,
+      // WebKit/nodejs-headers live under downloadCacheDir; when that diverges
+      // from cacheDir (BUN_DEPS_CACHE_PATH set) the cacheDir map doesn't cover
+      // them and their absolute paths would leak into DWARF.
+      ...(c.downloadCacheDir !== c.cacheDir ? [`-ffile-prefix-map=${c.downloadCacheDir}=dlcache`] : []),
     ],
     when: c => c.unix && c.ci,
     desc: "Remap source paths in debug info (reproducible builds)",

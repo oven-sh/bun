@@ -1,11 +1,13 @@
 //! `bun test --parallel`: process-pool coordinator and worker.
 //!
 //! Coordinator spawns N `bun test --test-worker --isolate` processes, hands
-//! out one file at a time over stdin (NDJSON), and reads per-file summaries
-//! back over fd 3. Worker stdout/stderr are captured and printed with a
-//! `[worker N]` prefix. Workers run each file in a fresh GlobalObject (Phase A
-//! isolation) and exit after `--isolate-recycle-after` files so leaks stay
-//! bounded; the coordinator respawns them transparently.
+//! out one file at a time over stdin, and reads per-test events back over fd
+//! 3. Per-test status lines are streamed to the coordinator the moment a test
+//! finishes; stderr (errors, console.log) streams per-line. On a TTY the
+//! coordinator draws a live one-line-per-worker status block at the bottom;
+//! result lines scroll above it. Workers run each file in a fresh GlobalObject
+//! and exit after `--isolate-recycle-after` files; the coordinator respawns
+//! them transparently.
 
 /// fd 3 in the worker. On Windows this must be a libuv (CRT) fd so
 /// `uv_get_osfhandle(3)` resolves to the inherited handle; can't be a
@@ -21,12 +23,18 @@ fn ipcFd() bun.FD {
 ///   worker -> coordinator (fd 3):
 ///     ready\n
 ///     recycle\n
+///     file_start <idx>\n
+///     test_start <idx> <hex_name>\n
+///     test_done <idx> <hex_status_line>\n
 ///     file_done <idx> <pass> <fail> <skip> <todo> <expectations> <skipped_label> <files> <unhandled>\n
 ///     repeat_bufs <fail_hex> <skip_hex> <todo_hex>\n  (sent once before recycle/shutdown)
 ///     junit_file <path...>\n                          (sent once before recycle/shutdown)
 ///     coverage_file <path...>\n                       (sent once before recycle/shutdown)
 const Kind = enum {
     ready,
+    file_start,
+    test_start,
+    test_done,
     file_done,
     repeat_bufs,
     junit_file,
@@ -34,6 +42,88 @@ const Kind = enum {
     recycle,
     run,
     shutdown,
+};
+
+/// Live one-line-per-worker status block drawn at the bottom of a TTY.
+/// Result lines and worker stderr print above it: clear → write → redraw.
+const LiveStatus = struct {
+    enabled: bool,
+    rows: []Row,
+    lines_drawn: u32 = 0,
+    last_draw_ns: i128 = 0,
+
+    const Row = struct {
+        file: []const u8 = "",
+        test_name: []const u8 = "",
+        started_ns: i128 = 0,
+    };
+
+    fn init(allocator: std.mem.Allocator, n: u32) LiveStatus {
+        const enabled = Output.stderr_descriptor_type == .terminal and Output.enable_ansi_colors_stderr;
+        const rows = allocator.alloc(Row, n) catch bun.outOfMemory();
+        @memset(rows, .{});
+        return .{ .enabled = enabled, .rows = rows };
+    }
+
+    fn setFile(self: *LiveStatus, w: u32, file: []const u8) void {
+        const r = &self.rows[w];
+        bun.default_allocator.free(r.file);
+        bun.default_allocator.free(r.test_name);
+        r.* = .{
+            .file = bun.default_allocator.dupe(u8, file) catch bun.outOfMemory(),
+            .started_ns = std.time.nanoTimestamp(),
+        };
+    }
+    fn setTest(self: *LiveStatus, w: u32, name: []const u8) void {
+        const r = &self.rows[w];
+        bun.default_allocator.free(r.test_name);
+        r.test_name = bun.default_allocator.dupe(u8, name) catch bun.outOfMemory();
+        r.started_ns = std.time.nanoTimestamp();
+    }
+    fn setIdle(self: *LiveStatus, w: u32) void {
+        const r = &self.rows[w];
+        bun.default_allocator.free(r.file);
+        bun.default_allocator.free(r.test_name);
+        r.* = .{};
+    }
+
+    fn clear(self: *LiveStatus) void {
+        if (!self.enabled or self.lines_drawn == 0) return;
+        const w = Output.errorWriter();
+        w.print("\x1b[{d}A\x1b[J", .{self.lines_drawn}) catch {};
+        self.lines_drawn = 0;
+    }
+
+    fn draw(self: *LiveStatus) void {
+        if (!self.enabled) return;
+        const now = std.time.nanoTimestamp();
+        self.last_draw_ns = now;
+        const w = Output.errorWriter();
+        for (self.rows, 0..) |row, i| {
+            if (row.file.len == 0) {
+                w.print(comptime Output.prettyFmt("<r><d>  worker {d} idle<r>\n", true), .{i}) catch {};
+            } else {
+                const elapsed_ms: u64 = @intCast(@max(0, @divTrunc(now - row.started_ns, std.time.ns_per_ms)));
+                const name = if (row.test_name.len > 0) row.test_name else "(loading)";
+                w.print(comptime Output.prettyFmt("<r><cyan>⏵<r> <d>{s} ›<r> {s} <d>[{d}ms]<r>\n", true), .{ row.file, name, elapsed_ms }) catch {};
+            }
+            self.lines_drawn += 1;
+        }
+        Output.flush();
+    }
+
+    fn maybeRefresh(self: *LiveStatus) void {
+        if (!self.enabled) return;
+        const now = std.time.nanoTimestamp();
+        if (now - self.last_draw_ns < 80 * std.time.ns_per_ms) return;
+        self.clear();
+        self.draw();
+    }
+
+    /// Call before writing permanent output to stderr; pair with `draw()` after.
+    fn open(self: *LiveStatus) void {
+        self.clear();
+    }
 };
 
 /// Reads worker output (IPC, stdout, or stderr) and routes it. One per pipe.
@@ -85,9 +175,6 @@ pub const Worker = struct {
     /// worker's own counter so the coordinator can predict a recycle exit and
     /// not dispatch into a dying worker.
     files_run: u32 = 0,
-    /// Buffered worker stdout/stderr for the current file, flushed atomically
-    /// on file_done so concurrent workers' per-test lines don't interleave.
-    output_buf: std.ArrayListUnmanaged(u8) = .empty,
     alive: bool = false,
     extra_fd_stdio: [1]bun.spawn.SpawnOptions.Stdio = undefined,
 
@@ -241,6 +328,12 @@ pub const Coordinator = struct {
     worker_tmpdir: ?[:0]const u8,
     junit_fragments: std.ArrayListUnmanaged([]const u8) = .empty,
     coverage_fragments: std.ArrayListUnmanaged([]const u8) = .empty,
+    /// File index whose `path:` header was most recently written. Result lines
+    /// from concurrent workers interleave; whenever the source file changes the
+    /// header is re-emitted so every line has visible context. null at start.
+    last_header_idx: ?u32 = null,
+    live: LiveStatus,
+    scratch: std.ArrayListUnmanaged(u8) = .empty,
     recycle_after: u32,
     bail: u32,
     next_file: u32 = 0,
@@ -260,11 +353,14 @@ pub const Coordinator = struct {
                 bun.Global.exit(1);
             };
         }
+        this.live.draw();
         while (!this.isDone()) {
             this.vm.eventLoop().tick();
+            this.live.maybeRefresh();
             if (this.isDone()) break;
             this.vm.eventLoop().autoTick();
         }
+        this.live.clear();
     }
 
     fn assignWork(this: *Coordinator, w: *Worker) void {
@@ -280,6 +376,7 @@ pub const Coordinator = struct {
     fn bailOut(this: *Coordinator) void {
         if (this.bailed) return;
         this.bailed = true;
+        this.live.open();
         Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.bail, if (this.bail == 1) "" else "s" });
         Output.flush();
         for (this.workers) |*other| {
@@ -287,22 +384,29 @@ pub const Coordinator = struct {
         }
     }
 
+    fn relPath(this: *Coordinator, file_idx: u32) []const u8 {
+        return bun.path.relative(bun.fs.FileSystem.instance.top_level_dir, this.files[file_idx].slice());
+    }
+
+    fn ensureHeader(this: *Coordinator, file_idx: u32) void {
+        if (this.last_header_idx == file_idx) return;
+        this.last_header_idx = file_idx;
+        const w = Output.errorWriter();
+        w.print("\n{s}:\n", .{this.relPath(file_idx)}) catch {};
+    }
+
     fn onLine(this: *Coordinator, w: *Worker, role: @FieldType(WorkerPipe, "role"), line: []const u8) void {
         switch (role) {
             .stdout, .stderr => {
-                bun.handleOom(w.output_buf.ensureUnusedCapacity(bun.default_allocator, line.len + 1));
-                w.output_buf.appendSliceAssumeCapacity(line);
-                w.output_buf.appendAssumeCapacity('\n');
+                this.live.open();
+                if (w.inflight) |idx| this.ensureHeader(idx);
+                Output.errorWriter().writeAll(line) catch {};
+                Output.errorWriter().writeByte('\n') catch {};
+                Output.flush();
+                this.live.draw();
             },
             .ipc => this.onIpc(w, line),
         }
-    }
-
-    fn flushWorkerOutput(_: *Coordinator, w: *Worker) void {
-        if (w.output_buf.items.len == 0) return;
-        Output.errorWriter().writeAll(w.output_buf.items) catch {};
-        Output.flush();
-        w.output_buf.clearRetainingCapacity();
     }
 
     fn onIpc(this: *Coordinator, w: *Worker, line: []const u8) void {
@@ -311,6 +415,29 @@ pub const Coordinator = struct {
         switch (kind) {
             .ready => this.assignWorkOrRetry(w),
             .recycle => {}, // exit handler will respawn
+            .file_start => {
+                const idx = std.fmt.parseInt(u32, it.next() orelse return, 10) catch return;
+                this.live.setFile(w.idx, this.relPath(idx));
+                this.live.open();
+                this.live.draw();
+            },
+            .test_start => {
+                _ = it.next(); // file idx
+                const name = decodeHex(&this.scratch, it.next() orelse return) orelse return;
+                this.live.setTest(w.idx, name);
+                this.live.open();
+                this.live.draw();
+            },
+            .test_done => {
+                const idx = std.fmt.parseInt(u32, it.next() orelse return, 10) catch return;
+                const formatted = decodeHex(&this.scratch, it.next() orelse "") orelse return;
+                if (formatted.len == 0) return; // e.g. pass under isAIAgent() — silenced by design
+                this.live.open();
+                this.ensureHeader(idx);
+                Output.errorWriter().writeAll(formatted) catch {};
+                Output.flush();
+                this.live.draw();
+            },
             .file_done => {
                 var nums: [9]u32 = undefined;
                 for (&nums) |*n| n.* = std.fmt.parseInt(u32, it.next() orelse return, 10) catch return;
@@ -327,8 +454,7 @@ pub const Coordinator = struct {
                 this.reporter.jest.unhandled_errors_between_tests += unhandled;
                 _ = idx;
 
-                this.flushWorkerOutput(w);
-
+                this.live.setIdle(w.idx);
                 w.inflight = null;
                 w.files_run += 1;
                 this.files_done += 1;
@@ -376,7 +502,9 @@ pub const Coordinator = struct {
     }
 
     fn onWorkerExit(this: *Coordinator, w: *Worker, status: bun.spawn.Status) void {
-        this.flushWorkerOutput(w);
+        this.live.setIdle(w.idx);
+        this.live.open();
+        defer this.live.draw();
         var retry_idx: ?u32 = null;
         if (w.inflight) |idx| {
             const file = this.files[idx].slice();
@@ -448,6 +576,11 @@ pub fn runAsCoordinator(
     defer arena.deinit();
 
     var worker_tmpdir: ?[:0]const u8 = null;
+    // Workers' stderr is a pipe; have them format with ANSI when we will be
+    // rendering to a color terminal so streamed lines match serial output.
+    if (Output.enable_ansi_colors_stderr) {
+        vm.transpiler.env.map.put("FORCE_COLOR", "1") catch bun.outOfMemory();
+    }
     if (ctx.test_options.reporters.junit or coverage_opts.enabled) {
         const dir = try std.fmt.allocPrintSentinel(arena.allocator(), "{s}/bun-test-worker-{d}", .{ bun.fs.FileSystem.RealFS.getDefaultTempDir(), std.crypto.random.int(u32) }, 0);
         if (std.fs.cwd().makePath(dir)) |_| {
@@ -482,6 +615,7 @@ pub fn runAsCoordinator(
         .workers = workers,
         .retries = retries,
         .pending_retry = pending_retry,
+        .live = LiveStatus.init(allocator, n),
         .worker_tmpdir = worker_tmpdir,
         .recycle_after = ctx.test_options.isolate_recycle_after,
         .bail = ctx.test_options.bail,
@@ -860,6 +994,12 @@ pub fn runAsWorker(
                 const idx = std.fmt.parseInt(u32, idx_str, 10) catch continue;
                 const file = rest;
 
+                reporter.worker_ipc_file_idx = idx;
+                {
+                    var buf: [64]u8 = undefined;
+                    writeIpcLine(std.fmt.bufPrint(&buf, "file_start {d}", .{idx}) catch unreachable);
+                }
+
                 const before = reporter.summary().*;
                 const before_unhandled = reporter.jest.unhandled_errors_between_tests;
 
@@ -893,7 +1033,7 @@ pub fn runAsWorker(
                     bun.Global.exit(0);
                 }
             },
-            .ready, .file_done, .repeat_bufs, .junit_file, .coverage_file, .recycle => {},
+            .ready, .file_start, .test_start, .test_done, .file_done, .repeat_bufs, .junit_file, .coverage_file, .recycle => {},
         }
     }
     workerFlushAggregates(reporter, vm, ctx, worker_tmp);
@@ -941,6 +1081,51 @@ fn workerFlushAggregates(reporter: *CommandLineReporter, vm: *jsc.VirtualMachine
             writeIpcLine(line.items);
         }
     }
+}
+
+/// Called from `Execution.onSequenceStarted` in the worker. Tells the
+/// coordinator which test is now running so the live TTY status block can
+/// show it.
+pub fn workerEmitTestStart(file_idx: u32, name: []const u8) void {
+    var line: std.ArrayListUnmanaged(u8) = .empty;
+    defer line.deinit(bun.default_allocator);
+    line.writer(bun.default_allocator).print("test_start {d} ", .{file_idx}) catch bun.outOfMemory();
+    appendHex(&line, name);
+    writeIpcLine(line.items);
+}
+
+/// Called from `CommandLineReporter.handleTestCompleted` in the worker with the
+/// fully-formatted status line (✓/✗ + scopes + name + duration, including ANSI
+/// codes). The coordinator prints these bytes verbatim so output matches serial.
+pub fn workerEmitTestDone(file_idx: u32, formatted_line: []const u8) void {
+    var line: std.ArrayListUnmanaged(u8) = .empty;
+    defer line.deinit(bun.default_allocator);
+    line.writer(bun.default_allocator).print("test_done {d} ", .{file_idx}) catch bun.outOfMemory();
+    appendHex(&line, formatted_line);
+    writeIpcLine(line.items);
+}
+
+fn appendHex(dst: *std.ArrayListUnmanaged(u8), bytes: []const u8) void {
+    if (bytes.len == 0) {
+        dst.append(bun.default_allocator, '-') catch bun.outOfMemory();
+        return;
+    }
+    const hex_chars = "0123456789abcdef";
+    dst.ensureUnusedCapacity(bun.default_allocator, bytes.len * 2) catch bun.outOfMemory();
+    for (bytes) |b| {
+        dst.appendAssumeCapacity(hex_chars[b >> 4]);
+        dst.appendAssumeCapacity(hex_chars[b & 0xf]);
+    }
+}
+
+fn decodeHex(scratch: *std.ArrayListUnmanaged(u8), hex: []const u8) ?[]const u8 {
+    if (hex.len == 1 and hex[0] == '-') return "";
+    scratch.clearRetainingCapacity();
+    scratch.ensureUnusedCapacity(bun.default_allocator, hex.len / 2) catch bun.outOfMemory();
+    const out = scratch.unusedCapacitySlice()[0 .. hex.len / 2];
+    _ = std.fmt.hexToBytes(out, hex) catch return null;
+    scratch.items.len += out.len;
+    return scratch.items;
 }
 
 fn takeWord(rest: *[]const u8) ?[]const u8 {

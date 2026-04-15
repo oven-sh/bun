@@ -275,7 +275,7 @@ it("process.versions", () => {
   const expectedVersions = {
     boringssl: "0c5fce43b7ed5eb6001487ee48ac65766f5ddcd1",
     libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
-    mimalloc: "9a5e1f52cdf4662f9590b69de104a4469140796f",
+    mimalloc: "1beadf9651a7bfdec6b5367c380ecc3fe1c40d1a",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
     zlib: "886098f3f339617b4243b286f5ed364b9989e245",
     tinycc: "12882eee073cfe5c7621bcfadf679e1372d4537b",

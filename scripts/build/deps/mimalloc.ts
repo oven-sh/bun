@@ -5,7 +5,7 @@
 
 import type { Dependency, NestedCmakeBuild, Provides } from "../source.ts";
 
-const MIMALLOC_COMMIT = "9a5e1f52cdf4662f9590b69de104a4469140796f";
+const MIMALLOC_COMMIT = "1beadf9651a7bfdec6b5367c380ecc3fe1c40d1a";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -68,13 +68,8 @@ export const mimalloc: Dependency = {
       // so UBSan doesn't false-positive on mimalloc's type punning.
       args.MI_DEBUG_UBSAN = "ON";
     } else if (cfg.darwin) {
-      // Register the mimalloc malloc_zone so leaks/heap/vmmap/Instruments can
-      // enumerate our allocations and the fork-prepare/child hooks fire.
-      // Interpose is OFF because we link the .o statically; the __interpose
-      // section only works for inserted dylibs. The zone-swap path in
-      // alloc-override-zone.c handles making mimalloc the default zone.
-      args.MI_OVERRIDE = "ON";
-      args.MI_OSX_ZONE = "ON";
+      args.MI_OVERRIDE = "OFF";
+      args.MI_OSX_ZONE = "OFF";
       args.MI_OSX_INTERPOSE = "OFF";
     } else if (cfg.linux) {
       args.MI_OVERRIDE = "ON";
@@ -96,10 +91,10 @@ export const mimalloc: Dependency = {
       args.MI_TRACK_VALGRIND = "ON";
     }
 
-    // dev3 grew MI_OPT_ARCH which sets -march=armv8.1-a on arm64 — that
-    // SIGILLs on ARMv8.0 CPUs. Explicitly disable it; our global
-    // -march=armv8-a+crc (via CMAKE_CXX_FLAGS) is sufficient.
-    args.MI_NO_OPT_ARCH = "ON";
+    // If mimalloc gets bumped to a version with MI_OPT_ARCH: pass
+    // MI_NO_OPT_ARCH=ON to stop it setting -march=armv8.1-a on arm64
+    // (SIGILLs on ARMv8.0 CPUs). Current pin has no arch-detection logic
+    // so our global -march=armv8-a+crc (via CMAKE_CXX_FLAGS) is sufficient.
 
     // ─── Windows: silence the vendored-C-as-C++ warning flood ───
     // MI_USE_CXX=ON means .c files compile as C++. clang-cl then complains
@@ -126,7 +121,7 @@ export const mimalloc: Dependency = {
     // to override this, so we have to mirror its naming logic.
     let libname: string;
     if (cfg.windows) {
-      libname = cfg.debug ? "mimalloc-debug" : "mimalloc";
+      libname = cfg.debug ? "mimalloc-static-debug" : "mimalloc-static";
     } else if (cfg.debug) {
       libname = cfg.asan ? "mimalloc-asan-debug" : "mimalloc-debug";
     } else {

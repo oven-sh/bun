@@ -68,9 +68,13 @@ export const mimalloc: Dependency = {
       // so UBSan doesn't false-positive on mimalloc's type punning.
       args.MI_DEBUG_UBSAN = "ON";
     } else if (cfg.darwin) {
-      // We cannot use MI_OSX_ZONE because it breaks NAPI addons.
-      args.MI_OVERRIDE = "OFF";
-      args.MI_OSX_ZONE = "OFF";
+      // Register the mimalloc malloc_zone so leaks/heap/vmmap/Instruments can
+      // enumerate our allocations and the fork-prepare/child hooks fire.
+      // Interpose is OFF because we link the .o statically; the __interpose
+      // section only works for inserted dylibs. The zone-swap path in
+      // alloc-override-zone.c handles making mimalloc the default zone.
+      args.MI_OVERRIDE = "ON";
+      args.MI_OSX_ZONE = "ON";
       args.MI_OSX_INTERPOSE = "OFF";
     } else if (cfg.linux) {
       args.MI_OVERRIDE = "ON";

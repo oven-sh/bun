@@ -762,7 +762,12 @@ pub fn installWithManager(
 
     if (manager.options.enable.frozen_lockfile and load_result != .not_found) frozen_lockfile: {
         if (load_result.loadedFromTextLockfile()) {
-            if (bun.handleOom(manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator))) {
+            if (bun.handleOom(manager.lockfile.frozenLockfileUnchangedText(
+                lockfile_before_clean,
+                packages_len_before_install,
+                manager.allocator,
+                PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
+            ))) {
                 break :frozen_lockfile;
             }
         } else {

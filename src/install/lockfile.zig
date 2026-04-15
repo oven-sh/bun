@@ -1807,7 +1807,7 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, cut_off_pkg_id: usize, alloca
     if (l_len != r_len) return false;
 
     const sort_buf = try allocator.alloc(EqlSorter.PathToId, l_len + r_len);
-    defer l.allocator.free(sort_buf);
+    defer allocator.free(sort_buf);
     var l_buf = sort_buf[0..l_len];
     var r_buf = sort_buf[r_len..];
 
@@ -1922,10 +1922,56 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, cut_off_pkg_id: usize, alloca
     return true;
 }
 
+/// Frozen-lockfile comparison for text lockfiles (`bun.lock`).
+///
+/// The text lockfile on disk doesn't encode the hoisted `node_modules` tree, so
+/// internal hoisting differences (or transient in-memory tree state) must not
+/// cause a false-positive frozen-lockfile failure. Use the lockfile's meta-hash
+/// as the primary equivalence check and fall back to `eql()` only when the meta
+/// hash differs.
+pub fn frozenLockfileUnchangedText(
+    after: *const Lockfile,
+    before: *const Lockfile,
+    packages_len: usize,
+    allocator: std.mem.Allocator,
+    print_name_version_string: bool,
+) OOM!bool {
+    const before_meta_hash = try before.generateMetaHash(print_name_version_string, packages_len);
+    const after_meta_hash = try after.generateMetaHash(print_name_version_string, packages_len);
+
+    if (strings.eqlLong(&before_meta_hash, &after_meta_hash, false)) {
+        return true;
+    }
+
+    return after.eql(before, packages_len, allocator);
+}
+
 pub fn hasMetaHashChanged(this: *Lockfile, print_name_version_string: bool, packages_len: usize) !bool {
     const previous_meta_hash = this.meta_hash;
     this.meta_hash = try this.generateMetaHash(print_name_version_string, packages_len);
     return !strings.eqlLong(&previous_meta_hash, &this.meta_hash, false);
+}
+
+test "frozenLockfileUnchangedText ignores hoist-only differences" {
+    var before: Lockfile = undefined;
+    before.initEmpty(std.testing.allocator);
+    defer before.deinit();
+
+    var after: Lockfile = undefined;
+    after.initEmpty(std.testing.allocator);
+    defer after.deinit();
+
+    _ = try before.appendPackage(.{ .name_hash = 1 });
+    _ = try before.appendPackage(.{ .name_hash = 2 });
+
+    _ = try after.appendPackage(.{ .name_hash = 1 });
+    _ = try after.appendPackage(.{ .name_hash = 2 });
+
+    // Simulate a difference in hoist buffers without changing the package graph.
+    try after.buffers.hoisted_dependencies.append(std.testing.allocator, 0);
+
+    try std.testing.expect(!(try after.eql(&before, after.packages.len, std.testing.allocator)));
+    try std.testing.expect(try after.frozenLockfileUnchangedText(&before, after.packages.len, std.testing.allocator, false));
 }
 pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packages_len: usize) !MetaHash {
     if (packages_len <= 1)

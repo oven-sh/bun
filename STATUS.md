@@ -1,6 +1,6 @@
 # `bun test --isolate --parallel` — overnight status
 
-**Branch:** `claude/isolated-parallel-test` (4 commits, unsigned — SSH agent was locked)
+**Branch:** `claude/isolated-parallel-test` (5 commits, unsigned — SSH agent was locked)
 **Design doc:** `docs/dev/isolated-parallel-test.md`, `docs/dev/parallel-test-ipc.md`
 
 ## TL;DR
@@ -47,9 +47,14 @@ bun bd test --parallel=4 test/js/bun/util/                                    # 
 - `test/cli/test/isolation.test.ts` — 3 tests (leaked global/server/interval invisible across files; control without flag shows leak; module state per-file)
 - `test/cli/test/parallel.test.ts` — 5 tests (totals, exit code, crash recovery, perf, default N)
 
+## Verification
+
+Independent adversarial verification: 12/12 PASS after one fix iteration. Initial run found a coordinator/worker recycle handoff race (coordinator dispatched into a worker that was about to exit for recycling, misreporting it as a crash and burning retry budget). Fixed in `cd175e19db` — coordinator now mirrors `files_run` per worker and skips dispatch at the recycle boundary. Regression test added.
+
 ## Commits
 
 ```
+cd175e19db test --parallel: don't dispatch into a recycling worker
 32c28b3440 test --parallel: lazily init extra_fds Stdio so Windows union compiles
 cacdbfe190 test: add --parallel for process-pool test execution
 0b2c03ce17 test --isolate: inherit ScriptExecutionContext identifier on swap

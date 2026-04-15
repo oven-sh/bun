@@ -81,9 +81,8 @@ test.skipIf(process.platform === "win32")(
 
     const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toContain("setup from bunfig");
-    expect(stdout).toContain("trace from cli");
-    expect(stdout).toContain("hello from pkg1");
+    // Bunfig preloads run before CLI preloads, then the script.
+    expect(stdout).toBe("setup from bunfig\ntrace from cli\nhello from pkg1\n");
     expect(exitCode).toBe(0);
   },
 );

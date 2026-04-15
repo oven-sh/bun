@@ -188,8 +188,10 @@ export const tart = {
       );
     }
 
-    // This command is blocking, so it needs to be detached and not awaited
-    this.spawn(["run", name, ...args], { detached: true });
+    // `tart run` blocks for the VM's lifetime, so it's detached and not
+    // awaited. stopVm() makes it exit non-zero; without throwOnError:false
+    // that becomes an unhandled rejection and Node exits 1.
+    this.spawn(["run", name, ...args], { detached: true, throwOnError: false });
   },
 
   /**

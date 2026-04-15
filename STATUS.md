@@ -1,6 +1,6 @@
 # `bun test --isolate --parallel` — status
 
-**Branch:** `claude/isolated-parallel-test` in `/Users/jarred/code/bun-4` @ `b48e1bd077`
+**Branch:** `claude/isolated-parallel-test` in `/Users/jarred/code/bun-4` @ `5ee0a161e6`
 **Design docs:** `docs/dev/isolated-parallel-test.md`, `docs/dev/parallel-test-ipc.md`
 **All commits unsigned** (SSH agent locked overnight) — re-sign before pushing.
 
@@ -36,6 +36,12 @@ Independent verification: **13/13 PASS** (core tests, regression, all six featur
 - **Coverage `% Funcs`** under `--parallel` takes per-worker max instead of union, because Bun's LCOV writer doesn't emit `FN`/`FNDA` records (pre-existing gap, `CodeCoverage.zig:229`). Line coverage is exact.
 - **Windows `--parallel`** compiles on all targets and mirrors `security_scanner.zig`'s working pipe pattern, but hasn't been executed on Windows yet.
 
-## In progress
+## Realtime output
 
-**Realtime per-test output** — current implementation buffers worker output until `file_done` for clean contiguous display, which means no feedback until a file completes. Reworking to: worker streams `test_start`/`test_done` events over IPC immediately; coordinator renders a live per-worker status block on TTY, plain self-describing lines on non-TTY. Running in a worktree now.
+Worker streams `test_start`/`test_done` events over IPC the instant each test completes. Coordinator renders:
+- **TTY**: live status block at bottom — one `⏵ file.ts › test name [elapsed]` row per worker, updating in place; completed `✓`/`✗` lines scroll above. ~80-line `LiveStatus` struct in `ParallelRunner.zig:48-128` using direct ANSI clear/redraw.
+- **Non-TTY**: each `(pass)`/`(fail)` line prints immediately as it arrives; file header re-emitted on context switch. Errors stream with full code frame + stack.
+
+Verified: per-test events arrive in 300ms waves (not buffered until file completes); multiline errors + unicode/2000-char/empty test names round-trip the hex IPC codec; no ANSI leakage to piped output; JUnit/coverage/recycle still work.
+
+Note: Bun defaults `--only-failures=true` when it detects an AI agent env (`test_command.zig:1453`), which suppresses pass lines. The realtime path is unaffected — it just respects that flag like serial does.

@@ -3,7 +3,6 @@
 #include "root.h"
 #include "sqlite3.h"
 
-#include <atomic>
 #include <mutex>
 
 #if !OS(WINDOWS)
@@ -320,23 +319,11 @@ static int lazyLoadSQLiteImpl()
 
 static int lazyLoadSQLite()
 {
-    // Serialize first-time loads across threads, but allow retries after a
-    // failed load so `Database.setCustomSQLitePath()` can recover when the
-    // default path isn't usable. Once a load succeeds, subsequent callers
-    // take the lock-free fast path via the atomic flag.
-    static std::atomic<bool> loaded { false };
-    if (loaded.load(std::memory_order_acquire)) {
-        return 0;
-    }
-    static std::mutex mutex;
-    std::lock_guard<std::mutex> lock(mutex);
-    if (loaded.load(std::memory_order_relaxed)) {
-        return 0;
-    }
-    int result = lazyLoadSQLiteImpl();
-    if (result == 0) {
-        loaded.store(true, std::memory_order_release);
-    }
+    static std::once_flag onceFlag;
+    static int result = -1;
+    std::call_once(onceFlag, [] {
+        result = lazyLoadSQLiteImpl();
+    });
     return result;
 }
 

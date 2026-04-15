@@ -37,7 +37,7 @@ template<typename T> struct Converter;
 
 template<typename IDL> class ConversionResult;
 
-struct ConversionResultException { };
+struct ConversionResultException {};
 
 namespace Detail {
 
@@ -46,9 +46,18 @@ struct ConversionResultStorage {
     using ReturnType = T;
     using Type = T;
 
-    ConversionResultStorage(ConversionResultException token) : value(makeUnexpected(token)) { }
-    ConversionResultStorage(const Type& value) : value(value) { }
-    ConversionResultStorage(Type&& value) : value(WTF::move(value)) { }
+    ConversionResultStorage(ConversionResultException token)
+        : value(makeUnexpected(token))
+    {
+    }
+    ConversionResultStorage(const Type& value)
+        : value(value)
+    {
+    }
+    ConversionResultStorage(Type&& value)
+        : value(WTF::move(value))
+    {
+    }
 
     template<typename U>
     ConversionResultStorage(ConversionResultStorage<U>&& other)
@@ -61,7 +70,7 @@ struct ConversionResultStorage {
     }
 
     template<typename U>
-        requires (std::is_pointer_v<Type> && std::is_lvalue_reference_v<U>)
+        requires(std::is_pointer_v<Type> && std::is_lvalue_reference_v<U>)
     ConversionResultStorage(ConversionResultStorage<U>&& other)
         : value([&]() -> Expected<Type, ConversionResultException> {
             if (other.hasException())
@@ -105,8 +114,14 @@ struct ConversionResultStorage<T&> {
     using ReturnType = T&;
     using Type = T;
 
-    ConversionResultStorage(ConversionResultException token) : value(makeUnexpected(token)) { }
-    ConversionResultStorage(Type& value) : value(std::reference_wrapper<Type> { value }) { }
+    ConversionResultStorage(ConversionResultException token)
+        : value(makeUnexpected(token))
+    {
+    }
+    ConversionResultStorage(Type& value)
+        : value(std::reference_wrapper<Type> { value })
+    {
+    }
 
     template<typename U>
     ConversionResultStorage(ConversionResultStorage<U>&& other)
@@ -167,17 +182,20 @@ public:
     {
     }
 
-    ConversionResult(ReturnType&& returnValue) requires (!std::is_lvalue_reference_v<ReturnType>)
+    ConversionResult(ReturnType&& returnValue)
+        requires(!std::is_lvalue_reference_v<ReturnType>)
         : m_storage { WTF::move(returnValue) }
     {
     }
 
-    ConversionResult(std::nullptr_t) requires std::is_same_v<decltype(IDL::nullValue()), std::nullptr_t>
+    ConversionResult(std::nullptr_t)
+        requires std::is_same_v<decltype(IDL::nullValue()), std::nullptr_t>
         : m_storage { nullptr }
     {
     }
 
-    ConversionResult(std::nullopt_t) requires std::is_same_v<decltype(IDL::nullValue()), std::nullopt_t>
+    ConversionResult(std::nullopt_t)
+        requires std::is_same_v<decltype(IDL::nullValue()), std::nullopt_t>
         : m_storage { std::nullopt }
     {
     }
@@ -204,24 +222,39 @@ public:
 #endif
     }
 
-    decltype(auto) returnValue() { ASSERT(!m_storage.hasException()); return m_storage.returnValue(); }
-    decltype(auto) returnValue() const { ASSERT(!m_storage.hasException()); return m_storage.returnValue(); }
-    decltype(auto) releaseReturnValue() { ASSERT(!m_storage.hasException()); return m_storage.releaseReturnValue(); }
+    decltype(auto) returnValue()
+    {
+        ASSERT(!m_storage.hasException());
+        return m_storage.returnValue();
+    }
+    decltype(auto) returnValue() const
+    {
+        ASSERT(!m_storage.hasException());
+        return m_storage.returnValue();
+    }
+    decltype(auto) releaseReturnValue()
+    {
+        ASSERT(!m_storage.hasException());
+        return m_storage.releaseReturnValue();
+    }
 
     // Transitional shim — lets existing call sites that do `auto x = convert<>(); RETURN_IF_EXCEPTION(scope, {}); use(WTF::move(x))`
     // compile unchanged. The exception check via RETURN_IF_EXCEPTION inspects the scope directly, so by the
     // time this fires the result is known-valid. Remove once call sites migrate to hasException()/releaseReturnValue().
-    operator ReturnType() && requires (!std::is_lvalue_reference_v<ReturnType>)
+    operator ReturnType() &&
+        requires(!std::is_lvalue_reference_v<ReturnType>)
     {
         return releaseReturnValue();
     }
 
-    operator ReturnType() & requires (!std::is_lvalue_reference_v<ReturnType>)
+    operator ReturnType() &
+        requires(!std::is_lvalue_reference_v<ReturnType>)
     {
         return m_storage.returnValue();
     }
 
-    operator ReturnType() requires std::is_lvalue_reference_v<ReturnType>
+    operator ReturnType()
+        requires std::is_lvalue_reference_v<ReturnType>
     {
         return m_storage.returnValue();
     }

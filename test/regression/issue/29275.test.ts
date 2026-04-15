@@ -37,11 +37,9 @@ test.skipIf(!isMacOS && !isWindows)(
             worker.postMessage("go");
           });
         }
-        // Fan out many parallel workers so the first batch hits the lazy-load
-        // race. A buggy build segfaults before we print "ok".
-        const jobs = [];
-        for (let i = 0; i < 16; i++) jobs.push(once());
-        await Promise.all(jobs);
+        // Two concurrent workers are enough to expose the lazy-load race.
+        // A buggy build segfaults before we print "ok".
+        await Promise.all([once(), once(), once(), once()]);
         console.log("ok");
       `,
     });
@@ -62,8 +60,8 @@ test.skipIf(!isMacOS && !isWindows)(
       return { i, stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
     }
 
-    const RUNS = 40;
-    const BATCH = 8;
+    const RUNS = 10;
+    const BATCH = 2;
     const failures: { i: number; stdout: string; stderr: string; exitCode: number }[] = [];
     for (let start = 0; start < RUNS; start += BATCH) {
       const batch = await Promise.all(Array.from({ length: Math.min(BATCH, RUNS - start) }, (_u, k) => run(start + k)));

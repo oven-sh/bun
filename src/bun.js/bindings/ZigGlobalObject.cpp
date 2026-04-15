@@ -574,11 +574,19 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     JSC::VM& vm = oldGlobal->vm();
     JSC::JSLockHolder locker(vm);
 
+    // The new global must inherit the old one's ScriptExecutionContext identifier so that
+    // `Bun.isMainThread` (identifier == 1) and cross-thread task dispatch keep working.
+    // Move the old context to a fresh identifier first to free the slot.
+    auto* oldContext = oldGlobal->scriptExecutionContext();
+    const auto inheritedId = oldContext->identifier();
+    oldContext->removeFromContextsMap();
+    oldContext->regenerateIdentifier();
+
     auto* structure = Zig::GlobalObject::createStructure(vm);
     if (!structure) [[unlikely]] {
         BUN_PANIC("Failed to allocate global object structure for test isolation");
     }
-    auto* globalObject = Zig::GlobalObject::create(vm, structure, ScriptExecutionContext::generateIdentifier());
+    auto* globalObject = Zig::GlobalObject::create(vm, structure, inheritedId);
     if (!globalObject) [[unlikely]] {
         BUN_PANIC("Failed to allocate global object for test isolation");
     }

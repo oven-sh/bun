@@ -1012,6 +1012,50 @@ pub const CommandLineReporter = struct {
         try this.printCodeCoverage(vm, opts, byte_ranges.items, reporters, enable_ansi_colors);
     }
 
+    /// Write an LCOV-only report to a specific path. Used by `--parallel`
+    /// workers to emit a fragment the coordinator merges.
+    pub fn writeLcovOnly(_: *CommandLineReporter, vm: *jsc.VirtualMachine, opts: *const TestCommand.CodeCoverageOptions, out_path: [:0]const u8) !void {
+        var map = coverage.ByteRangeMapping.map orelse return;
+        var iter = map.valueIterator();
+        var byte_ranges = try std.array_list.Managed(bun.SourceMap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+        defer byte_ranges.deinit();
+        while (iter.next()) |entry| byte_ranges.appendAssumeCapacity(entry.*);
+        if (byte_ranges.items.len == 0) return;
+        std.sort.pdq(
+            bun.SourceMap.coverage.ByteRangeMapping,
+            byte_ranges.items,
+            {},
+            bun.SourceMap.coverage.ByteRangeMapping.isLessThan,
+        );
+
+        const relative_dir = vm.transpiler.fs.top_level_dir;
+        const file = switch (bun.sys.File.openat(.cwd(), out_path, bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC, 0o644)) {
+            .err => return,
+            .result => |f| f,
+        };
+        defer file.close();
+        const buf = try bun.default_allocator.alloc(u8, 64 * 1024);
+        defer bun.default_allocator.free(buf);
+        var buffered = file.writer().adaptToNewApi(buf);
+        const writer = &buffered.new_interface;
+
+        for (byte_ranges.items) |*entry| {
+            if (opts.ignore_patterns.len > 0) {
+                const rel = bun.path.relative(relative_dir, entry.source_url.slice());
+                var skip = false;
+                for (opts.ignore_patterns) |p| if (bun.glob.match(p, rel).matches()) {
+                    skip = true;
+                    break;
+                };
+                if (skip) continue;
+            }
+            var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
+            defer report.deinit(bun.default_allocator);
+            CodeCoverageReport.Lcov.writeFormat(&report, relative_dir, writer) catch continue;
+        }
+        try writer.flush();
+    }
+
     pub fn printCodeCoverage(
         _: *CommandLineReporter,
         vm: *jsc.VirtualMachine,
@@ -1442,12 +1486,6 @@ pub const TestCommand = struct {
             vm.auto_killer.enabled = true;
         }
 
-        if (ctx.test_options.test_worker) {
-            // Worker mode: skip discovery; files arrive over stdin and
-            // results go out over fd 3. Never returns.
-            try ParallelRunner.runAsWorker(reporter, vm, ctx);
-        }
-
         if (ctx.test_options.coverage.enabled) {
             vm.transpiler.options.code_coverage = true;
             vm.transpiler.options.minify_syntax = false;
@@ -1455,6 +1493,12 @@ pub const TestCommand = struct {
             vm.transpiler.options.minify_whitespace = false;
             vm.transpiler.options.dead_code_elimination = false;
             vm.global.vm().setControlFlowProfiler(true);
+        }
+
+        if (ctx.test_options.test_worker) {
+            // Worker mode: skip discovery; files arrive over stdin and
+            // results go out over fd 3. Never returns.
+            try ParallelRunner.runAsWorker(reporter, vm, ctx);
         }
 
         // For tests, we default to UTC time zone
@@ -1622,6 +1666,8 @@ pub const TestCommand = struct {
             }
         }
 
+        var coverage_options = ctx.test_options.coverage;
+
         if (test_files.len > 0) {
             // Randomize the order of test files if --randomize flag is set
             if (random) |rand| {
@@ -1629,7 +1675,7 @@ pub const TestCommand = struct {
             }
 
             if (ctx.test_options.parallel > 0) {
-                try ParallelRunner.runAsCoordinator(reporter, vm, test_files, ctx);
+                try ParallelRunner.runAsCoordinator(reporter, vm, test_files, ctx, &coverage_options);
             } else {
                 runAllTests(reporter, vm, test_files, ctx.allocator);
             }
@@ -1659,7 +1705,6 @@ pub const TestCommand = struct {
 
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
-        var coverage_options = ctx.test_options.coverage;
         if (reporter.summary().pass > 20 and !Output.isAIAgent() and !reporter.reporters.dots and !reporter.reporters.only_failures) {
             if (reporter.summary().skip > 0) {
                 Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary().skip});
@@ -1762,7 +1807,7 @@ pub const TestCommand = struct {
         } else {
             Output.prettyError("\n", .{});
 
-            if (coverage_options.enabled) {
+            if (coverage_options.enabled and ctx.test_options.parallel == 0) {
                 switch (Output.enable_ansi_colors_stderr) {
                     inline else => |colors| switch (coverage_options.reporters.text) {
                         inline else => |console| switch (coverage_options.reporters.lcov) {

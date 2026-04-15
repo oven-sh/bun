@@ -302,3 +302,65 @@ test("--parallel --reporter=junit produces a merged report covering all files", 
   expect(xml.split("<testsuites ").length - 1).toBe(1);
   expect(xml.split("</testsuites>").length - 1).toBe(1);
 });
+
+test("--parallel --coverage merges LCOV across workers", async () => {
+  using dir = tempDir("parallel-coverage-lcov", {
+    "shared.js": `export function hit() { return 1; }\nexport function miss() { return 2; }\n`,
+    "only-a.js": `export function fa() { return 1; }\n`,
+    "a.test.js": `import {test,expect} from "bun:test"; import {hit} from "./shared.js"; import {fa} from "./only-a.js"; test("a",()=>expect(hit()+fa()).toBe(2));`,
+    "b.test.js": `import {test,expect} from "bun:test"; import {hit} from "./shared.js"; test("b",()=>expect(hit()).toBe(1));`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--coverage", "--coverage-reporter=lcov", "--coverage-dir=./cov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("--parallel: 2 workers");
+  expect(stderr).not.toContain("not yet aggregated");
+  expect(exitCode).toBe(0);
+
+  const lcov = await Bun.file(String(dir) + "/cov/lcov.info").text();
+  // Both source files present, each exactly once (merged, not duplicated per worker).
+  expect(lcov.match(/^SF:shared\.js$/gm)?.length).toBe(1);
+  expect(lcov.match(/^SF:only-a\.js$/gm)?.length).toBe(1);
+  // shared.js was loaded by both workers; merged DA hit counts must be > what
+  // a single worker reports. We just assert the line was hit (>0).
+  const sharedRecord = lcov.split("end_of_record").find(r => r.includes("SF:shared.js"))!;
+  const da1 = sharedRecord.match(/^DA:1,(\d+)$/m);
+  expect(da1).not.toBeNull();
+  expect(Number(da1![1])).toBeGreaterThan(0);
+  // LH/LF recomputed from merged DA.
+  expect(sharedRecord).toMatch(/^LF:\d+$/m);
+  expect(sharedRecord).toMatch(/^LH:\d+$/m);
+});
+
+test("--parallel --coverage prints merged text table", async () => {
+  using dir = tempDir("parallel-coverage-text", {
+    "lib-a.js": `export function used() { return 1; }\nexport function unused() { return 2; }\n`,
+    "lib-b.js": `export function go() { return 3; }\n`,
+    "a.test.js": `import {test,expect} from "bun:test"; import {used} from "./lib-a.js"; test("a",()=>expect(used()).toBe(1));`,
+    "b.test.js": `import {test,expect} from "bun:test"; import {go} from "./lib-b.js"; test("b",()=>expect(go()).toBe(3));`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--coverage", "--coverage-reporter=text"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("--parallel: 2 workers");
+
+  // Table header + both source files present with a numeric % Lines column.
+  expect(stderr).toContain("% Funcs");
+  expect(stderr).toContain("% Lines");
+  expect(stderr).toMatch(/lib-a\.js\s+\|\s+\d+\.\d+\s+\|\s+\d+\.\d+/);
+  expect(stderr).toMatch(/lib-b\.js\s+\|\s+\d+\.\d+\s+\|\s+\d+\.\d+/);
+  expect(stderr).toContain("All files");
+  expect(exitCode).toBe(0);
+});

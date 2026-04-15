@@ -1,70 +1,41 @@
-# `bun test --isolate --parallel` — overnight status
+# `bun test --isolate --parallel` — status
 
-**Branch:** `claude/isolated-parallel-test` (5 commits, unsigned — SSH agent was locked)
-**Design doc:** `docs/dev/isolated-parallel-test.md`, `docs/dev/parallel-test-ipc.md`
+**Branch:** `claude/isolated-parallel-test` in `/Users/jarred/code/bun-4` @ `b48e1bd077`
+**Design docs:** `docs/dev/isolated-parallel-test.md`, `docs/dev/parallel-test-ipc.md`
+**All commits unsigned** (SSH agent locked overnight) — re-sign before pushing.
 
 ## TL;DR
 
-Both flags work and are tested. `--isolate` gives each test file a fresh `ZigGlobalObject` on the same JSC::VM with eager handle cleanup. `--parallel[=N]` runs a coordinator + N worker processes over an fd-3 pipe, each worker isolating between files and recycling after M files.
-
 ```sh
-bun bd test test/cli/test/isolation.test.ts test/cli/test/parallel.test.ts   # 8 pass / 0 fail
-bun bd test --parallel=4 test/js/bun/util/                                    # 49 files, ~47s (vs >180s serial)
+bun bd test test/cli/test/isolation.test.ts test/cli/test/parallel.test.ts   # 20 pass / 0 fail
+bun bd test --parallel=4 test/js/bun/util/                                    # 49 files, ~45s, 296% CPU
+bun run zig:check-all                                                         # 61/61 targets
 ```
 
-## What works
+Independent verification: **13/13 PASS** (core tests, regression, all six feature probes, recycle race, large-suite smoke).
 
-**`--isolate`** (sequential, per-file fresh global)
-- New C++ entry: `Zig__GlobalObject__createForTestIsolation` (ZigGlobalObject.cpp:569) — creates a `Zig::GlobalObject` on an *existing* `JSC::VM`
-- `VirtualMachine.swapGlobalForTestIsolation()` (VirtualMachine.zig:2374): drains microtasks, cancels all timers, closes listening sockets, kills subprocesses, bumps generation, gcUnprotects old global, creates + installs new one
-- Generation counter (`test_isolation_generation`) checked at timer fire — stale timers self-reap
-- Context-ID inheritance so `Bun.isMainThread` stays correct after swap
-- SourceProvider/CodeCache reuse: turns out JSC's `CodeCache` is already VM-level and `RuntimeTranspilerCache` is process-level, so shared deps don't re-parse — no extra plumbing needed
+## Features
 
-**`--parallel[=N]`** (process pool)
-- `src/cli/test/ParallelRunner.zig`: coordinator spawns N workers (`bun test --test-worker --isolate`), distributes files over stdin, reads results from fd-3
-- Crash recovery: dead worker's in-flight file re-queued once, then marked fail
-- Recycling: `--isolate-recycle-after=M` (default 50), worker exits after M files, coordinator respawns
-- Totals aggregate correctly across workers; non-zero exit on any failure
-- Perf test asserts parallel < 0.75× serial wall-time on sleep-bound files
+**`--isolate`** — fresh `ZigGlobalObject` per file on the same `JSC::VM`. Between files: drain microtasks → close all sockets (usockets context walk) → close FSWatchers/StatWatchers → cancel timers → kill subprocesses → bump generation → unprotect old global → create new one. `--preload` re-runs in each fresh global. JSC `CodeCache` is VM-level so shared deps don't re-parse.
 
-## What's rough / TODO
+**`--parallel[=N]`** — coordinator + N workers over fd-3 IPC (POSIX raw fd, Windows non-overlapped pipe). Workers run with `--isolate`, recycle after `--isolate-recycle-after=M` files. Crash recovery re-queues once. Cross-worker `--bail` stops dispatch at file granularity. All test flags forwarded. Per-test output buffered per file (contiguous), JUnit aggregated, LCOV coverage merged with summed DA counts.
 
-| Area | State | Location |
-|---|---|---|
-| Outbound sockets (fetch keepalive, net.Socket, WS clients) | not eagerly closed on swap; recycling covers leak | VirtualMachine.zig:2410 TODO |
-| FSWatcher / StatWatcher | not closed on swap | same TODO |
-| `--preload` scripts | run once in first global only; not re-executed after swap | same TODO |
-| Generation check beyond timers | only timers tagged; uws/FS/subprocess callbacks unchecked | — |
-| Windows `--parallel` | fd-3 libuv pipe not wired; compiles but won't read IPC | ParallelRunner.zig:~130 |
-| Flag forwarding to workers | only timeout/todo/only/update-snapshots/recycle-after; missing bail/coverage/grep/preload/retry | ParallelRunner.zig coordinator spawn |
-| Coverage + JUnit aggregation | not collected from workers | — |
-| Per-test output | per-file ✓/✗ line + worker stderr passthrough; no `writeTestStatusLine` replay | — |
-| Cross-worker `--bail` | each worker bails independently | — |
+## Key entry points
 
-## Tests added
+| | |
+|---|---|
+| `Zig__GlobalObject__createForTestIsolation` | `src/bun.js/bindings/ZigGlobalObject.cpp:569` |
+| `VirtualMachine.swapGlobalForTestIsolation()` | `src/bun.js/VirtualMachine.zig:2374` |
+| `us_socket_context_next()` (new C accessor) | `packages/bun-usockets/src/context.c:204` |
+| Coordinator / worker | `src/cli/test/ParallelRunner.zig` |
+| LCOV merge | `ParallelRunner.zig` `mergeCoverageFragments()` |
 
-- `test/cli/test/isolation.test.ts` — 3 tests (leaked global/server/interval invisible across files; control without flag shows leak; module state per-file)
-- `test/cli/test/parallel.test.ts` — 5 tests (totals, exit code, crash recovery, perf, default N)
+## Known limits (documented inline)
 
-## Verification
+- **fetch keepalive pool** (HTTPThread, separate uws loop) not closed on swap; recycling covers fd accumulation. JS-side promises drop with the old global so it's invisible to tests.
+- **Coverage `% Funcs`** under `--parallel` takes per-worker max instead of union, because Bun's LCOV writer doesn't emit `FN`/`FNDA` records (pre-existing gap, `CodeCoverage.zig:229`). Line coverage is exact.
+- **Windows `--parallel`** compiles on all targets and mirrors `security_scanner.zig`'s working pipe pattern, but hasn't been executed on Windows yet.
 
-Independent adversarial verification: 12/12 PASS after one fix iteration. Initial run found a coordinator/worker recycle handoff race (coordinator dispatched into a worker that was about to exit for recycling, misreporting it as a crash and burning retry budget). Fixed in `cd175e19db` — coordinator now mirrors `files_run` per worker and skips dispatch at the recycle boundary. Regression test added.
+## In progress
 
-## Commits
-
-```
-cd175e19db test --parallel: don't dispatch into a recycling worker
-32c28b3440 test --parallel: lazily init extra_fds Stdio so Windows union compiles
-cacdbfe190 test: add --parallel for process-pool test execution
-0b2c03ce17 test --isolate: inherit ScriptExecutionContext identifier on swap
-66c553b200 test: add --isolate to run each file in a fresh GlobalObject
-```
-
-## Suggested next steps
-
-1. Walk usockets `loop->data.head` contexts in `swapGlobalForTestIsolation` to close *all* sockets, not just listeners — that's the biggest correctness gap
-2. Re-run `--preload` after swap (or hoist preload hooks to `BunTestRoot` so they survive)
-3. Forward remaining CLI flags to workers
-4. Per-test line replay in coordinator so output matches serial
-5. Windows fd-3 via libuv named pipe
+**Realtime per-test output** — current implementation buffers worker output until `file_done` for clean contiguous display, which means no feedback until a file completes. Reworking to: worker streams `test_start`/`test_done` events over IPC immediately; coordinator renders a live per-worker status block on TTY, plain self-describing lines on non-TTY. Running in a worktree now.

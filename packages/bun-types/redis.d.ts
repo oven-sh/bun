@@ -3339,10 +3339,25 @@ declare module "bun" {
     ): Promise<[string, [string, number][]] | null>;
 
     /**
-     * Perform a bitwise operation between multiple keys and store the result in the destination key
-     * @param operation The bitwise operation to perform (AND, OR, XOR, NOT)
+     * Perform a bitwise NOT on a key and store the result in the destination key
+     * @param operation The bitwise operation (NOT takes exactly one source key)
      * @param destkey The destination key to store the result
-     * @param keys The source keys
+     * @param key The source key
+     * @returns Promise that resolves with the size of the string stored in the destination key
+     *
+     * @example
+     * ```ts
+     * await redis.set("key1", "foobar");
+     * await redis.bitop("NOT", "dest", "key1");
+     * ```
+     */
+    bitop(operation: "NOT" | "not", destkey: RedisClient.KeyLike, key: RedisClient.KeyLike): Promise<number>;
+    /**
+     * Perform a bitwise operation between multiple keys and store the result in the destination key
+     * @param operation The bitwise operation to perform (AND, OR, XOR)
+     * @param destkey The destination key to store the result
+     * @param key The first source key
+     * @param moreKeys Additional source keys
      * @returns Promise that resolves with the size of the string stored in the destination key
      *
      * @example
@@ -3353,7 +3368,7 @@ declare module "bun" {
      * ```
      */
     bitop(
-      operation: "AND" | "OR" | "XOR" | "NOT" | "and" | "or" | "xor" | "not",
+      operation: "AND" | "OR" | "XOR" | "and" | "or" | "xor",
       destkey: RedisClient.KeyLike,
       key: RedisClient.KeyLike,
       ...moreKeys: RedisClient.KeyLike[]

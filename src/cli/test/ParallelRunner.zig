@@ -17,9 +17,13 @@ const ipc_fd: bun.FD = .fromNative(3);
 ///     ready\n
 ///     recycle\n
 ///     file_done <idx> <pass> <fail> <skip> <todo> <expectations> <skipped_label> <files> <unhandled>\n
+///     repeat_bufs <fail_hex> <skip_hex> <todo_hex>\n  (sent once before recycle/shutdown)
+///     junit_file <path...>\n                          (sent once before recycle/shutdown)
 const Kind = enum {
     ready,
     file_done,
+    repeat_bufs,
+    junit_file,
     recycle,
     run,
     shutdown,
@@ -74,6 +78,9 @@ pub const Worker = struct {
     /// worker's own counter so the coordinator can predict a recycle exit and
     /// not dispatch into a dying worker.
     files_run: u32 = 0,
+    /// Buffered worker stdout/stderr for the current file, flushed atomically
+    /// on file_done so concurrent workers' per-test lines don't interleave.
+    output_buf: std.ArrayListUnmanaged(u8) = .empty,
     alive: bool = false,
     extra_fd_stdio: [1]bun.spawn.SpawnOptions.Stdio = undefined,
 
@@ -202,6 +209,10 @@ pub const Coordinator = struct {
     /// worker crashed mid-run.
     retries: []u8,
     pending_retry: []?u32,
+    /// Temp dir for per-worker JUnit fragments; null if --reporter=junit was
+    /// not requested.
+    junit_tmpdir: ?[:0]const u8,
+    junit_fragments: std.ArrayListUnmanaged([]const u8) = .empty,
     recycle_after: u32,
     next_file: u32 = 0,
     files_done: u32 = 0,
@@ -239,18 +250,19 @@ pub const Coordinator = struct {
     fn onLine(this: *Coordinator, w: *Worker, role: @FieldType(WorkerPipe, "role"), line: []const u8) void {
         switch (role) {
             .stdout, .stderr => {
-                const writer = if (role == .stderr) Output.errorWriter() else Output.writer();
-                if (Output.enable_ansi_colors_stderr) {
-                    writer.print(comptime Output.prettyFmt("<d>[worker {d}]<r> ", true), .{w.idx}) catch {};
-                } else {
-                    writer.print("[worker {d}] ", .{w.idx}) catch {};
-                }
-                writer.writeAll(line) catch {};
-                writer.writeAll("\n") catch {};
-                Output.flush();
+                bun.handleOom(w.output_buf.ensureUnusedCapacity(bun.default_allocator, line.len + 1));
+                w.output_buf.appendSliceAssumeCapacity(line);
+                w.output_buf.appendAssumeCapacity('\n');
             },
             .ipc => this.onIpc(w, line),
         }
+    }
+
+    fn flushWorkerOutput(_: *Coordinator, w: *Worker) void {
+        if (w.output_buf.items.len == 0) return;
+        Output.errorWriter().writeAll(w.output_buf.items) catch {};
+        Output.flush();
+        w.output_buf.clearRetainingCapacity();
     }
 
     fn onIpc(this: *Coordinator, w: *Worker, line: []const u8) void {
@@ -273,15 +285,9 @@ pub const Coordinator = struct {
                 summary.skipped_because_label += skipped_label;
                 summary.files += files;
                 this.reporter.jest.unhandled_errors_between_tests += unhandled;
+                _ = idx;
 
-                const file = this.files[idx].slice();
-                const rel = bun.path.relative(bun.fs.FileSystem.instance.top_level_dir, file);
-                if (fail > 0) {
-                    Output.prettyError("<r><red>✗<r> <b>{s}<r> <d>({d} pass, {d} fail)<r>\n", .{ rel, pass, fail });
-                } else {
-                    Output.prettyError("<r><green>✓<r> {s} <d>({d} pass)<r>\n", .{ rel, pass });
-                }
-                Output.flush();
+                this.flushWorkerOutput(w);
 
                 w.inflight = null;
                 w.files_run += 1;
@@ -292,11 +298,36 @@ pub const Coordinator = struct {
                 // else: worker is about to send `recycle` and exit; let
                 // onWorkerExit respawn and the new worker's `ready` will pull.
             },
+            .repeat_bufs => {
+                inline for (.{
+                    &this.reporter.failures_to_repeat_buf,
+                    &this.reporter.skips_to_repeat_buf,
+                    &this.reporter.todos_to_repeat_buf,
+                }) |dest| {
+                    if (it.next()) |hex| {
+                        if (!(hex.len == 1 and hex[0] == '-')) {
+                            const decoded_len = hex.len / 2;
+                            bun.handleOom(dest.ensureUnusedCapacity(bun.default_allocator, decoded_len));
+                            const slice = dest.unusedCapacitySlice()[0..decoded_len];
+                            if (std.fmt.hexToBytes(slice, hex)) |_| {
+                                dest.items.len += decoded_len;
+                            } else |_| {}
+                        }
+                    }
+                }
+            },
+            .junit_file => {
+                const path = std.mem.trim(u8, it.rest(), " ");
+                if (path.len > 0) {
+                    bun.handleOom(this.junit_fragments.append(bun.default_allocator, bun.default_allocator.dupe(u8, path) catch bun.outOfMemory()));
+                }
+            },
             .run, .shutdown => {},
         }
     }
 
     fn onWorkerExit(this: *Coordinator, w: *Worker, status: bun.spawn.Status) void {
+        this.flushWorkerOutput(w);
         var retry_idx: ?u32 = null;
         if (w.inflight) |idx| {
             const file = this.files[idx].slice();
@@ -361,6 +392,18 @@ pub fn runAsCoordinator(
     Output.prettyError("<r><d>--parallel: {d} workers, {d} files<r>\n", .{ n, files.len });
     Output.flush();
 
+    // TODO(coverage): each worker has its own JSC ControlFlowProfiler. Merging
+    // requires (a) enabling code_coverage + setControlFlowProfiler in
+    // runAsWorker (currently set in exec() *after* the runAsWorker branch),
+    // (b) worker calls generateCodeCoverage with .lcov=true to a temp file on
+    // exit, (c) coordinator merges LCOV (sum DA hits per SF, recompute LH/LF).
+    // The text-table reporter additionally needs per-file Fraction values,
+    // which would have to be sent over IPC alongside the LCOV path.
+    if (ctx.test_options.coverage.enabled) {
+        Output.warn("--coverage is not yet aggregated across --parallel workers; coverage report will be empty.", .{});
+        Output.flush();
+    }
+
     const self_exe = bun.selfExePath() catch return error.SelfExePathFailed;
 
     // Forward flags that affect test execution inside the worker.
@@ -382,6 +425,23 @@ pub fn runAsCoordinator(
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
+
+    var junit_tmpdir: ?[:0]const u8 = null;
+    if (ctx.test_options.reporters.junit) {
+        const dir = try std.fmt.allocPrintSentinel(arena.allocator(), "{s}/bun-test-junit-{d}", .{ bun.fs.FileSystem.RealFS.getDefaultTempDir(), std.crypto.random.int(u32) }, 0);
+        std.fs.cwd().makePath(dir) catch |e| {
+            Output.err(e, "failed to create JUnit temp dir {s}", .{dir});
+            junit_tmpdir = null;
+        };
+        junit_tmpdir = dir;
+        vm.transpiler.env.map.put("BUN_TEST_WORKER_JUNIT", dir) catch bun.outOfMemory();
+        // Coordinator's own JunitReporter would otherwise produce an empty
+        // document and overwrite the merged one in writeJUnitReportIfNeeded.
+        if (reporter.reporters.junit) |jr| {
+            jr.deinit();
+            reporter.reporters.junit = null;
+        }
+    }
     const envp = try vm.transpiler.env.map.createNullDelimitedEnvMap(arena.allocator());
 
     const workers = try allocator.alloc(Worker, n);
@@ -401,6 +461,7 @@ pub fn runAsCoordinator(
         .workers = workers,
         .retries = retries,
         .pending_retry = pending_retry,
+        .junit_tmpdir = junit_tmpdir,
         .recycle_after = ctx.test_options.isolate_recycle_after,
     };
 
@@ -410,6 +471,58 @@ pub fn runAsCoordinator(
 
     vm.eventLoop().ensureWaker();
     vm.runWithAPILock(Coordinator, &coord, Coordinator.drive);
+
+    if (junit_tmpdir != null) {
+        if (ctx.test_options.reporter_outfile) |outfile| {
+            mergeJUnitFragments(coord.junit_fragments.items, outfile, reporter.summary());
+        }
+        if (junit_tmpdir) |dir| std.fs.cwd().deleteTree(dir) catch {};
+    }
+}
+
+fn mergeJUnitFragments(paths: []const []const u8, outfile: []const u8, summary: *const TestRunner.Summary) void {
+    var contents: std.ArrayListUnmanaged(u8) = .empty;
+    defer contents.deinit(bun.default_allocator);
+
+    const elapsed_time = @as(f64, @floatFromInt(std.time.nanoTimestamp() - bun.start_time)) / std.time.ns_per_s;
+    contents.writer(bun.default_allocator).print(
+        \\<?xml version="1.0" encoding="UTF-8"?>
+        \\<testsuites name="bun test" tests="{d}" assertions="{d}" failures="{d}" skipped="{d}" time="{d}">
+        \\
+    , .{
+        summary.pass + summary.fail + summary.skip + summary.todo,
+        summary.expectations,
+        summary.fail,
+        summary.skip + summary.todo,
+        elapsed_time,
+    }) catch bun.outOfMemory();
+
+    for (paths) |path| {
+        const file = std.fs.cwd().readFileAlloc(bun.default_allocator, path, 64 * 1024 * 1024) catch continue;
+        defer bun.default_allocator.free(file);
+        // Each fragment is a full <testsuites> document; extract its body.
+        const open_end = std.mem.indexOf(u8, file, "<testsuites") orelse continue;
+        const body_start = (std.mem.indexOfScalarPos(u8, file, open_end, '>') orelse continue) + 1;
+        const body_end = std.mem.lastIndexOf(u8, file, "</testsuites>") orelse continue;
+        if (body_start >= body_end) continue;
+        const body = std.mem.trim(u8, file[body_start..body_end], "\n");
+        if (body.len == 0) continue;
+        contents.appendSlice(bun.default_allocator, body) catch bun.outOfMemory();
+        contents.append(bun.default_allocator, '\n') catch bun.outOfMemory();
+    }
+
+    contents.appendSlice(bun.default_allocator, "</testsuites>\n") catch bun.outOfMemory();
+
+    var path_buf: bun.PathBuffer = undefined;
+    @memcpy(path_buf[0..outfile.len], outfile);
+    path_buf[outfile.len] = 0;
+    switch (bun.sys.File.openat(.cwd(), path_buf[0..outfile.len :0], bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+        .err => |err| Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{f}", .{ outfile, err }),
+        .result => |fd| {
+            defer _ = fd.close();
+            _ = bun.sys.File.writeAll(fd, contents.items);
+        },
+    }
 }
 
 /// Worker side: read NDJSON commands from stdin, run each file with isolation,
@@ -429,6 +542,14 @@ pub fn runAsWorker(
     vm.eventLoop().ensureWaker();
     vm.arena = &arena;
     vm.allocator = arena.allocator();
+
+    var worker_junit_path: ?[:0]const u8 = null;
+    if (vm.transpiler.env.get("BUN_TEST_WORKER_JUNIT")) |dir| {
+        worker_junit_path = std.fmt.allocPrintSentinel(bun.default_allocator, "{s}/w{d}.xml", .{ dir, std.c.getpid() }, 0) catch bun.outOfMemory();
+        if (reporter.reporters.junit == null) {
+            reporter.reporters.junit = test_command.JunitReporter.init();
+        }
+    }
 
     writeIpcLine("ready");
 
@@ -455,7 +576,10 @@ pub fn runAsWorker(
         const kind_str = takeWord(&rest) orelse continue;
         const kind = std.meta.stringToEnum(Kind, kind_str) orelse continue;
         switch (kind) {
-            .shutdown => bun.Global.exit(0),
+            .shutdown => {
+                workerFlushAggregates(reporter, worker_junit_path);
+                bun.Global.exit(0);
+            },
             .run => {
                 const idx_str = takeWord(&rest) orelse continue;
                 const idx = std.fmt.parseInt(u32, idx_str, 10) catch continue;
@@ -490,14 +614,50 @@ pub fn runAsWorker(
                 writeIpcLine(msg);
 
                 if (will_recycle) {
+                    workerFlushAggregates(reporter, worker_junit_path);
                     writeIpcLine("recycle");
                     bun.Global.exit(0);
                 }
             },
-            .ready, .file_done, .recycle => {},
+            .ready, .file_done, .repeat_bufs, .junit_file, .recycle => {},
         }
     }
+    workerFlushAggregates(reporter, worker_junit_path);
     bun.Global.exit(0);
+}
+
+fn workerFlushAggregates(reporter: *CommandLineReporter, junit_path: ?[:0]const u8) void {
+    var line: std.ArrayListUnmanaged(u8) = .empty;
+    defer line.deinit(bun.default_allocator);
+    line.appendSlice(bun.default_allocator, "repeat_bufs") catch bun.outOfMemory();
+    inline for (.{
+        reporter.failures_to_repeat_buf.items,
+        reporter.skips_to_repeat_buf.items,
+        reporter.todos_to_repeat_buf.items,
+    }) |buf| {
+        line.append(bun.default_allocator, ' ') catch bun.outOfMemory();
+        if (buf.len == 0) {
+            line.append(bun.default_allocator, '-') catch bun.outOfMemory();
+        } else {
+            const hex_chars = "0123456789abcdef";
+            line.ensureUnusedCapacity(bun.default_allocator, buf.len * 2) catch bun.outOfMemory();
+            for (buf) |b| {
+                line.appendAssumeCapacity(hex_chars[b >> 4]);
+                line.appendAssumeCapacity(hex_chars[b & 0xf]);
+            }
+        }
+    }
+    writeIpcLine(line.items);
+
+    if (junit_path) |path| {
+        if (reporter.reporters.junit) |junit| {
+            if (junit.current_file.len > 0) junit.endTestSuite() catch {};
+            junit.writeToFile(path) catch {};
+        }
+        line.clearRetainingCapacity();
+        line.writer(bun.default_allocator).print("junit_file {s}", .{path}) catch bun.outOfMemory();
+        writeIpcLine(line.items);
+    }
 }
 
 fn takeWord(rest: *[]const u8) ?[]const u8 {
@@ -568,3 +728,4 @@ const Command = @import("../../cli.zig").Command;
 const test_command = @import("../test_command.zig");
 const TestCommand = test_command.TestCommand;
 const CommandLineReporter = test_command.CommandLineReporter;
+const TestRunner = jsc.Jest.TestRunner;

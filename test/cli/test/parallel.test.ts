@@ -126,3 +126,26 @@ test("--parallel without N defaults to >1 workers", async () => {
   expect(stderr).toMatch(/--parallel: \d+ workers, 2 files/);
   expect(exitCode).toBe(0);
 });
+
+test("--isolate-recycle-after does not report recycles as crashes", async () => {
+  using dir = tempDir("parallel-recycle", {
+    "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,
+    "b.test.js": `import {test,expect} from "bun:test"; test("b",()=>expect(1).toBe(1));`,
+    "c.test.js": `import {test,expect} from "bun:test"; test("c",()=>expect(1).toBe(1));`,
+    "d.test.js": `import {test,expect} from "bun:test"; test("d",()=>expect(1).toBe(1));`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--isolate-recycle-after=1"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("crashed");
+  expect(stderr).toContain("4 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});

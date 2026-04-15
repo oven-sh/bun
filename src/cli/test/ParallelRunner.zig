@@ -70,6 +70,10 @@ pub const Worker = struct {
 
     /// Index into `Coordinator.files` currently running on this worker.
     inflight: ?u32 = null,
+    /// Files completed by this worker process since (re)spawn. Mirrors the
+    /// worker's own counter so the coordinator can predict a recycle exit and
+    /// not dispatch into a dying worker.
+    files_run: u32 = 0,
     alive: bool = false,
     extra_fd_stdio: [1]bun.spawn.SpawnOptions.Stdio = undefined,
 
@@ -198,6 +202,7 @@ pub const Coordinator = struct {
     /// worker crashed mid-run.
     retries: []u8,
     pending_retry: []?u32,
+    recycle_after: u32,
     next_file: u32 = 0,
     files_done: u32 = 0,
     live_workers: u32 = 0,
@@ -279,8 +284,13 @@ pub const Coordinator = struct {
                 Output.flush();
 
                 w.inflight = null;
+                w.files_run += 1;
                 this.files_done += 1;
-                this.assignWork(w);
+                if (this.recycle_after == 0 or w.files_run < this.recycle_after) {
+                    this.assignWork(w);
+                }
+                // else: worker is about to send `recycle` and exit; let
+                // onWorkerExit respawn and the new worker's `ready` will pull.
             },
             .run, .shutdown => {},
         }
@@ -311,6 +321,7 @@ pub const Coordinator = struct {
             w.out = .{ .role = .stdout };
             w.err = .{ .role = .stderr };
             w.process = null;
+            w.files_run = 0;
             w.start() catch |e| {
                 Output.err(e, "failed to respawn worker {d}", .{w.idx});
                 if (retry_idx != null) {
@@ -390,6 +401,7 @@ pub fn runAsCoordinator(
         .workers = workers,
         .retries = retries,
         .pending_retry = pending_retry,
+        .recycle_after = ctx.test_options.isolate_recycle_after,
     };
 
     for (workers, 0..) |*w, i| {

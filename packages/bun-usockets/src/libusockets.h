@@ -283,6 +283,7 @@ struct us_socket_context_t *us_create_bun_nossl_socket_context(struct us_loop_t 
 /* Delete resources allocated at creation time (will call unref now and only free when ref count == 0). */
 void us_socket_context_free(int ssl, us_socket_context_r context) nonnull_fn_decl;
 void us_socket_context_ref(int ssl, us_socket_context_r context) nonnull_fn_decl;
+unsigned int us_socket_context_ref_count(int ssl, us_socket_context_r context) nonnull_fn_decl;
 void us_socket_context_unref(int ssl, us_socket_context_r context) nonnull_fn_decl;
 
 struct us_bun_verify_error_t us_socket_verify_error(int ssl, struct us_socket_t *context);

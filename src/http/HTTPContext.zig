@@ -96,6 +96,16 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             return @as(*BoringSSL.SSL_CTX, @ptrCast(this.us_socket_context.getNativeHandle(true)));
         }
 
+        /// True if any request is currently using this context (a connecting
+        /// socket, or a connected socket that isn't parked in the keepalive
+        /// pool). Evicting a context in this state would close those sockets
+        /// with no-op callbacks (cleanCallbacks runs first in deinit), leaving
+        /// socket_async_http_abort_tracker pointing at freed memory.
+        pub fn hasActiveRequests(this: *@This()) bool {
+            const linked = this.us_socket_context.refCount(ssl) -| 1;
+            return linked > this.pending_sockets.used.count();
+        }
+
         pub fn deinit(this: *@This()) void {
             // Replace callbacks with no-ops first to avoid UAF when closing sockets.
             this.us_socket_context.cleanCallbacks(ssl);

@@ -355,6 +355,9 @@ void us_internal_socket_context_free(int ssl, struct us_socket_context_t *contex
 void us_socket_context_ref(int ssl, struct us_socket_context_t *context) {
     context->ref_count++;
 }
+unsigned int us_socket_context_ref_count(int ssl, struct us_socket_context_t *context) {
+    return context->ref_count;
+}
 void us_socket_context_unref(int ssl, struct us_socket_context_t *context) {
     uint32_t ref_count = context->ref_count;
     context->ref_count--;

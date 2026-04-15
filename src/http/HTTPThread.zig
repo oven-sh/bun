@@ -272,6 +272,12 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                 };
             };
 
+            // Enforce max cache size before inserting so the new entry (which
+            // has no sockets yet) is never the eviction victim.
+            if (custom_ssl_context_map.count() >= ssl_context_cache_max_size) {
+                evictOldestSslContext();
+            }
+
             const now = this.timer.read();
             bun.handleOom(custom_ssl_context_map.put(requested_config, .{
                 .ctx = custom_context,
@@ -279,11 +285,6 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                 // Clone a strong ref for the cache entry; client.tls_props keeps its own.
                 .config_ref = tls.clone(),
             }));
-
-            // Enforce max cache size - evict oldest entry
-            if (custom_ssl_context_map.count() > ssl_context_cache_max_size) {
-                evictOldestSslContext();
-            }
 
             client.custom_ssl_ctx = custom_context;
             // Keepalive is now supported for custom SSL contexts
@@ -318,7 +319,7 @@ fn evictStaleSslContexts(this: *@This()) void {
     var i: usize = 0;
     while (i < custom_ssl_context_map.count()) {
         var entry = custom_ssl_context_map.values()[i];
-        if (now -| entry.last_used_ns > ssl_context_cache_ttl_ns) {
+        if (now -| entry.last_used_ns > ssl_context_cache_ttl_ns and !entry.ctx.hasActiveRequests()) {
             custom_ssl_context_map.swapRemoveAt(i);
             entry.ctx.deinit();
             entry.config_ref.deinit();
@@ -328,19 +329,23 @@ fn evictStaleSslContexts(this: *@This()) void {
     }
 }
 
-/// Evict the least-recently-used SSL context cache entry.
+/// Evict the least-recently-used SSL context cache entry that has no
+/// in-flight requests. Evicting a context with active sockets would close
+/// them via no-op callbacks (cleanCallbacks runs before close in deinit),
+/// leaving socket_async_http_abort_tracker pointing at freed sockets.
 fn evictOldestSslContext() void {
     if (custom_ssl_context_map.count() == 0) return;
-    var oldest_idx: usize = 0;
+    var oldest_idx: ?usize = null;
     var oldest_time: u64 = std.math.maxInt(u64);
     for (custom_ssl_context_map.values(), 0..) |entry, i| {
-        if (entry.last_used_ns < oldest_time) {
+        if (entry.last_used_ns < oldest_time and !entry.ctx.hasActiveRequests()) {
             oldest_time = entry.last_used_ns;
             oldest_idx = i;
         }
     }
-    var entry = custom_ssl_context_map.values()[oldest_idx];
-    custom_ssl_context_map.swapRemoveAt(oldest_idx);
+    const idx = oldest_idx orelse return;
+    var entry = custom_ssl_context_map.values()[idx];
+    custom_ssl_context_map.swapRemoveAt(idx);
     entry.ctx.deinit();
     entry.config_ref.deinit();
 }

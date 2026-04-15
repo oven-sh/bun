@@ -71,7 +71,7 @@ pub const Worker = struct {
     /// Index into `Coordinator.files` currently running on this worker.
     inflight: ?u32 = null,
     alive: bool = false,
-    extra_fd_stdio: [1]bun.spawn.SpawnOptions.Stdio = .{if (Environment.isPosix) .buffer else undefined},
+    extra_fd_stdio: [1]bun.spawn.SpawnOptions.Stdio = undefined,
 
     fn start(this: *Worker) !void {
         bun.assert(!this.alive);
@@ -93,6 +93,7 @@ pub const Worker = struct {
         }
         const argv = argv_buf[0..n :null];
 
+        this.extra_fd_stdio = .{if (Environment.isPosix) .buffer else .{ .buffer = bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)) }};
         const options: bun.spawn.SpawnOptions = .{
             .stdin = if (Environment.isPosix) .buffer else .{ .buffer = bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)) },
             .stdout = if (Environment.isPosix) .buffer else .{ .buffer = bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)) },

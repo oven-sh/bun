@@ -135,7 +135,16 @@ pub fn onConnectionTimeout(this: *@This()) void {
 pub fn onMaxLifetimeTimeout(this: *@This()) void {
     this.max_lifetime_timer.state = .FIRED;
     if (this.#connection.status == .failed) return;
-    this.failFmt(error.LifetimeTimeout, "Max lifetime timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+
+    if (this.#connection.status == .connected and this.#connection.isIdle()) {
+        // Connection is fully established and idle, close it gracefully.
+        this.close();
+    } else {
+        // Connection has in-flight queries. Reschedule to check again in 1 second
+        // so we don't kill active queries.
+        this.max_lifetime_timer.next = bun.timespec.msFromNow(.allow_mocked_time, 1000);
+        this.#vm.timer.insert(&this.max_lifetime_timer);
+    }
 }
 fn setupMaxLifetimeTimerIfNecessary(this: *@This()) void {
     if (this.max_lifetime_interval_ms == 0) return;

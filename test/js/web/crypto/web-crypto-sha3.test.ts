@@ -92,13 +92,9 @@ describe("RSA with SHA-3 hash", () => {
     expect(jwk.kty).toBe("RSA");
     expect(jwk.alg).toBeUndefined();
 
-    const reimported = await crypto.subtle.importKey(
-      "jwk",
-      jwk,
-      { name: "RSA-PSS", hash: "SHA3-256" },
-      true,
-      ["verify"],
-    );
+    const reimported = await crypto.subtle.importKey("jwk", jwk, { name: "RSA-PSS", hash: "SHA3-256" }, true, [
+      "verify",
+    ]);
     expect(await crypto.subtle.verify({ name: "RSA-PSS", saltLength: 32 }, reimported, sig, data)).toBe(true);
   });
 });

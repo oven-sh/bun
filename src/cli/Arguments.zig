@@ -640,10 +640,12 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
 
         if (args.option("--isolate-recycle-after")) |recycle_str| {
-            ctx.test_options.isolate_recycle_after = std.fmt.parseInt(u32, recycle_str, 10) catch {
-                Output.prettyErrorln("<red>error<r>: --isolate-recycle-after expects a non-negative integer, received \"{s}\"", .{recycle_str});
+            const n = std.fmt.parseInt(u32, recycle_str, 10) catch 0;
+            if (n == 0) {
+                Output.prettyErrorln("<red>error<r>: --isolate-recycle-after expects a positive integer, received \"{s}\"", .{recycle_str});
                 Global.exit(1);
-            };
+            }
+            ctx.test_options.isolate_recycle_after = n;
         }
 
         if (args.option("--seed")) |seed_str| {

@@ -207,7 +207,7 @@ WTF::TextStream& operator<<(WTF::TextStream&, const Event&);
 
 } // namespace WebCore
 
-#define SPECIALIZE_TYPE_TRAITS_EVENT(ToValueTypeName)                                                                  \
-    SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::ToValueTypeName)                                                             \
+#define SPECIALIZE_TYPE_TRAITS_EVENT(ToValueTypeName)                                                                             \
+    SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::ToValueTypeName)                                                                        \
     static bool isType(const WebCore::Event& event) { return event.eventInterface() == WebCore::ToValueTypeName##InterfaceType; } \
     SPECIALIZE_TYPE_TRAITS_END()

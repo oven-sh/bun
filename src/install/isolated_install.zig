@@ -167,11 +167,26 @@ pub fn installIsolatedPackages(
 
         var root_declares_workspace = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(lockfile.allocator, lockfile.packages.len);
         defer root_declares_workspace.deinit(lockfile.allocator);
-        for (pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end()) |dep_idx| {
-            if (dependencies[dep_idx].behavior.isWorkspace()) {
-                const res = resolutions[dep_idx];
-                if (res != invalid_package_id) root_declares_workspace.set(res);
+        for (pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end()) |_dep_idx| {
+            const dep_idx: DependencyID = @intCast(_dep_idx);
+            if (!dependencies[dep_idx].behavior.isWorkspace()) continue;
+            const res = resolutions[dep_idx];
+            if (res == invalid_package_id) continue;
+            // Only mark workspaces that root will actually queue; an entry excluded
+            // by --filter or `bun install <pkgs>` never gets a root-declared node,
+            // so a `workspace:` reference must keep its dependencies.
+            if (Tree.isFilteredDependencyOrWorkspace(
+                dep_idx,
+                0,
+                workspace_filters,
+                install_root_dependencies,
+                manager,
+                lockfile,
+            )) continue;
+            if (packages_to_install) |packages| {
+                if (std.mem.indexOfScalar(PackageID, packages, res) == null) continue;
             }
+            root_declares_workspace.set(res);
         }
 
         var peer_dep_ids: std.array_list.Managed(DependencyID) = .init(lockfile.allocator);

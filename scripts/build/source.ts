@@ -15,7 +15,7 @@
  * `buildDir/deps/<name>/`. This supports "local" dep mode where the user edits
  * vendored source directly — the fetch step is skipped and no .ref is written.
  *
- * Tarballs are cached in `cacheDir/tarballs/<identity-hash>.tar.gz` so
+ * Tarballs are cached in `downloadCacheDir/tarballs/<identity-hash>.tar.gz` so
  * re-extraction after a failed patch doesn't re-download.
  */
 
@@ -152,7 +152,7 @@ export type Source =
       rmAfterExtract?: string[];
       /**
        * Where extracted files land. Default: `vendor/<name>/`. Prebuilt deps
-       * (WebKit, nodejs-headers) override to `cacheDir/<name>-<version>/`.
+       * (WebKit, nodejs-headers) override to `downloadCacheDir/<name>-<version>/`.
        */
       destDir?: string;
     };

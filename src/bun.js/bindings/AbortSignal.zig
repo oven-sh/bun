@@ -203,8 +203,9 @@ pub const AbortSignal = opaque {
             const loop = vm.eventLoop();
             loop.enter();
             defer loop.exit();
+            // signalAbort() releases the extra ref from timeout() after all
+            // abort work completes, so we must not unref here.
             signal_ptr.signal(vm.global, .Timeout);
-            signal_ptr.unref();
         }
 
         // This may run inside the "signal" call.

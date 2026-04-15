@@ -13,7 +13,6 @@ import { join } from "node:path";
 test.skipIf(!isLinux)("JS number argument marshals correctly as a `ptr`", async () => {
   using dir = tempDir("issue-29346", {
     "lib.c": `\
-#include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
 

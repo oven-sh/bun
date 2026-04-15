@@ -48,6 +48,12 @@ static size_t getKeyLengthFromHash(CryptoAlgorithmIdentifier hash)
     case CryptoAlgorithmIdentifier::SHA_384:
     case CryptoAlgorithmIdentifier::SHA_512:
         return 1024;
+    case CryptoAlgorithmIdentifier::SHA3_256:
+        return 1088;
+    case CryptoAlgorithmIdentifier::SHA3_384:
+        return 832;
+    case CryptoAlgorithmIdentifier::SHA3_512:
+        return 576;
     default:
         ASSERT_NOT_REACHED();
         return 0;

@@ -285,7 +285,7 @@ it("process.versions", async () => {
     libdeflate: "libdeflate",
     zstd: "zstd",
     lshpack: "lshpack",
-  };
+
 
   const expectedVersions = {};
   for (const [key, file] of Object.entries(deps)) {

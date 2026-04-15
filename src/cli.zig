@@ -357,6 +357,12 @@ pub const Command = struct {
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
         max_concurrency: u32 = 20,
+        /// `bun test --changed[=<since>]`. When set, only test files whose
+        /// module graph reaches a file changed according to git are run.
+        /// null = flag not passed. "" = compare against uncommitted changes.
+        /// Otherwise the value is a git ref (commit, branch, tag) to diff
+        /// against.
+        changed: ?[]const u8 = null,
 
         reporters: struct {
             dots: bool = false,

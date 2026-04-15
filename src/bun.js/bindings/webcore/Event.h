@@ -103,23 +103,7 @@ public:
     bool legacyReturnValue() const { return !m_wasCanceled; }
     void setLegacyReturnValue(bool);
 
-    virtual EventInterface eventInterface() const { return EventInterfaceType; }
-
-    virtual bool isBeforeTextInsertedEvent() const { return false; }
-    virtual bool isBeforeUnloadEvent() const { return false; }
-    virtual bool isClipboardEvent() const { return false; }
-    virtual bool isCompositionEvent() const { return false; }
-    virtual bool isErrorEvent() const { return false; }
-    virtual bool isFocusEvent() const { return false; }
-    virtual bool isInputEvent() const { return false; }
-    virtual bool isKeyboardEvent() const { return false; }
-    virtual bool isMouseEvent() const { return false; }
-    virtual bool isPointerEvent() const { return false; }
-    virtual bool isTextEvent() const { return false; }
-    virtual bool isTouchEvent() const { return false; }
-    virtual bool isUIEvent() const { return false; }
-    virtual bool isVersionChangeEvent() const { return false; }
-    virtual bool isWheelEvent() const { return false; }
+    EventInterface eventInterface() const { return static_cast<EventInterface>(m_eventInterface); }
 
     bool propagationStopped() const { return m_propagationStopped || m_immediatePropagationStopped; }
     bool immediatePropagationStopped() const { return m_immediatePropagationStopped; }
@@ -154,15 +138,15 @@ public:
     virtual String debugDescription() const;
 
 protected:
-    explicit Event(IsTrusted = IsTrusted::No);
-    Event(const AtomString& type, CanBubble, IsCancelable, IsComposed = IsComposed::No);
-    Event(const AtomString& type, CanBubble, IsCancelable, IsComposed, MonotonicTime timestamp, IsTrusted isTrusted = IsTrusted::Yes);
-    Event(const AtomString& type, const EventInit&, IsTrusted);
+    explicit Event(EventInterface, IsTrusted = IsTrusted::No);
+    Event(EventInterface, const AtomString& type, CanBubble, IsCancelable, IsComposed = IsComposed::No);
+    Event(EventInterface, const AtomString& type, CanBubble, IsCancelable, IsComposed, MonotonicTime timestamp, IsTrusted isTrusted = IsTrusted::Yes);
+    Event(EventInterface, const AtomString& type, const EventInit&, IsTrusted);
 
     virtual void receivedTarget() {}
 
 private:
-    explicit Event(MonotonicTime createTime, const AtomString& type, IsTrusted, CanBubble, IsCancelable, IsComposed);
+    explicit Event(EventInterface, MonotonicTime createTime, const AtomString& type, IsTrusted, CanBubble, IsCancelable, IsComposed);
 
     void setCanceledFlagIfPossible();
 
@@ -181,6 +165,7 @@ private:
     unsigned m_currentTargetIsInShadowTree : 1;
 
     unsigned m_eventPhase : 2;
+    unsigned m_eventInterface : 7;
 
     AtomString m_type;
 
@@ -222,7 +207,7 @@ WTF::TextStream& operator<<(WTF::TextStream&, const Event&);
 
 } // namespace WebCore
 
-#define SPECIALIZE_TYPE_TRAITS_EVENT(ToValueTypeName)                                       \
-    SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::ToValueTypeName)                                  \
-    static bool isType(const WebCore::Event& event) { return event.is##ToValueTypeName(); } \
+#define SPECIALIZE_TYPE_TRAITS_EVENT(ToValueTypeName)                                                                             \
+    SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::ToValueTypeName)                                                                        \
+    static bool isType(const WebCore::Event& event) { return event.eventInterface() == WebCore::ToValueTypeName##InterfaceType; } \
     SPECIALIZE_TYPE_TRAITS_END()

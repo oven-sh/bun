@@ -2160,8 +2160,11 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
             return promise;
     }
 
-    // only load preloads once
-    this.preload.len = 0;
+    // Under --isolate each test file gets a fresh global, so preloads must
+    // re-execute for every file. Otherwise, only load preloads once.
+    if (!this.test_isolation_enabled) {
+        this.preload.len = 0;
+    }
 
     return null;
 }
@@ -2405,8 +2408,7 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     this.has_loaded_constructors = true;
 
     // TODO(isolate): walk usockets contexts to close non-listening connections,
-    // close FSWatchers/StatWatchers, and re-run --preload scripts in the new
-    // global. For now those are covered by worker recycling.
+    // close FSWatchers/StatWatchers. For now those are covered by worker recycling.
 }
 
 pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_name: string, specifier: string, hash: i32) !*JSInternalPromise {

@@ -59,6 +59,75 @@ describe("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("with --isolate, --preload re-runs in each file's fresh global", async () => {
+    using dir = tempDir("isolate-preload", {
+      "preload.ts": `
+        import { expect, beforeEach, beforeAll, afterAll } from "bun:test";
+        expect.extend({
+          toBeCustom() { return { pass: true, message: () => "" }; },
+        });
+        beforeEach(() => { (globalThis as any).__preloadRan = true; });
+        beforeAll(() => { (globalThis as any).__beforeAllRan = ((globalThis as any).__beforeAllRan ?? 0) + 1; });
+        afterAll(() => { (globalThis as any).__afterAllRan = true; });
+      `,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("preload state present in a", () => {
+          expect((globalThis as any).__preloadRan).toBe(true);
+          expect((globalThis as any).__beforeAllRan).toBe(1);
+          (expect(1) as any).toBeCustom();
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        test("preload state present in b", () => {
+          expect((globalThis as any).__preloadRan).toBe(true);
+          expect((globalThis as any).__beforeAllRan).toBe(1);
+          (expect(1) as any).toBeCustom();
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate", "--preload", "./preload.ts"],
+      ["./a.test.ts", "./b.test.ts"],
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("without --isolate, --preload still runs once (regression)", async () => {
+    using dir = tempDir("isolate-preload-off", {
+      "preload.ts": `
+        import { beforeAll } from "bun:test";
+        (globalThis as any).__preloadEvals = ((globalThis as any).__preloadEvals ?? 0) + 1;
+        beforeAll(() => { (globalThis as any).__beforeAllRan = ((globalThis as any).__beforeAllRan ?? 0) + 1; });
+      `,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("a", () => {
+          expect((globalThis as any).__preloadEvals).toBe(1);
+          expect((globalThis as any).__beforeAllRan).toBe(1);
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        test("b", () => {
+          expect((globalThis as any).__preloadEvals).toBe(1);
+          expect((globalThis as any).__beforeAllRan).toBe(1);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--preload", "./preload.ts"],
+      ["./a.test.ts", "./b.test.ts"],
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("with --isolate, module state is not shared between files", async () => {
     using dir = tempDir("isolate-modules", {
       "shared.ts": `export let counter = { n: 0 };`,

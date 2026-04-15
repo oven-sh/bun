@@ -151,6 +151,22 @@ pub const BunTestRoot = struct {
         this.hook_scope.destroy(this.gpa);
         bun.assert(this.active_file == null);
     }
+    /// Drop preload-level hooks registered in the previous global. The next
+    /// file's `loadPreloads()` re-registers them against the fresh global.
+    pub fn resetHookScopeForTestIsolation(this: *BunTestRoot) void {
+        bun.assert(this.hook_scope.entries.items.len == 0);
+        this.hook_scope.destroy(this.gpa);
+        this.hook_scope = DescribeScope.create(this.gpa, .{
+            .parent = null,
+            .name = null,
+            .concurrent = false,
+            .mode = .normal,
+            .only = .no,
+            .has_callback = false,
+            .test_id_for_debugger = 0,
+            .line_no = 0,
+        });
+    }
 
     pub fn enterFile(this: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter, default_concurrent: bool, first_last: FirstLast) void {
         group.begin(@src());

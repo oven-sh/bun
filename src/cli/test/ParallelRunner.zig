@@ -440,11 +440,15 @@ pub fn runAsWorker(
         reporter: *CommandLineReporter,
         vm: *jsc.VirtualMachine,
         file: []const u8,
-        first: bool,
         swap_after: bool,
         pub fn begin(r: *@This()) void {
-            TestCommand.run(r.reporter, r.vm, r.file, .{ .first = r.first, .last = false }) catch |err| test_command.handleTopLevelTestErrorBeforeJavaScriptStart(err);
-            if (r.swap_after) r.vm.swapGlobalForTestIsolation();
+            // Workers always run with --isolate; every file is its own complete
+            // run from the preload's perspective.
+            TestCommand.run(r.reporter, r.vm, r.file, .{ .first = true, .last = true }) catch |err| test_command.handleTopLevelTestErrorBeforeJavaScriptStart(err);
+            if (r.swap_after) {
+                r.vm.swapGlobalForTestIsolation();
+                r.reporter.jest.bun_test_root.resetHookScopeForTestIsolation();
+            }
         }
     };
 
@@ -470,7 +474,6 @@ pub fn runAsWorker(
                     .reporter = reporter,
                     .vm = vm,
                     .file = file,
-                    .first = files_run == 1,
                     .swap_after = !will_recycle,
                 };
                 vm.runWithAPILock(Runner, &runner, Runner.begin);

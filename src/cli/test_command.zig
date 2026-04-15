@@ -1936,16 +1936,23 @@ pub const TestCommand = struct {
 
                 if (files.len > 1) {
                     for (files[0 .. files.len - 1], 0..) |file_name, i| {
-                        TestCommand.run(reporter, vm, file_name.slice(), .{ .first = i == 0, .last = false }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                        TestCommand.run(reporter, vm, file_name.slice(), .{
+                            .first = isolate or i == 0,
+                            .last = isolate,
+                        }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
                         reporter.jest.default_timeout_override = std.math.maxInt(u32);
                         Global.mimalloc_cleanup(false);
                         if (isolate) {
                             vm.swapGlobalForTestIsolation();
+                            reporter.jest.bun_test_root.resetHookScopeForTestIsolation();
                         }
                     }
                 }
 
-                TestCommand.run(reporter, vm, files[files.len - 1].slice(), .{ .first = files.len == 1, .last = true }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                TestCommand.run(reporter, vm, files[files.len - 1].slice(), .{
+                    .first = isolate or files.len == 1,
+                    .last = true,
+                }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
             }
         };
 

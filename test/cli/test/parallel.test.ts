@@ -149,3 +149,54 @@ test("--isolate-recycle-after does not report recycles as crashes", async () => 
   expect(stderr).toContain("0 fail");
   expect(exitCode).toBe(0);
 });
+
+test("--parallel forwards -t to workers", async () => {
+  using dir = tempDir("parallel-filter", {
+    "a.test.js": `import {test,expect} from "bun:test"; test("keep_a",()=>expect(1).toBe(1)); test("drop_a",()=>expect(1).toBe(2));`,
+    "b.test.js": `import {test,expect} from "bun:test"; test("drop_b",()=>expect(1).toBe(2));`,
+    "c.test.js": `import {test,expect} from "bun:test"; test("keep_c",()=>expect(1).toBe(1));`,
+    "d.test.js": `import {test,expect} from "bun:test"; test("drop_d",()=>expect(1).toBe(2));`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "-t", "keep"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("--parallel: 2 workers, 4 files");
+  // Only keep_a and keep_c run; drop_* tests would fail if executed.
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test("--parallel --bail stops dispatching new files after threshold", async () => {
+  // Every file fails, so whichever two the Scanner hands out first will
+  // trigger bail before any third file is dispatched. Order-independent.
+  const files: Record<string, string> = {};
+  for (const f of ["a", "b", "c", "d", "e", "f"]) {
+    files[`${f}.test.js`] = `import {test,expect} from "bun:test"; test("${f}",()=>expect(1).toBe(2));`;
+  }
+  using dir = tempDir("parallel-bail", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--bail=1"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("--parallel: 2 workers, 6 files");
+  expect(stderr).toContain("Bailed out after 1 failure");
+  // At most the two initially-dispatched files ran; the other four never did.
+  const m = stderr.match(/across (\d+) files?\./);
+  expect(m).not.toBeNull();
+  expect(Number(m![1])).toBeLessThanOrEqual(2);
+  expect(exitCode).toBe(1);
+});

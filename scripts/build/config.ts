@@ -135,8 +135,14 @@ export interface Config {
   buildDir: string;
   /** Generated code output, e.g. buildDir/codegen/. */
   codegenDir: string;
-  /** Persistent cache for dep tarballs and builds. */
+  /** ccache/zig-cache. Local: shared across checkouts. CI: per-build (ephemeral). */
   cacheDir: string;
+  /**
+   * Downloaded artifacts (dep tarballs, prebuilt webkit, nodejs-headers).
+   * Defaults to cacheDir; CI agents that want fetches to survive across
+   * ephemeral runners point this elsewhere via BUN_DEPS_CACHE_PATH.
+   */
+  downloadCacheDir: string;
   /** Vendored dependencies (gitignored). */
   vendorDir: string;
 
@@ -451,6 +457,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       : ci
         ? resolve(buildDir, "cache")
         : resolve(bunInstall, "build-cache");
+  // Downloaded artifacts only — content-addressed/version-stamped, so safe
+  // to share across builds. Anchored to repo root for the same regen-rule
+  // reason as bunInstall above.
+  const downloadCacheDir = process.env.BUN_DEPS_CACHE_PATH ? resolve(cwd, process.env.BUN_DEPS_CACHE_PATH) : cacheDir;
   const vendorDir = resolve(cwd, "vendor");
 
   // ─── Validation ───
@@ -524,6 +534,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     buildDir,
     codegenDir,
     cacheDir,
+    downloadCacheDir,
     vendorDir,
     cc: toolchain.cc,
     cxx: toolchain.cxx,

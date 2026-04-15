@@ -868,7 +868,7 @@ function emitFetch(
       repo: source.repo,
       commit: source.commit,
       dest: srcDir,
-      cache: resolve(cfg.cacheDir, "tarballs"),
+      cache: resolve(cfg.downloadCacheDir, "tarballs"),
       // Pass patches space-separated. Shell-safe because patch paths are
       // under our control (no spaces in repo paths per convention).
       patches: patchPaths.join(" "),

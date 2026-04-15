@@ -83,7 +83,7 @@ function prebuiltUrl(cfg: Config): string {
  */
 function prebuiltDestDir(cfg: Config): string {
   const version16 = cfg.webkitVersion.slice(0, 16);
-  return resolve(cfg.cacheDir, `webkit-${version16}${prebuiltSuffix(cfg)}`);
+  return resolve(cfg.downloadCacheDir, `webkit-${version16}${prebuiltSuffix(cfg)}`);
 }
 
 // ───────────────────────────────────────────────────────────────────────────

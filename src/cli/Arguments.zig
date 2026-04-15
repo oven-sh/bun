@@ -422,17 +422,12 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
                 dir = parent;
             }
             if (!found) {
-                // Fall back to the cwd-joined path so non-existent bunfig
-                // behaves the same as before (silent skip for auto_loaded).
-                var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
-                const joined = resolve_path.joinAbsStringBuf(
-                    ctx.args.absolute_working_dir.?,
-                    &config_buf,
-                    &parts,
-                    .auto,
-                );
-                config_buf[joined.len] = 0;
-                config_path = config_buf[0..joined.len :0];
+                // The walk found nothing. Mark bunfig as "loaded" (as in
+                // attempted) so a secondary loadConfig call (e.g. the
+                // RunCommand fallback in run_command.zig) doesn't redo the
+                // same ancestor walk on every invocation.
+                ctx.debug.loaded_bunfig = true;
+                return;
             }
         } else {
             var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };

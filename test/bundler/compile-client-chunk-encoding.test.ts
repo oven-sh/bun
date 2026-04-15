@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { copyFileSync, existsSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 
 // Client-side chunks (target=browser) are not printed with ascii_only and may
@@ -24,7 +24,7 @@ await import(join(import.meta.dir, (js as any).name));
 `,
   });
 
-  const outfile = join(String(dir), "app");
+  const outfile = join(String(dir), isWindows ? "app.exe" : "app");
   const shim = join(dirname(bunExe()), "asan-dyld-shim.dylib");
   if (existsSync(shim)) copyFileSync(shim, join(String(dir), "asan-dyld-shim.dylib"));
   {

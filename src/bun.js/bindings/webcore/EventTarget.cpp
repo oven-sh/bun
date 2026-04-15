@@ -61,14 +61,18 @@
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(EventTarget);
-WTF_MAKE_TZONE_ALLOCATED_IMPL(EventTargetWithInlineData);
 
 Ref<EventTarget> EventTarget::create(ScriptExecutionContext& context)
 {
     return EventTargetConcrete::create(context);
 }
 
-EventTarget::~EventTarget() = default;
+EventTarget::~EventTarget()
+{
+    // The WeakPtrImpl (and its EventTargetData) can outlive this object.
+    if (auto* data = this->eventTargetData())
+        data->clear();
+}
 
 bool EventTarget::isNode() const
 {

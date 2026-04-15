@@ -245,7 +245,6 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against.") catch unreachable,
     clap.parseParam("--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another.") catch unreachable,
     clap.parseParam("--parallel <NUMBER>?             Run test files in parallel using N worker processes. Implies --isolate. Defaults to CPU core count.") catch unreachable,
-    clap.parseParam("--isolate-recycle-after <NUMBER> Restart each --parallel worker after N files (default: 50). Mitigates leaks in long runs.") catch unreachable,
     clap.parseParam("--test-worker                    (internal) Run as a --parallel worker, receiving files over IPC.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
@@ -637,15 +636,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.test_options.parallel = parsed;
             // --parallel implies --isolate inside each worker.
             ctx.test_options.isolate = true;
-        }
-
-        if (args.option("--isolate-recycle-after")) |recycle_str| {
-            const n = std.fmt.parseInt(u32, recycle_str, 10) catch 0;
-            if (n == 0) {
-                Output.prettyErrorln("<red>error<r>: --isolate-recycle-after expects a positive integer, received \"{s}\"", .{recycle_str});
-                Global.exit(1);
-            }
-            ctx.test_options.isolate_recycle_after = n;
         }
 
         if (args.option("--seed")) |seed_str| {

@@ -4,10 +4,9 @@
 //! out one file at a time over stdin, and reads per-test events back over fd
 //! 3. Per-test status lines are streamed to the coordinator the moment a test
 //! finishes; stderr (errors, console.log) streams per-line. On a TTY the
-//! coordinator draws a live one-line-per-worker status block at the bottom;
-//! result lines scroll above it. Workers run each file in a fresh GlobalObject
-//! and exit after `--isolate-recycle-after` files; the coordinator respawns
-//! them transparently.
+//! coordinator draws a live status block at the bottom showing what each
+//! active worker is running; result lines scroll above it. Workers run each
+//! file in a fresh GlobalObject and live for the entire run.
 
 /// fd 3 in the worker. On Windows this must be a libuv (CRT) fd so
 /// `uv_get_osfhandle(3)` resolves to the inherited handle; can't be a
@@ -16,32 +15,71 @@ fn ipcFd() bun.FD {
     return .fromUV(3);
 }
 
-/// Wire protocol (newline-delimited, space-separated):
-///   coordinator -> worker (stdin):
-///     run <idx> <file...>\n
-///     shutdown\n
-///   worker -> coordinator (fd 3):
-///     ready\n
-///     recycle\n
-///     file_start <idx>\n
-///     test_start <idx> <hex_name>\n
-///     test_done <idx> <hex_status_line>\n
-///     file_done <idx> <pass> <fail> <skip> <todo> <expectations> <skipped_label> <files> <unhandled>\n
-///     repeat_bufs <fail_hex> <skip_hex> <todo_hex>\n  (sent once before recycle/shutdown)
-///     junit_file <path...>\n                          (sent once before recycle/shutdown)
-///     coverage_file <path...>\n                       (sent once before recycle/shutdown)
-const Kind = enum {
-    ready,
-    file_start,
-    test_start,
-    test_done,
-    file_done,
-    repeat_bufs,
-    junit_file,
-    coverage_file,
-    recycle,
-    run,
-    shutdown,
+/// Wire protocol on both stdin and fd 3: length-prefixed binary frames.
+///   [u32 LE payload_len][u8 kind][payload]
+/// Strings within a payload are [u32 LE len][bytes].
+const Kind = enum(u8) {
+    // worker → coordinator
+    ready, // (empty)
+    file_start, // u32 file_idx
+    test_start, // u32 file_idx, str name
+    test_done, // u32 file_idx, str formatted_line (ANSI included; printed verbatim)
+    file_done, // 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label, files, unhandled
+    repeat_bufs, // 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
+    junit_file, // str path
+    coverage_file, // str path
+    // coordinator → worker
+    run, // u32 file_idx, str path
+    shutdown, // (empty)
+};
+
+/// Minimal length-prefixed binary codec. Frames build into a reusable buffer
+/// then flush in a single write so partial reads on the other side never see a
+/// torn header.
+const Frame = struct {
+    buf: std.ArrayListUnmanaged(u8) = .empty,
+
+    fn begin(self: *Frame, kind: Kind) void {
+        self.buf.clearRetainingCapacity();
+        // reserve header; payload_len patched in send()
+        self.buf.appendNTimes(bun.default_allocator, 0, 4) catch bun.outOfMemory();
+        self.buf.append(bun.default_allocator, @intFromEnum(kind)) catch bun.outOfMemory();
+    }
+    fn u32_(self: *Frame, v: u32) void {
+        var le: [4]u8 = undefined;
+        std.mem.writeInt(u32, &le, v, .little);
+        self.buf.appendSlice(bun.default_allocator, &le) catch bun.outOfMemory();
+    }
+    fn str(self: *Frame, s: []const u8) void {
+        self.u32_(@intCast(s.len));
+        self.buf.appendSlice(bun.default_allocator, s) catch bun.outOfMemory();
+    }
+    fn send(self: *Frame, fd: bun.FD) void {
+        const payload_len: u32 = @intCast(self.buf.items.len - 5);
+        std.mem.writeInt(u32, self.buf.items[0..4], payload_len, .little);
+        writeAll(fd, self.buf.items);
+    }
+    fn deinit(self: *Frame) void {
+        self.buf.deinit(bun.default_allocator);
+    }
+
+    /// Payload reader; bounds-checked, returns zero/empty on truncation.
+    const Reader = struct {
+        p: []const u8,
+        fn u32_(self: *Reader) u32 {
+            if (self.p.len < 4) return 0;
+            const v = std.mem.readInt(u32, self.p[0..4], .little);
+            self.p = self.p[4..];
+            return v;
+        }
+        fn str(self: *Reader) []const u8 {
+            const n = self.u32_();
+            if (self.p.len < n) return "";
+            const s = self.p[0..n];
+            self.p = self.p[n..];
+            return s;
+        }
+    };
 };
 
 /// Live one-line-per-worker status block drawn at the bottom of a TTY.
@@ -99,14 +137,11 @@ const LiveStatus = struct {
         const now = std.time.nanoTimestamp();
         self.last_draw_ns = now;
         const w = Output.errorWriter();
-        for (self.rows, 0..) |row, i| {
-            if (row.file.len == 0) {
-                w.print(comptime Output.prettyFmt("<r><d>  worker {d} idle<r>\n", true), .{i}) catch {};
-            } else {
-                const elapsed_ms: u64 = @intCast(@max(0, @divTrunc(now - row.started_ns, std.time.ns_per_ms)));
-                const name = if (row.test_name.len > 0) row.test_name else "(loading)";
-                w.print(comptime Output.prettyFmt("<r><cyan>⏵<r> <d>{s} ›<r> {s} <d>[{d}ms]<r>\n", true), .{ row.file, name, elapsed_ms }) catch {};
-            }
+        for (self.rows) |row| {
+            if (row.file.len == 0) continue;
+            const elapsed_ms: u64 = @intCast(@max(0, @divTrunc(now - row.started_ns, std.time.ns_per_ms)));
+            const name = if (row.test_name.len > 0) row.test_name else "(loading)";
+            w.print(comptime Output.prettyFmt("<r><cyan>⏵<r> <d>{s} ›<r> {s} <d>[{d}ms]<r>\n", true), .{ row.file, name, elapsed_ms }) catch {};
             self.lines_drawn += 1;
         }
         Output.flush();
@@ -127,30 +162,47 @@ const LiveStatus = struct {
 };
 
 /// Reads worker output (IPC, stdout, or stderr) and routes it. One per pipe.
+/// IPC bytes are frame-decoded; stdout/stderr are split on newlines.
 const WorkerPipe = struct {
     reader: bun.io.BufferedReader = bun.io.BufferedReader.init(WorkerPipe),
     worker: *Worker = undefined,
     role: enum { ipc, stdout, stderr },
-    line_buf: JSONLineBuffer = .{},
+    buf: std.ArrayListUnmanaged(u8) = .empty,
 
     pub fn deinit(this: *WorkerPipe) void {
         this.reader.deinit();
-        this.line_buf.deinit();
+        this.buf.deinit(bun.default_allocator);
     }
 
     pub fn onReadChunk(this: *WorkerPipe, chunk: []const u8, _: bun.io.ReadState) bool {
-        this.line_buf.append(chunk);
-        while (this.line_buf.next()) |msg| {
-            this.worker.coord.onLine(this.worker, this.role, msg.data[0..msg.newline_pos]);
-            this.line_buf.consume(msg.newline_pos + 1);
+        this.buf.appendSlice(bun.default_allocator, chunk) catch bun.outOfMemory();
+        var head: usize = 0;
+        if (this.role == .ipc) {
+            while (this.buf.items.len - head >= 5) {
+                const len = std.mem.readInt(u32, this.buf.items[head..][0..4], .little);
+                if (this.buf.items.len - head < 5 + len) break;
+                const kind: Kind = @enumFromInt(this.buf.items[head + 4]);
+                var rd = Frame.Reader{ .p = this.buf.items[head + 5 ..][0..len] };
+                this.worker.coord.onFrame(this.worker, kind, &rd);
+                head += 5 + len;
+            }
+        } else {
+            while (std.mem.indexOfScalarPos(u8, this.buf.items, head, '\n')) |nl| {
+                this.worker.coord.onTextLine(this.worker, this.buf.items[head..nl]);
+                head = nl + 1;
+            }
+        }
+        if (head > 0) {
+            const rest = this.buf.items.len - head;
+            std.mem.copyForwards(u8, this.buf.items[0..rest], this.buf.items[head..]);
+            this.buf.items.len = rest;
         }
         return true;
     }
     pub fn onReaderDone(this: *WorkerPipe) void {
-        if (!this.line_buf.isEmpty()) {
-            const rest = this.line_buf.data.slice()[this.line_buf.head..];
-            this.worker.coord.onLine(this.worker, this.role, rest);
-            this.line_buf.consume(@intCast(rest.len));
+        if (this.role != .ipc and this.buf.items.len > 0) {
+            this.worker.coord.onTextLine(this.worker, this.buf.items);
+            this.buf.clearRetainingCapacity();
         }
     }
     pub fn onReaderError(_: *WorkerPipe, _: bun.sys.Error) void {}
@@ -174,10 +226,6 @@ pub const Worker = struct {
 
     /// Index into `Coordinator.files` currently running on this worker.
     inflight: ?u32 = null,
-    /// Files completed by this worker process since (re)spawn. Mirrors the
-    /// worker's own counter so the coordinator can predict a recycle exit and
-    /// not dispatch into a dying worker.
-    files_run: u32 = 0,
     alive: bool = false,
     extra_fd_stdio: [1]bun.spawn.SpawnOptions.Stdio = undefined,
 
@@ -282,31 +330,21 @@ pub const Worker = struct {
         return this.coord.vm.uvLoop();
     }
 
-    fn send(this: *Worker, json: []const u8) void {
-        const fd = this.stdin_fd orelse return;
-        var remaining = json;
-        while (remaining.len > 0) {
-            switch (bun.sys.write(fd, remaining)) {
-                .result => |wrote| remaining = remaining[wrote..],
-                .err => |e| switch (e.getErrno()) {
-                    .AGAIN, .INTR => continue,
-                    else => return,
-                },
-            }
-        }
-        _ = bun.sys.write(fd, "\n");
-    }
-
     fn dispatch(this: *Worker, file_idx: u32, file: []const u8) void {
-        this.coord.scratch.clearRetainingCapacity();
-        this.coord.scratch.writer(bun.default_allocator).print("run {d} {s}", .{ file_idx, file }) catch bun.outOfMemory();
-        this.send(this.coord.scratch.items);
+        const fd = this.stdin_fd orelse return;
+        const f = &this.coord.frame;
+        f.begin(.run);
+        f.u32_(file_idx);
+        f.str(file);
+        f.send(fd);
         this.inflight = file_idx;
     }
 
     fn shutdown(this: *Worker) void {
-        this.send("shutdown");
         if (this.stdin_fd) |fd| {
+            const f = &this.coord.frame;
+            f.begin(.shutdown);
+            f.send(fd);
             fd.close();
             this.stdin_fd = null;
         }
@@ -336,8 +374,7 @@ pub const Coordinator = struct {
     /// header is re-emitted so every line has visible context. null at start.
     last_header_idx: ?u32 = null,
     live: LiveStatus,
-    scratch: std.ArrayListUnmanaged(u8) = .empty,
-    recycle_after: u32,
+    frame: Frame = .{},
     bail: u32,
     next_file: u32 = 0,
     files_done: u32 = 0,
@@ -398,42 +435,32 @@ pub const Coordinator = struct {
         w.print("\n{s}:\n", .{this.relPath(file_idx)}) catch {};
     }
 
-    fn onLine(this: *Coordinator, w: *Worker, role: @FieldType(WorkerPipe, "role"), line: []const u8) void {
-        switch (role) {
-            .stdout, .stderr => {
-                this.live.open();
-                if (w.inflight) |idx| this.ensureHeader(idx);
-                Output.errorWriter().writeAll(line) catch {};
-                Output.errorWriter().writeByte('\n') catch {};
-                Output.flush();
-                this.live.draw();
-            },
-            .ipc => this.onIpc(w, line),
-        }
+    fn onTextLine(this: *Coordinator, w: *Worker, line: []const u8) void {
+        this.live.open();
+        if (w.inflight) |idx| this.ensureHeader(idx);
+        Output.errorWriter().writeAll(line) catch {};
+        Output.errorWriter().writeByte('\n') catch {};
+        Output.flush();
+        this.live.draw();
     }
 
-    fn onIpc(this: *Coordinator, w: *Worker, line: []const u8) void {
-        var it = std.mem.tokenizeScalar(u8, line, ' ');
-        const kind = std.meta.stringToEnum(Kind, it.next() orelse return) orelse return;
+    fn onFrame(this: *Coordinator, w: *Worker, kind: Kind, rd: *Frame.Reader) void {
         switch (kind) {
             .ready => this.assignWorkOrRetry(w),
-            .recycle => {}, // exit handler will respawn
             .file_start => {
-                const idx = std.fmt.parseInt(u32, it.next() orelse return, 10) catch return;
-                this.live.setFile(w.idx, this.relPath(idx));
+                this.live.setFile(w.idx, this.relPath(rd.u32_()));
                 this.live.open();
                 this.live.draw();
             },
             .test_start => {
-                _ = it.next(); // file idx
-                const name = decodeHex(&this.scratch, it.next() orelse return) orelse return;
-                this.live.setTest(w.idx, name);
+                _ = rd.u32_();
+                this.live.setTest(w.idx, rd.str());
                 this.live.open();
                 this.live.draw();
             },
             .test_done => {
-                const idx = std.fmt.parseInt(u32, it.next() orelse return, 10) catch return;
-                const formatted = decodeHex(&this.scratch, it.next() orelse "") orelse return;
+                const idx = rd.u32_();
+                const formatted = rd.str();
                 if (formatted.len == 0) return; // e.g. pass under isAIAgent() — silenced by design
                 this.live.open();
                 this.ensureHeader(idx);
@@ -443,7 +470,7 @@ pub const Coordinator = struct {
             },
             .file_done => {
                 var nums: [9]u32 = undefined;
-                for (&nums) |*n| n.* = std.fmt.parseInt(u32, it.next() orelse return, 10) catch return;
+                for (&nums) |*n| n.* = rd.u32_();
                 _, const pass, const fail, const skip, const todo, const expectations, const skipped_label, const files, const unhandled = nums;
 
                 const summary = this.reporter.summary();
@@ -458,16 +485,9 @@ pub const Coordinator = struct {
 
                 this.live.setIdle(w.idx);
                 w.inflight = null;
-                w.files_run += 1;
                 this.files_done += 1;
-                if (this.bail > 0 and summary.fail >= this.bail) {
-                    this.bailOut();
-                }
-                if (this.recycle_after == 0 or w.files_run < this.recycle_after) {
-                    this.assignWork(w);
-                }
-                // else: worker is about to send `recycle` and exit; let
-                // onWorkerExit respawn and the new worker's `ready` will pull.
+                if (this.bail > 0 and summary.fail >= this.bail) this.bailOut();
+                this.assignWork(w);
             },
             .repeat_bufs => {
                 inline for (.{
@@ -475,29 +495,14 @@ pub const Coordinator = struct {
                     &this.reporter.skips_to_repeat_buf,
                     &this.reporter.todos_to_repeat_buf,
                 }) |dest| {
-                    if (it.next()) |hex| {
-                        if (!(hex.len == 1 and hex[0] == '-')) {
-                            const decoded_len = hex.len / 2;
-                            bun.handleOom(dest.ensureUnusedCapacity(bun.default_allocator, decoded_len));
-                            const slice = dest.unusedCapacitySlice()[0..decoded_len];
-                            if (std.fmt.hexToBytes(slice, hex)) |_| {
-                                dest.items.len += decoded_len;
-                            } else |_| {}
-                        }
-                    }
+                    bun.handleOom(dest.appendSlice(bun.default_allocator, rd.str()));
                 }
             },
-            .junit_file => {
-                const path = std.mem.trim(u8, it.rest(), " ");
-                if (path.len > 0) {
-                    bun.handleOom(this.junit_fragments.append(bun.default_allocator, bun.default_allocator.dupe(u8, path) catch bun.outOfMemory()));
-                }
-            },
-            .coverage_file => {
-                const path = std.mem.trim(u8, it.rest(), " ");
-                if (path.len > 0) {
-                    bun.handleOom(this.coverage_fragments.append(bun.default_allocator, bun.default_allocator.dupe(u8, path) catch bun.outOfMemory()));
-                }
+            .junit_file, .coverage_file => {
+                const path = rd.str();
+                if (path.len == 0) return;
+                const list = if (kind == .junit_file) &this.junit_fragments else &this.coverage_fragments;
+                bun.handleOom(list.append(bun.default_allocator, bun.default_allocator.dupe(u8, path) catch bun.outOfMemory()));
             },
             .run, .shutdown => {},
         }
@@ -535,7 +540,6 @@ pub const Coordinator = struct {
             w.out = .{ .role = .stdout };
             w.err = .{ .role = .stderr };
             w.process = null;
-            w.files_run = 0;
             w.start() catch |e| {
                 Output.err(e, "failed to respawn worker {d}", .{w.idx});
                 if (retry_idx != null) {
@@ -642,7 +646,6 @@ pub fn runAsCoordinator(
         .pending_retry = pending_retry,
         .live = LiveStatus.init(allocator, n),
         .worker_tmpdir = worker_tmpdir,
-        .recycle_after = ctx.test_options.isolate_recycle_after,
         .bail = ctx.test_options.bail,
     };
 
@@ -921,7 +924,6 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
     try argv.append(arena, "--test-worker");
     try argv.append(arena, "--isolate");
 
-    try argv.append(arena, try printZ(arena, "--isolate-recycle-after={d}", .{opts.isolate_recycle_after}));
     try argv.append(arena, try printZ(arena, "--timeout={d}", .{opts.default_timeout_ms}));
     if (opts.run_todo) try argv.append(arena, "--todo");
     if (opts.only) try argv.append(arena, "--only");
@@ -955,8 +957,8 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
     return argv.items[0 .. argv.items.len - 1 :null];
 }
 
-/// Worker side: read NDJSON commands from stdin, run each file with isolation,
-/// write per-file summaries to fd 3. Never returns.
+/// Worker side: read framed commands from stdin, run each file with isolation,
+/// stream per-test events to fd 3. Never returns.
 pub fn runAsWorker(
     reporter: *CommandLineReporter,
     vm: *jsc.VirtualMachine,
@@ -964,9 +966,6 @@ pub fn runAsWorker(
 ) !noreturn {
     vm.test_isolation_enabled = true;
     vm.auto_killer.enabled = true;
-
-    const recycle_after = ctx.test_options.isolate_recycle_after;
-    var files_run: u32 = 0;
 
     var arena = bun.MimallocArena.init();
     vm.eventLoop().ensureWaker();
@@ -980,63 +979,52 @@ pub fn runAsWorker(
         reporter.reporters.junit = test_command.JunitReporter.init();
     }
 
-    writeIpcLine("ready");
+    worker_frame.begin(.ready);
+    worker_frame.send(ipcFd());
 
-    var stdin_buf: std.ArrayListUnmanaged(u8) = .empty;
-    defer stdin_buf.deinit(bun.default_allocator);
     const stdin = bun.FD.stdin();
+    var stdin_buf: std.ArrayListUnmanaged(u8) = .empty;
+    var path_buf: std.ArrayListUnmanaged(u8) = .empty;
 
     const Runner = struct {
         reporter: *CommandLineReporter,
         vm: *jsc.VirtualMachine,
         file: []const u8,
-        swap_after: bool,
         pub fn begin(r: *@This()) void {
             // Workers always run with --isolate; every file is its own complete
             // run from the preload's perspective.
             TestCommand.run(r.reporter, r.vm, r.file, .{ .first = true, .last = true }) catch |err| test_command.handleTopLevelTestErrorBeforeJavaScriptStart(err);
-            if (r.swap_after) {
-                r.vm.swapGlobalForTestIsolation();
-                r.reporter.jest.bun_test_root.resetHookScopeForTestIsolation();
-            }
+            r.vm.swapGlobalForTestIsolation();
+            r.reporter.jest.bun_test_root.resetHookScopeForTestIsolation();
         }
     };
 
-    var fmt_buf: [256]u8 = undefined;
-    while (true) {
-        const line = readLine(stdin, &stdin_buf) orelse break;
-        var it = std.mem.tokenizeScalar(u8, line, ' ');
-        const kind = std.meta.stringToEnum(Kind, it.next() orelse continue) orelse continue;
-        switch (kind) {
-            .shutdown => {
-                workerFlushAggregates(reporter, vm, ctx, worker_tmp);
-                bun.Global.exit(0);
-            },
+    while (readFrame(stdin, &stdin_buf)) |hd| {
+        var rd = Frame.Reader{ .p = stdin_buf.items[5 .. 5 + hd.len] };
+        switch (hd.kind) {
+            .shutdown => break,
             .run => {
-                const idx = std.fmt.parseInt(u32, it.next() orelse continue, 10) catch continue;
-                const file = std.mem.trimLeft(u8, it.rest(), " ");
+                const idx = rd.u32_();
+                // Copy out before the file runs; test code may write to stdin_buf via stdin.
+                path_buf.clearRetainingCapacity();
+                path_buf.appendSlice(bun.default_allocator, rd.str()) catch bun.outOfMemory();
+                std.mem.copyForwards(u8, stdin_buf.items, stdin_buf.items[5 + hd.len ..]);
+                stdin_buf.items.len -= 5 + hd.len;
 
                 reporter.worker_ipc_file_idx = idx;
-                {
-                    var buf: [64]u8 = undefined;
-                    writeIpcLine(std.fmt.bufPrint(&buf, "file_start {d}", .{idx}) catch unreachable);
-                }
+                worker_frame.begin(.file_start);
+                worker_frame.u32_(idx);
+                worker_frame.send(ipcFd());
 
                 const before = reporter.summary().*;
                 const before_unhandled = reporter.jest.unhandled_errors_between_tests;
 
-                files_run += 1;
-                const will_recycle = recycle_after > 0 and files_run >= recycle_after;
-                var runner = Runner{
-                    .reporter = reporter,
-                    .vm = vm,
-                    .file = file,
-                    .swap_after = !will_recycle,
-                };
+                var runner = Runner{ .reporter = reporter, .vm = vm, .file = path_buf.items };
                 vm.runWithAPILock(Runner, &runner, Runner.begin);
 
                 const after = reporter.summary().*;
-                const msg = std.fmt.bufPrint(&fmt_buf, "file_done {d} {d} {d} {d} {d} {d} {d} {d} {d}", .{
+                worker_frame.begin(.file_done);
+                inline for (.{
                     idx,
                     after.pass - before.pass,
                     after.fail - before.fail,
@@ -1046,16 +1034,10 @@ pub fn runAsWorker(
                     after.skipped_because_label - before.skipped_because_label,
                     after.files - before.files,
                     reporter.jest.unhandled_errors_between_tests - before_unhandled,
-                }) catch unreachable;
-                writeIpcLine(msg);
-
-                if (will_recycle) {
-                    workerFlushAggregates(reporter, vm, ctx, worker_tmp);
-                    writeIpcLine("recycle");
-                    bun.Global.exit(0);
-                }
+                }) |v| worker_frame.u32_(v);
+                worker_frame.send(ipcFd());
             },
-            .ready, .file_start, .test_start, .test_done, .file_done, .repeat_bufs, .junit_file, .coverage_file, .recycle => {},
+            else => {},
         }
     }
     workerFlushAggregates(reporter, vm, ctx, worker_tmp);
@@ -1063,27 +1045,11 @@ pub fn runAsWorker(
 }
 
 fn workerFlushAggregates(reporter: *CommandLineReporter, vm: *jsc.VirtualMachine, ctx: Command.Context, worker_tmp: ?[]const u8) void {
-    var line: std.ArrayListUnmanaged(u8) = .empty;
-    defer line.deinit(bun.default_allocator);
-    line.appendSlice(bun.default_allocator, "repeat_bufs") catch bun.outOfMemory();
-    inline for (.{
-        reporter.failures_to_repeat_buf.items,
-        reporter.skips_to_repeat_buf.items,
-        reporter.todos_to_repeat_buf.items,
-    }) |buf| {
-        line.append(bun.default_allocator, ' ') catch bun.outOfMemory();
-        if (buf.len == 0) {
-            line.append(bun.default_allocator, '-') catch bun.outOfMemory();
-        } else {
-            const hex_chars = "0123456789abcdef";
-            line.ensureUnusedCapacity(bun.default_allocator, buf.len * 2) catch bun.outOfMemory();
-            for (buf) |b| {
-                line.appendAssumeCapacity(hex_chars[b >> 4]);
-                line.appendAssumeCapacity(hex_chars[b & 0xf]);
-            }
-        }
-    }
-    writeIpcLine(line.items);
+    worker_frame.begin(.repeat_bufs);
+    worker_frame.str(reporter.failures_to_repeat_buf.items);
+    worker_frame.str(reporter.skips_to_repeat_buf.items);
+    worker_frame.str(reporter.todos_to_repeat_buf.items);
+    worker_frame.send(ipcFd());
 
     if (worker_tmp) |dir| {
         const id = std.crypto.random.int(u32);
@@ -1091,9 +1057,9 @@ fn workerFlushAggregates(reporter: *CommandLineReporter, vm: *jsc.VirtualMachine
             const path = std.fmt.allocPrintSentinel(bun.default_allocator, "{s}/w{d}.xml", .{ dir, id }, 0) catch bun.outOfMemory();
             if (junit.current_file.len > 0) junit.endTestSuite() catch {};
             if (junit.writeToFile(path)) |_| {
-                line.clearRetainingCapacity();
-                line.writer(bun.default_allocator).print("junit_file {s}", .{path}) catch bun.outOfMemory();
-                writeIpcLine(line.items);
+                worker_frame.begin(.junit_file);
+                worker_frame.str(path);
+                worker_frame.send(ipcFd());
             } else |e| {
                 Output.err(e, "failed to write JUnit fragment to {s}", .{path});
             }
@@ -1101,9 +1067,9 @@ fn workerFlushAggregates(reporter: *CommandLineReporter, vm: *jsc.VirtualMachine
         if (ctx.test_options.coverage.enabled) {
             const path = std.fmt.allocPrintSentinel(bun.default_allocator, "{s}/cov{d}.lcov", .{ dir, id }, 0) catch bun.outOfMemory();
             if (reporter.writeLcovOnly(vm, &ctx.test_options.coverage, path)) |_| {
-                line.clearRetainingCapacity();
-                line.writer(bun.default_allocator).print("coverage_file {s}", .{path}) catch bun.outOfMemory();
-                writeIpcLine(line.items);
+                worker_frame.begin(.coverage_file);
+                worker_frame.str(path);
+                worker_frame.send(ipcFd());
             } else |e| {
                 Output.err(e, "failed to write coverage fragment to {s}", .{path});
             }
@@ -1111,55 +1077,27 @@ fn workerFlushAggregates(reporter: *CommandLineReporter, vm: *jsc.VirtualMachine
     }
 }
 
+/// Reused across all worker → coordinator emits.
+var worker_frame: Frame = .{};
+
 /// Called from `Execution.onSequenceStarted` in the worker. Tells the
 /// coordinator which test is now running so the live TTY status block can
 /// show it.
 pub fn workerEmitTestStart(file_idx: u32, name: []const u8) void {
-    var line: std.ArrayListUnmanaged(u8) = .empty;
-    defer line.deinit(bun.default_allocator);
-    line.writer(bun.default_allocator).print("test_start {d} ", .{file_idx}) catch bun.outOfMemory();
-    appendHex(&line, name);
-    writeIpcLine(line.items);
+    worker_frame.begin(.test_start);
+    worker_frame.u32_(file_idx);
+    worker_frame.str(name);
+    worker_frame.send(ipcFd());
 }
 
 /// Called from `CommandLineReporter.handleTestCompleted` in the worker with the
 /// fully-formatted status line (✓/✗ + scopes + name + duration, including ANSI
 /// codes). The coordinator prints these bytes verbatim so output matches serial.
 pub fn workerEmitTestDone(file_idx: u32, formatted_line: []const u8) void {
-    var line: std.ArrayListUnmanaged(u8) = .empty;
-    defer line.deinit(bun.default_allocator);
-    line.writer(bun.default_allocator).print("test_done {d} ", .{file_idx}) catch bun.outOfMemory();
-    appendHex(&line, formatted_line);
-    writeIpcLine(line.items);
-}
-
-fn appendHex(dst: *std.ArrayListUnmanaged(u8), bytes: []const u8) void {
-    if (bytes.len == 0) {
-        dst.append(bun.default_allocator, '-') catch bun.outOfMemory();
-        return;
-    }
-    const hex_chars = "0123456789abcdef";
-    dst.ensureUnusedCapacity(bun.default_allocator, bytes.len * 2) catch bun.outOfMemory();
-    for (bytes) |b| {
-        dst.appendAssumeCapacity(hex_chars[b >> 4]);
-        dst.appendAssumeCapacity(hex_chars[b & 0xf]);
-    }
-}
-
-fn decodeHex(scratch: *std.ArrayListUnmanaged(u8), hex: []const u8) ?[]const u8 {
-    if (hex.len == 1 and hex[0] == '-') return "";
-    scratch.clearRetainingCapacity();
-    scratch.ensureUnusedCapacity(bun.default_allocator, hex.len / 2) catch bun.outOfMemory();
-    const out = scratch.unusedCapacitySlice()[0 .. hex.len / 2];
-    _ = std.fmt.hexToBytes(out, hex) catch return null;
-    scratch.items.len += out.len;
-    return scratch.items;
-}
-
-fn writeIpcLine(line: []const u8) void {
-    const fd = ipcFd();
-    writeAll(fd, line);
-    writeAll(fd, "\n");
+    worker_frame.begin(.test_done);
+    worker_frame.u32_(file_idx);
+    worker_frame.str(formatted_line);
+    worker_frame.send(ipcFd());
 }
 
 fn writeAll(fd: bun.FD, bytes: []const u8) void {
@@ -1175,20 +1113,16 @@ fn writeAll(fd: bun.FD, bytes: []const u8) void {
     }
 }
 
-fn readLine(fd: bun.FD, buf: *std.ArrayListUnmanaged(u8)) ?[]const u8 {
+/// Blocking read until one complete frame header sits at buf[0..]. Returns
+/// {kind, len}; payload is buf.items[5 .. 5+len]. Caller consumes before the
+/// next call.
+fn readFrame(fd: bun.FD, buf: *std.ArrayListUnmanaged(u8)) ?struct { kind: Kind, len: u32 } {
     while (true) {
-        if (std.mem.indexOfScalar(u8, buf.items, '\n')) |nl| {
-            const line = buf.items[0..nl];
-            // Shift the consumed line out on the *next* call by leaving the
-            // newline in place; simplest: copy out and trim now.
-            const owned = bun.default_allocator.dupe(u8, line) catch bun.outOfMemory();
-            const remaining = buf.items[nl + 1 ..];
-            std.mem.copyForwards(u8, buf.items[0..remaining.len], remaining);
-            buf.items.len = remaining.len;
-            // The caller treats the slice as borrowed for the iteration; we
-            // intentionally leak `owned` into the worker's lifetime — the
-            // process exits when the loop ends.
-            return owned;
+        if (buf.items.len >= 5) {
+            const len = std.mem.readInt(u32, buf.items[0..4], .little);
+            if (buf.items.len >= 5 + len) {
+                return .{ .kind = @enumFromInt(buf.items[4]), .len = len };
+            }
         }
         var chunk: [4096]u8 = undefined;
         switch (bun.sys.read(fd, &chunk)) {
@@ -1206,7 +1140,6 @@ fn readLine(fd: bun.FD, buf: *std.ArrayListUnmanaged(u8)) ?[]const u8 {
 
 const std = @import("std");
 const Command = @import("../../cli.zig").Command;
-const JSONLineBuffer = @import("../../bun.js/JSONLineBuffer.zig").JSONLineBuffer;
 
 const test_command = @import("../test_command.zig");
 const CommandLineReporter = test_command.CommandLineReporter;

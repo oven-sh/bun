@@ -363,8 +363,6 @@ pub const Command = struct {
         /// `bun test --parallel[=N]`: run test files across N worker
         /// processes. 0 means not requested. Implies `isolate` in workers.
         parallel: u32 = 0,
-        /// Worker exits and is respawned after this many files.
-        isolate_recycle_after: u32 = 50,
         /// Internal: this process is a `--parallel` worker. Files arrive over
         /// fd 3, results are written back over fd 3; no discovery, no header.
         test_worker: bool = false,

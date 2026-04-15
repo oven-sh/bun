@@ -59,12 +59,15 @@ describe("static initializers", () => {
       .map(a => a.trim())
       .filter(line => line.includes("running initializer") && line.includes(bunExe()));
 
-    // mimalloc v3 with MI_OSX_ZONE=ON contributes three: __GLOBAL__sub_I_static.c,
-    // mi_process_attach, and _mi_macos_override_malloc (the zone-swap constructor).
-    // On x86_64 there is also ___cpu_indicator_init from CPU feature detection.
+    // On both architectures, we have one initializer "__GLOBAL__sub_I_static.c".
+    // On arm64, mimalloc v3 adds one more static initializer (total: 2).
+    // On x86_64, we also have:
+    // - one from ___cpu_indicator_init due to our CPU feature detection
+    // - one from mimalloc v3
+    // (total: 3)
     expect(
       bunInitializers.length,
       `Do not add static initializers to Bun. Static initializers are called when Bun starts up, regardless of whether you use the variables or not. This makes Bun slower.`,
-    ).toBe(process.arch === "arm64" ? 3 : 4);
+    ).toBe(process.arch === "arm64" ? 1 : 2);
   });
 });

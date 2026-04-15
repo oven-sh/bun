@@ -1684,7 +1684,10 @@ pub const RunCommand = struct {
         }
 
         if (!ctx.debug.loaded_bunfig) {
-            bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+            // Use loadConfig (not loadConfigPath) so the bunfig.toml lookup
+            // walks up from cwd and finds a project-root config when `bun run`
+            // is invoked from a workspace subdirectory.
+            bun.cli.Arguments.loadConfig(ctx.allocator, null, ctx, .RunCommand) catch {};
         }
 
         // try fast run (check if the file exists and is not a folder, then run it)

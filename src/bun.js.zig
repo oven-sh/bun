@@ -159,7 +159,7 @@ pub const Run = struct {
         jsc.markBinding(@src());
 
         if (!ctx.debug.loaded_bunfig) {
-            try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
+            try bun.cli.Arguments.loadConfig(ctx.allocator, null, ctx, .RunCommand);
         }
 
         // The shell does not need to initialize JSC.

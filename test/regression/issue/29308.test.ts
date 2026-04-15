@@ -56,6 +56,38 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
+// A --preload flag on the CLI must be merged with, not replaced by, preload
+// entries the ancestor bunfig.toml contributes. Before the append-fix in
+// loadPreload, the secondary loadConfig call from run_command.zig clobbered
+// CLI preloads when a parent bunfig.toml also had preload entries.
+test.skipIf(process.platform === "win32")(
+  "CLI --preload is merged with ancestor bunfig.toml preload entries",
+  async () => {
+    using dir = tempDir("bun-issue-29308-merge", {
+      "bunfig.toml": `preload = ["./setup.ts"]\n`,
+      "setup.ts": `console.log("setup from bunfig");\n`,
+      "trace.ts": `console.log("trace from cli");\n`,
+      "packages/pkg1/package.json": `{"name":"pkg1","version":"0.0.0"}\n`,
+      "packages/pkg1/src/index.ts": `console.log("hello from pkg1");\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--preload", join(String(dir), "trace.ts"), "src/index.ts"],
+      env: bunEnv,
+      cwd: join(String(dir), "packages", "pkg1"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("setup from bunfig");
+    expect(stdout).toContain("trace from cli");
+    expect(stdout).toContain("hello from pkg1");
+    expect(exitCode).toBe(0);
+  },
+);
+
 // Guard against the ancestor walk stopping at a DIRECTORY named bunfig.toml.
 // Without the regular-file check, existsZ would treat the directory as a hit
 // and the real bunfig.toml higher in the tree would be silently skipped.

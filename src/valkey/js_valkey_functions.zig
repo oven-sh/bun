@@ -1563,6 +1563,10 @@ const compile = struct {
                 }
 
                 for (callframe.arguments()) |arg| {
+                    if (arg.isUndefinedOrNull()) {
+                        continue;
+                    }
+
                     const another = (try fromJS(globalObject, arg)) orelse {
                         return globalObject.throwInvalidArgumentType(name, "additional arguments", "string or buffer");
                     };

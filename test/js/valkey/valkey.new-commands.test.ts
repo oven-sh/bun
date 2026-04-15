@@ -98,6 +98,35 @@ describe.skipIf(!hasLocalRedis)("RedisClient new commands (functional)", () => {
     }
   }
 
+  test("optional trailing arguments may be undefined", async () => {
+    // Commands wired through the variadic (...strings) template should skip
+    // undefined/null arguments rather than throwing, so that optional
+    // parameters in the TypeScript signatures (e.g. flushdb(mode?)) work.
+    await withClient(async r => {
+      const info = await r.info(undefined as any);
+      expect(typeof info).toBe("string");
+      expect(info.length).toBeGreaterThan(0);
+
+      expect(typeof (await r.command(undefined as any))).not.toBe("undefined");
+
+      expect(await r.geoadd(key("geo-opt"), 13.361389, 38.115556, "Palermo")).toBe(1);
+      const dist = await r.geodist(key("geo-opt"), "Palermo", "Palermo", undefined);
+      expect(dist).toBe("0.0000");
+    });
+
+    // flushdb on an isolated database
+    const r = new RedisClient(url + "/10");
+    await r.connect();
+    try {
+      await r.set(key("opt-flush"), "x");
+      const mode: "SYNC" | undefined = undefined;
+      expect(await r.flushdb(mode)).toBe("OK");
+      expect(await r.get(key("opt-flush"))).toBeNull();
+    } finally {
+      r.close();
+    }
+  });
+
   test("ECHO / DBSIZE / TIME / INFO / LASTSAVE / COMMAND", async () => {
     await withClient(async r => {
       expect(await r.echo("hello")).toBe("hello");

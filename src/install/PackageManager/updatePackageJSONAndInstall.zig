@@ -71,6 +71,17 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         Global.crash();
     }
 
+    // `bun update -r [--latest]` and `bun update --filter=<pattern> [--latest]` (no
+    // positional package names) should edit every matching workspace's package.json,
+    // not just the current workspace. The interactive update path already handles this
+    // via `update_interactive_command.zig`; this branch mirrors that flow for the
+    // non-interactive case.
+    if (subcommand == .update and updates.len == 0 and
+        (manager.options.do.recursive or manager.options.filter_patterns.len > 0))
+    {
+        return updateAllWorkspacesNonInteractive(manager, ctx, original_cwd);
+    }
+
     var current_package_json = switch (manager.workspace_package_json_cache.getWithPath(
         manager.allocator,
         manager.log,
@@ -486,6 +497,433 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
     }
 }
 
+/// Recursive/filter `bun update` branch. Mirrors the behavior of
+/// `update_interactive_command.zig` without the interactive prompt: for every
+/// matching workspace, edit its `package.json` via `PackageJSONEditor.editUpdateNoArgs`,
+/// write the updated source to disk so the lockfile diff picks it up, run a single
+/// `installWithManager` pass from the root, and finally rewrite each workspace's
+/// resolved version literals back to disk.
+fn updateAllWorkspacesNonInteractive(
+    manager: *PackageManager,
+    ctx: Command.Context,
+    original_cwd: string,
+) !void {
+    const log_level = manager.options.log_level;
+
+    // `bun update` needs a lockfile so we can enumerate workspaces and resolve
+    // versions. Mirrors the interactive path's load behavior.
+    const load_lockfile_result = manager.lockfile.loadFromCwd(
+        manager,
+        manager.allocator,
+        manager.log,
+        true,
+    );
+    manager.lockfile = switch (load_lockfile_result) {
+        .not_found => {
+            if (log_level != .silent) {
+                Output.errGeneric("missing lockfile, nothing to update", .{});
+            }
+            Global.crash();
+        },
+        .err => |cause| {
+            if (log_level != .silent) {
+                switch (cause.step) {
+                    .open_file => Output.errGeneric("failed to open lockfile: {s}", .{@errorName(cause.value)}),
+                    .parse_file => Output.errGeneric("failed to parse lockfile: {s}", .{@errorName(cause.value)}),
+                    .read_file => Output.errGeneric("failed to read lockfile: {s}", .{@errorName(cause.value)}),
+                    .migrating => Output.errGeneric("failed to migrate lockfile: {s}", .{@errorName(cause.value)}),
+                }
+                if (manager.log.errors > 0) {
+                    manager.log.print(Output.errorWriter()) catch {};
+                }
+            }
+            Global.crash();
+        },
+        .ok => |ok| ok.lockfile,
+    };
+
+    const workspace_pkg_ids = if (manager.options.filter_patterns.len > 0) blk: {
+        break :blk findMatchingWorkspaces(
+            bun.default_allocator,
+            original_cwd,
+            manager,
+            manager.options.filter_patterns,
+        ) catch |err| bun.handleOom(err);
+    } else blk: {
+        break :blk bun.handleOom(getAllWorkspaces(bun.default_allocator, manager));
+    };
+    defer bun.default_allocator.free(workspace_pkg_ids);
+
+    if (workspace_pkg_ids.len == 0) {
+        if (log_level != .silent) {
+            Output.prettyln("<r>No workspaces matched, nothing to update", .{});
+        }
+        return;
+    }
+
+    const packages = manager.lockfile.packages.slice();
+    const pkg_name_hashes = packages.items(.name_hash);
+    const pkg_resolutions = packages.items(.resolution);
+    const string_buf = manager.lockfile.buffers.string_bytes.items;
+
+    // Per-workspace bookkeeping. Each workspace needs its own snapshot of
+    // `updating_packages` so the post-install second pass can reach each
+    // workspace's deps without being clobbered by a previously-processed
+    // workspace that shares a dependency name.
+    const SavedEntry = struct {
+        key: string,
+        value: PackageManager.PackageUpdateInfo,
+    };
+    const WorkspaceState = struct {
+        pkg_id: PackageID = 0,
+        pkg_json_path: ?[:0]const u8 = null,
+        preserve_trailing_newline: bool = false,
+        name_hash: PackageNameHash = 0,
+        updates: std.ArrayListUnmanaged(SavedEntry) = .{},
+    };
+    const workspace_states = try manager.allocator.alloc(WorkspaceState, workspace_pkg_ids.len);
+    // Initialize each state to a safe default so the defer's cleanup loop can
+    // handle partial initialization without crashing on undefined memory.
+    for (workspace_states) |*state| state.* = .{};
+    defer {
+        for (workspace_states) |*state| {
+            state.updates.deinit(manager.allocator);
+            if (state.pkg_json_path) |path| manager.allocator.free(path);
+        }
+        manager.allocator.free(workspace_states);
+    }
+
+    const top_level_dir = FileSystem.instance.top_level_dir;
+    const top_level_dir_without_trailing_slash = strings.withoutTrailingSlash(top_level_dir);
+
+    // Phase 1: Edit every matching workspace's package.json in the cache,
+    // then serialize and write to disk so the lockfile diff reads the
+    // updated content when `installWithManager` runs.
+    for (workspace_pkg_ids, workspace_states) |pkg_id, *state| {
+        const resolution = pkg_resolutions[pkg_id];
+        const workspace_sub_path = if (resolution.tag == .workspace)
+            resolution.value.workspace.slice(string_buf)
+        else
+            "";
+
+        var path_buf: bun.PathBuffer = undefined;
+        const workspace_pkg_json_path_slice = if (workspace_sub_path.len > 0)
+            bun.path.joinAbsStringBuf(
+                top_level_dir,
+                &path_buf,
+                &[_]string{ workspace_sub_path, "package.json" },
+                .auto,
+            )
+        else blk: {
+            @memcpy(path_buf[0..top_level_dir_without_trailing_slash.len], top_level_dir_without_trailing_slash);
+            @memcpy(
+                path_buf[top_level_dir_without_trailing_slash.len..][0.."/package.json".len],
+                "/package.json",
+            );
+            break :blk path_buf[0 .. top_level_dir_without_trailing_slash.len + "/package.json".len];
+        };
+
+        const workspace_pkg_json_path = try manager.allocator.dupeZ(u8, workspace_pkg_json_path_slice);
+        state.* = .{
+            .pkg_id = pkg_id,
+            .pkg_json_path = workspace_pkg_json_path,
+            .preserve_trailing_newline = false,
+            .name_hash = pkg_name_hashes[pkg_id],
+        };
+
+        var pkg_json = switch (manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            workspace_pkg_json_path,
+            .{ .guess_indentation = true },
+        )) {
+            .parse_err => |err| {
+                manager.log.print(Output.errorWriter()) catch {};
+                Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
+                    workspace_pkg_json_path,
+                    @errorName(err),
+                });
+                Global.crash();
+            },
+            .read_err => |err| {
+                Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
+                    workspace_pkg_json_path,
+                    @errorName(err),
+                });
+                Global.crash();
+            },
+            .entry => |entry| entry,
+        };
+
+        state.preserve_trailing_newline = pkg_json.source.contents.len > 0 and
+            pkg_json.source.contents[pkg_json.source.contents.len - 1] == '\n';
+
+        // Each workspace gets an independent view of `updating_packages` so
+        // shared deps (e.g. both workspaces depend on `react`) are handled
+        // correctly — without this, editUpdateNoArgs' `found_existing → continue`
+        // path would skip re-writing "latest" into the second workspace.
+        manager.updating_packages.clearRetainingCapacity();
+        manager.workspace_name_hash = state.name_hash;
+
+        try PackageJSONEditor.editUpdateNoArgs(
+            manager,
+            &pkg_json.root,
+            .{ .exact_versions = true, .before_install = true },
+        );
+
+        // Snapshot this workspace's entries so the second pass can replay them.
+        try state.updates.ensureTotalCapacity(manager.allocator, manager.updating_packages.count());
+        var it = manager.updating_packages.iterator();
+        while (it.next()) |entry| {
+            state.updates.appendAssumeCapacity(.{
+                .key = entry.key_ptr.*,
+                .value = entry.value_ptr.*,
+            });
+        }
+
+        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+        try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, pkg_json.source.contents.len + 1);
+        buffer_writer.append_newline = state.preserve_trailing_newline;
+        var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+
+        _ = JSPrinter.printJSON(
+            @TypeOf(&package_json_writer),
+            &package_json_writer,
+            pkg_json.root,
+            &pkg_json.source,
+            .{ .indent = pkg_json.indentation, .mangled_props = null },
+        ) catch |err| {
+            Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+            Global.crash();
+        };
+
+        const new_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
+        pkg_json.source.contents = new_source;
+
+        if (manager.options.do.write_package_json) {
+            const workspace_file = (try bun.sys.File.openat(
+                .cwd(),
+                workspace_pkg_json_path,
+                bun.O.RDWR,
+                0,
+            ).unwrap()).handle.stdFile();
+            defer workspace_file.close();
+
+            try workspace_file.pwriteAll(new_source, 0);
+            std.posix.ftruncate(workspace_file.handle, new_source.len) catch {};
+        }
+    }
+
+    // Build the combined `updating_packages` map for the install pass so that
+    // `install_with_manager.zig` sees every workspace's deps together.
+    manager.updating_packages.clearRetainingCapacity();
+    for (workspace_states) |*state| {
+        for (state.updates.items) |entry| {
+            const gop = bun.handleOom(manager.updating_packages.getOrPut(manager.allocator, entry.key));
+            if (!gop.found_existing) {
+                gop.value_ptr.* = entry.value;
+            }
+        }
+    }
+
+    manager.to_update = true;
+
+    var root_package_json_path_buf: bun.PathBuffer = undefined;
+    @memcpy(root_package_json_path_buf[0..top_level_dir_without_trailing_slash.len], top_level_dir_without_trailing_slash);
+    @memcpy(
+        root_package_json_path_buf[top_level_dir_without_trailing_slash.len..][0.."/package.json".len],
+        "/package.json",
+    );
+    const root_package_json_path_len = top_level_dir_without_trailing_slash.len + "/package.json".len;
+    root_package_json_path_buf[root_package_json_path_len] = 0;
+    const root_package_json_path = root_package_json_path_buf[0..root_package_json_path_len :0];
+
+    try manager.installWithManager(ctx, root_package_json_path, original_cwd);
+
+    // Phase 2: After install, rewrite each workspace's resolved version
+    // literals back to disk.
+    for (workspace_states) |*state| {
+        const workspace_pkg_json_path = state.pkg_json_path orelse continue;
+        // Restore this workspace's `updating_packages` snapshot so that
+        // editUpdateNoArgs' `fetchSwapRemove` path finds the original literals
+        // for every dep, even ones already consumed by a prior workspace.
+        manager.updating_packages.clearRetainingCapacity();
+        for (state.updates.items) |entry| {
+            const gop = bun.handleOom(manager.updating_packages.getOrPut(manager.allocator, entry.key));
+            gop.value_ptr.* = entry.value;
+        }
+        manager.workspace_name_hash = state.name_hash;
+
+        var pkg_json_entry = manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            workspace_pkg_json_path,
+            .{},
+        ).unwrap() catch |err| {
+            Output.err(err, "failed to read/parse package.json at '{s}'", .{workspace_pkg_json_path});
+            Global.exit(1);
+        };
+
+        // Re-parse the in-memory (edited) source so that we build an AST that
+        // matches the current string offsets — the existing single-workspace
+        // path does the same thing at line ~350.
+        const source = &logger.Source.initPathString("package.json", pkg_json_entry.source.contents);
+        var new_package_json = JSON.parsePackageJSONUTF8(source, manager.log, manager.allocator) catch |err| {
+            Output.prettyErrorln("package.json failed to parse due to error {s}", .{@errorName(err)});
+            Global.crash();
+        };
+
+        try PackageJSONEditor.editUpdateNoArgs(
+            manager,
+            &new_package_json,
+            .{ .exact_versions = manager.options.enable.exact_versions },
+        );
+
+        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+        try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, source.contents.len + 1);
+        buffer_writer.append_newline = state.preserve_trailing_newline;
+        var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+
+        _ = JSPrinter.printJSON(
+            @TypeOf(&package_json_writer),
+            &package_json_writer,
+            new_package_json,
+            source,
+            .{ .indent = pkg_json_entry.indentation, .mangled_props = null },
+        ) catch |err| {
+            Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+            Global.crash();
+        };
+
+        const final_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
+
+        if (manager.options.do.write_package_json) {
+            const workspace_file = (try bun.sys.File.openat(
+                .cwd(),
+                workspace_pkg_json_path,
+                bun.O.RDWR,
+                0,
+            ).unwrap()).handle.stdFile();
+            defer workspace_file.close();
+
+            try workspace_file.pwriteAll(final_source, 0);
+            std.posix.ftruncate(workspace_file.handle, final_source.len) catch {};
+        }
+
+        // Keep the cache entry consistent for anything downstream that may
+        // peek at the workspace package.json after this function returns.
+        pkg_json_entry.source.contents = final_source;
+    }
+
+    if (manager.any_failed_to_install) {
+        Global.exit(1);
+    }
+}
+
+fn getAllWorkspaces(
+    allocator: std.mem.Allocator,
+    manager: *PackageManager,
+) bun.OOM![]const PackageID {
+    const lockfile = manager.lockfile;
+    const packages = lockfile.packages.slice();
+    const pkg_resolutions = packages.items(.resolution);
+
+    var workspace_pkg_ids: std.ArrayListUnmanaged(PackageID) = .empty;
+    for (pkg_resolutions, 0..) |resolution, pkg_id| {
+        if (resolution.tag != .workspace and resolution.tag != .root) continue;
+        try workspace_pkg_ids.append(allocator, @intCast(pkg_id));
+    }
+
+    return workspace_pkg_ids.toOwnedSlice(allocator);
+}
+
+fn findMatchingWorkspaces(
+    allocator: std.mem.Allocator,
+    original_cwd: string,
+    manager: *PackageManager,
+    filters: []const string,
+) bun.OOM![]const PackageID {
+    const lockfile = manager.lockfile;
+    const packages = lockfile.packages.slice();
+    const pkg_names = packages.items(.name);
+    const pkg_resolutions = packages.items(.resolution);
+    const string_buf = lockfile.buffers.string_bytes.items;
+
+    var workspace_pkg_ids: std.ArrayListUnmanaged(PackageID) = .empty;
+    for (pkg_resolutions, 0..) |resolution, pkg_id| {
+        if (resolution.tag != .workspace and resolution.tag != .root) continue;
+        try workspace_pkg_ids.append(allocator, @intCast(pkg_id));
+    }
+
+    var path_buf: bun.PathBuffer = undefined;
+
+    const converted_filters = converted_filters: {
+        const buf = try allocator.alloc(PackageManager.WorkspaceFilter, filters.len);
+        for (filters, buf) |filter, *converted| {
+            converted.* = try PackageManager.WorkspaceFilter.init(allocator, filter, original_cwd, &path_buf);
+        }
+        break :converted_filters buf;
+    };
+    defer {
+        for (converted_filters) |filter| {
+            filter.deinit(allocator);
+        }
+        allocator.free(converted_filters);
+    }
+
+    // Move matched workspaces to the front of the slice and truncate.
+    var i: usize = 0;
+    while (i < workspace_pkg_ids.items.len) {
+        const workspace_pkg_id = workspace_pkg_ids.items[i];
+
+        const matched = matched: {
+            for (converted_filters) |filter| {
+                switch (filter) {
+                    .path => |pattern| {
+                        if (pattern.len == 0) continue;
+                        const res = pkg_resolutions[workspace_pkg_id];
+
+                        const res_path = switch (res.tag) {
+                            .workspace => res.value.workspace.slice(string_buf),
+                            .root => FileSystem.instance.top_level_dir,
+                            else => unreachable,
+                        };
+
+                        const abs_res_path = bun.path.joinAbsStringBuf(
+                            FileSystem.instance.top_level_dir,
+                            &path_buf,
+                            &[_]string{res_path},
+                            .posix,
+                        );
+
+                        if (!bun.glob.match(pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
+                            break :matched false;
+                        }
+                    },
+                    .name => |pattern| {
+                        const name = pkg_names[workspace_pkg_id].slice(string_buf);
+
+                        if (!bun.glob.match(pattern, name).matches()) {
+                            break :matched false;
+                        }
+                    },
+                    .all => {},
+                }
+            }
+
+            break :matched true;
+        };
+
+        if (matched) {
+            i += 1;
+        } else {
+            _ = workspace_pkg_ids.swapRemove(i);
+        }
+    }
+
+    return workspace_pkg_ids.toOwnedSlice(allocator);
+}
+
 pub fn updatePackageJSONAndInstallCatchError(
     ctx: Command.Context,
     subcommand: Subcommand,
@@ -744,6 +1182,7 @@ const logger = bun.logger;
 const strings = bun.strings;
 const Command = bun.cli.Command;
 const File = bun.sys.File;
+const PackageID = bun.install.PackageID;
 const PackageNameHash = bun.install.PackageNameHash;
 
 const Semver = bun.Semver;

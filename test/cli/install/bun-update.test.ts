@@ -421,13 +421,8 @@ it("should support catalog versions in update", async () => {
   expect(pkg.dependencies["no-deps"]).toBe("catalog:");
 });
 
-it("should support --recursive flag", async () => {
-  // First verify the flag appears in help
-  const {
-    stdout: helpOut,
-    stderr: helpErr,
-    exited: helpExited,
-  } = spawn({
+it("should show --recursive in help output", async () => {
+  const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "update", "--help"],
     cwd: package_dir,
     stdout: "pipe",
@@ -435,50 +430,129 @@ it("should support --recursive flag", async () => {
     env,
   });
 
-  const help = (await new Response(helpOut).text()) + (await new Response(helpErr).text());
-  expect(await helpExited).toBe(0);
+  const help = (await new Response(stdout).text()) + (await new Response(stderr).text());
+  expect(await exited).toBe(0);
   expect(help).toContain("--recursive");
   expect(help).toContain("-r");
+});
 
-  // Now test that --recursive actually works
+async function setupRecursiveWorkspace(dependencyRange: string) {
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
       name: "root",
       workspaces: ["packages/*"],
       dependencies: {
-        "no-deps": "^1.0.0",
+        "no-deps": dependencyRange,
       },
     }),
   );
 
-  await mkdir(join(package_dir, "packages", "pkg1"), { recursive: true });
-  await writeFile(
-    join(package_dir, "packages", "pkg1", "package.json"),
-    JSON.stringify({
-      name: "pkg1",
-      dependencies: {
-        "no-deps": "^1.0.0",
+  for (const name of ["pkg-a", "pkg-b"]) {
+    await mkdir(join(package_dir, "packages", name), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", name, "package.json"),
+      JSON.stringify({
+        name,
+        dependencies: {
+          "no-deps": dependencyRange,
+        },
+      }),
+    );
+  }
+
+  // Pre-populate a lockfile so `bun update` has a starting point.
+  const { exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(await exited).toBe(0);
+}
+
+it("should update every workspace with --recursive --latest", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(
+      urls,
+      {
+        "1.0.0": {},
+        "2.0.0": {},
+        latest: "2.0.0",
       },
-    }),
+      0,
+      join(import.meta.dir, "registry/packages/no-deps"),
+    ),
   );
 
-  // Test recursive update (might fail without lockfile, but shouldn't crash)
+  await setupRecursiveWorkspace("^1.0.0");
+
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "update", "--recursive", "--dry-run"],
+    cmd: [bunExe(), "update", "--recursive", "--latest"],
     cwd: package_dir,
     stdout: "pipe",
     stderr: "pipe",
     env,
   });
 
-  const out = await new Response(stdout).text();
   const err = await new Response(stderr).text();
-
-  // Should not crash
+  const out = await new Response(stdout).text();
   expect(err).not.toContain("panic");
-  expect(err).not.toContain("segfault");
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
 
-  // Should recognize the flag (either process workspaces or show error about missing lockfile)
-  expect(out + err).toMatch(/bun update|missing lockfile|nothing to update/);
+  // Every workspace's package.json should reflect the bumped version.
+  const rootPkg = await file(join(package_dir, "package.json")).json();
+  const pkgAPkg = await file(join(package_dir, "packages", "pkg-a", "package.json")).json();
+  const pkgBPkg = await file(join(package_dir, "packages", "pkg-b", "package.json")).json();
+
+  expect(rootPkg.dependencies["no-deps"]).toBe("^2.0.0");
+  expect(pkgAPkg.dependencies["no-deps"]).toBe("^2.0.0");
+  expect(pkgBPkg.dependencies["no-deps"]).toBe("^2.0.0");
+  // Silence unused-value lint: `out` captured for debuggability on failure.
+  void out;
+});
+
+it("should update only matched workspaces with --filter --latest", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(
+      urls,
+      {
+        "1.0.0": {},
+        "2.0.0": {},
+        latest: "2.0.0",
+      },
+      0,
+      join(import.meta.dir, "registry/packages/no-deps"),
+    ),
+  );
+
+  await setupRecursiveWorkspace("^1.0.0");
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--filter=pkg-a", "--latest"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  const out = await new Response(stdout).text();
+  expect(err).not.toContain("panic");
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  const rootPkg = await file(join(package_dir, "package.json")).json();
+  const pkgAPkg = await file(join(package_dir, "packages", "pkg-a", "package.json")).json();
+  const pkgBPkg = await file(join(package_dir, "packages", "pkg-b", "package.json")).json();
+
+  // Only pkg-a should have been bumped.
+  expect(pkgAPkg.dependencies["no-deps"]).toBe("^2.0.0");
+  expect(pkgBPkg.dependencies["no-deps"]).toBe("^1.0.0");
+  expect(rootPkg.dependencies["no-deps"]).toBe("^1.0.0");
+  void out;
 });

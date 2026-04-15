@@ -94,6 +94,16 @@ describe("path.resolve", () => {
     // }
   });
 
+  test.skipIf(!isWindows)("UNC path before drive-relative path does not corrupt resolvedDevice", () => {
+    // Parsing the UNC root reused the buffer backing the already-resolved `C:`
+    // device, which sent the i=-1 iteration down a broken slow path that read
+    // uninitialized memory and panicked. The UNC arg is on a different device
+    // so it should be ignored entirely.
+    expect(path.win32.resolve("//server/share", "C:relative")).toBe(path.win32.resolve("C:relative"));
+    expect(path.win32.resolve("//server/share", "C:")).toBe(path.win32.resolve("C:"));
+    expect(path.win32.resolve("//a/b", "//c/d", "C:foo")).toBe(path.win32.resolve("C:foo"));
+  });
+
   test("undefined argument are ignored if absolute path comes first (reverse loop through args)", () => {
     expect(() => {
       return path.posix.resolve(undefined, "hi");

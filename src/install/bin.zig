@@ -569,11 +569,9 @@ pub const Bin = extern struct {
             if (this.seen) |seen| {
                 // Skip seen destinations for this tree
                 // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
-                const entry = bun.handleOom(seen.getOrPut(abs_dest));
-                if (entry.found_existing) {
+                if (seen.contains(abs_dest)) {
                     return;
                 }
-                entry.key_ptr.* = bun.handleOom(seen.allocator.dupe(u8, abs_dest));
             }
 
             // Skip if the target does not exist. This is important because placing a dangling
@@ -581,6 +579,13 @@ pub const Bin = extern struct {
             if (!bun.sys.exists(abs_target)) {
                 this.skipped_due_to_missing_bin = true;
                 return;
+            }
+
+            if (this.seen) |seen| {
+                const entry = bun.handleOom(seen.getOrPut(abs_dest));
+                if (!entry.found_existing) {
+                    entry.key_ptr.* = bun.handleOom(seen.allocator.dupe(u8, abs_dest));
+                }
             }
 
             bun.analytics.Features.binlinks += 1;

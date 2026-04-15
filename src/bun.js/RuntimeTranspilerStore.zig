@@ -342,7 +342,12 @@ pub const RuntimeTranspilerStore = struct {
                 .hot, .watch => {
                     if (vm.bun_watcher.indexOf(hash)) |index| {
                         const watcher_fd = vm.bun_watcher.watchlist().items(.fd)[index];
-                        fd = if (watcher_fd.stdioTag() == null) watcher_fd else null;
+                        // On Linux, `addFileByPathSlow` inserts watchlist
+                        // entries with `fd = invalid_fd` (only kqueue needs
+                        // the descriptor). Treat invalid as "no cached fd"
+                        // so `readFileWithAllocator` opens the file instead
+                        // of calling `seekTo` on a bogus handle.
+                        fd = if (watcher_fd.isValid() and watcher_fd.stdioTag() == null) watcher_fd else null;
                         package_json = vm.bun_watcher.watchlist().items(.package_json)[index];
                     }
                 },

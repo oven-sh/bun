@@ -26,6 +26,7 @@
 #include "config.h"
 #include "CryptoDigest.h"
 
+#include <openssl/digest.h>
 #include <openssl/sha.h>
 
 namespace {
@@ -103,6 +104,41 @@ private:
     SHAContext m_context;
 };
 
+struct CryptoDigestContextEVP : public CryptoDigestContext {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(CryptoDigestContextEVP);
+
+    static std::unique_ptr<CryptoDigestContext> create(const EVP_MD* md)
+    {
+        return makeUnique<CryptoDigestContextEVP>(md);
+    }
+
+    explicit CryptoDigestContextEVP(const EVP_MD* md)
+    {
+        EVP_MD_CTX_init(&m_context);
+        int rc = EVP_DigestInit_ex(&m_context, md, nullptr);
+        ASSERT_UNUSED(rc, rc == 1);
+    }
+
+    ~CryptoDigestContextEVP() override { EVP_MD_CTX_cleanup(&m_context); }
+
+    void addBytes(const void* input, size_t length) override
+    {
+        int rc = EVP_DigestUpdate(&m_context, input, length);
+        ASSERT_UNUSED(rc, rc == 1);
+    }
+
+    Vector<uint8_t> computeHash() override
+    {
+        Vector<uint8_t> result(EVP_MD_CTX_size(&m_context));
+        int rc = EVP_DigestFinal_ex(&m_context, result.begin(), nullptr);
+        ASSERT_UNUSED(rc, rc == 1);
+        return result;
+    }
+
+private:
+    EVP_MD_CTX m_context;
+};
+
 CryptoDigest::CryptoDigest()
 {
 }
@@ -130,6 +166,15 @@ std::unique_ptr<CryptoDigest> CryptoDigest::create(CryptoDigest::Algorithm algor
         return digest;
     case CryptoDigest::Algorithm::SHA_512:
         digest->m_context = CryptoDigestContextImpl<SHA512_CTX, SHA512Functions>::create();
+        return digest;
+    case CryptoDigest::Algorithm::SHA3_256:
+        digest->m_context = CryptoDigestContextEVP::create(EVP_sha3_256());
+        return digest;
+    case CryptoDigest::Algorithm::SHA3_384:
+        digest->m_context = CryptoDigestContextEVP::create(EVP_sha3_384());
+        return digest;
+    case CryptoDigest::Algorithm::SHA3_512:
+        digest->m_context = CryptoDigestContextEVP::create(EVP_sha3_512());
         return digest;
     }
 

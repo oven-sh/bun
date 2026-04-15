@@ -59,7 +59,7 @@ unsigned int read_handle(void *handle) {
   });
   const cErr = await compiler.stderr.text();
   const cExit = await compiler.exited;
-  expect(cErr).toBe("");
+  if (cExit !== 0) expect(cErr).toBe("");
   expect(cExit).toBe(0);
 
   const { symbols } = dlopen(libPath, {

@@ -218,6 +218,12 @@ if (isBuildkite) {
 
 let coresDir;
 
+// Declared before the first top-level `await spawnSafe(...)` below — spawnSafe
+// is a hoisted function declaration that references this; with the const lower
+// in the file the Linux-only coredump sysctl call hit the TDZ.
+/** @type {Set<import("node:child_process").ChildProcess>} */
+const activeSubprocesses = new Set();
+
 if (options["coredump-upload"]) {
   // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
   const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
@@ -945,6 +951,7 @@ async function spawnSafe(options) {
         subprocess.kill(9);
       }
     }
+    activeSubprocesses.delete(subprocess);
     resolve();
   };
   await new Promise(resolve => {
@@ -975,6 +982,7 @@ async function spawnSafe(options) {
         env,
       });
       subprocess.on("spawn", () => {
+        activeSubprocesses.add(subprocess);
         timestamp = Date.now();
         timer = setTimeout(() => done(resolve), timeout);
       });
@@ -2350,6 +2358,12 @@ function isAlwaysFailure(error) {
 function onExit(signal) {
   const label = `${getAnsi("red")}Received ${signal}, exiting...${getAnsi("reset")}`;
   startGroup(label, () => {
+    for (const proc of activeSubprocesses) {
+      try {
+        if (isWindows) spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
+        else proc.kill(9);
+      } catch {}
+    }
     process.exit(getExitCode("cancel"));
   });
 }

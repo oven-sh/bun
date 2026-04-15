@@ -99,4 +99,11 @@ describe("node:crypto SHA-3", () => {
     expect(hashes).toContain("sha3-384");
     expect(hashes).toContain("sha3-512");
   });
+
+  it("pbkdf2Sync sha3-256", () => {
+    const { pbkdf2Sync } = require("node:crypto");
+    expect(pbkdf2Sync("pw", "salt", 1000, 32, "sha3-256").toString("hex")).toBe(
+      "53b1bc246a311cbf8e2c907d96bcb209ddf95cd9f0a74fdcbab033b6ea82e30a",
+    );
+  });
 });

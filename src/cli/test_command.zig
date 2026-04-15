@@ -2155,9 +2155,13 @@ pub const TestCommand = struct {
                 Output.flush();
             }
 
-            // Ensure these never linger across files.
-            vm.auto_killer.clear();
-            vm.auto_killer.disable();
+            if (!vm.test_isolation_enabled) {
+                // Ensure these never linger across files. Under --isolate this
+                // is done by swapGlobalForTestIsolation() (kill+clear) and we
+                // need tracking to remain enabled and populated until then.
+                vm.auto_killer.clear();
+                vm.auto_killer.disable();
+            }
         }
     }
 };

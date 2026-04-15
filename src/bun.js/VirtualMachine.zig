@@ -144,6 +144,7 @@ rare_data: ?*jsc.RareData = null,
 proxy_env_storage: jsc.RareData.ProxyEnvStorage = .{},
 is_us_loop_entered: bool = false,
 pending_internal_promise: ?*JSInternalPromise = null,
+pending_internal_promise_is_protected: bool = false,
 entry_point_result: struct {
     value: jsc.Strong.Optional = .empty,
     cjs_set_value: bool = false,
@@ -2206,6 +2207,7 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
                 JSValue.fromCell(promise).ensureStillAlive();
                 JSValue.fromCell(promise).protect();
                 this.pending_internal_promise = promise;
+                this.pending_internal_promise_is_protected = true;
                 return promise;
             }
 
@@ -2269,6 +2271,7 @@ pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const 
             JSValue.fromCell(promise).ensureStillAlive();
             this.pending_internal_promise = promise;
             JSValue.fromCell(promise).protect();
+            this.pending_internal_promise_is_protected = true;
 
             return promise;
         }
@@ -2420,12 +2423,13 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     this.entry_point_result.value.deinit();
     this.entry_point_result.cjs_set_value = false;
     if (this.pending_internal_promise) |promise| {
-        // The preload-failure paths in reloadEntryPoint{,ForTestRunner}
-        // protect() this slot; without an explicit unprotect the old global's
-        // promise would survive the swap as a permanent root.
-        JSValue.fromCell(promise).unprotect();
+        if (this.pending_internal_promise_is_protected) {
+            JSValue.fromCell(promise).unprotect();
+            this.pending_internal_promise_is_protected = false;
+        }
         this.pending_internal_promise = null;
     }
+    this.has_patched_run_main = false;
     this.main = "";
     this.main_hash = 0;
     this.main_resolved_path.deref();
@@ -2438,9 +2442,11 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     this.regular_event_loop.global = new_global;
     this.has_loaded_constructors = true;
 
-    // TODO(isolate): drain the off-thread HTTP client keepalive pool.
-    // Residual leaks (orphaned wrappers with hasPendingActivity stuck true)
-    // are covered by worker recycling.
+    // TODO(isolate): drain HTTPThread's keepalive pool. It lives on a separate
+    // thread with its own uws loop; pooled sockets are JS-invisible and bounded
+    // at HTTPContext.pool_size (64) per scheme, so serial --isolate leaks at
+    // most ~128 fds regardless of file count. --parallel covers this via
+    // worker recycling.
 }
 
 pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_name: string, specifier: string, hash: i32) !*JSInternalPromise {

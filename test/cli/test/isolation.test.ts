@@ -249,4 +249,55 @@ describe("bun test --isolate", () => {
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
+
+  test("leaked subprocesses are killed for every isolated file, not just the first", async () => {
+    using dir = tempDir("isolate-subprocess", {
+      "a-spawn.test.ts": `
+        import { test, expect } from "bun:test";
+        import fs from "node:fs";
+        test("leak a sleeper from file A", () => {
+          const child = Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(()=>{}, 1e6)"], stdout: "ignore", stderr: "ignore" });
+          fs.writeFileSync(process.env.PID_FILE_A!, String(child.pid));
+          expect(child.pid).toBeGreaterThan(0);
+        });
+      `,
+      "b-spawn.test.ts": `
+        import { test, expect } from "bun:test";
+        import fs from "node:fs";
+        test("leak a sleeper from file B", () => {
+          const child = Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(()=>{}, 1e6)"], stdout: "ignore", stderr: "ignore" });
+          fs.writeFileSync(process.env.PID_FILE_B!, String(child.pid));
+          expect(child.pid).toBeGreaterThan(0);
+        });
+      `,
+      "c-check.test.ts": `
+        import { test, expect } from "bun:test";
+        import fs from "node:fs";
+        const isAlive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+        test("both prior subprocesses were killed by isolation", async () => {
+          const pidA = Number(fs.readFileSync(process.env.PID_FILE_A!, "utf8"));
+          const pidB = Number(fs.readFileSync(process.env.PID_FILE_B!, "utf8"));
+          // auto_killer sends SIGTERM at swap; allow a moment for the OS to reap.
+          for (let i = 0; i < 50 && (isAlive(pidA) || isAlive(pidB)); i++) await Bun.sleep(20);
+          expect(isAlive(pidA)).toBe(false);
+          expect(isAlive(pidB)).toBe(false);
+        });
+      `,
+    });
+
+    const pidA = String(dir) + "/pid-a.txt";
+    const pidB = String(dir) + "/pid-b.txt";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a-spawn.test.ts", "./b-spawn.test.ts", "./c-check.test.ts"],
+      env: { ...bunEnv, PID_FILE_A: pidA, PID_FILE_B: pidB },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
 });

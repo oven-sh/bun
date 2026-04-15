@@ -337,7 +337,6 @@ test("--parallel --reporter=junit produces a merged report covering all files", 
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("--parallel: 2 workers");
-  expect(exitCode).toBe(1);
 
   const xml = await Bun.file(String(dir) + "/out.xml").text();
   expect(xml).toContain('<testsuites name="bun test"');
@@ -353,6 +352,7 @@ test("--parallel --reporter=junit produces a merged report covering all files", 
   // Exactly one outer testsuites element (not one per worker).
   expect(xml.split("<testsuites ").length - 1).toBe(1);
   expect(xml.split("</testsuites>").length - 1).toBe(1);
+  expect(exitCode).toBe(1);
 });
 
 test("--parallel --coverage merges LCOV across workers", async () => {
@@ -373,7 +373,6 @@ test("--parallel --coverage merges LCOV across workers", async () => {
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("--parallel: 2 workers");
   expect(stderr).not.toContain("not yet aggregated");
-  expect(exitCode).toBe(0);
 
   const lcov = await Bun.file(String(dir) + "/cov/lcov.info").text();
   // Both source files present, each exactly once (merged, not duplicated per worker).
@@ -388,6 +387,7 @@ test("--parallel --coverage merges LCOV across workers", async () => {
   // LH/LF recomputed from merged DA.
   expect(sharedRecord).toMatch(/^LF:\d+$/m);
   expect(sharedRecord).toMatch(/^LH:\d+$/m);
+  expect(exitCode).toBe(0);
 });
 
 test("--parallel --coverage prints merged text table", async () => {

@@ -1325,9 +1325,11 @@ pub const TestCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         Output.is_github_action = Output.isGithubAction();
 
-        // print the version so you know its doing stuff if it takes a sec
-        Output.prettyln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        Output.flush();
+        if (!ctx.test_options.test_worker) {
+            // print the version so you know its doing stuff if it takes a sec
+            Output.prettyln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+            Output.flush();
+        }
 
         var env_loader = brk: {
             const map = try ctx.allocator.create(DotEnv.Map);
@@ -1438,6 +1440,12 @@ pub const TestCommand = struct {
         if (ctx.test_options.isolate) {
             vm.test_isolation_enabled = true;
             vm.auto_killer.enabled = true;
+        }
+
+        if (ctx.test_options.test_worker) {
+            // Worker mode: skip discovery; files arrive over stdin and
+            // results go out over fd 3. Never returns.
+            try ParallelRunner.runAsWorker(reporter, vm, ctx);
         }
 
         if (ctx.test_options.coverage.enabled) {
@@ -1620,7 +1628,11 @@ pub const TestCommand = struct {
                 rand.shuffle(PathString, test_files);
             }
 
-            runAllTests(reporter, vm, test_files, ctx.allocator);
+            if (ctx.test_options.parallel > 0) {
+                try ParallelRunner.runAsCoordinator(reporter, vm, test_files, ctx);
+            } else {
+                runAllTests(reporter, vm, test_files, ctx.allocator);
+            }
         }
 
         // With --changed, only a subset of test files (possibly none) runs,
@@ -2087,7 +2099,7 @@ pub const TestCommand = struct {
     }
 };
 
-fn handleTopLevelTestErrorBeforeJavaScriptStart(err: anyerror) noreturn {
+pub fn handleTopLevelTestErrorBeforeJavaScriptStart(err: anyerror) noreturn {
     if (comptime Environment.isDebug) {
         if (err != error.ModuleNotFound) {
             Output.debugWarn("Unhandled error: {s}\n", .{@errorName(err)});
@@ -2103,6 +2115,7 @@ pub fn @"export"() void {
 const string = []const u8;
 
 const ChangedFilesFilter = @import("./test/ChangedFilesFilter.zig");
+const ParallelRunner = @import("./test/ParallelRunner.zig");
 const DotEnv = @import("../env_loader.zig");
 const Scanner = @import("./test/Scanner.zig");
 const bun_test = @import("../bun.js/test/bun_test.zig");

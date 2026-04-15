@@ -85,6 +85,7 @@ pub const ProcessExitHandler = struct {
             ShellSubprocess,
             ProcessHandle,
             MultiRunProcessHandle,
+            TestWorkerHandle,
             SecurityScanSubprocess,
             WebViewHostProcess,
             ChromeProcess,
@@ -118,6 +119,10 @@ pub const ProcessExitHandler = struct {
             },
             @field(TaggedPointer.Tag, @typeName(MultiRunProcessHandle)) => {
                 const subprocess = this.ptr.as(MultiRunProcessHandle);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(TestWorkerHandle)) => {
+                const subprocess = this.ptr.as(TestWorkerHandle);
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
@@ -2267,6 +2272,7 @@ pub const sync = struct {
 const std = @import("std");
 const MultiRunProcessHandle = @import("../../../cli/multi_run.zig").ProcessHandle;
 const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
+const TestWorkerHandle = @import("../../../cli/test/ParallelRunner.zig").Worker;
 
 const CronRegisterJob = @import("../cron.zig").CronRegisterJob;
 const CronRemoveJob = @import("../cron.zig").CronRemoveJob;

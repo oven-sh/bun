@@ -113,8 +113,9 @@ describe("node:crypto SHA-3", () => {
   });
 
   it("createHmac sha3-512", () => {
-    const out = createHmac("sha3-512", Buffer.from("key")).update("data").digest("hex");
-    expect(out.length).toBe(128);
+    expect(createHmac("sha3-512", Buffer.from("key")).update("data").digest("hex")).toBe(
+      "752bf49d54115aaa670ea62bdf79eb95e6df787938bec5fabdfc4745cf49f7fe11b7c2f73989ad2e568f06ced3a2d99536b05a121f43647b98ea43f818f38b33",
+    );
   });
 
   it("getHashes includes sha3", () => {

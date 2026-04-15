@@ -123,13 +123,15 @@ struct CryptoDigestContextEVP : public CryptoDigestContext {
 
     void addBytes(const void* input, size_t length) override
     {
-        EVP_DigestUpdate(&m_context, input, length);
+        int rc = EVP_DigestUpdate(&m_context, input, length);
+        ASSERT_UNUSED(rc, rc == 1);
     }
 
     Vector<uint8_t> computeHash() override
     {
         Vector<uint8_t> result(EVP_MD_CTX_size(&m_context));
-        EVP_DigestFinal_ex(&m_context, result.begin(), nullptr);
+        int rc = EVP_DigestFinal_ex(&m_context, result.begin(), nullptr);
+        ASSERT_UNUSED(rc, rc == 1);
         return result;
     }
 

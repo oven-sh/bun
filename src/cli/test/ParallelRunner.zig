@@ -1187,16 +1187,17 @@ fn readLine(fd: bun.FD, buf: *std.ArrayListUnmanaged(u8)) ?[]const u8 {
 }
 
 const std = @import("std");
+const Command = @import("../../cli.zig").Command;
+
+const test_command = @import("../test_command.zig");
+const CommandLineReporter = test_command.CommandLineReporter;
+const TestCommand = test_command.TestCommand;
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const PathString = bun.PathString;
 const jsc = bun.jsc;
-
-const Command = @import("../../cli.zig").Command;
-const test_command = @import("../test_command.zig");
-const TestCommand = test_command.TestCommand;
-const CommandLineReporter = test_command.CommandLineReporter;
-const TestRunner = jsc.Jest.TestRunner;
 const CoverageFraction = bun.SourceMap.coverage.Fraction;
+const TestRunner = jsc.Jest.TestRunner;
 const CoverageReportText = bun.SourceMap.coverage.Report.Text;

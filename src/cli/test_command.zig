@@ -2178,8 +2178,8 @@ pub fn @"export"() void {
 const string = []const u8;
 
 const ChangedFilesFilter = @import("./test/ChangedFilesFilter.zig");
-const ParallelRunner = @import("./test/ParallelRunner.zig");
 const DotEnv = @import("../env_loader.zig");
+const ParallelRunner = @import("./test/ParallelRunner.zig");
 const Scanner = @import("./test/Scanner.zig");
 const bun_test = @import("../bun.js/test/bun_test.zig");
 const options = @import("../options.zig");

@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, tempDir, normalizeBunSnapshot } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 test("--parallel runs files across workers and aggregates totals", async () => {
   using dir = tempDir("parallel-basic", {

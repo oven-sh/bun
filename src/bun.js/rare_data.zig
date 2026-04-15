@@ -794,10 +794,11 @@ const UUID = @import("./uuid.zig");
 const WebSocketDeflate = @import("../http/websocket_client/WebSocketDeflate.zig");
 const std = @import("std");
 const EditorContext = @import("../open.zig").EditorContext;
-const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
-const StatWatcher = @import("./node/node_fs_stat_watcher.zig").StatWatcher;
 const FSWatcher = @import("./node/node_fs_watcher.zig").FSWatcher;
 const ValkeyContext = @import("../valkey/valkey.zig").ValkeyContext;
+
+const StatWatcher = @import("./node/node_fs_stat_watcher.zig").StatWatcher;
+const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 
 const bun = @import("bun");
 const Async = bun.Async;

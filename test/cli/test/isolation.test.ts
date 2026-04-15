@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { bunEnv, bunExe, tempDir, normalizeBunSnapshot } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 // Two test files where the first leaks state and the second observes it.
 // Under --isolate the second file must see a clean world.

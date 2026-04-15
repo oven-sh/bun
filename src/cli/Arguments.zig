@@ -243,6 +243,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
     clap.parseParam("--path-ignore-patterns <STR>...   Glob patterns for test file paths to ignore.") catch unreachable,
     clap.parseParam("--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against.") catch unreachable,
+    clap.parseParam("--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -615,6 +616,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.test_options.pass_with_no_tests = args.flag("--pass-with-no-tests");
         ctx.test_options.concurrent = args.flag("--concurrent");
         ctx.test_options.randomize = args.flag("--randomize");
+        ctx.test_options.isolate = args.flag("--isolate");
 
         if (args.option("--seed")) |seed_str| {
             ctx.test_options.randomize = true;

@@ -566,6 +566,38 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     return globalObject;
 }
 
+// Create a fresh Zig::GlobalObject on the *same* JSC::VM as `oldGlobal`, then unprotect
+// the old one so GC can reclaim its module graph. Used by `bun test --isolate` to give
+// each test file a clean global without paying for a new JSC::VM.
+extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::GlobalObject* oldGlobal, void* console_client)
+{
+    JSC::VM& vm = oldGlobal->vm();
+    JSC::JSLockHolder locker(vm);
+
+    auto* structure = Zig::GlobalObject::createStructure(vm);
+    if (!structure) [[unlikely]] {
+        BUN_PANIC("Failed to allocate global object structure for test isolation");
+    }
+    auto* globalObject = Zig::GlobalObject::create(vm, structure, ScriptExecutionContext::generateIdentifier());
+    if (!globalObject) [[unlikely]] {
+        BUN_PANIC("Failed to allocate global object for test isolation");
+    }
+
+    globalObject->setConsole(console_client);
+    globalObject->isThreadLocalDefaultGlobalObject = true;
+    globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT);
+    Bun__setDefaultGlobalObject(globalObject);
+    JSC::gcProtect(globalObject);
+
+    // Drop the permanent root on the previous global so its module registry,
+    // require.cache, and user objects become collectable. JSC's CodeCache and
+    // Bun's RuntimeTranspilerCache are VM/process scoped and survive.
+    oldGlobal->isThreadLocalDefaultGlobalObject = false;
+    JSC::gcUnprotect(oldGlobal);
+
+    return globalObject;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {

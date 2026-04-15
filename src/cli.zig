@@ -357,6 +357,9 @@ pub const Command = struct {
         test_filter_pattern: ?[]const u8 = null,
         test_filter_regex: ?*RegularExpression = null,
         max_concurrency: u32 = 20,
+        /// `bun test --isolate`: run each test file in a fresh `JSGlobalObject`
+        /// on the same JSC::VM, force-closing leaked handles between files.
+        isolate: bool = false,
         /// `bun test --changed[=<since>]`. When set, only test files whose
         /// module graph reaches a file changed according to git are run.
         /// null = flag not passed. "" = compare against uncommitted changes.

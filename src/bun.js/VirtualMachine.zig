@@ -205,6 +205,14 @@ has_mutated_built_in_extensions: u32 = 0,
 
 initial_script_execution_context_identifier: i32,
 
+/// `bun test --isolate`: bumped each time a fresh global is swapped in.
+/// Native callbacks compare against this and self-cancel on mismatch so
+/// stale handles from a prior test file never call into the new global.
+test_isolation_generation: u32 = 0,
+/// When true, listening sockets and subprocesses are tracked so they can
+/// be force-closed between test files. Set by `bun test --isolate`.
+test_isolation_enabled: bool = false,
+
 extern "C" fn Bake__getAsyncLocalStorage(globalObject: *JSGlobalObject) callconv(jsc.conv) jsc.JSValue;
 
 pub fn getDevServerAsyncLocalStorage(this: *VirtualMachine) !?jsc.JSValue {
@@ -2348,18 +2356,57 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
 }
 
 pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FD) void {
-    if (this.hot_reload != .watch) {
+    if (this.hot_reload != .watch and !this.test_isolation_enabled) {
         return;
     }
 
     this.rareData().addListeningSocketForWatchMode(socket);
 }
 pub fn removeListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FD) void {
-    if (this.hot_reload != .watch) {
+    if (this.hot_reload != .watch and !this.test_isolation_enabled) {
         return;
     }
 
     this.rareData().removeListeningSocketForWatchMode(socket);
+}
+
+/// `bun test --isolate`: tear down per-file OS resources, bump the generation
+/// so stale callbacks self-cancel, then create a fresh `ZigGlobalObject` on
+/// the same `JSC::VM` and point `this.global` at it. The old global is
+/// gcUnprotect'd; its module graph becomes collectable on the next GC.
+pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
+    bun.debugAssert(this.test_isolation_enabled);
+
+    this.eventLoop().drainMicrotasks() catch {};
+
+    if (this.rare_data) |rare| {
+        rare.closeAllListenSocketsForWatchMode();
+    }
+
+    _ = this.auto_killer.kill();
+    this.auto_killer.clear();
+
+    this.test_isolation_generation +%= 1;
+
+    this.overridden_main.deinit();
+    this.entry_point_result.value.deinit();
+    this.entry_point_result.cjs_set_value = false;
+    this.pending_internal_promise = null;
+    this.main = "";
+    this.main_hash = 0;
+    this.main_resolved_path.deref();
+    this.main_resolved_path = bun.String.empty;
+    this.unhandled_error_counter = 0;
+
+    const new_global = JSGlobalObject.createForTestIsolation(this.global, this.console);
+    this.global = new_global;
+    VMHolder.cached_global_object = new_global;
+    this.regular_event_loop.global = new_global;
+    this.has_loaded_constructors = true;
+
+    // TODO(isolate): walk usockets contexts to close non-listening connections,
+    // close FSWatchers/StatWatchers, and re-run --preload scripts in the new
+    // global. For now those are covered by worker recycling.
 }
 
 pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_name: string, specifier: string, hash: i32) !*JSInternalPromise {

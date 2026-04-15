@@ -677,6 +677,7 @@ pub fn handleUncaughtException(this: *Execution, user_data: bun_test.BunTest.Ref
 
 const log = bun.Output.scoped(.jest, .visible);
 
+const ParallelRunner = @import("../../cli/test/ParallelRunner.zig");
 const std = @import("std");
 const test_command = @import("../../cli/test_command.zig");
 
@@ -689,4 +690,3 @@ const Execution = bun_test.Execution;
 const ExecutionEntry = bun_test.ExecutionEntry;
 const Order = bun_test.Order;
 const groupLog = bun_test.debug.group;
-const ParallelRunner = @import("../../cli/test/ParallelRunner.zig");

@@ -7,7 +7,12 @@
 //! isolation) and exit after `--isolate-recycle-after` files so leaks stay
 //! bounded; the coordinator respawns them transparently.
 
-const ipc_fd: bun.FD = .fromNative(3);
+/// fd 3 in the worker. On Windows this must be a libuv (CRT) fd so
+/// `uv_get_osfhandle(3)` resolves to the inherited handle; can't be a
+/// file-scope const because `FD.fromUV` rejects >2 at comptime.
+fn ipcFd() bun.FD {
+    return .fromUV(3);
+}
 
 /// Wire protocol (newline-delimited, space-separated):
 ///   coordinator -> worker (stdin):
@@ -54,7 +59,7 @@ const WorkerPipe = struct {
         return this.worker.coord.vm.eventLoop();
     }
     pub fn loop(this: *WorkerPipe) *bun.Async.Loop {
-        return this.worker.coord.vm.uwsLoop();
+        return this.worker.coord.vm.uvLoop();
     }
 };
 
@@ -97,20 +102,6 @@ pub const Worker = struct {
         }
         const argv = argv_buf[0..n :null];
 
-        this.extra_fd_stdio = .{if (Environment.isPosix) .buffer else .{ .buffer = bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)) }};
-        const options: bun.spawn.SpawnOptions = .{
-            .stdin = if (Environment.isPosix) .buffer else .{ .buffer = bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)) },
-            .stdout = if (Environment.isPosix) .buffer else .{ .buffer = bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)) },
-            .stderr = if (Environment.isPosix) .buffer else .{ .buffer = bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)) },
-            .extra_fds = &this.extra_fd_stdio,
-            .cwd = coord.cwd,
-            .windows = if (Environment.isWindows) .{ .loop = jsc.EventLoopHandle.init(coord.vm) },
-            .stream = true,
-        };
-
-        var spawned = try (try bun.spawn.spawnProcess(&options, argv.ptr, coord.envp)).unwrap();
-        var process = spawned.toProcess(coord.vm.eventLoop(), false);
-
         this.ipc.worker = this;
         this.out.worker = this;
         this.err.worker = this;
@@ -119,6 +110,17 @@ pub const Worker = struct {
         this.err.reader.setParent(&this.err);
 
         if (Environment.isPosix) {
+            this.extra_fd_stdio = .{.buffer};
+            const options: bun.spawn.SpawnOptions = .{
+                .stdin = .buffer,
+                .stdout = .buffer,
+                .stderr = .buffer,
+                .extra_fds = &this.extra_fd_stdio,
+                .cwd = coord.cwd,
+                .stream = true,
+            };
+            var spawned = try (try bun.spawn.spawnProcess(&options, argv.ptr, coord.envp)).unwrap();
+            this.process = spawned.toProcess(coord.vm.eventLoop(), false);
             this.stdin_fd = spawned.stdin;
             if (spawned.stdout) |fd| try this.out.reader.start(fd, true).unwrap();
             if (spawned.stderr) |fd| try this.err.reader.start(fd, true).unwrap();
@@ -126,11 +128,51 @@ pub const Worker = struct {
                 try this.ipc.reader.start(spawned.extra_pipes.items[0], true).unwrap();
             }
         } else {
-            // TODO(windows): wire up libuv pipes for IPC fd 3.
-            this.stdin_fd = null;
+            // Windows: stdin and the fd-3 results pipe are created with
+            // bun.sys.pipe() (uv_pipe(0,0) → both ends non-overlapped) so the
+            // worker's blocking ReadFile/WriteFile and the coordinator's
+            // bun.sys.write(stdin_fd) work. Same approach security_scanner.zig
+            // uses for its child-sync-IO pipes. stdout/stderr stay as libuv
+            // .buffer pipes since the child writes via the CRT and the
+            // coordinator reads async via startWithPipe().
+            // TODO: verify on Windows CI.
+            const uv = bun.windows.libuv;
+
+            const stdin_pair = try bun.sys.pipe().unwrap();
+            errdefer {
+                stdin_pair[0].close();
+                stdin_pair[1].close();
+            }
+            const ipc_pair = try bun.sys.pipe().unwrap();
+            errdefer {
+                ipc_pair[0].close();
+                ipc_pair[1].close();
+            }
+
+            this.extra_fd_stdio = .{.{ .pipe = ipc_pair[1] }};
+            const options: bun.spawn.SpawnOptions = .{
+                .stdin = .{ .pipe = stdin_pair[0] },
+                .stdout = .{ .buffer = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe)) },
+                .stderr = .{ .buffer = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe)) },
+                .extra_fds = &this.extra_fd_stdio,
+                .cwd = coord.cwd,
+                .windows = .{ .loop = jsc.EventLoopHandle.init(coord.vm) },
+                .stream = true,
+            };
+            var spawned = try (try bun.spawn.spawnProcess(&options, argv.ptr, coord.envp)).unwrap();
+            this.process = spawned.toProcess(coord.vm.eventLoop(), false);
+
+            stdin_pair[0].close();
+            ipc_pair[1].close();
+            this.stdin_fd = stdin_pair[1];
+
+            try this.ipc.reader.start(ipc_pair[0], true).unwrap();
+            if (spawned.stdout == .buffer) try this.out.reader.startWithPipe(spawned.stdout.buffer).unwrap();
+            if (spawned.stderr == .buffer) try this.err.reader.startWithPipe(spawned.stderr.buffer).unwrap();
+            spawned.extra_pipes.deinit();
         }
 
-        this.process = process;
+        const process = this.process.?;
         this.alive = true;
         coord.live_workers += 1;
         process.setExitHandler(this);
@@ -154,7 +196,7 @@ pub const Worker = struct {
         return this.coord.vm.eventLoop();
     }
     pub fn loop(this: *Worker) *bun.Async.Loop {
-        return this.coord.vm.uwsLoop();
+        return this.coord.vm.uvLoop();
     }
 
     fn send(this: *Worker, json: []const u8) void {
@@ -511,8 +553,9 @@ fn takeWord(rest: *[]const u8) ?[]const u8 {
 }
 
 fn writeIpcLine(line: []const u8) void {
-    writeAll(ipc_fd, line);
-    writeAll(ipc_fd, "\n");
+    const fd = ipcFd();
+    writeAll(fd, line);
+    writeAll(fd, "\n");
 }
 
 fn writeAll(fd: bun.FD, bytes: []const u8) void {

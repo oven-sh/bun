@@ -35,8 +35,9 @@ pub const Run = struct {
 
         // Load bunfig.toml unless disabled by compile flags
         // Note: config loading with execArgv is handled earlier in cli.zig via loadConfig
-        if (!ctx.debug.loaded_bunfig and !graph_ptr.flags.disable_autoload_bunfig) {
-            try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
+        // loadConfig checks graph.flags.disable_autoload_bunfig internally.
+        if (!ctx.debug.loaded_bunfig) {
+            try bun.cli.Arguments.loadConfig(ctx.allocator, null, ctx, .RunCommand);
         }
 
         run = .{

@@ -119,26 +119,29 @@ pub const Bunfig = struct {
             allocator: std.mem.Allocator,
             expr: js_ast.Expr,
         ) !void {
-            // Append rather than replace: a secondary loadConfig call (e.g.
-            // the RunCommand fallback in run_command.zig) must not clobber
-            // preloads that came from CLI flags or an earlier bunfig lookup.
+            // Merge rather than replace so a secondary loadConfig call (e.g.
+            // the RunCommand fallback in run_command.zig) doesn't clobber
+            // preloads from CLI flags or an earlier bunfig lookup. Bunfig
+            // entries go first so the ordering is [bunfig, cli] no matter
+            // which pass fires first — matching what users get when the
+            // initial parse loads the bunfig.
             const existing = this.ctx.preloads;
             if (expr.asArray()) |array_| {
                 var array = array_;
-                var preloads = try std.array_list.Managed(string).initCapacity(allocator, existing.len + array.array.items.len);
+                var preloads = try std.array_list.Managed(string).initCapacity(allocator, array.array.items.len + existing.len);
                 errdefer preloads.deinit();
-                preloads.appendSliceAssumeCapacity(existing);
                 while (array.next()) |item| {
                     try this.expectString(item);
                     if (item.data.e_string.len() > 0)
                         preloads.appendAssumeCapacity(try this.resolvePreloadPath(allocator, try item.data.e_string.string(allocator)));
                 }
+                preloads.appendSliceAssumeCapacity(existing);
                 this.ctx.preloads = preloads.items;
             } else if (expr.data == .e_string) {
                 if (expr.data.e_string.len() > 0) {
-                    var preloads = try allocator.alloc(string, existing.len + 1);
-                    @memcpy(preloads[0..existing.len], existing);
-                    preloads[existing.len] = try this.resolvePreloadPath(allocator, try expr.data.e_string.string(allocator));
+                    var preloads = try allocator.alloc(string, 1 + existing.len);
+                    preloads[0] = try this.resolvePreloadPath(allocator, try expr.data.e_string.string(allocator));
+                    @memcpy(preloads[1..], existing);
                     this.ctx.preloads = preloads;
                 }
             } else if (expr.data != .e_null) {

@@ -1563,7 +1563,10 @@ const compile = struct {
                 }
 
                 for (callframe.arguments()) |arg| {
-                    if (arg.isUndefinedOrNull()) {
+                    // Skip undefined (optional trailing params like flushdb(mode?)),
+                    // but still reject null so explicit bad values surface as a clear
+                    // client-side error instead of a confusing server reply.
+                    if (arg.isUndefined()) {
                         continue;
                     }
 

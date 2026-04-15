@@ -98,10 +98,12 @@ describe.skipIf(!hasLocalRedis)("RedisClient new commands (functional)", () => {
     }
   }
 
-  test("optional trailing arguments may be undefined", async () => {
+  test("optional trailing arguments may be undefined (but null is rejected)", async () => {
     // Commands wired through the variadic (...strings) template should skip
-    // undefined/null arguments rather than throwing, so that optional
-    // parameters in the TypeScript signatures (e.g. flushdb(mode?)) work.
+    // `undefined` so optional parameters in the TypeScript signatures (e.g.
+    // flushdb(mode?)) work, but should still reject explicit `null` with a
+    // clear client-side error (matching existing scan(null)/zrangestore(null)
+    // tests in valkey.test.ts).
     await withClient(async r => {
       const info = await r.info(undefined as any);
       expect(typeof info).toBe("string");
@@ -112,6 +114,11 @@ describe.skipIf(!hasLocalRedis)("RedisClient new commands (functional)", () => {
       expect(await r.geoadd(key("geo-opt"), 13.361389, 38.115556, "Palermo")).toBe(1);
       const dist = await r.geodist(key("geo-opt"), "Palermo", "Palermo", undefined);
       expect(dist).toBe("0.0000");
+
+      // null is still rejected client-side
+      expect(async () => {
+        await r.geoadd(key("geo-opt"), null as any);
+      }).toThrow(/string or buffer/);
     });
 
     // flushdb on an isolated database
@@ -193,6 +200,10 @@ describe.skipIf(!hasLocalRedis)("RedisClient new commands (functional)", () => {
       expect(hashes[0]).toMatch(/^sqc8/);
 
       const pos = await r.geopos(key("geo"), "Palermo", "Nowhere");
+      // RESP3 returns GEOPOS coordinates as Double (number), unlike GEODIST which
+      // returns a bulk string. Assert the runtime type matches the TS declaration.
+      expect(typeof pos[0]![0]).toBe("number");
+      expect(typeof pos[0]![1]).toBe("number");
       expect(pos[0]![0]).toBeCloseTo(13.361389, 4);
       expect(pos[0]![1]).toBeCloseTo(38.115556, 4);
       expect(pos[1]).toBeNull();

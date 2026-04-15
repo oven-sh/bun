@@ -169,7 +169,10 @@ pub const Bunfig = struct {
 
         fn resolveBunfigRelative(this: *Parser, allocator: std.mem.Allocator, entry: string) !string {
             const bunfig_dir = resolve_path.dirname(this.source.path.text, .auto);
-            if (bunfig_dir.len == 0) return entry;
+            // Skip the join when the dirname isn't itself an absolute path
+            // (e.g. Windows `dirname("C:\\bunfig.toml") == "C:"`, which would
+            // trip the `isAbsoluteWindows` assert in joinAbsStringBuf).
+            if (bunfig_dir.len == 0 or !resolve_path.Platform.auto.isAbsolute(bunfig_dir)) return entry;
             var buf: bun.PathBuffer = undefined;
             const parts = [_]string{ bunfig_dir, entry };
             const joined = resolve_path.joinAbsStringBuf(bunfig_dir, &buf, &parts, .auto);

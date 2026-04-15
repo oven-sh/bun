@@ -68,6 +68,7 @@ export const mimalloc: Dependency = {
       // so UBSan doesn't false-positive on mimalloc's type punning.
       args.MI_DEBUG_UBSAN = "ON";
     } else if (cfg.darwin) {
+      // We cannot use MI_OSX_ZONE because it breaks NAPI addons.
       args.MI_OVERRIDE = "OFF";
       args.MI_OSX_ZONE = "OFF";
       args.MI_OSX_INTERPOSE = "OFF";
@@ -91,10 +92,10 @@ export const mimalloc: Dependency = {
       args.MI_TRACK_VALGRIND = "ON";
     }
 
-    // If mimalloc gets bumped to a version with MI_OPT_ARCH: pass
-    // MI_NO_OPT_ARCH=ON to stop it setting -march=armv8.1-a on arm64
-    // (SIGILLs on ARMv8.0 CPUs). Current pin has no arch-detection logic
-    // so our global -march=armv8-a+crc (via CMAKE_CXX_FLAGS) is sufficient.
+    // dev3 grew MI_OPT_ARCH which sets -march=armv8.1-a on arm64 — that
+    // SIGILLs on ARMv8.0 CPUs. Explicitly disable it; our global
+    // -march=armv8-a+crc (via CMAKE_CXX_FLAGS) is sufficient.
+    args.MI_NO_OPT_ARCH = "ON";
 
     // ─── Windows: silence the vendored-C-as-C++ warning flood ───
     // MI_USE_CXX=ON means .c files compile as C++. clang-cl then complains
@@ -121,7 +122,7 @@ export const mimalloc: Dependency = {
     // to override this, so we have to mirror its naming logic.
     let libname: string;
     if (cfg.windows) {
-      libname = cfg.debug ? "mimalloc-static-debug" : "mimalloc-static";
+      libname = cfg.debug ? "mimalloc-debug" : "mimalloc";
     } else if (cfg.debug) {
       libname = cfg.asan ? "mimalloc-asan-debug" : "mimalloc-debug";
     } else {

@@ -210,6 +210,12 @@ export const tart = {
    */
   async createMachine(options) {
     const { name, imageName, cpuCount, memoryGb, diskSizeGb, rdp } = options;
+    // cirruslabs base images use password auth (admin/admin); spawnSsh shells
+    // out to sshpass for that, which isn't on stock macOS. Check before
+    // cloneVm/runVm so a missing dep doesn't orphan a running VM.
+    if (!which("sshpass")) {
+      throw new Error("tart machine ops need sshpass: brew install hudochenkov/sshpass/sshpass");
+    }
 
     const image = imageName || this.getImage(options);
     const machineId = name || `i-${Math.random().toString(36).slice(2, 11)}`;
@@ -234,12 +240,6 @@ export const tart = {
    * @returns {Machine}
    */
   toMachine(name) {
-    // cirruslabs base images use password auth (admin/admin); spawnSsh shells
-    // out to sshpass for that, which isn't on stock macOS. Fail up front with
-    // the install hint instead of a generic "command not found" mid-bootstrap.
-    if (!which("sshpass")) {
-      throw new Error("tart machine ops need sshpass: brew install hudochenkov/sshpass/sshpass");
-    }
     const connect = async () => {
       const hostname = await this.getVmIp(name);
       return {

@@ -119,10 +119,15 @@ pub const Bunfig = struct {
             allocator: std.mem.Allocator,
             expr: js_ast.Expr,
         ) !void {
+            // Append rather than replace: a secondary loadConfig call (e.g.
+            // the RunCommand fallback in run_command.zig) must not clobber
+            // preloads that came from CLI flags or an earlier bunfig lookup.
+            const existing = this.ctx.preloads;
             if (expr.asArray()) |array_| {
                 var array = array_;
-                var preloads = try std.array_list.Managed(string).initCapacity(allocator, array.array.items.len);
+                var preloads = try std.array_list.Managed(string).initCapacity(allocator, existing.len + array.array.items.len);
                 errdefer preloads.deinit();
+                preloads.appendSliceAssumeCapacity(existing);
                 while (array.next()) |item| {
                     try this.expectString(item);
                     if (item.data.e_string.len() > 0)
@@ -131,8 +136,9 @@ pub const Bunfig = struct {
                 this.ctx.preloads = preloads.items;
             } else if (expr.data == .e_string) {
                 if (expr.data.e_string.len() > 0) {
-                    var preloads = try allocator.alloc(string, 1);
-                    preloads[0] = try this.resolvePreloadPath(allocator, try expr.data.e_string.string(allocator));
+                    var preloads = try allocator.alloc(string, existing.len + 1);
+                    @memcpy(preloads[0..existing.len], existing);
+                    preloads[existing.len] = try this.resolvePreloadPath(allocator, try expr.data.e_string.string(allocator));
                     this.ctx.preloads = preloads;
                 }
             } else if (expr.data != .e_null) {

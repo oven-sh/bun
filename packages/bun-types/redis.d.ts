@@ -3432,7 +3432,7 @@ declare module "bun" {
      * await redis.pfcount("merged"); // 2
      * ```
      */
-    pfmerge(destkey: RedisClient.KeyLike, ...sourcekeys: RedisClient.KeyLike[]): Promise<string>;
+    pfmerge(destkey: RedisClient.KeyLike, ...sourcekeys: RedisClient.KeyLike[]): Promise<"OK">;
 
     /**
      * Add one or more geospatial items to the specified key
@@ -3554,6 +3554,20 @@ declare module "bun" {
     evalsha(sha1: string, numkeys: number, ...keysAndArgs: (string | number)[]): Promise<any>;
 
     /**
+     * Manage the Lua script cache
+     * @param args Subcommand and its arguments (LOAD, EXISTS, FLUSH, KILL)
+     * @returns Promise that resolves with the subcommand's result
+     *
+     * @example
+     * ```ts
+     * const sha = await redis.script("LOAD", "return ARGV[1]");
+     * await redis.script("EXISTS", sha); // [1]
+     * await redis.script("FLUSH");
+     * ```
+     */
+    script(...args: string[]): Promise<any>;
+
+    /**
      * Invoke a function from a loaded library
      * @param name The fully-qualified function name
      * @param numkeys The number of keys
@@ -3587,14 +3601,14 @@ declare module "bun" {
      * @param mode Optional ASYNC or SYNC modifier
      * @returns Promise that resolves with "OK"
      */
-    flushdb(mode?: "ASYNC" | "SYNC" | "async" | "sync"): Promise<string>;
+    flushdb(mode?: "ASYNC" | "SYNC" | "async" | "sync"): Promise<"OK">;
 
     /**
      * Remove all keys from all databases
      * @param mode Optional ASYNC or SYNC modifier
      * @returns Promise that resolves with "OK"
      */
-    flushall(mode?: "ASYNC" | "SYNC" | "async" | "sync"): Promise<string>;
+    flushall(mode?: "ASYNC" | "SYNC" | "async" | "sync"): Promise<"OK">;
 
     /**
      * Get information and statistics about the server
@@ -3834,7 +3848,7 @@ declare module "bun" {
      * @param ids The IDs of the messages to acknowledge
      * @returns Promise that resolves with the number of messages successfully acknowledged
      */
-    xack(key: RedisClient.KeyLike, group: string, ...ids: string[]): Promise<number>;
+    xack(key: RedisClient.KeyLike, group: string, id: string, ...moreIds: string[]): Promise<number>;
 
     /**
      * Change the ownership of pending messages in a consumer group
@@ -3924,7 +3938,7 @@ declare module "bun" {
      * @param options Optional ENTRIESADDED and MAXDELETEDID modifiers
      * @returns Promise that resolves with "OK"
      */
-    xsetid(key: RedisClient.KeyLike, lastId: string, ...options: (string | number)[]): Promise<string>;
+    xsetid(key: RedisClient.KeyLike, lastId: string, ...options: (string | number)[]): Promise<"OK">;
   }
 
   /**

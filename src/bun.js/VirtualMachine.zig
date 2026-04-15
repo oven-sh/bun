@@ -2380,8 +2380,33 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     this.eventLoop().drainMicrotasks() catch {};
 
     if (this.rare_data) |rare| {
-        rare.closeAllListenSocketsForWatchMode();
+        rare.closeAllWatchersForIsolation();
     }
+
+    {
+        const skip_ipc = if (this.rare_data) |rare| rare.spawn_ipc_usockets_context else null;
+        var maybe_ctx = bun.uws.Loop.get().internal_loop_data.head;
+        while (maybe_ctx) |ctx| {
+            const next_ctx = ctx.next();
+            if (ctx != skip_ipc) {
+                // ssl=false routes through the base on_close which, for SSL
+                // contexts, is ssl_on_close (SSL_free + user callback). Letting
+                // the real callbacks run lets wrappers drop Strong<> refs so
+                // the old global can be collected.
+                ctx.close(false);
+            }
+            maybe_ctx = next_ctx;
+        }
+    }
+    if (this.rare_data) |rare| {
+        // The context walk already closed all listening sockets properly
+        // (poll stop + fd close); just discard the now-stale fd list so it
+        // doesn't grow across files.
+        rare.listening_sockets_for_watch_mode_lock.lock();
+        rare.listening_sockets_for_watch_mode.clearRetainingCapacity();
+        rare.listening_sockets_for_watch_mode_lock.unlock();
+    }
+    this.eventLoop().drainMicrotasks() catch {};
 
     _ = this.auto_killer.kill();
     this.auto_killer.clear();
@@ -2404,9 +2429,9 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     this.regular_event_loop.global = new_global;
     this.has_loaded_constructors = true;
 
-    // TODO(isolate): walk usockets contexts to close non-listening connections,
-    // close FSWatchers/StatWatchers, and re-run --preload scripts in the new
-    // global. For now those are covered by worker recycling.
+    // TODO(isolate): re-run --preload scripts in the new global; drain the
+    // off-thread HTTP client keepalive pool. Residual leaks (orphaned wrappers
+    // with hasPendingActivity stuck true) are covered by worker recycling.
 }
 
 pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_name: string, specifier: string, hash: i32) !*JSInternalPromise {

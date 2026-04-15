@@ -1040,7 +1040,7 @@ function getCloud(name) {
  * @property {(source: string, destination: string) => Promise<void>} upload
  * @property {() => Promise<RdpCredentials>} [rdp]
  * @property {() => Promise<void>} attach
- * @property {() => Promise<string>} snapshot
+ * @property {(label?: string) => Promise<string>} snapshot
  * @property {() => Promise<void>} close
  */
 

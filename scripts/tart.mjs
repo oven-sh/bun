@@ -234,6 +234,12 @@ export const tart = {
    * @returns {Machine}
    */
   toMachine(name) {
+    // cirruslabs base images use password auth (admin/admin); spawnSsh shells
+    // out to sshpass for that, which isn't on stock macOS. Fail up front with
+    // the install hint instead of a generic "command not found" mid-bootstrap.
+    if (!which("sshpass")) {
+      throw new Error("tart machine ops need sshpass: brew install hudochenkov/sshpass/sshpass");
+    }
     const connect = async () => {
       const hostname = await this.getVmIp(name);
       return {
@@ -265,12 +271,14 @@ export const tart = {
     };
 
     const snapshot = async label => {
+      if (!label) throw new Error("tart snapshot() requires a label");
       // tart can't push a running VM — stop first, then push to ghcr. Auth via
       // TART_REGISTRY_USERNAME / TART_REGISTRY_PASSWORD (set by the image-build
       // pipeline; tart reads them directly, no `tart login` needed).
       await this.stopVm(name);
       const remote = `ghcr.io/oven-sh/${label}`;
-      await this.spawn(["push", name, remote]);
+      console.log(`Pushing ${name} to ${remote} (~25GB, this takes a while)...`);
+      await this.spawn(["push", name, remote], { stdio: "inherit" });
       return remote;
     };
 

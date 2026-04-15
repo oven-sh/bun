@@ -17,7 +17,8 @@ test("#29265 inspector exposes /json and /json/list for target discovery", async
     const { done, value } = await reader.read();
     if (done) break;
     buffered += decoder.decode(value, { stream: true });
-    const match = buffered.match(/(ws:\/\/[^\s]+)/);
+    const cleaned = buffered.replace(/\x1b\[[0-9;]*m/g, "");
+    const match = cleaned.match(/(ws:\/\/[^\s]+)/);
     if (match) wsUrl = new URL(match[1]);
   }
   reader.releaseLock();

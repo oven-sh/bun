@@ -237,6 +237,7 @@ export interface PartialConfig {
   webkit?: WebKitMode;
   buildDir?: string;
   cacheDir?: string;
+  downloadCacheDir?: string;
   // Version pins (defaults in versions.ts).
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
@@ -460,7 +461,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Downloaded artifacts only — content-addressed/version-stamped, so safe
   // to share across builds. Anchored to repo root for the same regen-rule
   // reason as bunInstall above.
-  const downloadCacheDir = process.env.BUN_DEPS_CACHE_PATH ? resolve(cwd, process.env.BUN_DEPS_CACHE_PATH) : cacheDir;
+  const downloadCacheDir = partial.downloadCacheDir
+    ? resolve(cwd, partial.downloadCacheDir)
+    : process.env.BUN_DEPS_CACHE_PATH
+      ? resolve(cwd, process.env.BUN_DEPS_CACHE_PATH)
+      : cacheDir;
   const vendorDir = resolve(cwd, "vendor");
 
   // ─── Validation ───

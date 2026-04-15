@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { closeSync, openSync, unlinkSync, writeFileSync } from "fs";
-import { isWindows, tmpdirSync } from "harness";
+import { closeSync, openSync } from "fs";
+import { isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // Reading a Bun.file() backed by a file descriptor goes through
@@ -21,44 +21,32 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
   }
 
   test("text() and arrayBuffer() on a regular-file fd return file contents", async () => {
-    const dir = tmpdirSync();
-    const path = join(dir, "fd-read.txt");
-    writeFileSync(path, "hello from fd");
-    try {
-      // Each read needs a fresh fd because Bun.file(fd) does not own or rewind
-      // the descriptor, and a completed read leaves it positioned at EOF.
-      expect(await withFd(path, fd => Bun.file(fd).text())).toBe("hello from fd");
+    using dir = tempDir("bun-file-fd-read", { "fd-read.txt": "hello from fd" });
+    const path = join(String(dir), "fd-read.txt");
 
-      const buf = await withFd(path, fd => Bun.file(fd).arrayBuffer());
-      expect(new Uint8Array(buf)).toEqual(new TextEncoder().encode("hello from fd"));
-    } finally {
-      unlinkSync(path);
-    }
+    // Each read needs a fresh fd because Bun.file(fd) does not own or rewind
+    // the descriptor, and a completed read leaves it positioned at EOF.
+    expect(await withFd(path, fd => Bun.file(fd).text())).toBe("hello from fd");
+
+    const buf = await withFd(path, fd => Bun.file(fd).arrayBuffer());
+    expect(new Uint8Array(buf)).toEqual(new TextEncoder().encode("hello from fd"));
   });
 
   test("slice() with an end beyond the real size reads the actual file contents", async () => {
-    const dir = tmpdirSync();
-    const path = join(dir, "fd-slice.txt");
-    writeFileSync(path, "0123456789");
-    try {
-      // total_size should come from fstat (10), not from the requested slice
-      // end, so the initial buffer allocation stays small.
-      expect(await withFd(path, fd => Bun.file(fd).slice(0, Number.MAX_SAFE_INTEGER).text())).toBe("0123456789");
-      expect(await withFd(path, fd => Bun.file(fd).slice(2, 5).text())).toBe("234");
-    } finally {
-      unlinkSync(path);
-    }
+    using dir = tempDir("bun-file-fd-read", { "fd-slice.txt": "0123456789" });
+    const path = join(String(dir), "fd-slice.txt");
+
+    // total_size should come from fstat (10), not from the requested slice
+    // end, so the initial buffer allocation stays small.
+    expect(await withFd(path, fd => Bun.file(fd).slice(0, Number.MAX_SAFE_INTEGER).text())).toBe("0123456789");
+    expect(await withFd(path, fd => Bun.file(fd).slice(2, 5).text())).toBe("234");
   });
 
   test("empty regular file via fd resolves with empty content", async () => {
-    const dir = tmpdirSync();
-    const path = join(dir, "fd-empty.txt");
-    writeFileSync(path, "");
-    try {
-      expect(await withFd(path, fd => Bun.file(fd).text())).toBe("");
-      expect((await withFd(path, fd => Bun.file(fd).arrayBuffer())).byteLength).toBe(0);
-    } finally {
-      unlinkSync(path);
-    }
+    using dir = tempDir("bun-file-fd-read", { "fd-empty.txt": "" });
+    const path = join(String(dir), "fd-empty.txt");
+
+    expect(await withFd(path, fd => Bun.file(fd).text())).toBe("");
+    expect((await withFd(path, fd => Bun.file(fd).arrayBuffer())).byteLength).toBe(0);
   });
 });

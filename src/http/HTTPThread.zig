@@ -183,10 +183,12 @@ fn initOnce(opts: *const InitOpts) void {
     bun.http.http_thread = .{
         .loop = undefined,
         .http_context = .{
+            .ref_count = .init(),
             .us_socket_context = undefined,
             .pending_sockets = NewHTTPContext(false).PooledSocketHiveAllocator.empty,
         },
         .https_context = .{
+            .ref_count = .init(),
             .us_socket_context = undefined,
             .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
         },
@@ -258,6 +260,7 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
             // Cache miss - create new SSL context
             var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
             custom_context.* = .{
+                .ref_count = .init(),
                 .pending_sockets = NewHTTPContext(is_ssl).PooledSocketHiveAllocator.empty,
                 .us_socket_context = undefined,
             };
@@ -272,12 +275,6 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                 };
             };
 
-            // Enforce max cache size before inserting so the new entry (which
-            // has no sockets yet) is never the eviction victim.
-            if (custom_ssl_context_map.count() >= ssl_context_cache_max_size) {
-                evictOldestSslContext();
-            }
-
             const now = this.timer.read();
             bun.handleOom(custom_ssl_context_map.put(requested_config, .{
                 .ctx = custom_context,
@@ -285,6 +282,11 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                 // Clone a strong ref for the cache entry; client.tls_props keeps its own.
                 .config_ref = tls.clone(),
             }));
+
+            // Enforce max cache size - evict oldest entry
+            if (custom_ssl_context_map.count() > ssl_context_cache_max_size) {
+                evictOldestSslContext();
+            }
 
             client.setCustomSslCtx(custom_context);
             // Keepalive is now supported for custom SSL contexts
@@ -319,9 +321,7 @@ fn evictStaleSslContexts(this: *@This()) void {
     var i: usize = 0;
     while (i < custom_ssl_context_map.count()) {
         var entry = custom_ssl_context_map.values()[i];
-        // ref_count == 1 means only the cache holds it; >1 means a request is
-        // mid-flight and treats last_used as "now".
-        if (now -| entry.last_used_ns > ssl_context_cache_ttl_ns and entry.ctx.ref_count == 1) {
+        if (now -| entry.last_used_ns > ssl_context_cache_ttl_ns) {
             custom_ssl_context_map.swapRemoveAt(i);
             entry.ctx.deref();
             entry.config_ref.deinit();
@@ -331,23 +331,19 @@ fn evictStaleSslContexts(this: *@This()) void {
     }
 }
 
-/// Evict the least-recently-used idle SSL context cache entry. Contexts with
-/// in-flight requests (ref_count > 1) are skipped — evicting one would close
-/// its sockets via no-op callbacks (cleanCallbacks runs before close in
-/// deinit), leaving socket_async_http_abort_tracker pointing at freed sockets.
+/// Evict the least-recently-used SSL context cache entry.
 fn evictOldestSslContext() void {
     if (custom_ssl_context_map.count() == 0) return;
-    var oldest_idx: ?usize = null;
+    var oldest_idx: usize = 0;
     var oldest_time: u64 = std.math.maxInt(u64);
     for (custom_ssl_context_map.values(), 0..) |entry, i| {
-        if (entry.last_used_ns < oldest_time and entry.ctx.ref_count == 1) {
+        if (entry.last_used_ns < oldest_time) {
             oldest_time = entry.last_used_ns;
             oldest_idx = i;
         }
     }
-    const idx = oldest_idx orelse return;
-    var entry = custom_ssl_context_map.values()[idx];
-    custom_ssl_context_map.swapRemoveAt(idx);
+    var entry = custom_ssl_context_map.values()[oldest_idx];
+    custom_ssl_context_map.swapRemoveAt(oldest_idx);
     entry.ctx.deref();
     entry.config_ref.deinit();
 }

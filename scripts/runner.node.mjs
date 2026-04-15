@@ -2360,7 +2360,8 @@ function onExit(signal) {
   startGroup(label, () => {
     for (const proc of activeSubprocesses) {
       try {
-        if (isWindows) spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
+        if (isWindows)
+          spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore", timeout: 5000 });
         else proc.kill(9);
       } catch {}
     }

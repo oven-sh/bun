@@ -81,22 +81,6 @@ pub const Worker = struct {
         bun.assert(!this.alive);
         const coord = this.coord;
 
-        var argv_buf: [16:null]?[*:0]const u8 = @splat(null);
-        var n: usize = 0;
-        argv_buf[n] = coord.self_exe.ptr;
-        n += 1;
-        argv_buf[n] = "test";
-        n += 1;
-        argv_buf[n] = "--test-worker";
-        n += 1;
-        argv_buf[n] = "--isolate";
-        n += 1;
-        for (coord.forwarded_args) |arg| {
-            argv_buf[n] = arg;
-            n += 1;
-        }
-        const argv = argv_buf[0..n :null];
-
         this.extra_fd_stdio = .{if (Environment.isPosix) .buffer else .{ .buffer = bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)) }};
         const options: bun.spawn.SpawnOptions = .{
             .stdin = if (Environment.isPosix) .buffer else .{ .buffer = bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)) },
@@ -108,7 +92,7 @@ pub const Worker = struct {
             .stream = true,
         };
 
-        var spawned = try (try bun.spawn.spawnProcess(&options, argv.ptr, coord.envp)).unwrap();
+        var spawned = try (try bun.spawn.spawnProcess(&options, coord.argv.ptr, coord.envp)).unwrap();
         var process = spawned.toProcess(coord.vm.eventLoop(), false);
 
         this.ipc.worker = this;
@@ -193,9 +177,8 @@ pub const Coordinator = struct {
     reporter: *CommandLineReporter,
     files: []const PathString,
     cwd: [:0]const u8,
-    self_exe: [:0]const u8,
+    argv: [:null]?[*:0]const u8,
     envp: [*:null]?[*:0]const u8,
-    forwarded_args: []const [:0]const u8,
 
     workers: []Worker,
     /// retries[i] counts how many times files[i] has been re-queued after a
@@ -203,13 +186,15 @@ pub const Coordinator = struct {
     retries: []u8,
     pending_retry: []?u32,
     recycle_after: u32,
+    bail: u32,
     next_file: u32 = 0,
     files_done: u32 = 0,
     live_workers: u32 = 0,
     crashed_files: u32 = 0,
+    bailed: bool = false,
 
     fn isDone(this: *const Coordinator) bool {
-        return this.files_done >= this.files.len and this.live_workers == 0;
+        return (this.files_done >= this.files.len or this.bailed) and this.live_workers == 0;
     }
 
     pub fn drive(this: *Coordinator) void {
@@ -227,12 +212,22 @@ pub const Coordinator = struct {
     }
 
     fn assignWork(this: *Coordinator, w: *Worker) void {
-        if (this.next_file < this.files.len) {
+        if (!this.bailed and this.next_file < this.files.len) {
             const idx = this.next_file;
             this.next_file += 1;
             w.dispatch(idx, this.files[idx].slice());
         } else {
             w.shutdown();
+        }
+    }
+
+    fn bailOut(this: *Coordinator) void {
+        if (this.bailed) return;
+        this.bailed = true;
+        Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.bail, if (this.bail == 1) "" else "s" });
+        Output.flush();
+        for (this.workers) |*other| {
+            if (other.alive and other.inflight == null) other.shutdown();
         }
     }
 
@@ -286,6 +281,9 @@ pub const Coordinator = struct {
                 w.inflight = null;
                 w.files_run += 1;
                 this.files_done += 1;
+                if (this.bail > 0 and summary.fail >= this.bail) {
+                    this.bailOut();
+                }
                 if (this.recycle_after == 0 or w.files_run < this.recycle_after) {
                     this.assignWork(w);
                 }
@@ -311,12 +309,13 @@ pub const Coordinator = struct {
                 this.reporter.summary().files += 1;
                 this.crashed_files += 1;
                 this.files_done += 1;
+                if (this.bail > 0 and this.reporter.summary().fail >= this.bail) this.bailOut();
             }
             Output.flush();
             w.inflight = null;
         }
 
-        if (this.next_file < this.files.len or retry_idx != null) {
+        if (!this.bailed and (this.next_file < this.files.len or retry_idx != null)) {
             w.ipc = .{ .role = .ipc };
             w.out = .{ .role = .stdout };
             w.err = .{ .role = .stderr };
@@ -336,6 +335,7 @@ pub const Coordinator = struct {
     }
 
     fn assignWorkOrRetry(this: *Coordinator, w: *Worker) void {
+        if (this.bailed) return w.shutdown();
         if (this.pending_retry[w.idx]) |idx| {
             this.pending_retry[w.idx] = null;
             w.dispatch(idx, this.files[idx].slice());
@@ -361,28 +361,10 @@ pub fn runAsCoordinator(
     Output.prettyError("<r><d>--parallel: {d} workers, {d} files<r>\n", .{ n, files.len });
     Output.flush();
 
-    const self_exe = bun.selfExePath() catch return error.SelfExePathFailed;
-
-    // Forward flags that affect test execution inside the worker.
-    var fwd: std.ArrayListUnmanaged([:0]const u8) = .empty;
-    defer fwd.deinit(allocator);
-    var timeout_buf: [32]u8 = undefined;
-    if (ctx.test_options.default_timeout_ms != 5 * std.time.ms_per_s) {
-        const s = try std.fmt.bufPrintZ(&timeout_buf, "--timeout={d}", .{ctx.test_options.default_timeout_ms});
-        try fwd.append(allocator, try allocator.dupeZ(u8, s));
-    }
-    var recycle_buf: [48]u8 = undefined;
-    {
-        const s = try std.fmt.bufPrintZ(&recycle_buf, "--isolate-recycle-after={d}", .{ctx.test_options.isolate_recycle_after});
-        try fwd.append(allocator, try allocator.dupeZ(u8, s));
-    }
-    if (ctx.test_options.run_todo) try fwd.append(allocator, "--todo");
-    if (ctx.test_options.only) try fwd.append(allocator, "--only");
-    if (ctx.test_options.update_snapshots) try fwd.append(allocator, "--update-snapshots");
-
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const envp = try vm.transpiler.env.map.createNullDelimitedEnvMap(arena.allocator());
+    const argv = try buildWorkerArgv(arena.allocator(), ctx);
 
     const workers = try allocator.alloc(Worker, n);
     const retries = try allocator.alloc(u8, files.len);
@@ -395,13 +377,13 @@ pub fn runAsCoordinator(
         .reporter = reporter,
         .files = files,
         .cwd = bun.fs.FileSystem.instance.top_level_dir,
-        .self_exe = self_exe,
+        .argv = argv,
         .envp = envp,
-        .forwarded_args = fwd.items,
         .workers = workers,
         .retries = retries,
         .pending_retry = pending_retry,
         .recycle_after = ctx.test_options.isolate_recycle_after,
+        .bail = ctx.test_options.bail,
     };
 
     for (workers, 0..) |*w, i| {
@@ -410,6 +392,67 @@ pub fn runAsCoordinator(
 
     vm.eventLoop().ensureWaker();
     vm.runWithAPILock(Coordinator, &coord, Coordinator.drive);
+}
+
+/// Build the argv used for every worker (re)spawn. Forwards every `bun test`
+/// flag that affects how tests *execute inside* a worker. Coordinator-only
+/// concerns — file discovery (`--path-ignore-patterns`, `--changed`), output
+/// format (`--reporter`, `--reporter-outfile`, `--dots`, `--only-failures`),
+/// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
+/// forwarded.
+fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0]const u8 {
+    var argv: std.ArrayListUnmanaged(?[*:0]const u8) = .empty;
+    const opts = &ctx.test_options;
+
+    const printZ = struct {
+        fn f(a: std.mem.Allocator, comptime fmt: []const u8, args: anytype) ![*:0]const u8 {
+            return (try std.fmt.allocPrintSentinel(a, fmt, args, 0)).ptr;
+        }
+    }.f;
+
+    try argv.append(arena, (bun.selfExePath() catch return error.SelfExePathFailed).ptr);
+    try argv.append(arena, "test");
+    try argv.append(arena, "--test-worker");
+    try argv.append(arena, "--isolate");
+
+    try argv.append(arena, try printZ(arena, "--isolate-recycle-after={d}", .{opts.isolate_recycle_after}));
+    if (opts.default_timeout_ms != 5 * std.time.ms_per_s)
+        try argv.append(arena, try printZ(arena, "--timeout={d}", .{opts.default_timeout_ms}));
+    if (opts.run_todo) try argv.append(arena, "--todo");
+    if (opts.only) try argv.append(arena, "--only");
+    if (opts.update_snapshots) try argv.append(arena, "--update-snapshots");
+    if (opts.concurrent) try argv.append(arena, "--concurrent");
+    if (opts.randomize) try argv.append(arena, "--randomize");
+    if (opts.seed) |seed|
+        try argv.append(arena, try printZ(arena, "--seed={d}", .{seed}));
+    // --bail is intentionally NOT forwarded: workers Global.exit(1) on bail
+    // (test_command.zig handleTestCompleted), which the coordinator would
+    // misread as a crash. Cross-worker bail is handled at file granularity by
+    // the coordinator instead.
+    if (opts.repeat_count > 0)
+        try argv.append(arena, try printZ(arena, "--rerun-each={d}", .{opts.repeat_count}));
+    if (opts.retry > 0)
+        try argv.append(arena, try printZ(arena, "--retry={d}", .{opts.retry}));
+    if (opts.max_concurrency != 20)
+        try argv.append(arena, try printZ(arena, "--max-concurrency={d}", .{opts.max_concurrency}));
+    if (opts.test_filter_pattern) |pattern| {
+        try argv.append(arena, "-t");
+        try argv.append(arena, (try arena.dupeZ(u8, pattern)).ptr);
+    }
+    for (ctx.preloads) |preload| {
+        try argv.append(arena, "--preload");
+        try argv.append(arena, (try arena.dupeZ(u8, preload)).ptr);
+    }
+    if (opts.coverage.enabled) {
+        try argv.append(arena, "--coverage");
+        if (opts.coverage.reporters.lcov) try argv.append(arena, "--coverage-reporter=lcov");
+        if (opts.coverage.reporters.text) try argv.append(arena, "--coverage-reporter=text");
+        if (!std.mem.eql(u8, opts.coverage.reports_directory, "coverage"))
+            try argv.append(arena, try printZ(arena, "--coverage-dir={s}", .{opts.coverage.reports_directory}));
+    }
+
+    try argv.append(arena, null);
+    return argv.items[0 .. argv.items.len - 1 :null];
 }
 
 /// Worker side: read NDJSON commands from stdin, run each file with isolation,

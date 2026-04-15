@@ -319,6 +319,14 @@ pub const FetchTasklet = struct {
             buffer.clearDrainCallback();
             buffer.deref();
         }
+        switch (this.request_body) {
+            // .Sendfile closes an fd (pure syscall). .AnyBlob's variants all
+            // have atomic refcounts (Blob.Store, WTF::StringImpl) or just free
+            // a bun.default_allocator buffer (InternalBlob). .ReadableStream
+            // is a jsc.Strong — leak it.
+            .Sendfile, .AnyBlob => this.request_body.detach(),
+            .ReadableStream => {},
+        }
 
         if (this.http) |http_| {
             this.http = null;

@@ -158,6 +158,7 @@ pub fn installIsolatedPackages(
 
             const nodes_slice = nodes.slice();
             const node_parent_ids = nodes_slice.items(.parent_id);
+            const node_pkg_ids = nodes_slice.items(.pkg_id);
             const node_dependencies = nodes_slice.items(.dependencies);
             const node_peers = nodes_slice.items(.peers);
             const node_nodes = nodes_slice.items(.nodes);
@@ -354,6 +355,14 @@ pub fn installIsolatedPackages(
                 }
 
                 for (visited_parent_node_ids.items) |visited_parent_id| {
+                    // Skip nodes that are themselves the resolved peer. Otherwise, when
+                    // two packages form a peer-dependency cycle (e.g. A peers B, B peers A),
+                    // package A's peer set would include A itself via B's resolution walk —
+                    // producing a different `peer_hash` than the A instance that wasn't
+                    // reached through the cycle. Those should collapse to a single entry.
+                    if (node_pkg_ids[visited_parent_id.get()] == resolved_pkg_id) {
+                        continue;
+                    }
                     const ctx: Store.Node.TransitivePeer.OrderedArraySetCtx = .{
                         .string_buf = string_buf,
                         .pkg_names = pkg_names,

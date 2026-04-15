@@ -366,7 +366,8 @@ class Debugger {
     const { pathname } = this.#url!;
     const host = request.headers.get("host") || `${this.#url!.hostname}:${this.#url!.port}`;
     const id = pathname.startsWith("/") ? pathname.slice(1) : pathname;
-    const webSocketDebuggerUrl = `ws://${host}${pathname}`;
+    const scheme = this.#url!.protocol === "wss:" ? "wss" : "ws";
+    const webSocketDebuggerUrl = `${scheme}://${host}${pathname}`;
     return [
       {
         description: "bun instance",

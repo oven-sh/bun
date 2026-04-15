@@ -6164,6 +6164,365 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       });
     });
 
+    describe("Bitmap Operations", () => {
+      test("BITPOS finds first set/unset bit", async () => {
+        const redis = ctx.redis;
+        const key = "bitpos:" + randomUUIDv7();
+        await redis.set(key, "\x00\x0f");
+        expect(await redis.bitpos(key, 1)).toBe(12);
+        expect(await redis.bitpos(key, 0)).toBe(0);
+        expect(await redis.bitpos(key, 1, 0, 0)).toBe(-1);
+      });
+
+      test("BITOP performs bitwise operations between keys", async () => {
+        const redis = ctx.redis;
+        const k1 = "bitop:a:" + randomUUIDv7();
+        const k2 = "bitop:b:" + randomUUIDv7();
+        const dest = "bitop:dest:" + randomUUIDv7();
+        await redis.set(k1, "abc");
+        await redis.set(k2, "abd");
+        const len = await redis.bitop("AND", dest, k1, k2);
+        expect(len).toBe(3);
+        expect(await redis.get(dest)).toBe("ab`");
+      });
+
+      test("BITFIELD reads and writes arbitrary bit fields", async () => {
+        const redis = ctx.redis;
+        const key = "bitfield:" + randomUUIDv7();
+        const result = await redis.bitfield(key, "SET", "u8", 0, 255, "GET", "u8", 0, "INCRBY", "u8", 0, 10);
+        expect(result).toEqual([0, 255, 9]);
+      });
+    });
+
+    describe("HyperLogLog Operations", () => {
+      test("PFCOUNT returns approximate cardinality", async () => {
+        const redis = ctx.redis;
+        const key = "pfcount:" + randomUUIDv7();
+        await redis.pfadd(key, "a");
+        await redis.pfadd(key, "b");
+        await redis.pfadd(key, "c");
+        await redis.pfadd(key, "a");
+        expect(await redis.pfcount(key)).toBe(3);
+      });
+
+      test("PFMERGE merges multiple HyperLogLogs", async () => {
+        const redis = ctx.redis;
+        const k1 = "pfmerge:a:" + randomUUIDv7();
+        const k2 = "pfmerge:b:" + randomUUIDv7();
+        const dest = "pfmerge:dest:" + randomUUIDv7();
+        await redis.pfadd(k1, "a");
+        await redis.pfadd(k1, "b");
+        await redis.pfadd(k2, "b");
+        await redis.pfadd(k2, "c");
+        expect(await redis.pfmerge(dest, k1, k2)).toBe("OK");
+        expect(await redis.pfcount(dest)).toBe(3);
+        expect(await redis.pfcount(k1, k2)).toBe(3);
+      });
+    });
+
+    describe("Geo Operations", () => {
+      async function setupGeo(redis: RedisClient, key: string) {
+        return redis.geoadd(key, 13.361389, 38.115556, "Palermo", 15.087269, 37.502669, "Catania");
+      }
+
+      test("GEOADD adds members to a geo set", async () => {
+        const redis = ctx.redis;
+        const key = "geo:" + randomUUIDv7();
+        expect(await setupGeo(redis, key)).toBe(2);
+        expect(await redis.geoadd(key, "NX", 2.349014, 48.864716, "Paris")).toBe(1);
+      });
+
+      test("GEODIST returns distance between members", async () => {
+        const redis = ctx.redis;
+        const key = "geo:" + randomUUIDv7();
+        await setupGeo(redis, key);
+        const dist = await redis.geodist(key, "Palermo", "Catania", "km");
+        expect(typeof dist).toBe("string");
+        expect(Number(dist)).toBeCloseTo(166.2742, 3);
+        expect(await redis.geodist(key, "Palermo", "Nowhere")).toBeNull();
+      });
+
+      test("GEOHASH returns geohash strings", async () => {
+        const redis = ctx.redis;
+        const key = "geo:" + randomUUIDv7();
+        await setupGeo(redis, key);
+        const hashes = await redis.geohash(key, "Palermo", "Catania");
+        expect(hashes).toHaveLength(2);
+        expect(hashes[0]).toMatch(/^sqc8b49rny/);
+        expect(hashes[1]).toMatch(/^sqdtr74hyu/);
+      });
+
+      test("GEOPOS returns coordinates", async () => {
+        const redis = ctx.redis;
+        const key = "geo:" + randomUUIDv7();
+        await setupGeo(redis, key);
+        const pos = await redis.geopos(key, "Palermo", "Nowhere");
+        expect(pos).toHaveLength(2);
+        expect(pos[0]![0]).toBeCloseTo(13.361389, 4);
+        expect(pos[0]![1]).toBeCloseTo(38.115556, 4);
+        expect(pos[1]).toBeNull();
+      });
+
+      test("GEOSEARCH finds members in an area", async () => {
+        const redis = ctx.redis;
+        const key = "geo:" + randomUUIDv7();
+        await setupGeo(redis, key);
+        const near = await redis.geosearch(key, "FROMLONLAT", 15, 37, "BYRADIUS", 200, "km", "ASC");
+        expect(near).toEqual(["Catania", "Palermo"]);
+      });
+
+      test("GEOSEARCHSTORE stores search results", async () => {
+        const redis = ctx.redis;
+        const src = "geo:src:" + randomUUIDv7();
+        const dest = "geo:dest:" + randomUUIDv7();
+        await setupGeo(redis, src);
+        const count = await redis.geosearchstore(dest, src, "FROMLONLAT", 15, 37, "BYRADIUS", 100, "km");
+        expect(count).toBe(1);
+        expect(await redis.zcard(dest)).toBe(1);
+      });
+    });
+
+    describe("Scripting Operations", () => {
+      test("EVAL runs a Lua script", async () => {
+        const redis = ctx.redis;
+        expect(await redis.eval("return ARGV[1]", 0, "hello")).toBe("hello");
+        expect(await redis.eval("return tonumber(ARGV[1]) + tonumber(ARGV[2])", 0, 3, 4)).toBe(7);
+        const key = "eval:" + randomUUIDv7();
+        await redis.set(key, "world");
+        expect(await redis.eval("return redis.call('GET', KEYS[1])", 1, key)).toBe("world");
+      });
+
+      test("EVALSHA runs a cached Lua script", async () => {
+        const redis = ctx.redis;
+        const sha = await redis.script("LOAD", "return 'cached'");
+        expect(typeof sha).toBe("string");
+        expect(await redis.evalsha(sha, 0)).toBe("cached");
+      });
+
+      test("FUNCTION and FCALL load and invoke a library function", async () => {
+        const redis = ctx.redis;
+        const lib = "bunlib" + randomUUIDv7().replace(/-/g, "").slice(0, 8);
+        const code = `#!lua name=${lib}\nredis.register_function('${lib}_fn', function(keys, args) return args[1] end)`;
+        await redis.function("LOAD", "REPLACE", code);
+        try {
+          expect(await redis.fcall(`${lib}_fn`, 0, "abc")).toBe("abc");
+        } finally {
+          await redis.function("DELETE", lib);
+        }
+      });
+    });
+
+    describe("Server & Connection Commands", () => {
+      test("ECHO returns the message", async () => {
+        const redis = ctx.redis;
+        expect(await redis.echo("hello")).toBe("hello");
+      });
+
+      test("DBSIZE returns the number of keys", async () => {
+        const redis = ctx.redis;
+        const key = "dbsize:" + randomUUIDv7();
+        const before = await redis.dbsize();
+        await redis.set(key, "x");
+        expect(await redis.dbsize()).toBe(before + 1);
+      });
+
+      test("TIME returns server time", async () => {
+        const redis = ctx.redis;
+        const [secs, micros] = await redis.time();
+        expect(Number(secs)).toBeGreaterThan(1_700_000_000);
+        expect(Number(micros)).toBeGreaterThanOrEqual(0);
+      });
+
+      test("INFO returns server info string", async () => {
+        const redis = ctx.redis;
+        const info = await redis.info("server");
+        expect(typeof info).toBe("string");
+        expect(info).toContain("redis_version");
+      });
+
+      test("LASTSAVE returns a timestamp", async () => {
+        const redis = ctx.redis;
+        const ts = await redis.lastsave();
+        expect(typeof ts).toBe("number");
+        expect(ts).toBeGreaterThan(0);
+      });
+
+      test("CLIENT SETNAME/GETNAME manage connection name", async () => {
+        const redis = ctx.redis;
+        expect(await redis.client("SETNAME", "bun-test-conn")).toBe("OK");
+        expect(await redis.client("GETNAME")).toBe("bun-test-conn");
+        const id = await redis.client("ID");
+        expect(typeof id).toBe("number");
+      });
+
+      test("CONFIG GET returns configuration parameters", async () => {
+        const redis = ctx.redis;
+        const result = await redis.config("GET", "maxmemory");
+        expect(result).toHaveProperty("maxmemory");
+      });
+
+      test("COMMAND COUNT returns number of commands", async () => {
+        const redis = ctx.redis;
+        const count = await redis.command("COUNT");
+        expect(typeof count).toBe("number");
+        expect(count).toBeGreaterThan(100);
+      });
+
+      test("FLUSHDB clears the current database", async () => {
+        const redis = ctx.redis;
+        const key = "flushdb:" + randomUUIDv7();
+        await redis.set(key, "x");
+        expect(await redis.flushdb("SYNC")).toBe("OK");
+        expect(await redis.get(key)).toBeNull();
+      });
+
+      test("FLUSHALL clears all databases", async () => {
+        const redis = ctx.redis;
+        const key = "flushall:" + randomUUIDv7();
+        await redis.set(key, "x");
+        expect(await redis.flushall("SYNC")).toBe("OK");
+        expect(await redis.exists(key)).toBe(false);
+      });
+
+      test("WAIT returns number of synced replicas", async () => {
+        const redis = ctx.redis;
+        expect(await redis.wait(0, 10)).toBe(0);
+      });
+    });
+
+    describe("Generic Key Commands", () => {
+      test("OBJECT ENCODING returns internal encoding", async () => {
+        const redis = ctx.redis;
+        const key = "obj:" + randomUUIDv7();
+        await redis.set(key, "hello");
+        const encoding = await redis.object("ENCODING", key);
+        expect(["embstr", "raw", "int"]).toContain(encoding);
+      });
+
+      test("SORT sorts list elements", async () => {
+        const redis = ctx.redis;
+        const key = "sort:" + randomUUIDv7();
+        await redis.rpush(key, "3", "1", "2");
+        expect(await redis.sort(key)).toEqual(["1", "2", "3"]);
+        expect(await redis.sort(key, "DESC")).toEqual(["3", "2", "1"]);
+        expect(await redis.sort(key, "LIMIT", 0, 2)).toEqual(["1", "2"]);
+      });
+
+      test("LCS returns longest common subsequence", async () => {
+        const redis = ctx.redis;
+        const k1 = "lcs:a:" + randomUUIDv7();
+        const k2 = "lcs:b:" + randomUUIDv7();
+        await redis.set(k1, "ohmytext");
+        await redis.set(k2, "mynewtext");
+        expect(await redis.lcs(k1, k2)).toBe("mytext");
+        expect(await redis.lcs(k1, k2, "LEN")).toBe(6);
+      });
+    });
+
+    describe("Stream Operations", () => {
+      test("XADD, XLEN, XRANGE, XREVRANGE basic operations", async () => {
+        const redis = ctx.redis;
+        const key = "stream:" + randomUUIDv7();
+
+        const id1 = await redis.xadd(key, "*", "field", "v1");
+        const id2 = await redis.xadd(key, "*", "field", "v2", "other", "x");
+        expect(typeof id1).toBe("string");
+        expect(id1).toMatch(/^\d+-\d+$/);
+
+        expect(await redis.xlen(key)).toBe(2);
+
+        const range = await redis.xrange(key, "-", "+");
+        expect(range).toHaveLength(2);
+        expect(range[0][0]).toBe(id1);
+        expect(range[0][1]).toEqual(["field", "v1"]);
+        expect(range[1][0]).toBe(id2);
+
+        const rev = await redis.xrevrange(key, "+", "-");
+        expect(rev[0][0]).toBe(id2);
+        expect(rev[1][0]).toBe(id1);
+
+        const limited = await redis.xrange(key, "-", "+", "COUNT", 1);
+        expect(limited).toHaveLength(1);
+      });
+
+      test("XREAD reads from a stream", async () => {
+        const redis = ctx.redis;
+        const key = "stream:" + randomUUIDv7();
+        await redis.xadd(key, "*", "k", "v");
+        const result = await redis.xread("COUNT", 10, "STREAMS", key, "0");
+        expect(result).toHaveProperty(key);
+        expect(result[key]).toHaveLength(1);
+      });
+
+      test("XDEL and XTRIM remove entries", async () => {
+        const redis = ctx.redis;
+        const key = "stream:" + randomUUIDv7();
+        const id1 = await redis.xadd(key, "*", "k", "v1");
+        await redis.xadd(key, "*", "k", "v2");
+        await redis.xadd(key, "*", "k", "v3");
+
+        expect(await redis.xdel(key, id1!)).toBe(1);
+        expect(await redis.xlen(key)).toBe(2);
+
+        expect(await redis.xtrim(key, "MAXLEN", 1)).toBe(1);
+        expect(await redis.xlen(key)).toBe(1);
+      });
+
+      test("XSETID sets the stream last ID", async () => {
+        const redis = ctx.redis;
+        const key = "stream:" + randomUUIDv7();
+        await redis.xadd(key, "*", "k", "v");
+        expect(await redis.xsetid(key, "99999999999999-0")).toBe("OK");
+      });
+
+      test("XGROUP, XREADGROUP, XACK, XPENDING consumer group flow", async () => {
+        const redis = ctx.redis;
+        const key = "stream:" + randomUUIDv7();
+        const group = "grp";
+
+        expect(await redis.xgroup("CREATE", key, group, "$", "MKSTREAM")).toBe("OK");
+
+        const id = await redis.xadd(key, "*", "msg", "hello");
+
+        const read = await redis.xreadgroup("GROUP", group, "consumer1", "COUNT", 10, "STREAMS", key, ">");
+        expect(read).toHaveProperty(key);
+        expect(read[key][0][0]).toBe(id);
+        expect(read[key][0][1]).toEqual(["msg", "hello"]);
+
+        const pendingBefore = await redis.xpending(key, group);
+        expect(pendingBefore[0]).toBe(1);
+
+        expect(await redis.xack(key, group, id!)).toBe(1);
+
+        const pendingAfter = await redis.xpending(key, group);
+        expect(pendingAfter[0]).toBe(0);
+
+        const groups = await redis.xinfo("GROUPS", key);
+        expect(Array.isArray(groups)).toBe(true);
+
+        expect(await redis.xgroup("DESTROY", key, group)).toBe(1);
+      });
+
+      test("XCLAIM and XAUTOCLAIM transfer message ownership", async () => {
+        const redis = ctx.redis;
+        const key = "stream:" + randomUUIDv7();
+        const group = "grp";
+
+        await redis.xgroup("CREATE", key, group, "$", "MKSTREAM");
+        const id = await redis.xadd(key, "*", "msg", "hello");
+        await redis.xreadgroup("GROUP", group, "consumer1", "COUNT", 1, "STREAMS", key, ">");
+
+        const claimed = await redis.xclaim(key, group, "consumer2", 0, id!);
+        expect(claimed).toHaveLength(1);
+        expect(claimed[0][0]).toBe(id);
+
+        const auto = await redis.xautoclaim(key, group, "consumer3", 0, "0");
+        expect(auto[0]).toBe("0-0");
+        expect(auto[1]).toHaveLength(1);
+        expect(auto[1][0][0]).toBe(id);
+      });
+    });
+
     describe("Connection State", () => {
       test("should have a connected property", () => {
         const redis = ctx.redis;

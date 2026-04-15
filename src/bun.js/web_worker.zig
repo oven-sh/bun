@@ -402,14 +402,22 @@ pub fn start(
 
 /// Deinit will clean up vm and everything.
 /// Early deinit may be called from caller thread, but full vm deinit will only be called within worker's thread.
+/// The struct itself is freed separately by the owning C++ `Worker` via `WebWorker__destroy` so
+/// that `WebWorker__notifyNeedTermination` never touches freed memory while JS still holds the
+/// wrapper.
 fn deinit(this: *WebWorker) void {
     log("[{d}] deinit", .{this.execution_context_id});
     this.parent_poll_ref.unrefConcurrently(this.parent);
     bun.default_allocator.free(this.unresolved_specifier);
+    this.unresolved_specifier = "";
     for (this.preloads) |preload| {
         bun.default_allocator.free(preload);
     }
     bun.default_allocator.free(this.preloads);
+    this.preloads = &.{};
+}
+
+export fn WebWorker__destroy(this: *WebWorker) void {
     bun.default_allocator.destroy(this);
 }
 
@@ -644,6 +652,12 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     }
     var arena = this.arena;
 
+    // Release owned resources before dispatching exit. `WebWorker__dispatchExit` drops the
+    // Zig-held ref on the C++ `Worker`; once the parent processes the close task and GC
+    // collects the wrapper, `~Worker()` will free this struct, so it must not be touched
+    // afterwards.
+    this.deinit();
+
     WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
     if (loop) |loop_| {
         loop_.internal_loop_data.jsc_vm = null;
@@ -658,8 +672,6 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     if (comptime Environment.isWindows) {
         bun.windows.libuv.Loop.shutdown();
     }
-
-    this.deinit();
 
     if (vm_to_deinit) |vm| {
         vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.

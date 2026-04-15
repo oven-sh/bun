@@ -71,6 +71,8 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
 extern "C" void WebWorker__notifyNeedTermination(
     void* worker);
+extern "C" void WebWorker__destroy(
+    void* worker);
 
 static Lock allWorkersLock;
 static HashMap<ScriptExecutionContextIdentifier, Worker*>& allWorkers() WTF_REQUIRES_LOCK(allWorkersLock)
@@ -228,6 +230,9 @@ Worker::~Worker()
         Locker locker { allWorkersLock };
         allWorkers().remove(m_clientIdentifier);
     }
+    if (impl_) {
+        WebWorker__destroy(impl_);
+    }
     // m_contextProxy.workerObjectDestroyed();
 }
 
@@ -262,7 +267,8 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
 void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
-    m_terminationFlags.fetch_or(TerminateRequestedFlag);
+    if (m_terminationFlags.fetch_or(TerminateRequestedFlag))
+        return;
     WebWorker__notifyNeedTermination(impl_);
 }
 

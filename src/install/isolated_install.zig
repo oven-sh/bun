@@ -31,10 +31,12 @@ pub fn installIsolatedPackages(
             pkg_id: PackageID,
         };
 
-        var node_queue: bun.LinearFifo(QueuedNode, .Dynamic) = .init(lockfile.allocator);
-        defer node_queue.deinit();
+        // DFS so a deduplicated node's full subtree (and therefore its `peers`)
+        // is finalized before any later sibling encounters it.
+        var node_queue: std.ArrayListUnmanaged(QueuedNode) = .empty;
+        defer node_queue.deinit(lockfile.allocator);
 
-        try node_queue.writeItem(.{
+        try node_queue.append(lockfile.allocator, .{
             .parent_id = .invalid,
             .dep_id = invalid_dependency_id,
             .pkg_id = 0,
@@ -43,13 +45,134 @@ pub fn installIsolatedPackages(
         var dep_ids_sort_buf: std.ArrayListUnmanaged(DependencyID) = .empty;
         defer dep_ids_sort_buf.deinit(lockfile.allocator);
 
-        // Used by leaves and linked dependencies. They can be deduplicated early
-        // because peers won't change them.
+        // For each package, the peer dependency names declared anywhere in its
+        // transitive closure that are not satisfied within that closure (i.e., the
+        // walk-up in the loop below would continue past this package).
         //
-        // In the pnpm repo without this map: 772,471 nodes
-        //                 and with this map: 314,022 nodes
-        var early_dedupe: std.AutoHashMap(PackageID, Store.Node.Id) = .init(lockfile.allocator);
+        // A node's `peers` set (the second-pass dedup key) is exactly the resolved
+        // package for each of these names as seen from the node's ancestor chain, so
+        // two nodes with the same package and the same ancestor resolution for each
+        // name will produce identical subtrees and identical second-pass entries.
+        const leaking_peers: []std.AutoArrayHashMapUnmanaged(PackageNameHash, void) = try lockfile.allocator.alloc(
+            std.AutoArrayHashMapUnmanaged(PackageNameHash, void),
+            lockfile.packages.len,
+        );
+        @memset(leaking_peers, .empty);
+        defer {
+            for (leaking_peers) |*set| set.deinit(lockfile.allocator);
+            lockfile.allocator.free(leaking_peers);
+        }
+        {
+            // The runtime child of a peer edge is whichever package an ancestor's
+            // dependency with that name resolves to, which may be an `npm:`-aliased
+            // target whose package name differs. Index resolutions by *dependency*
+            // name so the union below covers every package a peer could become.
+            var dep_name_to_pkgs: std.AutoArrayHashMapUnmanaged(PackageNameHash, std.ArrayListUnmanaged(PackageID)) = .empty;
+            defer {
+                for (dep_name_to_pkgs.values()) |*list| list.deinit(lockfile.allocator);
+                dep_name_to_pkgs.deinit(lockfile.allocator);
+            }
+            for (dependencies, resolutions) |dep, res| {
+                if (res == invalid_package_id) continue;
+                const gop = try dep_name_to_pkgs.getOrPut(lockfile.allocator, dep.name_hash);
+                if (!gop.found_existing) gop.value_ptr.* = .empty;
+                if (std.mem.indexOfScalar(PackageID, gop.value_ptr.items, res) == null) {
+                    try gop.value_ptr.append(lockfile.allocator, res);
+                }
+            }
+
+            var scratch: std.AutoArrayHashMapUnmanaged(PackageNameHash, void) = .empty;
+            defer scratch.deinit(lockfile.allocator);
+
+            var changed = true;
+            while (changed) {
+                changed = false;
+                for (0..lockfile.packages.len) |pkg_idx| {
+                    const pkg_id: PackageID = @intCast(pkg_idx);
+                    const deps = pkg_dependency_slices[pkg_id];
+
+                    scratch.clearRetainingCapacity();
+
+                    for (deps.begin()..deps.end()) |_dep_id| {
+                        const dep_id: DependencyID = @intCast(_dep_id);
+                        const dep = dependencies[dep_id];
+                        if (dep.behavior.isPeer()) {
+                            try scratch.put(lockfile.allocator, dep.name_hash, {});
+
+                            if (dep_name_to_pkgs.get(dep.name_hash)) |list| {
+                                for (list.items) |child| {
+                                    for (leaking_peers[child].keys()) |k| {
+                                        try scratch.put(lockfile.allocator, k, {});
+                                    }
+                                }
+                            }
+                        } else {
+                            const res_pkg = resolutions[dep_id];
+                            if (res_pkg != invalid_package_id) {
+                                for (leaking_peers[res_pkg].keys()) |k| {
+                                    try scratch.put(lockfile.allocator, k, {});
+                                }
+                            }
+                        }
+                    }
+                    // Non-peer dependency names that actually reach `node_dependencies`
+                    // satisfy any matching peer that walks up to this package. Filtered
+                    // dependencies (bundled, disabled, unresolved) never appear there,
+                    // so a peer with that name can still leak past.
+                    for (deps.begin()..deps.end()) |_dep_id| {
+                        const dep_id: DependencyID = @intCast(_dep_id);
+                        const dep = dependencies[dep_id];
+                        if (dep.behavior.isPeer()) continue;
+                        if (Tree.isFilteredDependencyOrWorkspace(
+                            dep_id,
+                            pkg_id,
+                            workspace_filters,
+                            install_root_dependencies,
+                            manager,
+                            lockfile,
+                        )) continue;
+                        _ = scratch.swapRemove(dep.name_hash);
+                    }
+
+                    if (scratch.count() != leaking_peers[pkg_id].count()) {
+                        changed = true;
+                        leaking_peers[pkg_id].clearRetainingCapacity();
+                        try leaking_peers[pkg_id].ensureTotalCapacity(lockfile.allocator, scratch.count());
+                        for (scratch.keys()) |k| {
+                            leaking_peers[pkg_id].putAssumeCapacity(k, {});
+                        }
+                    }
+                }
+            }
+
+            // Stable order so the context hash below does not depend on fixpoint
+            // iteration order.
+            for (leaking_peers) |*set| {
+                const Ctx = struct {
+                    keys: []PackageNameHash,
+                    pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+                        return ctx.keys[a] < ctx.keys[b];
+                    }
+                };
+                set.sort(Ctx{ .keys = set.keys() });
+            }
+        }
+
+        // Two would-be nodes with the same (pkg_id, ctx_hash) will end up with the
+        // same `peers` set and therefore become the same entry in the second pass.
+        // ctx_hash is 0 when the package has no leaking peers (or is a workspace).
+        const EarlyDedupeKey = struct { pkg_id: PackageID, ctx_hash: u64 };
+        var early_dedupe: std.AutoHashMap(EarlyDedupeKey, Store.Node.Id) = .init(lockfile.allocator);
         defer early_dedupe.deinit();
+
+        var root_declares_workspace = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(lockfile.allocator, lockfile.packages.len);
+        defer root_declares_workspace.deinit(lockfile.allocator);
+        for (pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end()) |dep_idx| {
+            if (dependencies[dep_idx].behavior.isWorkspace()) {
+                const res = resolutions[dep_idx];
+                if (res != invalid_package_id) root_declares_workspace.set(res);
+            }
+        }
 
         var peer_dep_ids: std.array_list.Managed(DependencyID) = .init(lockfile.allocator);
         defer peer_dep_ids.deinit();
@@ -58,7 +181,7 @@ pub fn installIsolatedPackages(
         defer visited_parent_node_ids.deinit();
 
         // First pass: create full dependency tree with resolved peers
-        next_node: while (node_queue.readItem()) |entry| {
+        next_node: while (node_queue.pop()) |entry| {
             check_cycle: {
                 // check for cycles
                 const nodes_slice = nodes.slice();
@@ -113,14 +236,64 @@ pub fn installIsolatedPackages(
 
             if (entry.dep_id != invalid_dependency_id) {
                 const entry_dep = dependencies[entry.dep_id];
-                if (pkg_deps.len == 0 or entry_dep.version.tag == .workspace) dont_dedupe: {
-                    const dedupe_entry = try early_dedupe.getOrPut(entry.pkg_id);
+
+                // A `workspace:` protocol reference does not own the workspace's
+                // dependencies when root also declares that workspace; the
+                // root-declared entry does. (If root does not declare it, the
+                // protocol reference is the only one and must keep them.)
+                if (entry_dep.version.tag == .workspace and
+                    !entry_dep.behavior.isWorkspace() and
+                    root_declares_workspace.isSet(entry.pkg_id))
+                {
+                    skip_dependencies = true;
+                }
+
+                dont_dedupe: {
+                    const nodes_slice = nodes.slice();
+                    const node_nodes = nodes_slice.items(.nodes);
+                    const node_dep_ids = nodes_slice.items(.dep_id);
+                    const node_parent_ids = nodes_slice.items(.parent_id);
+                    const node_dependencies = nodes_slice.items(.dependencies);
+                    const node_peers = nodes_slice.items(.peers);
+
+                    const ctx_hash: u64 = if (entry_dep.version.tag == .workspace)
+                        0
+                    else ctx: {
+                        const leaks = &leaking_peers[entry.pkg_id];
+                        if (leaks.count() == 0) break :ctx 0;
+
+                        var hasher = bun.Wyhash11.init(0);
+                        for (leaks.keys()) |peer_name_hash| {
+                            const resolved: PackageID = resolved: {
+                                var curr_id = entry.parent_id;
+                                while (curr_id != .invalid) {
+                                    for (node_dependencies[curr_id.get()].items) |ids| {
+                                        if (dependencies[ids.dep_id].name_hash == peer_name_hash) {
+                                            break :resolved ids.pkg_id;
+                                        }
+                                    }
+                                    for (node_peers[curr_id.get()].list.items) |ids| {
+                                        if (!ids.auto_installed and dependencies[ids.dep_id].name_hash == peer_name_hash) {
+                                            break :resolved ids.pkg_id;
+                                        }
+                                    }
+                                    curr_id = node_parent_ids[curr_id.get()];
+                                }
+                                break :resolved invalid_package_id;
+                            };
+                            // Auto-install fallback is declarer-specific; let the
+                            // second pass handle this position rather than risk an
+                            // unsound key.
+                            if (resolved == invalid_package_id) break :dont_dedupe;
+                            hasher.update(std.mem.asBytes(&peer_name_hash));
+                            hasher.update(std.mem.asBytes(&resolved));
+                        }
+                        break :ctx hasher.final();
+                    };
+
+                    const dedupe_entry = try early_dedupe.getOrPut(.{ .pkg_id = entry.pkg_id, .ctx_hash = ctx_hash });
                     if (dedupe_entry.found_existing) {
                         const dedupe_node_id = dedupe_entry.value_ptr.*;
-
-                        const nodes_slice = nodes.slice();
-                        const node_nodes = nodes_slice.items(.nodes);
-                        const node_dep_ids = nodes_slice.items(.dep_id);
 
                         const dedupe_dep_id = node_dep_ids[dedupe_node_id.get()];
                         if (dedupe_dep_id == invalid_dependency_id) {
@@ -134,9 +307,27 @@ pub fn installIsolatedPackages(
 
                         if (dedupe_dep.version.tag == .workspace and entry_dep.version.tag == .workspace) {
                             if (dedupe_dep.behavior.isWorkspace() != entry_dep.behavior.isWorkspace()) {
-                                // only attach the dependencies to one of the workspaces
-                                skip_dependencies = true;
                                 break :dont_dedupe;
+                            }
+                        }
+
+                        // The skipped subtree would have walked up through this
+                        // ancestor chain marking each node with its leaking peers.
+                        // DFS guarantees `dedupe_node`'s subtree is fully processed,
+                        // so its `peers` is exactly that set; propagate it here.
+                        const set_ctx: Store.Node.TransitivePeer.OrderedArraySetCtx = .{
+                            .string_buf = string_buf,
+                            .pkg_names = pkg_names,
+                        };
+                        for (node_peers[dedupe_node_id.get()].list.items) |peer| {
+                            const peer_name_hash = dependencies[peer.dep_id].name_hash;
+                            var curr_id = entry.parent_id;
+                            walk: while (curr_id != .invalid) {
+                                for (node_dependencies[curr_id.get()].items) |ids| {
+                                    if (dependencies[ids.dep_id].name_hash == peer_name_hash) break :walk;
+                                }
+                                try node_peers[curr_id.get()].insert(lockfile.allocator, peer, &set_ctx);
+                                curr_id = node_parent_ids[curr_id.get()];
                             }
                         }
 
@@ -170,6 +361,8 @@ pub fn installIsolatedPackages(
                 continue;
             }
 
+            const queue_mark = node_queue.items.len;
+
             dep_ids_sort_buf.clearRetainingCapacity();
             try dep_ids_sort_buf.ensureUnusedCapacity(lockfile.allocator, pkg_deps.len);
             for (pkg_deps.begin()..pkg_deps.end()) |_dep_id| {
@@ -202,7 +395,7 @@ pub fn installIsolatedPackages(
                             for (packages) |package_to_install| {
                                 if (package_to_install == pkg_id) {
                                     node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
-                                    try node_queue.writeItem(.{
+                                    try node_queue.append(lockfile.allocator, .{
                                         .parent_id = node_id,
                                         .dep_id = dep_id,
                                         .pkg_id = pkg_id,
@@ -238,7 +431,7 @@ pub fn installIsolatedPackages(
                         // - add it as a dependency
                         // - queue it
                         node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
-                        try node_queue.writeItem(.{
+                        try node_queue.append(lockfile.allocator, .{
                             .parent_id = node_id,
                             .dep_id = dep_id,
                             .pkg_id = pkg_id,
@@ -370,13 +563,17 @@ pub fn installIsolatedPackages(
                     // visited parents length == 0 means the node satisfied it's own
                     // peer. don't queue.
                     node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = peer_dep_id, .pkg_id = resolved_pkg_id });
-                    try node_queue.writeItem(.{
+                    try node_queue.append(lockfile.allocator, .{
                         .parent_id = node_id,
                         .dep_id = peer_dep_id,
                         .pkg_id = resolved_pkg_id,
                     });
                 }
             }
+
+            // node_queue is a stack: reverse children so the first one pushed is the
+            // first popped, matching BFS sibling order.
+            std.mem.reverse(QueuedNode, node_queue.items[queue_mark..]);
         }
 
         if (manager.options.log_level.isVerbose()) {
@@ -390,6 +587,10 @@ pub fn installIsolatedPackages(
             dep_id: DependencyID,
             peers: Store.OrderedArraySet(Store.Node.TransitivePeer, Store.Node.TransitivePeer.OrderedArraySetCtx),
         };
+
+        if (bun.getenvTruthy("BUN_DEBUG_ISOLATED_NODES")) {
+            bun.Output.prettyErrorln("[isolated] first pass: {d} nodes", .{nodes.len});
+        }
 
         var dedupe: std.AutoHashMapUnmanaged(PackageID, std.ArrayListUnmanaged(DedupeInfo)) = .empty;
         defer dedupe.deinit(lockfile.allocator);
@@ -773,6 +974,10 @@ pub fn installIsolatedPackages(
     {
         var root_node: *Progress.Node = undefined;
         var download_node: Progress.Node = undefined;
+        if (bun.getenvTruthy("BUN_DEBUG_ISOLATED_NODES")) {
+            bun.Output.prettyErrorln("[isolated] second pass: {d} entries", .{store.entries.len});
+        }
+
         var install_node: Progress.Node = undefined;
         var scripts_node: Progress.Node = undefined;
         var progress = &manager.progress;
@@ -1238,6 +1443,7 @@ const Command = bun.cli.Command;
 const install = bun.install;
 const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
+const PackageNameHash = install.PackageNameHash;
 const PackageInstall = install.PackageInstall;
 const Resolution = install.Resolution;
 const Store = install.Store;

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
 import { copyFileSync, existsSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { dirname, join } from "path";
 
 // Client-side chunks (target=browser) are not printed with ascii_only and may

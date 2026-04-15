@@ -547,6 +547,8 @@ pub fn deinit(this: *HTTPClient) void {
     // Release our strong ref on the interned SSLConfig
     if (this.tls_props) |*tls| tls.deinit();
     this.tls_props = null;
+    if (this.custom_ssl_ctx) |ctx| ctx.deref();
+    this.custom_ssl_ctx = null;
     this.unix_socket_path.deinit();
     this.unix_socket_path = jsc.ZigString.Slice.empty;
 }
@@ -653,6 +655,12 @@ pub fn getSslCtx(this: *HTTPClient, comptime is_ssl: bool) *NewHTTPContext(is_ss
     } else {
         return &http_thread.http_context;
     }
+}
+
+pub fn setCustomSslCtx(this: *HTTPClient, ctx: *NewHTTPContext(true)) void {
+    ctx.ref();
+    if (this.custom_ssl_ctx) |old| old.deref();
+    this.custom_ssl_ctx = ctx;
 }
 
 // lowercase hash header names so that we can be sure

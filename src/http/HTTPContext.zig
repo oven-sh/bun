@@ -67,6 +67,12 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
         pending_sockets: PooledSocketHiveAllocator,
         us_socket_context: *uws.SocketContext,
+        /// Heap-allocated custom-SSL contexts only. The cache entry in
+        /// custom_ssl_context_map holds 1; each in-flight HTTPClient that set
+        /// `client.custom_ssl_ctx = this` holds 1. Eviction drops the cache
+        /// ref but the context survives until the last client releases it,
+        /// so deinit() never runs while a request is mid-flight.
+        ref_count: u32 = 1,
 
         const Context = @This();
         pub const HTTPSocket = uws.NewSocketHandler(ssl);
@@ -96,17 +102,18 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             return @as(*BoringSSL.SSL_CTX, @ptrCast(this.us_socket_context.getNativeHandle(true)));
         }
 
-        /// True if any request is currently using this context (a connecting
-        /// socket, or a connected socket that isn't parked in the keepalive
-        /// pool). Evicting a context in this state would close those sockets
-        /// with no-op callbacks (cleanCallbacks runs first in deinit), leaving
-        /// socket_async_http_abort_tracker pointing at freed memory.
-        pub fn hasActiveRequests(this: *@This()) bool {
-            const linked = this.us_socket_context.refCount(ssl) -| 1;
-            return linked > this.pending_sockets.used.count();
+        pub fn ref(this: *@This()) void {
+            this.ref_count += 1;
         }
 
-        pub fn deinit(this: *@This()) void {
+        pub fn deref(this: *@This()) void {
+            this.ref_count -= 1;
+            if (this.ref_count == 0) {
+                this.deinit();
+            }
+        }
+
+        fn deinit(this: *@This()) void {
             // Replace callbacks with no-ops first to avoid UAF when closing sockets.
             this.us_socket_context.cleanCallbacks(ssl);
 

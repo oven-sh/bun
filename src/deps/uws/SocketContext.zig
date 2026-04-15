@@ -36,10 +36,6 @@ pub const SocketContext = opaque {
         return this;
     }
 
-    pub fn refCount(this: *SocketContext, comptime ssl: bool) u32 {
-        return c.us_socket_context_ref_count(@intFromBool(ssl), this);
-    }
-
     pub fn unref(this: *SocketContext, comptime ssl: bool) *SocketContext {
         c.us_socket_context_unref(@intFromBool(ssl), this);
         return this;
@@ -279,7 +275,6 @@ pub const c = struct {
     pub extern fn us_socket_context_on_timeout(ssl: i32, context: *SocketContext, on_timeout: ?*const fn (*us_socket_t) callconv(.c) ?*us_socket_t) void;
     pub extern fn us_socket_context_on_writable(ssl: i32, context: *SocketContext, on_writable: ?*const fn (*us_socket_t) callconv(.c) ?*us_socket_t) void;
     pub extern fn us_socket_context_ref(ssl: i32, context: *SocketContext) void;
-    pub extern fn us_socket_context_ref_count(ssl: i32, context: *SocketContext) u32;
     pub extern fn us_socket_context_remove_server_name(ssl: i32, context: *SocketContext, hostname_pattern: [*c]const u8) void;
     pub extern fn us_socket_context_unref(ssl: i32, context: *SocketContext) void;
     pub extern fn create_ssl_context_from_bun_options(options: SocketContext.BunSocketContextOptions, err: *create_bun_socket_error_t) ?*BoringSSL.SSL_CTX;

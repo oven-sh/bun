@@ -937,12 +937,31 @@ struct BlobHeader {
 }
 
 #if OS(DARWIN)
+#include <mach-o/getsect.h>
+#include <mach-o/dyld.h>
 
 extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
 
 extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
 {
     return &BUN_COMPILED.size;
+}
+
+extern "C" int Bun__getStandaloneModuleGraphMachoSectionRange(uint64_t* outAddr, uint64_t* outSize, uint32_t* outFileOff)
+{
+    const struct mach_header_64* mh = (const struct mach_header_64*)_dyld_get_image_header(0);
+    unsigned long size = 0;
+    uint8_t* addr = getsectiondata(mh, "__BUN", "__bun", &size);
+    if (!addr || !size) return 0;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    const struct section_64* sect = getsectbynamefromheader_64(mh, "__BUN", "__bun");
+#pragma clang diagnostic pop
+    if (!sect) return 0;
+    *outAddr = (uint64_t)addr;
+    *outSize = (uint64_t)size;
+    *outFileOff = sect->offset;
+    return 1;
 }
 
 #else // __linux__

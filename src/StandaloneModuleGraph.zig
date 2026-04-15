@@ -1348,6 +1348,8 @@ pub const StandaloneModuleGraph = struct {
         comptime unreachable;
     }
 
+    extern "C" fn Bun__getStandaloneModuleGraphMachoSectionRange(addr: *u64, size: *u64, file_off: *u32) c_int;
+
     /// Hint to the kernel that the embedded `__BUN`/`.bun` source pages are
     /// unlikely to be accessed again after the entrypoint has been parsed.
     /// The pages are clean file-backed COW, so any later read (lazy require,
@@ -1357,25 +1359,59 @@ pub const StandaloneModuleGraph = struct {
     pub fn hintSourcePagesDontNeed() void {
         if (comptime Environment.isWindows) return;
 
-        const bytes: []const u8 = if (comptime Environment.isMac)
-            Macho.getData() orelse return
-        else if (comptime Environment.isLinux)
-            ELF.getData() orelse return
-        else
+        if (comptime Environment.isMac) {
+            // On macOS madvise(MADV_DONTNEED) is a hint that the kernel may
+            // ignore for file-backed pages. mmap(MAP_FIXED) over the same file
+            // range atomically replaces the mapping; old resident pages are
+            // released and new ones fault in on demand.
+            var addr: u64 = 0;
+            var size: u64 = 0;
+            var file_off: u32 = 0;
+            if (Bun__getStandaloneModuleGraphMachoSectionRange(&addr, &size, &file_off) == 0) return;
+            if (size == 0) return;
+
+            var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+            const exe_path = std.fs.selfExePath(&path_buf) catch return;
+            const file = std.fs.openFileAbsolute(exe_path, .{}) catch return;
+            defer file.close();
+
+            const page: usize = std.heap.pageSize();
+            const start = std.mem.alignBackward(usize, @intCast(addr), page);
+            const off_adj: u64 = @intCast(@as(usize, @intCast(addr)) - start);
+            const end = std.mem.alignForward(usize, @intCast(addr + size), page);
+            const aligned_ptr: [*]align(std.heap.page_size_min) u8 = @ptrFromInt(start);
+
+            _ = std.posix.mmap(
+                aligned_ptr,
+                end - start,
+                std.posix.PROT.READ,
+                .{ .TYPE = .PRIVATE, .FIXED = true },
+                file.handle,
+                @as(u64, file_off) - off_adj,
+            ) catch |err| {
+                Output.debugWarn("hintSourcePagesDontNeed: mmap failed: {s}", .{@errorName(err)});
+                return;
+            };
+            Output.debugWarn("hintSourcePagesDontNeed: mmap-overlay {d} bytes", .{end - start});
             return;
+        }
 
-        if (bytes.len == 0) return;
+        if (comptime Environment.isLinux) {
+            const bytes = ELF.getData() orelse return;
+            if (bytes.len == 0) return;
 
-        const page: usize = std.heap.pageSize();
-        const start = std.mem.alignBackward(usize, @intFromPtr(bytes.ptr), page);
-        const end = std.mem.alignForward(usize, @intFromPtr(bytes.ptr) + bytes.len, page);
-        const aligned_ptr: [*]align(std.heap.page_size_min) u8 = @ptrFromInt(start);
+            const page: usize = std.heap.pageSize();
+            const start = std.mem.alignBackward(usize, @intFromPtr(bytes.ptr), page);
+            const end = std.mem.alignForward(usize, @intFromPtr(bytes.ptr) + bytes.len, page);
+            const aligned_ptr: [*]align(std.heap.page_size_min) u8 = @ptrFromInt(start);
 
-        std.posix.madvise(aligned_ptr, end - start, std.posix.MADV.DONTNEED) catch |err| {
-            Output.debugWarn("hintSourcePagesDontNeed: madvise failed: {s}", .{@errorName(err)});
+            std.posix.madvise(aligned_ptr, end - start, std.posix.MADV.DONTNEED) catch |err| {
+                Output.debugWarn("hintSourcePagesDontNeed: madvise failed: {s}", .{@errorName(err)});
+                return;
+            };
+            Output.debugWarn("hintSourcePagesDontNeed: MADV_DONTNEED {d} bytes", .{end - start});
             return;
-        };
-        Output.debugWarn("hintSourcePagesDontNeed: MADV_DONTNEED {d} bytes", .{end - start});
+        }
     }
 
     /// Allocates a StandaloneModuleGraph on the heap, populates it from bytes, sets it globally, and returns the pointer.

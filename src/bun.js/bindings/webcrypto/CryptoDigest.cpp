@@ -115,7 +115,8 @@ struct CryptoDigestContextEVP : public CryptoDigestContext {
     explicit CryptoDigestContextEVP(const EVP_MD* md)
     {
         EVP_MD_CTX_init(&m_context);
-        EVP_DigestInit_ex(&m_context, md, nullptr);
+        int rc = EVP_DigestInit_ex(&m_context, md, nullptr);
+        ASSERT_UNUSED(rc, rc == 1);
     }
 
     ~CryptoDigestContextEVP() override { EVP_MD_CTX_cleanup(&m_context); }

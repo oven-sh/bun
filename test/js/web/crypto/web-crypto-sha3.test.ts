@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { createHash, createHmac, getHashes, pbkdf2Sync } from "node:crypto";
 
 const hex = (buf: ArrayBuffer) => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
 
@@ -33,13 +34,13 @@ describe("crypto.subtle.digest SHA-3", () => {
   }
 
   it("SHA3-256 large input (>64 bytes, async path)", async () => {
-    const input = new TextEncoder().encode("a".repeat(1_000_000));
+    const input = Buffer.alloc(1_000_000, "a");
     const buf = await crypto.subtle.digest("SHA3-256", input);
     expect(hex(buf)).toBe("5c8875ae474a3634ba4fd55ec85bffd661f32aca75c6d699d0cdcb6c115891c1");
   });
 
   it("rejects unknown digest", async () => {
-    expect(crypto.subtle.digest("SHA3-1024" as any, new Uint8Array())).rejects.toThrow();
+    await expect(crypto.subtle.digest("SHA3-1024" as any, new Uint8Array())).rejects.toThrow();
   });
 });
 
@@ -71,29 +72,56 @@ describe("HMAC with SHA-3", () => {
   });
 });
 
+describe("RSA with SHA-3 hash", () => {
+  it("RSA-PSS with SHA3-256: generate, sign, verify, JWK export", async () => {
+    const { publicKey, privateKey } = await crypto.subtle.generateKey(
+      {
+        name: "RSA-PSS",
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: "SHA3-256",
+      },
+      true,
+      ["sign", "verify"],
+    );
+    const data = new TextEncoder().encode("hello");
+    const sig = await crypto.subtle.sign({ name: "RSA-PSS", saltLength: 32 }, privateKey, data);
+    expect(await crypto.subtle.verify({ name: "RSA-PSS", saltLength: 32 }, publicKey, sig, data)).toBe(true);
+
+    const jwk = await crypto.subtle.exportKey("jwk", publicKey);
+    expect(jwk.kty).toBe("RSA");
+    expect(jwk.alg).toBeUndefined();
+
+    const reimported = await crypto.subtle.importKey(
+      "jwk",
+      jwk,
+      { name: "RSA-PSS", hash: "SHA3-256" },
+      true,
+      ["verify"],
+    );
+    expect(await crypto.subtle.verify({ name: "RSA-PSS", saltLength: 32 }, reimported, sig, data)).toBe(true);
+  });
+});
+
 describe("node:crypto SHA-3", () => {
   it("createHash sha3-256", () => {
-    const { createHash } = require("node:crypto");
     expect(createHash("sha3-256").update("abc").digest("hex")).toBe(
       "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532",
     );
   });
 
   it("createHash sha3-384", () => {
-    const { createHash } = require("node:crypto");
     expect(createHash("sha3-384").update("abc").digest("hex")).toBe(
       "ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b298d88cea927ac7f539f1edf228376d25",
     );
   });
 
   it("createHmac sha3-512", () => {
-    const { createHmac } = require("node:crypto");
     const out = createHmac("sha3-512", Buffer.from("key")).update("data").digest("hex");
     expect(out.length).toBe(128);
   });
 
   it("getHashes includes sha3", () => {
-    const { getHashes } = require("node:crypto");
     const hashes = getHashes();
     expect(hashes).toContain("sha3-256");
     expect(hashes).toContain("sha3-384");
@@ -101,7 +129,6 @@ describe("node:crypto SHA-3", () => {
   });
 
   it("pbkdf2Sync sha3-256", () => {
-    const { pbkdf2Sync } = require("node:crypto");
     expect(pbkdf2Sync("pw", "salt", 1000, 32, "sha3-256").toString("hex")).toBe(
       "53b1bc246a311cbf8e2c907d96bcb209ddf95cd9f0a74fdcbab033b6ea82e30a",
     );

@@ -1804,12 +1804,10 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, cut_off_pkg_id: usize, alloca
     const l_len = l_hoisted_deps.len;
     const r_len = r_hoisted_deps.len;
 
-    if (l_len != r_len) return false;
-
     const sort_buf = try allocator.alloc(EqlSorter.PathToId, l_len + r_len);
     defer allocator.free(sort_buf);
     var l_buf = sort_buf[0..l_len];
-    var r_buf = sort_buf[r_len..];
+    var r_buf = sort_buf[l_len..][0..r_len];
 
     var path_buf: bun.PathBuffer = undefined;
     var depth_buf: Tree.DepthBuf = undefined;
@@ -1922,37 +1920,13 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, cut_off_pkg_id: usize, alloca
     return true;
 }
 
-/// Frozen-lockfile comparison for text lockfiles (`bun.lock`).
-///
-/// The text lockfile on disk doesn't encode the hoisted `node_modules` tree, so
-/// internal hoisting differences (or transient in-memory tree state) must not
-/// cause a false-positive frozen-lockfile failure. Use the lockfile's meta-hash
-/// as the primary equivalence check and fall back to `eql()` only when the meta
-/// hash differs.
-pub fn frozenLockfileUnchangedText(
-    after: *const Lockfile,
-    before: *const Lockfile,
-    packages_len: usize,
-    allocator: std.mem.Allocator,
-    print_name_version_string: bool,
-) OOM!bool {
-    const before_meta_hash = try before.generateMetaHash(print_name_version_string, packages_len);
-    const after_meta_hash = try after.generateMetaHash(print_name_version_string, packages_len);
-
-    if (strings.eqlLong(&before_meta_hash, &after_meta_hash, false)) {
-        return true;
-    }
-
-    return after.eql(before, packages_len, allocator);
-}
-
 pub fn hasMetaHashChanged(this: *Lockfile, print_name_version_string: bool, packages_len: usize) !bool {
     const previous_meta_hash = this.meta_hash;
     this.meta_hash = try this.generateMetaHash(print_name_version_string, packages_len);
     return !strings.eqlLong(&previous_meta_hash, &this.meta_hash, false);
 }
 
-test "frozenLockfileUnchangedText ignores hoist-only differences" {
+test "Lockfile.eql ignores unused hoist buffer length differences" {
     var before: Lockfile = undefined;
     before.initEmpty(std.testing.allocator);
     defer before.deinit();
@@ -1967,11 +1941,11 @@ test "frozenLockfileUnchangedText ignores hoist-only differences" {
     _ = try after.appendPackage(.{ .name_hash = 1 });
     _ = try after.appendPackage(.{ .name_hash = 2 });
 
-    // Simulate a difference in hoist buffers without changing the package graph.
-    try after.buffers.hoisted_dependencies.append(std.testing.allocator, 0);
+    // Extra entries in the hoisted-deps buffer are irrelevant if they point at
+    // invalid dependency IDs (the comparison filters those out).
+    try after.buffers.hoisted_dependencies.append(std.testing.allocator, invalid_dependency_id);
 
-    try std.testing.expect(!(try after.eql(&before, after.packages.len, std.testing.allocator)));
-    try std.testing.expect(try after.frozenLockfileUnchangedText(&before, after.packages.len, std.testing.allocator, false));
+    try std.testing.expect(try after.eql(&before, after.packages.len, std.testing.allocator));
 }
 pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packages_len: usize) !MetaHash {
     if (packages_len <= 1)

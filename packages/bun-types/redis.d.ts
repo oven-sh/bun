@@ -3664,7 +3664,7 @@ declare module "bun" {
      * await redis.config("GET", "maxmemory");
      * ```
      */
-    config(...args: string[]): Promise<any>;
+    config(...args: (string | number)[]): Promise<any>;
 
     /**
      * Run a debugging command. Most subcommands are intended for internal use.

@@ -630,7 +630,7 @@ pub fn runAsWorker(
 
     var worker_junit_path: ?[:0]const u8 = null;
     if (vm.transpiler.env.get("BUN_TEST_WORKER_JUNIT")) |dir| {
-        worker_junit_path = std.fmt.allocPrintSentinel(bun.default_allocator, "{s}/w{d}.xml", .{ dir, std.c.getpid() }, 0) catch bun.outOfMemory();
+        worker_junit_path = std.fmt.allocPrintSentinel(bun.default_allocator, "{s}/w{d}.xml", .{ dir, std.crypto.random.int(u32) }, 0) catch bun.outOfMemory();
         if (reporter.reporters.junit == null) {
             reporter.reporters.junit = test_command.JunitReporter.init();
         }

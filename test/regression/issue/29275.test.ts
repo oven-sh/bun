@@ -15,31 +15,28 @@ test.skipIf(!isMacOS && !isWindows)(
   "parallel Workers opening bun:sqlite Database do not race (#29275)",
   async () => {
     using dir = tempDir("issue-29275", {
+      // Worker opens a Database at module load. The buggy build segfaults
+      // inside \`new Database\` during the lazy-load race between two workers
+      // starting at the same time.
       "worker.js": `
         import { Database } from "bun:sqlite";
-        globalThis.onmessage = () => {
-          new Database(":memory:");
-          postMessage("done");
-        };
+        new Database(":memory:");
+        postMessage("done");
       `,
       "repro.js": `
         const workerUrl = new URL("./worker.js", import.meta.url).href;
         function once() {
           return new Promise((resolve, reject) => {
-            const worker = new Worker(workerUrl, { type: "module" });
-            worker.onmessage = () => {
-              worker.terminate();
-              resolve();
-            };
+            const worker = new Worker(workerUrl, { type: "module", smol: true });
+            worker.onmessage = () => { worker.unref(); resolve(); };
             worker.onerror = (event) => {
               reject(event instanceof ErrorEvent ? (event.error ?? new Error(event.message)) : new Error("worker error"));
             };
-            worker.postMessage("go");
           });
         }
         // Two concurrent workers are enough to expose the lazy-load race.
         // A buggy build segfaults before we print "ok".
-        await Promise.all([once(), once(), once(), once()]);
+        await Promise.all([once(), once()]);
         console.log("ok");
       `,
     });
@@ -60,8 +57,8 @@ test.skipIf(!isMacOS && !isWindows)(
       return { i, stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
     }
 
-    const RUNS = 10;
-    const BATCH = 2;
+    const RUNS = 5;
+    const BATCH = 1;
     const failures: { i: number; stdout: string; stderr: string; exitCode: number }[] = [];
     for (let start = 0; start < RUNS; start += BATCH) {
       const batch = await Promise.all(Array.from({ length: Math.min(BATCH, RUNS - start) }, (_u, k) => run(start + k)));

@@ -15,6 +15,12 @@ const CurrentFile = struct {
         repeat_index: u32,
         reporter: *CommandLineReporter,
     ) void {
+        if (reporter.worker_ipc_file_idx != null) {
+            // Coordinator owns the terminal and prints its own per-test file
+            // context; the worker should not emit a header to stderr.
+            this.has_printed_filename = true;
+            return;
+        }
         if (reporter.reporters.dots or reporter.reporters.only_failures) {
             this.freeAndClear();
             this.title = bun.handleOom(bun.default_allocator.dupe(u8, title));

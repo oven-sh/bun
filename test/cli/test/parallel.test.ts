@@ -210,7 +210,7 @@ test("--parallel --bail stops dispatching new files after threshold", async () =
   expect(exitCode).toBe(1);
 });
 
-test("--parallel prints per-test lines contiguously per file", async () => {
+test("--parallel prints per-test lines under their file's header", async () => {
   using dir = tempDir("parallel-output", {
     "a.test.js": `import {test,expect} from "bun:test";
       test("alpha-one",()=>expect(1).toBe(1));
@@ -229,18 +229,66 @@ test("--parallel prints per-test lines contiguously per file", async () => {
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain("--parallel: 2 workers");
-  // Per-test lines appear (matching serial output, not just per-file summary).
-  expect(stderr).toContain("alpha-one");
-  expect(stderr).toContain("alpha-two");
-  expect(stderr).toContain("bravo-one");
-  expect(stderr).toContain("bravo-two");
-  // Tests from one file print contiguously: between alpha-one and alpha-two
-  // there is no bravo-* line, regardless of which worker finished first.
-  const a1 = stderr.indexOf("alpha-one");
-  const a2 = stderr.indexOf("alpha-two");
-  const between = stderr.slice(Math.min(a1, a2), Math.max(a1, a2));
-  expect(between).not.toContain("bravo-");
+  // Per-test lines appear (matching serial output's "(pass) name" format).
+  expect(stderr).toMatch(/\(pass\) alpha-one/);
+  expect(stderr).toMatch(/\(pass\) alpha-two/);
+  expect(stderr).toMatch(/\(pass\) bravo-one/);
+  expect(stderr).toMatch(/\(pass\) bravo-two/);
+  // Result lines from concurrent workers may interleave; whenever the source
+  // file changes the header is re-emitted, so the nearest preceding header
+  // for any alpha-* line is always a.test.js (and likewise for bravo-*).
+  const lines = stderr.split("\n");
+  let header = "";
+  for (const ln of lines) {
+    if (ln.endsWith(".test.js:")) header = ln;
+    else if (ln.includes("alpha-")) expect(header).toBe("a.test.js:");
+    else if (ln.includes("bravo-")) expect(header).toBe("b.test.js:");
+  }
   expect(exitCode).toBe(0);
+});
+
+test("--parallel streams test results in realtime, not buffered per-file", async () => {
+  // Each file: one fast test then one slow test. With 2 workers running
+  // concurrently the first two results should arrive long before both files
+  // would finish (which is gated on the 600ms slow test). Per-file buffering
+  // would withhold output until ~600ms; per-test streaming surfaces the fast
+  // results within the worker spawn + first-tick latency.
+  using dir = tempDir("parallel-realtime", {
+    "a.test.js": `import {test,expect} from "bun:test";
+       test("a-fast",()=>expect(1).toBe(1));
+       test("a-slow",async()=>{await Bun.sleep(600);expect(1).toBe(1);});`,
+    "b.test.js": `import {test,expect} from "bun:test";
+       test("b-fast",()=>expect(1).toBe(1));
+       test("b-slow",async()=>{await Bun.sleep(600);expect(1).toBe(1);});`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const t0 = performance.now();
+  let firstFastAt = 0;
+  let firstSlowAt = 0;
+  let acc = "";
+  for await (const chunk of proc.stderr) {
+    acc += new TextDecoder().decode(chunk);
+    const now = performance.now() - t0;
+    if (!firstFastAt && /\(pass\) [ab]-fast/.test(acc)) firstFastAt = now;
+    if (!firstSlowAt && /\(pass\) [ab]-slow/.test(acc)) firstSlowAt = now;
+    if (firstFastAt && firstSlowAt) break;
+  }
+  await proc.exited;
+
+  expect(acc).toContain("--parallel: 2 workers");
+  expect(firstFastAt).toBeGreaterThan(0);
+  expect(firstSlowAt).toBeGreaterThan(0);
+  // The slow result cannot arrive before ~600ms, so this proves the fast
+  // result was not held back waiting for it.
+  expect(firstFastAt).toBeLessThan(firstSlowAt - 300);
+  expect(await proc.exited).toBe(0);
 });
 
 test("--parallel aggregates failure summary across workers", async () => {

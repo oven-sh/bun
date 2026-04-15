@@ -573,6 +573,12 @@ pub const CommandLineReporter = struct {
     repeat_count: u32 = 1,
     last_printed_dot: bool = false,
 
+    /// When running as a `--parallel` worker, this is the coordinator-assigned
+    /// index of the file currently being executed. While set, per-test output
+    /// is sent over the IPC pipe instead of to stderr; the coordinator owns
+    /// the terminal.
+    worker_ipc_file_idx: ?u32 = null,
+
     failures_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     skips_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     todos_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
@@ -913,8 +919,13 @@ pub const CommandLineReporter = struct {
             },
         }
 
-        const output_writer = Output.errorWriter(); // unbuffered. buffered is errorWriterBuffered() / Output.flush()
-        output_writer.writeAll(output_buf.items[initial_length..]) catch {};
+        const formatted_line = output_buf.items[initial_length..];
+        if (buntest.reporter != null and buntest.reporter.?.worker_ipc_file_idx != null) {
+            ParallelRunner.workerEmitTestDone(buntest.reporter.?.worker_ipc_file_idx.?, formatted_line);
+        } else {
+            const output_writer = Output.errorWriter(); // unbuffered. buffered is errorWriterBuffered() / Output.flush()
+            output_writer.writeAll(formatted_line) catch {};
+        }
 
         var this: *CommandLineReporter = buntest.reporter orelse return; // command line reporter is missing! uh oh!
 

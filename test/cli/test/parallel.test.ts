@@ -83,42 +83,9 @@ test("--parallel re-queues a file when its worker crashes mid-run", async () => 
   expect(exitCode).toBe(1);
 });
 
-test("--parallel is faster than serial for sleep-bound files", async () => {
-  const files: Record<string, string> = {};
-  for (let i = 0; i < 8; i++) {
-    files[`f${i}.test.js`] =
-      `import {test,expect} from "bun:test"; test("s", async()=>{await Bun.sleep(200);expect(1).toBe(1);});`;
-  }
-  using dir = tempDir("parallel-perf", files);
-
-  const run = async (extra: string[]) => {
-    const t0 = performance.now();
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", ...extra],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [, , code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(code).toBe(0);
-    return performance.now() - t0;
-  };
-
-  const serial = await run([]);
-  if (serial < 800) {
-    // Minimum possible is 8×200ms=1600ms. If serial finished this fast,
-    // the timing/sleep machinery is unreliable on this machine; don't
-    // assert a ratio off it.
-    return;
-  }
-  const parallel = await run(["--parallel=4"]);
-
-  // 8 × 200ms serial ≈ 1600ms; 4 workers ≈ 400ms + spawn overhead. Only
-  // assert that parallel is meaningfully faster — under heavy machine load
-  // worker spawn overhead grows, so the ratio is loose.
-  expect(parallel).toBeLessThan(serial * 0.9);
-});
+// Concurrency is proven deterministically by the lazy-spawn PID-count tests
+// below; the timing-based "faster than serial" assertion was load-sensitive
+// and removed.
 
 test("--parallel without N is accepted and runs all files", async () => {
   using dir = tempDir("parallel-default", {

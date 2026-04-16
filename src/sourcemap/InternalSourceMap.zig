@@ -62,8 +62,8 @@
 //!     [24..28]  sync_count:        u32
 //!     [28..32]  stream_offset:     u32   -- byte offset from blob start to stream
 //!     [32..  ]  SyncEntry[sync_count]    -- 24 bytes each
-//!     [stream_offset..total_len-8]  Window[sync_count]
-//!     [total_len-8..total_len]      8 zero bytes (read-past padding)
+//!     [stream_offset..total_len-stream_tail_pad]  Window[sync_count]
+//!     [total_len-stream_tail_pad..total_len]      zero bytes (read-past pad)
 //!
 //! SyncEntry: absolute state of this window's first mapping plus stream offset
 //!            (i32 gen_line/col, u32 byte_offset, i32 orig_line/col/src_idx).
@@ -170,9 +170,11 @@ pub fn memoryCost(self: InternalSourceMap) usize {
     return self.totalLen();
 }
 
-/// Sanity-check the blob's self-described layout against its actual length.
-/// Used by `StandaloneModuleGraph.LazySourceMap.load` so a corrupted embedded
-/// section degrades to "no sourcemap" instead of OOB reads.
+/// Sanity-check the blob's outer header (total_len, sync_count, stream_offset)
+/// against its actual length so a *truncated* embedded section in a `--compile`
+/// binary degrades to "no sourcemap". This does not walk per-window
+/// `SyncEntry.byte_offset`/section lengths; the blob is self-produced at build
+/// time, and a tampered executable already implies arbitrary execution.
 pub fn isValidBlob(blob: []const u8) bool {
     if (blob.len < header_size) return false;
     const self = InternalSourceMap{ .data = blob.ptr };

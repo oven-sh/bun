@@ -165,9 +165,9 @@ fn formatVLQsImpl(map: *const ParsedSourceMap, w: *std.Io.Writer) !void {
 const std = @import("std");
 
 const SourceMap = @import("./sourcemap.zig");
-const InternalSourceMap = SourceMap.InternalSourceMap;
 const BakeSourceProvider = SourceMap.BakeSourceProvider;
 const DevServerSourceProvider = SourceMap.DevServerSourceProvider;
+const InternalSourceMap = SourceMap.InternalSourceMap;
 const Mapping = SourceMap.Mapping;
 const ParseUrlResultHint = SourceMap.ParseUrlResultHint;
 const SourceMapLoadHint = SourceMap.SourceMapLoadHint;

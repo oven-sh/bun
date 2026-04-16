@@ -1338,12 +1338,87 @@ extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
 
-__attribute__((noinline)) static void forwardSignal(int signalNumber)
+#if !OS(WINDOWS)
+// For each signal we install forwardSignal on, remember what was there before
+// (Bun's crash handler, ASAN's handler, SIG_DFL, …) so we can put it back when
+// the last JS listener is removed, and so forwardSignal can defer to it when
+// the signal is a real synchronous CPU fault rather than an async kill().
+static struct sigaction savedSignalActions[NSIG];
+static bool savedSignalActionValid[NSIG];
+
+static inline bool isSynchronousFaultSignal(int sig)
 {
+    switch (sig) {
+    case SIGSEGV:
+    case SIGILL:
+    case SIGBUS:
+    case SIGFPE:
+#ifdef SIGTRAP
+    case SIGTRAP:
+#endif
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Does this siginfo describe a fault raised synchronously by the CPU (ud2,
+// brk, bad load/store, div-by-zero), as opposed to a signal sent with
+// kill()/raise()/pthread_kill()/sigqueue()? Returning from a handler for the
+// former restores PC to the faulting instruction, which just faults again —
+// an unkillable 100% CPU loop.
+static inline bool isKernelGeneratedFault(int sig, const siginfo_t* info)
+{
+    if (!info || !isSynchronousFaultSignal(sig))
+        return false;
+    const int c = info->si_code;
+#if OS(DARWIN)
+    // Darwin's user-sent codes start at SI_USER (0x10001); kernel fault codes
+    // are small positive integers (SEGV_MAPERR=1, ILL_ILLOPC=1, TRAP_BRKPT=1…).
+    return c > 0 && c < SI_USER;
+#else
+    // POSIX (and Linux): si_code <= 0 for kill()/raise()/sigqueue()/tkill().
+    // Kernel-generated fault codes are > 0.
+    return c > 0;
+#endif
+}
+
+__attribute__((noinline)) static void forwardSignal(int signalNumber, siginfo_t* info, void* context)
+{
+    // A JS `process.on('SIGSEGV', …)` listener cannot be invoked synchronously
+    // from inside a signal handler; we enqueue it to a ring buffer and return,
+    // and the main event loop drains it later. That is correct for async
+    // signals (kill, ^C). For a *synchronous* CPU fault it is not: returning
+    // re-executes the faulting instruction and we spin forever in
+    // _sigtramp ↔ fault at 100% CPU, and the main thread may itself be blocked
+    // (e.g. in pthread_join during atexit) so the JS listener would never run
+    // anyway. Restore whatever handler we displaced (Bun's crash reporter,
+    // ASAN, or SIG_DFL) and return — the immediate re-fault then terminates
+    // the process instead of livelocking.
+    if (isKernelGeneratedFault(signalNumber, info)) {
+        struct sigaction restore;
+        if (signalNumber < NSIG && savedSignalActionValid[signalNumber]) {
+            restore = savedSignalActions[signalNumber];
+        } else {
+            memset(&restore, 0, sizeof(restore));
+            restore.sa_handler = SIG_DFL;
+            sigemptyset(&restore.sa_mask);
+        }
+        sigaction(signalNumber, &restore, nullptr);
+        return;
+    }
+
+    (void)context;
     // We want a function that's equivalent to Bun__onPosixSignal but whose address is different.
     // This is so that we can be sure not to uninstall signal handlers that we didn't install here.
     Bun__onPosixSignal(signalNumber);
 }
+#else
+__attribute__((noinline)) static void forwardSignal(int signalNumber)
+{
+    Bun__onPosixSignal(signalNumber);
+}
+#endif
 
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
@@ -1487,14 +1562,23 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         memset(&action, 0, sizeof(struct sigaction));
 
                         // Set the handler in the action struct
-                        action.sa_handler = forwardSignal;
+                        action.sa_sigaction = forwardSignal;
 
                         // Clear the sa_mask
                         sigemptyset(&action.sa_mask);
                         sigaddset(&action.sa_mask, signalNumber);
-                        action.sa_flags = SA_RESTART;
+                        action.sa_flags = SA_RESTART | SA_SIGINFO;
 
-                        sigaction(signalNumber, &action, nullptr);
+                        // Remember the handler we are displacing so forwardSignal can
+                        // restore it on a real CPU fault (see isKernelGeneratedFault),
+                        // and so removing the last JS listener restores it rather than
+                        // blindly installing SIG_DFL.
+                        struct sigaction previous;
+                        memset(&previous, 0, sizeof(previous));
+                        if (sigaction(signalNumber, &action, &previous) == 0 && signalNumber < NSIG) {
+                            savedSignalActions[signalNumber] = previous;
+                            savedSignalActionValid[signalNumber] = true;
+                        }
 #else
                         signal_handle.handle = Bun__UVSignalHandle__init(
                             eventEmitter.scriptExecutionContext()->jsGlobalObject(),
@@ -1511,9 +1595,25 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && eventEmitter.listenerCount(eventName) == 0) {
 
 #if !OS(WINDOWS)
-                        if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
-                            // Don't uninstall the old handler if it's not the one we installed.
-                            signal(signalNumber, oldHandler);
+                        struct sigaction current;
+                        memset(&current, 0, sizeof(current));
+                        if (sigaction(signalNumber, nullptr, &current) == 0
+                            && (current.sa_flags & SA_SIGINFO)
+                            && current.sa_sigaction == forwardSignal) {
+                            // Only uninstall if it's still the one we installed; a native
+                            // addon may have layered its own on top after us.
+                            struct sigaction restore;
+                            if (signalNumber < NSIG && savedSignalActionValid[signalNumber]) {
+                                restore = savedSignalActions[signalNumber];
+                            } else {
+                                memset(&restore, 0, sizeof(restore));
+                                restore.sa_handler = SIG_DFL;
+                                sigemptyset(&restore.sa_mask);
+                            }
+                            sigaction(signalNumber, &restore, nullptr);
+                        }
+                        if (signalNumber < NSIG) {
+                            savedSignalActionValid[signalNumber] = false;
                         }
 #else
                         SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);

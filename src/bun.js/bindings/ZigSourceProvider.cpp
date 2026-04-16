@@ -126,7 +126,7 @@ Ref<SourceProvider> SourceProvider::create(
 
             Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
             auto provider = adoptRef(*new SourceProvider(
-                globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
+                globalObject->bunVM(),
                 resolvedSource,
                 string.isNull() ? *StringImpl::empty() : *string.impl(),
                 JSC::SourceTaintedOrigin::Untainted,
@@ -138,7 +138,7 @@ Ref<SourceProvider> SourceProvider::create(
         }
 
         return adoptRef(*new SourceProvider(
-            globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
+            globalObject->bunVM(),
             resolvedSource,
             string.isNull() ? *StringImpl::empty() : *string.impl(),
             JSC::SourceTaintedOrigin::Untainted,

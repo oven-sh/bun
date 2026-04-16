@@ -60,12 +60,12 @@ public:
     void freeSourceCode();
 
 private:
-    SourceProvider(Zig::GlobalObject* globalObject, ResolvedSource resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
+    SourceProvider(void* bunVM, ResolvedSource resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
         JSC::SourceTaintedOrigin taintedness,
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
         : Base(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType)
-        , m_bunVM(globalObject->bunVM())
+        , m_bunVM(bunVM)
         , m_source(sourceImpl)
     {
         m_resolvedSource = resolvedSource;

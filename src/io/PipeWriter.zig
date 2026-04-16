@@ -17,7 +17,7 @@ pub fn PosixPipeWriter(
     comptime This: type,
     // Originally this was the comptime vtable struct like the below
     // But that caused a Zig compiler segfault as of 0.12.0-dev.1604+caae40c21
-    comptime getFd: fn (*This) bun.FileDescriptor,
+    comptime getFd: fn (*This) bun.FD,
     comptime getBuffer: fn (*This) []const u8,
     comptime onWrite: fn (*This, written: usize, status: WriteStatus) void,
     comptime registerPoll: ?fn (*This) void,
@@ -32,7 +32,7 @@ pub fn PosixPipeWriter(
             };
         }
 
-        fn tryWriteWithWriteFn(this: *This, buf: []const u8, comptime write_fn: *const fn (bun.FileDescriptor, []const u8) bun.sys.Maybe(usize)) WriteResult {
+        fn tryWriteWithWriteFn(this: *This, buf: []const u8, comptime write_fn: *const fn (bun.FD, []const u8) bun.sys.Maybe(usize)) WriteResult {
             const fd = getFd(this);
 
             var offset: usize = 0;
@@ -63,7 +63,7 @@ pub fn PosixPipeWriter(
             return .{ .wrote = offset };
         }
 
-        fn writeToFileType(comptime file_type: FileType) *const (fn (bun.FileDescriptor, []const u8) bun.sys.Maybe(usize)) {
+        fn writeToFileType(comptime file_type: FileType) *const (fn (bun.FD, []const u8) bun.sys.Maybe(usize)) {
             comptime return switch (file_type) {
                 .nonblocking_pipe, .file => &bun.sys.write,
                 .pipe => &writeToBlockingPipe,
@@ -71,7 +71,7 @@ pub fn PosixPipeWriter(
             };
         }
 
-        fn writeToBlockingPipe(fd: bun.FileDescriptor, buf: []const u8) bun.sys.Maybe(usize) {
+        fn writeToBlockingPipe(fd: bun.FD, buf: []const u8) bun.sys.Maybe(usize) {
             if (comptime bun.Environment.isLinux) {
                 if (bun.linux.RWFFlagSupport.isMaybeSupported()) {
                     return bun.sys.writeNonblocking(fd, buf);
@@ -195,7 +195,7 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
 
         pub const auto_poll = if (@hasDecl(Parent, "auto_poll")) Parent.auto_poll else true;
 
-        pub fn createPoll(this: *@This(), fd: bun.FileDescriptor) *Async.FilePoll {
+        pub fn createPoll(this: *@This(), fd: bun.FD) *Async.FilePoll {
             return Async.FilePoll.init(@as(*Parent, @ptrCast(this.parent)).eventLoop(), fd, .{}, PosixWriter, this);
         }
 
@@ -209,7 +209,7 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
             return poll.fileType();
         }
 
-        pub fn getFd(this: *const PosixWriter) bun.FileDescriptor {
+        pub fn getFd(this: *const PosixWriter) bun.FD {
             return this.handle.getFd();
         }
 
@@ -344,9 +344,9 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
         pub fn start(this: *PosixWriter, rawfd: anytype, pollable: bool) bun.sys.Maybe(void) {
             const FDType = @TypeOf(rawfd);
             const fd = switch (FDType) {
-                bun.FileDescriptor => rawfd,
+                bun.FD => rawfd,
                 *bun.MovableIfWindowsFd, bun.MovableIfWindowsFd => rawfd.getPosix(),
-                else => @compileError("Expected `bun.FileDescriptor`, `*bun.MovableIfWindowsFd` or `bun.MovableIfWindowsFd` but got: " ++ @typeName(rawfd)),
+                else => @compileError("Expected `bun.FD`, `*bun.MovableIfWindowsFd` or `bun.MovableIfWindowsFd` but got: " ++ @typeName(rawfd)),
             };
             this.pollable = pollable;
             if (!pollable) {
@@ -410,7 +410,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
             return this.handle.getPoll();
         }
 
-        pub fn getFd(this: *PosixWriter) bun.FileDescriptor {
+        pub fn getFd(this: *PosixWriter) bun.FD {
             return this.handle.getFd();
         }
 
@@ -743,7 +743,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
             this.handle.close(this.parent, onClose);
         }
 
-        pub fn start(this: *PosixWriter, fd: bun.FileDescriptor, is_pollable: bool) bun.sys.Maybe(void) {
+        pub fn start(this: *PosixWriter, fd: bun.FD, is_pollable: bool) bun.sys.Maybe(void) {
             if (!is_pollable) {
                 this.close();
                 this.handle = .{ .fd = fd };
@@ -782,7 +782,7 @@ fn BaseWindowsPipeWriter(
     comptime Parent: type,
 ) type {
     return struct {
-        pub fn getFd(this: *const WindowsPipeWriter) bun.FileDescriptor {
+        pub fn getFd(this: *const WindowsPipeWriter) bun.FD {
             const pipe = this.source orelse return bun.invalid_fd;
             return pipe.getFd();
         }
@@ -881,7 +881,7 @@ fn BaseWindowsPipeWriter(
             return this.startWithCurrentPipe();
         }
 
-        pub fn startSync(this: *WindowsPipeWriter, fd: bun.FileDescriptor, _: bool) bun.sys.Maybe(void) {
+        pub fn startSync(this: *WindowsPipeWriter, fd: bun.FD, _: bool) bun.sys.Maybe(void) {
             bun.assert(this.source == null);
             const source = Source{
                 .sync_file = Source.openFile(fd),
@@ -892,7 +892,7 @@ fn BaseWindowsPipeWriter(
             return this.startWithCurrentPipe();
         }
 
-        pub fn startWithFile(this: *WindowsPipeWriter, fd: bun.FileDescriptor) bun.sys.Maybe(void) {
+        pub fn startWithFile(this: *WindowsPipeWriter, fd: bun.FD) bun.sys.Maybe(void) {
             bun.assert(this.source == null);
             const source: bun.io.Source = .{ .file = Source.openFile(fd) };
             source.setData(this);
@@ -904,9 +904,9 @@ fn BaseWindowsPipeWriter(
         pub fn start(this: *WindowsPipeWriter, rawfd: anytype, _: bool) bun.sys.Maybe(void) {
             const FDType = @TypeOf(rawfd);
             const fd = switch (FDType) {
-                bun.FileDescriptor => rawfd,
+                bun.FD => rawfd,
                 *bun.MovableIfWindowsFd => rawfd.get().?,
-                else => @compileError("Expected `bun.FileDescriptor` or `*bun.MovableIfWindowsFd` but got: " ++ @typeName(rawfd)),
+                else => @compileError("Expected `bun.FD` or `*bun.MovableIfWindowsFd` but got: " ++ @typeName(rawfd)),
             };
             bun.assert(this.source == null);
             // Use the event loop from the parent, not the global one

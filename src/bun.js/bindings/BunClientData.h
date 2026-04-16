@@ -18,7 +18,9 @@ class DOMWrapperWorld;
 // #include "WorkerThreadType.h"
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
+#include <wtf/WeakHashSet.h>
 #include <wtf/RefPtr.h>
+#include "JSVMClientDataClient.h"
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/StdLibExtras.h>
 #include "WebCoreJSBuiltins.h"
@@ -118,6 +120,8 @@ public:
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    void addClient(JSVMClientDataClient& client) { m_clients.add(client); }
+
 private:
     bool isWebCoreJSClientData() const final { return true; }
 
@@ -135,6 +139,7 @@ private:
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
 
     std::optional<WebCore::HTTPHeaderIdentifiers> m_httpHeaderIdentifiers;
+    WeakHashSet<JSVMClientDataClient> m_clients;
 };
 
 } // namespace WebCore

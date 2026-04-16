@@ -20,17 +20,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Extract the commit hash from the line after COMMIT
-          CURRENT_VERSION=$(awk '/[[:space:]]*COMMIT[[:space:]]*$/{getline; gsub(/^[[:space:]]+|[[:space:]]+$/,"",$0); print}' cmake/targets/BuildHighway.cmake)
+          DEP_FILE=scripts/build/deps/highway.ts
+          CURRENT_VERSION=$(sed -nE 's/^const HIGHWAY_COMMIT = "([0-9a-f]{40})";$/\1/p' "$DEP_FILE")
 
           if [ -z "$CURRENT_VERSION" ]; then
-            echo "Error: Could not find COMMIT line in BuildHighway.cmake"
+            echo "Error: Could not find HIGHWAY_COMMIT in $DEP_FILE"
             exit 1
           fi
 
           # Validate that it looks like a git hash
           if ! [[ $CURRENT_VERSION =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Error: Invalid git hash format in BuildHighway.cmake"
+            echo "Error: Invalid git hash format in $DEP_FILE"
             echo "Found: $CURRENT_VERSION"
             echo "Expected: 40 character hexadecimal string"
             exit 1
@@ -92,10 +92,11 @@ jobs:
 
       - name: Update version if needed
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        env:
+          LATEST: ${{ steps.check-version.outputs.latest }}
         run: |
           set -euo pipefail
-          # Handle multi-line format where COMMIT and its value are on separate lines
-          sed -i -E '/[[:space:]]*COMMIT[[:space:]]*$/{n;s/[[:space:]]*([0-9a-f]+)[[:space:]]*$/    ${{ steps.check-version.outputs.latest }}/}' cmake/targets/BuildHighway.cmake
+          sed -i -E 's/^(const HIGHWAY_COMMIT = ")[0-9a-f]{40}(";)$/\1'"$LATEST"'\2/' scripts/build/deps/highway.ts
 
       - name: Create Pull Request
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
@@ -103,7 +104,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           add-paths: |
-            cmake/targets/BuildHighway.cmake
+            scripts/build/deps/highway.ts
           commit-message: "deps: update highway to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update highway to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true

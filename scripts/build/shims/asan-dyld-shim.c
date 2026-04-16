@@ -22,6 +22,7 @@
 // https://github.com/llvm/llvm-project/pull/188913 backport, or an Xcode
 // update.
 
+#include <dlfcn.h>
 #include <mach-o/dyld.h>
 #include <stdint.h>
 #include <string.h>
@@ -32,7 +33,8 @@
 // entry, and keeps the one where IsDyldHdr(hdr) matches. We give it exactly
 // one entry with the offset that lands on dyld's header — obtained via the
 // non-allocating _dyld_get_dyld_header() that the upstream fix uses.
-extern const struct mach_header* _dyld_get_dyld_header(void);
+// That symbol is private — present in libdyld at runtime but absent from
+// the SDK's .tbd stubs — so a direct extern fails to link. dlsym it.
 extern const void* _dyld_get_shared_cache_range(size_t* length);
 
 // Layout must match compiler-rt's copy of the struct. Fields ASAN reads:
@@ -52,7 +54,9 @@ extern int dyld_shared_cache_iterate_text(const uuid_t, dsc_callback);
 
 static int shim_iterate(const uuid_t uuid, dsc_callback cb) {
   (void)uuid;
-  const struct mach_header* hdr = _dyld_get_dyld_header();
+  typedef const struct mach_header* (*get_hdr_fn)(void);
+  get_hdr_fn get_hdr = (get_hdr_fn)dlsym(RTLD_DEFAULT, "_dyld_get_dyld_header");
+  const struct mach_header* hdr = get_hdr ? get_hdr() : NULL;
   size_t len;
   const void* cacheStart = _dyld_get_shared_cache_range(&len);
   if (!hdr || !cacheStart || !cb) return -1;

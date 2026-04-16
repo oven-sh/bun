@@ -17,8 +17,9 @@
 
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
-import type { Config } from "./config.ts";
+import type { Config, OS } from "./config.ts";
 import { downloadWithRetry, extractZip } from "./download.ts";
 import { assert } from "./error.ts";
 import { fetchCliPath } from "./fetch-cli.ts";
@@ -30,8 +31,43 @@ import { streamPath } from "./stream.ts";
  * Zig compiler commit — determines compiler download + bundled stdlib.
  * Override via `--zig-commit=<hash>` to test a new compiler.
  * From https://github.com/oven-sh/zig releases.
+ *
+ * TEMPORARY SPLIT: local dev uses a newer compiler with parallel sema +
+ * sharded LLVM codegen (big speedup, still being proven correct). CI
+ * stays on the last known-good commit so release builds aren't affected
+ * by compiler bugs we haven't shaken out yet. Once the parallel compiler
+ * is trusted, collapse both back to one constant.
  */
-export const ZIG_COMMIT = "c031cbebf5b063210473ff5204a24ebfb2492c72";
+export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
+export const ZIG_COMMIT_PARALLEL = "445fc0cbba4eea579e5c846f2b8be7c9bdc4e1cc";
+
+/**
+ * The one place that picks which compiler to use. Everything coupled to
+ * the parallel compiler (ZIG_PARALLEL_SEMA, -Dllvm_codegen_threads) keys
+ * on the resolved cfg.zigCommit via usingParallelCompiler(), so changing
+ * this — or passing --zigCommit=<hash> — is sufficient.
+ *
+ * Parallel compiler is darwin-local only for now. Linux is gated off
+ * because oven-sh/zig's self-hosted ELF `-r` merge (used to combine
+ * sharded codegen output when no_link_obj=true) currently emits an
+ * incomplete bun-zig.o — link fails with every Zig symbol undefined on
+ * a fresh build. macOS's Mach-O merge path works. See #29132. CI and
+ * Windows stay on the stable compiler regardless.
+ */
+export function defaultZigCommit(ci: boolean, hostOs: OS): string {
+  if (ci || hostOs !== "darwin") return ZIG_COMMIT;
+  return ZIG_COMMIT_PARALLEL;
+}
+
+/**
+ * True iff `cfg` is using the parallel-sema compiler. All parallel-only
+ * build knobs (ZIG_PARALLEL_SEMA env, -Dllvm_codegen_threads>0) must key
+ * on this — the stable compiler emits N sharded .o files under those
+ * options but leaves getEmittedBin() as a 0-byte stub, so link fails.
+ */
+function usingParallelCompiler(cfg: Config): boolean {
+  return cfg.zigCommit !== ZIG_COMMIT;
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Target/optimize/CPU computation
@@ -132,10 +168,7 @@ function zigPath(cfg: Config): string {
 }
 
 function zigExecutable(cfg: Config): string {
-  // Host suffix — zig runs on the host. cfg.exeSuffix is target
-  // (windows target → .exe), wrong for cross-compile from linux.
-  const suffix = cfg.host.os === "windows" ? ".exe" : "";
-  return resolve(zigPath(cfg), "zig" + suffix);
+  return resolve(zigPath(cfg), "zig" + cfg.host.exeSuffix);
 }
 
 /**
@@ -143,7 +176,7 @@ function zigExecutable(cfg: Config): string {
  */
 function zigCacheDirs(cfg: Config): { local: string; global: string } {
   return {
-    local: resolve(cfg.cacheDir, "zig", "local"),
+    local: resolve(cfg.buildDir, "cache", "zig", "local"),
     global: resolve(cfg.cacheDir, "zig", "global"),
   };
 }
@@ -207,10 +240,22 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
   // our fork (upstream added Feb 2026, not backported).
   const interleave = false;
   const consoleMode = !interleave || hostWin;
+  const parallelSema = usingParallelCompiler(cfg) ? " --env=ZIG_PARALLEL_SEMA=1" : "";
   n.rule("zig_build", {
-    command: `${stream} ${consoleMode ? "--console" : "--zig-progress"} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache $zig build $step $args`,
+    command: `${stream} ${consoleMode ? "--console" : "--zig-progress"} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache${parallelSema} $zig build $step $args`,
     description: "zig $step → $out",
     ...(consoleMode && { pool: "console" }),
+    restat: true,
+  });
+
+  // Zig semantic check — `zig build check[-*]`. Type-checks without
+  // emitting object code; output is a stamp file created by --stamp so
+  // ninja can track completion. Same cache dirs as the main zig build —
+  // zig keys by hash, the two coexist cleanly.
+  n.rule("zig_check", {
+    command: `${stream} --console --stamp=$out --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache $zig build $step $args`,
+    description: "zig $step",
+    pool: "console",
     restat: true,
   });
 }
@@ -293,16 +338,43 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
   // ─── Build ───
   const cacheDirs = zigCacheDirs(cfg);
   const output = resolve(cfg.buildDir, "bun-zig.o");
+  const args = zigBuildArgs(cfg);
 
-  // Extra embed: scanner-entry.ts is @embedFile'd by the zig code directly.
-  // A genuinely odd cross-language embed; there's no cleaner way.
-  const scannerEntry = resolve(cfg.cwd, "src", "install", "PackageManager", "scanner-entry.ts");
+  n.build({
+    outputs: [output],
+    rule: "zig_build",
+    inputs: [],
+    implicitInputs: zigBuildImplicitInputs(cfg, inputs),
+    orderOnlyInputs: zigBuildOrderOnlyInputs(inputs),
+    vars: {
+      zig: zigExe,
+      step: "obj",
+      args: quoteArgs(args, cfg.host.os === "windows"),
+      zig_local_cache: cacheDirs.local,
+      zig_global_cache: cacheDirs.global,
+    },
+  });
+  n.phony("bun-zig", [output]);
+  n.blank();
 
-  // ─── Build args ───
-  // One -D per feature flag. Each maps directly to a build.zig option.
-  // Order doesn't matter but we keep it the same as CMake for easy diffing.
+  return [output];
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Shared `zig build` invocation helpers (obj + check)
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * `zig build` CLI args shared by both the obj build and the check steps.
+ * build.zig options have `orelse` defaults, so unknown-to-a-step options
+ * (e.g. -Dtarget for check-all, which sets targets internally) are ignored
+ * silently — we pass them uniformly for simplicity and diffability.
+ */
+function zigBuildArgs(cfg: Config): string[] {
+  const cacheDirs = zigCacheDirs(cfg);
+  const zigDest = zigPath(cfg);
   const bool = (b: boolean): string => (b ? "true" : "false");
-  const args: string[] = [
+  return [
     // Cache and lib paths. --zig-lib-dir points at OUR bundled stdlib,
     // not any system zig — the compiler and stdlib must match commits.
     "--cache-dir",
@@ -329,8 +401,10 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
     // Always ON — bun uses mimalloc as its default allocator. The flag
     // exists for experimentation; in practice it's never OFF.
     `-Duse_mimalloc=true`,
-    // Not using threaded codegen — always 0.
-    `-Dllvm_codegen_threads=0`,
+    // Sharded LLVM codegen — one shard per host core on the parallel
+    // compiler. Zig has no "auto" value (0 = single-threaded). MUST be 0
+    // on the stable compiler — see usingParallelCompiler().
+    `-Dllvm_codegen_threads=${usingParallelCompiler(cfg) ? availableParallelism() : 0}`,
 
     // Versioning
     `-Dversion=${cfg.version}`,
@@ -347,43 +421,116 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
     "--summary",
     "all",
   ];
+}
 
-  n.build({
-    outputs: [output],
-    rule: "zig_build",
-    inputs: [],
-    implicitInputs: [
-      // Compiler itself — rebuild on zig version bump.
-      zigExe,
-      // build.zig — the zig build script.
-      resolve(cfg.cwd, "build.zig"),
-      // All zig source files (codegen outputs already filtered by caller).
-      ...inputs.zigSources,
-      // Codegen outputs zig imports/embeds.
-      ...inputs.codegenInputs,
-      // The odd cross-language embed.
-      scannerEntry,
-    ],
-    orderOnlyInputs: [
-      // zstd headers — must exist for @cImport, but content is tracked by
-      // zig's translate-c cache, not ninja.
-      inputs.zstdStamp,
-      // Debug-mode bake runtime — must exist at runtime-load path, but
-      // zig doesn't track content (not embedded).
-      ...inputs.codegenOrderOnly,
-    ],
-    vars: {
-      zig: zigExe,
-      step: "obj",
-      args: quoteArgs(args, cfg.host.os === "windows"),
-      zig_local_cache: cacheDirs.local,
-      zig_global_cache: cacheDirs.global,
-    },
-  });
-  n.phony("bun-zig", [output]);
+/**
+ * Implicit inputs for any zig build invocation (obj or check). Same set
+ * in both cases — the compiler, build.zig, every .zig source, and every
+ * codegen file zig imports or embeds.
+ */
+function zigBuildImplicitInputs(cfg: Config, inputs: ZigBuildInputs): string[] {
+  // Extra embed: scanner-entry.ts is @embedFile'd by the zig code directly.
+  // A genuinely odd cross-language embed; there's no cleaner way.
+  const scannerEntry = resolve(cfg.cwd, "src", "install", "PackageManager", "scanner-entry.ts");
+  return [
+    // Compiler itself — rebuild on zig version bump.
+    zigExecutable(cfg),
+    // build.zig — the zig build script.
+    resolve(cfg.cwd, "build.zig"),
+    // All zig source files (codegen outputs already filtered by caller).
+    ...inputs.zigSources,
+    // Codegen outputs zig imports/embeds.
+    ...inputs.codegenInputs,
+    // The odd cross-language embed.
+    scannerEntry,
+  ];
+}
+
+/**
+ * Order-only inputs for any zig build invocation — files that must EXIST
+ * but whose content is tracked elsewhere (zig's translate-c cache, or
+ * they're runtime-loaded not embedded).
+ */
+function zigBuildOrderOnlyInputs(inputs: ZigBuildInputs): string[] {
+  return [
+    // zstd headers — must exist for @cImport, but content is tracked by
+    // zig's translate-c cache, not ninja.
+    inputs.zstdStamp,
+    // Debug-mode bake runtime — must exist at runtime-load path, but
+    // zig doesn't track content (not embedded).
+    ...inputs.codegenOrderOnly,
+  ];
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Zig semantic check — `zig build check[-*]`
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * `zig build` check steps exposed as ninja targets. Each becomes a phony
+ * `zig-<step>` plus a stamp file, invokable via `bun bd --target=zig-check`
+ * (etc.). See build.zig for what each step covers.
+ *
+ * `check` type-checks the current platform (uses -Dtarget/-Dcpu). The
+ * `check-*` variants iterate multiple targets internally — our -Dtarget
+ * is inert for them.
+ */
+const CHECK_STEPS = [
+  "check",
+  "check-debug",
+  "check-all",
+  "check-all-debug",
+  "check-windows",
+  "check-windows-debug",
+  "check-macos",
+  "check-macos-debug",
+  "check-linux",
+  "check-linux-debug",
+] as const;
+
+/**
+ * Emit one ninja edge per `zig build check[-*]` step. Each depends on
+ * the same codegen + zig source set as the obj build, so users can run
+ * `bun bd --target=zig-check` and ninja will rebuild any stale codegen
+ * before invoking zig. Output is a stamp file (stream.ts --stamp writes
+ * it on exit 0); restat lets the no-op case prune downstream.
+ *
+ * Assumes the zig compiler download edge (from `emitZig`) has already
+ * been emitted — we depend on zigExecutable but don't re-emit the fetch.
+ */
+export function emitZigCheck(n: Ninja, cfg: Config, inputs: ZigBuildInputs): void {
+  n.comment("─── Zig semantic check ───");
   n.blank();
 
-  return [output];
+  const zigExe = zigExecutable(cfg);
+  const cacheDirs = zigCacheDirs(cfg);
+  // `--summary new` instead of `all`: check is a fast-iteration workflow
+  // (mostly cache hits), so skip the "cached" rows zig would otherwise
+  // print for every unchanged step. Matches the pre-ninja `zig:check`
+  // scripts. zigBuildArgs ends with `--summary all`; swap the last arg.
+  const args = zigBuildArgs(cfg);
+  args[args.length - 1] = "new";
+  const hostWin = cfg.host.os === "windows";
+
+  for (const step of CHECK_STEPS) {
+    const stamp = resolve(cfg.buildDir, `.zig-${step}.stamp`);
+    n.build({
+      outputs: [stamp],
+      rule: "zig_check",
+      inputs: [],
+      implicitInputs: zigBuildImplicitInputs(cfg, inputs),
+      orderOnlyInputs: zigBuildOrderOnlyInputs(inputs),
+      vars: {
+        zig: zigExe,
+        step,
+        args: quoteArgs(args, hostWin),
+        zig_local_cache: cacheDirs.local,
+        zig_global_cache: cacheDirs.global,
+      },
+    });
+    n.phony(`zig-${step}`, [stamp]);
+  }
+  n.blank();
 }
 
 // ───────────────────────────────────────────────────────────────────────────

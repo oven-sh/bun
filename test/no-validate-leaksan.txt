@@ -62,6 +62,7 @@ test/js/node/test/parallel/test-worker.js
 test/js/node/test/parallel/test-worker.mjs
 test/js/node/worker_threads/worker_destruction.test.ts
 test/js/web/broadcastchannel/broadcast-channel.test.ts
+test/js/web/broadcastchannel/broadcast-channel-worker-gc.test.ts
 
 
 # error exit root cause unclear

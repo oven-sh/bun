@@ -377,7 +377,7 @@ for (const { name, connect } of tests) {
 
       socket.on("secureConnect", () => {
         expect(socket.remotePort).toBe(443);
-        expect(socket[symbolConnectOptions].serverName).toBe("bun.sh");
+        expect(socket[symbolConnectOptions].servername).toBe("bun.sh");
         socket.end();
         done();
       });
@@ -398,7 +398,7 @@ for (const { name, connect } of tests) {
         if (connect === tlsConnect) {
           expect(socket.remotePort).toBe(443);
         }
-        expect(socket[symbolConnectOptions].serverName).toBe("bun.sh");
+        expect(socket[symbolConnectOptions].servername).toBe("bun.sh");
         socket.end();
         done();
       });
@@ -421,7 +421,7 @@ for (const { name, connect } of tests) {
           if (connect === tlsConnect) {
             expect(socket.remotePort).toBe(443);
           }
-          expect(socket[symbolConnectOptions].serverName).toBe("bun.sh");
+          expect(socket[symbolConnectOptions].servername).toBe("bun.sh");
           socket.end();
           done();
         },
@@ -437,7 +437,7 @@ for (const { name, connect } of tests) {
       });
 
       socket.on("secureConnect", () => {
-        expect(socket[symbolConnectOptions].serverName).toBe("bun.sh");
+        expect(socket[symbolConnectOptions].servername).toBe("bun.sh");
         if (connect === tlsConnect) {
           expect(socket.remotePort).toBe(443);
         }

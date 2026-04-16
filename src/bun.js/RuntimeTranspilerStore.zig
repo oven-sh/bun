@@ -237,8 +237,11 @@ pub const RuntimeTranspilerStore = struct {
         threadlocal var source_code_printer: ?*js_printer.BufferPrinter = null;
 
         pub fn dispatchToMainThread(this: *TranspilerJob) void {
-            this.vm.transpiler_store.queue.push(this);
-            this.vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.createFrom(&this.vm.transpiler_store));
+            const vm = this.vm;
+            const transpiler_store = &vm.transpiler_store;
+            transpiler_store.queue.push(this);
+            // Another thread may free `this` at any time after .push, so we cannot use it any more.
+            vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.createFrom(transpiler_store));
         }
 
         pub fn runFromJSThread(this: *TranspilerJob) bun.JSError!void {
@@ -331,7 +334,7 @@ pub const RuntimeTranspilerStore = struct {
             transpiler.macro_context = null;
             transpiler.linker.resolver = &transpiler.resolver;
 
-            var fd: ?StoredFileDescriptorType = null;
+            var fd: ?FD = null;
             var package_json: ?*PackageJSON = null;
             const hash = bun.Watcher.getHash(path.text);
 
@@ -339,7 +342,12 @@ pub const RuntimeTranspilerStore = struct {
                 .hot, .watch => {
                     if (vm.bun_watcher.indexOf(hash)) |index| {
                         const watcher_fd = vm.bun_watcher.watchlist().items(.fd)[index];
-                        fd = if (watcher_fd.stdioTag() == null) watcher_fd else null;
+                        // On Linux, `addFileByPathSlow` inserts watchlist
+                        // entries with `fd = invalid_fd` (only kqueue needs
+                        // the descriptor). Treat invalid as "no cached fd"
+                        // so `readFileWithAllocator` opens the file instead
+                        // of calling `seekTo` on a bogus handle.
+                        fd = if (watcher_fd.isValid() and watcher_fd.stdioTag() == null) watcher_fd else null;
                         package_json = vm.bun_watcher.watchlist().items(.package_json)[index];
                     }
                 },
@@ -363,7 +371,7 @@ pub const RuntimeTranspilerStore = struct {
             //
             var should_close_input_file_fd = fd == null;
 
-            var input_file_fd: StoredFileDescriptorType = .invalid;
+            var input_file_fd: FD = .invalid;
 
             const is_main = vm.main.len == path.text.len and
                 vm.main_hash == hash and
@@ -627,8 +635,8 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const bun = @import("bun");
 const Async = bun.Async;
 const Environment = bun.Environment;
+const FD = bun.FD;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const String = bun.String;
 const Transpiler = bun.Transpiler;
 const js_ast = bun.ast;

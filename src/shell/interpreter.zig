@@ -64,7 +64,7 @@ pub const Syscall = bun.sys;
 pub const WorkPoolTask = jsc.WorkPoolTask;
 pub const WorkPool = jsc.WorkPool;
 
-pub const Pipe = [2]bun.FileDescriptor;
+pub const Pipe = [2]bun.FD;
 pub const SmolList = shell.SmolList;
 
 pub const GlobWalker = bun.glob.BunGlobWalkerZ;
@@ -136,13 +136,13 @@ pub const StateKind = enum(u8) {
 ///
 /// If you want to write to the file descriptor, you call `.write()`, if `being_written` is true it will duplicate the file descriptor.
 pub const CowFd = struct {
-    __fd: bun.FileDescriptor,
+    __fd: bun.FD,
     refcount: u32 = 1,
     being_used: bool = false,
 
     const debug = bun.Output.scoped(.CowFd, .hidden);
 
-    pub fn init(fd: bun.FileDescriptor) *CowFd {
+    pub fn init(fd: bun.FD) *CowFd {
         const this = bun.handleOom(bun.default_allocator.create(CowFd));
         this.* = .{
             .__fd = fd,
@@ -363,7 +363,7 @@ pub const Interpreter = struct {
         /// Always has zero-sentinel
         __prev_cwd: std.array_list.Managed(u8),
         __cwd: std.array_list.Managed(u8),
-        cwd_fd: bun.FileDescriptor,
+        cwd_fd: bun.FD,
 
         async_pids: SmolList(pid_t, 4) = SmolList(pid_t, 4).zeroes,
 
@@ -1585,7 +1585,7 @@ pub fn MaybeChild(comptime T: type) type {
     };
 }
 
-pub fn closefd(fd: bun.FileDescriptor) void {
+pub fn closefd(fd: bun.FD) void {
     if (fd.closeAllowingBadFileDescriptor(null)) |err| {
         log("ERR closefd: {f}\n", .{err});
     }
@@ -1737,7 +1737,7 @@ pub const ShellSyscall = struct {
         }
         if (ResolvePath.Platform.posix.isAbsolute(to[0..to.len])) {
             const dirpath = brk: {
-                if (@TypeOf(dirfd) == bun.FileDescriptor) break :brk switch (Syscall.getFdPath(dirfd, buf)) {
+                if (@TypeOf(dirfd) == bun.FD) break :brk switch (Syscall.getFdPath(dirfd, buf)) {
                     .result => |path| path,
                     .err => |e| return .{ .err = e.withFd(dirfd) },
                 };
@@ -1752,7 +1752,7 @@ pub const ShellSyscall = struct {
         if (ResolvePath.Platform.isAbsolute(.windows, to[0..to.len])) return .{ .result = to };
 
         const dirpath = brk: {
-            if (@TypeOf(dirfd) == bun.FileDescriptor) break :brk switch (Syscall.getFdPath(dirfd, buf)) {
+            if (@TypeOf(dirfd) == bun.FD) break :brk switch (Syscall.getFdPath(dirfd, buf)) {
                 .result => |path| path,
                 .err => |e| return .{ .err = e.withFd(dirfd) },
             };
@@ -1768,7 +1768,7 @@ pub const ShellSyscall = struct {
         return .{ .result = joined };
     }
 
-    pub fn statat(dir: bun.FileDescriptor, path_: [:0]const u8) Maybe(bun.Stat) {
+    pub fn statat(dir: bun.FD, path_: [:0]const u8) Maybe(bun.Stat) {
         if (bun.Environment.isWindows) {
             const buf: *bun.PathBuffer = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(buf);
@@ -1788,7 +1788,7 @@ pub const ShellSyscall = struct {
 
     /// Same thing as bun.sys.openat on posix
     /// On windows it will convert paths for us
-    pub fn openat(dir: bun.FileDescriptor, path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    pub fn openat(dir: bun.FD, path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FD) {
         if (bun.Environment.isWindows) {
             if (flags & bun.O.DIRECTORY != 0) {
                 if (ResolvePath.Platform.posix.isAbsolute(path[0..path.len])) {
@@ -1828,7 +1828,7 @@ pub const ShellSyscall = struct {
         return .{ .result = fd };
     }
 
-    pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    pub fn open(file_path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FD) {
         const fd = switch (Syscall.open(file_path, flags, perm)) {
             .result => |fd| fd,
             .err => |e| return .{ .err = e },
@@ -1839,7 +1839,7 @@ pub const ShellSyscall = struct {
         return .{ .result = fd };
     }
 
-    pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {
+    pub fn dup(fd: bun.FD) Maybe(bun.FD) {
         if (bun.Environment.isWindows) {
             return switch (Syscall.dup(fd)) {
                 .result => |duped_fd| duped_fd.makeLibUVOwnedForSyscall(.dup, .close_on_fail),
@@ -2023,7 +2023,7 @@ pub fn FlagParser(comptime Opts: type) type {
     };
 }
 
-pub fn isPollable(fd: bun.FileDescriptor, mode: bun.Mode) bool {
+pub fn isPollable(fd: bun.FD, mode: bun.Mode) bool {
     return switch (bun.Environment.os) {
         .windows, .wasm => false,
         .linux => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),

@@ -616,3 +616,56 @@ test("--parallel --randomize without --seed is reproducible via the printed seed
   // Within-file ordering must match exactly when the printed seed is replayed.
   expect({ a: second.a, b: second.b }).toEqual({ a: first.a, b: first.b });
 });
+
+test("--parallel forwards --conditions to workers", async () => {
+  using dir = tempDir("parallel-conditions", {
+    "node_modules/condpkg/package.json": JSON.stringify({
+      name: "condpkg",
+      exports: { ".": { development: "./dev.js", default: "./prod.js" } },
+    }),
+    "node_modules/condpkg/dev.js": `export const variant = "dev";`,
+    "node_modules/condpkg/prod.js": `export const variant = "prod";`,
+    "a.test.ts": `import {test,expect} from "bun:test"; import {variant} from "condpkg"; test("a",()=>expect(variant).toBe("dev"));`,
+    "b.test.ts": `import {test,expect} from "bun:test"; import {variant} from "condpkg"; test("b",()=>expect(variant).toBe("dev"));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--conditions=development"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("(parallel)");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test("--parallel --reporter=junit emits a synthetic suite for crashed files", async () => {
+  using dir = tempDir("parallel-junit-crash", {
+    "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
+    "crash.test.js": `import {test} from "bun:test"; test("boom",()=>process.kill(process.pid, "SIGKILL"));`,
+  });
+  const out = String(dir) + "/out.xml";
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--reporter=junit", `--reporter-outfile=${out}`],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(exitCode).not.toBe(0);
+  const xml = await Bun.file(out).text();
+
+  // The crashed file gets a synthetic suite so outer totals == sum of children.
+  expect(xml).toContain('<testsuite name="crash.test.js"');
+  expect(xml).toContain("worker process crashed before reporting results");
+
+  const outerTests = Number(xml.match(/<testsuites[^>]*\btests="(\d+)"/)![1]);
+  const outerFail = Number(xml.match(/<testsuites[^>]*\bfailures="(\d+)"/)![1]);
+  const innerTests = [...xml.matchAll(/<testsuite [^>]*\btests="(\d+)"/g)].reduce((a, m) => a + Number(m[1]), 0);
+  const innerFail = [...xml.matchAll(/<testsuite [^>]*\bfailures="(\d+)"/g)].reduce((a, m) => a + Number(m[1]), 0);
+  expect({ innerTests, innerFail }).toEqual({ innerTests: outerTests, innerFail: outerFail });
+});

@@ -370,7 +370,7 @@ pub const Coordinator = struct {
     files_done: u32 = 0,
     spawned_count: u32 = 0,
     live_workers: u32 = 0,
-    crashed_files: u32 = 0,
+    crashed_files: std.ArrayListUnmanaged(u32) = .empty,
     bailed: bool = false,
     last_printed_dot: bool = false,
 
@@ -632,7 +632,7 @@ pub const Coordinator = struct {
         Output.prettyError("<r><red>✗<r> <b>{s}<r> <d>(crashed: {s})<r>\n", .{ this.relPath(file_idx), reason });
         this.reporter.summary().fail += 1;
         this.reporter.summary().files += 1;
-        this.crashed_files += 1;
+        bun.handleOom(this.crashed_files.append(bun.default_allocator, file_idx));
         this.files_done += 1;
         if (this.bail > 0 and this.reporter.summary().fail >= this.bail) this.bailOut();
     }
@@ -645,7 +645,7 @@ pub const Coordinator = struct {
             Output.prettyError("<r><red>✗<r> <b>{s}<r> <d>({s})<r>\n", .{ rel, reason });
             this.reporter.summary().fail += 1;
             this.reporter.summary().files += 1;
-            this.crashed_files += 1;
+            bun.handleOom(this.crashed_files.append(bun.default_allocator, this.next_file));
             this.files_done += 1;
         }
         Output.flush();
@@ -730,7 +730,7 @@ pub fn runAsCoordinator(
         .worker_tmpdir = worker_tmpdir,
         .parallel_limit = n,
         .scale_up_after_ms = if (vm.transpiler.env.get("BUN_TEST_PARALLEL_SCALE_MS")) |s|
-            std.fmt.parseInt(i64, s, 10) catch default_scale_up_after_ms
+            @max(0, std.fmt.parseInt(i64, s, 10) catch default_scale_up_after_ms)
         else
             default_scale_up_after_ms,
         .bail = ctx.test_options.bail,
@@ -752,7 +752,7 @@ pub fn runAsCoordinator(
 
     if (ctx.test_options.reporters.junit) {
         if (ctx.test_options.reporter_outfile) |outfile| {
-            mergeJUnitFragments(coord.junit_fragments.items, outfile, reporter.summary());
+            mergeJUnitFragments(&coord, outfile, reporter.summary());
         }
     }
     if (coverage_opts.enabled) {
@@ -763,40 +763,72 @@ pub fn runAsCoordinator(
     return true;
 }
 
-fn mergeJUnitFragments(paths: []const []const u8, outfile: []const u8, summary: *const TestRunner.Summary) void {
-    var contents: std.ArrayListUnmanaged(u8) = .empty;
-    defer contents.deinit(bun.default_allocator);
+fn attrValue(head: []const u8, comptime name: []const u8) u32 {
+    const needle = " " ++ name ++ "=\"";
+    const start = (bun.strings.indexOf(head, needle) orelse return 0) + needle.len;
+    const end = start + (bun.strings.indexOfChar(head[start..], '"') orelse return 0);
+    return std.fmt.parseInt(u32, head[start..end], 10) catch 0;
+}
 
-    const elapsed_time = @as(f64, @floatFromInt(std.time.nanoTimestamp() - bun.start_time)) / std.time.ns_per_s;
-    bun.handleOom(contents.writer(bun.default_allocator).print(
-        \\<?xml version="1.0" encoding="UTF-8"?>
-        \\<testsuites name="bun test" tests="{d}" assertions="{d}" failures="{d}" skipped="{d}" time="{d}">
-        \\
-    , .{
-        summary.pass + summary.fail + summary.skip + summary.todo,
-        summary.expectations,
-        summary.fail,
-        summary.skip + summary.todo,
-        elapsed_time,
-    }));
+fn mergeJUnitFragments(coord: *Coordinator, outfile: []const u8, summary: *const TestRunner.Summary) void {
+    var body: std.ArrayListUnmanaged(u8) = .empty;
+    defer body.deinit(bun.default_allocator);
+    // Crashed workers never reach workerFlushAggregates, so any files they ran
+    // (including earlier passing ones) have no fragment. Compute the outer
+    // <testsuites> totals from what we actually emit so they always equal the
+    // sum of inner <testsuite> elements; CI tools schema-validate this.
+    var totals: struct { tests: u32 = 0, failures: u32 = 0, skipped: u32 = 0 } = .{};
 
-    for (paths) |path| {
+    for (coord.junit_fragments.items) |path| {
         const file = switch (bun.sys.File.readFrom(bun.FD.cwd(), path, bun.default_allocator)) {
             .result => |r| r,
             .err => continue,
         };
         defer bun.default_allocator.free(file);
-        // Each fragment is a full <testsuites> document; extract its body.
-        const open_end = bun.strings.indexOf(file, "<testsuites") orelse continue;
-        const body_start = open_end + (bun.strings.indexOfChar(file[open_end..], '>') orelse continue) + 1;
+        // Each fragment is a full <testsuites> document; extract its header
+        // attributes for the merged totals and its body for the inner suites.
+        const open_start = bun.strings.indexOf(file, "<testsuites") orelse continue;
+        const head_end = open_start + (bun.strings.indexOfChar(file[open_start..], '>') orelse continue);
+        const head = file[open_start..head_end];
+        totals.tests += attrValue(head, "tests");
+        totals.failures += attrValue(head, "failures");
+        totals.skipped += attrValue(head, "skipped");
+        const body_start = head_end + 1;
         const body_end = bun.strings.lastIndexOf(file, "</testsuites>") orelse continue;
         if (body_start >= body_end) continue;
-        const body = std.mem.trim(u8, file[body_start..body_end], "\n");
-        if (body.len == 0) continue;
-        bun.handleOom(contents.appendSlice(bun.default_allocator, body));
-        bun.handleOom(contents.append(bun.default_allocator, '\n'));
+        const inner = std.mem.trim(u8, file[body_start..body_end], "\n");
+        if (inner.len == 0) continue;
+        bun.handleOom(body.appendSlice(bun.default_allocator, inner));
+        bun.handleOom(body.append(bun.default_allocator, '\n'));
     }
 
+    for (coord.crashed_files.items) |idx| {
+        const rel = coord.relPath(idx);
+        const w = body.writer(bun.default_allocator);
+        bun.handleOom(w.writeAll("  <testsuite name=\""));
+        bun.handleOom(test_command.escapeXml(rel, w));
+        bun.handleOom(w.writeAll("\" tests=\"1\" assertions=\"0\" failures=\"1\" skipped=\"0\" time=\"0\">\n    <testcase name=\"(worker crashed)\" classname=\""));
+        bun.handleOom(test_command.escapeXml(rel, w));
+        bun.handleOom(w.writeAll(
+            \\">
+            \\      <failure message="worker process crashed before reporting results"></failure>
+            \\    </testcase>
+            \\  </testsuite>
+            \\
+        ));
+        totals.tests += 1;
+        totals.failures += 1;
+    }
+
+    var contents: std.ArrayListUnmanaged(u8) = .empty;
+    defer contents.deinit(bun.default_allocator);
+    const elapsed_time = @as(f64, @floatFromInt(std.time.nanoTimestamp() - bun.start_time)) / std.time.ns_per_s;
+    bun.handleOom(contents.writer(bun.default_allocator).print(
+        \\<?xml version="1.0" encoding="UTF-8"?>
+        \\<testsuites name="bun test" tests="{d}" assertions="{d}" failures="{d}" skipped="{d}" time="{d}">
+        \\
+    , .{ totals.tests, summary.expectations, totals.failures, totals.skipped, elapsed_time }));
+    bun.handleOom(contents.appendSlice(bun.default_allocator, body.items));
     bun.handleOom(contents.appendSlice(bun.default_allocator, "</testsuites>\n"));
 
     const out_z = bun.handleOom(bun.default_allocator.dupeZ(u8, outfile));
@@ -1065,6 +1097,36 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
     if (ctx.args.tsconfig_override) |tsconfig| {
         try argv.append(arena, "--tsconfig-override");
         try argv.append(arena, (try arena.dupeZ(u8, tsconfig)).ptr);
+    }
+    inline for (.{
+        .{ "--conditions", ctx.args.conditions },
+        .{ "--drop", ctx.args.drop },
+        .{ "--main-fields", ctx.args.main_fields },
+        .{ "--extension-order", ctx.args.extension_order },
+        .{ "--env-file", ctx.args.env_files },
+        .{ "--feature", ctx.args.feature_flags },
+    }) |pair| {
+        for (pair[1]) |value| {
+            try argv.append(arena, pair[0]);
+            try argv.append(arena, (try arena.dupeZ(u8, value)).ptr);
+        }
+    }
+    if (ctx.args.preserve_symlinks orelse false)
+        try argv.append(arena, "--preserve-symlinks");
+    if (ctx.args.allow_addons == false)
+        try argv.append(arena, "--no-addons");
+    if (ctx.debug.macros == .disable)
+        try argv.append(arena, "--no-macros");
+    if (ctx.args.jsx) |jsx| {
+        if (jsx.factory.len > 0)
+            try argv.append(arena, try printZ(arena, "--jsx-factory={s}", .{jsx.factory}));
+        if (jsx.fragment.len > 0)
+            try argv.append(arena, try printZ(arena, "--jsx-fragment={s}", .{jsx.fragment}));
+        if (jsx.import_source.len > 0)
+            try argv.append(arena, try printZ(arena, "--jsx-import-source={s}", .{jsx.import_source}));
+        try argv.append(arena, try printZ(arena, "--jsx-runtime={s}", .{@tagName(jsx.runtime)}));
+        if (jsx.side_effects)
+            try argv.append(arena, "--jsx-side-effects");
     }
     if (opts.coverage.enabled) {
         try argv.append(arena, "--coverage");

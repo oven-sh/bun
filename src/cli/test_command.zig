@@ -1,7 +1,7 @@
 var path_buf: bun.PathBuffer = undefined;
 var path_buf2: bun.PathBuffer = undefined;
 
-fn escapeXml(str: string, writer: anytype) !void {
+pub fn escapeXml(str: string, writer: anytype) !void {
     var last: usize = 0;
     var i: usize = 0;
     const len = str.len;

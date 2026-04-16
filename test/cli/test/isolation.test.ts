@@ -607,3 +607,45 @@ test("t2", () => {
   expect(stderr).toContain("0 fail");
   expect(exitCode).toBe(0);
 });
+
+test("--isolate: leaked AbortSignal.timeout does not fire in next file", async () => {
+  using dir = tempDir("isolate-abort-timeout", {
+    "a-leak.test.ts": `
+      import { test, expect } from "bun:test";
+      import { writeFileSync } from "fs";
+      test("leak AbortSignal.timeout", () => {
+        const s = AbortSignal.timeout(100);
+        s.addEventListener("abort", () => writeFileSync(process.env.FIRE_FILE!, "fired"));
+        // Keep the signal reachable so it isn't GC'd before the timer would
+        // have fired.
+        (globalThis as any).__abort_signal = s;
+        (globalThis as any).__a_ran = true;
+        expect(s.aborted).toBe(false);
+      });
+    `,
+    "b-check.test.ts": `
+      import { test, expect } from "bun:test";
+      import { existsSync } from "fs";
+      test("AbortSignal from prior file did not fire here", async () => {
+        // Prove this file is isolated from a (fails under USE_SYSTEM_BUN=1).
+        expect((globalThis as any).__a_ran).toBeUndefined();
+        for (let i = 0; i < 30; i++) {
+          if (existsSync(process.env.FIRE_FILE!)) break;
+          await Bun.sleep(20);
+        }
+        expect(existsSync(process.env.FIRE_FILE!)).toBe(false);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "./a-leak.test.ts", "./b-check.test.ts"],
+    env: { ...bunEnv, FIRE_FILE: String(dir) + "/fired.txt" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});

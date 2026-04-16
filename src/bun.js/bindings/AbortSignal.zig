@@ -161,11 +161,16 @@ pub const AbortSignal = opaque {
         /// "epoch" is reused.
         flags: jsc.API.Timer.TimerObjectInternals.Flags = .{},
 
+        /// See `swapGlobalForTestIsolation`: timers from a prior isolated test
+        /// file must not fire abort handlers in the new global.
+        generation: u32 = 0,
+
         const new = bun.TrivialNew(Timeout);
 
         fn init(vm: *jsc.VirtualMachine, signal_: *AbortSignal, milliseconds: u64) *Timeout {
             const this: *Timeout = .new(.{
                 .signal = signal_,
+                .generation = vm.test_isolation_generation,
                 .event_loop_timer = .{
                     .next = bun.timespec.now(.allow_mocked_time).addMs(@intCast(milliseconds)),
                     .tag = .AbortSignalTimeout,
@@ -194,6 +199,14 @@ pub const AbortSignal = opaque {
         pub fn run(this: *Timeout, vm: *jsc.VirtualMachine) void {
             this.event_loop_timer.state = .FIRED;
             this.cancel(vm);
+
+            // The signal and its handlers belong to a previous isolated test
+            // file's global; firing now would run them against the new global.
+            // Drop the extra ref that signalAbort() would have released.
+            if (this.generation != vm.test_isolation_generation) {
+                this.signal.unref();
+                return;
+            }
 
             // Dispatching the signal may cause the Timeout to get freed.
             dispatch(vm, this.signal);

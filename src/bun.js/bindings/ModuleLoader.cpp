@@ -780,16 +780,21 @@ JSValue fetchCommonJSModule(
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
 
-    if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute) && !globalObject->hasOverriddenModuleWrapper) {
+    if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute)) {
         if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifierWtfString)) {
             if (cached->sourceType() == JSC::SourceProviderSourceType::Program) {
-                target->evaluate(globalObject, Ref(*cached), cached->m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule);
+                // The wrapper override only affects CJS evaluation; if it's
+                // active, fall through and re-transpile so the override can run.
+                if (!globalObject->hasOverriddenModuleWrapper) {
+                    target->evaluate(globalObject, Ref(*cached), cached->m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    RELEASE_AND_RETURN(scope, target);
+                }
+            } else {
+                globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(Ref(*cached)));
                 RETURN_IF_EXCEPTION(scope, {});
-                RELEASE_AND_RETURN(scope, target);
+                RELEASE_AND_RETURN(scope, jsNumber(-1));
             }
-            globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(Ref(*cached)));
-            RETURN_IF_EXCEPTION(scope, {});
-            RELEASE_AND_RETURN(scope, jsNumber(-1));
         }
     }
 

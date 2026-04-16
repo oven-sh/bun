@@ -122,7 +122,7 @@ const WorkerPipe = struct {
                 // worker so onWorkerExit accounts for the in-flight file and
                 // the slot can respawn.
                 this.buf.clearRetainingCapacity();
-                if (this.worker.process) |p| _ = p.kill(@intCast(std.posix.SIG.KILL));
+                if (this.worker.process) |p| _ = p.kill(9);
                 return false;
             }
             if (this.buf.items.len - head < @as(usize, 5) + len) break;
@@ -196,7 +196,7 @@ pub const Worker = struct {
             var spawned = try (try bun.spawn.spawnProcess(&options, coord.argv.ptr, coord.envp)).unwrap();
             const process = spawned.toProcess(coord.vm.eventLoop(), false);
             errdefer {
-                _ = process.kill(std.posix.SIG.KILL);
+                _ = process.kill(9);
                 process.close();
             }
             this.process = process;

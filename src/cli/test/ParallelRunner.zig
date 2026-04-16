@@ -1,12 +1,13 @@
 //! `bun test --parallel`: process-pool coordinator and worker.
 //!
-//! Coordinator spawns N `bun test --test-worker --isolate` processes, hands
-//! out one file at a time over stdin, and reads per-test events back over fd
-//! 3. Per-test status lines are streamed to the coordinator the moment a test
-//! finishes; stderr (errors, console.log) streams per-line. On a TTY the
-//! coordinator draws a live status block at the bottom showing what each
-//! active worker is running; result lines scroll above it. Workers run each
-//! file in a fresh GlobalObject and live for the entire run.
+//! The coordinator lazily spawns up to N `bun test --test-worker --isolate`
+//! processes (starting with one, adding another whenever every live worker
+//! has been busy for ≥`scale_up_after_ms`), hands out one file at a time over
+//! stdin, and reads per-test events back over fd 3. Per-test status lines are
+//! streamed to the coordinator the moment a test finishes; worker stdout and
+//! stderr are buffered and flushed atomically before each result line so
+//! console output never interleaves across files. Output is identical to
+//! serial: workers are an implementation detail and never named.
 
 /// fd 3 in the worker. On Windows this must be a libuv (CRT) fd so
 /// `uv_get_osfhandle(3)` resolves to the inherited handle; can't be a
@@ -22,7 +23,6 @@ const Kind = enum(u8) {
     // worker → coordinator
     ready, // (empty)
     file_start, // u32 file_idx
-    test_start, // u32 file_idx, str name
     test_done, // u32 file_idx, str formatted_line (ANSI included; printed verbatim)
     file_done, // 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label, files, unhandled
     repeat_bufs, // 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
@@ -82,87 +82,15 @@ const Frame = struct {
     };
 };
 
-/// Live one-line-per-worker status block drawn at the bottom of a TTY.
-/// Result lines and worker stderr print above it: clear → write → redraw.
-const LiveStatus = struct {
-    enabled: bool,
-    rows: []Row,
-    lines_drawn: u32 = 0,
-    last_draw_ns: i128 = 0,
-
-    const Row = struct {
-        file: []const u8 = "",
-        test_name: []const u8 = "",
-        started_ns: i128 = 0,
-    };
-
-    fn init(allocator: std.mem.Allocator, n: u32) LiveStatus {
-        const enabled = Output.stderr_descriptor_type == .terminal and Output.enable_ansi_colors_stderr;
-        const rows = allocator.alloc(Row, n) catch bun.outOfMemory();
-        @memset(rows, .{});
-        return .{ .enabled = enabled, .rows = rows };
-    }
-
-    fn setFile(self: *LiveStatus, w: u32, file: []const u8) void {
-        const r = &self.rows[w];
-        bun.default_allocator.free(r.file);
-        bun.default_allocator.free(r.test_name);
-        r.* = .{
-            .file = bun.default_allocator.dupe(u8, file) catch bun.outOfMemory(),
-            .started_ns = std.time.nanoTimestamp(),
-        };
-    }
-    fn setTest(self: *LiveStatus, w: u32, name: []const u8) void {
-        const r = &self.rows[w];
-        bun.default_allocator.free(r.test_name);
-        r.test_name = bun.default_allocator.dupe(u8, name) catch bun.outOfMemory();
-        r.started_ns = std.time.nanoTimestamp();
-    }
-    fn setIdle(self: *LiveStatus, w: u32) void {
-        const r = &self.rows[w];
-        bun.default_allocator.free(r.file);
-        bun.default_allocator.free(r.test_name);
-        r.* = .{};
-    }
-
-    fn clear(self: *LiveStatus) void {
-        if (!self.enabled or self.lines_drawn == 0) return;
-        const w = Output.errorWriter();
-        w.print("\x1b[{d}A\x1b[J", .{self.lines_drawn}) catch {};
-        self.lines_drawn = 0;
-    }
-
-    fn draw(self: *LiveStatus) void {
-        if (!self.enabled) return;
-        const now = std.time.nanoTimestamp();
-        self.last_draw_ns = now;
-        const w = Output.errorWriter();
-        for (self.rows) |row| {
-            if (row.file.len == 0) continue;
-            const elapsed_ms: u64 = @intCast(@max(0, @divTrunc(now - row.started_ns, std.time.ns_per_ms)));
-            const name = if (row.test_name.len > 0) row.test_name else "(loading)";
-            w.print(comptime Output.prettyFmt("<r><cyan>⏵<r> <d>{s} ›<r> {s} <d>[{d}ms]<r>\n", true), .{ row.file, name, elapsed_ms }) catch {};
-            self.lines_drawn += 1;
-        }
-        Output.flush();
-    }
-
-    fn maybeRefresh(self: *LiveStatus) void {
-        if (!self.enabled) return;
-        const now = std.time.nanoTimestamp();
-        if (now - self.last_draw_ns < 80 * std.time.ns_per_ms) return;
-        self.clear();
-        self.draw();
-    }
-
-    /// Call before writing permanent output to stderr; pair with `draw()` after.
-    fn open(self: *LiveStatus) void {
-        self.clear();
-    }
-};
+/// All workers are busy for at least this long before another is spawned.
+/// Overridable via BUN_TEST_PARALLEL_SCALE_MS for tests, where debug-build
+/// module load alone can exceed the production 5ms threshold.
+const default_scale_up_after_ms = 5;
 
 /// Reads worker output (IPC, stdout, or stderr) and routes it. One per pipe.
-/// IPC bytes are frame-decoded; stdout/stderr are split on newlines.
+/// IPC bytes are frame-decoded; stdout/stderr accumulate into the worker's
+/// `captured` buffer and flush atomically with the next test result so console
+/// output from concurrent files never interleaves.
 const WorkerPipe = struct {
     reader: bun.io.BufferedReader = bun.io.BufferedReader.init(WorkerPipe),
     worker: *Worker = undefined,
@@ -175,22 +103,19 @@ const WorkerPipe = struct {
     }
 
     pub fn onReadChunk(this: *WorkerPipe, chunk: []const u8, _: bun.io.ReadState) bool {
+        if (this.role != .ipc) {
+            bun.handleOom(this.worker.captured.appendSlice(bun.default_allocator, chunk));
+            return true;
+        }
         this.buf.appendSlice(bun.default_allocator, chunk) catch bun.outOfMemory();
         var head: usize = 0;
-        if (this.role == .ipc) {
-            while (this.buf.items.len - head >= 5) {
-                const len = std.mem.readInt(u32, this.buf.items[head..][0..4], .little);
-                if (this.buf.items.len - head < 5 + len) break;
-                const kind: Kind = @enumFromInt(this.buf.items[head + 4]);
-                var rd = Frame.Reader{ .p = this.buf.items[head + 5 ..][0..len] };
-                this.worker.coord.onFrame(this.worker, kind, &rd);
-                head += 5 + len;
-            }
-        } else {
-            while (std.mem.indexOfScalarPos(u8, this.buf.items, head, '\n')) |nl| {
-                this.worker.coord.onTextLine(this.worker, this.buf.items[head..nl]);
-                head = nl + 1;
-            }
+        while (this.buf.items.len - head >= 5) {
+            const len = std.mem.readInt(u32, this.buf.items[head..][0..4], .little);
+            if (this.buf.items.len - head < 5 + len) break;
+            const kind: Kind = @enumFromInt(this.buf.items[head + 4]);
+            var rd = Frame.Reader{ .p = this.buf.items[head + 5 ..][0..len] };
+            this.worker.coord.onFrame(this.worker, kind, &rd);
+            head += 5 + len;
         }
         if (head > 0) {
             const rest = this.buf.items.len - head;
@@ -199,12 +124,7 @@ const WorkerPipe = struct {
         }
         return true;
     }
-    pub fn onReaderDone(this: *WorkerPipe) void {
-        if (this.role != .ipc and this.buf.items.len > 0) {
-            this.worker.coord.onTextLine(this.worker, this.buf.items);
-            this.buf.clearRetainingCapacity();
-        }
-    }
+    pub fn onReaderDone(_: *WorkerPipe) void {}
     pub fn onReaderError(_: *WorkerPipe, _: bun.sys.Error) void {}
     pub fn eventLoop(this: *WorkerPipe) *jsc.EventLoop {
         return this.worker.coord.vm.eventLoop();
@@ -226,6 +146,12 @@ pub const Worker = struct {
 
     /// Index into `Coordinator.files` currently running on this worker.
     inflight: ?u32 = null,
+    /// `std.time.milliTimestamp()` at the most recent dispatch; drives lazy
+    /// scale-up.
+    dispatched_at: i64 = 0,
+    /// Worker stdout+stderr since the last `test_done`. Flushed atomically
+    /// under the right file header so concurrent files don't interleave.
+    captured: std.ArrayListUnmanaged(u8) = .empty,
     alive: bool = false,
     extra_fd_stdio: [1]bun.spawn.SpawnOptions.Stdio = undefined,
 
@@ -338,6 +264,7 @@ pub const Worker = struct {
         f.str(file);
         f.send(fd);
         this.inflight = file_idx;
+        this.dispatched_at = std.time.milliTimestamp();
     }
 
     fn shutdown(this: *Worker) void {
@@ -373,34 +300,64 @@ pub const Coordinator = struct {
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. null at start.
     last_header_idx: ?u32 = null,
-    live: LiveStatus,
     frame: Frame = .{},
+    parallel_limit: u32,
+    scale_up_after_ms: i64,
     bail: u32,
+    dots: bool,
     next_file: u32 = 0,
     files_done: u32 = 0,
+    spawned_count: u32 = 0,
     live_workers: u32 = 0,
     crashed_files: u32 = 0,
     bailed: bool = false,
+    last_printed_dot: bool = false,
 
     fn isDone(this: *const Coordinator) bool {
         return (this.files_done >= this.files.len or this.bailed) and this.live_workers == 0;
     }
 
     pub fn drive(this: *Coordinator) void {
-        for (this.workers) |*w| {
-            w.start() catch |e| {
-                Output.err(e, "failed to spawn test worker {d}", .{w.idx});
-                bun.Global.exit(1);
-            };
-        }
-        this.live.draw();
+        this.spawnWorker();
         while (!this.isDone()) {
             this.vm.eventLoop().tick();
-            this.live.maybeRefresh();
+            this.maybeScaleUp();
             if (this.isDone()) break;
-            this.vm.eventLoop().autoTick();
+            if (this.spawned_count < this.parallel_limit and this.next_file < this.files.len and !this.bailed) {
+                // Bound the wait so we wake to scale up even if no I/O arrives.
+                var ts = bun.timespec{ .sec = 0, .nsec = this.scale_up_after_ms * std.time.ns_per_ms };
+                this.vm.eventLoop().usocketsLoop().tickWithTimeout(&ts);
+            } else {
+                this.vm.eventLoop().autoTick();
+            }
         }
-        this.live.clear();
+    }
+
+    fn spawnWorker(this: *Coordinator) void {
+        bun.assert(this.spawned_count < this.parallel_limit);
+        const w = &this.workers[this.spawned_count];
+        this.spawned_count += 1;
+        w.start() catch |e| {
+            Output.err(e, "failed to spawn test worker", .{});
+            if (this.live_workers == 0) bun.Global.exit(1);
+        };
+    }
+
+    /// Once every live worker has been busy for at least `scale_up_after_ms`,
+    /// spawn the remaining workers. A suite of trivially fast files therefore
+    /// runs on one worker with zero spawn overhead; the first slow file
+    /// triggers full scale-up so longer suites aren't staircased.
+    fn maybeScaleUp(this: *Coordinator) void {
+        if (this.spawned_count >= this.parallel_limit) return;
+        if (this.bailed or this.next_file >= this.files.len) return;
+        const now = std.time.milliTimestamp();
+        for (this.workers[0..this.spawned_count]) |*w| {
+            if (!w.alive) continue;
+            if (w.inflight == null) return;
+            if (now - w.dispatched_at < this.scale_up_after_ms) return;
+        }
+        const want = @min(this.parallel_limit, @as(u32, @intCast(this.files.len)) - this.files_done);
+        while (this.spawned_count < want) this.spawnWorker();
     }
 
     fn assignWork(this: *Coordinator, w: *Worker) void {
@@ -416,10 +373,10 @@ pub const Coordinator = struct {
     fn bailOut(this: *Coordinator) void {
         if (this.bailed) return;
         this.bailed = true;
-        this.live.open();
+        this.breakDots();
         Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.bail, if (this.bail == 1) "" else "s" });
         Output.flush();
-        for (this.workers) |*other| {
+        for (this.workers[0..this.spawned_count]) |*other| {
             if (other.alive and other.inflight == null) other.shutdown();
         }
     }
@@ -429,49 +386,56 @@ pub const Coordinator = struct {
     }
 
     fn ensureHeader(this: *Coordinator, file_idx: u32) void {
+        if (this.dots) return;
         if (this.last_header_idx == file_idx) return;
         this.last_header_idx = file_idx;
-        const w = Output.errorWriter();
-        w.print("\n{s}:\n", .{this.relPath(file_idx)}) catch {};
+        Output.errorWriter().print("\n{s}:\n", .{this.relPath(file_idx)}) catch {};
     }
 
-    fn onTextLine(this: *Coordinator, w: *Worker, line: []const u8) void {
-        this.live.open();
+    fn breakDots(this: *Coordinator) void {
+        if (this.last_printed_dot) {
+            Output.errorWriter().writeByte('\n') catch {};
+            this.last_printed_dot = false;
+        }
+    }
+
+    fn flushCaptured(this: *Coordinator, w: *Worker) void {
+        if (w.captured.items.len == 0) return;
+        this.breakDots();
         if (w.inflight) |idx| this.ensureHeader(idx);
-        Output.errorWriter().writeAll(line) catch {};
-        Output.errorWriter().writeByte('\n') catch {};
-        Output.flush();
-        this.live.draw();
+        Output.errorWriter().writeAll(w.captured.items) catch {};
+        if (!std.mem.endsWith(u8, w.captured.items, "\n")) {
+            Output.errorWriter().writeByte('\n') catch {};
+        }
+        w.captured.clearRetainingCapacity();
     }
 
     fn onFrame(this: *Coordinator, w: *Worker, kind: Kind, rd: *Frame.Reader) void {
         switch (kind) {
             .ready => this.assignWorkOrRetry(w),
-            .file_start => {
-                this.live.setFile(w.idx, this.relPath(rd.u32_()));
-                this.live.open();
-                this.live.draw();
-            },
-            .test_start => {
-                _ = rd.u32_();
-                this.live.setTest(w.idx, rd.str());
-                this.live.open();
-                this.live.draw();
-            },
+            .file_start => _ = rd.u32_(),
             .test_done => {
                 const idx = rd.u32_();
                 const formatted = rd.str();
-                if (formatted.len == 0) return; // e.g. pass under isAIAgent() — silenced by design
-                this.live.open();
-                this.ensureHeader(idx);
+                this.flushCaptured(w);
+                if (formatted.len == 0) return; // e.g. pass under --only-failures
+                // dots-mode failures print a full line (writeTestStatusLine);
+                // dots themselves are unterminated.
+                const is_dot = this.dots and !std.mem.endsWith(u8, formatted, "\n");
+                if (!is_dot) {
+                    this.breakDots();
+                    this.ensureHeader(idx);
+                }
                 Output.errorWriter().writeAll(formatted) catch {};
+                this.last_printed_dot = is_dot;
                 Output.flush();
-                this.live.draw();
             },
             .file_done => {
                 var nums: [9]u32 = undefined;
                 for (&nums) |*n| n.* = rd.u32_();
                 _, const pass, const fail, const skip, const todo, const expectations, const skipped_label, const files, const unhandled = nums;
+
+                this.flushCaptured(w);
 
                 const summary = this.reporter.summary();
                 summary.pass += pass;
@@ -483,7 +447,6 @@ pub const Coordinator = struct {
                 summary.files += files;
                 this.reporter.jest.unhandled_errors_between_tests += unhandled;
 
-                this.live.setIdle(w.idx);
                 w.inflight = null;
                 this.files_done += 1;
                 if (this.bail > 0 and summary.fail >= this.bail) this.bailOut();
@@ -509,19 +472,18 @@ pub const Coordinator = struct {
     }
 
     fn onWorkerExit(this: *Coordinator, w: *Worker, status: bun.spawn.Status) void {
-        this.live.setIdle(w.idx);
-        this.live.open();
-        defer this.live.draw();
+        this.flushCaptured(w);
         var retry_idx: ?u32 = null;
         if (w.inflight) |idx| {
-            const file = this.files[idx].slice();
-            const rel = bun.path.relative(bun.fs.FileSystem.instance.top_level_dir, file);
+            this.breakDots();
+            this.ensureHeader(idx);
+            const rel = this.relPath(idx);
             if (this.retries[idx] < 1) {
                 this.retries[idx] += 1;
                 retry_idx = idx;
-                Output.prettyError("<r><yellow>⟳<r> worker {d} crashed running <b>{s}<r>, retrying\n", .{ w.idx, rel });
+                Output.prettyError("<r><yellow>⟳<r> crashed running <b>{s}<r>, retrying\n", .{rel});
             } else {
-                Output.prettyError("<r><red>✗<r> <b>{s}<r> <d>(worker crashed: {s})<r>\n", .{ rel, @tagName(status) });
+                Output.prettyError("<r><red>✗<r> <b>{s}<r> <d>(crashed: {s})<r>\n", .{ rel, @tagName(status) });
                 this.reporter.summary().fail += 1;
                 this.reporter.summary().files += 1;
                 this.crashed_files += 1;
@@ -541,7 +503,7 @@ pub const Coordinator = struct {
             w.err = .{ .role = .stderr };
             w.process = null;
             w.start() catch |e| {
-                Output.err(e, "failed to respawn worker {d}", .{w.idx});
+                Output.err(e, "failed to respawn test worker", .{});
                 if (retry_idx != null) {
                     this.reporter.summary().fail += 1;
                     this.reporter.summary().files += 1;
@@ -598,7 +560,7 @@ pub fn runAsCoordinator(
         return false;
     }
 
-    Output.prettyError("<r><d>--parallel: {d} workers, {d} files<r>\n", .{ n, files.len });
+    Output.prettyError("<d>(parallel)<r>\n", .{});
     Output.flush();
 
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -644,9 +606,14 @@ pub fn runAsCoordinator(
         .workers = workers,
         .retries = retries,
         .pending_retry = pending_retry,
-        .live = LiveStatus.init(allocator, n),
         .worker_tmpdir = worker_tmpdir,
+        .parallel_limit = n,
+        .scale_up_after_ms = if (vm.transpiler.env.get("BUN_TEST_PARALLEL_SCALE_MS")) |s|
+            std.fmt.parseInt(i64, s, 10) catch default_scale_up_after_ms
+        else
+            default_scale_up_after_ms,
         .bail = ctx.test_options.bail,
+        .dots = ctx.test_options.reporters.dots,
     };
 
     for (workers, 0..) |*w, i| {
@@ -904,9 +871,10 @@ fn writeRange(w: *std.Io.Writer, first: *bool, a: u32, b: u32, comptime colors: 
 }
 
 /// Build the argv used for every worker (re)spawn. Forwards every `bun test`
-/// flag that affects how tests *execute inside* a worker. Coordinator-only
-/// concerns — file discovery (`--path-ignore-patterns`, `--changed`), output
-/// format (`--reporter`, `--reporter-outfile`, `--dots`, `--only-failures`),
+/// flag that affects how tests *execute inside* a worker, plus `--dots` and
+/// `--only-failures` since the worker formats result lines and the coordinator
+/// prints them verbatim. Coordinator-only concerns — file discovery
+/// (`--path-ignore-patterns`, `--changed`), `--reporter`/`--reporter-outfile`,
 /// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
 /// forwarded.
 fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0]const u8 {
@@ -927,6 +895,8 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
     try argv.append(arena, try printZ(arena, "--timeout={d}", .{opts.default_timeout_ms}));
     if (opts.run_todo) try argv.append(arena, "--todo");
     if (opts.only) try argv.append(arena, "--only");
+    if (opts.reporters.dots) try argv.append(arena, "--dots");
+    if (opts.reporters.only_failures) try argv.append(arena, "--only-failures");
     if (opts.update_snapshots) try argv.append(arena, "--update-snapshots");
     if (opts.concurrent) try argv.append(arena, "--concurrent");
     if (opts.randomize) try argv.append(arena, "--randomize");
@@ -1079,16 +1049,6 @@ fn workerFlushAggregates(reporter: *CommandLineReporter, vm: *jsc.VirtualMachine
 
 /// Reused across all worker → coordinator emits.
 var worker_frame: Frame = .{};
-
-/// Called from `Execution.onSequenceStarted` in the worker. Tells the
-/// coordinator which test is now running so the live TTY status block can
-/// show it.
-pub fn workerEmitTestStart(file_idx: u32, name: []const u8) void {
-    worker_frame.begin(.test_start);
-    worker_frame.u32_(file_idx);
-    worker_frame.str(name);
-    worker_frame.send(ipcFd());
-}
 
 /// Called from `CommandLineReporter.handleTestCompleted` in the worker with the
 /// fully-formatted status line (✓/✗ + scopes + name + duration, including ANSI

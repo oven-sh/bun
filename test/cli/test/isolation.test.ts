@@ -559,3 +559,51 @@ test("--isolate: cached SourceProvider's module_info rebuilds correct exports", 
   expect(stderr).toContain("0 fail");
   expect(exitCode).toBe(0);
 });
+
+test("--isolate: cached module_info handles `import * as ns; export { ns }` as a Namespace export", async () => {
+  // The zod pattern: re-exporting a namespace import binding. Bun's module_info
+  // must record this as a [Namespace] export entry (not [Local]) so the cached
+  // analyze result matches JSC's ModuleAnalyzer. The debug build's
+  // fallbackParse diff would print "BEGIN analyzeTranspiledModule" + a DIFF
+  // and assert if they disagree.
+  using dir = tempDir("isolate-ns-reexport", {
+    "external.ts": `export const a = 1;\nexport const b = 2;\n`,
+    "re.ts": `import * as ns from "./external";\nexport { ns };\nexport default ns;\nexport * from "./external";\n`,
+    "t1.test.ts": `import {test,expect} from "bun:test";
+import { ns } from "./re";
+import def, * as all from "./re";
+test("t1", () => {
+  (globalThis as any).__t1_ran = true;
+  expect(ns.a).toBe(1);
+  expect(def.b).toBe(2);
+  expect(all.ns.a).toBe(1);
+  expect(all.a).toBe(1);
+  expect(Object.keys(ns).sort()).toEqual(["a","b"]);
+});
+`,
+    "t2.test.ts": `import {test,expect} from "bun:test";
+import { ns } from "./re";
+test("t2", () => {
+  // Isolation sentinel: system bun ignores --isolate, so t2 would see t1's
+  // global mutation and fail here. Ensures this test depends on --isolate.
+  expect((globalThis as any).__t1_ran).toBeUndefined();
+  expect(ns.a).toBe(1);
+  expect(ns.b).toBe(2);
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "./t1.test.ts", "./t2.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("BEGIN analyzeTranspiledModule");
+  expect(stderr).not.toContain("DIFF:");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});

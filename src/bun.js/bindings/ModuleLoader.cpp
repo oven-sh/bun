@@ -511,7 +511,7 @@ extern "C" void Bun__onFulfillAsyncModule(
             }
         } else {
             auto provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
-            if (res->result.value.tag == SyntheticModuleType::JavaScript && Bun__VM__isTestIsolationEnabled(globalObject->bunVM())) {
+            if (res->result.value.tag == SyntheticModuleType::JavaScript && Bun__VM__useIsolationSourceProviderCache(globalObject->bunVM())) {
                 WebCore::clientData(vm)->isolationSourceProviderCache.add(specifier->toWTFString(BunString::ZeroCopy), Ref<JSC::SourceProvider>(provider.get()));
             }
             promise->resolve(globalObject, vm, JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider))));
@@ -1012,19 +1012,12 @@ static JSValue fetchESMSourceCode(
         }
     }
 
-    static const bool debugIsolationCache = getenv("BUN_DEBUG_ISOLATE_SOURCE_CACHE") != nullptr;
-    static const bool disableIsolationCache = getenv("BUN_DISABLE_ISOLATION_SOURCE_CACHE") != nullptr;
-    const bool useIsolationCache = !disableIsolationCache && isBunTest && Bun__VM__isTestIsolationEnabled(bunVM) && (typeAttribute == nullptr || typeAttribute->isEmpty());
+    const bool useIsolationCache = isBunTest && Bun__VM__useIsolationSourceProviderCache(bunVM) && (typeAttribute == nullptr || typeAttribute->isEmpty());
     if (useIsolationCache) {
         auto& cache = WebCore::clientData(vm)->isolationSourceProviderCache;
-        auto key = specifier->toWTFString(BunString::ZeroCopy);
-        if (auto* cached = cache.get(key)) {
-            if (debugIsolationCache) [[unlikely]]
-                fprintf(stderr, "[isolate-source-cache] hit  %s\n", key.utf8().data());
+        if (auto* cached = cache.get(specifier->toWTFString(BunString::ZeroCopy))) {
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached)))));
         }
-        if (debugIsolationCache) [[unlikely]]
-            fprintf(stderr, "[isolate-source-cache] miss %s\n", key.utf8().data());
     }
 
     if constexpr (allowPromise) {

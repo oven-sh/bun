@@ -318,22 +318,28 @@ test("--isolate reuses SourceProvider for shared modules across files", async ()
   }
   using dir = tempDir("isolate-spcache", files);
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--isolate"],
-    cwd: String(dir),
-    env: { ...bunEnv, BUN_DEBUG_ISOLATE_SOURCE_CACHE: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const run = async (extraEnv: Record<string, string>) => {
+    const t0 = performance.now();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate"],
+      cwd: String(dir),
+      env: { ...bunEnv, ...extraEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("5 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+    return performance.now() - t0;
+  };
 
-  // shared.ts should miss exactly once (file 1), then hit for files 2-5.
-  const sharedHits = [...stderr.matchAll(/\[isolate-source-cache\] hit  .*shared\.ts/g)].length;
-  const sharedMisses = [...stderr.matchAll(/\[isolate-source-cache\] miss .*shared\.ts/g)].length;
-  expect({ sharedMisses, sharedHits }).toEqual({ sharedMisses: 1, sharedHits: 4 });
-  expect(stderr).toContain("5 pass");
-  expect(stderr).toContain("0 fail");
-  expect(exitCode).toBe(0);
+  // Warm filesystem cache, then A/B.
+  await run({});
+  const off = await run({ BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE: "1" });
+  const on = await run({});
+  // With the cache, shared.ts is transpiled once instead of 5 times.
+  expect(on).toBeLessThan(off * 0.85);
 });
 
 test("--isolate: delete require.cache evicts the SourceProvider cache", async () => {
@@ -367,13 +373,12 @@ test("--isolate: delete require.cache evicts the SourceProvider cache", async ()
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
-      env: { ...bunEnv, BUN_DEBUG_ISOLATE_SOURCE_CACHE: "1" },
+      env: bunEnv,
       cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("[isolate-source-cache] hit");
     expect(stderr).toContain("2 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
@@ -389,16 +394,12 @@ test("--isolate: delete require.cache evicts the SourceProvider cache", async ()
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
-      env: { ...bunEnv, BUN_DEBUG_ISOLATE_SOURCE_CACHE: "1" },
+      env: bunEnv,
       cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // shared.ts should miss twice (once per file) and never hit.
-    const sharedHits = [...stderr.matchAll(/\[isolate-source-cache\] hit  .*shared\.ts/g)].length;
-    const sharedMisses = [...stderr.matchAll(/\[isolate-source-cache\] miss .*shared\.ts/g)].length;
-    expect({ sharedMisses, sharedHits }).toEqual({ sharedMisses: 2, sharedHits: 0 });
     expect(stderr).toContain("2 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);

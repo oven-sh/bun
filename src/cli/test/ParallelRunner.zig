@@ -780,13 +780,16 @@ pub fn runAsCoordinator(
 
     // Sort lexicographically so adjacent indices share parent directories.
     // Each worker owns a contiguous chunk; co-located files share imports, so
-    // this keeps each worker's isolation SourceProvider cache hot.
+    // this keeps each worker's isolation SourceProvider cache hot. --randomize
+    // explicitly opts out of locality (the caller already shuffled).
     const sorted = try arena.allocator().dupe(PathString, files);
-    std.sort.pdq(PathString, sorted, {}, struct {
-        fn lt(_: void, a: PathString, b: PathString) bool {
-            return bun.strings.order(a.slice(), b.slice()) == .lt;
-        }
-    }.lt);
+    if (!ctx.test_options.randomize) {
+        std.sort.pdq(PathString, sorted, {}, struct {
+            fn lt(_: void, a: PathString, b: PathString) bool {
+                return bun.strings.order(a.slice(), b.slice()) == .lt;
+            }
+        }.lt);
+    }
 
     const workers = try allocator.alloc(Worker, K);
     const retries = try allocator.alloc(u8, sorted.len);

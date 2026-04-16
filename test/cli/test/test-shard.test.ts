@@ -73,10 +73,12 @@ describe.concurrent("--shard", () => {
     expect(b.exitCode).toBe(0);
   });
 
-  test("composes with --randomize: shard selection happens before shuffle", async () => {
+  test("composes with --randomize: shard selection is independent of the seed", async () => {
     // Shard selection sorts, picks, then --randomize shuffles only the
-    // selected subset. So the SET of files in a shard is independent
-    // of the seed, and a fixed seed gives a reproducible order.
+    // selected subset. This test verifies the SET of files in a shard
+    // is unaffected by randomization — every seed (and no seed) yields
+    // the same shard membership. Shuffle-order determinism under a
+    // fixed seed is covered by test-randomize.test.ts.
     using dir = makeFixture("shard-randomize", 12);
     const cwd = String(dir);
 
@@ -85,13 +87,11 @@ describe.concurrent("--shard", () => {
     const seeded2 = await runShard(cwd, "2/4", ["--seed=123"]);
     const otherSeed = await runShard(cwd, "2/4", ["--seed=999999"]);
 
-    // Same set of files regardless of randomization (ran is sorted).
     expect(plain.ran).toEqual(["f01", "f05", "f09"]);
     expect(seeded1.ran).toEqual(plain.ran);
     expect(seeded2.ran).toEqual(plain.ran);
     expect(otherSeed.ran).toEqual(plain.ran);
 
-    // Same seed → same result.
     expect(seeded1.stderr).toContain("--shard=2/4:");
     for (const r of [plain, seeded1, seeded2, otherSeed]) expect(r.exitCode).toBe(0);
   });

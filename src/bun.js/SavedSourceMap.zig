@@ -4,6 +4,13 @@ const SavedSourceMap = @This();
 map: *HashTable,
 mutex: bun.Mutex = .{},
 
+/// Warm cache for `remapStackFramePositions`: the last decoded sync window and
+/// the last (path_hash -> ISM) resolution. Guarded by `mutex`. Invalidated on
+/// any `putValue` since that may free the cached blob.
+find_cache: InternalSourceMap.FindCache = .{},
+last_path_hash: u64 = 0,
+last_ism: ?InternalSourceMap = null,
+
 pub fn init(this: *SavedSourceMap, map: *HashTable) void {
     this.* = .{
         .map = map,
@@ -136,6 +143,7 @@ pub fn deinit(this: *SavedSourceMap) void {
 
 pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings: MutableString) !void {
     const blob = try bun.default_allocator.dupe(u8, mappings.list.items);
+    errdefer bun.default_allocator.free(blob);
     try this.putValue(source.path.text, Value.init(bun.cast(*InternalSourceMap, blob.ptr)));
 }
 
@@ -143,6 +151,8 @@ pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
     this.lock();
     defer this.unlock();
 
+    this.find_cache.data = null;
+    this.last_ism = null;
     const entry = try this.map.getOrPut(bun.hash(path));
     if (entry.found_existing) {
         var old_value = Value.from(entry.value_ptr.*);
@@ -177,34 +187,19 @@ fn getWithContent(
 
     switch (Value.from(mapping.value_ptr.*).tag()) {
         @field(Value.Tag, @typeName(InternalSourceMap)) => {
-            // Rare path: a caller wants a ParsedSourceMap (e.g.
-            // `node:module`.findSourceMap). Re-encode to VLQ, parse into a
-            // Mapping.List, and swap the table entry so this only happens once.
+            // Runtime-transpiled module. Wrap the blob in a refcounted
+            // ParsedSourceMap shell (no VLQ decode, no Mapping.List) so callers
+            // can hold a ref while the table mutates. The shell takes ownership
+            // of the blob.
             defer this.unlock();
             const ism: InternalSourceMap = .{
                 .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(InternalSourceMap))),
             };
-            var vlq = MutableString.initEmpty(bun.default_allocator);
-            defer vlq.deinit();
-            ism.appendVLQTo(&vlq);
-
-            const parsed = switch (SourceMap.Mapping.parse(
-                bun.default_allocator,
-                vlq.list.items,
-                ism.mappingCount(),
-                1,
-                ism.inputLineCount(),
-                .{},
-            )) {
-                .fail => {
-                    ism.deinit();
-                    _ = this.map.remove(hash);
-                    return .{};
-                },
-                .success => |success| success,
-            };
-            ism.deinit();
-            const result = bun.new(ParsedSourceMap, parsed);
+            const result = bun.new(ParsedSourceMap, .{
+                .ref_count = .init(),
+                .input_line_count = ism.inputLineCount(),
+                .internal = ism,
+            });
             mapping.value_ptr.* = Value.init(result).ptr();
             result.ref();
             return .{ .map = result };
@@ -311,16 +306,10 @@ pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
     return this.getWithContent(path, .mappings_only).map;
 }
 
-/// Returns a view over the InternalSourceMap blob if `path` was inserted via
-/// `putMappings` (runtime-transpiled module). The blob lives until the entry is
-/// replaced or the table is deinitialized; callers must not retain the view
-/// across module reloads.
-pub fn getInternal(this: *SavedSourceMap, path: string) ?InternalSourceMap {
-    this.lock();
-    defer this.unlock();
-    const raw = this.map.get(bun.hash(path)) orelse return null;
-    const ptr = Value.from(raw).get(InternalSourceMap) orelse return null;
-    return .{ .data = @as([*]u8, @ptrCast(ptr)) };
+/// Mutex must already be held. Returns the raw table value for `hash` if any.
+pub fn getValueLocked(this: *SavedSourceMap, hash: u64) ?Value {
+    const raw = this.map.get(hash) orelse return null;
+    return Value.from(raw);
 }
 
 pub fn resolveMapping(
@@ -330,29 +319,6 @@ pub fn resolveMapping(
     column: bun.Ordinal,
     source_handling: SourceMap.SourceContentHandling,
 ) ?SourceMap.Mapping.Lookup {
-    {
-        this.lock();
-        defer this.unlock();
-        if (this.map.get(bun.hash(path))) |raw| {
-            if (Value.from(raw).get(InternalSourceMap)) |ptr| {
-                const ism = InternalSourceMap{ .data = @as([*]u8, @ptrCast(ptr)) };
-                const mapping = ism.find(line, column) orelse return null;
-                // `source_handling` is irrelevant for this arm. Runtime-transpiled
-                // modules have no external sources (`isExternal() == false`), so on
-                // `main` this codepath returned a ParsedSourceMap that
-                // `remapZigException` ignored anyway and fell through to
-                // `fetchWithoutOnLoadPlugins(.print_source)` for the code frame.
-                // Returning `source_map = null` reaches the same fallback one
-                // branch earlier.
-                return .{
-                    .mapping = mapping,
-                    .source_map = null,
-                    .prefetched_source_code = null,
-                };
-            }
-        }
-    }
-
     const parse = this.getWithContent(path, switch (source_handling) {
         .no_source_contents => .mappings_only,
         .source_contents => .{ .all = .{ .line = @max(line.zeroBased(), 0), .column = @max(column.zeroBased(), 0) } },

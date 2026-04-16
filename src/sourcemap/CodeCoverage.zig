@@ -416,11 +416,7 @@ pub const ByteRangeMapping = struct {
 
         var executable_lines: Bitset = Bitset{};
         var lines_which_have_executed: Bitset = Bitset{};
-        const internal_mapping_ = bun.jsc.VirtualMachine.get().source_mappings.getInternal(source_url.slice());
-        const parsed_mappings_ = if (internal_mapping_ == null)
-            bun.jsc.VirtualMachine.get().source_mappings.get(source_url.slice())
-        else
-            null;
+        const parsed_mappings_ = bun.jsc.VirtualMachine.get().source_mappings.get(source_url.slice());
         defer if (parsed_mappings_) |parsed_mapping| parsed_mapping.deref();
         var line_hits = LinesHits{};
 
@@ -440,7 +436,7 @@ pub const ByteRangeMapping = struct {
         errdefer lines_which_have_executed.deinit(allocator);
         var line_count: u32 = 0;
 
-        if (ignore_sourcemap or (parsed_mappings_ == null and internal_mapping_ == null)) {
+        if (ignore_sourcemap or parsed_mappings_ == null) {
             line_count = @truncate(line_starts.len);
             executable_lines = try Bitset.initEmpty(allocator, line_count);
             lines_which_have_executed = try Bitset.initEmpty(allocator, line_count);
@@ -531,113 +527,6 @@ pub const ByteRangeMapping = struct {
                 if (did_fn_execute)
                     functions_which_have_executed.set(i);
             }
-        } else if (internal_mapping_) |ism| {
-            line_count = @as(u32, @truncate(ism.inputLineCount())) + 1;
-            executable_lines = try Bitset.initEmpty(allocator, line_count);
-            lines_which_have_executed = try Bitset.initEmpty(allocator, line_count);
-            line_hits = try LinesHits.initCapacity(allocator, line_count);
-            line_hits.len = line_count;
-            const line_hits_slice = line_hits.slice();
-            @memset(line_hits_slice, 0);
-            errdefer line_hits.deinit(allocator);
-
-            var cur = ism.cursor();
-
-            for (blocks, 0..) |block, i| {
-                if (block.endOffset < 0 or block.startOffset < 0) continue; // does not map to anything
-
-                const min: usize = @intCast(@min(block.startOffset, block.endOffset));
-                const max: usize = @intCast(@max(block.startOffset, block.endOffset));
-                var min_line: u32 = std.math.maxInt(u32);
-                var max_line: u32 = 0;
-                const has_executed = block.hasExecuted or block.executionCount > 0;
-
-                for (min..max) |byte_offset| {
-                    const new_line_index = LineOffsetTable.findIndex(line_starts, .{ .start = @intCast(byte_offset) }) orelse continue;
-                    const line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset >= byte_offset) {
-                        continue;
-                    }
-                    const column_position = byte_offset -| line_start_byte_offset;
-
-                    if (cur.moveTo(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)))) |*point| {
-                        if (point.original.lines.zeroBased() < 0) continue;
-
-                        const line: u32 = @as(u32, @intCast(point.original.lines.zeroBased()));
-
-                        executable_lines.set(line);
-                        if (has_executed) {
-                            lines_which_have_executed.set(line);
-                            line_hits_slice[line] += 1;
-                        }
-
-                        min_line = @min(min_line, line);
-                        max_line = @max(max_line, line);
-                    }
-                }
-
-                if (min_line != std.math.maxInt(u32)) {
-                    try stmts.append(allocator, .{
-                        .start_line = min_line,
-                        .end_line = max_line,
-                    });
-
-                    if (has_executed)
-                        stmts_which_have_executed.set(i);
-                }
-            }
-
-            for (function_blocks, 0..) |function, i| {
-                if (function.endOffset < 0 or function.startOffset < 0) continue; // does not map to anything
-
-                const min: usize = @intCast(@min(function.startOffset, function.endOffset));
-                const max: usize = @intCast(@max(function.startOffset, function.endOffset));
-                var min_line: u32 = std.math.maxInt(u32);
-                var max_line: u32 = 0;
-
-                for (min..max) |byte_offset| {
-                    const new_line_index = LineOffsetTable.findIndex(line_starts, .{ .start = @intCast(byte_offset) }) orelse continue;
-                    const line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset >= byte_offset) {
-                        continue;
-                    }
-
-                    const column_position = byte_offset -| line_start_byte_offset;
-
-                    if (cur.moveTo(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)))) |point| {
-                        if (point.original.lines.zeroBased() < 0) continue;
-
-                        const line: u32 = @as(u32, @intCast(point.original.lines.zeroBased()));
-                        min_line = @min(min_line, line);
-                        max_line = @max(max_line, line);
-                    }
-                }
-
-                // no sourcemaps? ignore it
-                if (min_line == std.math.maxInt(u32) and max_line == 0) {
-                    continue;
-                }
-
-                const did_fn_execute = function.executionCount > 0 or function.hasExecuted;
-
-                // only mark the lines as executable if the function has not executed
-                // functions that have executed have non-executable lines in them and thats fine.
-                if (!did_fn_execute) {
-                    const end = @min(max_line, line_count);
-                    for (min_line..end) |line| {
-                        executable_lines.set(line);
-                        lines_which_have_executed.unset(line);
-                        line_hits_slice[line] = 0;
-                    }
-                }
-
-                try functions.append(allocator, .{
-                    .start_line = min_line,
-                    .end_line = max_line,
-                });
-                if (did_fn_execute)
-                    functions_which_have_executed.set(i);
-            }
         } else if (parsed_mappings_) |parsed_mapping| {
             line_count = @as(u32, @truncate(parsed_mapping.input_line_count)) + 1;
             executable_lines = try Bitset.initEmpty(allocator, line_count);
@@ -648,6 +537,8 @@ pub const ByteRangeMapping = struct {
             @memset(line_hits_slice, 0);
             errdefer line_hits.deinit(allocator);
 
+            var cur_: ?bun.SourceMap.InternalSourceMap.Cursor = parsed_mapping.internalCursor();
+
             for (blocks, 0..) |block, i| {
                 if (block.endOffset < 0 or block.startOffset < 0) continue; // does not map to anything
 
@@ -665,7 +556,11 @@ pub const ByteRangeMapping = struct {
                     }
                     const column_position = byte_offset -| line_start_byte_offset;
 
-                    if (parsed_mapping.mappings.find(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)))) |*point| {
+                    const found = if (cur_) |*c|
+                        c.moveTo(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)))
+                    else
+                        parsed_mapping.findMapping(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)));
+                    if (found) |*point| {
                         if (point.original.lines.zeroBased() < 0) continue;
 
                         const line: u32 = @as(u32, @intCast(point.original.lines.zeroBased()));
@@ -709,7 +604,11 @@ pub const ByteRangeMapping = struct {
 
                     const column_position = byte_offset -| line_start_byte_offset;
 
-                    if (parsed_mapping.mappings.find(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)))) |point| {
+                    const found = if (cur_) |*c|
+                        c.moveTo(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)))
+                    else
+                        parsed_mapping.findMapping(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)));
+                    if (found) |point| {
                         if (point.original.lines.zeroBased() < 0) continue;
 
                         const line: u32 = @as(u32, @intCast(point.original.lines.zeroBased()));

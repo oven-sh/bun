@@ -267,7 +267,10 @@ pub const StandaloneModuleGraph = struct {
                 .none => null,
                 .parsed => |map| map,
                 .serialized => |serialized| {
-                    const blob = serialized.mappingBlob();
+                    const blob = serialized.mappingBlob() orelse {
+                        this.* = .none;
+                        return null;
+                    };
                     if (blob.len < SourceMap.InternalSourceMap.header_size) {
                         this.* = .none;
                         return null;
@@ -1374,9 +1377,11 @@ pub const StandaloneModuleGraph = struct {
             return @ptrCast(map.bytes.ptr);
         }
 
-        pub fn mappingBlob(map: SerializedSourceMap) []const u8 {
+        pub fn mappingBlob(map: SerializedSourceMap) ?[]const u8 {
+            if (map.bytes.len < @sizeOf(Header)) return null;
             const head = map.header();
             const start = @sizeOf(Header) + head.source_files_count * @sizeOf(StringPointer) * 2;
+            if (start > map.bytes.len or head.map_bytes_length > map.bytes.len - start) return null;
             return map.bytes[start..][0..head.map_bytes_length];
         }
 

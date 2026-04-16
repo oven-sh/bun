@@ -98,9 +98,16 @@ pub fn findMapping(this: *const ParsedSourceMap, line: bun.Ordinal, column: bun.
     return this.mappings.find(line, column);
 }
 
+pub fn internalCursor(this: *const ParsedSourceMap) ?InternalSourceMap.Cursor {
+    return if (this.internal) |ism| ism.cursor() else null;
+}
+
 fn deinit(this: *ParsedSourceMap) void {
     const allocator = bun.default_allocator;
 
+    if (this.internal) |ism| {
+        if (!this.is_standalone_module_graph) ism.deinit();
+    }
     this.mappings.deinit(allocator);
 
     if (this.external_source_names.len > 0) {
@@ -123,6 +130,13 @@ pub fn memoryCost(this: *const ParsedSourceMap) usize {
 }
 
 pub fn writeVLQs(map: *const ParsedSourceMap, writer: anytype) !void {
+    if (map.internal) |ism| {
+        var buf = bun.MutableString.initEmpty(bun.default_allocator);
+        defer buf.deinit();
+        ism.appendVLQTo(&buf);
+        try writer.writeAll(buf.list.items);
+        return;
+    }
     var last_col: i32 = 0;
     var last_src: i32 = 0;
     var last_ol: i32 = 0;

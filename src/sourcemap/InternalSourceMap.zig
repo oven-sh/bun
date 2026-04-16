@@ -34,7 +34,7 @@
 //! mappings we record an absolute SyncPoint{generated, original, source_index,
 //! byte_offset}. `find(line, col)` binary-searches the sync array on
 //! (generated_line, generated_column), seeds decoder state from the hit, then
-//! decodes at most 64 segments forward. (Same trick DWARF .debug_line uses for
+//! decodes at most 16 segments forward. (Same trick DWARF .debug_line uses for
 //! the same problem.) Minified single-line files work because sync points carry
 //! absolute column.
 //!
@@ -48,13 +48,15 @@
 //!                      VLQ -> Mapping.List           InternalSourceMap
 //!     encode           base64-VLQ per mapping        varint append per mapping
 //!     first lookup     decode entire file            none
-//!     resident size    20 B/mapping after decode     ~5-6 B/mapping, constant
+//!     resident size    20 B/mapping after decode     ~6-7 B/mapping, constant
 //!     per-lookup       bsearch over N (8B keys)      bsearch N/64 + <=64 decodes
 //!     interop .map     yes (it *is* the spec)        no -- call appendVLQTo()
 //!
-//! Steady-state lookup is a few percent slower than the fully-decoded array
-//! (<=64 varint reads vs one array index) but avoids the decode and the 4x
-//! residency. Raising `sync_interval` trades memory for per-lookup work.
+//! Steady-state lookup is within a few percent of the fully-decoded array on
+//! `error-capturestack` after C++ batching + the per-VM `FindCache` (decodes a
+//! sync window once, subsequent lookups bsearch the cached State[K] directly).
+//! Raising `sync_interval` trades memory for first-window-decode work; 64 costs
+//! ~0.4 B/mapping in sync points and is ~3.5x smaller than Mapping.List.
 //!
 //! ## Why LEB128 and not Stream VByte
 //!
@@ -152,12 +154,103 @@ pub inline fn stream(self: InternalSourceMap) []const u8 {
     return self.data[self.streamOffset()..self.totalLen()];
 }
 
+/// Only call this when the blob was heap-allocated by `Builder`/`fromVLQ` (e.g.
+/// entries in `SavedSourceMap`). Do NOT call on views over the standalone
+/// module graph section or any other borrowed memory.
 pub fn deinit(self: InternalSourceMap) void {
     bun.default_allocator.free(@constCast(self.data[0..self.totalLen()]));
 }
 
 pub fn memoryCost(self: InternalSourceMap) usize {
     return self.totalLen();
+}
+
+/// Per-caller decode cache. When successive `findWithCache` calls land in the
+/// same sync window (the common case for stack traces in a small file), the
+/// window is decoded once and later calls binary-search the cached `State`s
+/// directly. ~1.5 KB; keep on the caller's stack.
+pub const FindCache = struct {
+    data: ?[*]const u8 = null,
+    sync_idx: u32 = 0,
+    n: u8 = 0,
+    /// stream byte offset reached so far in this window; lazy fill resumes here.
+    stream_pos: u32 = 0,
+    /// stream byte offset where this window ends.
+    end_pos: u32 = 0,
+    win: [sync_interval]State = undefined,
+};
+
+pub fn findWithCache(self: InternalSourceMap, line: bun.Ordinal, column: bun.Ordinal, cache: *FindCache) ?Mapping {
+    const target_line = line.zeroBased();
+    const target_col = column.zeroBased();
+    const n_sync = self.syncCount();
+    if (n_sync == 0) return null;
+
+    var lo: usize = 0;
+    var hi: usize = n_sync;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        if (self.syncPoint(mid).lessOrEqual(target_line, target_col)) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if (lo == 0) return null;
+    const sync_idx: u32 = @intCast(lo - 1);
+
+    const bytes = self.stream();
+    if (cache.data != self.data or cache.sync_idx != sync_idx or cache.n == 0) {
+        const sp = self.syncPoint(sync_idx);
+        cache.win[0] = .{
+            .generated_line = sp.generated_line,
+            .generated_column = sp.generated_column,
+            .source_index = sp.source_index,
+            .original_line = sp.original_line,
+            .original_column = sp.original_column,
+        };
+        cache.data = self.data;
+        cache.sync_idx = sync_idx;
+        cache.n = 1;
+        cache.stream_pos = sp.byte_offset;
+        cache.end_pos = @intCast(if (sync_idx + 1 < n_sync) self.syncPoint(sync_idx + 1).byte_offset else bytes.len);
+    }
+
+    // Lazily extend the cached window only as far as needed to cover `target`.
+    {
+        var n = cache.n;
+        var pos: usize = cache.stream_pos;
+        var state = cache.win[n - 1];
+        while (pos < cache.end_pos and n < sync_interval and
+            (state.generated_line < target_line or
+                (state.generated_line == target_line and state.generated_column <= target_col)))
+        {
+            pos = decodeMappingInto(bytes, pos, &state);
+            cache.win[n] = state;
+            n += 1;
+        }
+        cache.n = n;
+        cache.stream_pos = @intCast(pos);
+    }
+
+    const win = cache.win[0..cache.n];
+    var l: usize = 0;
+    var h: usize = win.len;
+    while (l < h) {
+        const mid = l + (h - l) / 2;
+        const s = win[mid];
+        if (s.generated_line < target_line or
+            (s.generated_line == target_line and s.generated_column <= target_col))
+        {
+            l = mid + 1;
+        } else {
+            h = mid;
+        }
+    }
+    if (l == 0) return null;
+    const best = win[l - 1];
+    if (best.generated_line != target_line) return null;
+    return best.toMapping();
 }
 
 /// Matches the semantics of `Mapping.List.find`: returns the last mapping with
@@ -375,11 +468,15 @@ fn readVarint(bytes: []const u8, pos: *usize) i32 {
         return zigzagDecode(first);
     }
     var result: u32 = first & 0x7f;
-    var shift: u5 = 7;
+    var shift: u6 = 7;
     while (true) {
+        // Corruption guards: a truncated stream or a >5-byte varint (only
+        // possible if the .pile cache or --compile section is malformed) yields
+        // value-so-far rather than reading out of bounds or wrapping `shift`.
+        if (i >= bytes.len or shift > 28) break;
         const byte = bytes[i];
         i += 1;
-        result |= @as(u32, byte & 0x7f) << shift;
+        result |= @as(u32, byte & 0x7f) << @as(u5, @intCast(shift));
         if (byte & 0x80 == 0) break;
         shift += 7;
     }
@@ -418,7 +515,7 @@ fn decodeMappingInto(bytes: []const u8, start: usize, state: *State) usize {
 pub fn fromVLQ(
     allocator: std.mem.Allocator,
     vlq: []const u8,
-    input_line_count: u32,
+    input_line_count_hint: u32,
 ) error{InvalidSourceMap}![]u8 {
     var builder = Builder.init(allocator);
     errdefer builder.deinit();
@@ -427,6 +524,7 @@ pub fn fromVLQ(
     var source_index: i32 = 0;
     var original_line: i32 = 0;
     var original_column: i32 = 0;
+    var max_original_line: i32 = 0;
 
     var remain = vlq;
     while (remain.len > 0) {
@@ -473,6 +571,7 @@ pub fn fromVLQ(
         }
         if (remain.len > 0 and remain[0] == ',') remain = remain[1..];
 
+        max_original_line = @max(max_original_line, original_line);
         builder.appendMapping(.{
             .generated_column = generated_column,
             .source_index = source_index,
@@ -485,7 +584,10 @@ pub fn fromVLQ(
     const blob = out.list.items;
     const total_len: u64 = @intCast(blob.len);
     const mapping_count: u64 = builder.count;
-    const input_lines: u64 = input_line_count;
+    const input_lines: u64 = @max(
+        @as(u64, input_line_count_hint),
+        @as(u64, @intCast(max_original_line)) + 1,
+    );
     blob[0..8].* = @bitCast(total_len);
     blob[8..16].* = @bitCast(mapping_count);
     blob[16..24].* = @bitCast(input_lines);

@@ -218,7 +218,7 @@ pub fn parseJSON(
     const mapping, const source_index = switch (hint) {
         .source_only => |index| .{ null, index },
         .all => |loc| brk: {
-            const mapping = map.?.mappings.find(.fromZeroBased(loc.line), .fromZeroBased(loc.column)) orelse
+            const mapping = map.?.findMapping(.fromZeroBased(loc.line), .fromZeroBased(loc.column)) orelse
                 break :brk .{ null, null };
             break :brk .{ mapping, std.math.cast(u32, mapping.source_index) };
         },

@@ -7,7 +7,7 @@
 // strict Host/authority matching. Per RFC 7230 §5.3.2 the default port should
 // be omitted; curl and Node's `http.request` both do this.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
 import net from "node:net";
 

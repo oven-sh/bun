@@ -42,17 +42,17 @@ const Frame = struct {
     fn begin(self: *Frame, kind: Kind) void {
         self.buf.clearRetainingCapacity();
         // reserve header; payload_len patched in send()
-        self.buf.appendNTimes(bun.default_allocator, 0, 4) catch bun.outOfMemory();
-        self.buf.append(bun.default_allocator, @intFromEnum(kind)) catch bun.outOfMemory();
+        bun.handleOom(self.buf.appendNTimes(bun.default_allocator, 0, 4));
+        bun.handleOom(self.buf.append(bun.default_allocator, @intFromEnum(kind)));
     }
     fn u32_(self: *Frame, v: u32) void {
         var le: [4]u8 = undefined;
         std.mem.writeInt(u32, &le, v, .little);
-        self.buf.appendSlice(bun.default_allocator, &le) catch bun.outOfMemory();
+        bun.handleOom(self.buf.appendSlice(bun.default_allocator, &le));
     }
     fn str(self: *Frame, s: []const u8) void {
         self.u32_(@intCast(s.len));
-        self.buf.appendSlice(bun.default_allocator, s) catch bun.outOfMemory();
+        bun.handleOom(self.buf.appendSlice(bun.default_allocator, s));
     }
     fn send(self: *Frame, fd: bun.FD) void {
         const payload_len: u32 = @intCast(self.buf.items.len - 5);
@@ -99,7 +99,7 @@ const max_frame_payload: u32 = 64 * 1024 * 1024;
 /// output from concurrent files never interleaves.
 const WorkerPipe = struct {
     reader: bun.io.BufferedReader = bun.io.BufferedReader.init(WorkerPipe),
-    worker: *Worker = undefined,
+    worker: *Worker,
     role: enum { ipc, stdout, stderr },
     buf: std.ArrayListUnmanaged(u8) = .empty,
 
@@ -113,7 +113,7 @@ const WorkerPipe = struct {
             bun.handleOom(this.worker.captured.appendSlice(bun.default_allocator, chunk));
             return true;
         }
-        this.buf.appendSlice(bun.default_allocator, chunk) catch bun.outOfMemory();
+        bun.handleOom(this.buf.appendSlice(bun.default_allocator, chunk));
         var head: usize = 0;
         while (this.buf.items.len - head >= 5) {
             const len = std.mem.readInt(u32, this.buf.items[head..][0..4], .little);
@@ -157,9 +157,9 @@ pub const Worker = struct {
     process: ?*bun.spawn.Process = null,
     stdin_fd: ?bun.FD = null,
 
-    ipc: WorkerPipe = .{ .role = .ipc },
-    out: WorkerPipe = .{ .role = .stdout },
-    err: WorkerPipe = .{ .role = .stderr },
+    ipc: WorkerPipe,
+    out: WorkerPipe,
+    err: WorkerPipe,
 
     /// Index into `Coordinator.files` currently running on this worker.
     inflight: ?u32 = null,
@@ -170,15 +170,12 @@ pub const Worker = struct {
     /// under the right file header so concurrent files don't interleave.
     captured: std.ArrayListUnmanaged(u8) = .empty,
     alive: bool = false,
-    extra_fd_stdio: [1]bun.spawn.SpawnOptions.Stdio = undefined,
+    extra_fd_stdio: [1]bun.spawn.SpawnOptions.Stdio = .{.ignore},
 
     fn start(this: *Worker) !void {
         bun.assert(!this.alive);
         const coord = this.coord;
 
-        this.ipc.worker = this;
-        this.out.worker = this;
-        this.err.worker = this;
         this.ipc.reader.setParent(&this.ipc);
         this.out.reader.setParent(&this.out);
         this.err.reader.setParent(&this.err);
@@ -528,7 +525,7 @@ pub const Coordinator = struct {
                 const path = rd.str();
                 if (path.len == 0) return;
                 const list = if (kind == .junit_file) &this.junit_fragments else &this.coverage_fragments;
-                bun.handleOom(list.append(bun.default_allocator, bun.default_allocator.dupe(u8, path) catch bun.outOfMemory()));
+                bun.handleOom(list.append(bun.default_allocator, bun.handleOom(bun.default_allocator.dupe(u8, path))));
             },
             .run, .shutdown => {},
         }
@@ -557,9 +554,9 @@ pub const Coordinator = struct {
             w.ipc.deinit();
             w.out.deinit();
             w.err.deinit();
-            w.ipc = .{ .role = .ipc };
-            w.out = .{ .role = .stdout };
-            w.err = .{ .role = .stderr };
+            w.ipc = .{ .role = .ipc, .worker = w };
+            w.out = .{ .role = .stdout, .worker = w };
+            w.err = .{ .role = .stderr, .worker = w };
             w.process = null;
             if (w.start()) |_| {
                 respawned = true;
@@ -652,7 +649,7 @@ pub fn runAsCoordinator(
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
     if (Output.enable_ansi_colors_stderr) {
-        vm.transpiler.env.map.put("FORCE_COLOR", "1") catch bun.outOfMemory();
+        bun.handleOom(vm.transpiler.env.map.put("FORCE_COLOR", "1"));
     }
     defer if (worker_tmpdir) |d| bun.FD.cwd().deleteTree(d) catch {};
     if (ctx.test_options.reporters.junit or coverage_opts.enabled) {
@@ -662,11 +659,11 @@ pub fn runAsCoordinator(
             bun.Global.exit(1);
         };
         worker_tmpdir = dir;
-        vm.transpiler.env.map.put("BUN_TEST_WORKER_TMP", dir) catch bun.outOfMemory();
+        bun.handleOom(vm.transpiler.env.map.put("BUN_TEST_WORKER_TMP", dir));
         // Coordinator's own JunitReporter would otherwise produce an empty
         // document and overwrite the merged one in writeJUnitReportIfNeeded.
         if (reporter.reporters.junit) |jr| {
-            vm.transpiler.env.map.put("BUN_TEST_WORKER_JUNIT", "1") catch bun.outOfMemory();
+            bun.handleOom(vm.transpiler.env.map.put("BUN_TEST_WORKER_JUNIT", "1"));
             jr.deinit();
             reporter.reporters.junit = null;
         }
@@ -701,7 +698,13 @@ pub fn runAsCoordinator(
     };
 
     for (workers, 0..) |*w, i| {
-        w.* = .{ .coord = &coord, .idx = @intCast(i) };
+        w.* = .{
+            .coord = &coord,
+            .idx = @intCast(i),
+            .ipc = .{ .role = .ipc, .worker = w },
+            .out = .{ .role = .stdout, .worker = w },
+            .err = .{ .role = .stderr, .worker = w },
+        };
     }
 
     vm.eventLoop().ensureWaker();
@@ -725,7 +728,7 @@ fn mergeJUnitFragments(paths: []const []const u8, outfile: []const u8, summary: 
     defer contents.deinit(bun.default_allocator);
 
     const elapsed_time = @as(f64, @floatFromInt(std.time.nanoTimestamp() - bun.start_time)) / std.time.ns_per_s;
-    contents.writer(bun.default_allocator).print(
+    bun.handleOom(contents.writer(bun.default_allocator).print(
         \\<?xml version="1.0" encoding="UTF-8"?>
         \\<testsuites name="bun test" tests="{d}" assertions="{d}" failures="{d}" skipped="{d}" time="{d}">
         \\
@@ -735,7 +738,7 @@ fn mergeJUnitFragments(paths: []const []const u8, outfile: []const u8, summary: 
         summary.fail,
         summary.skip + summary.todo,
         elapsed_time,
-    }) catch bun.outOfMemory();
+    }));
 
     for (paths) |path| {
         const file = switch (bun.sys.File.readFrom(bun.FD.cwd(), path, bun.default_allocator)) {
@@ -750,13 +753,13 @@ fn mergeJUnitFragments(paths: []const []const u8, outfile: []const u8, summary: 
         if (body_start >= body_end) continue;
         const body = std.mem.trim(u8, file[body_start..body_end], "\n");
         if (body.len == 0) continue;
-        contents.appendSlice(bun.default_allocator, body) catch bun.outOfMemory();
-        contents.append(bun.default_allocator, '\n') catch bun.outOfMemory();
+        bun.handleOom(contents.appendSlice(bun.default_allocator, body));
+        bun.handleOom(contents.append(bun.default_allocator, '\n'));
     }
 
-    contents.appendSlice(bun.default_allocator, "</testsuites>\n") catch bun.outOfMemory();
+    bun.handleOom(contents.appendSlice(bun.default_allocator, "</testsuites>\n"));
 
-    const out_z = bun.default_allocator.dupeZ(u8, outfile) catch bun.outOfMemory();
+    const out_z = bun.handleOom(bun.default_allocator.dupeZ(u8, outfile));
     defer bun.default_allocator.free(out_z);
     switch (bun.sys.File.openat(.cwd(), out_z, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
         .err => |err| Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{f}", .{ outfile, err }),
@@ -791,7 +794,7 @@ fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.CodeCove
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var by_file: std.StringArrayHashMapUnmanaged(FileCoverage) = .empty;
+    var by_file: bun.StringArrayHashMapUnmanaged(FileCoverage) = .empty;
 
     for (paths) |path| {
         const data = switch (bun.sys.File.readFrom(bun.FD.cwd(), path, arena)) {
@@ -804,9 +807,9 @@ fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.CodeCove
             const line = std.mem.trimEnd(u8, raw, "\r");
             if (bun.strings.hasPrefixComptime(line, "SF:")) {
                 const name = line[3..];
-                const gop = by_file.getOrPut(arena, name) catch bun.outOfMemory();
+                const gop = bun.handleOom(by_file.getOrPut(arena, name));
                 if (!gop.found_existing) {
-                    gop.key_ptr.* = arena.dupe(u8, name) catch bun.outOfMemory();
+                    gop.key_ptr.* = bun.handleOom(arena.dupe(u8, name));
                     gop.value_ptr.* = .{ .path = gop.key_ptr.* };
                 }
                 cur = gop.value_ptr;
@@ -817,7 +820,7 @@ fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.CodeCove
                     var parts = std.mem.splitScalar(u8, line[3..], ',');
                     const ln = std.fmt.parseInt(u32, parts.next() orelse continue, 10) catch continue;
                     const cnt = std.fmt.parseInt(u32, parts.next() orelse continue, 10) catch continue;
-                    const gop = fc.da.getOrPut(arena, ln) catch bun.outOfMemory();
+                    const gop = bun.handleOom(fc.da.getOrPut(arena, ln));
                     gop.value_ptr.* = if (gop.found_existing) gop.value_ptr.* +| cnt else cnt;
                 } else if (bun.strings.hasPrefixComptime(line, "FNF:")) {
                     fc.fnf = @max(fc.fnf, std.fmt.parseInt(u32, line[4..], 10) catch 0);
@@ -851,11 +854,11 @@ fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.CodeCove
             .err => |e| Output.err(.lcovCoverageError, "Failed to write merged lcov.info\n{f}", .{e}),
             .result => |f| {
                 defer f.close();
-                const buf = arena.alloc(u8, 64 * 1024) catch bun.outOfMemory();
+                const buf = bun.handleOom(arena.alloc(u8, 64 * 1024));
                 var bw = f.writer().adaptToNewApi(buf);
                 const w = &bw.new_interface;
                 for (by_file.values()) |*fc| {
-                    const sorted = arena.dupe(u32, fc.da.keys()) catch bun.outOfMemory();
+                    const sorted = bun.handleOom(arena.dupe(u32, fc.da.keys()));
                     std.sort.pdq(u32, sorted, {}, std.sort.asc(u32));
                     w.print("TN:\nSF:{s}\nFNF:{d}\nFNH:{d}\n", .{ fc.path, fc.fnf, fc.fnh }) catch {};
                     for (sorted) |ln| w.print("DA:{d},{d}\n", .{ ln, fc.da.get(ln).? }) catch {};
@@ -870,7 +873,7 @@ fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.CodeCove
     var failing = false;
     var avg = CoverageFraction{ .functions = 0, .lines = 0, .stmts = 0 };
     var avg_n: f64 = 0;
-    const fracs = arena.alloc(CoverageFraction, by_file.count()) catch bun.outOfMemory();
+    const fracs = bun.handleOom(arena.alloc(CoverageFraction, by_file.count()));
     for (by_file.values(), fracs) |*fc, *frac| {
         const lf: f64 = @floatFromInt(fc.da.count());
         const lh_: f64 = @floatFromInt(fc.lh());
@@ -912,7 +915,7 @@ fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.CodeCove
             CoverageReportText.writeFormatWithValues(fc.path, max_len, frac, base, frac.failing, &body.writer, true, enable_colors) catch {};
             body.writer.writeAll(Output.prettyFmt("<r><d> | <r>", enable_colors)) catch {};
 
-            const sorted = arena.dupe(u32, fc.da.keys()) catch bun.outOfMemory();
+            const sorted = bun.handleOom(arena.dupe(u32, fc.da.keys()));
             std.sort.pdq(u32, sorted, {}, std.sort.asc(u32));
             var first = true;
             var range_start: u32 = 0;
@@ -1080,7 +1083,7 @@ pub fn runAsWorker(
                 const idx = rd.u32_();
                 // Copy out before consuming; rd points into stdin_buf.
                 path_buf.clearRetainingCapacity();
-                path_buf.appendSlice(bun.default_allocator, rd.str()) catch bun.outOfMemory();
+                bun.handleOom(path_buf.appendSlice(bun.default_allocator, rd.str()));
                 std.mem.copyForwards(u8, stdin_buf.items, stdin_buf.items[consumed..]);
                 stdin_buf.items.len -= consumed;
 
@@ -1140,7 +1143,7 @@ fn workerFlushAggregates(reporter: *CommandLineReporter, vm: *jsc.VirtualMachine
         else
             @intCast(std.c.getpid());
         if (reporter.reporters.junit) |junit| {
-            const path = std.fmt.allocPrintSentinel(bun.default_allocator, "{s}/w{d}.xml", .{ dir, id }, 0) catch bun.outOfMemory();
+            const path = bun.handleOom(std.fmt.allocPrintSentinel(bun.default_allocator, "{s}/w{d}.xml", .{ dir, id }, 0));
             if (junit.current_file.len > 0) junit.endTestSuite() catch {};
             if (junit.writeToFile(path)) |_| {
                 worker_frame.begin(.junit_file);
@@ -1151,7 +1154,7 @@ fn workerFlushAggregates(reporter: *CommandLineReporter, vm: *jsc.VirtualMachine
             }
         }
         if (ctx.test_options.coverage.enabled) {
-            const path = std.fmt.allocPrintSentinel(bun.default_allocator, "{s}/cov{d}.lcov", .{ dir, id }, 0) catch bun.outOfMemory();
+            const path = bun.handleOom(std.fmt.allocPrintSentinel(bun.default_allocator, "{s}/cov{d}.lcov", .{ dir, id }, 0));
             if (reporter.writeLcovOnly(vm, &ctx.test_options.coverage, path)) |_| {
                 worker_frame.begin(.coverage_file);
                 worker_frame.str(path);

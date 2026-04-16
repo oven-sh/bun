@@ -229,7 +229,13 @@ pub const PendingInternalPromise = struct {
 
     pub fn get(this: *const PendingInternalPromise) ?*JSInternalPromise {
         const v = this.strong.get() orelse return null;
-        return v.asInternalPromise();
+        // Several callers historically store a plain JSPromise* here through a
+        // lying extern (e.g. Bun__loadHTMLEntryPoint, the old
+        // JSC__JSInternalPromise__resolvedPromise). All consumers only call
+        // JSPromise base-class methods (status/result/isHandled), so cast the
+        // cell directly instead of jsDynamicCast<JSInternalPromise*> which
+        // would correctly-but-unhelpfully return null for those cases.
+        return @ptrCast(v.asCell());
     }
 
     pub fn deinit(this: *PendingInternalPromise) void {

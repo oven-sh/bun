@@ -133,12 +133,23 @@ extern "C" void WebWorker__setRef(
 
 void Worker::setKeepAlive(bool keepAlive)
 {
+    Locker locker { m_implLock };
+    if (!impl_)
+        return;
     WebWorker__setRef(impl_, keepAlive);
+}
+
+void Worker::clearZigImpl()
+{
+    Locker locker { m_implLock };
+    impl_ = nullptr;
 }
 
 bool Worker::updatePtr()
 {
+    Locker locker { m_implLock };
     if (!WebWorker__updatePtr(impl_, this)) {
+        impl_ = nullptr;
         m_onlineClosingFlags = ClosingFlag;
         m_terminationFlags.fetch_or(TerminatedFlag);
         return false;
@@ -216,7 +227,10 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
     }
 
-    worker->impl_ = impl;
+    {
+        Locker locker { worker->m_implLock };
+        worker->impl_ = impl;
+    }
     worker->m_workerCreationTime = MonotonicTime::now();
 
     return worker;
@@ -263,6 +277,9 @@ void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
+    Locker locker { m_implLock };
+    if (!impl_)
+        return;
     WebWorker__notifyNeedTermination(impl_);
 }
 
@@ -467,6 +484,10 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
+    // The Zig WebWorker struct is about to be freed on this (worker) thread.
+    // Block until any in-flight ref()/unref()/terminate() from the parent
+    // thread is done, then clear the pointer so they become no-ops.
+    worker->clearZigImpl();
     worker->dispatchExit(exitCode);
     // no longer referenced by Zig
     worker->deref();

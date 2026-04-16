@@ -919,8 +919,7 @@ pub fn fromVLQ(
 /// transpiler or `--compile`.
 pub const TestingAPIs = struct {
     pub fn fromVLQ(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(1);
-        const vlq_str = try (arguments.ptr[0]).toBunString(globalThis);
+        const vlq_str = try callframe.argument(0).toBunString(globalThis);
         defer vlq_str.deref();
         const vlq = vlq_str.toUTF8(bun.default_allocator);
         defer vlq.deinit();
@@ -933,8 +932,7 @@ pub const TestingAPIs = struct {
     }
 
     pub fn toVLQ(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(1);
-        const ab = arguments.ptr[0].asArrayBuffer(globalThis) orelse {
+        const ab = callframe.argument(0).asArrayBuffer(globalThis) orelse {
             return globalThis.throw("InternalSourceMap.toVLQ: expected Uint8Array", .{});
         };
         const bytes = ab.byteSlice();
@@ -949,16 +947,15 @@ pub const TestingAPIs = struct {
     }
 
     pub fn find(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const arguments = callframe.arguments_old(3);
-        const ab = arguments.ptr[0].asArrayBuffer(globalThis) orelse {
+        const ab = callframe.argument(0).asArrayBuffer(globalThis) orelse {
             return globalThis.throw("InternalSourceMap.find: expected Uint8Array", .{});
         };
         const bytes = ab.byteSlice();
         if (!isValidBlob(bytes)) {
             return globalThis.throw("InternalSourceMap.find: invalid blob", .{});
         }
-        const line = arguments.ptr[1].toInt32();
-        const col = arguments.ptr[2].toInt32();
+        const line = callframe.argument(1).toInt32();
+        const col = callframe.argument(2).toInt32();
         if (line < 0 or col < 0) return .null;
         const ism = InternalSourceMap{ .data = bytes.ptr };
         const mapping = ism.find(.fromZeroBased(line), .fromZeroBased(col)) orelse return .null;

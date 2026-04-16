@@ -189,6 +189,7 @@ pub const WalkTask = struct {
 
     fn deinit(this: *WalkTask) void {
         this.walker.deinit(true);
+        this.alloc.destroy(this.walker);
         this.alloc.destroy(this);
     }
 };
@@ -313,7 +314,10 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFram
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
-    const globWalker = try this.makeGlobWalker(globalThis, &arguments, "scan", alloc, &arena) orelse {
+    const globWalker = this.makeGlobWalker(globalThis, &arguments, "scan", alloc, &arena) catch |err| {
+        arena.deinit();
+        return err;
+    } orelse {
         arena.deinit();
         return .js_undefined;
     };
@@ -321,6 +325,8 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFram
     incrPendingActivityFlag(&this.has_pending_activity);
     var task = WalkTask.create(globalThis, alloc, globWalker, &this.has_pending_activity) catch {
         decrPendingActivityFlag(&this.has_pending_activity);
+        globWalker.deinit(true);
+        alloc.destroy(globWalker);
         return globalThis.throwOutOfMemory();
     };
     task.schedule();
@@ -336,11 +342,17 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.Call
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
-    var globWalker = try this.makeGlobWalker(globalThis, &arguments, "scanSync", alloc, &arena) orelse {
+    var globWalker = this.makeGlobWalker(globalThis, &arguments, "scanSync", alloc, &arena) catch |err| {
+        arena.deinit();
+        return err;
+    } orelse {
         arena.deinit();
         return .js_undefined;
     };
-    defer globWalker.deinit(true);
+    defer {
+        globWalker.deinit(true);
+        alloc.destroy(globWalker);
+    }
 
     switch (try globWalker.walk()) {
         .err => |err| {

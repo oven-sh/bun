@@ -271,7 +271,7 @@ pub const StandaloneModuleGraph = struct {
                         this.* = .none;
                         return null;
                     };
-                    if (blob.len < SourceMap.InternalSourceMap.header_size) {
+                    if (!SourceMap.InternalSourceMap.isValidBlob(blob)) {
                         this.* = .none;
                         return null;
                     }

@@ -242,6 +242,7 @@ WTF::String formatStackTrace(
     WTF::Vector<WTF::String, 8> sourceURLs;
     WTF::Vector<LineColumn, 8> originalLineColumns;
     remappedFrames.grow(framesCount);
+    memset(remappedFrames.begin(), 0, sizeof(ZigStackFrame) * framesCount);
     sourceURLs.grow(framesCount);
     originalLineColumns.grow(framesCount);
     bool anyRemap = false;
@@ -249,8 +250,13 @@ WTF::String formatStackTrace(
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
         ZigStackFrame& remappedFrame = remappedFrames[i];
+        // Match `ZigStackFramePosition.invalid` exactly so the Zig batch loop's
+        // `position.isInvalid()` skips frames we never populate (vm-context
+        // frames, frames without line/col info). memset alone leaves
+        // `line_start_byte = 0` which fails that byte-compare.
         remappedFrame.position.line_zero_based = -1;
         remappedFrame.position.column_zero_based = -1;
+        remappedFrame.position.byte_position = -1;
         originalLineColumns[i] = {};
 
         if (!frame.hasLineAndColumnInfo()) continue;
@@ -450,6 +456,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
         didRemap[i] = false;
         frame.position.line_zero_based = -1;
         frame.position.column_zero_based = -1;
+        frame.position.byte_position = -1;
 
         // When you use node:vm, the global object can be different on a
         // per-frame basis. We should sourcemap the frames which are in Bun's

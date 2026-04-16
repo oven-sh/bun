@@ -170,6 +170,23 @@ pub fn memoryCost(self: InternalSourceMap) usize {
     return self.totalLen();
 }
 
+/// Sanity-check the blob's self-described layout against its actual length.
+/// Used by `StandaloneModuleGraph.LazySourceMap.load` so a corrupted embedded
+/// section degrades to "no sourcemap" instead of OOB reads.
+pub fn isValidBlob(blob: []const u8) bool {
+    if (blob.len < header_size) return false;
+    const self = InternalSourceMap{ .data = blob.ptr };
+    const total = self.totalLen();
+    if (total != blob.len) return false;
+    const sync_n = self.syncCount();
+    const stream_off = self.streamOffset();
+    const sync_end = header_size + @as(usize, sync_n) * @sizeOf(SyncEntry);
+    if (stream_off < sync_end) return false;
+    if (stream_off > total) return false;
+    if (total < stream_off + stream_tail_pad) return false;
+    return true;
+}
+
 const State = struct {
     generated_line: i32 = 0,
     generated_column: i32 = 0,

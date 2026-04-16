@@ -16,14 +16,29 @@ let body = "";
 for (let i = 0; i < STMTS; i++) {
   body += `  if (a === ${i}) { const x${i}: number = (a * ${i}) | 0; return x${i} + b.length; }\n`;
 }
-const big = `export function big(a: number, b: string): number {\n${body}  return -1;\n}\nexport const MARKER = ${STMTS};\n`;
+const big =
+  `// Isolation guard: this module must evaluate in a fresh global per test file.
+// If a runner loads it twice in the same global (no isolation), the second load
+// sees the prior counter and throws — making the bench fail instead of silently
+// measuring the wrong thing.
+declare const globalThis: { __big_loaded?: number };
+if (globalThis.__big_loaded !== undefined) {
+  throw new Error("big.ts evaluated twice in the same global (isolation is not active)");
+}
+globalThis.__big_loaded = (globalThis.__big_loaded ?? 0) + 1;
+export const LOAD_COUNT = globalThis.__big_loaded;
+` + `export function big(a: number, b: string): number {\n${body}  return -1;\n}\nexport const MARKER = ${STMTS};\n`;
 writeFileSync(`${root}/big.ts`, big);
 
 for (let f = 0; f < FILES; f++) {
   writeFileSync(
     `${root}/t${String(f).padStart(2, "0")}.test.ts`,
-    `import { big, MARKER } from "./big";
+    `import { big, MARKER, LOAD_COUNT } from "./big";
 test("t${f}", () => {
+  // Fails if a prior test file ran in this same global (i.e. no isolation).
+  expect((globalThis as any).__isolate_bench_seen).toBeUndefined();
+  (globalThis as any).__isolate_bench_seen = ${f};
+  expect(LOAD_COUNT).toBe(1);
   expect(typeof big).toBe("function");
   expect(MARKER).toBe(${STMTS});
 });

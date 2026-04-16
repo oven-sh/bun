@@ -65,13 +65,15 @@ private:
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
         : Base(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType)
-        , m_globalObject(globalObject)
+        , m_bunVM(globalObject->bunVM())
         , m_source(sourceImpl)
     {
         m_resolvedSource = resolvedSource;
     }
 
-    Zig::GlobalObject* m_globalObject;
+    // Stored directly (not via the creating global) so the destructor stays
+    // valid when the provider outlives its global under --isolate caching.
+    void* m_bunVM;
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     Ref<WTF::StringImpl> m_source;
     unsigned m_hash = 0;

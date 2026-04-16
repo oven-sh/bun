@@ -169,7 +169,7 @@ SourceProvider::~SourceProvider()
 {
     if (m_resolvedSource.already_bundled) {
         BunString str = Bun::toString(sourceURL());
-        Bun__removeSourceProviderSourceMap(m_globalObject->bunVM(), this, &str);
+        Bun__removeSourceProviderSourceMap(m_bunVM, this, &str);
     }
     if (m_resolvedSource.module_info != nullptr) {
         zig__ModuleInfoDeserialized__deinit(static_cast<bun_ModuleInfoDeserialized*>(m_resolvedSource.module_info));

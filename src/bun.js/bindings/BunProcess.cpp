@@ -3096,6 +3096,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_execArgv);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
+    thisObject->m_threadCpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);
     thisObject->m_memoryUsageStructure.visit(visitor);
     thisObject->m_bindingUV.visit(visitor);

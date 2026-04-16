@@ -724,9 +724,9 @@ fn mergeJUnitFragments(paths: []const []const u8, outfile: []const u8, summary: 
         };
         defer bun.default_allocator.free(file);
         // Each fragment is a full <testsuites> document; extract its body.
-        const open_end = std.mem.indexOf(u8, file, "<testsuites") orelse continue;
-        const body_start = (std.mem.indexOfScalarPos(u8, file, open_end, '>') orelse continue) + 1;
-        const body_end = std.mem.lastIndexOf(u8, file, "</testsuites>") orelse continue;
+        const open_end = bun.strings.indexOf(file, "<testsuites") orelse continue;
+        const body_start = open_end + (bun.strings.indexOfChar(file[open_end..], '>') orelse continue) + 1;
+        const body_end = bun.strings.lastIndexOf(file, "</testsuites>") orelse continue;
         if (body_start >= body_end) continue;
         const body = std.mem.trim(u8, file[body_start..body_end], "\n");
         if (body.len == 0) continue;
@@ -782,7 +782,7 @@ fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.CodeCove
         var lines = std.mem.splitScalar(u8, data, '\n');
         while (lines.next()) |raw| {
             const line = std.mem.trimEnd(u8, raw, "\r");
-            if (std.mem.startsWith(u8, line, "SF:")) {
+            if (bun.strings.hasPrefixComptime(line, "SF:")) {
                 const name = line[3..];
                 const gop = by_file.getOrPut(arena, name) catch bun.outOfMemory();
                 if (!gop.found_existing) {
@@ -790,18 +790,18 @@ fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.CodeCove
                     gop.value_ptr.* = .{ .path = gop.key_ptr.* };
                 }
                 cur = gop.value_ptr;
-            } else if (std.mem.eql(u8, line, "end_of_record")) {
+            } else if (bun.strings.eqlComptime(line, "end_of_record")) {
                 cur = null;
             } else if (cur) |fc| {
-                if (std.mem.startsWith(u8, line, "DA:")) {
+                if (bun.strings.hasPrefixComptime(line, "DA:")) {
                     var parts = std.mem.splitScalar(u8, line[3..], ',');
                     const ln = std.fmt.parseInt(u32, parts.next() orelse continue, 10) catch continue;
                     const cnt = std.fmt.parseInt(u32, parts.next() orelse continue, 10) catch continue;
                     const gop = fc.da.getOrPut(arena, ln) catch bun.outOfMemory();
                     gop.value_ptr.* = if (gop.found_existing) gop.value_ptr.* +| cnt else cnt;
-                } else if (std.mem.startsWith(u8, line, "FNF:")) {
+                } else if (bun.strings.hasPrefixComptime(line, "FNF:")) {
                     fc.fnf = @max(fc.fnf, std.fmt.parseInt(u32, line[4..], 10) catch 0);
-                } else if (std.mem.startsWith(u8, line, "FNH:")) {
+                } else if (bun.strings.hasPrefixComptime(line, "FNH:")) {
                     fc.fnh = @max(fc.fnh, std.fmt.parseInt(u32, line[4..], 10) catch 0);
                 }
             }

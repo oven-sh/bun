@@ -35,8 +35,19 @@ for (let f = 0; f < FILES; f++) {
     `${root}/t${String(f).padStart(2, "0")}.test.ts`,
     `import { big, MARKER, LOAD_COUNT } from "./big";
 test("t${f}", () => {
-  // Fails if a prior test file ran in this same global (i.e. no isolation).
-  expect((globalThis as any).__isolate_bench_seen).toBeUndefined();
+  const seen = (globalThis as any).__isolate_bench_seen;
+  if (seen !== undefined) {
+    throw new Error(
+      "\\n\\n" +
+      "  ┌─────────────────────────────────────────────────────────────┐\\n" +
+      "  │  This benchmark requires per-file isolation.                │\\n" +
+      "  │                                                             │\\n" +
+      "  │  t${String(f).padStart(2, "0")}.test.ts ran in the same global as t" + String(seen).padStart(2, "0") + ".test.ts.         │\\n" +
+      "  │                                                             │\\n" +
+      "  │  Run with:  bun test --isolate ./suite                      │\\n" +
+      "  └─────────────────────────────────────────────────────────────┘\\n"
+    );
+  }
   (globalThis as any).__isolate_bench_seen = ${f};
   expect(LOAD_COUNT).toBe(1);
   expect(typeof big).toBe("function");

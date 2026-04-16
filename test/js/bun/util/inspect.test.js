@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -451,6 +451,30 @@ const fixture = [
         },
       },
     ),
+  () =>
+    Object.setPrototypeOf(
+      {},
+      new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error("nope");
+          },
+        },
+      ),
+    ),
+  () =>
+    Object.setPrototypeOf(
+      { yolo: 1 },
+      new Proxy(
+        { foo: 1 },
+        {
+          getPrototypeOf() {
+            throw new Error("nope");
+          },
+        },
+      ),
+    ),
 ];
 
 describe("crash testing", () => {
@@ -465,6 +489,32 @@ describe("crash testing", () => {
       }
     });
   }
+
+  it("inspecting an object whose prototype is a Proxy with a throwing getPrototypeOf trap", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const obj = Object.setPrototypeOf({}, new Proxy({}, {
+            getPrototypeOf() { throw new Error("nope"); },
+          }));
+          process.stdout.write(Bun.inspect(obj) + "|");
+          const obj2 = Object.setPrototypeOf({ a: 1 }, new Proxy({ b: 2 }, {
+            getPrototypeOf() { throw new Error("nope"); },
+          }));
+          process.stdout.write(Bun.inspect(obj2) + "|");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("{}|");
+    expect(stdout).toContain("a: 1");
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("possibly formatted emojis log", () => {

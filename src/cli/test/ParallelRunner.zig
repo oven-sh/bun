@@ -102,6 +102,10 @@ const WorkerPipe = struct {
     worker: *Worker,
     role: enum { ipc, stdout, stderr },
     buf: std.ArrayListUnmanaged(u8) = .empty,
+    /// EOF or error observed. For the IPC pipe this gates `tryReap` so
+    /// kernel-buffered frames written just before exit() are decoded
+    /// before the pipe is torn down.
+    done: bool = false,
 
     pub fn deinit(this: *WorkerPipe) void {
         this.reader.deinit();
@@ -122,6 +126,7 @@ const WorkerPipe = struct {
                 // worker so onWorkerExit accounts for the in-flight file and
                 // the slot can respawn.
                 this.buf.clearRetainingCapacity();
+                this.done = true;
                 if (this.worker.process) |p| _ = p.kill(9);
                 return false;
             }
@@ -141,8 +146,14 @@ const WorkerPipe = struct {
         }
         return true;
     }
-    pub fn onReaderDone(_: *WorkerPipe) void {}
-    pub fn onReaderError(_: *WorkerPipe, _: bun.sys.Error) void {}
+    pub fn onReaderDone(this: *WorkerPipe) void {
+        this.done = true;
+        if (this.role == .ipc) this.worker.coord.tryReap(this.worker);
+    }
+    pub fn onReaderError(this: *WorkerPipe, _: bun.sys.Error) void {
+        this.done = true;
+        if (this.role == .ipc) this.worker.coord.tryReap(this.worker);
+    }
     pub fn eventLoop(this: *WorkerPipe) *jsc.EventLoop {
         return this.worker.coord.vm.eventLoop();
     }
@@ -170,6 +181,9 @@ pub const Worker = struct {
     /// under the right file header so concurrent files don't interleave.
     captured: std.ArrayListUnmanaged(u8) = .empty,
     alive: bool = false,
+    /// Set when the process-exit notification arrives. Reaping waits for both
+    /// this and `ipc.done` so trailing IPC frames are decoded first.
+    exit_status: ?bun.spawn.Status = null,
     extra_fd_stdio: [1]bun.spawn.SpawnOptions.Stdio = .{.ignore},
 
     fn start(this: *Worker) !void {
@@ -210,12 +224,15 @@ pub const Worker = struct {
                 .stream = true,
             };
             var spawned = try (try bun.spawn.spawnProcess(&options, coord.argv.ptr, coord.envp)).unwrap();
+            defer spawned.extra_pipes.deinit();
             this.process = spawned.toProcess(coord.vm.eventLoop(), false);
             this.stdin_fd = spawned.stdin;
             if (spawned.stdout) |fd| try this.out.reader.start(fd, true).unwrap();
             if (spawned.stderr) |fd| try this.err.reader.start(fd, true).unwrap();
             if (spawned.extra_pipes.items.len > 0) {
                 try this.ipc.reader.start(spawned.extra_pipes.items[0], true).unwrap();
+            } else {
+                this.ipc.done = true;
             }
         } else {
             // Windows: stdin and the fd-3 results pipe are created with
@@ -286,7 +303,6 @@ pub const Worker = struct {
 
     pub fn onProcessExit(this: *Worker, _: *bun.spawn.Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
         this.alive = false;
-        this.coord.live_workers -= 1;
         if (this.stdin_fd) |fd| {
             fd.close();
             this.stdin_fd = null;
@@ -458,7 +474,7 @@ pub const Coordinator = struct {
         this.breakDots();
         if (w.inflight) |idx| this.ensureHeader(idx);
         Output.errorWriter().writeAll(w.captured.items) catch {};
-        if (!std.mem.endsWith(u8, w.captured.items, "\n")) {
+        if (!bun.strings.endsWithChar(w.captured.items, '\n')) {
             Output.errorWriter().writeByte('\n') catch {};
         }
         w.captured.clearRetainingCapacity();
@@ -475,7 +491,7 @@ pub const Coordinator = struct {
                 if (formatted.len == 0) return; // e.g. pass under --only-failures
                 // dots-mode failures print a full line (writeTestStatusLine);
                 // dots themselves are unterminated.
-                const is_dot = this.dots and !std.mem.endsWith(u8, formatted, "\n");
+                const is_dot = this.dots and !bun.strings.endsWithChar(formatted, '\n');
                 if (!is_dot) {
                     this.breakDots();
                     this.ensureHeader(idx);
@@ -510,7 +526,11 @@ pub const Coordinator = struct {
                 w.inflight = null;
                 this.files_done += 1;
                 if (this.bail > 0 and summary.fail >= this.bail) this.bailOut();
-                this.assignWork(w);
+                // A dead worker can deliver a buffered file_done during the
+                // pre-reap drain; don't dispatch into it (stdin is gone, the
+                // file index would be consumed and skipped). reapWorker()
+                // handles the next dispatch via respawn.
+                if (w.alive) this.assignWork(w);
             },
             .repeat_bufs => {
                 inline for (.{
@@ -532,6 +552,26 @@ pub const Coordinator = struct {
     }
 
     fn onWorkerExit(this: *Coordinator, w: *Worker, status: bun.spawn.Status) void {
+        w.exit_status = status;
+        // POSIX: synchronously drain anything already in the kernel pipe
+        // buffer; the writer is dead so this can't block. On Windows
+        // BufferedReader.read() is just unpause() and the EOF callback drives
+        // tryReap when libuv delivers it.
+        if (!w.ipc.done) w.ipc.reader.read();
+        this.tryReap(w);
+    }
+
+    fn tryReap(this: *Coordinator, w: *Worker) void {
+        const status = w.exit_status orelse return;
+        if (!w.ipc.done) return;
+        w.exit_status = null;
+        this.reapWorker(w, status);
+    }
+
+    fn reapWorker(this: *Coordinator, w: *Worker, status: bun.spawn.Status) void {
+        // Decrement here (not in onProcessExit) so drive() keeps pumping until
+        // the IPC pipe has been drained and this reap actually runs.
+        this.live_workers -= 1;
         this.flushCaptured(w);
         var retry_idx: ?u32 = null;
         if (w.inflight) |idx| {

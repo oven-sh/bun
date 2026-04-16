@@ -613,3 +613,39 @@ test("--parallel: a test writing garbage to fd 3 does not hang the coordinator",
   expect(stderr).toContain("Ran ");
   expect([0, 1]).toContain(exitCode);
 });
+
+test("--parallel --randomize without --seed is reproducible via the printed seed", async () => {
+  const mk = (tag: string) =>
+    `import {test,expect} from "bun:test";\n` +
+    "abcdefgh"
+      .split("")
+      .map(n => `test("${n}",()=>{console.error("ORDER:${tag}:${n}");expect(1).toBe(1);});`)
+      .join("\n");
+  using dir = tempDir("parallel-randomize-seed", { "a.test.ts": mk("a"), "b.test.ts": mk("b") });
+
+  const run = async (extra: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--randomize", ...extra, "./a.test.ts", "./b.test.ts"],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("(parallel)");
+    expect(stderr).toContain("16 pass");
+    expect(exitCode).toBe(0);
+    const order = (tag: string) => [...stderr.matchAll(new RegExp(`ORDER:${tag}:(\\w)`, "g"))].map(m => m[1]).join("");
+    const seed = stderr.match(/--seed=(\d+)/)?.[1];
+    return { stderr, a: order("a"), b: order("b"), seed };
+  };
+
+  const first = await run([]);
+  expect(first.seed).toBeDefined();
+  expect(first.a.length).toBe(8);
+  expect(first.b.length).toBe(8);
+
+  const second = await run([`--seed=${first.seed}`]);
+  // Within-file ordering must match exactly when the printed seed is replayed.
+  expect({ a: second.a, b: second.b }).toEqual({ a: first.a, b: first.b });
+});

@@ -1401,6 +1401,10 @@ pub const TestCommand = struct {
 
         const enable_random = ctx.test_options.randomize;
         const seed: u32 = if (enable_random) ctx.test_options.seed orelse @truncate(bun.fastRandom()) else 0; // seed is limited to u32 so storing it in js doesn't lose precision
+        // Persist the chosen seed so --parallel forwards it to every worker;
+        // otherwise each worker would draw its own and the printed --seed=N
+        // would not reproduce the run.
+        if (enable_random) ctx.test_options.seed = seed;
         var random_instance: ?std.Random.DefaultPrng = if (enable_random) std.Random.DefaultPrng.init(seed) else null;
         const random = if (random_instance) |*instance| instance.random() else null;
 

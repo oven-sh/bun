@@ -92,6 +92,26 @@ describe("--shard", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("does not print shard summary when there are no test files", async () => {
+    // With no test files at all, --shard should stay out of the way and
+    // let the normal "No tests found!" error path handle it.
+    using dir = tempDir("shard-no-files", {
+      "not-a-test.ts": "export const x = 1;",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--shard=1/3"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("--shard=");
+    expect(stderr).not.toContain("0/0");
+    expect(stderr.toLowerCase()).toContain("no tests found");
+    expect(exitCode).not.toBe(0);
+  });
+
   test("empty shard exits 0 without 'No tests found'", async () => {
     // 2 files, 5 shards → shards 3, 4, 5 get nothing.
     using dir = makeFixture("shard-empty", 2);

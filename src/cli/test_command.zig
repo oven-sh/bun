@@ -1682,7 +1682,12 @@ pub const TestCommand = struct {
         // keeps shards roughly balanced regardless of how many files there
         // are, and is stable across runs and machines as long as the set of
         // test files is the same.
-        if (ctx.test_options.shard) |shard| {
+        //
+        // Only runs when there are files to shard — if the scanner or
+        // --changed already produced an empty list, fall through to the
+        // existing "No tests found!" / --changed messaging rather than
+        // printing a confusing "running 0/0 test files".
+        if (ctx.test_options.shard) |shard| if (test_files.len > 0) {
             std.sort.pdq(PathString, test_files, {}, struct {
                 pub fn lessThan(_: void, a: PathString, b: PathString) bool {
                     return strings.order(a.slice(), b.slice()) == .lt;
@@ -1709,14 +1714,14 @@ pub const TestCommand = struct {
             );
             Output.flush();
 
-            if (write == 0 and test_files.len > 0) {
+            if (write == 0) {
                 // There were test files, but fewer than the shard count so
                 // this shard got none. That's fine — not a "no tests
                 // found" error.
                 pass_with_no_tests_from_filter = true;
             }
             test_files = test_files[0..write];
-        }
+        };
 
         // Normally the watcher is only enabled when there are test files to
         // run; `bun test --watch` with nothing matching should still exit.

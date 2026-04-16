@@ -236,8 +236,13 @@ pub const AbortSignal = opaque {
             this.run(vm);
         }
 
-        export fn AbortSignal__Timeout__deinit(this: *Timeout, vm: *jsc.VirtualMachine) void {
-            this.deinit(vm);
+        export fn AbortSignal__Timeout__deinit(this: *Timeout) void {
+            // Called from ~AbortSignal() / cancelTimer(). The AbortSignal's
+            // ScriptExecutionContext may be a dead global under --isolate, so
+            // we resolve the VM via the threadlocal instead of taking it as a
+            // parameter (which the caller would have to dereference the dead
+            // context to obtain).
+            this.deinit(jsc.VirtualMachine.get());
         }
     };
 };

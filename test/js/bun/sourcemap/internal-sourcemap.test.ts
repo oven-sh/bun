@@ -54,12 +54,12 @@ function extractPositions(stack: string): string[] {
     .filter((s): s is string => s !== null);
 }
 
-async function run(files: Record<string, string>) {
+async function run(files: Record<string, string>, env: Record<string, string> = {}) {
   using dir = tempDir("internal-sourcemap", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "index.ts"],
     cwd: String(dir),
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -124,6 +124,43 @@ describe("InternalSourceMap", () => {
     // `function deep()` is at source line 202; the call is at line 203.
     expect(stdout).toMatch(/index\.ts:202:\d+/);
     expect(stdout).toMatch(/index\.ts:203:\d+/);
+    expect(exited).toBe(0);
+  });
+
+  test("FindCache eviction (>16 distinct windows in one stack)", async () => {
+    // 20 functions spread ~125 lines apart in a single file. With ~6 mappings
+    // per padding line that's ~750 mappings between calls -> each frame lands
+    // in a different K=64 window, and 20 windows > FindCache.slot_count (16),
+    // so the cache must evict mid-stack. Capture twice so the second pass
+    // exercises lookups against post-eviction slot state.
+    const lines: string[] = ["Error.stackTraceLimit = 50;", "export const keep: number[] = [];"];
+    const callLines: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      for (let p = 0; p < 125; p++) lines.push(`keep.push(${i * 1000 + p});`);
+      callLines.push(lines.length + 1);
+      lines.push(
+        i === 0
+          ? `function f0(): string { return new Error("e").stack!; }`
+          : `function f${i}(): string { return f${i - 1}(); }`,
+      );
+    }
+    lines.push(`const stacks: string[] = [];`);
+    lines.push(`for (let i = 0; i < 2; i++) stacks.push(f19());`);
+    lines.push(
+      `if (stacks[0] !== stacks[1]) throw new Error("FindCache produced different positions across passes:\\n" + stacks[0] + "\\n---\\n" + stacks[1]);`,
+    );
+    lines.push(`console.log(stacks[0]);`);
+
+    // Disable JSC tail-call elimination so all 20 frames survive in the stack.
+    const { stdout, stderr, exited } = await run(
+      { "index.ts": lines.join("\n") + "\n" },
+      { BUN_JSC_useTailCalls: "0" },
+    );
+
+    expect(stderr).toBe("");
+    for (const ln of callLines) {
+      expect(stdout).toMatch(new RegExp(`index\\.ts:${ln}:`));
+    }
     expect(exited).toBe(0);
   });
 });

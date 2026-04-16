@@ -787,7 +787,8 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
     jsc.API.cron.CronJob.clearAllForVM(this, .reload);
     this.global.reload() catch @panic("Failed to reload");
     this.hot_reload_counter += 1;
-    this.pending_internal_promise.set(this.global, this.reloadEntryPoint(this.main) catch @panic("Failed to reload"));
+    // reloadEntryPoint() already stores into pending_internal_promise on every return path.
+    _ = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
 }
 
 pub inline fn nodeFS(this: *VirtualMachine) *Node.fs.NodeFS {

@@ -183,6 +183,25 @@ pub const Worker = struct {
         this.out.reader.setParent(&this.out);
         this.err.reader.setParent(&this.err);
 
+        // All resource cleanup on any error return — including watchOrReap
+        // failure below. Each guard checks for null/unstarted so the order in
+        // which fields are populated doesn't matter.
+        errdefer {
+            if (this.process) |p| {
+                p.exit_handler = .{};
+                if (!p.hasExited()) _ = p.kill(9);
+                p.close();
+                this.process = null;
+            }
+            if (this.stdin_fd) |fd| {
+                fd.close();
+                this.stdin_fd = null;
+            }
+            this.ipc.deinit();
+            this.out.deinit();
+            this.err.deinit();
+        }
+
         if (Environment.isPosix) {
             this.extra_fd_stdio = .{.buffer};
             const options: bun.spawn.SpawnOptions = .{
@@ -194,12 +213,7 @@ pub const Worker = struct {
                 .stream = true,
             };
             var spawned = try (try bun.spawn.spawnProcess(&options, coord.argv.ptr, coord.envp)).unwrap();
-            const process = spawned.toProcess(coord.vm.eventLoop(), false);
-            errdefer {
-                _ = process.kill(9);
-                process.close();
-            }
-            this.process = process;
+            this.process = spawned.toProcess(coord.vm.eventLoop(), false);
             this.stdin_fd = spawned.stdin;
             if (spawned.stdout) |fd| try this.out.reader.start(fd, true).unwrap();
             if (spawned.stderr) |fd| try this.err.reader.start(fd, true).unwrap();
@@ -217,16 +231,14 @@ pub const Worker = struct {
             // TODO: verify on Windows CI.
             const uv = bun.windows.libuv;
 
-            const stdin_pair = try bun.sys.pipe().unwrap();
-            errdefer {
-                stdin_pair[0].close();
-                stdin_pair[1].close();
-            }
-            const ipc_pair = try bun.sys.pipe().unwrap();
-            errdefer {
-                ipc_pair[0].close();
-                ipc_pair[1].close();
-            }
+            var stdin_pair = try bun.sys.pipe().unwrap();
+            errdefer for (&stdin_pair) |*fd| {
+                if (fd.isValid()) fd.close();
+            };
+            var ipc_pair = try bun.sys.pipe().unwrap();
+            errdefer for (&ipc_pair) |*fd| {
+                if (fd.isValid()) fd.close();
+            };
 
             this.extra_fd_stdio = .{.{ .pipe = ipc_pair[1] }};
             const options: bun.spawn.SpawnOptions = .{
@@ -242,10 +254,14 @@ pub const Worker = struct {
             this.process = spawned.toProcess(coord.vm.eventLoop(), false);
 
             stdin_pair[0].close();
+            stdin_pair[0] = bun.FD.invalid;
             ipc_pair[1].close();
+            ipc_pair[1] = bun.FD.invalid;
             this.stdin_fd = stdin_pair[1];
+            stdin_pair[1] = bun.FD.invalid;
 
             try this.ipc.reader.start(ipc_pair[0], true).unwrap();
+            ipc_pair[0] = bun.FD.invalid;
             if (spawned.stdout == .buffer) try this.out.reader.startWithPipe(spawned.stdout.buffer).unwrap();
             if (spawned.stderr == .buffer) try this.err.reader.startWithPipe(spawned.stderr.buffer).unwrap();
             spawned.extra_pipes.deinit();
@@ -262,19 +278,9 @@ pub const Worker = struct {
                 // synchronously firing onExit() — that would re-enter
                 // onWorkerExit() → start(), which under persistent EMFILE
                 // recurses unboundedly while spawning real processes each frame.
+                // Resource cleanup is handled by the function-scope errdefer.
                 this.alive = false;
                 coord.live_workers -= 1;
-                process.exit_handler = .{};
-                if (!process.hasExited()) _ = process.kill(9);
-                process.close();
-                this.process = null;
-                if (this.stdin_fd) |fd| {
-                    fd.close();
-                    this.stdin_fd = null;
-                }
-                this.ipc.deinit();
-                this.out.deinit();
-                this.err.deinit();
                 Output.err(e, "watchOrReap failed for test worker", .{});
                 return error.ProcessWatchFailed;
             },
@@ -481,9 +487,15 @@ pub const Coordinator = struct {
             .file_done => {
                 var nums: [9]u32 = undefined;
                 for (&nums) |*n| n.* = rd.u32_();
-                _, const pass, const fail, const skip, const todo, const expectations, const skipped_label, const files, const unhandled = nums;
+                const idx, const pass, const fail, const skip, const todo, const expectations, const skipped_label, const files, const unhandled = nums;
 
                 this.flushCaptured(w);
+
+                // A worker can write file_done and crash before the coordinator
+                // reads the frame; onWorkerExit() will already have called
+                // accountCrash() and cleared inflight. Ignore the buffered frame
+                // so we don't double-count.
+                if (w.inflight != idx) return;
 
                 const summary = this.reporter.summary();
                 summary.pass += pass;
@@ -568,6 +580,10 @@ pub const Coordinator = struct {
             if (!this.bailed and this.live_workers == 0) {
                 this.abortQueuedFiles("no live workers");
             }
+            w.ipc.deinit();
+            w.out.deinit();
+            w.err.deinit();
+            w.captured.deinit(bun.default_allocator);
         }
     }
 
@@ -1117,7 +1133,10 @@ fn workerFlushAggregates(reporter: *CommandLineReporter, vm: *jsc.VirtualMachine
     worker_frame.send(ipcFd());
 
     if (worker_tmp) |dir| {
-        const id = std.crypto.random.int(u32);
+        const id: i64 = if (Environment.isWindows)
+            @intCast(std.os.windows.GetCurrentProcessId())
+        else
+            @intCast(std.c.getpid());
         if (reporter.reporters.junit) |junit| {
             const path = std.fmt.allocPrintSentinel(bun.default_allocator, "{s}/w{d}.xml", .{ dir, id }, 0) catch bun.outOfMemory();
             if (junit.current_file.len > 0) junit.endTestSuite() catch {};

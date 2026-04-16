@@ -764,6 +764,7 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
     jsc.API.cron.CronJob.clearAllForVM(this, .reload);
     this.global.reload() catch @panic("Failed to reload");
     this.hot_reload_counter += 1;
+    this.pending_internal_promise_is_protected = false;
     this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
 }
 
@@ -2216,9 +2217,11 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
             if (this.has_patched_run_main) {
                 @branchHint(.cold);
                 this.pending_internal_promise = null;
+                this.pending_internal_promise_is_protected = false;
                 const ret = try jsc.fromJSHostCall(this.global, @src(), NodeModuleModule__callOverriddenRunMain, .{ this.global, try bun.String.createUTF8ForJS(this.global, main_file_name) });
                 if (this.pending_internal_promise == prev or this.pending_internal_promise == null) {
                     this.pending_internal_promise = JSInternalPromise.resolvedPromise(this.global, ret);
+                    this.pending_internal_promise_is_protected = false;
                     return this.pending_internal_promise.?;
                 }
                 return (this.pending_internal_promise orelse prev).?;
@@ -2231,11 +2234,13 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
             try jsc.fromJSHostCallGeneric(this.global, @src(), Bun__loadHTMLEntryPoint, .{this.global});
 
         this.pending_internal_promise = promise;
+        this.pending_internal_promise_is_protected = false;
         JSValue.fromCell(promise).ensureStillAlive();
         return promise;
     } else {
         const promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(this.main)) orelse return error.JSError;
         this.pending_internal_promise = promise;
+        this.pending_internal_promise_is_protected = false;
         JSValue.fromCell(promise).ensureStillAlive();
 
         return promise;
@@ -2255,6 +2260,7 @@ export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm: *VirtualMachine, is_
 export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm: *VirtualMachine, promise: *JSInternalPromise) void {
     if (vm.pending_internal_promise == null) {
         vm.pending_internal_promise = promise;
+        vm.pending_internal_promise_is_protected = false;
     }
 }
 
@@ -2283,6 +2289,7 @@ pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const 
 
     const promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(this.main)) orelse return error.JSError;
     this.pending_internal_promise = promise;
+    this.pending_internal_promise_is_protected = false;
     JSValue.fromCell(promise).ensureStillAlive();
 
     return promise;

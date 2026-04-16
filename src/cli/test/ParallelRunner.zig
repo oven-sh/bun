@@ -826,9 +826,30 @@ fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.CodeCove
         }
     }
 
+    const base = opts.fractions;
+    var failing = false;
+    var avg = CoverageFraction{ .functions = 0, .lines = 0, .stmts = 0 };
+    var avg_n: f64 = 0;
+    const fracs = arena.alloc(CoverageFraction, by_file.count()) catch bun.outOfMemory();
+    for (by_file.values(), fracs) |*fc, *frac| {
+        const lf: f64 = @floatFromInt(fc.da.count());
+        const lh_: f64 = @floatFromInt(fc.lh());
+        const fnf: f64 = @floatFromInt(@max(fc.fnf, 1));
+        frac.* = .{
+            .functions = @as(f64, @floatFromInt(fc.fnh)) / fnf,
+            .lines = if (lf > 0) lh_ / lf else 1.0,
+            .stmts = if (lf > 0) lh_ / lf else 1.0,
+        };
+        frac.failing = frac.functions < base.functions or frac.lines < base.lines;
+        if (frac.failing) failing = true;
+        avg.functions += frac.functions;
+        avg.lines += frac.lines;
+        avg.stmts += frac.stmts;
+        avg_n += 1;
+    }
+    opts.fractions.failing = failing;
+
     if (opts.reporters.text) {
-        const base = opts.fractions;
-        var failing = false;
         var max_len: usize = "All files".len;
         for (by_file.keys()) |k| max_len = @max(max_len, k.len);
 
@@ -847,30 +868,10 @@ fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.CodeCove
         sep(console, max_len, enable_colors);
 
         var body = std.Io.Writer.Allocating.init(arena);
-        var avg = CoverageFraction{ .functions = 0, .lines = 0, .stmts = 0 };
-        var avg_n: f64 = 0;
-
-        for (by_file.values()) |*fc| {
-            const lf: f64 = @floatFromInt(fc.da.count());
-            const lh_: f64 = @floatFromInt(fc.lh());
-            const fnf: f64 = @floatFromInt(@max(fc.fnf, 1));
-            var frac = CoverageFraction{
-                .functions = @as(f64, @floatFromInt(fc.fnh)) / fnf,
-                .lines = if (lf > 0) lh_ / lf else 1.0,
-                .stmts = if (lf > 0) lh_ / lf else 1.0,
-            };
-            const failed = frac.functions < base.functions or frac.lines < base.lines;
-            frac.failing = failed;
-            if (failed) failing = true;
-            avg.functions += frac.functions;
-            avg.lines += frac.lines;
-            avg.stmts += frac.stmts;
-            avg_n += 1;
-
-            CoverageReportText.writeFormatWithValues(fc.path, max_len, frac, base, failed, &body.writer, true, enable_colors) catch {};
+        for (by_file.values(), fracs) |*fc, frac| {
+            CoverageReportText.writeFormatWithValues(fc.path, max_len, frac, base, frac.failing, &body.writer, true, enable_colors) catch {};
             body.writer.writeAll(Output.prettyFmt("<r><d> | <r>", enable_colors)) catch {};
 
-            // Uncovered line ranges (DA entries with count 0).
             const sorted = arena.dupe(u32, fc.da.keys()) catch bun.outOfMemory();
             std.sort.pdq(u32, sorted, {}, std.sort.asc(u32));
             var first = true;
@@ -904,7 +905,6 @@ fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.CodeCove
         console.writeAll(body.written()) catch {};
         sep(console, max_len, enable_colors);
 
-        opts.fractions.failing = failing;
         Output.flush();
     }
 }

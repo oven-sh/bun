@@ -392,6 +392,30 @@ test("--parallel --coverage prints merged text table", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("--parallel --coverage enforces coverageThreshold with lcov-only reporter", async () => {
+  using dir = tempDir("parallel-coverage-threshold", {
+    "bunfig.toml": `[test]\ncoverageThreshold = 0.9\ncoverageSkipTestFiles = true\n`,
+    "lib.js": `export function used() { return 1; }\nexport function unused() { return 2; }\nexport function alsoUnused() { return 3; }\n`,
+    "a.test.js": `import {test,expect} from "bun:test"; import {used} from "./lib.js"; test("a",()=>expect(used()).toBe(1));`,
+    "b.test.js": `import {test,expect} from "bun:test"; import {used} from "./lib.js"; test("b",()=>expect(used()).toBe(1));`,
+  });
+
+  for (const reporter of ["lcov", "text"] as const) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--coverage", `--coverage-reporter=${reporter}`, "--coverage-dir=./cov"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("(parallel)");
+    expect(stderr).toContain("2 pass");
+    // lib.js has 1/3 functions covered → below 0.9 threshold → must fail.
+    expect({ reporter, exitCode }).toEqual({ reporter, exitCode: 1 });
+  }
+});
+
 test("--parallel --dots prints one status character per test", async () => {
   using dir = tempDir("parallel-dots", {
     "a.test.js": `import {test,expect} from "bun:test";

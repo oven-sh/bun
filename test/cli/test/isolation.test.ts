@@ -228,7 +228,13 @@ describe("bun test --isolate", () => {
 
         test("watcher from prior file does not fire", async () => {
           fs.writeFileSync(process.env.WATCH_DIR! + "/poke.txt", String(Date.now()));
-          await Bun.sleep(100);
+          // Poll for up to 500ms; if the leaked watcher fires at any point in
+          // this window the regression is caught (avoids a false pass when a
+          // slow runner delivers the event after a fixed sleep).
+          for (let i = 0; i < 25; i++) {
+            if (fs.existsSync(process.env.FIRE_FILE!)) break;
+            await Bun.sleep(20);
+          }
           expect(fs.existsSync(process.env.FIRE_FILE!)).toBe(false);
         });
       `,

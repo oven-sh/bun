@@ -15,7 +15,11 @@ async function run(src: string) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
+  expect(stdout).toBe("");
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
+  expect(exitCode).toBe(0);
 }
 
 test.concurrent("Worker: ref/unref after terminate does not use-after-free", async () => {

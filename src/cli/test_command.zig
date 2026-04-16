@@ -1539,9 +1539,75 @@ pub const TestCommand = struct {
             };
         }
 
-        const test_files = bun.handleOom(scanner.takeFoundTestFiles());
-        defer ctx.allocator.free(test_files);
+        const all_test_files = bun.handleOom(scanner.takeFoundTestFiles());
+        defer ctx.allocator.free(all_test_files);
         const search_count = scanner.search_count;
+
+        var pass_with_no_tests_from_changed = false;
+        var changed_module_graph_files: []const []const u8 = &.{};
+        defer {
+            for (changed_module_graph_files) |p| ctx.allocator.free(p);
+            ctx.allocator.free(changed_module_graph_files);
+        }
+        const test_files: []PathString = if (ctx.test_options.changed) |changed_since| brk: {
+            // If the Scanner found nothing, fall through to the existing
+            // "no tests found" error path rather than treating it as a
+            // --changed success.
+            if (all_test_files.len == 0) break :brk all_test_files;
+
+            const result = ChangedFilesFilter.filter(ctx, vm, all_test_files, changed_since) catch |err| {
+                Output.err(err, "--changed: unable to determine affected tests", .{});
+                Global.exit(1);
+            };
+            changed_module_graph_files = result.module_graph_files;
+            if (result.test_files.len == 0 and result.changed_count == 0) {
+                Output.prettyError("<r><d>--changed:<r> no changed files, nothing to run\n", .{});
+                pass_with_no_tests_from_changed = true;
+            } else if (result.test_files.len == 0) {
+                Output.prettyError(
+                    "<r><d>--changed:<r> {d} changed file{s}, but no test files are affected\n",
+                    .{ result.changed_count, if (result.changed_count == 1) "" else "s" },
+                );
+                pass_with_no_tests_from_changed = true;
+            } else {
+                Output.prettyError(
+                    "<r><d>--changed:<r> {d} changed file{s}, running {d}/{d} test file{s}\n",
+                    .{
+                        result.changed_count,
+                        if (result.changed_count == 1) "" else "s",
+                        result.test_files.len,
+                        result.total_tests,
+                        if (result.total_tests == 1) "" else "s",
+                    },
+                );
+            }
+            Output.flush();
+            break :brk result.test_files;
+        } else all_test_files;
+
+        // Normally the watcher is only enabled when there are test files to
+        // run; `bun test --watch` with nothing matching should still exit.
+        // With --changed we always want to keep watching as long as any test
+        // files exist, since "nothing changed yet" is the common starting
+        // state and editing a source file should kick off a run.
+        if (test_files.len > 0 or (ctx.test_options.changed != null and all_test_files.len > 0)) {
+            vm.hot_reload = ctx.debug.hot_reload;
+
+            // Install the --changed trigger collector BEFORE the watcher
+            // thread starts so a file edit during runAllTests is still
+            // recorded. The addFileByPathSlow seeding stays after
+            // runAllTests (separate concern; see O_EVTONLY comment
+            // below).
+            if (ctx.test_options.changed != null and vm.hot_reload == .watch) {
+                ChangedFilesFilter.initWatchTrigger(ctx.allocator);
+            }
+
+            switch (vm.hot_reload) {
+                .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm, null),
+                .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm, null),
+                else => {},
+            }
+        }
 
         if (test_files.len > 0) {
             // Randomize the order of test files if --randomize flag is set
@@ -1549,15 +1615,29 @@ pub const TestCommand = struct {
                 rand.shuffle(PathString, test_files);
             }
 
-            vm.hot_reload = ctx.debug.hot_reload;
-
-            switch (vm.hot_reload) {
-                .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm, null),
-                .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm, null),
-                else => {},
-            }
-
             runAllTests(reporter, vm, test_files, ctx.allocator);
+        }
+
+        // With --changed, only a subset of test files (possibly none) runs,
+        // so the module loader won't naturally add every source file to the
+        // watcher. Seed it from the module graph so editing any local source
+        // file — including files only reachable from tests that were
+        // filtered out — still triggers a restart under --watch.
+        //
+        // This must happen AFTER runAllTests: during the run the module
+        // loader registers loaded files with a readable fd, which
+        // RuntimeTranspilerStore reuses on the next load. On macOS
+        // addFileByPathSlow opens with O_EVTONLY (not readable); seeding
+        // first would hand that fd to the transpiler. Seeding after means
+        // loaded files are already present (indexOf early-returns) and only
+        // the never-loaded filtered-out subgraph gets an O_EVTONLY entry,
+        // which the transpiler never touches. The test harness syncs on the
+        // "Ran N tests" summary (printed after this), so seeding completes
+        // before the next file edit.
+        if (ctx.test_options.changed != null and vm.isWatcherEnabled()) {
+            for (changed_module_graph_files) |path| {
+                _ = vm.bun_watcher.addFileByPathSlow(path, vm.transpiler.options.loader(std.fs.path.extension(path)));
+            }
         }
 
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
@@ -1601,7 +1681,7 @@ pub const TestCommand = struct {
 
         var failed_to_find_any_tests = false;
 
-        if (test_files.len == 0) {
+        if (test_files.len == 0 and !pass_with_no_tests_from_changed) {
             failed_to_find_any_tests = true;
 
             // "bun test" - positionals[0] == "test"
@@ -2012,6 +2092,7 @@ pub fn @"export"() void {
 
 const string = []const u8;
 
+const ChangedFilesFilter = @import("./test/ChangedFilesFilter.zig");
 const DotEnv = @import("../env_loader.zig");
 const Scanner = @import("./test/Scanner.zig");
 const bun_test = @import("../bun.js/test/bun_test.zig");

@@ -88,12 +88,6 @@ private:
     void derefEventTarget() final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
     void eventListenersDidChange() final;
 
-    EventTargetData* eventTargetData() final { return &m_eventTargetData; }
-    EventTargetData* eventTargetDataConcurrently() final { return &m_eventTargetData; }
-    EventTargetData& ensureEventTargetData() final { return m_eventTargetData; }
-
-    EventTargetData m_eventTargetData;
-
     // ActiveDOMObject
     // const char* activeDOMObjectName() const final;
     // bool virtualHasPendingActivity() const final;

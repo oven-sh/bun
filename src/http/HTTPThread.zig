@@ -183,10 +183,12 @@ fn initOnce(opts: *const InitOpts) void {
     bun.http.http_thread = .{
         .loop = undefined,
         .http_context = .{
+            .ref_count = .init(),
             .us_socket_context = undefined,
             .pending_sockets = NewHTTPContext(false).PooledSocketHiveAllocator.empty,
         },
         .https_context = .{
+            .ref_count = .init(),
             .us_socket_context = undefined,
             .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
         },
@@ -246,7 +248,7 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
             if (custom_ssl_context_map.getPtr(requested_config)) |entry| {
                 // Cache hit - reuse existing SSL context
                 entry.last_used_ns = this.timer.read();
-                client.custom_ssl_ctx = entry.ctx;
+                client.setCustomSslCtx(entry.ctx);
                 // Keepalive is now supported for custom SSL contexts
                 if (client.http_proxy) |url| {
                     return try entry.ctx.connect(client, url.hostname, url.getPortAuto());
@@ -258,6 +260,7 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
             // Cache miss - create new SSL context
             var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
             custom_context.* = .{
+                .ref_count = .init(),
                 .pending_sockets = NewHTTPContext(is_ssl).PooledSocketHiveAllocator.empty,
                 .us_socket_context = undefined,
             };
@@ -285,7 +288,7 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                 evictOldestSslContext();
             }
 
-            client.custom_ssl_ctx = custom_context;
+            client.setCustomSslCtx(custom_context);
             // Keepalive is now supported for custom SSL contexts
             if (client.http_proxy) |url| {
                 if (url.protocol.len == 0 or strings.eqlComptime(url.protocol, "https") or strings.eqlComptime(url.protocol, "http")) {
@@ -320,7 +323,7 @@ fn evictStaleSslContexts(this: *@This()) void {
         var entry = custom_ssl_context_map.values()[i];
         if (now -| entry.last_used_ns > ssl_context_cache_ttl_ns) {
             custom_ssl_context_map.swapRemoveAt(i);
-            entry.ctx.deinit();
+            entry.ctx.deref();
             entry.config_ref.deinit();
         } else {
             i += 1;
@@ -341,7 +344,7 @@ fn evictOldestSslContext() void {
     }
     var entry = custom_ssl_context_map.values()[oldest_idx];
     custom_ssl_context_map.swapRemoveAt(oldest_idx);
-    entry.ctx.deinit();
+    entry.ctx.deref();
     entry.config_ref.deinit();
 }
 

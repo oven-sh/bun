@@ -5,7 +5,7 @@
 
 import type { Dependency, NestedCmakeBuild, Provides } from "../source.ts";
 
-const MIMALLOC_COMMIT = "9a5e1f52cdf4662f9590b69de104a4469140796f";
+const MIMALLOC_COMMIT = "a29368ef60d5c90bd760ff42a36ad4ad919a9ad7";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -68,13 +68,9 @@ export const mimalloc: Dependency = {
       // so UBSan doesn't false-positive on mimalloc's type punning.
       args.MI_DEBUG_UBSAN = "ON";
     } else if (cfg.darwin) {
-      // Register the mimalloc malloc_zone so leaks/heap/vmmap/Instruments can
-      // enumerate our allocations and the fork-prepare/child hooks fire.
-      // Interpose is OFF because we link the .o statically; the __interpose
-      // section only works for inserted dylibs. The zone-swap path in
-      // alloc-override-zone.c handles making mimalloc the default zone.
-      args.MI_OVERRIDE = "ON";
-      args.MI_OSX_ZONE = "ON";
+      // We cannot use MI_OSX_ZONE because it breaks NAPI addons.
+      args.MI_OVERRIDE = "OFF";
+      args.MI_OSX_ZONE = "OFF";
       args.MI_OSX_INTERPOSE = "OFF";
     } else if (cfg.linux) {
       args.MI_OVERRIDE = "ON";

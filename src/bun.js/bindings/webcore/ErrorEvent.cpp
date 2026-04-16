@@ -44,7 +44,7 @@ using namespace JSC;
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ErrorEvent);
 
 ErrorEvent::ErrorEvent(const AtomString& type, const Init& initializer, IsTrusted isTrusted)
-    : Event(type, initializer, isTrusted)
+    : Event(ErrorEventInterfaceType, type, initializer, isTrusted)
     , m_message(initializer.message)
     , m_fileName(initializer.filename)
     , m_lineNumber(initializer.lineno)
@@ -54,7 +54,7 @@ ErrorEvent::ErrorEvent(const AtomString& type, const Init& initializer, IsTruste
 }
 
 ErrorEvent::ErrorEvent(const AtomString& type, const String& message, const String& fileName, unsigned lineNumber, unsigned columnNumber, JSC::Strong<JSC::Unknown> error)
-    : Event(type, CanBubble::No, IsCancelable::Yes)
+    : Event(ErrorEventInterfaceType, type, CanBubble::No, IsCancelable::Yes)
     , m_message(message)
     , m_fileName(fileName)
     , m_lineNumber(lineNumber)
@@ -69,11 +69,6 @@ ErrorEvent::ErrorEvent(const String& message, const String& fileName, unsigned l
 }
 
 ErrorEvent::~ErrorEvent() = default;
-
-EventInterface ErrorEvent::eventInterface() const
-{
-    return ErrorEventInterfaceType;
-}
 
 JSValue ErrorEvent::error(JSGlobalObject& globalObject)
 {
@@ -101,10 +96,5 @@ JSValue ErrorEvent::error(JSGlobalObject& globalObject)
 //     // }
 //     return 0;
 // }
-
-bool ErrorEvent::isErrorEvent() const
-{
-    return true;
-}
 
 } // namespace WebCore

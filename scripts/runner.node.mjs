@@ -2358,16 +2358,17 @@ function isAlwaysFailure(error) {
 function onExit(signal) {
   const label = `${getAnsi("red")}Received ${signal}, exiting...${getAnsi("reset")}`;
   startGroup(label, () => {
-    for (const proc of activeSubprocesses) {
-      try {
-        // Windows: detached+unref so taskkill outlives our process.exit()
-        // below — CreateProcess is synchronous inside spawn(), so the child
-        // exists before this returns. Avoids serializing N×timeout under
-        // --parallel like spawnSync would.
-        if (isWindows)
-          spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore", detached: true }).unref();
-        else proc.kill(9);
-      } catch {}
+    // Windows: children spawned without `detached` are assigned to this
+    // process's Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, so
+    // process.exit() below already terminates the whole tree — nothing to
+    // do here. POSIX: Buildkite cancel sends SIGTERM to the runner PID only
+    // (not the group), so orphans survive unless we kill them explicitly.
+    if (!isWindows) {
+      for (const proc of activeSubprocesses) {
+        try {
+          proc.kill(9);
+        } catch {}
+      }
     }
     process.exit(getExitCode("cancel"));
   });

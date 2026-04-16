@@ -871,6 +871,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
     }
 
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
+    if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute))
+        Bun::IsolatedModuleCache::insert(vm, specifierWtfString, provider.get());
     globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(provider));
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, jsNumber(-1));

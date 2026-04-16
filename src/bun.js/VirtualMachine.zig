@@ -2243,6 +2243,9 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
 }
 
 extern "C" fn NodeModuleModule__callOverriddenRunMain(global: *JSGlobalObject, argv1: JSValue) JSValue;
+export fn Bun__VM__isTestIsolationEnabled(vm: *VirtualMachine) bool {
+    return vm.test_isolation_enabled;
+}
 export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm: *VirtualMachine, is_patched: bool) void {
     if (vm.is_in_preload) {
         vm.has_patched_run_main = is_patched;

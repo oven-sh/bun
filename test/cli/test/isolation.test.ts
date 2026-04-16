@@ -301,3 +301,37 @@ describe("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+test("--isolate reuses SourceProvider for shared modules across files", async () => {
+  // shared.ts must be heavy enough that re-transpiling is observable but
+  // <50KB so RuntimeTranspilerCache (disk) doesn't mask the in-memory cache.
+  let shared = "";
+  for (let i = 0; i < 300; i++) {
+    shared += `export function fn${i}<T extends {a:number}>(x: T): T & {b:string} { return {...x, b: String(x.a + ${i})}; }\n`;
+  }
+  shared += `export const ALL = ${Array.from({ length: 300 }, (_, i) => `fn${i}({a:${i}}).a`).join(" + ")};\n`;
+
+  const files: Record<string, string> = { "shared.ts": shared };
+  for (let i = 1; i <= 5; i++) {
+    files[`t${i}.test.ts`] =
+      `import {test,expect} from "bun:test";\nimport {ALL} from "./shared";\ntest("t${i}",()=>{expect(typeof ALL).toBe("number");});\n`;
+  }
+  using dir = tempDir("isolate-spcache", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_DEBUG_ISOLATE_SOURCE_CACHE: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // shared.ts should miss exactly once (file 1), then hit for files 2-5.
+  const sharedHits = [...stderr.matchAll(/\[isolate-source-cache\] hit  .*shared\.ts/g)].length;
+  const sharedMisses = [...stderr.matchAll(/\[isolate-source-cache\] miss .*shared\.ts/g)].length;
+  expect({ sharedMisses, sharedHits }).toEqual({ sharedMisses: 1, sharedHits: 4 });
+  expect(stderr).toContain("5 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});

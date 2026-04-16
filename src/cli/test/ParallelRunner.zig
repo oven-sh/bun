@@ -162,6 +162,31 @@ const WorkerPipe = struct {
     }
 };
 
+/// Contiguous slice of `Coordinator.files` owned by a worker. Dispatching
+/// pulls from the front (cache-hot region); stealing takes from the back
+/// (furthest from the owner's hot region).
+const FileRange = struct {
+    lo: u32,
+    hi: u32,
+
+    pub fn len(self: @This()) u32 {
+        return self.hi - self.lo;
+    }
+    pub fn isEmpty(self: @This()) bool {
+        return self.lo >= self.hi;
+    }
+    pub fn popFront(self: *@This()) ?u32 {
+        if (self.isEmpty()) return null;
+        defer self.lo += 1;
+        return self.lo;
+    }
+    pub fn stealBack(self: *@This()) ?u32 {
+        if (self.isEmpty()) return null;
+        self.hi -= 1;
+        return self.hi;
+    }
+};
+
 pub const Worker = struct {
     coord: *Coordinator,
     idx: u32,
@@ -174,6 +199,13 @@ pub const Worker = struct {
 
     /// Index into `Coordinator.files` currently running on this worker.
     inflight: ?u32 = null,
+    /// Contiguous slice of `Coordinator.files` owned by this worker. `files`
+    /// is sorted lexicographically so adjacent indices share parent dirs (and
+    /// likely imports); each worker walks its range front-to-back. When the
+    /// range is empty the worker steals one file from the *end* of whichever
+    /// range has the most remaining — the end is furthest from that worker's
+    /// hot region.
+    range: FileRange = .{ .lo = 0, .hi = 0 },
     /// `std.time.milliTimestamp()` at the most recent dispatch; drives lazy
     /// scale-up.
     dispatched_at: i64 = 0,
@@ -366,7 +398,6 @@ pub const Coordinator = struct {
     scale_up_after_ms: i64,
     bail: u32,
     dots: bool,
-    next_file: u32 = 0,
     files_done: u32 = 0,
     spawned_count: u32 = 0,
     live_workers: u32 = 0,
@@ -378,13 +409,31 @@ pub const Coordinator = struct {
         return (this.files_done >= this.files.len or this.bailed) and this.live_workers == 0;
     }
 
+    fn hasUndispatchedFiles(this: *const Coordinator) bool {
+        for (this.workers) |*w| if (!w.range.isEmpty()) return true;
+        return false;
+    }
+
+    /// The worker (spawned or not) whose range has the most files remaining.
+    fn findStealVictim(this: *Coordinator) ?*Worker {
+        var victim: ?*Worker = null;
+        var most: u32 = 0;
+        for (this.workers) |*v| {
+            if (v.range.len() > most) {
+                most = v.range.len();
+                victim = v;
+            }
+        }
+        return victim;
+    }
+
     pub fn drive(this: *Coordinator) void {
         _ = this.spawnWorker();
         while (!this.isDone()) {
             this.vm.eventLoop().tick();
             this.maybeScaleUp();
             if (this.isDone()) break;
-            if (this.spawned_count < this.parallel_limit and this.next_file < this.files.len and !this.bailed) {
+            if (this.spawned_count < this.parallel_limit and this.hasUndispatchedFiles() and !this.bailed) {
                 // Bound the wait so we wake to scale up even if no I/O arrives.
                 var ts = bun.timespec{
                     .sec = @divTrunc(this.scale_up_after_ms, std.time.ms_per_s),
@@ -415,7 +464,7 @@ pub const Coordinator = struct {
     /// triggers full scale-up so longer suites aren't staircased.
     fn maybeScaleUp(this: *Coordinator) void {
         if (this.spawned_count >= this.parallel_limit) return;
-        if (this.bailed or this.next_file >= this.files.len) return;
+        if (this.bailed or !this.hasUndispatchedFiles()) return;
         const now = std.time.milliTimestamp();
         for (this.workers[0..this.spawned_count]) |*w| {
             if (!w.alive) continue;
@@ -431,13 +480,18 @@ pub const Coordinator = struct {
     }
 
     fn assignWork(this: *Coordinator, w: *Worker) void {
-        if (!this.bailed and this.next_file < this.files.len) {
-            const idx = this.next_file;
-            this.next_file += 1;
-            w.dispatch(idx, this.files[idx].slice());
-        } else {
-            w.shutdown();
+        if (this.bailed) return w.shutdown();
+        if (w.range.popFront()) |idx|
+            return w.dispatch(idx, this.files[idx].slice());
+        // Steal one from the end of the largest remaining range — that file is
+        // furthest from its owner's hot region so the loss of locality is
+        // smallest. Stealing from not-yet-spawned workers is fine; their range
+        // is just an unclaimed reservation.
+        if (this.findStealVictim()) |v| {
+            if (v.range.stealBack()) |idx|
+                return w.dispatch(idx, this.files[idx].slice());
         }
+        w.shutdown();
     }
 
     fn bailOut(this: *Coordinator) void {
@@ -590,7 +644,7 @@ pub const Coordinator = struct {
         }
 
         var respawned = false;
-        if (!this.bailed and (this.next_file < this.files.len or retry_idx != null)) {
+        if (!this.bailed and (this.hasUndispatchedFiles() or retry_idx != null)) {
             w.ipc.deinit();
             w.out.deinit();
             w.err.deinit();
@@ -640,13 +694,14 @@ pub const Coordinator = struct {
     /// Mark every not-yet-dispatched file as failed so `drive()` can exit
     /// instead of spinning when no live worker remains to make progress.
     fn abortQueuedFiles(this: *Coordinator, reason: []const u8) void {
-        while (this.next_file < this.files.len) : (this.next_file += 1) {
-            const rel = this.relPath(this.next_file);
-            Output.prettyError("<r><red>✗<r> <b>{s}<r> <d>({s})<r>\n", .{ rel, reason });
-            this.reporter.summary().fail += 1;
-            this.reporter.summary().files += 1;
-            bun.handleOom(this.crashed_files.append(bun.default_allocator, this.next_file));
-            this.files_done += 1;
+        for (this.workers) |*w| {
+            while (w.range.popFront()) |idx| {
+                Output.prettyError("<r><red>✗<r> <b>{s}<r> <d>({s})<r>\n", .{ this.relPath(idx), reason });
+                this.reporter.summary().fail += 1;
+                this.reporter.summary().files += 1;
+                bun.handleOom(this.crashed_files.append(bun.default_allocator, idx));
+                this.files_done += 1;
+            }
         }
         Output.flush();
     }
@@ -673,8 +728,9 @@ pub fn runAsCoordinator(
     coverage_opts: *TestCommand.CodeCoverageOptions,
 ) !bool {
     const allocator = ctx.allocator;
-    const n: u32 = @min(ctx.test_options.parallel, @as(u32, @intCast(files.len)));
-    if (n <= 1) {
+    const N: u32 = @intCast(files.len);
+    const K: u32 = @min(ctx.test_options.parallel, N);
+    if (K <= 1) {
         TestCommand.runAllTests(reporter, vm, files, allocator);
         return false;
     }
@@ -711,16 +767,26 @@ pub fn runAsCoordinator(
     const envp = try vm.transpiler.env.map.createNullDelimitedEnvMap(arena.allocator());
     const argv = try buildWorkerArgv(arena.allocator(), ctx);
 
-    const workers = try allocator.alloc(Worker, n);
-    const retries = try allocator.alloc(u8, files.len);
+    // Sort lexicographically so adjacent indices share parent directories.
+    // Each worker owns a contiguous chunk; co-located files share imports, so
+    // this keeps each worker's isolation SourceProvider cache hot.
+    const sorted = try arena.allocator().dupe(PathString, files);
+    std.sort.pdq(PathString, sorted, {}, struct {
+        fn lt(_: void, a: PathString, b: PathString) bool {
+            return bun.strings.order(a.slice(), b.slice()) == .lt;
+        }
+    }.lt);
+
+    const workers = try allocator.alloc(Worker, K);
+    const retries = try allocator.alloc(u8, sorted.len);
     @memset(retries, 0);
-    const pending_retry = try allocator.alloc(?u32, n);
+    const pending_retry = try allocator.alloc(?u32, K);
     @memset(pending_retry, null);
 
     var coord = Coordinator{
         .vm = vm,
         .reporter = reporter,
-        .files = files,
+        .files = sorted,
         .cwd = bun.fs.FileSystem.instance.top_level_dir,
         .argv = argv,
         .envp = envp,
@@ -728,7 +794,7 @@ pub fn runAsCoordinator(
         .retries = retries,
         .pending_retry = pending_retry,
         .worker_tmpdir = worker_tmpdir,
-        .parallel_limit = n,
+        .parallel_limit = K,
         .scale_up_after_ms = if (vm.transpiler.env.get("BUN_TEST_PARALLEL_SCALE_MS")) |s|
             @max(0, std.fmt.parseInt(i64, s, 10) catch default_scale_up_after_ms)
         else
@@ -738,9 +804,11 @@ pub fn runAsCoordinator(
     };
 
     for (workers, 0..) |*w, i| {
+        const idx: u32 = @intCast(i);
         w.* = .{
             .coord = &coord,
-            .idx = @intCast(i),
+            .idx = idx,
+            .range = .{ .lo = idx * N / K, .hi = (idx + 1) * N / K },
             .ipc = .{ .role = .ipc, .worker = w },
             .out = .{ .role = .stdout, .worker = w },
             .err = .{ .role = .stderr, .worker = w },

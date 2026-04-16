@@ -991,10 +991,22 @@ static JSValue fetchESMSourceCode(
 
         auto moduleKey = specifier->toWTFString(BunString::ZeroCopy);
 
+        // bun:wrap and a few other builtins return real JS source (not a
+        // synthetic generator). Their providers are identical across globals,
+        // so check the isolation cache before re-creating one.
+        const bool useIsolationCacheForBuiltin = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
+        if (useIsolationCacheForBuiltin) {
+            if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, moduleKey)) {
+                RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached)))));
+            }
+        }
+
         auto tag = res->result.value.tag;
         switch (tag) {
         case SyntheticModuleType::ESM: {
             auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
+            if (useIsolationCacheForBuiltin)
+                Bun::IsolatedModuleCache::insert(vm, moduleKey, provider.get());
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(provider))));
         }
 
@@ -1014,6 +1026,8 @@ static JSValue fetchESMSourceCode(
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));
             } else {
                 auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
+                if (useIsolationCacheForBuiltin)
+                    Bun::IsolatedModuleCache::insert(vm, moduleKey, provider.get());
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider))));
             }
         }

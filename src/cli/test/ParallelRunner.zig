@@ -809,7 +809,9 @@ pub fn runAsCoordinator(
         .pending_retry = pending_retry,
         .worker_tmpdir = worker_tmpdir,
         .parallel_limit = K,
-        .scale_up_after_ms = if (vm.transpiler.env.get("BUN_TEST_PARALLEL_SCALE_MS")) |s|
+        .scale_up_after_ms = if (ctx.test_options.parallel_delay_ms) |d|
+            @intCast(d)
+        else if (vm.transpiler.env.get("BUN_TEST_PARALLEL_SCALE_MS")) |s|
             @max(0, std.fmt.parseInt(i64, s, 10) catch default_scale_up_after_ms)
         else
             default_scale_up_after_ms,

@@ -245,6 +245,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against.") catch unreachable,
     clap.parseParam("--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another.") catch unreachable,
     clap.parseParam("--parallel <NUMBER>?             Run test files in parallel using N worker processes. Implies --isolate. Defaults to CPU core count.") catch unreachable,
+    clap.parseParam("--parallel-delay <NUMBER>        Milliseconds the first --parallel worker must be busy before spawning the rest. 0 spawns all immediately. Default 5.") catch unreachable,
     clap.parseParam("--test-worker                    (internal) Run as a --parallel worker, receiving files over IPC.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
@@ -636,6 +637,13 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.test_options.parallel = parsed;
             // --parallel implies --isolate inside each worker.
             ctx.test_options.isolate = true;
+        }
+
+        if (args.option("--parallel-delay")) |delay_str| {
+            ctx.test_options.parallel_delay_ms = std.fmt.parseInt(u32, delay_str, 10) catch {
+                Output.prettyErrorln("<red>error<r>: --parallel-delay expects a non-negative integer (milliseconds), received \"{s}\"", .{delay_str});
+                Global.exit(1);
+            };
         }
 
         if (args.option("--seed")) |seed_str| {

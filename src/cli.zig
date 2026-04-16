@@ -363,6 +363,9 @@ pub const Command = struct {
         /// `bun test --parallel[=N]`: run test files across N worker
         /// processes. 0 means not requested. Implies `isolate` in workers.
         parallel: u32 = 0,
+        /// `bun test --parallel-delay=MS`: how long the first worker must be
+        /// busy before spawning the rest. null = use the built-in default.
+        parallel_delay_ms: ?u32 = null,
         /// Internal: this process is a `--parallel` worker. Files arrive over
         /// fd 3, results are written back over fd 3; no discovery, no header.
         test_worker: bool = false,

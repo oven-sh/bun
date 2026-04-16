@@ -1173,6 +1173,7 @@ pub fn runAsWorker(
             TestCommand.run(r.reporter, r.vm, r.file, .{ .first = true, .last = true }) catch |err| test_command.handleTopLevelTestErrorBeforeJavaScriptStart(err);
             r.vm.swapGlobalForTestIsolation();
             r.reporter.jest.bun_test_root.resetHookScopeForTestIsolation();
+            r.reporter.jest.default_timeout_override = std.math.maxInt(u32);
         }
     };
 

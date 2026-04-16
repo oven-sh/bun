@@ -394,7 +394,7 @@ const SourceMapHandlerGetter = struct {
     pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
         var temp_json_buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer temp_json_buffer.deinit();
-        try chunk.printSourceMapContentsAtOffset(source, &temp_json_buffer, true, SavedSourceMap.vlq_offset, true);
+        try chunk.printSourceMapContentsFromInternal(source, &temp_json_buffer, true, true);
         const source_map_url_prefix_start = "//# sourceMappingURL=data:application/json;base64,";
         // TODO: do we need to %-encode the path?
         const source_url_len = source.path.text.len;
@@ -2661,37 +2661,128 @@ pub export fn Bun__remapStackFramePositions(vm: *jsc.VirtualMachine, frames: [*]
 }
 
 pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]jsc.ZigStackFrame, frames_count: usize) void {
+    if (frames_count == 0) return;
+
+    // **Warning** this method can be called in the heap collector thread!!
+    // https://github.com/oven-sh/bun/issues/17087
+    this.remap_stack_frames_mutex.lock();
+    defer this.remap_stack_frames_mutex.unlock();
+
+    // Hold the SavedSourceMap mutex across the batch so a cached
+    // InternalSourceMap view cannot be freed mid-loop by a concurrent
+    // putMappings(). The slow path (external/standalone maps) drops and
+    // re-acquires it around resolveSourceMapping().
+    this.source_mappings.lock();
+    var table_locked = true;
+    defer if (table_locked) this.source_mappings.unlock();
+
+    const sm = &this.source_mappings;
+    var cached_hash: u64 = sm.last_path_hash;
+    var cached: union(enum) { none, ism: SourceMap.InternalSourceMap, absent } =
+        if (sm.last_ism) |ism| .{ .ism = ism } else .none;
+
     for (frames[0..frames_count]) |*frame| {
         if (frame.position.isInvalid() or frame.remapped) continue;
         var sourceURL = frame.source_url.toUTF8(bun.default_allocator);
         defer sourceURL.deinit();
-
-        // **Warning** this method can be called in the heap collector thread!!
-        // https://github.com/oven-sh/bun/issues/17087
-        this.remap_stack_frames_mutex.lock();
-        defer this.remap_stack_frames_mutex.unlock();
-
-        if (this.resolveSourceMapping(
-            sourceURL.slice(),
-            frame.position.line,
-            frame.position.column,
-            .no_source_contents,
-        )) |lookup| {
-            const source_map = lookup.source_map;
-            defer if (source_map) |map| map.deref();
-            if (lookup.displaySourceURLIfNeeded(sourceURL.slice())) |source_url| {
-                frame.source_url.deref();
-                frame.source_url = source_url;
-            }
-            const mapping = lookup.mapping;
-            frame.position.line = mapping.original.lines;
-            frame.position.column = mapping.original.columns;
+        const path = sourceURL.slice();
+        if (path.len == 0) {
             frame.remapped = true;
-        } else {
-            // we don't want it to be remapped again
-            frame.remapped = true;
+            continue;
         }
+        const hash = bun.hash(path);
+
+        if (cached == .none or hash != cached_hash) {
+            cached_hash = hash;
+            if (this.source_mappings.getValueLocked(hash)) |value| {
+                if (value.get(SourceMap.InternalSourceMap)) |ptr| {
+                    cached = .{ .ism = .{ .data = @as([*]const u8, @ptrCast(ptr)) } };
+                } else if (value.get(SourceMap.ParsedSourceMap)) |parsed| {
+                    // A ParsedSourceMap-with-internal that has no external
+                    // sources (runtime-transpiled wrapped by getWithContent)
+                    // is equivalent to the raw ISM fast path. If it *does*
+                    // have external sources (standalone --compile), we need
+                    // displaySourceURLIfNeeded, so take the full Lookup path.
+                    if (parsed.internal != null and !parsed.isExternal()) {
+                        cached = .{ .ism = parsed.internal.? };
+                    } else {
+                        cached = .none;
+                        if (parsed.findMapping(frame.position.line, frame.position.column)) |mapping| {
+                            const lookup: SourceMap.Mapping.Lookup = .{
+                                .mapping = mapping,
+                                .source_map = parsed,
+                                .prefetched_source_code = null,
+                            };
+                            if (lookup.displaySourceURLIfNeeded(path)) |source_url| {
+                                frame.source_url.deref();
+                                frame.source_url = source_url;
+                            }
+                            frame.position.line = mapping.original.lines;
+                            frame.position.column = mapping.original.columns;
+                        }
+                        frame.remapped = true;
+                        continue;
+                    }
+                } else {
+                    // SourceProviderMap / Bake / DevServer: needs lazy parse
+                    // outside the table lock.
+                    cached = .none;
+                    this.source_mappings.unlock();
+                    table_locked = false;
+                    this.remapOneFrameSlow(frame, path);
+                    this.source_mappings.lock();
+                    table_locked = true;
+                    continue;
+                }
+            } else if (this.standalone_module_graph != null) {
+                // Standalone-graph lazy load goes through resolveSourceMapping.
+                cached = .none;
+                this.source_mappings.unlock();
+                table_locked = false;
+                this.remapOneFrameSlow(frame, path);
+                this.source_mappings.lock();
+                table_locked = true;
+                continue;
+            } else {
+                cached = .absent;
+            }
+        }
+
+        switch (cached) {
+            .ism => |ism| {
+                if (ism.findWithCache(frame.position.line, frame.position.column, &sm.find_cache)) |mapping| {
+                    frame.position.line = mapping.original.lines;
+                    frame.position.column = mapping.original.columns;
+                }
+            },
+            .absent => {},
+            .none => unreachable,
+        }
+        frame.remapped = true;
     }
+
+    sm.last_path_hash = cached_hash;
+    sm.last_ism = if (cached == .ism) cached.ism else null;
+}
+
+fn remapOneFrameSlow(this: *VirtualMachine, frame: *jsc.ZigStackFrame, path: []const u8) void {
+    if (this.resolveSourceMapping(
+        path,
+        frame.position.line,
+        frame.position.column,
+        .no_source_contents,
+    )) |lookup| {
+        const source_map = lookup.source_map;
+        defer if (source_map) |map| map.deref();
+        if (lookup.displaySourceURLIfNeeded(path)) |source_url| {
+            frame.source_url.deref();
+            frame.source_url = source_url;
+        }
+        const mapping = lookup.mapping;
+        frame.position.line = mapping.original.lines;
+        frame.position.column = mapping.original.columns;
+    }
+    frame.remapped = true;
 }
 
 pub fn remapZigException(
@@ -3546,7 +3637,7 @@ pub fn resolveSourceMapping(
             this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch
                 bun.outOfMemory();
 
-            const mapping = map.mappings.find(line, column) orelse
+            const mapping = map.findMapping(line, column) orelse
                 return null;
 
             return .{

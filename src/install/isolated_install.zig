@@ -53,35 +53,86 @@ pub fn installIsolatedPackages(
         // package for each of these names as seen from the node's ancestor chain, so
         // two nodes with the same package and the same ancestor resolution for each
         // name will produce identical subtrees and identical second-pass entries.
-        const leaking_peers: []std.AutoArrayHashMapUnmanaged(PackageNameHash, void) = try lockfile.allocator.alloc(
-            std.AutoArrayHashMapUnmanaged(PackageNameHash, void),
-            lockfile.packages.len,
-        );
-        @memset(leaking_peers, .empty);
-        defer {
-            for (leaking_peers) |*set| set.deinit(lockfile.allocator);
-            lockfile.allocator.free(leaking_peers);
+        //
+        // The universe of distinct peer-dependency names is small even in large
+        // lockfiles, so each per-package set is a bitset over that universe and the
+        // fixpoint is bitwise OR/ANDNOT on a contiguous buffer.
+        var peer_name_idx: std.AutoArrayHashMapUnmanaged(PackageNameHash, void) = .empty;
+        defer peer_name_idx.deinit(lockfile.allocator);
+        for (dependencies) |dep| {
+            if (dep.behavior.isPeer()) {
+                try peer_name_idx.put(lockfile.allocator, dep.name_hash, {});
+            }
         }
-        {
+        const peer_name_count: u32 = @intCast(peer_name_idx.count());
+
+        var leaking_peers: bun.bit_set.DynamicBitSetUnmanaged.List = try .initEmpty(
+            lockfile.allocator,
+            lockfile.packages.len,
+            peer_name_count,
+        );
+        defer leaking_peers.deinit(lockfile.allocator);
+
+        if (peer_name_count != 0) {
             // The runtime child of a peer edge is whichever package an ancestor's
             // dependency with that name resolves to, which may be an `npm:`-aliased
             // target whose package name differs. Index resolutions by *dependency*
             // name so the union below covers every package a peer could become.
-            var dep_name_to_pkgs: std.AutoArrayHashMapUnmanaged(PackageNameHash, std.ArrayListUnmanaged(PackageID)) = .empty;
+            const peer_targets: []std.ArrayListUnmanaged(PackageID) = try lockfile.allocator.alloc(
+                std.ArrayListUnmanaged(PackageID),
+                peer_name_count,
+            );
+            @memset(peer_targets, .empty);
             defer {
-                for (dep_name_to_pkgs.values()) |*list| list.deinit(lockfile.allocator);
-                dep_name_to_pkgs.deinit(lockfile.allocator);
+                for (peer_targets) |*list| list.deinit(lockfile.allocator);
+                lockfile.allocator.free(peer_targets);
             }
             for (dependencies, resolutions) |dep, res| {
                 if (res == invalid_package_id) continue;
-                const gop = try dep_name_to_pkgs.getOrPut(lockfile.allocator, dep.name_hash);
-                if (!gop.found_existing) gop.value_ptr.* = .empty;
-                if (std.mem.indexOfScalar(PackageID, gop.value_ptr.items, res) == null) {
-                    try gop.value_ptr.append(lockfile.allocator, res);
+                const bit = peer_name_idx.getIndex(dep.name_hash) orelse continue;
+                if (std.mem.indexOfScalar(PackageID, peer_targets[bit].items, res) == null) {
+                    try peer_targets[bit].append(lockfile.allocator, res);
                 }
             }
 
-            var scratch: std.AutoArrayHashMapUnmanaged(PackageNameHash, void) = .empty;
+            // Per-package bits computed once: own peer-dep names, and non-peer
+            // dependency names that will appear in `node_dependencies` (i.e., not
+            // filtered out by bundled/disabled/unresolved).
+            var own_peers: bun.bit_set.DynamicBitSetUnmanaged.List = try .initEmpty(
+                lockfile.allocator,
+                lockfile.packages.len,
+                peer_name_count,
+            );
+            defer own_peers.deinit(lockfile.allocator);
+            var provides: bun.bit_set.DynamicBitSetUnmanaged.List = try .initEmpty(
+                lockfile.allocator,
+                lockfile.packages.len,
+                peer_name_count,
+            );
+            defer provides.deinit(lockfile.allocator);
+            for (0..lockfile.packages.len) |pkg_idx| {
+                const pkg_id: PackageID = @intCast(pkg_idx);
+                const deps = pkg_dependency_slices[pkg_id];
+                for (deps.begin()..deps.end()) |_dep_id| {
+                    const dep_id: DependencyID = @intCast(_dep_id);
+                    const dep = dependencies[dep_id];
+                    const bit = peer_name_idx.getIndex(dep.name_hash) orelse continue;
+                    if (dep.behavior.isPeer()) {
+                        own_peers.set(pkg_id, bit);
+                    } else if (!Tree.isFilteredDependencyOrWorkspace(
+                        dep_id,
+                        pkg_id,
+                        workspace_filters,
+                        install_root_dependencies,
+                        manager,
+                        lockfile,
+                    )) {
+                        provides.set(pkg_id, bit);
+                    }
+                }
+            }
+
+            var scratch = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(lockfile.allocator, peer_name_count);
             defer scratch.deinit(lockfile.allocator);
 
             var changed = true;
@@ -91,70 +142,32 @@ pub fn installIsolatedPackages(
                     const pkg_id: PackageID = @intCast(pkg_idx);
                     const deps = pkg_dependency_slices[pkg_id];
 
-                    scratch.clearRetainingCapacity();
+                    scratch.copyInto(own_peers.at(pkg_id));
 
                     for (deps.begin()..deps.end()) |_dep_id| {
                         const dep_id: DependencyID = @intCast(_dep_id);
                         const dep = dependencies[dep_id];
                         if (dep.behavior.isPeer()) {
-                            try scratch.put(lockfile.allocator, dep.name_hash, {});
-
-                            if (dep_name_to_pkgs.get(dep.name_hash)) |list| {
-                                for (list.items) |child| {
-                                    for (leaking_peers[child].keys()) |k| {
-                                        try scratch.put(lockfile.allocator, k, {});
-                                    }
+                            if (peer_name_idx.getIndex(dep.name_hash)) |bit| {
+                                for (peer_targets[bit].items) |child| {
+                                    scratch.setUnion(leaking_peers.at(child));
                                 }
                             }
                         } else {
                             const res_pkg = resolutions[dep_id];
                             if (res_pkg != invalid_package_id) {
-                                for (leaking_peers[res_pkg].keys()) |k| {
-                                    try scratch.put(lockfile.allocator, k, {});
-                                }
+                                scratch.setUnion(leaking_peers.at(res_pkg));
                             }
                         }
                     }
-                    // Non-peer dependency names that actually reach `node_dependencies`
-                    // satisfy any matching peer that walks up to this package. Filtered
-                    // dependencies (bundled, disabled, unresolved) never appear there,
-                    // so a peer with that name can still leak past.
-                    for (deps.begin()..deps.end()) |_dep_id| {
-                        const dep_id: DependencyID = @intCast(_dep_id);
-                        const dep = dependencies[dep_id];
-                        if (dep.behavior.isPeer()) continue;
-                        if (Tree.isFilteredDependencyOrWorkspace(
-                            dep_id,
-                            pkg_id,
-                            workspace_filters,
-                            install_root_dependencies,
-                            manager,
-                            lockfile,
-                        )) continue;
-                        _ = scratch.swapRemove(dep.name_hash);
-                    }
+                    scratch.setDifference(provides.at(pkg_id));
 
-                    if (scratch.count() != leaking_peers[pkg_id].count()) {
+                    var dst = leaking_peers.at(pkg_id);
+                    if (!scratch.eql(dst)) {
+                        dst.copyInto(scratch);
                         changed = true;
-                        leaking_peers[pkg_id].clearRetainingCapacity();
-                        try leaking_peers[pkg_id].ensureTotalCapacity(lockfile.allocator, scratch.count());
-                        for (scratch.keys()) |k| {
-                            leaking_peers[pkg_id].putAssumeCapacity(k, {});
-                        }
                     }
                 }
-            }
-
-            // Stable order so the context hash below does not depend on fixpoint
-            // iteration order.
-            for (leaking_peers) |*set| {
-                const Ctx = struct {
-                    keys: []PackageNameHash,
-                    pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
-                        return ctx.keys[a] < ctx.keys[b];
-                    }
-                };
-                set.sort(Ctx{ .keys = set.keys() });
             }
         }
 
@@ -271,14 +284,17 @@ pub fn installIsolatedPackages(
                     const node_dependencies = nodes_slice.items(.dependencies);
                     const node_peers = nodes_slice.items(.peers);
 
-                    const ctx_hash: u64 = if (entry_dep.version.tag == .workspace)
+                    const ctx_hash: u64 = if (entry_dep.version.tag == .workspace or peer_name_count == 0)
                         0
                     else ctx: {
-                        const leaks = &leaking_peers[entry.pkg_id];
+                        const leaks = leaking_peers.at(entry.pkg_id);
                         if (leaks.count() == 0) break :ctx 0;
 
+                        const peer_names = peer_name_idx.keys();
                         var hasher = bun.Wyhash11.init(0);
-                        for (leaks.keys()) |peer_name_hash| {
+                        var it = leaks.iterator(.{});
+                        while (it.next()) |bit| {
+                            const peer_name_hash = peer_names[bit];
                             const resolved: PackageID = resolved: {
                                 var curr_id = entry.parent_id;
                                 while (curr_id != .invalid) {

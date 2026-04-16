@@ -4048,84 +4048,208 @@ pub const H2FrameParser = struct {
         }
 
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
-        var iter = try jsc.JSPropertyIterator(.{
-            .skip_empty_name = false,
-            .include_value = true,
-        }).init(globalObject, headers_obj);
-        defer iter.deinit();
         var single_value_headers: [SingleValueHeaders.keys().len]bool = undefined;
         @memset(&single_value_headers, false);
 
-        for (0..2) |ignore_pseudo_headers| {
-            iter.reset();
-
-            while (try iter.next()) |header_name| {
-                if (header_name.length() == 0) continue;
-
-                const name_slice = header_name.toUTF8(bun.default_allocator);
-                defer name_slice.deinit();
-                const name = name_slice.slice();
-
-                const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
-                    const exception = globalObject.toTypeError(.INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name});
-                    return globalObject.throwValue(exception);
-                };
-
-                if (header_name.charAt(0) == ':') {
-                    if (ignore_pseudo_headers == 1) continue;
-
-                    if (this.isServer) {
-                        if (!ValidResponsePseudoHeaders.has(validated_name)) {
-                            if (!globalObject.hasException()) {
-                                return globalObject.ERR(.HTTP2_INVALID_PSEUDOHEADER, "\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
-                            }
-                            return .zero;
-                        }
-                    } else {
-                        if (!ValidRequestPseudoHeaders.has(validated_name)) {
-                            if (!globalObject.hasException()) {
-                                return globalObject.ERR(.HTTP2_INVALID_PSEUDOHEADER, "\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
-                            }
-                            return .zero;
-                        }
+        if (headers_arg.jsType().isArray()) {
+            // Raw [k, v, k, v, ...] array form (Node.js raw headers). Preserves
+            // duplicate ordering on the wire so the receiver's rawHeaders matches.
+            const length = try headers_arg.getLength(globalObject);
+            if (length % 2 != 0) {
+                return globalObject.ERR(.INVALID_ARG_VALUE, "The argument 'headers' must have an even number of elements", .{}).throw();
+            }
+            for (0..2) |ignore_pseudo_headers| {
+                var i: usize = 0;
+                while (i + 1 < length) : (i += 2) {
+                    const name_js = try headers_arg.getIndex(globalObject, @intCast(i));
+                    if (!name_js.isString()) {
+                        return globalObject.throw("Expected header name to be a string", .{});
                     }
-                } else if (ignore_pseudo_headers == 0) {
-                    continue;
-                }
+                    const name_str = try name_js.toBunString(globalObject);
+                    defer name_str.deref();
+                    if (name_str.length() == 0) continue;
+                    const name_slice = name_str.toUTF8(bun.default_allocator);
+                    defer name_slice.deinit();
+                    const name = name_slice.slice();
+                    if (name.len > name_buffer.len) {
+                        return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Header name is too long", .{}).throw();
+                    }
 
-                const js_value = iter.value;
-                if (js_value.isUndefinedOrNull()) {
-                    const exception = globalObject.toTypeError(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name});
-                    return globalObject.throwValue(exception);
-                }
+                    const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
+                        const exception = globalObject.toTypeError(.INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name});
+                        return globalObject.throwValue(exception);
+                    };
 
-                if (js_value.jsType().isArray()) {
-                    log("array header {s}", .{name});
-                    // https://github.com/oven-sh/bun/issues/8940
-                    var value_iter = try js_value.arrayIterator(globalObject);
+                    if (name[0] == ':') {
+                        if (ignore_pseudo_headers == 1) continue;
+                        if (this.isServer) {
+                            if (!ValidResponsePseudoHeaders.has(validated_name)) {
+                                return globalObject.ERR(.HTTP2_INVALID_PSEUDOHEADER, "\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
+                            }
+                        } else if (!ValidRequestPseudoHeaders.has(validated_name)) {
+                            return globalObject.ERR(.HTTP2_INVALID_PSEUDOHEADER, "\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
+                        }
+                    } else if (ignore_pseudo_headers == 0) {
+                        continue;
+                    }
 
                     if (SingleValueHeaders.indexOf(validated_name)) |idx| {
-                        if (value_iter.len > 1 or single_value_headers[idx]) {
-                            if (!globalObject.hasException()) {
-                                const exception = globalObject.toTypeError(.HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name});
-                                return globalObject.throwValue(exception);
-                            }
-                            return .zero;
+                        if (single_value_headers[idx]) {
+                            const exception = globalObject.toTypeError(.HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name});
+                            return globalObject.throwValue(exception);
                         }
                         single_value_headers[idx] = true;
                     }
 
-                    while (try value_iter.next()) |item| {
-                        if (item.isEmptyOrUndefinedOrNull()) {
-                            if (!globalObject.hasException()) {
-                                return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();
+                    const value_js = try headers_arg.getIndex(globalObject, @intCast(i + 1));
+                    if (value_js.isUndefinedOrNull()) {
+                        const exception = globalObject.toTypeError(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name});
+                        return globalObject.throwValue(exception);
+                    }
+                    const value_str = value_js.toJSString(globalObject) catch {
+                        globalObject.clearException();
+                        return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}).throw();
+                    };
+                    const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
+                    defer value_slice.deinit();
+                    const value = value_slice.slice();
+
+                    const never_index = (try sensitive_arg.getTruthyPropertyValue(globalObject, validated_name) orelse try sensitive_arg.getTruthyPropertyValue(globalObject, name)) != null;
+
+                    _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
+                        if (err == error.OutOfMemory) {
+                            return globalObject.throw("Failed to allocate header buffer", .{});
+                        }
+                        const stream = this.handleReceivedStreamID(stream_id) orelse {
+                            return jsc.JSValue.jsNumber(-1);
+                        };
+                        if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
+                            stream.setContext(stream_ctx_arg, globalObject);
+                        }
+                        stream.state = .CLOSED;
+                        stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
+                        this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
+                        return jsc.JSValue.jsNumber(stream_id);
+                    };
+                }
+            }
+        } else {
+            var iter = try jsc.JSPropertyIterator(.{
+                .skip_empty_name = false,
+                .include_value = true,
+            }).init(globalObject, headers_obj);
+            defer iter.deinit();
+
+            for (0..2) |ignore_pseudo_headers| {
+                iter.reset();
+
+                while (try iter.next()) |header_name| {
+                    if (header_name.length() == 0) continue;
+
+                    const name_slice = header_name.toUTF8(bun.default_allocator);
+                    defer name_slice.deinit();
+                    const name = name_slice.slice();
+                    if (name.len > name_buffer.len) {
+                        return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Header name is too long", .{}).throw();
+                    }
+
+                    const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
+                        const exception = globalObject.toTypeError(.INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name});
+                        return globalObject.throwValue(exception);
+                    };
+
+                    if (header_name.charAt(0) == ':') {
+                        if (ignore_pseudo_headers == 1) continue;
+
+                        if (this.isServer) {
+                            if (!ValidResponsePseudoHeaders.has(validated_name)) {
+                                if (!globalObject.hasException()) {
+                                    return globalObject.ERR(.HTTP2_INVALID_PSEUDOHEADER, "\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
+                                }
+                                return .zero;
                             }
-                            return .zero;
+                        } else {
+                            if (!ValidRequestPseudoHeaders.has(validated_name)) {
+                                if (!globalObject.hasException()) {
+                                    return globalObject.ERR(.HTTP2_INVALID_PSEUDOHEADER, "\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
+                                }
+                                return .zero;
+                            }
+                        }
+                    } else if (ignore_pseudo_headers == 0) {
+                        continue;
+                    }
+
+                    const js_value = iter.value;
+                    if (js_value.isUndefinedOrNull()) {
+                        const exception = globalObject.toTypeError(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name});
+                        return globalObject.throwValue(exception);
+                    }
+
+                    if (js_value.jsType().isArray()) {
+                        log("array header {s}", .{name});
+                        // https://github.com/oven-sh/bun/issues/8940
+                        var value_iter = try js_value.arrayIterator(globalObject);
+
+                        if (SingleValueHeaders.indexOf(validated_name)) |idx| {
+                            if (value_iter.len > 1 or single_value_headers[idx]) {
+                                if (!globalObject.hasException()) {
+                                    const exception = globalObject.toTypeError(.HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name});
+                                    return globalObject.throwValue(exception);
+                                }
+                                return .zero;
+                            }
+                            single_value_headers[idx] = true;
                         }
 
-                        const value_str = item.toJSString(globalObject) catch {
+                        while (try value_iter.next()) |item| {
+                            if (item.isEmptyOrUndefinedOrNull()) {
+                                if (!globalObject.hasException()) {
+                                    return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();
+                                }
+                                return .zero;
+                            }
+
+                            const value_str = item.toJSString(globalObject) catch {
+                                globalObject.clearException();
+                                return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();
+                            };
+
+                            const never_index = (try sensitive_arg.getTruthyPropertyValue(globalObject, validated_name) orelse try sensitive_arg.getTruthyPropertyValue(globalObject, name)) != null;
+
+                            const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
+                            defer value_slice.deinit();
+                            const value = value_slice.slice();
+                            log("encode header {s} {s}", .{ validated_name, value });
+
+                            _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
+                                if (err == error.OutOfMemory) {
+                                    return globalObject.throw("Failed to allocate header buffer", .{});
+                                }
+                                const stream = this.handleReceivedStreamID(stream_id) orelse {
+                                    return jsc.JSValue.jsNumber(-1);
+                                };
+                                if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
+                                    stream.setContext(stream_ctx_arg, globalObject);
+                                }
+                                stream.state = .CLOSED;
+                                stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
+                                this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
+                                return .js_undefined;
+                            };
+                        }
+                    } else if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        log("single header {s}", .{name});
+                        if (SingleValueHeaders.indexOf(validated_name)) |idx| {
+                            if (single_value_headers[idx]) {
+                                const exception = globalObject.toTypeError(.HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name});
+                                return globalObject.throwValue(exception);
+                            }
+                            single_value_headers[idx] = true;
+                        }
+                        const value_str = js_value.toJSString(globalObject) catch {
                             globalObject.clearException();
-                            return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}).throw();
+                            return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}).throw();
                         };
 
                         const never_index = (try sensitive_arg.getTruthyPropertyValue(globalObject, validated_name) orelse try sensitive_arg.getTruthyPropertyValue(globalObject, name)) != null;
@@ -4142,51 +4266,15 @@ pub const H2FrameParser = struct {
                             const stream = this.handleReceivedStreamID(stream_id) orelse {
                                 return jsc.JSValue.jsNumber(-1);
                             };
+                            stream.state = .CLOSED;
                             if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
                                 stream.setContext(stream_ctx_arg, globalObject);
                             }
-                            stream.state = .CLOSED;
                             stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                             this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
-                            return .js_undefined;
+                            return jsc.JSValue.jsNumber(stream_id);
                         };
                     }
-                } else if (!js_value.isEmptyOrUndefinedOrNull()) {
-                    log("single header {s}", .{name});
-                    if (SingleValueHeaders.indexOf(validated_name)) |idx| {
-                        if (single_value_headers[idx]) {
-                            const exception = globalObject.toTypeError(.HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name});
-                            return globalObject.throwValue(exception);
-                        }
-                        single_value_headers[idx] = true;
-                    }
-                    const value_str = js_value.toJSString(globalObject) catch {
-                        globalObject.clearException();
-                        return globalObject.ERR(.HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}).throw();
-                    };
-
-                    const never_index = (try sensitive_arg.getTruthyPropertyValue(globalObject, validated_name) orelse try sensitive_arg.getTruthyPropertyValue(globalObject, name)) != null;
-
-                    const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
-                    defer value_slice.deinit();
-                    const value = value_slice.slice();
-                    log("encode header {s} {s}", .{ validated_name, value });
-
-                    _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
-                        if (err == error.OutOfMemory) {
-                            return globalObject.throw("Failed to allocate header buffer", .{});
-                        }
-                        const stream = this.handleReceivedStreamID(stream_id) orelse {
-                            return jsc.JSValue.jsNumber(-1);
-                        };
-                        stream.state = .CLOSED;
-                        if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
-                            stream.setContext(stream_ctx_arg, globalObject);
-                        }
-                        stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
-                        this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
-                        return jsc.JSValue.jsNumber(stream_id);
-                    };
                 }
             }
         }

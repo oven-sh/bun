@@ -63,6 +63,8 @@ const ObjectKeys = Object.keys;
 const FunctionPrototypeBind = Function.prototype.bind;
 const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSlice = Array.prototype.slice;
+const ArrayPrototypeUnshift = Array.prototype.unshift;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeStartsWith = String.prototype.startsWith;
@@ -320,6 +322,7 @@ const bunHTTP2StreamStatus = Symbol.for("::bunhttp2StreamStatus::");
 
 const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
+const bunHTTP2RawHeaders = Symbol.for("::bunhttp2rawheaders::");
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 
@@ -1966,6 +1969,7 @@ class Http2Stream extends Duplex {
 
   rstCode: number | undefined = undefined;
   [bunHTTP2Headers]: any;
+  [bunHTTP2RawHeaders]: any;
   [kInfoHeaders]: any;
   #sentTrailers: any;
   [kAborted]: boolean = false;
@@ -2002,7 +2006,28 @@ class Http2Stream extends Duplex {
   }
 
   get sentHeaders() {
-    return this[bunHTTP2Headers];
+    if (this[bunHTTP2Headers] || !this[bunHTTP2RawHeaders]) {
+      return this[bunHTTP2Headers];
+    }
+    const rawHeaders = this[bunHTTP2RawHeaders];
+    const headersObject = { __proto__: null };
+    for (let i = 0; i < rawHeaders.length; i += 2) {
+      const key = rawHeaders[i];
+      const value = rawHeaders[i + 1];
+      const existing = headersObject[key];
+      if (existing === undefined) {
+        headersObject[key] = value;
+      } else if (ArrayIsArray(existing)) {
+        ArrayPrototypePush.$call(existing, value);
+      } else {
+        headersObject[key] = [existing, value];
+      }
+    }
+    if (rawHeaders[sensitiveHeaders] !== undefined) {
+      headersObject[sensitiveHeaders] = rawHeaders[sensitiveHeaders];
+    }
+    this[bunHTTP2Headers] = headersObject;
+    return headersObject;
   }
 
   get sentInfoHeaders() {
@@ -2597,29 +2622,66 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
     }
 
+    let rawHeaders: any[] | undefined;
+    let sensitives;
     if (headers == undefined) {
       headers = {};
+    } else if (ArrayIsArray(headers)) {
+      if (headers.length % 2 !== 0) {
+        throw $ERR_INVALID_ARG_VALUE("headers", headers, "must have an even number of elements");
+      }
+      sensitives = headers[sensitiveHeaders];
+      rawHeaders = ArrayPrototypeSlice.$call(headers);
+      headers = undefined;
     } else if (!$isObject(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
       headers = { ...headers };
+      sensitives = headers[sensitiveHeaders];
+      delete headers[sensitiveHeaders];
     }
 
-    const sensitives = headers[sensitiveHeaders];
-    delete headers[sensitiveHeaders];
     const sensitiveNames = {};
     if (sensitives) {
       if (!$isArray(sensitives)) {
         throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
       }
       for (let i = 0; i < sensitives.length; i++) {
-        sensitiveNames[sensitives[i]] = true;
+        sensitiveNames[StringPrototypeToLowerCase.$call(sensitives[i])] = true;
       }
     }
-    if (headers[HTTP2_HEADER_STATUS] === undefined) {
-      headers[HTTP2_HEADER_STATUS] = 200;
+
+    let statusCode;
+    if (rawHeaders !== undefined) {
+      let hasDate = false;
+      for (let i = 0; i < rawHeaders.length; i += 2) {
+        const key = StringPrototypeToLowerCase.$call(rawHeaders[i]);
+        if (key === HTTP2_HEADER_STATUS) statusCode = rawHeaders[i + 1];
+        else if (key === "date") hasDate = true;
+      }
+      if (statusCode === undefined) {
+        statusCode = 200;
+        ArrayPrototypeUnshift.$call(rawHeaders, HTTP2_HEADER_STATUS, statusCode);
+      }
+      const sendDate = options?.sendDate;
+      if (!hasDate && (sendDate == null || sendDate)) {
+        ArrayPrototypePush.$call(rawHeaders, "date", utcDate());
+      }
+      if (sensitives !== undefined) rawHeaders[sensitiveHeaders] = sensitives;
+    } else {
+      if (headers[HTTP2_HEADER_STATUS] === undefined) {
+        headers[HTTP2_HEADER_STATUS] = 200;
+      }
+      statusCode = headers[HTTP2_HEADER_STATUS];
+      const sendDate = options?.sendDate;
+      if (sendDate == null || sendDate) {
+        const current_date = headers["date"];
+        if (current_date == null) {
+          headers["date"] = utcDate();
+        }
+      }
     }
-    const statusCode = headers[HTTP2_HEADER_STATUS];
+
     let endStream = !!options?.endStream;
     if (
       endStream ||
@@ -2631,21 +2693,19 @@ class ServerHttp2Stream extends Http2Stream {
       options = { ...options, endStream: true };
       endStream = true;
     }
-    const sendDate = options?.sendDate;
-    if (sendDate == null || sendDate) {
-      const current_date = headers["date"];
-      if (current_date == null) {
-        headers["date"] = utcDate();
-      }
-    }
 
+    const headersToSend = rawHeaders !== undefined ? rawHeaders : headers;
     if (typeof options === "undefined") {
-      session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
+      session[bunHTTP2Native]?.request(this.id, undefined, headersToSend, sensitiveNames);
     } else {
-      session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames, options);
+      session[bunHTTP2Native]?.request(this.id, undefined, headersToSend, sensitiveNames, options);
     }
     this.headersSent = true;
-    this[bunHTTP2Headers] = headers;
+    if (rawHeaders !== undefined) {
+      this[bunHTTP2RawHeaders] = rawHeaders;
+    } else {
+      this[bunHTTP2Headers] = headers;
+    }
     if (endStream) {
       this.end();
     }
@@ -3818,59 +3878,105 @@ class ClientHttp2Session extends Http2Session {
         throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
       }
 
+      let rawHeaders: any[] | undefined;
+      let sensitives;
       if (headers == undefined) {
         headers = {};
+      } else if (ArrayIsArray(headers)) {
+        if (headers.length % 2 !== 0) {
+          throw $ERR_INVALID_ARG_VALUE("headers", headers, "must have an even number of elements");
+        }
+        sensitives = headers[sensitiveHeaders];
+        rawHeaders = ArrayPrototypeSlice.$call(headers);
+        headers = undefined;
       } else if (!$isObject(headers)) {
         throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
       } else {
         headers = { ...headers };
+        sensitives = headers[sensitiveHeaders];
+        delete headers[sensitiveHeaders];
       }
 
-      const sensitives = headers[sensitiveHeaders];
-      delete headers[sensitiveHeaders];
       const sensitiveNames = {};
       if (sensitives) {
         if (!$isArray(sensitives)) {
           throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
         }
         for (let i = 0; i < sensitives.length; i++) {
-          sensitiveNames[sensitives[i]] = true;
+          sensitiveNames[StringPrototypeToLowerCase.$call(sensitives[i])] = true;
         }
       }
       const url = this.#url;
 
-      let authority = headers[":authority"];
-      if (!authority) {
-        // Use precomputed authority (like Node.js's session[kAuthority])
-        authority = this.#authority;
-        if (!headers["host"]) {
-          headers[":authority"] = authority;
+      let authority, method, scheme, path;
+      if (rawHeaders !== undefined) {
+        let hasHost = false;
+        for (let i = 0; i < rawHeaders.length; i += 2) {
+          const rawKey = rawHeaders[i];
+          if (rawKey[0] !== ":") {
+            if (!hasHost && StringPrototypeToLowerCase.$call(rawKey) === "host") hasHost = true;
+            continue;
+          }
+          const key = StringPrototypeToLowerCase.$call(rawKey);
+          const value = rawHeaders[i + 1];
+          if (key === ":method") method = value;
+          else if (key === ":scheme") scheme = value;
+          else if (key === ":authority") authority = value;
+          else if (key === ":path") path = value;
         }
-      }
-      let method = headers[":method"];
-      if (!method) {
-        method = "GET";
-        headers[":method"] = method;
-      }
-
-      let scheme = headers[":scheme"];
-      if (!scheme) {
-        let protocol: string = url.protocol || options?.protocol || "https:";
-        switch (protocol) {
-          case "https:":
-            scheme = "https";
-            break;
-          case "http:":
-            scheme = "http";
-            break;
-          default:
-            scheme = protocol;
+        const additional: string[] = [];
+        if (method === undefined) {
+          method = "GET";
+          ArrayPrototypePush.$call(additional, ":method", method);
         }
-        headers[":scheme"] = scheme;
-      }
-
-      if (headers[":path"] == undefined) {
-        headers[":path"] = "/";
+        if (authority === undefined && !hasHost) {
+          authority = this.#authority;
+          ArrayPrototypePush.$call(additional, ":authority", authority);
+        }
+        if (scheme === undefined) {
+          const protocol: string = url.protocol || options?.protocol || "https:";
+          scheme = protocol === "http:" ? "http" : protocol === "https:" ? "https" : protocol;
+          ArrayPrototypePush.$call(additional, ":scheme", scheme);
+        }
+        if (path === undefined) {
+          ArrayPrototypePush.$call(additional, ":path", "/");
+        }
+        if (additional.length) {
+          for (let i = 0; i < rawHeaders.length; i++) ArrayPrototypePush.$call(additional, rawHeaders[i]);
+          rawHeaders = additional;
+        }
+        if (sensitives !== undefined) rawHeaders[sensitiveHeaders] = sensitives;
+      } else {
+        authority = headers[":authority"];
+        if (!authority) {
+          authority = this.#authority;
+          if (!headers["host"]) {
+            headers[":authority"] = authority;
+          }
+        }
+        method = headers[":method"];
+        if (!method) {
+          method = "GET";
+          headers[":method"] = method;
+        }
+        scheme = headers[":scheme"];
+        if (!scheme) {
+          const protocol: string = url.protocol || options?.protocol || "https:";
+          switch (protocol) {
+            case "https:":
+              scheme = "https";
+              break;
+            case "http:":
+              scheme = "http";
+              break;
+            default:
+              scheme = protocol;
+          }
+          headers[":scheme"] = scheme;
+        }
+        if (headers[":path"] == undefined) {
+          headers[":path"] = "/";
+        }
       }
 
       if (NoPayloadMethods.has(method.toUpperCase())) {
@@ -3883,16 +3989,19 @@ class ClientHttp2Session extends Http2Session {
       let stream_id: number = this.#parser.getNextStream();
       if (stream_id < 0) {
         const req = new ClientHttp2Stream(undefined, this, headers);
+        if (rawHeaders !== undefined) req[bunHTTP2RawHeaders] = rawHeaders;
         process.nextTick(emitOutofStreamErrorNT, req);
         return req;
       }
       const req = new ClientHttp2Stream(stream_id, this, headers);
+      if (rawHeaders !== undefined) req[bunHTTP2RawHeaders] = rawHeaders;
       req.authority = authority;
       req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
+      const headersToSend = rawHeaders !== undefined ? rawHeaders : headers;
       if (typeof options === "undefined") {
-        this.#parser.request(stream_id, req, headers, sensitiveNames);
+        this.#parser.request(stream_id, req, headersToSend, sensitiveNames);
       } else {
-        this.#parser.request(stream_id, req, headers, sensitiveNames, options);
+        this.#parser.request(stream_id, req, headersToSend, sensitiveNames, options);
       }
       process.nextTick(emitEventNT, req, "ready");
       return req;

@@ -305,7 +305,10 @@ const WindowReader = struct {
         const b = bytes.ptr + start;
         r.bytes = bytes;
         r.base = b;
-        r.count = b[win_hdr.count_off];
+        // Clamp `count` so a corrupted header byte cannot drive `next()` past
+        // `FindCacheSlot.decoded[sync_interval]`. Well-formed blobs never
+        // exceed K; this is defense-in-depth for the standalone-graph path.
+        r.count = @min(b[win_hdr.count_off], sync_interval);
         const flags = b[win_hdr.flags_off];
         r.flags = flags;
         r.delta_idx = 0;
@@ -320,10 +323,10 @@ const WindowReader = struct {
         var pos = r.orig_col_exc_pos + orig_col_len;
         r.gen_line_exc_next_idx = 0xFF;
         if (flags != 0) {
-            if (flags & flag_has_gen_line_exceptions != 0) {
+            if (flags & flag_has_gen_line_exceptions != 0 and pos < bytes.len) {
                 r.gen_line_exc_pos = pos;
                 r.gen_line_exc_next_idx = bytes[pos];
-                while (bytes[pos] != 0xFF) {
+                while (pos < bytes.len and bytes[pos] != 0xFF) {
                     pos += 1;
                     _ = readVarint(bytes, &pos);
                 }

@@ -257,7 +257,27 @@ pub const Worker = struct {
         process.setExitHandler(this);
         switch (process.watchOrReap()) {
             .result => {},
-            .err => |e| if (!process.hasExited()) process.onExit(.{ .err = e }, &std.mem.zeroes(bun.spawn.Rusage)),
+            .err => |e| {
+                // Surface to the caller (spawnWorker / onWorkerExit) instead of
+                // synchronously firing onExit() — that would re-enter
+                // onWorkerExit() → start(), which under persistent EMFILE
+                // recurses unboundedly while spawning real processes each frame.
+                this.alive = false;
+                coord.live_workers -= 1;
+                process.exit_handler = .{};
+                if (!process.hasExited()) _ = process.kill(9);
+                process.close();
+                this.process = null;
+                if (this.stdin_fd) |fd| {
+                    fd.close();
+                    this.stdin_fd = null;
+                }
+                this.ipc.deinit();
+                this.out.deinit();
+                this.err.deinit();
+                Output.err(e, "watchOrReap failed for test worker", .{});
+                return error.ProcessWatchFailed;
+            },
         }
     }
 

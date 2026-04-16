@@ -686,7 +686,6 @@ describe.concurrent(() => {
 
   const undefinedStubs = [
     "_debugEnd",
-    "_debugProcess",
     "_fatalException",
     "_linkedBinding",
     "_rawDebug",

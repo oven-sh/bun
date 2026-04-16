@@ -2394,11 +2394,21 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     }
 
     {
-        const skip_ipc = if (this.rare_data) |rare| rare.spawn_ipc_usockets_context else null;
+        const skip_spawn_ipc = if (this.rare_data) |rare| rare.spawn_ipc_usockets_context else null;
+        // When this process is itself a forked child (NODE_CHANNEL_FD set),
+        // its inbound process.send/on('message') channel lives on a separate
+        // uws context that must survive the swap.
+        const skip_process_ipc: ?*uws.SocketContext = if (Environment.isPosix)
+            if (this.ipc) |ipc| switch (ipc) {
+                .initialized => |inst| inst.context,
+                .waiting => null,
+            } else null
+        else
+            null;
         var maybe_ctx = bun.uws.Loop.get().internal_loop_data.head;
         while (maybe_ctx) |ctx| {
             const next_ctx = ctx.next();
-            if (ctx != skip_ipc) {
+            if (ctx != skip_spawn_ipc and ctx != skip_process_ipc) {
                 // ssl=false routes through the base on_close which, for SSL
                 // contexts, is ssl_on_close (SSL_free + user callback). Letting
                 // the real callbacks run lets wrappers drop Strong<> refs so
@@ -2445,6 +2455,9 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     VMHolder.cached_global_object = new_global;
     this.regular_event_loop.global = new_global;
     this.has_loaded_constructors = true;
+    if (this.ipc) |ipc| if (ipc == .initialized) {
+        ipc.initialized.globalThis = new_global;
+    };
 
     // TODO(isolate): drain HTTPThread's keepalive pool. It lives on a separate
     // thread with its own uws loop; pooled sockets are JS-invisible and bounded

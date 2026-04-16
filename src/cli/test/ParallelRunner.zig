@@ -87,6 +87,12 @@ const Frame = struct {
 /// module load alone can exceed the production 5ms threshold.
 const default_scale_up_after_ms = 5;
 
+/// Upper bound on a single IPC frame payload. The protocol is internal but
+/// fd 3 is reachable from test JS via `fs.writeSync(3, ...)`; rejecting
+/// nonsensical lengths up-front prevents both a `5 + len` u32 overflow and
+/// an unbounded allocation.
+const max_frame_payload: u32 = 64 * 1024 * 1024;
+
 /// Reads worker output (IPC, stdout, or stderr) and routes it. One per pipe.
 /// IPC bytes are frame-decoded; stdout/stderr accumulate into the worker's
 /// `captured` buffer and flush atomically with the next test result so console
@@ -111,11 +117,22 @@ const WorkerPipe = struct {
         var head: usize = 0;
         while (this.buf.items.len - head >= 5) {
             const len = std.mem.readInt(u32, this.buf.items[head..][0..4], .little);
-            if (this.buf.items.len - head < 5 + len) break;
-            const kind: Kind = @enumFromInt(this.buf.items[head + 4]);
+            if (len > max_frame_payload) {
+                // Corrupt or hostile frame (test JS wrote to fd 3). Kill the
+                // worker so onWorkerExit accounts for the in-flight file and
+                // the slot can respawn.
+                this.buf.clearRetainingCapacity();
+                if (this.worker.process) |p| _ = p.kill(@intCast(std.posix.SIG.KILL));
+                return false;
+            }
+            if (this.buf.items.len - head < @as(usize, 5) + len) break;
+            const kind = std.meta.intToEnum(Kind, this.buf.items[head + 4]) catch {
+                head += @as(usize, 5) + len;
+                continue;
+            };
             var rd = Frame.Reader{ .p = this.buf.items[head + 5 ..][0..len] };
             this.worker.coord.onFrame(this.worker, kind, &rd);
-            head += 5 + len;
+            head += @as(usize, 5) + len;
         }
         if (head > 0) {
             const rest = this.buf.items.len - head;
@@ -177,7 +194,12 @@ pub const Worker = struct {
                 .stream = true,
             };
             var spawned = try (try bun.spawn.spawnProcess(&options, coord.argv.ptr, coord.envp)).unwrap();
-            this.process = spawned.toProcess(coord.vm.eventLoop(), false);
+            const process = spawned.toProcess(coord.vm.eventLoop(), false);
+            errdefer {
+                _ = process.kill(std.posix.SIG.KILL);
+                process.close();
+            }
+            this.process = process;
             this.stdin_fd = spawned.stdin;
             if (spawned.stdout) |fd| try this.out.reader.start(fd, true).unwrap();
             if (spawned.stderr) |fd| try this.err.reader.start(fd, true).unwrap();
@@ -318,7 +340,7 @@ pub const Coordinator = struct {
     }
 
     pub fn drive(this: *Coordinator) void {
-        this.spawnWorker();
+        _ = this.spawnWorker();
         while (!this.isDone()) {
             this.vm.eventLoop().tick();
             this.maybeScaleUp();
@@ -333,14 +355,16 @@ pub const Coordinator = struct {
         }
     }
 
-    fn spawnWorker(this: *Coordinator) void {
+    fn spawnWorker(this: *Coordinator) bool {
         bun.assert(this.spawned_count < this.parallel_limit);
         const w = &this.workers[this.spawned_count];
-        this.spawned_count += 1;
         w.start() catch |e| {
             Output.err(e, "failed to spawn test worker", .{});
             if (this.live_workers == 0) bun.Global.exit(1);
+            return false;
         };
+        this.spawned_count += 1;
+        return true;
     }
 
     /// Once every live worker has been busy for at least `scale_up_after_ms`,
@@ -357,7 +381,11 @@ pub const Coordinator = struct {
             if (now - w.dispatched_at < this.scale_up_after_ms) return;
         }
         const want = @min(this.parallel_limit, @as(u32, @intCast(this.files.len)) - this.files_done);
-        while (this.spawned_count < want) this.spawnWorker();
+        while (this.spawned_count < want) {
+            // On failure, leave the slot unconsumed so the next drive() tick
+            // can retry; don't loop here or a hard spawn error would spin.
+            if (!this.spawnWorker()) break;
+        }
     }
 
     fn assignWork(this: *Coordinator, w: *Worker) void {
@@ -483,17 +511,13 @@ pub const Coordinator = struct {
                 retry_idx = idx;
                 Output.prettyError("<r><yellow>⟳<r> crashed running <b>{s}<r>, retrying\n", .{rel});
             } else {
-                Output.prettyError("<r><red>✗<r> <b>{s}<r> <d>(crashed: {s})<r>\n", .{ rel, @tagName(status) });
-                this.reporter.summary().fail += 1;
-                this.reporter.summary().files += 1;
-                this.crashed_files += 1;
-                this.files_done += 1;
-                if (this.bail > 0 and this.reporter.summary().fail >= this.bail) this.bailOut();
+                this.accountCrash(idx, @tagName(status));
             }
             Output.flush();
             w.inflight = null;
         }
 
+        var respawned = false;
         if (!this.bailed and (this.next_file < this.files.len or retry_idx != null)) {
             w.ipc.deinit();
             w.out.deinit();
@@ -502,20 +526,39 @@ pub const Coordinator = struct {
             w.out = .{ .role = .stdout };
             w.err = .{ .role = .stderr };
             w.process = null;
-            w.start() catch |e| {
+            if (w.start()) |_| {
+                respawned = true;
+                if (retry_idx) |idx| this.pending_retry[w.idx] = idx;
+            } else |e| {
                 Output.err(e, "failed to respawn test worker", .{});
-                if (retry_idx != null) {
-                    this.reporter.summary().fail += 1;
-                    this.reporter.summary().files += 1;
-                    this.files_done += 1;
-                }
-                if (this.live_workers == 0) {
-                    this.abortQueuedFiles("no live workers (respawn failed)");
-                }
-                return;
-            };
-            if (retry_idx) |idx| this.pending_retry[w.idx] = idx;
+            }
         }
+
+        if (!respawned) {
+            // The worker slot is dead. Any retry that was queued for it (either
+            // from this exit or from a prior respawn that died before .ready)
+            // will never be picked up — count it as a crash so totals stay
+            // correct and drive() doesn't wait on a files_done that can't
+            // advance.
+            if (retry_idx orelse this.pending_retry[w.idx]) |orphan| {
+                this.pending_retry[w.idx] = null;
+                this.accountCrash(orphan, "retry abandoned");
+                Output.flush();
+            }
+            if (!this.bailed and this.live_workers == 0) {
+                this.abortQueuedFiles("no live workers");
+            }
+        }
+    }
+
+    fn accountCrash(this: *Coordinator, file_idx: u32, reason: []const u8) void {
+        this.breakDots();
+        Output.prettyError("<r><red>✗<r> <b>{s}<r> <d>(crashed: {s})<r>\n", .{ this.relPath(file_idx), reason });
+        this.reporter.summary().fail += 1;
+        this.reporter.summary().files += 1;
+        this.crashed_files += 1;
+        this.files_done += 1;
+        if (this.bail > 0 and this.reporter.summary().fail >= this.bail) this.bailOut();
     }
 
     /// Mark every not-yet-dispatched file as failed so `drive()` can exit
@@ -572,9 +615,10 @@ pub fn runAsCoordinator(
     if (Output.enable_ansi_colors_stderr) {
         vm.transpiler.env.map.put("FORCE_COLOR", "1") catch bun.outOfMemory();
     }
+    defer if (worker_tmpdir) |d| bun.FD.cwd().deleteTree(d) catch {};
     if (ctx.test_options.reporters.junit or coverage_opts.enabled) {
         const dir = try std.fmt.allocPrintSentinel(arena.allocator(), "{s}/bun-test-worker-{d}", .{ bun.fs.FileSystem.RealFS.getDefaultTempDir(), std.crypto.random.int(u32) }, 0);
-        std.fs.cwd().makePath(dir) catch |e| {
+        bun.FD.cwd().makePath(u8, dir) catch |e| {
             Output.err(e, "failed to create worker temp dir {s}", .{dir});
             bun.Global.exit(1);
         };
@@ -633,7 +677,6 @@ pub fn runAsCoordinator(
             inline else => |colors| mergeCoverageFragments(coord.coverage_fragments.items, coverage_opts, colors),
         }
     }
-    if (worker_tmpdir) |dir| std.fs.cwd().deleteTree(dir) catch {};
     return true;
 }
 
@@ -655,7 +698,10 @@ fn mergeJUnitFragments(paths: []const []const u8, outfile: []const u8, summary: 
     }) catch bun.outOfMemory();
 
     for (paths) |path| {
-        const file = std.fs.cwd().readFileAlloc(bun.default_allocator, path, 64 * 1024 * 1024) catch continue;
+        const file = switch (bun.sys.File.readFrom(bun.FD.cwd(), path, bun.default_allocator)) {
+            .result => |r| r,
+            .err => continue,
+        };
         defer bun.default_allocator.free(file);
         // Each fragment is a full <testsuites> document; extract its body.
         const open_end = std.mem.indexOf(u8, file, "<testsuites") orelse continue;
@@ -670,10 +716,9 @@ fn mergeJUnitFragments(paths: []const []const u8, outfile: []const u8, summary: 
 
     contents.appendSlice(bun.default_allocator, "</testsuites>\n") catch bun.outOfMemory();
 
-    var path_buf: bun.PathBuffer = undefined;
-    @memcpy(path_buf[0..outfile.len], outfile);
-    path_buf[outfile.len] = 0;
-    switch (bun.sys.File.openat(.cwd(), path_buf[0..outfile.len :0], bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+    const out_z = bun.default_allocator.dupeZ(u8, outfile) catch bun.outOfMemory();
+    defer bun.default_allocator.free(out_z);
+    switch (bun.sys.File.openat(.cwd(), out_z, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
         .err => |err| Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{f}", .{ outfile, err }),
         .result => |fd| {
             defer _ = fd.close();
@@ -709,7 +754,10 @@ fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.CodeCove
     var by_file: std.StringArrayHashMapUnmanaged(FileCoverage) = .empty;
 
     for (paths) |path| {
-        const data = std.fs.cwd().readFileAlloc(arena, path, 64 * 1024 * 1024) catch continue;
+        const data = switch (bun.sys.File.readFrom(bun.FD.cwd(), path, arena)) {
+            .result => |r| r,
+            .err => continue,
+        };
         var cur: ?*FileCoverage = null;
         var lines = std.mem.splitScalar(u8, data, '\n');
         while (lines.next()) |raw| {
@@ -971,15 +1019,16 @@ pub fn runAsWorker(
 
     while (readFrame(stdin, &stdin_buf)) |hd| {
         var rd = Frame.Reader{ .p = stdin_buf.items[5 .. 5 + hd.len] };
+        const consumed: usize = 5 + hd.len;
         switch (hd.kind) {
             .shutdown => break,
             .run => {
                 const idx = rd.u32_();
-                // Copy out before the file runs; test code may write to stdin_buf via stdin.
+                // Copy out before consuming; rd points into stdin_buf.
                 path_buf.clearRetainingCapacity();
                 path_buf.appendSlice(bun.default_allocator, rd.str()) catch bun.outOfMemory();
-                std.mem.copyForwards(u8, stdin_buf.items, stdin_buf.items[5 + hd.len ..]);
-                stdin_buf.items.len -= 5 + hd.len;
+                std.mem.copyForwards(u8, stdin_buf.items, stdin_buf.items[consumed..]);
+                stdin_buf.items.len -= consumed;
 
                 reporter.worker_ipc_file_idx = idx;
                 worker_frame.begin(.file_start);
@@ -1007,7 +1056,10 @@ pub fn runAsWorker(
                 }) |v| worker_frame.u32_(v);
                 worker_frame.send(ipcFd());
             },
-            else => {},
+            else => {
+                std.mem.copyForwards(u8, stdin_buf.items, stdin_buf.items[consumed..]);
+                stdin_buf.items.len -= consumed;
+            },
         }
     }
     workerFlushAggregates(reporter, vm, ctx, worker_tmp);
@@ -1015,6 +1067,13 @@ pub fn runAsWorker(
 }
 
 fn workerFlushAggregates(reporter: *CommandLineReporter, vm: *jsc.VirtualMachine, ctx: Command.Context, worker_tmp: ?[]const u8) void {
+    // Snapshots flush lazily when the next file opens its snapshot file; the
+    // last file each worker ran has no successor to trigger that.
+    if (jsc.Jest.Jest.runner) |runner| {
+        _ = runner.snapshots.writeInlineSnapshots() catch false;
+        runner.snapshots.writeSnapshotFile() catch {};
+    }
+
     worker_frame.begin(.repeat_bufs);
     worker_frame.str(reporter.failures_to_repeat_buf.items);
     worker_frame.str(reporter.skips_to_repeat_buf.items);
@@ -1080,8 +1139,10 @@ fn readFrame(fd: bun.FD, buf: *std.ArrayListUnmanaged(u8)) ?struct { kind: Kind,
     while (true) {
         if (buf.items.len >= 5) {
             const len = std.mem.readInt(u32, buf.items[0..4], .little);
-            if (buf.items.len >= 5 + len) {
-                return .{ .kind = @enumFromInt(buf.items[4]), .len = len };
+            if (len > max_frame_payload) return null;
+            if (buf.items.len >= @as(usize, 5) + len) {
+                const kind = std.meta.intToEnum(Kind, buf.items[4]) catch return null;
+                return .{ .kind = kind, .len = len };
             }
         }
         var chunk: [4096]u8 = undefined;

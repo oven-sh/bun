@@ -1040,7 +1040,10 @@ pub const CommandLineReporter = struct {
 
         const relative_dir = vm.transpiler.fs.top_level_dir;
         const file = switch (bun.sys.File.openat(.cwd(), out_path, bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC, 0o644)) {
-            .err => return,
+            .err => |e| {
+                Output.err(.lcovCoverageError, "failed to open coverage fragment {s}\n{f}", .{ out_path, e });
+                return error.OpenFailed;
+            },
             .result => |f| f,
         };
         defer file.close();

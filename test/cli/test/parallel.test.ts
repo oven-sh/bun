@@ -518,3 +518,74 @@ test("--parallel lazily scales workers based on file duration", async () => {
     expect(r.exitCode).toBe(0);
   }
 });
+
+test("--parallel writes new snapshots from every worker", async () => {
+  const body = (n: number) =>
+    `import {test,expect} from "bun:test"; test("snap",()=>expect("value-${n}").toMatchSnapshot());`;
+  using dir = tempDir("parallel-snapshots", {
+    "a.test.js": body(1),
+    "b.test.js": body(2),
+    "c.test.js": body(3),
+    "d.test.js": body(4),
+  });
+
+  // First run creates snapshots; with 4 workers each worker's only file is its
+  // last file, so this exercises the explicit flush before worker exit.
+  await using first = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=4", "--update-snapshots"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", CI: "false" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr1, code1] = await Promise.all([first.stdout.text(), first.stderr.text(), first.exited]);
+  expect(stderr1).toContain("(parallel)");
+  expect(stderr1).toContain("4 pass");
+  expect(code1).toBe(0);
+
+  for (const f of ["a", "b", "c", "d"]) {
+    const snap = `${dir}/__snapshots__/${f}.test.js.snap`;
+    expect(await Bun.file(snap).exists()).toBe(true);
+  }
+
+  // Second run must pass against the snapshots written by the first.
+  await using second = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=4"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", CI: "false" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr2, code2] = await Promise.all([second.stdout.text(), second.stderr.text(), second.exited]);
+  expect(stderr2).toContain("(parallel)");
+  expect(stderr2).toContain("4 pass");
+  expect(stderr2).toContain("0 fail");
+  expect(code2).toBe(0);
+});
+
+test("--parallel: a test writing garbage to fd 3 does not hang the coordinator", async () => {
+  using dir = tempDir("parallel-hostile-fd3", {
+    "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
+    "bad.test.js": `import {test} from "bun:test"; import {writeSync} from "fs";
+      test("bad",()=>{ writeSync(3, Buffer.from([0xff,0xff,0xff,0xff,0x42])); });`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const result = await Promise.race([
+    Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]),
+    Bun.sleep(15000).then(() => "TIMEOUT" as const),
+  ]);
+  expect(result).not.toBe("TIMEOUT");
+  const [, stderr, exitCode] = result as [string, string, number];
+  expect(stderr).toContain("(parallel)");
+  // ok.test.js's pass survives; bad.test.js's worker is treated as crashed once
+  // its IPC pipe is dropped, then retried. We don't assert exact counts (the
+  // retry may also corrupt fd 3) — only that the run completes deterministically.
+  expect(stderr).toContain("Ran ");
+  expect([0, 1]).toContain(exitCode);
+});

@@ -11,15 +11,15 @@ rmSync(dir, { recursive: true, force: true });
 mkdirSync(dir, { recursive: true });
 
 for (let f = 0; f < FILES; f++) {
-  let body = `import { test, expect } from "bun:test";\n`;
+  let body = "";
   for (let t = 0; t < TESTS_PER_FILE; t++) {
     body += `
 test("file${f}-t${t}", async () => {
   // Mix of I/O wait and a little CPU so neither dominates.
-  await Bun.sleep(25);
+  await new Promise(r => setTimeout(r, 25));
   let h = 0;
   for (let i = 0; i < 50_000; i++) h = (h * 31 + i) | 0;
-  expect(h).toBeTypeOf("number");
+  expect(typeof h).toBe("number");
 });
 `;
   }

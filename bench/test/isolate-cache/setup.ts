@@ -22,8 +22,7 @@ writeFileSync(`${root}/big.ts`, big);
 for (let f = 0; f < FILES; f++) {
   writeFileSync(
     `${root}/t${String(f).padStart(2, "0")}.test.ts`,
-    `import { test, expect } from "bun:test";
-import { big, MARKER } from "./big";
+    `import { big, MARKER } from "./big";
 test("t${f}", () => {
   expect(typeof big).toBe("function");
   expect(MARKER).toBe(${STMTS});

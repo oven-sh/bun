@@ -35,6 +35,7 @@
 
 #include "../modules/ObjectModule.h"
 #include "JSCommonJSModule.h"
+#include "IsolatedModuleCache.h"
 #include "../modules/_NativeModule.h"
 
 #include "JSCommonJSExtensions.h"
@@ -511,8 +512,8 @@ extern "C" void Bun__onFulfillAsyncModule(
             }
         } else {
             auto provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
-            if ((res->result.value.tag == SyntheticModuleType::JavaScript || res->result.value.tag == SyntheticModuleType::PackageJSONTypeModule) && Bun__VM__useIsolationSourceProviderCache(globalObject->bunVM())) {
-                WebCore::clientData(vm)->isolationSourceProviderCache.add(specifier->toWTFString(BunString::ZeroCopy), WebCore::JSVMClientData::CachedIsolationProvider { provider.ptr() });
+            if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
+                Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
             }
             promise->resolve(globalObject, vm, JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider))));
             scope.assertNoExceptionExceptTermination();
@@ -779,17 +780,14 @@ JSValue fetchCommonJSModule(
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
 
-    if (isBunTest && Bun__VM__useIsolationSourceProviderCache(bunVM) && (typeAttribute == nullptr || typeAttribute->isEmpty()) && !globalObject->hasOverriddenModuleWrapper) {
-        auto& cache = WebCore::clientData(vm)->isolationSourceProviderCache;
-        auto it = cache.find(specifierWtfString);
-        if (it != cache.end()) {
-            auto& entry = it->value;
-            if (entry.provider->sourceType() == JSC::SourceProviderSourceType::Program) {
-                target->evaluate(globalObject, Ref(*entry.provider), entry.ignoreESModuleAnnotation);
+    if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute) && !globalObject->hasOverriddenModuleWrapper) {
+        if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifierWtfString)) {
+            if (cached->sourceType() == JSC::SourceProviderSourceType::Program) {
+                target->evaluate(globalObject, Ref(*cached), cached->m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule);
                 RETURN_IF_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, target);
             }
-            globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(Ref(*entry.provider)));
+            globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(Ref(*cached)));
             RETURN_IF_EXCEPTION(scope, {});
             RELEASE_AND_RETURN(scope, jsNumber(-1));
         }
@@ -1029,14 +1027,11 @@ static JSValue fetchESMSourceCode(
         }
     }
 
-    const bool useIsolationCache = isBunTest && Bun__VM__useIsolationSourceProviderCache(bunVM) && (typeAttribute == nullptr || typeAttribute->isEmpty());
+    const bool useIsolationCache = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
     if (useIsolationCache) {
-        auto& cache = WebCore::clientData(vm)->isolationSourceProviderCache;
-        auto it = cache.find(specifier->toWTFString(BunString::ZeroCopy));
-        if (it != cache.end()) {
-            auto& entry = it->value;
-            if (entry.provider->sourceType() == JSC::SourceProviderSourceType::Program) {
-                auto created = Bun::createCommonJSModule(globalObject, specifierJS, Ref(*entry.provider), entry.ignoreESModuleAnnotation);
+        if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifier->toWTFString(BunString::ZeroCopy))) {
+            if (cached->sourceType() == JSC::SourceProviderSourceType::Program) {
+                auto created = Bun::createCommonJSModule(globalObject, specifierJS, Ref(*cached), cached->m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule);
                 EXCEPTION_ASSERT(created.has_value() == !scope.exception());
                 if (created.has_value()) {
                     RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
@@ -1050,7 +1045,7 @@ static JSValue fetchESMSourceCode(
                     return {};
                 }
             }
-            RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*entry.provider)))));
+            RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached)))));
         }
     }
 
@@ -1151,8 +1146,8 @@ static JSValue fetchESMSourceCode(
     }
 
     auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
-    if (useIsolationCache && (res->result.value.tag == SyntheticModuleType::JavaScript || res->result.value.tag == SyntheticModuleType::PackageJSONTypeModule)) {
-        WebCore::clientData(vm)->isolationSourceProviderCache.add(specifier->toWTFString(BunString::ZeroCopy), WebCore::JSVMClientData::CachedIsolationProvider { provider.ptr() });
+    if (useIsolationCache) {
+        Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
     }
     RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider)))));
 }
@@ -1185,16 +1180,13 @@ using namespace Bun;
 BUN_DEFINE_HOST_FUNCTION(jsFunctionEvictIsolationSourceProviderCache, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    auto& cache = WebCore::clientData(vm)->isolationSourceProviderCache;
-    if (cache.isEmpty())
-        return JSC::JSValue::encode(JSC::jsUndefined());
     JSC::JSValue arg = callFrame->argument(0);
     if (arg.isUndefined()) {
-        cache.clear();
+        Bun::IsolatedModuleCache::clear(vm);
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
     if (auto* str = arg.toStringOrNull(globalObject))
-        cache.remove(str->value(globalObject));
+        Bun::IsolatedModuleCache::evict(vm, str->value(globalObject));
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

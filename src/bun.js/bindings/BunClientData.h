@@ -120,22 +120,13 @@ public:
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
-    // Populated only under `bun test --isolate`. Keyed by resolved specifier
-    // (absolute path). Survives global swaps so a fresh global's module fetch
-    // can reuse an already-transpiled provider and hit JSC's CodeCache instead
-    // of re-running Bun__transpileFile. Values are strong Ref<> by design: this
-    // map is the only owner once the previous global is GC'd, so a weak map
-    // would empty after every swap. Memory grows with the set of distinct
-    // modules imported across the run; explicit invalidation is via
-    // `delete require.cache[key]` (jsFunctionEvictIsolationSourceProviderCache).
-    // CommonJS providers (sourceType()==Program) are wrapped in a fresh
-    // per-global module record at lookup; ignoreESModuleAnnotation is the only
-    // bit of ResolvedSource needed to do that.
-    struct CachedIsolationProvider {
-        RefPtr<JSC::SourceProvider> provider;
-        bool ignoreESModuleAnnotation { false };
-    };
-    WTF::UncheckedKeyHashMap<WTF::String, CachedIsolationProvider> isolationSourceProviderCache;
+    // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
+    // All access should go through that class. Stored as the JSC base type to
+    // avoid pulling ZigSourceProvider.h into this header; the cache class
+    // downcasts on lookup. Values hold strong refs by design: this map is the
+    // only owner once the previous global is GC'd, so a weak map would empty
+    // after every swap.
+    WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
 
     void addClient(JSVMClientDataClient& client) { m_clients.add(client); }
 

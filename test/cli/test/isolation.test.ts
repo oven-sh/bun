@@ -454,6 +454,69 @@ test("--isolate: SourceProvider cache covers CommonJS modules", async () => {
   }
 });
 
+test("--isolate: SourceProvider cache covers node_modules .mjs and type:commonjs packages", async () => {
+  // Regression: insert was gated on tag == JavaScript || PackageJSONTypeModule,
+  // so .mjs files from `"type":"module"` packages and .ts from `"type":"commonjs"`
+  // packages (PackageJSONTypeCommonJS / ESM tags) bypassed the cache and were
+  // re-transpiled on every isolated file. This test proves both now cache by
+  // showing files 2-3 see stale v1 after file 1 rewrites disk to v2.
+  const mkEsmPkg = (v: string) => `export const v = "${v}";\n`;
+  const mkCjsPkg = (v: string) => `export const v: string = "${v}";\n`;
+  const aBody = `
+    import { test, expect } from "bun:test";
+    import { writeFileSync } from "node:fs";
+    import * as path from "node:path";
+    import { v as esm } from "fake-esm-pkg";
+    import { v as cjs } from "fake-cjs-pkg";
+    test("a", () => {
+      expect(esm).toBe("v1");
+      expect(cjs).toBe("v1");
+      globalThis.__a_ran = true;
+      writeFileSync(path.join(process.cwd(), "node_modules/fake-esm-pkg/index.mjs"), ${JSON.stringify(mkEsmPkg("v2"))});
+      writeFileSync(path.join(process.cwd(), "node_modules/fake-cjs-pkg/index.ts"), ${JSON.stringify(mkCjsPkg("v2"))});
+    });
+  `;
+  const bcBody = (name: string) => `
+    import { test, expect } from "bun:test";
+    import { v as esm } from "fake-esm-pkg";
+    import { v as cjs } from "fake-cjs-pkg";
+    test("${name}", () => {
+      expect(globalThis.__a_ran).toBeUndefined();
+      expect(esm).toBe("v1");
+      expect(cjs).toBe("v1");
+    });
+  `;
+
+  using dir = tempDir("isolate-spcache-nodemod", {
+    "node_modules/fake-esm-pkg/package.json": JSON.stringify({
+      name: "fake-esm-pkg",
+      type: "module",
+      main: "./index.mjs",
+    }),
+    "node_modules/fake-esm-pkg/index.mjs": mkEsmPkg("v1"),
+    "node_modules/fake-cjs-pkg/package.json": JSON.stringify({
+      name: "fake-cjs-pkg",
+      type: "commonjs",
+      main: "./index.ts",
+    }),
+    "node_modules/fake-cjs-pkg/index.ts": mkCjsPkg("v1"),
+    "a.test.ts": aBody,
+    "b.test.ts": bcBody("b"),
+    "c.test.ts": bcBody("c"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("3 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
 test("--isolate: cached SourceProvider's module_info rebuilds correct exports", async () => {
   // A wide module so the printer-generated module_info has thousands of
   // export entries. Under --isolate, file b hits the SourceProvider cache and

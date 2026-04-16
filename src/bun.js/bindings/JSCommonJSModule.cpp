@@ -50,6 +50,7 @@
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include "BunClientData.h"
+#include "IsolatedModuleCache.h"
 #include <JavaScriptCore/Identifier.h>
 #include "ImportMetaObject.h"
 #include "NodeModuleModule.h"
@@ -1363,8 +1364,8 @@ void JSCommonJSModule::evaluate(
 
     auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
-    if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun__VM__useIsolationSourceProviderCache(globalObject->bunVM())) {
-        WebCore::clientData(vm)->isolationSourceProviderCache.add(key, WebCore::JSVMClientData::CachedIsolationProvider { sourceProvider.ptr(), this->ignoreESModuleAnnotation });
+    if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
+        Bun::IsolatedModuleCache::insert(vm, key, sourceProvider.get());
     }
     if (this->hasEvaluated)
         return;
@@ -1481,8 +1482,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         }
 
         auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
-        if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun__VM__useIsolationSourceProviderCache(globalObject->bunVM())) {
-            WebCore::clientData(vm)->isolationSourceProviderCache.add(sourceURL, WebCore::JSVMClientData::CachedIsolationProvider { sourceProvider.ptr(), ignoreESModuleAnnotation });
+        if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
+            Bun::IsolatedModuleCache::insert(vm, sourceURL, sourceProvider.get());
         }
         sourceOrigin = sourceProvider->sourceOrigin();
         moduleObject = JSCommonJSModule::create(

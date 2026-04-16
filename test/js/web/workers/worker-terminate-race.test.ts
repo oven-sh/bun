@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // The Zig WebWorker struct is freed on the worker thread once the worker

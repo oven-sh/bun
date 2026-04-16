@@ -532,19 +532,13 @@ fn onGroupCompleted(_: *Execution, _: *ConcurrentGroup, globalThis: *jsc.JSGloba
     const vm = globalThis.bunVM();
     vm.auto_killer.disable();
 }
-fn onSequenceStarted(this: *Execution, sequence: *ExecutionSequence) void {
+fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     if (sequence.test_entry) |entry| if (entry.callback == null) return;
 
     sequence.started_at = bun.timespec.now(.force_real_time);
 
     if (sequence.test_entry) |entry| {
         log("Running test: \"{f}\"", .{std.zig.fmtString(entry.base.name orelse "(unnamed)")});
-
-        if (this.bunTest().reporter) |reporter| {
-            if (reporter.worker_ipc_file_idx) |file_idx| {
-                ParallelRunner.workerEmitTestStart(file_idx, entry.base.name orelse "(unnamed)");
-            }
-        }
 
         if (entry.base.test_id_for_debugger != 0) {
             if (jsc.VirtualMachine.get().debugger) |*debugger| {
@@ -677,7 +671,6 @@ pub fn handleUncaughtException(this: *Execution, user_data: bun_test.BunTest.Ref
 
 const log = bun.Output.scoped(.jest, .visible);
 
-const ParallelRunner = @import("../../cli/test/ParallelRunner.zig");
 const std = @import("std");
 const test_command = @import("../../cli/test_command.zig");
 

@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "devDependencies": {
-    "vitest": "^1"
+    "vitest": "^4.1.4"
   }
 }

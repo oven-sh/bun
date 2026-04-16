@@ -261,6 +261,12 @@ pub const Worker = struct {
                 .extra_fds = &this.extra_fd_stdio,
                 .cwd = coord.cwd,
                 .stream = true,
+                // Own pgrp so abortAll can kill(-pid, SIGTERM) the worker and
+                // anything it spawned. PDEATHSIG is the SIGKILL safety net on
+                // Linux; spawnProcessPosix propagates it to grandchildren by
+                // defaulting linux_pdeathsig to the parent's current value.
+                .new_process_group = true,
+                .linux_pdeathsig = if (Environment.isLinux) std.posix.SIG.KILL else null,
             };
             var spawned = try (try bun.spawn.spawnProcess(&options, coord.argv.ptr, coord.envp)).unwrap();
             defer spawned.extra_pipes.deinit();
@@ -321,6 +327,13 @@ pub const Worker = struct {
         }
 
         const process = this.process.?;
+        if (Environment.isWindows) {
+            if (coord.windows_job) |job| {
+                if (process.poller == .uv) {
+                    _ = bun.windows.AssignProcessToJobObject(job, process.poller.uv.process_handle);
+                }
+            }
+        }
         this.alive = true;
         coord.live_workers += 1;
         process.setExitHandler(this);
@@ -378,6 +391,71 @@ pub const Worker = struct {
     }
 };
 
+/// Coordinator-side SIGINT/SIGTERM handling. The signal handler only sets a
+/// flag; `Coordinator.drive` checks it and tears down workers itself so we
+/// don't do non-signal-safe work in the handler. Linux PDEATHSIG and the
+/// Windows Job Object are the safety net for when the coordinator can't run
+/// this (SIGKILL).
+const AbortHandler = struct {
+    var should_abort: std.atomic.Value(bool) = .init(false);
+    var prev_int: if (Environment.isPosix) std.posix.Sigaction else void = undefined;
+    var prev_term: if (Environment.isPosix) std.posix.Sigaction else void = undefined;
+
+    fn posixHandler(_: i32, _: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.c) void {
+        should_abort.store(true, .release);
+    }
+
+    fn windowsCtrlHandler(ctrl: std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL {
+        switch (ctrl) {
+            std.os.windows.CTRL_C_EVENT, std.os.windows.CTRL_BREAK_EVENT, std.os.windows.CTRL_CLOSE_EVENT => {
+                should_abort.store(true, .release);
+                return std.os.windows.TRUE;
+            },
+            else => return std.os.windows.FALSE,
+        }
+    }
+
+    pub fn install() void {
+        if (Environment.isPosix) {
+            const act = std.posix.Sigaction{
+                .handler = .{ .sigaction = posixHandler },
+                .mask = std.posix.sigemptyset(),
+                .flags = std.posix.SA.SIGINFO,
+            };
+            std.posix.sigaction(std.posix.SIG.INT, &act, &prev_int);
+            std.posix.sigaction(std.posix.SIG.TERM, &act, &prev_term);
+        } else {
+            _ = bun.c.SetConsoleCtrlHandler(windowsCtrlHandler, std.os.windows.TRUE);
+        }
+    }
+
+    pub fn uninstall() void {
+        if (Environment.isPosix) {
+            std.posix.sigaction(std.posix.SIG.INT, &prev_int, null);
+            std.posix.sigaction(std.posix.SIG.TERM, &prev_term, null);
+        } else {
+            _ = bun.c.SetConsoleCtrlHandler(windowsCtrlHandler, std.os.windows.FALSE);
+        }
+    }
+};
+
+fn createWindowsKillOnCloseJob() ?std.os.windows.HANDLE {
+    if (!Environment.isWindows) return null;
+    const job = bun.windows.CreateJobObjectA(null, null) orelse return null;
+    var jeli = std.mem.zeroes(bun.c.JOBOBJECT_EXTENDED_LIMIT_INFORMATION);
+    jeli.BasicLimitInformation.LimitFlags = bun.c.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (bun.c.SetInformationJobObject(
+        job,
+        bun.c.JobObjectExtendedLimitInformation,
+        &jeli,
+        @sizeOf(bun.c.JOBOBJECT_EXTENDED_LIMIT_INFORMATION),
+    ) == 0) {
+        std.os.windows.CloseHandle(job);
+        return null;
+    }
+    return job;
+}
+
 pub const Coordinator = struct {
     vm: *jsc.VirtualMachine,
     reporter: *CommandLineReporter,
@@ -411,6 +489,10 @@ pub const Coordinator = struct {
     crashed_files: std.ArrayListUnmanaged(u32) = .empty,
     bailed: bool = false,
     last_printed_dot: bool = false,
+    /// Kill-on-close Job Object so the OS reaps workers if the coordinator dies
+    /// without running its signal handler (e.g. SIGKILL / TerminateProcess).
+    windows_job: if (Environment.isWindows) ?std.os.windows.HANDLE else void =
+        if (Environment.isWindows) null else {},
 
     fn isDone(this: *const Coordinator) bool {
         return (this.files_done >= this.files.len or this.bailed) and this.live_workers == 0;
@@ -437,6 +519,7 @@ pub const Coordinator = struct {
     pub fn drive(this: *Coordinator) void {
         _ = this.spawnWorker();
         while (!this.isDone()) {
+            if (AbortHandler.should_abort.load(.acquire)) return this.abortAll();
             this.vm.eventLoop().tick();
             this.maybeScaleUp();
             if (this.isDone()) break;
@@ -451,6 +534,26 @@ pub const Coordinator = struct {
                 this.vm.eventLoop().autoTick();
             }
         }
+    }
+
+    /// SIGINT/SIGTERM: terminate every worker (and its descendants) and exit.
+    /// Workers run in their own process group, so kill(-pid, SIGTERM) reaches
+    /// everything they spawned. Kernel-level safety nets cover the case where
+    /// the coordinator can't run this (SIGKILL): PDEATHSIG on Linux,
+    /// kill-on-close Job Object on Windows. macOS has neither; the process
+    /// group kill here plus stdin EOF in the worker loop is the best effort.
+    fn abortAll(this: *Coordinator) noreturn {
+        AbortHandler.uninstall();
+        for (this.workers[0..this.spawned_count]) |*w| {
+            if (w.process) |p| {
+                if (Environment.isPosix) {
+                    _ = std.c.kill(-p.pid, std.posix.SIG.TERM);
+                } else {
+                    _ = p.kill(1);
+                }
+            }
+        }
+        bun.Global.exit(130);
     }
 
     fn spawnWorker(this: *Coordinator) bool {
@@ -820,7 +923,11 @@ pub fn runAsCoordinator(
             default_scale_up_after_ms,
         .bail = ctx.test_options.bail,
         .dots = ctx.test_options.reporters.dots,
+        .windows_job = if (Environment.isWindows) createWindowsKillOnCloseJob() else {},
     };
+
+    AbortHandler.install();
+    defer AbortHandler.uninstall();
 
     for (workers, 0..) |*w, i| {
         const idx: u32 = @intCast(i);

@@ -755,3 +755,84 @@ test("--parallel --reporter=junit emits a synthetic suite for crashed files", as
   const innerFail = [...xml.matchAll(/<testsuite [^>]*\bfailures="(\d+)"/g)].reduce((a, m) => a + Number(m[1]), 0);
   expect({ innerTests, innerFail }).toEqual({ innerTests: outerTests, innerFail: outerFail });
 });
+
+test("--parallel: SIGTERM on coordinator kills workers and their grandchildren", async () => {
+  const grandchild = `
+    require("fs").appendFileSync(process.env.PIDS, "grandchild=" + process.pid + "\\n");
+    setTimeout(() => {}, 8000);
+  `;
+  const fixture = `
+    import { test } from "bun:test";
+    import { appendFileSync } from "fs";
+    test("slow", async () => {
+      const child = Bun.spawn({
+        cmd: [process.execPath, "grandchild.cjs"],
+        env: process.env,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      appendFileSync(process.env.PIDS, "worker=" + process.pid + "\\n");
+      appendFileSync(process.env.PIDS, "spawned=" + child.pid + "\\n");
+      await Bun.sleep(60000);
+    });
+  `;
+  using dir = tempDir("parallel-deathsig", {
+    "a.test.ts": fixture,
+    "b.test.ts": fixture,
+    "grandchild.cjs": grandchild,
+  });
+  const pids = String(dir) + "/pids.txt";
+
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=0"],
+    env: { ...bunEnv, PIDS: pids },
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+
+  // Wait for both workers and both grandchildren to log their PIDs.
+  const wanted = (re: RegExp, n: number) =>
+    (
+      Bun.file(pids)
+        .text()
+        .catch(() => "") as Promise<string>
+    ).then(t => [...t.matchAll(re)].length >= n);
+  for (let i = 0; i < 200; i++) {
+    if ((await wanted(/^worker=/gm, 2)) && (await wanted(/^grandchild=/gm, 2))) break;
+    await Bun.sleep(25);
+  }
+  const log = await Bun.file(pids).text();
+  const workers = [...log.matchAll(/^worker=(\d+)/gm)].map(m => Number(m[1]));
+  const grandchildren = [...log.matchAll(/^grandchild=(\d+)/gm)].map(m => Number(m[1]));
+  expect(workers.length).toBeGreaterThanOrEqual(2);
+  expect(grandchildren.length).toBeGreaterThanOrEqual(2);
+
+  proc.kill("SIGTERM");
+  await proc.exited;
+
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // The coordinator's signal handler kills each worker's process group, so
+  // workers and grandchildren should both be gone. Allow a short window for
+  // signal delivery.
+  let outstanding: number[] = [];
+  for (let i = 0; i < 100; i++) {
+    outstanding = [...workers, ...grandchildren].filter(alive);
+    if (outstanding.length === 0) break;
+    await Bun.sleep(25);
+  }
+  // Clean up survivors so a failing run doesn't leak processes.
+  for (const pid of outstanding)
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  expect(outstanding).toEqual([]);
+}, 15000);

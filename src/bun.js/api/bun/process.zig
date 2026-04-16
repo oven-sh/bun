@@ -1024,8 +1024,18 @@ pub const PosixSpawnOptions = struct {
     /// for stdout. This is used to preserve
     /// consistent shell semantics.
     no_sigpipe: bool = true,
+    /// setpgid(0, 0) in the child so it leads its own process group. The parent
+    /// can then `kill(-pid, sig)` to signal the child and all its descendants.
+    /// Not exposed to JS yet.
+    new_process_group: bool = false,
     /// PTY slave fd for controlling terminal setup (-1 if not using PTY).
     pty_slave_fd: i32 = -1,
+    /// Linux only. When non-null, the child sets PR_SET_PDEATHSIG to this
+    /// signal between vfork and exec in posix_spawn_bun, so the kernel kills
+    /// it when the spawning thread dies. When null, defaults to whatever this
+    /// process itself has set (so a worker with PDEATHSIG propagates it to
+    /// children automatically). Not exposed to JS yet.
+    linux_pdeathsig: ?u8 = null,
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -1295,6 +1305,20 @@ pub fn spawnProcessPosix(
 
     // Pass PTY slave fd to attr for controlling terminal setup
     attr.pty_slave_fd = options.pty_slave_fd;
+    attr.new_process_group = options.new_process_group;
+
+    if (Environment.isLinux) {
+        attr.linux_pdeathsig = if (options.linux_pdeathsig) |sig|
+            @intCast(sig)
+        else inherit: {
+            // Propagate the parent's own PDEATHSIG so a chain of bun processes
+            // (e.g. coordinator → worker → test-spawned server) tears down
+            // together without each link opting in.
+            var current: i32 = 0;
+            _ = std.os.linux.prctl(@intFromEnum(std.os.linux.PR.GET_PDEATHSIG), @intFromPtr(&current), 0, 0, 0);
+            break :inherit current;
+        };
+    }
 
     if (options.cwd.len > 0) {
         try actions.chdir(options.cwd);

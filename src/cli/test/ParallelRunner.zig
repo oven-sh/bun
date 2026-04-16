@@ -180,10 +180,17 @@ const FileRange = struct {
         defer self.lo += 1;
         return self.lo;
     }
-    pub fn stealBack(self: *@This()) ?u32 {
+    /// Take the back half as a new contiguous range for the thief, leaving the
+    /// owner the front half. The thief then walks its stolen block forward via
+    /// popFront, so both workers keep directory locality. For len()==1 the
+    /// single file goes to the thief (owner is either already inflight or was
+    /// never spawned).
+    pub fn stealBackHalf(self: *@This()) ?FileRange {
         if (self.isEmpty()) return null;
-        self.hi -= 1;
-        return self.hi;
+        const mid = self.lo + self.len() / 2;
+        const stolen = FileRange{ .lo = mid, .hi = self.hi };
+        self.hi = mid;
+        return stolen;
     }
 };
 
@@ -483,13 +490,17 @@ pub const Coordinator = struct {
         if (this.bailed) return w.shutdown();
         if (w.range.popFront()) |idx|
             return w.dispatch(idx, this.files[idx].slice());
-        // Steal one from the end of the largest remaining range — that file is
-        // furthest from its owner's hot region so the loss of locality is
-        // smallest. Stealing from not-yet-spawned workers is fine; their range
-        // is just an unclaimed reservation.
+        // Steal the back half of the largest remaining range as a contiguous
+        // block. The thief walks it forward via popFront, so both workers keep
+        // directory locality and total steals are O(K log N) instead of O(N).
+        // Stealing from not-yet-spawned workers is fine — their range is just
+        // an unclaimed reservation.
         if (this.findStealVictim()) |v| {
-            if (v.range.stealBack()) |idx|
-                return w.dispatch(idx, this.files[idx].slice());
+            if (v.range.stealBackHalf()) |stolen| {
+                w.range = stolen;
+                if (w.range.popFront()) |idx|
+                    return w.dispatch(idx, this.files[idx].slice());
+            }
         }
         w.shutdown();
     }

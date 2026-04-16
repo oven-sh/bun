@@ -25,7 +25,10 @@ function createCapturingProxy() {
         buf = "";
       }
     });
-    socket.on("error", () => {});
+    // If the socket errors (e.g. client RSTs mid-write), destroy it so
+    // server.close() can drop its tracking and emit 'close'. A bare
+    // empty handler leaves the socket tracked forever.
+    socket.on("error", () => socket.destroy());
   });
   return {
     server,

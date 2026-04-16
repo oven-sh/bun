@@ -123,7 +123,11 @@ public:
     // Populated only under `bun test --isolate`. Keyed by resolved specifier
     // (absolute path). Survives global swaps so a fresh global's module fetch
     // can reuse an already-transpiled provider and hit JSC's CodeCache instead
-    // of re-running Bun__transpileFile.
+    // of re-running Bun__transpileFile. Values are strong Ref<> by design: this
+    // map is the only owner once the previous global is GC'd, so a weak map
+    // would empty after every swap. Memory grows with the set of distinct
+    // modules imported across the run; explicit invalidation is via
+    // `delete require.cache[key]` (jsFunctionEvictIsolationSourceProviderCache).
     WTF::UncheckedKeyHashMap<WTF::String, Ref<JSC::SourceProvider>> isolationSourceProviderCache;
 
     void addClient(JSVMClientDataClient& client) { m_clients.add(client); }

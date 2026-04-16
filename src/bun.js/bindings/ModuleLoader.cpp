@@ -1155,6 +1155,22 @@ JSValue fetchESMSourceCodeAsync(
 
 using namespace Bun;
 
+BUN_DEFINE_HOST_FUNCTION(jsFunctionEvictIsolationSourceProviderCache, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto& cache = WebCore::clientData(vm)->isolationSourceProviderCache;
+    if (cache.isEmpty())
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    JSC::JSValue arg = callFrame->argument(0);
+    if (arg.isUndefined()) {
+        cache.clear();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    if (auto* str = arg.toStringOrNull(globalObject))
+        cache.remove(str->value(globalObject));
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

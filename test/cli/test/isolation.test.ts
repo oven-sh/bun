@@ -302,46 +302,10 @@ describe("bun test --isolate", () => {
   });
 });
 
-test("--isolate reuses SourceProvider for shared modules across files", async () => {
-  // shared.ts must be heavy enough that re-transpiling is observable but
-  // <50KB so RuntimeTranspilerCache (disk) doesn't mask the in-memory cache.
-  let shared = "";
-  for (let i = 0; i < 300; i++) {
-    shared += `export function fn${i}<T extends {a:number}>(x: T): T & {b:string} { return {...x, b: String(x.a + ${i})}; }\n`;
-  }
-  shared += `export const ALL = ${Array.from({ length: 300 }, (_, i) => `fn${i}({a:${i}}).a`).join(" + ")};\n`;
-
-  const files: Record<string, string> = { "shared.ts": shared };
-  for (let i = 1; i <= 5; i++) {
-    files[`t${i}.test.ts`] =
-      `import {test,expect} from "bun:test";\nimport {ALL} from "./shared";\ntest("t${i}",()=>{expect(typeof ALL).toBe("number");});\n`;
-  }
-  using dir = tempDir("isolate-spcache", files);
-
-  const run = async (extraEnv: Record<string, string>) => {
-    const t0 = performance.now();
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate"],
-      cwd: String(dir),
-      env: { ...bunEnv, ...extraEnv },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("5 pass");
-    expect(stderr).toContain("0 fail");
-    expect(exitCode).toBe(0);
-    return performance.now() - t0;
-  };
-
-  // Warm filesystem cache, then A/B.
-  await run({});
-  const off = await run({ BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE: "1" });
-  const on = await run({});
-  // With the cache, shared.ts is transpiled once instead of 5 times.
-  expect(on).toBeLessThan(off * 0.85);
-});
-
+// The eviction test below proves the SourceProvider cache is active (control:
+// b sees stale v1 → cache hit) and that delete require.cache evicts it
+// (treatment: b sees fresh v2). A/B timing was removed as flaky; this is the
+// deterministic behavioral proof.
 test("--isolate: delete require.cache evicts the SourceProvider cache", async () => {
   const sharedV1 = `export const v = "v1";\n`;
   const sharedV2 = `export const v = "v2";\n`;

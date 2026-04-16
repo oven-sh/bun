@@ -433,12 +433,12 @@ test("--parallel never interleaves console output across files", async () => {
   // immediately followed by its own (pass) line, never another file's MARK.
   const body = (tag: string) =>
     `import {test,expect} from "bun:test"; import {appendFileSync} from "fs";
-     for (let i=0;i<3;i++) test("${tag}"+i, async()=>{ appendFileSync(process.env.PIDS, process.pid+"\\n"); console.error("MARK-${tag}-"+i); await Bun.sleep(50); expect(1).toBe(1); });`;
+     for (let i=0;i<3;i++) test("${tag}"+i, async()=>{ appendFileSync(process.env.PIDS, process.pid+"\\n"); console.error("MARK-${tag}-"+i); await Bun.sleep(300); expect(1).toBe(1); });`;
   using dir = tempDir("parallel-no-interleave", { "a.test.js": body("a"), "b.test.js": body("b") });
   const pids = String(dir) + "/pids.txt";
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2"],
-    env: { ...bunEnv, PIDS: pids },
+    env: { ...bunEnv, PIDS: pids, BUN_TEST_PARALLEL_SCALE_MS: "0" },
     cwd: String(dir),
     stderr: "pipe",
     stdout: "pipe",

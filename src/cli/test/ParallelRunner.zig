@@ -373,7 +373,10 @@ pub const Coordinator = struct {
             if (this.isDone()) break;
             if (this.spawned_count < this.parallel_limit and this.next_file < this.files.len and !this.bailed) {
                 // Bound the wait so we wake to scale up even if no I/O arrives.
-                var ts = bun.timespec{ .sec = 0, .nsec = this.scale_up_after_ms * std.time.ns_per_ms };
+                var ts = bun.timespec{
+                    .sec = @divTrunc(this.scale_up_after_ms, std.time.ms_per_s),
+                    .nsec = @mod(this.scale_up_after_ms, std.time.ms_per_s) * std.time.ns_per_ms,
+                };
                 this.vm.eventLoop().usocketsLoop().tickWithTimeout(&ts);
             } else {
                 this.vm.eventLoop().autoTick();
@@ -663,6 +666,7 @@ pub fn runAsCoordinator(
         // Coordinator's own JunitReporter would otherwise produce an empty
         // document and overwrite the merged one in writeJUnitReportIfNeeded.
         if (reporter.reporters.junit) |jr| {
+            vm.transpiler.env.map.put("BUN_TEST_WORKER_JUNIT", "1") catch bun.outOfMemory();
             jr.deinit();
             reporter.reporters.junit = null;
         }
@@ -1043,9 +1047,7 @@ pub fn runAsWorker(
     vm.allocator = arena.allocator();
 
     const worker_tmp = vm.transpiler.env.get("BUN_TEST_WORKER_TMP");
-    if (worker_tmp != null and reporter.reporters.junit == null) {
-        // Coordinator decides which fragments to consume, so we always
-        // populate the JUnit reporter when a tmp dir is provided.
+    if (vm.transpiler.env.get("BUN_TEST_WORKER_JUNIT") != null and reporter.reporters.junit == null) {
         reporter.reporters.junit = test_command.JunitReporter.init();
     }
 

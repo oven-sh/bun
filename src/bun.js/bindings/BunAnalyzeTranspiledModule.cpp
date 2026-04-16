@@ -11,6 +11,8 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "ZigSourceProvider.h"
+#include "ZigGlobalObject.h"
+#include "headers-handwritten.h"
 #include "BunAnalyzeTranspiledModule.h"
 
 // ref: JSModuleLoader.cpp
@@ -29,6 +31,9 @@ Identifier getFromIdentifierArray(VM& vm, Identifier* identifierArray, uint32_t 
 {
     if (n == std::numeric_limits<uint32_t>::max()) {
         return vm.propertyNames->starDefaultPrivateName;
+    }
+    if (n == std::numeric_limits<uint32_t>::max() - 1) {
+        return vm.propertyNames->starNamespacePrivateName;
     }
     return identifierArray[n];
 }
@@ -161,10 +166,15 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("module_info is null")))));
     }
 
-    auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, declaredVariables, lexicalVariables, static_cast<bun_ModuleInfoDeserialized*>(provider->m_resolvedSource.module_info));
-    // zig__ModuleInfoDeserialized__toJSModuleRecord consumes and frees the module_info.
-    // Null it out to prevent use-after-free via the dangling pointer.
-    provider->m_resolvedSource.module_info = nullptr;
+    auto* moduleInfo = static_cast<bun_ModuleInfoDeserialized*>(provider->m_resolvedSource.module_info);
+    auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, declaredVariables, lexicalVariables, moduleInfo);
+    // Under --isolate the same SourceProvider is reused across globals via the
+    // isolation SourceProvider cache, so module_info must remain alive on the
+    // provider; ~SourceProvider frees it. Otherwise, free now.
+    if (!Bun__VM__useIsolationSourceProviderCache(jsCast<Zig::GlobalObject*>(globalObject)->bunVM())) {
+        zig__ModuleInfoDeserialized__deinit(moduleInfo);
+        provider->m_resolvedSource.module_info = nullptr;
+    }
     if (moduleRecord == nullptr) {
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
     }

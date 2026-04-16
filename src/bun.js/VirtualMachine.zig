@@ -2250,7 +2250,11 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
 extern "C" fn NodeModuleModule__callOverriddenRunMain(global: *JSGlobalObject, argv1: JSValue) JSValue;
 
 export fn Bun__VM__useIsolationSourceProviderCache(vm: *VirtualMachine) bool {
-    return vm.test_isolation_enabled and !bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE.get();
+    return vm.useIsolationSourceProviderCache();
+}
+
+pub inline fn useIsolationSourceProviderCache(this: *const VirtualMachine) bool {
+    return this.test_isolation_enabled and !bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE.get();
 }
 export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm: *VirtualMachine, is_patched: bool) void {
     if (vm.is_in_preload) {

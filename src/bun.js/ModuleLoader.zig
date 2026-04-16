@@ -424,9 +424,11 @@ pub fn transpileSourceCode(
                     dumpSourceString(jsc_vm, specifier, entry.output_code.byteSlice());
                 }
 
-                // TODO: module_info is only needed for standalone ESM bytecode.
-                // For now, skip it entirely in the runtime transpiler.
-                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
+                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized =
+                    if (jsc_vm.useIsolationSourceProviderCache() and entry.metadata.module_type != .cjs and entry.esm_record.len > 0)
+                        analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(entry.esm_record, bun.default_allocator)
+                    else
+                        null;
 
                 return ResolvedSource{
                     .allocator = null,
@@ -512,9 +514,12 @@ pub fn transpileSourceCode(
             jsc_vm.transpiler.linker.import_counter = 0;
 
             const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
-            // TODO: module_info is only needed for standalone ESM bytecode.
-            // For now, skip it entirely in the runtime transpiler.
-            const module_info: ?*analyze_transpiled_module.ModuleInfo = null;
+            const module_info: ?*analyze_transpiled_module.ModuleInfo =
+                if (jsc_vm.useIsolationSourceProviderCache() and !is_commonjs_module and loader.isJavaScriptLike())
+                    analyze_transpiled_module.ModuleInfo.create(bun.default_allocator, loader.isTypeScript()) catch null
+                else
+                    null;
+            errdefer if (module_info) |mi| mi.destroy();
 
             var printer = source_code_printer.*;
             printer.ctx.reset();

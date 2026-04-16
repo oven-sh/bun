@@ -222,7 +222,7 @@ pub const ModuleInfo = struct {
         try self._addRecord(if (only_used_as_type) .import_info_single_type_script else .import_info_single, &.{ module_name, import_name, local_name });
     }
     pub fn addImportInfoNamespace(self: *ModuleInfo, module_name: StringID, local_name: StringID) !void {
-        try self._addRecord(.import_info_namespace, &.{ module_name, try self.str("*"), local_name });
+        try self._addRecord(.import_info_namespace, &.{ module_name, .star_namespace, local_name });
     }
     pub fn addExportInfoIndirect(self: *ModuleInfo, export_name: StringID, import_name: StringID, module_name: StringID) !void {
         if (try self._hasOrAddExportedName(export_name)) return; // a syntax error will be emitted later in this case
@@ -387,7 +387,10 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     lexical_variables: *VariableEnvironment,
     res: *ModuleInfoDeserialized,
 ) ?*JSModuleRecord {
-    defer res.deinit();
+    // Ownership of `res` stays with the caller; this function only reads it.
+    // The caller (BunAnalyzeTranspiledModule.cpp) decides whether to free
+    // immediately or keep it alive on the SourceProvider for the isolation
+    // SourceProvider cache.
 
     var identifiers = IdentifierArray.create(res.strings_lens.len);
     defer identifiers.destroy();
@@ -448,6 +451,9 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 }
 export fn zig__ModuleInfo__destroy(info: *ModuleInfo) void {
     info.destroy();
+}
+export fn zig__ModuleInfoDeserialized__deinit(info: *ModuleInfoDeserialized) void {
+    info.deinit();
 }
 
 const VariableEnvironment = opaque {

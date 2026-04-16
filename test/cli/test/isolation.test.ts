@@ -453,3 +453,46 @@ test("--isolate: SourceProvider cache covers CommonJS modules", async () => {
     expect(exitCode).toBe(0);
   }
 });
+
+test("--isolate: cached SourceProvider's module_info rebuilds correct exports", async () => {
+  // A wide module so the printer-generated module_info has thousands of
+  // export entries. Under --isolate, file b hits the SourceProvider cache and
+  // rebuilds JSModuleRecord from the cached module_info (Bun__analyzeTranspiledModule)
+  // instead of re-parsing. If the record is wrong, named imports would be
+  // undefined or the count would mismatch.
+  const N = 2000;
+  let big = "";
+  for (let i = 0; i < N; i++) big += `export function f${i}(x){return x+${i};}\n`;
+  big += `export const COUNT = ${N};\n`;
+
+  const tBody = (name: string) => `
+    import { test, expect } from "bun:test";
+    import { f0, f1, f${N - 1}, COUNT } from "./big";
+    import * as all from "./big";
+    test("${name}", () => {
+      expect(f0(1)).toBe(1);
+      expect(f1(1)).toBe(2);
+      expect(f${N - 1}(1)).toBe(${N});
+      expect(COUNT).toBe(${N});
+      expect(Object.keys(all).length).toBe(${N + 1});
+    });
+  `;
+
+  using dir = tempDir("isolate-module-info", {
+    "big.ts": big,
+    "a.test.ts": tBody("a"),
+    "b.test.ts": tBody("b"),
+    "c.test.ts": tBody("c"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("3 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});

@@ -1426,7 +1426,7 @@ async function main() {
   }
 
   try {
-    if (options.rdp) {
+    if (options.rdp && typeof machine.rdp === "function") {
       await startGroup("Connecting with RDP...", async () => {
         const { hostname, username, password } = await machine.rdp();
 

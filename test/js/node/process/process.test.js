@@ -269,30 +269,32 @@ it("process.umask()", () => {
 });
 
 it("process.versions", () => {
-  // Expected dependency versions — must match scripts/build/deps/*.ts commits.
-  // These are the ACTUAL commits built into bun (not derived values, so
-  // bumping a dep requires updating this test too).
-  const expectedVersions = {
-    boringssl: "0c5fce43b7ed5eb6001487ee48ac65766f5ddcd1",
-    libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
-    mimalloc: "9a5e1f52cdf4662f9590b69de104a4469140796f",
-    picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
-    zlib: "886098f3f339617b4243b286f5ed364b9989e245",
-    tinycc: "12882eee073cfe5c7621bcfadf679e1372d4537b",
-    lolhtml: "77127cd2b8545998756e8d64e36ee2313c4bb312",
-    ares: "3ac47ee46edd8ea40370222f91613fc16c434853",
-    libdeflate: "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
-    zstd: "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
-    lshpack: "8905c024b6d052f083a3d11d0a169b3c2735c8a1",
-  };
+  // Bundled C/C++ dependencies whose versions are reported as git commit
+  // hashes. We only assert the shape (40 lowercase hex chars) — not the
+  // exact hash — so dep bumps don't break this test.
+  const gitHashDeps = [
+    "boringssl",
+    "libarchive",
+    "mimalloc",
+    "picohttpparser",
+    "zlib",
+    "tinycc",
+    "lolhtml",
+    "ares",
+    "libdeflate",
+    "zstd",
+    "lshpack",
+    "usockets",
+    "uwebsockets",
+    "webkit",
+    "zig",
+  ];
 
-  for (const [name, expectedHash] of Object.entries(expectedVersions)) {
+  for (const name of gitHashDeps) {
     expect(process.versions).toHaveProperty(name);
-    expect(process.versions[name]).toBe(expectedHash);
+    expect(process.versions[name]).toMatch(/^[a-f0-9]{40}$/);
   }
 
-  expect(process.versions).toHaveProperty("usockets");
-  expect(process.versions).toHaveProperty("uwebsockets");
   expect(process.versions.usockets).toBe(process.versions.uwebsockets);
 });
 

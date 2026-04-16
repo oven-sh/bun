@@ -84,6 +84,31 @@ describe("InternalSourceMap", () => {
     expect(exited).toBe(0);
   });
 
+  // Minified-shape: a single ~12KB line with thousands of mappings forces the
+  // bit-packed `gc_w` lane wide and the absolute SyncEntry.gen_col into the
+  // thousands, while `gl_mask` is all-zeros. Stack column must still remap to
+  // the original `throw`.
+  test("remaps a throw deep into a single very long line", async () => {
+    let src = "";
+    for (let i = 0; i < 1000; i++) src += `const a${i}:number=${i};`;
+    // One very long identifier forces a single ~10k-column delta inside one
+    // window so the bit-packed `gc` lane width must exceed 8 bits.
+    src += `const ${Buffer.alloc(10000, "Z").toString()}: number = 0;`;
+    const throwCol = src.length + 1;
+    src += `throw new Error("x");\n`;
+
+    const { stderr, exited } = await run({ "index.ts": src });
+
+    const m = stderr.match(/index\.ts:1:(\d+)/);
+    expect(m).not.toBeNull();
+    // Mapped column lands inside the `throw new Error(...)` expression. The
+    // printer maps the throw at the `Error` constructor, ~10 columns past the
+    // `throw` keyword; a tolerance well under one statement width still rejects
+    // sync-index or bit-lane drift (which would be off by hundreds/thousands).
+    expect(Math.abs(Number(m![1]) - throwCol)).toBeLessThan(24);
+    expect(exited).toBe(1);
+  });
+
   // 200 single-expression lines so the map has well over `sync_interval` (64)
   // mappings and lookup must bsearch past sync_points[0].
   test("remaps frames past multiple sync points", async () => {

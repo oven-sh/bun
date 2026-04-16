@@ -151,7 +151,7 @@ pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
     this.lock();
     defer this.unlock();
 
-    this.find_cache.data = null;
+    this.find_cache.invalidateAll();
     this.last_ism = null;
     const entry = try this.map.getOrPut(bun.hash(path));
     if (entry.found_existing) {

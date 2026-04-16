@@ -760,7 +760,10 @@ pub fn runAsCoordinator(
     }
     defer if (worker_tmpdir) |d| bun.FD.cwd().deleteTree(d) catch {};
     if (ctx.test_options.reporters.junit or coverage_opts.enabled) {
-        const dir = try std.fmt.allocPrintSentinel(arena.allocator(), "{s}/bun-test-worker-{d}", .{ bun.fs.FileSystem.RealFS.getDefaultTempDir(), std.crypto.random.int(u32) }, 0);
+        const dir = try std.fmt.allocPrintSentinel(arena.allocator(), "{s}/bun-test-worker-{d}", .{
+            bun.fs.FileSystem.RealFS.getDefaultTempDir(),
+            if (bun.Environment.isWindows) bun.windows.GetCurrentProcessId() else std.c.getpid(),
+        }, 0);
         bun.FD.cwd().makePath(u8, dir) catch |e| {
             Output.err(e, "failed to create worker temp dir {s}", .{dir});
             bun.Global.exit(1);

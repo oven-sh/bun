@@ -65,8 +65,7 @@ describe.concurrent("--shard", () => {
     using dir = makeFixture("shard-determinism", 12);
     const cwd = String(dir);
 
-    const a = await runShard(cwd, "2/4");
-    const b = await runShard(cwd, "2/4");
+    const [a, b] = await Promise.all([runShard(cwd, "2/4"), runShard(cwd, "2/4")]);
     expect(a.ran).toEqual(["f01", "f05", "f09"]);
     expect(a.ran).toEqual(b.ran);
     expect(a.exitCode).toBe(0);
@@ -82,10 +81,12 @@ describe.concurrent("--shard", () => {
     using dir = makeFixture("shard-randomize", 12);
     const cwd = String(dir);
 
-    const plain = await runShard(cwd, "2/4");
-    const seeded1 = await runShard(cwd, "2/4", ["--seed=123"]);
-    const seeded2 = await runShard(cwd, "2/4", ["--seed=123"]);
-    const otherSeed = await runShard(cwd, "2/4", ["--seed=999999"]);
+    const [plain, seeded1, seeded2, otherSeed] = await Promise.all([
+      runShard(cwd, "2/4"),
+      runShard(cwd, "2/4", ["--seed=123"]),
+      runShard(cwd, "2/4", ["--seed=123"]),
+      runShard(cwd, "2/4", ["--seed=999999"]),
+    ]);
 
     expect(plain.ran).toEqual(["f01", "f05", "f09"]);
     expect(seeded1.ran).toEqual(plain.ran);
@@ -94,7 +95,7 @@ describe.concurrent("--shard", () => {
 
     expect(seeded1.stderr).toContain("--shard=2/4:");
     for (const r of [plain, seeded1, seeded2, otherSeed]) expect(r.exitCode).toBe(0);
-  });
+  }, 20_000);
 
   test("--shard=1/1 runs every test file", async () => {
     using dir = makeFixture("shard-one", 5);

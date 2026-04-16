@@ -263,8 +263,7 @@ pub const Worker = struct {
                 .stream = true,
                 // Own pgrp so abortAll can kill(-pid, SIGTERM) the worker and
                 // anything it spawned. PDEATHSIG is the SIGKILL safety net on
-                // Linux; spawnProcessPosix propagates it to grandchildren by
-                // defaulting linux_pdeathsig to the parent's current value.
+                // Linux for the worker itself.
                 .new_process_group = true,
                 .linux_pdeathsig = if (Environment.isLinux) std.posix.SIG.KILL else null,
             };

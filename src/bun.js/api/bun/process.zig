@@ -1104,6 +1104,10 @@ pub const WindowsSpawnOptions = struct {
     stream: bool = true,
     use_execve_on_macos: bool = false,
     can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool = false,
+    /// Linux-only; placeholder for struct compatibility.
+    linux_pdeathsig: ?u8 = null,
+    /// POSIX-only; placeholder for struct compatibility.
+    new_process_group: bool = false,
     /// PTY not supported on Windows - this is a void placeholder for struct compatibility
     pty_slave_fd: void = {},
     pub const WindowsOptions = struct {
@@ -1308,16 +1312,7 @@ pub fn spawnProcessPosix(
     attr.new_process_group = options.new_process_group;
 
     if (Environment.isLinux) {
-        attr.linux_pdeathsig = if (options.linux_pdeathsig) |sig|
-            @intCast(sig)
-        else inherit: {
-            // Propagate the parent's own PDEATHSIG so a chain of bun processes
-            // (e.g. coordinator → worker → test-spawned server) tears down
-            // together without each link opting in.
-            var current: i32 = 0;
-            _ = std.os.linux.prctl(@intFromEnum(std.os.linux.PR.GET_PDEATHSIG), @intFromPtr(&current), 0, 0, 0);
-            break :inherit current;
-        };
+        attr.linux_pdeathsig = if (options.linux_pdeathsig) |sig| @intCast(sig) else 0;
     }
 
     if (options.cwd.len > 0) {

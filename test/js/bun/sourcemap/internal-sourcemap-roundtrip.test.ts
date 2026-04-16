@@ -1,5 +1,5 @@
-import { test, expect, describe } from "bun:test";
 import { internalSourceMap } from "bun:internal-for-testing";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path from "node:path";
 

@@ -41,6 +41,14 @@ pub const Snapshots = struct {
         file: std.fs.File,
     };
 
+    pub fn clearCounts(this: *Snapshots) void {
+        var count_key_itr = this.counts.keyIterator();
+        while (count_key_itr.next()) |key| {
+            this.allocator.free(key.*);
+        }
+        this.counts.clearRetainingCapacity();
+    }
+
     pub fn addCount(this: *Snapshots, expect: *Expect, hint: []const u8) !struct { []const u8, usize } {
         this.total += 1;
         const snapshot_name = try expect.getSnapshotName(this.allocator, hint);

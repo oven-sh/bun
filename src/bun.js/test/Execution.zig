@@ -636,6 +636,13 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     });
     sequence.flaky_attempt_count = saved_flaky_attempt_count;
     sequence.flaky_attempts_buf = saved_flaky_attempts_buf;
+
+    // Snapshot counters are keyed by full test name and incremented on every
+    // toMatchSnapshot() call. Without this reset, --rerun-each / retries would
+    // increment the counter to N on rerun N and look for a key that does not
+    // exist (https://github.com/oven-sh/bun/issues/23705). Entries for
+    // already-completed tests are dead at this point, so a full clear is safe.
+    if (jsc.Jest.Jest.runner) |runner| runner.snapshots.clearCounts();
     _ = this;
 }
 

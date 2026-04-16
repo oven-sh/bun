@@ -987,6 +987,22 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
         try argv.append(arena, "--preload");
         try argv.append(arena, (try arena.dupeZ(u8, preload)).ptr);
     }
+    if (ctx.args.define) |define| {
+        for (define.keys, define.values) |key, value| {
+            try argv.append(arena, "--define");
+            try argv.append(arena, try printZ(arena, "{s}={s}", .{ key, value }));
+        }
+    }
+    if (ctx.args.loaders) |loaders| {
+        for (loaders.extensions, loaders.loaders) |ext, loader| {
+            try argv.append(arena, "--loader");
+            try argv.append(arena, try printZ(arena, "{s}:{s}", .{ ext, @tagName(loader) }));
+        }
+    }
+    if (ctx.args.tsconfig_override) |tsconfig| {
+        try argv.append(arena, "--tsconfig-override");
+        try argv.append(arena, (try arena.dupeZ(u8, tsconfig)).ptr);
+    }
     if (opts.coverage.enabled) {
         try argv.append(arena, "--coverage");
     }

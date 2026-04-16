@@ -133,8 +133,10 @@ export const tart = {
     }
 
     console.log(`Cloning macOS image: ${image} (this will take a long time)`);
-    await this.spawn(["clone", image, localName]);
-    await this.spawn(["clone", localName, name]);
+    // stdio: inherit — surface tart's layer-by-layer pull progress so
+    // Buildkite's 10-min no-output watchdog doesn't kill a ~25GB download.
+    await this.spawn(["clone", image, localName], { stdio: "inherit" });
+    await this.spawn(["clone", localName, name], { stdio: "inherit" });
   },
 
   /**

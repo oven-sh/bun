@@ -128,7 +128,14 @@ public:
     // would empty after every swap. Memory grows with the set of distinct
     // modules imported across the run; explicit invalidation is via
     // `delete require.cache[key]` (jsFunctionEvictIsolationSourceProviderCache).
-    WTF::UncheckedKeyHashMap<WTF::String, Ref<JSC::SourceProvider>> isolationSourceProviderCache;
+    // CommonJS providers (sourceType()==Program) are wrapped in a fresh
+    // per-global module record at lookup; ignoreESModuleAnnotation is the only
+    // bit of ResolvedSource needed to do that.
+    struct CachedIsolationProvider {
+        RefPtr<JSC::SourceProvider> provider;
+        bool ignoreESModuleAnnotation { false };
+    };
+    WTF::UncheckedKeyHashMap<WTF::String, CachedIsolationProvider> isolationSourceProviderCache;
 
     void addClient(JSVMClientDataClient& client) { m_clients.add(client); }
 

@@ -369,3 +369,81 @@ test("--isolate: delete require.cache evicts the SourceProvider cache", async ()
     expect(exitCode).toBe(0);
   }
 });
+
+test("--isolate: SourceProvider cache covers CommonJS modules", async () => {
+  const sharedV1 = `module.exports = { v: "v1" };\n`;
+  const sharedV2 = `module.exports = { v: "v2" };\n`;
+  const aBody = (doDelete: boolean) => `
+    const { test, expect } = require("bun:test");
+    const { writeFileSync } = require("node:fs");
+    const path = require("node:path");
+    test("a sees v1 then rewrites", () => {
+      const { v } = require("./shared.cjs");
+      expect(v).toBe("v1");
+      globalThis.__a_ran = true;
+      ${doDelete ? `delete require.cache[require.resolve("./shared.cjs")];` : ``}
+      writeFileSync(path.join(__dirname, "shared.cjs"), ${JSON.stringify(sharedV2)});
+    });
+  `;
+  const bBody = (expected: "v1" | "v2") => `
+    const { test, expect } = require("bun:test");
+    test("b sees ${expected}", () => {
+      // Under --isolate, a's global is gone; if b sees ${expected === "v1" ? "stale " : ""}v
+      // it must be from the VM-level SourceProvider cache, not require.cache.
+      expect(globalThis.__a_ran).toBeUndefined();
+      const { v } = require("./shared.cjs");
+      expect(v).toBe("${expected}");
+    });
+  `;
+  // Same shared.cjs imported as ESM (import-CJS-from-ESM path).
+  const cBody = (expected: "v1" | "v2") => `
+    import { test, expect } from "bun:test";
+    test("c (esm import of cjs) sees ${expected}", async () => {
+      const mod = await import("./shared.cjs");
+      expect(mod.default.v).toBe("${expected}");
+    });
+  `;
+
+  // Control: without delete, the cached Program-type SourceProvider is reused
+  // across files for both require() and import-of-CJS, so b and c see stale v1.
+  {
+    using dir = tempDir("isolate-spcache-cjs-ctrl", {
+      "shared.cjs": sharedV1,
+      "a.test.cjs": aBody(false),
+      "b.test.cjs": bBody("v1"),
+      "c.test.ts": cBody("v1"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.cjs", "./b.test.cjs", "./c.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  }
+
+  // With delete: b and c re-transpile and see v2.
+  {
+    using dir = tempDir("isolate-spcache-cjs", {
+      "shared.cjs": sharedV1,
+      "a.test.cjs": aBody(true),
+      "b.test.cjs": bBody("v2"),
+      "c.test.ts": cBody("v2"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.cjs", "./b.test.cjs", "./c.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  }
+});

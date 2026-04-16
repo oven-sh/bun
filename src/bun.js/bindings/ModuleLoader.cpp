@@ -512,7 +512,7 @@ extern "C" void Bun__onFulfillAsyncModule(
         } else {
             auto provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
             if ((res->result.value.tag == SyntheticModuleType::JavaScript || res->result.value.tag == SyntheticModuleType::PackageJSONTypeModule) && Bun__VM__useIsolationSourceProviderCache(globalObject->bunVM())) {
-                WebCore::clientData(vm)->isolationSourceProviderCache.add(specifier->toWTFString(BunString::ZeroCopy), Ref<JSC::SourceProvider>(provider.get()));
+                WebCore::clientData(vm)->isolationSourceProviderCache.add(specifier->toWTFString(BunString::ZeroCopy), WebCore::JSVMClientData::CachedIsolationProvider { provider.ptr() });
             }
             promise->resolve(globalObject, vm, JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider))));
             scope.assertNoExceptionExceptTermination();
@@ -778,6 +778,23 @@ JSValue fetchCommonJSModule(
     if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice) {
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
+
+    if (isBunTest && Bun__VM__useIsolationSourceProviderCache(bunVM) && (typeAttribute == nullptr || typeAttribute->isEmpty()) && !globalObject->hasOverriddenModuleWrapper) {
+        auto& cache = WebCore::clientData(vm)->isolationSourceProviderCache;
+        auto it = cache.find(specifierWtfString);
+        if (it != cache.end()) {
+            auto& entry = it->value;
+            if (entry.provider->sourceType() == JSC::SourceProviderSourceType::Program) {
+                target->evaluate(globalObject, Ref(*entry.provider), entry.ignoreESModuleAnnotation);
+                RETURN_IF_EXCEPTION(scope, {});
+                RELEASE_AND_RETURN(scope, target);
+            }
+            globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(Ref(*entry.provider)));
+            RETURN_IF_EXCEPTION(scope, {});
+            RELEASE_AND_RETURN(scope, jsNumber(-1));
+        }
+    }
+
     return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
 }
 
@@ -1015,8 +1032,25 @@ static JSValue fetchESMSourceCode(
     const bool useIsolationCache = isBunTest && Bun__VM__useIsolationSourceProviderCache(bunVM) && (typeAttribute == nullptr || typeAttribute->isEmpty());
     if (useIsolationCache) {
         auto& cache = WebCore::clientData(vm)->isolationSourceProviderCache;
-        if (auto* cached = cache.get(specifier->toWTFString(BunString::ZeroCopy))) {
-            RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached)))));
+        auto it = cache.find(specifier->toWTFString(BunString::ZeroCopy));
+        if (it != cache.end()) {
+            auto& entry = it->value;
+            if (entry.provider->sourceType() == JSC::SourceProviderSourceType::Program) {
+                auto created = Bun::createCommonJSModule(globalObject, specifierJS, Ref(*entry.provider), entry.ignoreESModuleAnnotation);
+                EXCEPTION_ASSERT(created.has_value() == !scope.exception());
+                if (created.has_value()) {
+                    RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
+                }
+                if constexpr (allowPromise) {
+                    auto* exception = scope.exception();
+                    (void)scope.tryClearException();
+                    RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
+                } else {
+                    scope.release();
+                    return {};
+                }
+            }
+            RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*entry.provider)))));
         }
     }
 
@@ -1118,7 +1152,7 @@ static JSValue fetchESMSourceCode(
 
     auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
     if (useIsolationCache && (res->result.value.tag == SyntheticModuleType::JavaScript || res->result.value.tag == SyntheticModuleType::PackageJSONTypeModule)) {
-        WebCore::clientData(vm)->isolationSourceProviderCache.add(specifier->toWTFString(BunString::ZeroCopy), Ref<JSC::SourceProvider>(provider.get()));
+        WebCore::clientData(vm)->isolationSourceProviderCache.add(specifier->toWTFString(BunString::ZeroCopy), WebCore::JSVMClientData::CachedIsolationProvider { provider.ptr() });
     }
     RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider)))));
 }

@@ -55,13 +55,14 @@ async function main(): Promise<void> {
     }
 
     case "prebuilt": {
-      // fetch-cli.ts prebuilt <name> <url> <dest> <identity> [...rm_paths]
-      const [name, url, dest, identity, ...rmPaths] = args;
+      // fetch-cli.ts prebuilt <name> <url> <dest> <identity> <cache> [...rm_paths]
+      const [name, url, dest, identity, cache, ...rmPaths] = args;
       assert(
         name !== undefined && url !== undefined && dest !== undefined && identity !== undefined,
         "prebuilt: missing name/url/dest/identity",
       );
-      return fetchPrebuilt(name, url, dest, identity, rmPaths);
+      assert(cache !== undefined, "prebuilt: missing cache");
+      return fetchPrebuilt(name, url, dest, identity, cache, rmPaths);
     }
 
     case "zig": {
@@ -88,7 +89,7 @@ Usage: bun fetch-cli.ts <kind> <args...>
 
 Kinds:
   dep      <name> <repo> <commit> <dest> <cache> [...patches]
-  prebuilt <name> <url> <dest> <identity> [...rm_paths]
+  prebuilt <name> <url> <dest> <identity> <cache> [...rm_paths]
   zig      <url> <dest> <commit>
 
 This is invoked by ninja build rules. You shouldn't need to call it

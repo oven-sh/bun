@@ -135,12 +135,17 @@ export interface Config {
   buildDir: string;
   /** Generated code output, e.g. buildDir/codegen/. */
   codegenDir: string;
-  /** ccache/zig-cache. Local: shared across checkouts. CI: per-build (ephemeral). */
+  /**
+   * ccache/zig-cache + prebuilt extraction (webkit, nodejs-headers).
+   * Local: shared across checkouts. CI: per-build (ephemeral, under buildDir).
+   */
   cacheDir: string;
   /**
-   * Downloaded artifacts (dep tarballs, prebuilt webkit, nodejs-headers).
+   * Downloaded tarballs (dep archives + prebuilt webkit/nodejs-headers).
    * Defaults to cacheDir; CI agents that want fetches to survive across
-   * ephemeral runners point this elsewhere via BUN_DEPS_CACHE_PATH.
+   * ephemeral runners point this elsewhere via BUN_DEPS_CACHE_PATH. Only
+   * tarballs land here — extraction stays in cacheDir so split-build
+   * artifact paths remain buildDir-relative.
    */
   downloadCacheDir: string;
   /** Vendored dependencies (gitignored). */
@@ -458,14 +463,17 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       : ci
         ? resolve(buildDir, "cache")
         : resolve(bunInstall, "build-cache");
-  // Downloaded artifacts only — content-addressed/version-stamped, so safe
+  // Downloaded tarballs only — content-addressed/version-stamped, so safe
   // to share across builds. Anchored to repo root for the same regen-rule
   // reason as bunInstall above.
-  const downloadCacheDir = partial.downloadCacheDir
-    ? resolve(cwd, partial.downloadCacheDir)
-    : process.env.BUN_DEPS_CACHE_PATH
-      ? resolve(cwd, process.env.BUN_DEPS_CACHE_PATH)
-      : cacheDir;
+  const downloadCacheDir =
+    partial.downloadCacheDir !== undefined
+      ? isAbsolute(partial.downloadCacheDir)
+        ? partial.downloadCacheDir
+        : resolve(cwd, partial.downloadCacheDir)
+      : process.env.BUN_DEPS_CACHE_PATH
+        ? resolve(cwd, process.env.BUN_DEPS_CACHE_PATH)
+        : cacheDir;
   const vendorDir = resolve(cwd, "vendor");
 
   // ─── Validation ───

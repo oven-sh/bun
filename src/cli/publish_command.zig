@@ -532,7 +532,26 @@ pub const PublishCommand = struct {
         comptime directory_publish: bool,
         ctx: *const Context(directory_publish),
     ) PublishError!void {
-        const registry = ctx.manager.scopeForPackageName(ctx.package_name);
+        const orig_registry = ctx.manager.scopeForPackageName(ctx.package_name);
+
+        // If no auth is configured and we're in CI, attempt OIDC trusted publishing.
+        // This exchanges a CI-provided OIDC token with the npm registry for a short-lived
+        // publish token, eliminating the need for long-lived NPM_TOKEN secrets.
+        var oidc_scope: Npm.Registry.Scope = undefined;
+        const registry: *const Npm.Registry.Scope = blk: {
+            if (orig_registry.token.len == 0 and orig_registry.auth.len == 0 and
+                (orig_registry.url.password.len == 0 or orig_registry.url.username.len == 0))
+            {
+                if (bun.ci.isCI()) {
+                    if (oidc.attemptOidcAuth(ctx.allocator, orig_registry, ctx.package_name)) |token| {
+                        oidc_scope = orig_registry.*;
+                        oidc_scope.token = token;
+                        break :blk &oidc_scope;
+                    }
+                }
+            }
+            break :blk orig_registry;
+        };
 
         if (registry.token.len == 0 and (registry.url.password.len == 0 or registry.url.username.len == 0)) {
             return error.NeedAuth;
@@ -1453,6 +1472,7 @@ const E = bun.ast.E;
 const G = bun.ast.G;
 
 const Command = bun.cli.Command;
+const oidc = @import("oidc.zig");
 const Pack = bun.cli.PackCommand;
 const Run = bun.cli.RunCommand;
 const prompt = bun.cli.InitCommand.prompt;

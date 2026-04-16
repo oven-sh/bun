@@ -394,7 +394,7 @@ const SourceMapHandlerGetter = struct {
     pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
         var temp_json_buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer temp_json_buffer.deinit();
-        try chunk.printSourceMapContentsAtOffset(source, &temp_json_buffer, true, SavedSourceMap.vlq_offset, true);
+        try chunk.printSourceMapContentsFromInternal(source, &temp_json_buffer, true, true);
         const source_map_url_prefix_start = "//# sourceMappingURL=data:application/json;base64,";
         // TODO: do we need to %-encode the path?
         const source_url_len = source.path.text.len;
@@ -3546,7 +3546,7 @@ pub fn resolveSourceMapping(
             this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch
                 bun.outOfMemory();
 
-            const mapping = map.mappings.find(line, column) orelse
+            const mapping = map.findMapping(line, column) orelse
                 return null;
 
             return .{

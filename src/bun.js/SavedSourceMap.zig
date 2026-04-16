@@ -4,8 +4,6 @@ const SavedSourceMap = @This();
 map: *HashTable,
 mutex: bun.Mutex = .{},
 
-pub const vlq_offset = 24;
-
 pub fn init(this: *SavedSourceMap, map: *HashTable) void {
     this.* = .{
         .map = map,
@@ -25,70 +23,16 @@ pub inline fn unlock(map: *SavedSourceMap) void {
     map.mutex.unlock();
 }
 
-// For the runtime, we store the number of mappings and how many bytes the final list is at the beginning of the array
-// The first 8 bytes are the length of the array
-// The second 8 bytes are the number of mappings
-pub const SavedMappings = struct {
-    data: [*]u8,
-
-    pub fn vlq(this: SavedMappings) []u8 {
-        return this.data[vlq_offset..this.len()];
-    }
-
-    pub inline fn len(this: SavedMappings) usize {
-        return @as(u64, @bitCast(this.data[0..8].*));
-    }
-
-    pub fn deinit(this: SavedMappings) void {
-        bun.default_allocator.free(this.data[0..this.len()]);
-    }
-
-    pub fn toMapping(this: SavedMappings, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
-        const result = SourceMap.Mapping.parse(
-            allocator,
-            this.data[vlq_offset..this.len()],
-            @as(usize, @bitCast(this.data[8..16].*)),
-            1,
-            @as(usize, @bitCast(this.data[16..24].*)),
-            .{},
-        );
-        switch (result) {
-            .fail => |fail| {
-                if (Output.enable_ansi_colors_stderr) {
-                    try fail.toData(path).writeFormat(
-                        Output.errorWriter(),
-                        logger.Kind.warn,
-                        false,
-                        true,
-                    );
-                } else {
-                    try fail.toData(path).writeFormat(
-                        Output.errorWriter(),
-                        logger.Kind.warn,
-                        false,
-                        false,
-                    );
-                }
-
-                return fail.err;
-            },
-            .success => |success| {
-                return success;
-            },
-        }
-    }
-};
-
-/// ParsedSourceMap is the canonical form for sourcemaps,
-///
-/// but `SavedMappings` and `SourceProviderMap` are much cheaper to construct.
-/// In `fn get`, this value gets converted to ParsedSourceMap always
+/// `InternalSourceMap` is the storage for runtime-transpiled modules.
+/// `ParsedSourceMap` is materialized lazily from a `SourceProviderMap` /
+/// `BakeSourceProvider` / `DevServerSourceProvider` for sources that ship
+/// their own external `.map`.
 pub const Value = bun.TaggedPointerUnion(.{
     ParsedSourceMap,
-    SavedMappings,
     SourceProviderMap,
     BakeSourceProvider,
     DevServerSourceProvider,
+    InternalSourceMap,
 });
 
 pub const MissingSourceMapNoteInfo = struct {
@@ -178,11 +122,10 @@ pub fn deinit(this: *SavedSourceMap) void {
             var value = Value.from(val.*);
             if (value.get(ParsedSourceMap)) |source_map| {
                 source_map.deref();
-            } else if (value.get(SavedMappings)) |saved_mappings| {
-                var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
-                saved.deinit();
             } else if (value.get(SourceProviderMap)) |provider| {
                 _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
+            } else if (value.get(InternalSourceMap)) |ism| {
+                (InternalSourceMap{ .data = @as([*]u8, @ptrCast(ism)) }).deinit();
             }
         }
     }
@@ -192,7 +135,8 @@ pub fn deinit(this: *SavedSourceMap) void {
 }
 
 pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings: MutableString) !void {
-    try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, try bun.default_allocator.dupe(u8, mappings.list.items))));
+    const blob = try bun.default_allocator.dupe(u8, mappings.list.items);
+    try this.putValue(source.path.text, Value.init(bun.cast(*InternalSourceMap, blob.ptr)));
 }
 
 pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
@@ -205,11 +149,10 @@ pub fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
         if (old_value.get(ParsedSourceMap)) |parsed_source_map| {
             var source_map: *ParsedSourceMap = parsed_source_map;
             source_map.deref();
-        } else if (old_value.get(SavedMappings)) |saved_mappings| {
-            var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
-            saved.deinit();
         } else if (old_value.get(SourceProviderMap)) |provider| {
             _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
+        } else if (old_value.get(InternalSourceMap)) |ism| {
+            (InternalSourceMap{ .data = @as([*]u8, @ptrCast(ism)) }).deinit();
         }
     }
     entry.value_ptr.* = value.ptr();
@@ -233,24 +176,44 @@ fn getWithContent(
     };
 
     switch (Value.from(mapping.value_ptr.*).tag()) {
+        @field(Value.Tag, @typeName(InternalSourceMap)) => {
+            // Rare path: a caller wants a ParsedSourceMap (e.g.
+            // `node:module`.findSourceMap). Re-encode to VLQ, parse into a
+            // Mapping.List, and swap the table entry so this only happens once.
+            defer this.unlock();
+            const ism: InternalSourceMap = .{
+                .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(InternalSourceMap))),
+            };
+            var vlq = MutableString.initEmpty(bun.default_allocator);
+            defer vlq.deinit();
+            ism.appendVLQTo(&vlq);
+
+            const parsed = switch (SourceMap.Mapping.parse(
+                bun.default_allocator,
+                vlq.list.items,
+                ism.mappingCount(),
+                1,
+                ism.inputLineCount(),
+                .{},
+            )) {
+                .fail => {
+                    ism.deinit();
+                    _ = this.map.remove(hash);
+                    return .{};
+                },
+                .success => |success| success,
+            };
+            ism.deinit();
+            const result = bun.new(ParsedSourceMap, parsed);
+            mapping.value_ptr.* = Value.init(result).ptr();
+            result.ref();
+            return .{ .map = result };
+        },
         @field(Value.Tag, @typeName(ParsedSourceMap)) => {
             defer this.unlock();
             const map = Value.from(mapping.value_ptr.*).as(ParsedSourceMap);
             map.ref();
             return .{ .map = map };
-        },
-        @field(Value.Tag, @typeName(SavedMappings)) => {
-            defer this.unlock();
-            var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
-            defer saved.deinit();
-            const result = bun.new(ParsedSourceMap, saved.toMapping(bun.default_allocator, path) catch {
-                _ = this.map.remove(mapping.key_ptr.*);
-                return .{};
-            });
-            mapping.value_ptr.* = Value.init(result).ptr();
-            result.ref();
-
-            return .{ .map = result };
         },
         @field(Value.Tag, @typeName(SourceProviderMap)) => {
             const ptr: *SourceProviderMap = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
@@ -348,6 +311,18 @@ pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
     return this.getWithContent(path, .mappings_only).map;
 }
 
+/// Returns a view over the InternalSourceMap blob if `path` was inserted via
+/// `putMappings` (runtime-transpiled module). The blob lives until the entry is
+/// replaced or the table is deinitialized; callers must not retain the view
+/// across module reloads.
+pub fn getInternal(this: *SavedSourceMap, path: string) ?InternalSourceMap {
+    this.lock();
+    defer this.unlock();
+    const raw = this.map.get(bun.hash(path)) orelse return null;
+    const ptr = Value.from(raw).get(InternalSourceMap) orelse return null;
+    return .{ .data = @as([*]u8, @ptrCast(ptr)) };
+}
+
 pub fn resolveMapping(
     this: *SavedSourceMap,
     path: []const u8,
@@ -355,6 +330,29 @@ pub fn resolveMapping(
     column: bun.Ordinal,
     source_handling: SourceMap.SourceContentHandling,
 ) ?SourceMap.Mapping.Lookup {
+    {
+        this.lock();
+        defer this.unlock();
+        if (this.map.get(bun.hash(path))) |raw| {
+            if (Value.from(raw).get(InternalSourceMap)) |ptr| {
+                const ism = InternalSourceMap{ .data = @as([*]u8, @ptrCast(ptr)) };
+                const mapping = ism.find(line, column) orelse return null;
+                // `source_handling` is irrelevant for this arm. Runtime-transpiled
+                // modules have no external sources (`isExternal() == false`), so on
+                // `main` this codepath returned a ParsedSourceMap that
+                // `remapZigException` ignored anyway and fell through to
+                // `fetchWithoutOnLoadPlugins(.print_source)` for the code frame.
+                // Returning `source_map = null` reaches the same fallback one
+                // branch earlier.
+                return .{
+                    .mapping = mapping,
+                    .source_map = null,
+                    .prefetched_source_code = null,
+                };
+            }
+        }
+    }
+
     const parse = this.getWithContent(path, switch (source_handling) {
         .no_source_contents => .mappings_only,
         .source_contents => .{ .all = .{ .line = @max(line.zeroBased(), 0), .column = @max(column.zeroBased(), 0) } },
@@ -362,7 +360,7 @@ pub fn resolveMapping(
     const map = parse.map orelse return null;
 
     const mapping = parse.mapping orelse
-        map.mappings.find(line, column) orelse
+        map.findMapping(line, column) orelse
         return null;
 
     return .{
@@ -375,7 +373,6 @@ pub fn resolveMapping(
 const string = []const u8;
 
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -387,5 +384,6 @@ const logger = bun.logger;
 const SourceMap = bun.SourceMap;
 const BakeSourceProvider = bun.SourceMap.BakeSourceProvider;
 const DevServerSourceProvider = bun.SourceMap.DevServerSourceProvider;
+const InternalSourceMap = SourceMap.InternalSourceMap;
 const ParsedSourceMap = SourceMap.ParsedSourceMap;
 const SourceProviderMap = SourceMap.SourceProviderMap;

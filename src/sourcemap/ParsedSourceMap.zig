@@ -10,6 +10,11 @@ ref_count: RefCount,
 
 input_line_count: usize = 0,
 mappings: Mapping.List = .{},
+/// Set when this map's mappings are backed by an InternalSourceMap blob (e.g.
+/// embedded in a `bun build --compile` executable) instead of a materialized
+/// `Mapping.List`. The blob's bytes are borrowed (they live in the standalone
+/// module graph's section), so `deinit` does not free them.
+internal: ?InternalSourceMap = null,
 
 /// If this is empty, this implies that the source code is a single file
 /// transpiled on-demand. If there are items, then it means this is a file
@@ -88,6 +93,11 @@ pub fn isExternal(psm: *ParsedSourceMap) bool {
     return psm.external_source_names.len != 0;
 }
 
+pub fn findMapping(this: *const ParsedSourceMap, line: bun.Ordinal, column: bun.Ordinal) ?Mapping {
+    if (this.internal) |ism| return ism.find(line, column);
+    return this.mappings.find(line, column);
+}
+
 fn deinit(this: *ParsedSourceMap) void {
     const allocator = bun.default_allocator;
 
@@ -108,7 +118,8 @@ pub fn standaloneModuleGraphData(this: *ParsedSourceMap) *bun.StandaloneModuleGr
 }
 
 pub fn memoryCost(this: *const ParsedSourceMap) usize {
-    return @sizeOf(ParsedSourceMap) + this.mappings.memoryCost() + this.external_source_names.len * @sizeOf([]const u8);
+    const mappings_cost = if (this.internal) |ism| ism.memoryCost() else this.mappings.memoryCost();
+    return @sizeOf(ParsedSourceMap) + mappings_cost + this.external_source_names.len * @sizeOf([]const u8);
 }
 
 pub fn writeVLQs(map: *const ParsedSourceMap, writer: anytype) !void {
@@ -154,6 +165,7 @@ fn formatVLQsImpl(map: *const ParsedSourceMap, w: *std.Io.Writer) !void {
 const std = @import("std");
 
 const SourceMap = @import("./sourcemap.zig");
+const InternalSourceMap = SourceMap.InternalSourceMap;
 const BakeSourceProvider = SourceMap.BakeSourceProvider;
 const DevServerSourceProvider = SourceMap.DevServerSourceProvider;
 const Mapping = SourceMap.Mapping;

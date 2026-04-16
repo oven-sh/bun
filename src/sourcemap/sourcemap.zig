@@ -956,6 +956,7 @@ pub const coverage = @import("./CodeCoverage.zig");
 pub const VLQ = @import("./VLQ.zig");
 pub const LineOffsetTable = @import("./LineOffsetTable.zig");
 pub const JSSourceMap = @import("./JSSourceMap.zig");
+pub const InternalSourceMap = @import("./InternalSourceMap.zig");
 
 const decodeVLQAssumeValid = VLQ.decodeAssumeValid;
 const decodeVLQ = VLQ.decode;

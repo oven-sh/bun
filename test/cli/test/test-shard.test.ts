@@ -14,9 +14,9 @@ function makeFixture(name: string, fileCount: number) {
   return tempDir(name, files);
 }
 
-async function runShard(cwd: string, shard: string) {
+async function runShard(cwd: string, shard: string, extra: string[] = []) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", `--shard=${shard}`],
+    cmd: [bunExe(), "test", `--shard=${shard}`, ...extra],
     env: bunEnv,
     cwd,
     stdout: "pipe",
@@ -31,7 +31,7 @@ async function runShard(cwd: string, shard: string) {
   return { ran, stderr, exitCode };
 }
 
-describe("--shard", () => {
+describe.concurrent("--shard", () => {
   test("partitions test files across shards with no overlap or gaps", async () => {
     using dir = makeFixture("shard-partition", 10);
     const cwd = String(dir);
@@ -71,6 +71,29 @@ describe("--shard", () => {
     expect(a.ran).toEqual(b.ran);
     expect(a.exitCode).toBe(0);
     expect(b.exitCode).toBe(0);
+  });
+
+  test("composes with --randomize: shard selection happens before shuffle", async () => {
+    // Shard selection sorts, picks, then --randomize shuffles only the
+    // selected subset. So the SET of files in a shard is independent
+    // of the seed, and a fixed seed gives a reproducible order.
+    using dir = makeFixture("shard-randomize", 12);
+    const cwd = String(dir);
+
+    const plain = await runShard(cwd, "2/4");
+    const seeded1 = await runShard(cwd, "2/4", ["--seed=123"]);
+    const seeded2 = await runShard(cwd, "2/4", ["--seed=123"]);
+    const otherSeed = await runShard(cwd, "2/4", ["--seed=999999"]);
+
+    // Same set of files regardless of randomization (ran is sorted).
+    expect(plain.ran).toEqual(["f01", "f05", "f09"]);
+    expect(seeded1.ran).toEqual(plain.ran);
+    expect(seeded2.ran).toEqual(plain.ran);
+    expect(otherSeed.ran).toEqual(plain.ran);
+
+    // Same seed → same result.
+    expect(seeded1.stderr).toContain("--shard=2/4:");
+    for (const r of [plain, seeded1, seeded2, otherSeed]) expect(r.exitCode).toBe(0);
   });
 
   test("--shard=1/1 runs every test file", async () => {

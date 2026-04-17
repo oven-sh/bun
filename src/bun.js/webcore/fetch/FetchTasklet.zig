@@ -551,8 +551,16 @@ pub const FetchTasklet = struct {
                 this.promise.deinit();
                 return;
             }
-            // everything ok
-            if (this.metadata == null) {
+            // checkServerIdentity passed. If we don't have response headers yet
+            // and the request is still in progress, wait for the next update.
+            //
+            // If the result is a failure (e.g. the server closed the connection
+            // after the TLS handshake but before sending headers — common when
+            // an mTLS server rejects a client that didn't present a certificate),
+            // we must fall through to the reject path below. Otherwise the
+            // `is_done` defer above would deref and deinit the tasklet, removing
+            // the abort listener, and the fetch promise would hang forever.
+            if (this.metadata == null and this.result.isSuccess()) {
                 log("onProgressUpdate: metadata is null", .{});
                 return;
             }

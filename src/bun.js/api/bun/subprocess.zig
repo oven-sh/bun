@@ -736,22 +736,16 @@ pub fn finalizeStreams(this: *Subprocess) void {
     this.closeIO(.stdout);
     this.closeIO(.stderr);
 
-    close_stdio_pipes: {
-        if (!this.observable_getters.contains(.stdio)) {
-            break :close_stdio_pipes;
-        }
-
-        for (this.stdio_pipes.items) |item| {
-            if (Environment.isWindows) {
-                if (item == .buffer) {
-                    item.buffer.close(onPipeClose);
-                }
-            } else {
-                item.close();
+    for (this.stdio_pipes.items) |item| {
+        if (Environment.isWindows) {
+            if (item == .buffer) {
+                item.buffer.close(onPipeClose);
             }
+        } else {
+            item.close();
         }
-        this.stdio_pipes.clearAndFree(bun.default_allocator);
     }
+    this.stdio_pipes.clearAndFree(bun.default_allocator);
 }
 
 fn deinit(this: *Subprocess) void {

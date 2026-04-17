@@ -1011,6 +1011,38 @@ describe("spyOn", () => {
       expect(arr[14]()).toBe(456);
       expect(fn).not.toHaveBeenCalled();
     });
+
+    test("spyOn on a missing indexed property does not crash", () => {
+      const o = {};
+      const fn = spyOn(o, 12);
+      expect(Object.getOwnPropertyDescriptor(o, 12)).toEqual({
+        value: fn,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(o, 12)).toEqual({
+        value: undefined,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    });
+
+    test("spyOn on a non-callable indexed property does not crash", () => {
+      const arr = ["hello"];
+      const fn = spyOn(arr, 0);
+      expect(Object.getOwnPropertyDescriptor(arr, 0)).toEqual({
+        value: fn,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(arr[0]).toBe(fn);
+      fn.mockRestore();
+      expect(arr[0]).toBe("hello");
+    });
   }
 
   // spyOn does not work with getters/setters yet.

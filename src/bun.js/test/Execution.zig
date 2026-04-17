@@ -641,11 +641,10 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     // toMatchSnapshot() call. Without this reset, retries / repeats would
     // increment the counter to N on attempt N and look for a key that does
     // not exist (https://github.com/oven-sh/bun/issues/23705).
-    // A full clear is safe: for serial groups only this sequence is active
-    // (completed tests' entries are never read again), and concurrent groups
-    // cannot reach snapshot matchers at all (see SnapshotInConcurrentGroup in
-    // expect.zig).
-    if (jsc.Jest.Jest.runner) |runner| runner.snapshots.clearCounts();
+    // Zeroing all entries matches Jest (SnapshotState.clear() on test_retry,
+    // jestjs/jest#7493). Concurrent tests never touch the counts map — see
+    // SnapshotInConcurrentGroup in expect.zig.
+    if (jsc.Jest.Jest.runner) |runner| runner.snapshots.resetCounts();
     _ = this;
 }
 

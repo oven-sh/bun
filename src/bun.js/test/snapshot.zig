@@ -41,12 +41,11 @@ pub const Snapshots = struct {
         file: std.fs.File,
     };
 
-    pub fn clearCounts(this: *Snapshots) void {
-        var count_key_itr = this.counts.keyIterator();
-        while (count_key_itr.next()) |key| {
-            this.allocator.free(key.*);
-        }
-        this.counts.clearRetainingCapacity();
+    /// Reset per-run snapshot counters to 0. Keys stay owned by the map until
+    /// `writeSnapshotFile` tears them down on file switch.
+    pub fn resetCounts(this: *Snapshots) void {
+        var it = this.counts.valueIterator();
+        while (it.next()) |v| v.* = 0;
     }
 
     pub fn addCount(this: *Snapshots, expect: *Expect, hint: []const u8) !struct { []const u8, usize } {

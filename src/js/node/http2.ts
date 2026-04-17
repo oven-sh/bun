@@ -54,6 +54,8 @@ const Socket = net.Socket;
 const EventEmitter = require("node:events");
 const { Duplex } = Stream;
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
+const { AsyncResource } = require("node:async_hooks");
+const kRequestAsyncResource = Symbol("kRequestAsyncResource");
 const { promisify } = require("internal/promisify");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
@@ -1914,6 +1916,34 @@ function assertSession(session) {
 }
 hideFromStack(assertSession);
 
+function emitClientStreamHeaders(self, stream, headers, flags, rawheaders) {
+  const status = stream[bunHTTP2StreamStatus];
+  const header_status = headers[HTTP2_HEADER_STATUS];
+  if (header_status === HTTP_STATUS_CONTINUE) {
+    stream.emit("continue");
+  }
+
+  if ((status & StreamState.StreamResponded) !== 0) {
+    stream.emit("trailers", headers, flags, rawheaders);
+  } else {
+    if (header_status >= 100 && header_status < 200) {
+      stream.emit("headers", headers, flags, rawheaders);
+    } else {
+      stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
+      if (header_status === 421) {
+        // 421 Misdirected Request
+        removeOriginFromSet(self, stream);
+      }
+      self.emit("stream", stream, headers, flags, rawheaders);
+      stream.emit("response", headers, flags, rawheaders);
+    }
+  }
+}
+function pushToStreamInScope(stream, data) {
+  const reqAsync = stream[kRequestAsyncResource];
+  if (reqAsync) reqAsync.runInAsyncScope(pushToStream, null, stream, data);
+  else pushToStream(stream, data);
+}
 function pushToStream(stream, data) {
   if (data && stream[bunHTTP2StreamStatus] & StreamState.Closed) {
     if (!stream._readableState.ended) {
@@ -3337,7 +3367,7 @@ class ClientHttp2Session extends Http2Session {
           }
           // Push a null so the stream can end whenever the client consumes
           // it completely.
-          pushToStream(stream, null);
+          pushToStreamInScope(stream, null);
           stream.read(0);
         }
       }
@@ -3357,7 +3387,7 @@ class ClientHttp2Session extends Http2Session {
     },
     streamData(self: ClientHttp2Session, stream: ClientHttp2Stream, data: Buffer) {
       if (!self || typeof stream !== "object" || !data) return;
-      pushToStream(stream, data);
+      pushToStreamInScope(stream, data);
     },
     streamHeaders(
       self: ClientHttp2Session,
@@ -3368,26 +3398,11 @@ class ClientHttp2Session extends Http2Session {
     ) {
       if (!self || typeof stream !== "object" || stream.rstCode) return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
-      const status = stream[bunHTTP2StreamStatus];
-      const header_status = headers[HTTP2_HEADER_STATUS];
-      if (header_status === HTTP_STATUS_CONTINUE) {
-        stream.emit("continue");
-      }
-
-      if ((status & StreamState.StreamResponded) !== 0) {
-        stream.emit("trailers", headers, flags, rawheaders);
+      const reqAsync = stream[kRequestAsyncResource];
+      if (reqAsync) {
+        reqAsync.runInAsyncScope(emitClientStreamHeaders, null, self, stream, headers, flags, rawheaders);
       } else {
-        if (header_status >= 100 && header_status < 200) {
-          stream.emit("headers", headers, flags, rawheaders);
-        } else {
-          stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
-          if (header_status === 421) {
-            // 421 Misdirected Request
-            removeOriginFromSet(self, stream);
-          }
-          self.emit("stream", stream, headers, flags, rawheaders);
-          stream.emit("response", headers, flags, rawheaders);
-        }
+        emitClientStreamHeaders(self, stream, headers, flags, rawheaders);
       }
     },
     localSettings(self: ClientHttp2Session, settings: Settings) {
@@ -3887,6 +3902,7 @@ class ClientHttp2Session extends Http2Session {
         return req;
       }
       const req = new ClientHttp2Stream(stream_id, this, headers);
+      req[kRequestAsyncResource] = new AsyncResource("PendingRequest");
       req.authority = authority;
       req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
       if (typeof options === "undefined") {

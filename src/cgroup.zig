@@ -37,9 +37,14 @@ pub fn getMemoryLimit() ?usize {
 
     // Fall back to cgroup v1
     if (readCgroupFile("/sys/fs/cgroup/memory/memory.limit_in_bytes")) |limit| {
-        // cgroup v1 sets this to a very large number (close to total RAM) when unlimited
-        const ram_size = Bun__ramSize();
-        if (limit >= ram_size * 9 / 10) return null;
+        // cgroup v1 uses PAGE_COUNTER_MAX * PAGE_SIZE as sentinel for "no limit",
+        // which on 64-bit is a huge number (typically 0x7FFFFFFFFFFFF000 or similar).
+        // We check against a 1 TiB threshold: any limit above 1 TiB is almost certainly
+        // the sentinel, not a real container limit. This avoids the previous heuristic
+        // of comparing against physical RAM, which wrongly dropped valid limits
+        // (e.g. 15 GiB on a 16 GiB node).
+        const one_tib: usize = 1024 * 1024 * 1024 * 1024;
+        if (limit >= one_tib) return null;
         return limit;
     }
 
@@ -133,7 +138,7 @@ pub export fn Bun__cgroup__getMemoryLimit() u64 {
     return getCachedMemoryLimit() orelse 0;
 }
 
-extern fn Bun__ramSize() usize;
+
 
 const std = @import("std");
 const bun = @import("bun");

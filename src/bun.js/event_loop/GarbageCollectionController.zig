@@ -141,12 +141,17 @@ pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.c) void {
     var this = timer.as(*GarbageCollectionController);
 
     // Container-aware RSS pressure check (Issue #17723)
-    if (this.cgroup_memory_limit != null) {
-        this.checkContainerMemoryPressure();
-    }
+    // If pressure was detected and GC was already triggered, skip the normal
+    // performGC() to avoid running GC twice on the same tick.
+    const pressure_gc_ran = if (this.cgroup_memory_limit != null)
+        this.checkContainerMemoryPressure()
+    else
+        false;
 
     const prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
-    this.performGC();
+    if (!pressure_gc_ran) {
+        this.performGC();
+    }
     this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
     if (prev_heap_size == this.gc_last_heap_size_on_repeating_timer) {
         this.heap_size_didnt_change_for_repeating_timer_ticks_count +|= 1;
@@ -217,9 +222,10 @@ pub fn performGC(this: *GarbageCollectionController) void {
 /// Note: Each Worker has its own VirtualMachine with its own GarbageCollectionController.
 /// RSS is process-wide, so multiple Workers may detect pressure simultaneously.
 /// The 5-second cooldown on the critical path prevents compounding pause time.
-fn checkContainerMemoryPressure(this: *GarbageCollectionController) void {
+/// Returns true if GC was triggered (so the caller can skip its own performGC).
+fn checkContainerMemoryPressure(this: *GarbageCollectionController) bool {
     const rss = bun.cgroup.getCurrentRSS();
-    if (rss == 0) return;
+    if (rss == 0) return false;
 
     if (rss > this.cgroup_critical_threshold) {
         // CRITICAL: RSS is above 85% of the container limit.
@@ -228,7 +234,7 @@ fn checkContainerMemoryPressure(this: *GarbageCollectionController) void {
         // Cooldown: skip if we already ran a critical GC within the last 5 seconds
         // to avoid compounding event-loop pause time.
         const now = std.time.milliTimestamp();
-        if (now - this.cgroup_last_critical_gc < 5000) return;
+        if (now - this.cgroup_last_critical_gc < 5000) return false;
         this.cgroup_last_critical_gc = now;
 
         var vm = this.bunVM().jsc_vm;
@@ -238,6 +244,7 @@ fn checkContainerMemoryPressure(this: *GarbageCollectionController) void {
             bun.mimalloc.mi_collect(true);
         }
         this.gc_last_heap_size = vm.blockBytesAllocated();
+        return true;
     } else if (rss > this.cgroup_pressure_threshold) {
         // PRESSURE: RSS is above 75% of the container limit.
         // Run an async GC and do a partial mimalloc purge.
@@ -247,7 +254,9 @@ fn checkContainerMemoryPressure(this: *GarbageCollectionController) void {
             bun.mimalloc.mi_collect(false);
         }
         this.gc_last_heap_size = vm.blockBytesAllocated();
+        return true;
     }
+    return false;
 }
 
 var mimalloc_purge_once = std.once(struct {

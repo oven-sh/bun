@@ -2051,12 +2051,12 @@ class Http2Stream extends Duplex {
         sensitiveNames[sensitives[i]] = true;
       }
     }
-    // RFC 7540 §8.1: a trailer HEADERS frame must carry a valid header block.
-    // If the user asked to send an empty trailer object (which the compat
-    // Http2ServerResponse does unconditionally from onStreamTrailersReady),
-    // emit an empty DATA frame with END_STREAM instead — this matches how
-    // Node terminates the stream and avoids a zero-length HEADERS frame that
-    // strict peers (nghttp2/curl) reject as a callback failure.
+    // RFC 9113 §8.1 doesn't explicitly forbid an empty trailer HEADERS frame,
+    // but strict peer implementations (nghttp2, used by curl and Node) reject
+    // a zero-length HPACK block as a callback failure. When the user passes an
+    // empty trailer object (which the compat Http2ServerResponse does
+    // unconditionally from onStreamTrailersReady), emit an empty DATA frame
+    // with END_STREAM instead — this matches Node's wire output.
     if (ObjectKeys(headers).length === 0) {
       session[bunHTTP2Native]?.noTrailers(this.#id);
     } else {

@@ -56,9 +56,15 @@ pub fn start(this: *Worker) !void {
             p.close();
             this.process = null;
         }
+        // Reset to fresh state after deinit so reapWorker's `!respawned`
+        // cleanup (which can't tell whether start() ran) doesn't deinit on
+        // undefined ArrayList memory.
         this.ipc.deinit();
+        this.ipc = .{};
         this.out.deinit();
+        this.out = .{ .role = .stdout, .worker = this };
         this.err.deinit();
+        this.err = .{ .role = .stderr, .worker = this };
     }
 
     if (Environment.isPosix) {

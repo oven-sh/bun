@@ -158,10 +158,17 @@ pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
                 return;
             }
             const pipe = self.backend.pipe orelse return;
-            // Try a synchronous write first (no allocation, no req).
+            // Try a synchronous write first. uv_try_write on a Windows
+            // UV_NAMED_PIPE always returns EAGAIN (vendor/libuv/src/win/stream.c),
+            // so this currently always falls through to submitWindowsWrite — kept
+            // because EBADF/EPIPE here mean the pipe is dead and must not silently
+            // drop the frame.
             const w: usize = switch (pipe.tryWrite(frame_bytes)) {
                 .result => |n| n,
-                .err => |e| if (e.getErrno() == .AGAIN) 0 else return,
+                .err => |e| if (e.getErrno() == .AGAIN) 0 else {
+                    self.markDone();
+                    return;
+                },
             };
             if (w >= frame_bytes.len) return;
             bun.handleOom(self.out.appendSlice(bun.default_allocator, frame_bytes[w..]));
@@ -230,11 +237,15 @@ pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
                     p.closeAndDestroy();
                 }
                 self.backend.inflight.deinit(bun.default_allocator);
+                self.backend.inflight = .empty;
             } else if (!self.backend.socket.isDetached()) {
                 self.backend.socket.close(.normal);
+                self.backend.socket = .detached;
             }
             self.in.deinit(bun.default_allocator);
+            self.in = .empty;
             self.out.deinit(bun.default_allocator);
+            self.out = .empty;
         }
 
         // -- frame decode (shared) -----------------------------------------

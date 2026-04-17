@@ -1051,7 +1051,13 @@ static JSValue fetchESMSourceCode(
     const bool useIsolationCache = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
     if (useIsolationCache) {
         if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifier->toWTFString(BunString::ZeroCopy))) {
-            if (cached->sourceType() == JSC::SourceProviderSourceType::Program) {
+            if (cached->sourceType() != JSC::SourceProviderSourceType::Program) {
+                RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached)))));
+            }
+            // Mirror the guard in fetchCommonJSModule: a Module.wrap override only
+            // affects CJS evaluation, so don't serve a cached Program-type provider
+            // when one is active in this global — fall through to re-transpile.
+            if (!globalObject->hasOverriddenModuleWrapper) {
                 auto created = Bun::createCommonJSModule(globalObject, specifierJS, Ref(*cached), cached->m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule);
                 EXCEPTION_ASSERT(created.has_value() == !scope.exception());
                 if (created.has_value()) {
@@ -1066,7 +1072,6 @@ static JSValue fetchESMSourceCode(
                     return {};
                 }
             }
-            RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached)))));
         }
     }
 

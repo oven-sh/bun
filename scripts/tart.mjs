@@ -236,7 +236,12 @@ export const tart = {
       "vnc-experimental": rdp,
     });
 
-    return this.toMachine(machineId);
+    return {
+      ...this.toMachine(machineId),
+      imageId: image,
+      instanceType: cpuCount || memoryGb ? `${cpuCount ?? "?"}cpu-${memoryGb ?? "?"}gb` : "default",
+      region: "local",
+    };
   },
 
   /**

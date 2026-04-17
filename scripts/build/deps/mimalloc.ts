@@ -5,7 +5,7 @@
 
 import type { Dependency, NestedCmakeBuild, Provides } from "../source.ts";
 
-const MIMALLOC_COMMIT = "ac2e0d58bd008347ad78d0aae0af829458a2d1de";
+const MIMALLOC_COMMIT = "809f7f32645a8aed84e4e9d343eb75576f133dee";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -34,6 +34,13 @@ export const mimalloc: Dependency = {
       // Don't walk all heaps on exit. Bun's shutdown is already complicated
       // enough without mimalloc traversing every live allocation.
       MI_SKIP_COLLECT_ON_EXIT: "ON",
+
+      // Go further: skip mi_process_done entirely. It exists for the
+      // dlopen/dlclose-a-static-mimalloc case (issue #281); Bun is a static
+      // exe that exits via _exit, so the OS reclaims everything. Running it
+      // tears down locks/TLS while other static destructors may still call
+      // free(). MI_SKIP_COLLECT_ON_EXIT only skips the heap walk inside it.
+      MI_NO_PROCESS_DETACH: "ON",
 
       // Disable Transparent Huge Pages. Measured impact:
       //   bun --eval 1:  THP off = 30MB peak,  THP on = 52MB peak

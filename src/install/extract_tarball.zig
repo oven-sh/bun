@@ -11,12 +11,13 @@ url: strings.StringOrTinyString,
 package_manager: *PackageManager,
 
 pub inline fn run(this: *const ExtractTarball, log: *logger.Log, bytes: []const u8) !Install.ExtractData {
+    // NOTE: runs on thread pool — manager.allocator must be thread-safe
     if (!this.skip_verify and this.integrity.tag.isSupported()) {
         if (!this.integrity.verify(bytes)) {
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
-                bun.default_allocator,
+                this.package_manager.allocator,
                 "Integrity check failed<r> for tarball: {s}",
                 .{this.name.slice()},
             ) catch unreachable;
@@ -127,6 +128,8 @@ threadlocal var folder_name_buf: bun.PathBuffer = undefined;
 threadlocal var json_path_buf: bun.PathBuffer = undefined;
 
 fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8) !Install.ExtractData {
+    // NOTE: runs on thread pool — manager.allocator must be thread-safe
+    const allocator = this.package_manager.allocator;
     const tracer = bun.perf.trace("ExtractTarball.extract");
     defer tracer.end();
 
@@ -173,7 +176,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
-                bun.default_allocator,
+                allocator,
                 "{s} when create temporary directory named \"{s}\" (while extracting \"{s}\")",
                 .{ @errorName(err), tmpname, name },
             ) catch unreachable;
@@ -184,7 +187,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
         const Archiver = bun.libarchive.Archiver;
         const Zlib = @import("../zlib.zig");
-        var zlib_pool = Npm.Registry.BodyPool.get(default_allocator);
+        var zlib_pool = Npm.Registry.BodyPool.get(allocator);
         zlib_pool.data.reset();
         defer Npm.Registry.BodyPool.release(zlib_pool);
 
@@ -227,12 +230,12 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
         if (needs_to_decompress) {
             zlib_pool.data.list.clearRetainingCapacity();
-            var zlib_entry = try Zlib.ZlibReaderArrayList.init(tgz_bytes, &zlib_pool.data.list, default_allocator);
+            var zlib_entry = try Zlib.ZlibReaderArrayList.init(tgz_bytes, &zlib_pool.data.list, allocator);
             zlib_entry.readAll(true) catch |err| {
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
-                    bun.default_allocator,
+                    allocator,
                     "{s} decompressing \"{s}\" to \"{f}\"",
                     .{ @errorName(err), name, bun.fmt.fmtPath(u8, tmpname, .{}) },
                 ) catch unreachable;
@@ -345,7 +348,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                 log.addErrorFmt(
                     null,
                     logger.Loc.Empty,
-                    bun.default_allocator,
+                    allocator,
                     "moving \"{s}\" to cache dir failed\n{}\n From: {s}\n   To: {s}",
                     .{ name, err, tmpname, folder_name },
                 ) catch unreachable;
@@ -394,7 +397,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                     log.addErrorFmt(
                         null,
                         logger.Loc.Empty,
-                        bun.default_allocator,
+                        allocator,
                         "moving \"{s}\" to cache dir failed\n{f}\n  From: {s}\n    To: {s}",
                         .{ name, err, tmpname, folder_name },
                     ) catch unreachable;
@@ -433,7 +436,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
-                bun.default_allocator,
+                allocator,
                 "moving \"{s}\" to cache dir failed: {f}\n  From: {s}\n    To: {s}",
                 .{ name, err, tmpname, folder_name },
             ) catch unreachable;
@@ -447,7 +450,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         log.addErrorFmt(
             null,
             logger.Loc.Empty,
-            bun.default_allocator,
+            allocator,
             "failed to verify cache dir for \"{s}\": {s}",
             .{ name, @errorName(err) },
         ) catch unreachable;
@@ -462,7 +465,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         log.addErrorFmt(
             null,
             logger.Loc.Empty,
-            bun.default_allocator,
+            allocator,
             "failed to resolve cache dir for \"{s}\": {s}",
             .{ name, @errorName(err) },
         ) catch unreachable;
@@ -482,7 +485,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         const json_file, json_buf = bun.sys.File.readFileFrom(
             bun.FD.fromStdDir(cache_dir),
             bun.path.joinZBuf(&json_path_buf, &[_]string{ folder_name, "package.json" }, .auto),
-            bun.default_allocator,
+            allocator,
         ).unwrap() catch |err| {
             if (this.resolution.tag == .github and err == error.ENOENT) {
                 // allow git dependencies without package.json
@@ -495,7 +498,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
-                bun.default_allocator,
+                allocator,
                 "\"package.json\" for \"{s}\" failed to open: {s}",
                 .{ name, @errorName(err) },
             ) catch unreachable;
@@ -508,7 +511,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
-                bun.default_allocator,
+                allocator,
                 "\"package.json\" for \"{s}\" failed to resolve: {s}",
                 .{ name, @errorName(err) },
             ) catch unreachable;
@@ -581,6 +584,5 @@ const Environment = bun.Environment;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const Semver = bun.Semver;
-const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const strings = bun.strings;

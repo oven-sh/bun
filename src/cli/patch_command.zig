@@ -4,7 +4,7 @@
 
 pub const PatchCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstallCatchError(ctx, .patch);
+        (try updatePackageJSONAndInstallCatchError(ctx, .patch)).handleCli();
     }
 };
 

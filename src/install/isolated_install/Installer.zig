@@ -91,12 +91,14 @@ pub const Installer = struct {
         const node_id = entry_node_ids[entry_id.get()];
         const node_pkg_ids = store.nodes.items(.pkg_id);
         const pkg_id = node_pkg_ids[node_id.get()];
+        // failure already recorded on the manager; the caller checks log/manager
+        // state after this returns.
         const patch_task = install.PatchTask.newApplyPatchHash(
             this.manager,
             pkg_id,
             patch.contents_hash,
             patch.name_and_version_hash,
-        );
+        ) catch return;
         defer patch_task.deinit();
         bun.handleOom(patch_task.apply());
 
@@ -180,7 +182,11 @@ pub const Installer = struct {
         }
 
         if (this.manager.options.enable.fail_early) {
-            Global.exit(1);
+            // diagnostic already printed inside the failed task
+            this.manager.addError(.{ .already_printed = .{ .exit_code = 1 } });
+            // do NOT decrementPendingTasks/resumeUnblockedTasks; the Wait.isDone
+            // hasErrors() check in isolated_install.zig wakes the main loop.
+            return;
         }
 
         this.summary.fail += 1;
@@ -203,7 +209,7 @@ pub const Installer = struct {
         // fix: check if the task is unblocked after the task returns blocked, and only set/unset
         // blocked from the main thread.
 
-        var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
+        var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(this.manager.allocator);
         defer parent_dedupe.deinit();
 
         if (!this.isTaskBlocked(entry_id, &parent_dedupe)) {
@@ -308,7 +314,7 @@ pub const Installer = struct {
         const entries = this.store.entries.slice();
         const entry_steps = entries.items(.step);
 
-        var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
+        var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(this.manager.allocator);
         defer parent_dedupe.deinit();
 
         for (0..this.store.entries.len) |id_int| {
@@ -418,10 +424,10 @@ pub const Installer = struct {
             blocked,
             fail: Error,
 
-            pub fn failure(e: Error) Yield {
+            pub fn failure(allocator: std.mem.Allocator, e: Error) Yield {
                 // clone here in case a path is kept in a buffer that
                 // will be freed at the end of the current scope.
-                return .{ .fail = e.clone(bun.default_allocator) };
+                return .{ .fail = e.clone(allocator) };
             }
         };
 
@@ -497,7 +503,7 @@ pub const Installer = struct {
                             // the folder does not exist in the cache. xdev is per folder dependency
                             const folder_dir = switch (bun.openDirForIteration(FD.cwd(), path)) {
                                 .result => |fd| fd,
-                                .err => |err| return .failure(.{ .link_package = err }),
+                                .err => |err| return .failure(manager.allocator, .{ .link_package = err }),
                             };
                             defer folder_dir.close();
 
@@ -513,6 +519,7 @@ pub const Installer = struct {
                                     installer.appendStorePath(&dest, this.entry_id);
 
                                     var hardlinker: Hardlinker = try .init(
+                                        installer.manager.allocator,
                                         folder_dir,
                                         src,
                                         dest,
@@ -543,7 +550,7 @@ pub const Installer = struct {
                                                 );
                                                 Output.flush();
                                             }
-                                            return .failure(.{ .link_package = err });
+                                            return .failure(manager.allocator, .{ .link_package = err });
                                         },
                                     }
                                 },
@@ -566,6 +573,7 @@ pub const Installer = struct {
                                             else
                                                 .ENAMETOOLONG;
                                             return .failure(
+                                                manager.allocator,
                                                 .{ .link_package = .{ .errno = @intFromEnum(err), .syscall = .copyfile } },
                                             );
                                         }
@@ -578,6 +586,7 @@ pub const Installer = struct {
                                     installer.appendStorePath(&dest, this.entry_id);
 
                                     var file_copier: FileCopier = try .init(
+                                        installer.manager.allocator,
                                         folder_dir,
                                         src_path,
                                         dest,
@@ -604,7 +613,7 @@ pub const Installer = struct {
                                                 );
                                                 Output.flush();
                                             }
-                                            return .failure(.{ .link_package = err });
+                                            return .failure(manager.allocator, .{ .link_package = err });
                                         },
                                     }
                                 },
@@ -617,7 +626,9 @@ pub const Installer = struct {
                     });
                     defer pkg_cache_dir_subpath.deinit();
 
-                    const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath();
+                    // cache directory is eagerly initialized by installWithManager before
+                    // isolated install tasks run; once cached this never fails.
+                    const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath() catch unreachable;
                     defer cache_dir_path.deinit();
 
                     var dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }) = .init();
@@ -668,7 +679,7 @@ pub const Installer = struct {
                                             continue :backend .hardlink;
                                         },
                                         else => {
-                                            return .failure(.{ .link_package = err });
+                                            return .failure(manager.allocator, .{ .link_package = err });
                                         },
                                     }
                                 },
@@ -690,7 +701,7 @@ pub const Installer = struct {
                                         );
                                         Output.flush();
                                     }
-                                    return .failure(.{ .link_package = err });
+                                    return .failure(manager.allocator, .{ .link_package = err });
                                 },
                             };
 
@@ -699,6 +710,7 @@ pub const Installer = struct {
                             src.appendJoin(pkg_cache_dir_subpath.slice());
 
                             var hardlinker: Hardlinker = try .init(
+                                installer.manager.allocator,
                                 cached_package_dir.?,
                                 src,
                                 dest_subpath,
@@ -729,7 +741,7 @@ pub const Installer = struct {
                                         );
                                         Output.flush();
                                     }
-                                    return .failure(.{ .link_package = err });
+                                    return .failure(manager.allocator, .{ .link_package = err });
                                 },
                             }
 
@@ -757,7 +769,7 @@ pub const Installer = struct {
                                         );
                                         Output.flush();
                                     }
-                                    return .failure(.{ .link_package = err });
+                                    return .failure(manager.allocator, .{ .link_package = err });
                                 },
                             };
 
@@ -766,6 +778,7 @@ pub const Installer = struct {
                             src_path.append(pkg_cache_dir_subpath.slice());
 
                             var file_copier: FileCopier = try .init(
+                                installer.manager.allocator,
                                 cached_package_dir.?,
                                 src_path,
                                 dest_subpath,
@@ -792,7 +805,7 @@ pub const Installer = struct {
                                         );
                                         Output.flush();
                                     }
-                                    return .failure(.{ .link_package = err });
+                                    return .failure(manager.allocator, .{ .link_package = err });
                                 },
                             }
 
@@ -854,7 +867,7 @@ pub const Installer = struct {
                         switch (symlinker.ensureSymlink(link_strategy)) {
                             .result => {},
                             .err => |err| {
-                                return .failure(.{ .symlink_dependencies = err });
+                                return .failure(manager.allocator, .{ .symlink_dependencies = err });
                             },
                         }
                     }
@@ -864,7 +877,8 @@ pub const Installer = struct {
                     // preinstall scripts need to run before binaries can be linked. Block here if any dependencies
                     // of this entry are not finished. Do not count cycles towards blocking.
 
-                    var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
+                    // NOTE: runs on thread pool — manager.allocator must be thread-safe
+                    var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(installer.manager.allocator);
                     defer parent_dedupe.deinit();
 
                     if (installer.isTaskBlocked(this.entry_id, &parent_dedupe)) {
@@ -875,7 +889,7 @@ pub const Installer = struct {
                 },
                 inline .symlink_dependency_binaries => |current_step| {
                     installer.linkDependencyBins(this.entry_id) catch |err| {
-                        return .failure(.{ .binaries = err });
+                        return .failure(manager.allocator, .{ .binaries = err });
                     };
 
                     switch (pkg_res.tag) {
@@ -946,7 +960,8 @@ pub const Installer = struct {
                             break :enqueue_lifecycle_scripts;
                         }
 
-                        var log = bun.logger.Log.init(bun.default_allocator);
+                        // NOTE: runs on thread pool — manager.allocator must be thread-safe
+                        var log = bun.logger.Log.init(installer.manager.allocator);
                         defer log.deinit();
 
                         const scripts_list = pkg_scripts.getList(
@@ -956,11 +971,11 @@ pub const Installer = struct {
                             dep.name.slice(string_buf),
                             &pkg_res,
                         ) catch |err| {
-                            return .failure(.{ .run_scripts = err });
+                            return .failure(manager.allocator, .{ .run_scripts = err });
                         };
 
                         if (scripts_list) |list| {
-                            const clone = bun.create(bun.default_allocator, Package.Scripts.List, list);
+                            const clone = bun.create(installer.manager.allocator, Package.Scripts.List, list);
                             entry_scripts[this.entry_id.get()] = clone;
 
                             if (is_trusted_through_update_request) {
@@ -1012,7 +1027,8 @@ pub const Installer = struct {
                     const rel_buf = bun.path_buffer_pool.get();
                     defer bun.path_buffer_pool.put(rel_buf);
 
-                    var seen: bun.StringHashMap(void) = .init(bun.default_allocator);
+                    // NOTE: runs on thread pool — manager.allocator must be thread-safe
+                    var seen: bun.StringHashMap(void) = .init(installer.manager.allocator);
                     defer seen.deinit();
 
                     var node_modules_path: bun.AbsPath(.{}) = .initTopLevelDir();
@@ -1043,6 +1059,7 @@ pub const Installer = struct {
 
                     var bin_linker: Bin.Linker = .{
                         .bin = bin,
+                        .allocator = manager.allocator,
                         .global_bin_path = installer.manager.options.bin_path,
                         .package_name = strings.StringOrTinyString.init(dep_name),
                         .target_package_name = target_package_name,
@@ -1076,7 +1093,7 @@ pub const Installer = struct {
                     }
 
                     if (bin_linker.err) |err| {
-                        return .failure(.{ .binaries = err });
+                        return .failure(manager.allocator, .{ .binaries = err });
                     }
 
                     continue :next_step this.nextStep(current_step);
@@ -1214,7 +1231,7 @@ pub const Installer = struct {
         const string_buf = this.lockfile.buffers.string_bytes.items;
 
         var version_buf: std.ArrayListUnmanaged(u8) = .empty;
-        defer version_buf.deinit(bun.default_allocator);
+        defer version_buf.deinit(this.lockfile.allocator);
 
         var writer = version_buf.writer(this.lockfile.allocator);
         try writer.print("{s}@", .{pkg_name.slice(string_buf)});
@@ -1373,7 +1390,7 @@ pub const Installer = struct {
         const link_rel_buf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(link_rel_buf);
 
-        var seen: bun.StringHashMap(void) = .init(bun.default_allocator);
+        var seen: bun.StringHashMap(void) = .init(this.manager.allocator);
         defer seen.deinit();
 
         var node_modules_path: bun.AbsPath(.{}) = .initTopLevelDir();
@@ -1417,6 +1434,7 @@ pub const Installer = struct {
 
             var bin_linker: Bin.Linker = .{
                 .bin = bin,
+                .allocator = this.manager.allocator,
                 .global_bin_path = this.manager.options.bin_path,
                 .package_name = package_name,
                 .string_buf = string_buf,
@@ -1530,7 +1548,10 @@ pub const Installer = struct {
                 buf.append(pkg_res.value.workspace.slice(string_buf));
             },
             .symlink => {
-                const symlink_dir_path = this.manager.globalLinkDirPath();
+                // globalLinkDir is lazily opened; on failure the diagnostics are
+                // already printed and recorded in manager.errors. Leave the
+                // buffer untouched so the top-level loop can abort cleanly.
+                const symlink_dir_path = this.manager.globalLinkDirPath() catch return;
 
                 buf.clear();
                 buf.append(symlink_dir_path);
@@ -1593,7 +1614,6 @@ const Symlinker = @import("./Symlinker.zig").Symlinker;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
-const Global = bun.Global;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const Progress = bun.Progress;

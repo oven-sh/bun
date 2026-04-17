@@ -20,6 +20,8 @@ const SloppyGlobalGitConfig = struct {
 
         var config_file_path_buf: bun.PathBuffer = undefined;
         const config_file_path = bun.path.joinAbsStringBufZ(home_dir, &config_file_path_buf, &.{".gitconfig"}, .auto);
+        // std.once requires a zero-arg fn, so an allocator can't be threaded in. The buffer is
+        // freed in-scope below; only two bools escape into the module-global holder.
         var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
         const allocator = stack_fallback.get();
         const source = File.toSource(config_file_path, allocator, .{ .convert_bom = true }).unwrap() catch {
@@ -389,7 +391,7 @@ pub const Repository = extern struct {
         return error.InstallFailed;
     }
 
-    pub fn trySSH(url: string) ?string {
+    pub fn trySSH(allocator: std.mem.Allocator, url: string) ?string {
         // Do not cast explicit http(s) URLs to SSH
         if (strings.hasPrefixComptime(url, "http")) {
             return null;
@@ -412,7 +414,7 @@ pub const Repository = extern struct {
                 .protocol = .{ .well_formed = .git_plus_ssh },
             };
 
-            var corrected = hosted_git_info.correctUrl(&pair, bun.default_allocator) catch {
+            var corrected = hosted_git_info.correctUrl(&pair, allocator) catch {
                 return url; // If correction fails, return original
             };
             defer corrected.deinit();

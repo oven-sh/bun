@@ -1751,13 +1751,19 @@ pub const Command = struct {
 
     fn @"bun info"(allocator: std.mem.Allocator, log: *logger.Log) !void {
         // Parse arguments manually since the standard flow doesn't work for standalone commands
-        const cli = try PackageManager.CommandLineArguments.parse(allocator, .info);
+        const cli = switch (try PackageManager.CommandLineArguments.parse(allocator, .info)) {
+            .args => |a| a,
+            .err => |f| bun.install.InstallResult.exitForCli(f),
+        };
         const ctx = try Command.init(allocator, log, .InfoCommand);
-        const pm, _ = try PackageManager.init(
+        const pm, _ = switch (try PackageManager.init(
             ctx,
             cli,
             PackageManager.Subcommand.info,
-        );
+        )) {
+            .ok => |r| r,
+            .err => |f| bun.install.InstallResult.exitForCli(f),
+        };
 
         // Handle arguments correctly for standalone info command
         var package_name: []const u8 = "";

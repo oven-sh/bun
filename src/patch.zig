@@ -551,24 +551,24 @@ const ParseErr = error{
 };
 
 /// NOTE: the returned `PatchFile` struct will contain pointers to original file text so make sure to not deallocate `file`
-pub fn parsePatchFile(file: []const u8) ParseErr!PatchFile {
+pub fn parsePatchFile(allocator: std.mem.Allocator, file: []const u8) ParseErr!PatchFile {
     var lines_parser = PatchLinesParser{};
-    defer lines_parser.deinit(bun.default_allocator, false);
+    defer lines_parser.deinit(allocator, false);
 
-    lines_parser.parse(file, .{}) catch |err| brk: {
+    lines_parser.parse(allocator, file, .{}) catch |err| brk: {
         // TODO: the parser can be refactored to remove this as it is a hacky workaround, like detecting while parsing if legacy diffs are used
         if (err == ParseErr.hunk_header_integrity_check_failed) {
-            lines_parser.reset(bun.default_allocator);
-            break :brk try lines_parser.parse(file, .{ .support_legacy_diffs = true });
+            lines_parser.reset(allocator);
+            break :brk try lines_parser.parse(allocator, file, .{ .support_legacy_diffs = true });
         }
         return err;
     };
 
     const files = lines_parser.result.items;
-    return try patchFileSecondPass(files);
+    return try patchFileSecondPass(allocator, files);
 }
 
-fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
+fn patchFileSecondPass(allocator: std.mem.Allocator, files: []FileDeets) ParseErr!PatchFile {
     var result: PatchFile = .{};
 
     for (files) |*file| {
@@ -590,7 +590,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                 if (file.rename_from == null or file.rename_to == null) return ParseErr.rename_from_and_to_not_give;
 
                 result.parts.append(
-                    bun.default_allocator,
+                    allocator,
                     .{
                         .file_rename = bun.new(
                             FileRename,
@@ -608,7 +608,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                 const path = file.diff_line_from_path orelse file.from_path orelse {
                     return ParseErr.no_path_given_for_file_deletion;
                 };
-                result.parts.append(bun.default_allocator, .{
+                result.parts.append(allocator, .{
                     .file_deletion = bun.new(FileDeletion, FileDeletion{
                         .hunk = if (file.hunks.items.len > 0) brk: {
                             const value = file.hunks.items[0];
@@ -629,7 +629,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                 const path = file.diff_line_to_path orelse file.to_path orelse {
                     return ParseErr.no_path_given_for_file_creation;
                 };
-                result.parts.append(bun.default_allocator, .{
+                result.parts.append(allocator, .{
                     .file_creation = bun.new(FileCreation, FileCreation{
                         .hunk = if (file.hunks.items.len > 0) brk: {
                             const value = file.hunks.items[0];
@@ -652,7 +652,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
         }
 
         if (destination_file_path != null and file.old_mode != null and file.new_mode != null and !std.mem.eql(u8, file.old_mode.?, file.new_mode.?)) {
-            result.parts.append(bun.default_allocator, .{
+            result.parts.append(allocator, .{
                 .file_mode_change = bun.new(FileModeChange, FileModeChange{
                     .path = destination_file_path.?,
                     .old_mode = parseFileMode(file.old_mode.?) orelse {
@@ -666,7 +666,7 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
         }
 
         if (destination_file_path != null and file.hunks.items.len > 0) {
-            result.parts.append(bun.default_allocator, .{
+            result.parts.append(allocator, .{
                 .file_patch = bun.new(FilePatch, FilePatch{
                     .path = destination_file_path.?,
                     .hunks = file.takeHunks(),
@@ -755,6 +755,7 @@ const PatchLinesParser = struct {
 
     pub fn parse(
         this: *PatchLinesParser,
+        allocator: std.mem.Allocator,
         file_: []const u8,
         opts: struct { support_legacy_diffs: bool = false },
     ) ParseErr!void {
@@ -782,7 +783,7 @@ const PatchLinesParser = struct {
                         lines.back();
                     } else if (bun.strings.hasPrefix(line, "diff --git ")) {
                         if (this.current_file_patch.diff_line_from_path != null) {
-                            this.commitFilePatch();
+                            this.commitFilePatch(allocator);
                         }
                         // Equivalent to:
                         // const match = line.match(/^diff --git a\/(.*?) b\/(.*?)\s*$/)
@@ -819,7 +820,7 @@ const PatchLinesParser = struct {
                 .parsing_hunks => {
                     if (opts.support_legacy_diffs and bun.strings.hasPrefix(line, "--- a/")) {
                         this.state = .parsing_header;
-                        this.commitFilePatch();
+                        this.commitFilePatch(allocator);
                         lines.back();
                         continue;
                     }
@@ -840,7 +841,7 @@ const PatchLinesParser = struct {
                         } orelse {
                             // unrecognized, bail out
                             this.state = .parsing_header;
-                            this.commitFilePatch();
+                            this.commitFilePatch(allocator);
                             lines.back();
                             continue;
                         };
@@ -848,7 +849,7 @@ const PatchLinesParser = struct {
 
                     switch (hunk_line_type) {
                         .header => {
-                            this.commitHunk();
+                            this.commitHunk(allocator);
                             this.current_hunk = try parseHunkHeaderLine(line);
                         },
                         .pragma => {
@@ -866,7 +867,7 @@ const PatchLinesParser = struct {
                                 return ParseErr.hunk_lines_encountered_before_hunk_header;
                             }
                             if (this.current_hunk_mutation_part != null and @intFromEnum(this.current_hunk_mutation_part.?.type) != @intFromEnum(hunk_line_type)) {
-                                this.current_hunk.?.parts.append(bun.default_allocator, this.current_hunk_mutation_part.?) catch unreachable;
+                                this.current_hunk.?.parts.append(allocator, this.current_hunk_mutation_part.?) catch unreachable;
                                 this.current_hunk_mutation_part = null;
                             }
 
@@ -876,14 +877,14 @@ const PatchLinesParser = struct {
                                 };
                             }
 
-                            this.current_hunk_mutation_part.?.lines.append(bun.default_allocator, line[@min(1, line.len)..]) catch unreachable;
+                            this.current_hunk_mutation_part.?.lines.append(allocator, line[@min(1, line.len)..]) catch unreachable;
                         },
                     }
                 },
             }
         }
 
-        this.commitFilePatch();
+        this.commitFilePatch(allocator);
 
         for (this.result.items) |file_deet| {
             for (file_deet.hunks.items) |hunk| {
@@ -894,21 +895,21 @@ const PatchLinesParser = struct {
         }
     }
 
-    fn commitHunk(this: *PatchLinesParser) void {
+    fn commitHunk(this: *PatchLinesParser, allocator: std.mem.Allocator) void {
         if (this.current_hunk) |*hunk| {
             if (this.current_hunk_mutation_part) |mutation_part| {
-                hunk.parts.append(bun.default_allocator, mutation_part) catch unreachable;
+                hunk.parts.append(allocator, mutation_part) catch unreachable;
                 this.current_hunk_mutation_part = null;
             }
-            this.current_file_patch.hunks.append(bun.default_allocator, hunk.*) catch unreachable;
+            this.current_file_patch.hunks.append(allocator, hunk.*) catch unreachable;
             this.current_hunk = null;
         }
     }
 
-    fn commitFilePatch(this: *PatchLinesParser) void {
-        this.commitHunk();
+    fn commitFilePatch(this: *PatchLinesParser, allocator: std.mem.Allocator) void {
+        this.commitHunk(allocator);
         this.current_file_patch.nullifyEmptyStrings();
-        this.result.append(bun.default_allocator, this.current_file_patch) catch unreachable;
+        this.result.append(allocator, this.current_file_patch) catch unreachable;
         this.current_file_patch = .{};
     }
 
@@ -1167,7 +1168,7 @@ pub const TestingAPIs = struct {
         const patchfile_src_bunstr = try patchfile_src_js.toBunString(globalThis);
         const patchfile_src = patchfile_src_bunstr.toUTF8(bun.default_allocator);
 
-        var patchfile = parsePatchFile(patchfile_src.slice()) catch |e| {
+        var patchfile = parsePatchFile(bun.default_allocator, patchfile_src.slice()) catch |e| {
             if (e == error.hunk_header_integrity_check_failed) {
                 return globalThis.throwError(e, "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)");
             } else {
@@ -1209,7 +1210,7 @@ pub const TestingAPIs = struct {
         defer patchfile_bunstr.deref();
         const patchfile_src = patchfile_bunstr.toUTF8(bun.default_allocator);
 
-        const patch_file = parsePatchFile(patchfile_src.slice()) catch |e| {
+        const patch_file = parsePatchFile(bun.default_allocator, patchfile_src.slice()) catch |e| {
             // TODO: HAVE @zackradisic REVIEW THIS DIFF
             if (bun.FD.cwd() != dir_fd) {
                 dir_fd.close();

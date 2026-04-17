@@ -398,7 +398,7 @@ pub const TrustCommand = struct {
             try pm.lockfile.trusted_dependencies.?.put(ctx.allocator, @truncate(String.Builder.stringHash(name)), {});
         }
 
-        pm.lockfile.saveToDisk(&load_lockfile, &pm.options);
+        pm.lockfile.saveToDisk(&load_lockfile, &pm.options) catch Global.crash();
 
         var buffer_writer = bun.js_printer.BufferWriter.init(ctx.allocator);
         try buffer_writer.buffer.list.ensureTotalCapacity(ctx.allocator, package_json_contents.len + 1);

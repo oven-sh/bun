@@ -302,7 +302,7 @@ pub const LifecycleScriptSubprocess = struct {
             // Reuse the memory
             if (stdout.items.len == 0 and stdout.capacity > 0 and this.stderr.buffer().capacity == 0) {
                 this.stderr.buffer().* = stdout.*;
-                stdout.* = std.array_list.Managed(u8).init(bun.default_allocator);
+                stdout.* = std.array_list.Managed(u8).init(this.manager.allocator);
             }
 
             var stderr = this.stderr.finalBuffer();
@@ -360,9 +360,12 @@ pub const LifecycleScriptSubprocess = struct {
                         this.package_name,
                         exit.code,
                     });
-                    this.deinit();
                     Output.flush();
-                    Global.exit(exit.code);
+                    const manager = this.manager;
+                    this.decrementPendingScriptTasks();
+                    this.deinit();
+                    manager.addError(.{ .already_printed = .{ .exit_code = exit.code } });
+                    return;
                 }
 
                 if (!this.foreground and this.manager.scripts_node != null) {
@@ -409,11 +412,15 @@ pub const LifecycleScriptSubprocess = struct {
                     if (this.scripts.items[new_script_index] != null) {
                         this.resetPolls();
                         this.spawnNextScript(@intCast(new_script_index)) catch |err| {
-                            Output.errGeneric("Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
-                                Lockfile.Scripts.names[new_script_index],
-                                @errorName(err),
-                            });
-                            Global.exit(1);
+                            const manager = this.manager;
+                            this.decrementPendingScriptTasks();
+                            this.deinit();
+                            manager.addError(.{ .lifecycle_script_spawn_failed = .{
+                                .script_name = Lockfile.Scripts.names[new_script_index],
+                                .err = err,
+                                .use_err_generic = true,
+                            } });
+                            return;
                         };
                         return;
                     }
@@ -461,21 +468,30 @@ pub const LifecycleScriptSubprocess = struct {
                     return;
                 }
 
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to\n{f}", .{
-                    this.scriptName(),
-                    this.package_name,
-                    err,
-                });
+                const manager = this.manager;
+                const script_name = this.scriptName();
+                const package_name = bun.handleOom(manager.allocator.dupe(u8, this.package_name));
+                this.decrementPendingScriptTasks();
                 this.deinit();
-                Output.flush();
-                Global.exit(1);
+                manager.addError(.{ .lifecycle_script_sys_error = .{
+                    .script_name = script_name,
+                    .package_name = package_name,
+                    .err = err,
+                } });
+                return;
             },
             else => {
-                Output.panic("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to unexpected status\n{f}", .{
-                    this.scriptName(),
-                    this.package_name,
-                    status,
-                });
+                const manager = this.manager;
+                const script_name = this.scriptName();
+                const package_name = bun.handleOom(manager.allocator.dupe(u8, this.package_name));
+                this.decrementPendingScriptTasks();
+                this.deinit();
+                manager.addError(.{ .lifecycle_script_unexpected_status = .{
+                    .script_name = script_name,
+                    .package_name = package_name,
+                    .status = status,
+                } });
+                return;
             },
         }
     }
@@ -567,11 +583,14 @@ pub const LifecycleScriptSubprocess = struct {
         lifecycle_subprocess.incrementPendingScriptTasks();
 
         lifecycle_subprocess.spawnNextScript(list.first_index) catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{
-                Lockfile.Scripts.names[list.first_index],
-                @errorName(err),
-            });
-            Global.exit(1);
+            lifecycle_subprocess.decrementPendingScriptTasks();
+            lifecycle_subprocess.deinit();
+            manager.addError(.{ .lifecycle_script_spawn_failed = .{
+                .script_name = Lockfile.Scripts.names[list.first_index],
+                .err = err,
+                .use_err_generic = false,
+            } });
+            return;
         };
     }
 

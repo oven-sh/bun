@@ -47,7 +47,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                 return This.init(.{ .folder = try string_buf.append(folder) });
             }
 
-            return switch (Dependency.Version.Tag.infer(res_str)) {
+            return switch (Dependency.Version.Tag.infer(string_buf.allocator, res_str)) {
                 .git => This.init(.{ .git = try Repository.parseAppendGit(res_str, string_buf) }),
                 .github => This.init(.{ .github = try Repository.parseAppendGithub(res_str, string_buf) }),
                 .tarball => {
@@ -137,7 +137,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                 return This.init(.{ .folder = try string_buf.append(path) });
             }
 
-            return switch (Dependency.Version.Tag.infer(res_str)) {
+            return switch (Dependency.Version.Tag.infer(string_buf.allocator, res_str)) {
                 .git => This.init(.{ .git = try Repository.parseAppendGit(res_str, string_buf) }),
                 .github => This.init(.{ .github = try Repository.parseAppendGithub(res_str, string_buf) }),
                 .tarball => {

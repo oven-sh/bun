@@ -63,13 +63,13 @@ pub fn installHoistedPackages(
         // Attempt to create a new node_modules folder
         if (bun.sys.mkdir("node_modules", 0o755).asErr()) |err| {
             if (err.errno != @intFromEnum(bun.sys.E.EXIST)) {
-                Output.err(err, "could not create the <b>\"node_modules\"<r> directory", .{});
-                Global.crash();
+                this.addError(.{ .node_modules_create = .{ .err = err } });
+                return error.InstallFailed;
             }
         }
         break :brk bun.openDir(cwd.stdDir(), "node_modules") catch |err| {
-            Output.err(err, "could not open the <b>\"node_modules\"<r> directory", .{});
-            Global.crash();
+            this.addError(.{ .node_modules_open = .{ .err = err } });
+            return error.InstallFailed;
         };
     };
 
@@ -340,7 +340,7 @@ pub fn installHoistedPackages(
         installer.completeRemainingScripts(log_level);
 
         // .monotonic is okay because this value is only accessed on this thread.
-        while (this.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
+        while (this.pending_lifecycle_script_tasks.load(.monotonic) > 0 and !this.hasErrors()) {
             this.reportSlowLifecycleScripts();
 
             this.sleep();
@@ -349,6 +349,8 @@ pub fn installHoistedPackages(
         if (log_level.showProgress()) {
             scripts_node.end();
         }
+
+        if (this.hasErrors()) return error.InstallFailed;
     }
 
     return summary;
@@ -358,7 +360,6 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const Output = bun.Output;
 const Progress = bun.Progress;
 const strings = bun.strings;

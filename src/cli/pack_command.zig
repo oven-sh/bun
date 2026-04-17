@@ -137,9 +137,12 @@ pub const PackCommand = struct {
     }
 
     pub fn exec(ctx: Command.Context) !void {
-        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pack);
+        const cli = switch (try PackageManager.CommandLineArguments.parse(ctx.allocator, .pack)) {
+            .args => |a| a,
+            .err => |f| bun.install.InstallResult.exitForCli(f),
+        };
 
-        const manager, const original_cwd = PackageManager.init(ctx, cli, .pack) catch |err| {
+        const init_result = PackageManager.init(ctx, cli, .pack) catch |err| {
             if (!cli.silent) {
                 switch (err) {
                     error.MissingPackageJSON => {
@@ -155,6 +158,10 @@ pub const PackCommand = struct {
             }
 
             Global.crash();
+        };
+        const manager, const original_cwd = switch (init_result) {
+            .ok => |r| r,
+            .err => |f| bun.install.InstallResult.exitForCli(f),
         };
         defer ctx.allocator.free(original_cwd);
 

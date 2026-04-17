@@ -1,14 +1,21 @@
 pub const ScanCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .scan);
+        const cli = switch (try PackageManager.CommandLineArguments.parse(ctx.allocator, .scan)) {
+            .args => |a| a,
+            .err => |f| bun.install.InstallResult.exitForCli(f),
+        };
 
-        const manager, const cwd = PackageManager.init(ctx, cli, .scan) catch |err| {
+        const init_result = PackageManager.init(ctx, cli, .scan) catch |err| {
             if (err == error.MissingPackageJSON) {
                 Output.errGeneric("No package.json found. 'bun pm scan' requires a lockfile to analyze dependencies.", .{});
                 Output.note("Run \"bun install\" first to generate a lockfile", .{});
                 Global.exit(1);
             }
             return err;
+        };
+        const manager, const cwd = switch (init_result) {
+            .ok => |r| r,
+            .err => |f| bun.install.InstallResult.exitForCli(f),
         };
         defer ctx.allocator.free(cwd);
 

@@ -6,6 +6,7 @@ dest: bun.RelPath(.{ .sep = .auto, .unit = .os }),
 walker: Walker,
 
 pub fn init(
+    allocator: std.mem.Allocator,
     folder_dir: FD,
     src: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
     dest: bun.RelPath(.{ .sep = .auto, .unit = .os }),
@@ -18,7 +19,7 @@ pub fn init(
         .walker = walker: {
             var w = try Walker.walk(
                 folder_dir,
-                bun.default_allocator,
+                allocator,
                 &.{},
                 skip_dirnames,
             );
@@ -194,6 +195,7 @@ pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
     return .success;
 }
 
+const std = @import("std");
 const Walker = @import("../../walker_skippable.zig");
 
 const bun = @import("bun");

@@ -533,6 +533,8 @@ pub const Bin = extern struct {
         err: ?anyerror = null,
         skipped_due_to_missing_bin: bool = false,
 
+        allocator: std.mem.Allocator,
+
         pub var umask: bun.Mode = 0;
 
         var has_set_umask = false;
@@ -611,11 +613,11 @@ pub const Bin = extern struct {
             }
 
             if (comptime !Environment.isWindows) {
-                tryNormalizeShebang(abs_target);
+                this.tryNormalizeShebang(abs_target);
             }
         }
 
-        fn tryNormalizeShebang(abs_target: [:0]const u8) void {
+        fn tryNormalizeShebang(this: *const Linker, abs_target: [:0]const u8) void {
             var shebang_buf: [2048]u8 = undefined;
 
             // any error here is ignored
@@ -653,7 +655,7 @@ pub const Bin = extern struct {
             const content: []const u8, const content_to_free: []const u8 = brk: {
                 if (chunk.len >= shebang_buf.len) {
                     // Partial read. Need to read the rest of the file.
-                    const original_contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), abs_target, bun.default_allocator)) {
+                    const original_contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), abs_target, this.allocator)) {
                         .result => |contents| contents,
                         .err => return,
                     };
@@ -662,7 +664,7 @@ pub const Bin = extern struct {
 
                 break :brk .{ chunk, "" };
             };
-            defer bun.default_allocator.free(content_to_free);
+            defer this.allocator.free(content_to_free);
 
             // Get original file permissions to preserve them (including setuid/setgid/sticky bits)
             const original_stat = bun.sys.fstatat(.cwd(), abs_target).unwrap() catch return;

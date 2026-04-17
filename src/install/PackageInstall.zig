@@ -142,7 +142,7 @@ pub const PackageInstall = struct {
         this.destination_dir_subpath_buf[this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len] = 0;
         const bun_tag_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len :0];
         defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
-        var git_tag_stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
+        var git_tag_stack_fallback = std.heap.stackFallback(2048, this.allocator);
         const allocator = git_tag_stack_fallback.get();
 
         var bun_tag_file = this.node_modules.readSmallFile(
@@ -313,6 +313,9 @@ pub const PackageInstall = struct {
             err: anyerror,
             step: Step,
             debug_trace: if (Environment.isDebug) bun.crash_handler.StoredTrace else void,
+            /// When true, the install must abort (was Global.crash). Diagnostic already
+            /// printed; PackageInstaller records manager.addError(.already_printed) and returns.
+            fatal: bool = false,
 
             pub inline fn isPackageMissingFromCache(this: @This()) bool {
                 return (this.err == error.FileNotFound or this.err == error.ENOENT) and this.step == .opening_cache_dir;
@@ -332,6 +335,17 @@ pub const PackageInstall = struct {
                             bun.crash_handler.StoredTrace.capture(@returnAddress()),
                 },
             };
+        }
+
+        /// Init a Result with the 'fail' tag and `fatal=true`. The diagnostic was already
+        /// printed to stderr; the caller must abort the whole install.
+        pub inline fn fatal(e: anyerror, step: Step) Result {
+            return .{ .failure = .{
+                .err = e,
+                .step = step,
+                .fatal = true,
+                .debug_trace = if (Environment.isDebug) bun.crash_handler.StoredTrace.capture(@returnAddress()),
+            } };
         }
 
         pub fn isFail(this: @This()) bool {
@@ -651,7 +665,7 @@ pub const PackageInstall = struct {
                                         Output.prettyError("<r><red>error<r> copying file {f}", .{bun.fmt.fmtOSPath(entry.path, .{})});
                                     }
 
-                                    Global.crash();
+                                    return error.FatalCopyFailure;
                                 }
                             },
                             else => unreachable, // handled above
@@ -676,7 +690,7 @@ pub const PackageInstall = struct {
                                 }
 
                                 Output.prettyErrorln("<r><red>{s}<r>: copying file {f}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                                Global.crash();
+                                return error.FatalCopyFailure;
                             };
                         };
                         defer outfile.close();
@@ -693,7 +707,7 @@ pub const PackageInstall = struct {
                             }
 
                             Output.prettyError("<r><red>{s}<r>: copying file {f}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                            Global.crash();
+                            return error.FatalCopyFailure;
                         };
                     }
                 }
@@ -710,7 +724,10 @@ pub const PackageInstall = struct {
             if (Environment.isWindows) &state.buf else void{},
             if (Environment.isWindows) state.to_copy_buf2 else void{},
             if (Environment.isWindows) &state.buf2 else void{},
-        ) catch |err| return Result.fail(err, .copying_files, @errorReturnTrace());
+        ) catch |err| return if (err == error.FatalCopyFailure)
+            Result.fatal(err, .copying_files)
+        else
+            Result.fail(err, .copying_files, @errorReturnTrace());
 
         return .success;
     }
@@ -758,6 +775,9 @@ pub const PackageInstall = struct {
             const allocation_size =
                 (src.len) + 1 + (dest.len) + 1;
 
+            // Allocated on the calling thread, freed in deinit() from runFromThreadPool() on a
+            // worker thread. Must be default_allocator (mimalloc supports cross-thread free); a
+            // per-install arena would UAF or free to the wrong heap.
             const combined = bun.handleOom(bun.default_allocator.alloc(u16, allocation_size));
             var remaining = combined;
             @memcpy(remaining[0..src.len], src);
@@ -1183,6 +1203,9 @@ pub const PackageInstall = struct {
                     }
 
                     pub fn deinit(uninstall_task: *@This()) void {
+                        // absolute_path is dupeZ'd below on the caller thread and freed here from
+                        // the worker pool callback. Must be default_allocator for cross-thread
+                        // free safety; a per-install arena would UAF.
                         bun.default_allocator.free(uninstall_task.absolute_path);
                         bun.destroy(uninstall_task);
                     }
@@ -1484,7 +1507,6 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const JSON = bun.json;
 const MutableString = bun.MutableString;
 const Output = bun.Output;

@@ -451,9 +451,10 @@ pub const Registry = struct {
             if (package_manager.options.enable.manifest_cache) {
                 PackageManifest.Serializer.saveAsync(
                     &package,
+                    package_manager.allocator,
                     scope,
-                    package_manager.getTemporaryDirectory().handle,
-                    package_manager.getCacheDirectory(),
+                    (try package_manager.getTemporaryDirectory()).handle,
+                    try package_manager.getCacheDirectory(),
                 );
             }
 
@@ -1039,6 +1040,7 @@ pub const PackageManifest = struct {
 
         fn writeFile(
             this: *const PackageManifest,
+            backing_allocator: std.mem.Allocator,
             scope: *const Registry.Scope,
             tmp_path: [:0]const u8,
             tmpdir: std.fs.Dir,
@@ -1047,7 +1049,7 @@ pub const PackageManifest = struct {
         ) !void {
             const cache_dir: bun.FD = .fromStdDir(cache_dir_std);
             // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
-            var stack_fallback = std.heap.stackFallback(64 * 1024, bun.default_allocator);
+            var stack_fallback = std.heap.stackFallback(64 * 1024, backing_allocator);
 
             const allocator = stack_fallback.get();
             var buffer = try std.array_list.Managed(u8).initCapacity(allocator, this.byteLength(scope) + 64);
@@ -1077,7 +1079,7 @@ pub const PackageManifest = struct {
             // This needs many more call sites, doesn't have much impact on this location.
             var realpath_buf: bun.PathBuffer = undefined;
             const path_to_use_for_opening_file = if (Environment.isWindows)
-                bun.path.joinAbsStringBufZ(PackageManager.get().getTemporaryDirectory().path, &realpath_buf, &.{tmp_path}, .auto)
+                bun.path.joinAbsStringBufZ((try PackageManager.get().getTemporaryDirectory()).path, &realpath_buf, &.{tmp_path}, .auto)
             else
                 tmp_path;
 
@@ -1194,9 +1196,10 @@ pub const PackageManifest = struct {
         /// Therefore, we choose to not increment the pending task count or wake up the main thread.
         ///
         /// This might leave temporary files in the temporary directory that will never be moved to the cache directory. We'll see if anyone asks about that.
-        pub fn saveAsync(this: *const PackageManifest, scope: *const Registry.Scope, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) void {
+        pub fn saveAsync(this: *const PackageManifest, allocator: std.mem.Allocator, scope: *const Registry.Scope, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) void {
             const SaveTask = struct {
                 manifest: PackageManifest,
+                allocator: std.mem.Allocator,
                 scope: *const Registry.Scope,
                 tmpdir: std.fs.Dir,
                 cache_dir: std.fs.Dir,
@@ -1211,7 +1214,7 @@ pub const PackageManifest = struct {
                     const save_task: *@This() = @fieldParentPtr("task", task);
                     defer bun.destroy(save_task);
 
-                    Serializer.save(&save_task.manifest, save_task.scope, save_task.tmpdir, save_task.cache_dir) catch |err| {
+                    Serializer.save(&save_task.manifest, save_task.allocator, save_task.scope, save_task.tmpdir, save_task.cache_dir) catch |err| {
                         if (PackageManager.verbose_install) {
                             Output.warn("Error caching manifest for {s}: {s}", .{ save_task.manifest.name(), @errorName(err) });
                             Output.flush();
@@ -1222,6 +1225,7 @@ pub const PackageManifest = struct {
 
             const task = SaveTask.new(.{
                 .manifest = this.*,
+                .allocator = allocator,
                 .scope = scope,
                 .tmpdir = tmpdir,
                 .cache_dir = cache_dir,
@@ -1239,7 +1243,7 @@ pub const PackageManifest = struct {
                 try std.fmt.bufPrintZ(buf, "{f}-{f}.npm", .{ file_id_hex_fmt, bun.fmt.hexIntLower(scope.url_hash) });
         }
 
-        pub fn save(this: *const PackageManifest, scope: *const Registry.Scope, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
+        pub fn save(this: *const PackageManifest, allocator: std.mem.Allocator, scope: *const Registry.Scope, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
             const file_id = bun.Wyhash11.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
             var out_path_buf: [("18446744073709551615".len * 2) + "_".len + ".npm".len + 1]u8 = undefined;
@@ -1252,7 +1256,7 @@ pub const PackageManifest = struct {
             try dest_path_stream_writer.writeByte(0);
             const tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
             const out_path = try manifestFileName(&out_path_buf, file_id, scope);
-            try writeFile(this, scope, tmp_path, tmpdir, cache_dir, out_path);
+            try writeFile(this, allocator, scope, tmp_path, tmpdir, cache_dir, out_path);
         }
 
         pub fn loadByFileID(allocator: std.mem.Allocator, scope: *const Registry.Scope, cache_dir: std.fs.Dir, file_id: u64) !?PackageManifest {
@@ -1853,7 +1857,7 @@ pub const PackageManifest = struct {
             arena.allocator(),
         ) catch {
             // don't use the arena memory!
-            var cloned_log: logger.Log = .init(bun.default_allocator);
+            var cloned_log: logger.Log = .init(allocator);
             try log.cloneToWithRecycled(&cloned_log, true);
             log.* = cloned_log;
 
@@ -1869,13 +1873,13 @@ pub const PackageManifest = struct {
 
         var result: PackageManifest = bun.serializable(PackageManifest{});
 
-        var string_pool = String.Builder.StringPool.init(default_allocator);
+        var string_pool = String.Builder.StringPool.init(allocator);
         defer string_pool.deinit();
-        var all_extern_strings_dedupe_map = ExternalStringMapDeduper.initContext(default_allocator, .{});
+        var all_extern_strings_dedupe_map = ExternalStringMapDeduper.initContext(allocator, .{});
         defer all_extern_strings_dedupe_map.deinit();
-        var version_extern_strings_dedupe_map = ExternalStringMapDeduper.initContext(default_allocator, .{});
+        var version_extern_strings_dedupe_map = ExternalStringMapDeduper.initContext(allocator, .{});
         defer version_extern_strings_dedupe_map.deinit();
-        var optional_peer_dep_names = std.array_list.Managed(u64).init(default_allocator);
+        var optional_peer_dep_names = std.array_list.Managed(u64).init(allocator);
         defer optional_peer_dep_names.deinit();
 
         var bundled_deps_set = bun.StringSet.init(allocator);
@@ -2659,15 +2663,15 @@ pub const PackageManifest = struct {
                     }
                 };
 
-                var all_indices = try bun.default_allocator.alloc(Int, max_versions_count);
-                defer bun.default_allocator.free(all_indices);
+                var all_indices = try allocator.alloc(Int, max_versions_count);
+                defer allocator.free(all_indices);
                 const releases_list = .{ &result.pkg.releases, &result.pkg.prereleases };
 
-                var all_cloned_versions = try bun.default_allocator.alloc(Semver.Version, max_versions_count);
-                defer bun.default_allocator.free(all_cloned_versions);
+                var all_cloned_versions = try allocator.alloc(Semver.Version, max_versions_count);
+                defer allocator.free(all_cloned_versions);
 
-                var all_cloned_packages = try bun.default_allocator.alloc(PackageVersion, max_versions_count);
-                defer bun.default_allocator.free(all_cloned_packages);
+                var all_cloned_packages = try allocator.alloc(PackageVersion, max_versions_count);
+                defer allocator.free(all_cloned_packages);
 
                 inline for (0..2) |release_i| {
                     var release = releases_list[release_i];
@@ -2774,7 +2778,6 @@ const JSON = bun.json;
 const MutableString = bun.MutableString;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const default_allocator = bun.default_allocator;
 const http = bun.http;
 const logger = bun.logger;
 const strings = bun.strings;

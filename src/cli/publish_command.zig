@@ -291,9 +291,12 @@ pub const PublishCommand = struct {
         Output.prettyln("<r><b>bun publish <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
-        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .publish);
+        const cli = switch (try PackageManager.CommandLineArguments.parse(ctx.allocator, .publish)) {
+            .args => |a| a,
+            .err => |f| bun.install.InstallResult.exitForCli(f),
+        };
 
-        const manager, const original_cwd = PackageManager.init(ctx, cli, .publish) catch |err| {
+        const init_result = PackageManager.init(ctx, cli, .publish) catch |err| {
             if (!cli.silent) {
                 if (err == error.MissingPackageJSON) {
                     Output.errGeneric("missing package.json, nothing to publish", .{});
@@ -301,6 +304,10 @@ pub const PublishCommand = struct {
                 Output.errGeneric("failed to initialize bun install: {s}", .{@errorName(err)});
             }
             Global.crash();
+        };
+        const manager, const original_cwd = switch (init_result) {
+            .ok => |r| r,
+            .err => |f| bun.install.InstallResult.exitForCli(f),
         };
         defer ctx.allocator.free(original_cwd);
 

@@ -79,15 +79,8 @@ test("aborting a fetch that is queued behind max_simultaneous_requests rejects t
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim().split("\n")).toEqual([
-    "OK: queued fetch rejected with AbortError",
-    "hung request is pending",
-  ]);
+  expect(stdout.trim().split("\n")).toEqual(["OK: queued fetch rejected with AbortError", "hung request is pending"]);
   expect(exitCode).toBe(0);
 });

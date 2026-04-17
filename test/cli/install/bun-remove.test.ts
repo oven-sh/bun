@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { mkdir, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { chmod, mkdir, symlink, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, isWindows, tmpdirSync } from "harness";
 import { join, relative } from "path";
 import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
 
@@ -284,6 +284,185 @@ it("should retain a new line in the end of package.json", async () => {
       2,
     ) + "\n",
   );
+});
+
+describe("bun remove -g with a package that isn't installed", () => {
+  // Sets up a throwaway $BUN_INSTALL with one global dependency (a local file: package) so that
+  // the global package.json has a non-empty "dependencies" section.
+  async function setupGlobalDir() {
+    const root = tmpdirSync();
+    const bunInstall = join(root, "bun-install");
+    const globalDir = join(bunInstall, "install", "global");
+    const globalBin = join(bunInstall, "bin");
+    const depDir = join(root, "existing-dep");
+    const extraBin = join(root, "extra-bin");
+
+    await mkdir(globalDir, { recursive: true });
+    await mkdir(globalBin, { recursive: true });
+    await mkdir(depDir, { recursive: true });
+    await mkdir(extraBin, { recursive: true });
+
+    await writeFile(join(depDir, "package.json"), JSON.stringify({ name: "existing-dep", version: "1.0.0" }));
+    await writeFile(
+      join(globalDir, "package.json"),
+      JSON.stringify({
+        dependencies: {
+          "existing-dep": `file:${depDir.replace(/\\/g, "/")}`,
+        },
+      }),
+    );
+
+    return { root, bunInstall, globalDir, globalBin, extraBin };
+  }
+
+  function globalEnv(bunInstall: string, extraPath: string) {
+    const sep = isWindows ? ";" : ":";
+    return {
+      ...env,
+      BUN_INSTALL: bunInstall,
+      BUN_INSTALL_BIN: join(bunInstall, "bin"),
+      PATH: `${extraPath}${sep}${join(bunInstall, "bin")}${sep}${env.PATH ?? ""}`,
+    };
+  }
+
+  it("warns when the package is not installed globally", async () => {
+    const { bunInstall, globalDir, extraBin } = await setupGlobalDir();
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "remove", "-g", "definitely-not-installed"],
+      cwd: globalDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: globalEnv(bunInstall, extraBin),
+    });
+
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+    expect(err).toContain("warn:");
+    expect(err).toContain("definitely-not-installed is not in global package.json");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("bun remove");
+    expect(code).toBe(0);
+
+    // existing dep is still there
+    expect(await file(join(globalDir, "package.json")).json()).toMatchObject({
+      dependencies: { "existing-dep": expect.any(String) },
+    });
+  });
+
+  it("mentions the $PATH location when the name is a binary on $PATH", async () => {
+    const { bunInstall, globalDir, extraBin } = await setupGlobalDir();
+
+    // a binary on $PATH that is not managed by bun and doesn't point at node_modules/
+    const target = join(extraBin, "somebin-target");
+    await writeFile(target, "#!/bin/sh\necho hi\n");
+    if (!isWindows) await chmod(target, 0o755);
+
+    if (isWindows) {
+      await writeFile(join(extraBin, "somebin.cmd"), "@echo hi\r\n");
+    } else {
+      await symlink(target, join(extraBin, "somebin"));
+    }
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "remove", "-g", "somebin"],
+      cwd: globalDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: globalEnv(bunInstall, extraBin),
+    });
+
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+    expect(err).toContain("warn:");
+    expect(err).toContain("somebin is not in global package.json");
+    expect(err).toContain("$PATH");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("bun remove");
+    expect(code).toBe(0);
+  });
+
+  it.skipIf(isWindows)(
+    "suggests the package name when the binary on $PATH points into node_modules/",
+    async () => {
+      const { root, bunInstall, globalDir, extraBin } = await setupGlobalDir();
+
+      // simulate e.g. `tsc` -> `.../node_modules/typescript/bin/tsc`
+      const nmBin = join(root, "some-other-tool", "node_modules", "some-real-package", "bin");
+      await mkdir(nmBin, { recursive: true });
+      const target = join(nmBin, "mybin");
+      await writeFile(target, "#!/bin/sh\necho hi\n");
+      await chmod(target, 0o755);
+      await symlink(target, join(extraBin, "mybin"));
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "remove", "-g", "mybin"],
+        cwd: globalDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: globalEnv(bunInstall, extraBin),
+      });
+
+      const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+      expect(err).toContain("warn:");
+      expect(err).toContain("mybin is not in global package.json");
+      expect(err).toContain("bun remove -g some-real-package");
+      expect(err).not.toContain("error:");
+      expect(out).toContain("bun remove");
+      expect(code).toBe(0);
+    },
+  );
+
+  it.skipIf(isWindows)(
+    "suggests scoped package names when the binary on $PATH points into node_modules/@scope/name/",
+    async () => {
+      const { root, bunInstall, globalDir, extraBin } = await setupGlobalDir();
+
+      const nmBin = join(root, "other", "node_modules", "@my-scope", "the-pkg", "bin");
+      await mkdir(nmBin, { recursive: true });
+      const target = join(nmBin, "scopedbin");
+      await writeFile(target, "#!/bin/sh\necho hi\n");
+      await chmod(target, 0o755);
+      await symlink(target, join(extraBin, "scopedbin"));
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "remove", "-g", "scopedbin"],
+        cwd: globalDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: globalEnv(bunInstall, extraBin),
+      });
+
+      const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+      expect(err).toContain("warn:");
+      expect(err).toContain("bun remove -g @my-scope/the-pkg");
+      expect(err).not.toContain("error:");
+      expect(out).toContain("bun remove");
+      expect(code).toBe(0);
+    },
+  );
+
+  it("does not warn when the package is installed globally", async () => {
+    const { bunInstall, globalDir, extraBin } = await setupGlobalDir();
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "remove", "-g", "existing-dep"],
+      cwd: globalDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: globalEnv(bunInstall, extraBin),
+    });
+
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+    expect(err).not.toContain("is not in global package.json");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("bun remove");
+    expect(code).toBe(0);
+    expect(await file(join(globalDir, "package.json")).json()).toEqual({});
+  });
 });
 
 it("should remove peerDependencies", async () => {

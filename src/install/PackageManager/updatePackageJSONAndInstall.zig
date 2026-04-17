@@ -137,6 +137,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             // if we're removing, they don't have to specify where it is installed in the dependencies list
             // they can even put it multiple times and we will just remove all of them
             for (updates.*) |request| {
+                var found = false;
                 inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
                     if (current_package_json.root.asProperty(list)) |query| {
                         if (query.expr.data == .e_object) {
@@ -154,6 +155,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                                         }
 
                                         any_changes = true;
+                                        found = true;
                                     }
                                 }
                             }
@@ -177,6 +179,14 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                             }
                         }
                     }
+                }
+
+                // When a user runs `bun remove -g <name>` and <name> is not a globally installed
+                // package, it's often because <name> is a binary name (e.g. `tsc`) rather than the
+                // package name (e.g. `typescript`), or the binary was installed by a different tool.
+                // Without a warning the command silently succeeds, which is confusing.
+                if (!found and manager.options.global and log_level != .silent and request.name.len > 0) {
+                    warnGlobalPackageNotFound(request.name);
                 }
             }
         },
@@ -484,6 +494,93 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             }
         }
     }
+}
+
+/// Called when `bun remove -g <name>` is used but `<name>` is not in the global package.json.
+/// If `<name>` resolves to a binary on $PATH, try to figure out the owning package name and
+/// suggest it. Otherwise just warn that the package is not installed globally.
+fn warnGlobalPackageNotFound(name: string) void {
+    var which_buf: bun.PathBuffer = undefined;
+    const found_in_path: ?[:0]const u8 = if (bun.env_var.PATH.get()) |PATH|
+        bun.which(&which_buf, PATH, FileSystem.instance.top_level_dir, name)
+    else
+        null;
+
+    if (found_in_path) |binary_path| {
+        var link_buf: bun.PathBuffer = undefined;
+        if (packageNameFromBinary(binary_path, &link_buf)) |pkg| {
+            if (!strings.eql(pkg, name)) {
+                Output.warn(
+                    "<b>{s}<r> is not in global package.json. Did you mean <b><cyan>bun remove -g {s}<r>?",
+                    .{ name, pkg },
+                );
+                Output.note("<b>{s}<r> is in $PATH at {s}", .{ name, binary_path });
+                Output.flush();
+                return;
+            }
+        }
+
+        Output.warn("<b>{s}<r> is not in global package.json, but it is in $PATH at {s}", .{ name, binary_path });
+        Output.flush();
+        return;
+    }
+
+    Output.warn("<b>{s}<r> is not in global package.json", .{name});
+    Output.flush();
+}
+
+/// Given an absolute path to a binary, try to derive the npm package name that provides it.
+/// On POSIX this follows the symlink (global bins are relative symlinks into
+/// `node_modules/<pkg>/...`). Falls back to scanning the path itself for a `node_modules/`
+/// segment. Returns a slice into `link_buf` or `binary_path`.
+fn packageNameFromBinary(binary_path: [:0]const u8, link_buf: *bun.PathBuffer) ?string {
+    if (!Environment.isWindows) {
+        switch (bun.sys.readlink(binary_path, link_buf)) {
+            .result => |target| {
+                if (packageNameFromNodeModulesPath(target)) |pkg| return pkg;
+            },
+            .err => {},
+        }
+    }
+
+    return packageNameFromNodeModulesPath(binary_path);
+}
+
+/// Find the last `node_modules/` segment in `path_` and return the package name that follows it,
+/// handling `@scope/name`. Works with both `/` and `\` separators. Returns a slice into `path_`.
+fn packageNameFromNodeModulesPath(path_: string) ?string {
+    const needles = if (Environment.isWindows)
+        &[_]string{ "node_modules/", "node_modules\\" }
+    else
+        &[_]string{"node_modules/"};
+
+    var best: ?usize = null;
+    for (needles) |needle| {
+        if (strings.lastIndexOf(path_, needle)) |i| {
+            const after = i + needle.len;
+            if (best == null or after > best.?) best = after;
+        }
+    }
+
+    var remain = path_[best orelse return null ..];
+
+    // `@scope/name/...` or `name/...`
+    const is_scoped = remain.len > 0 and remain[0] == '@';
+    var seen_sep: usize = 0;
+    var end: usize = 0;
+    while (end < remain.len) : (end += 1) {
+        const c = remain[end];
+        if (c == '/' or (Environment.isWindows and c == '\\')) {
+            seen_sep += 1;
+            if (!is_scoped or seen_sep == 2) break;
+        }
+    }
+    remain = remain[0..end];
+
+    if (remain.len == 0 or strings.eqlComptime(remain, ".bin")) return null;
+    if (is_scoped and seen_sep == 0) return null;
+
+    return remain;
 }
 
 pub fn updatePackageJSONAndInstallCatchError(

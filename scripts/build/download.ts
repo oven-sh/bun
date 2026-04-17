@@ -30,6 +30,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -128,12 +129,14 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
  * Used to decide whether a cached tarball is itself bad vs. extraction
  * failed for environmental reasons (disk full, staging dir unwritable).
  * Listing reads and gunzips every block but writes nothing to disk, so it
- * isolates the archive from the destination. Spawn failure (tar not found)
- * counts as "lists cleanly" — can't judge the file, so don't delete it.
+ * isolates the archive from the destination. Anything other than a clean
+ * non-zero exit — spawn failure (tar not found) or signal death (OOM
+ * killer) — counts as "lists cleanly": can't judge the file, so don't
+ * delete a possibly-shared artifact.
  */
-function tarballListsCleanly(tarball: string): boolean {
+export function tarballListsCleanly(tarball: string): boolean {
   const r = spawnSync("tar", ["-tzf", tarball], { stdio: "ignore" });
-  return r.error !== undefined || r.status === 0;
+  return r.error !== undefined || r.signal !== null || r.status === 0;
 }
 
 /**
@@ -182,11 +185,14 @@ export async function extractZip(zipPath: string, dest: string): Promise<void> {
  * If a tarball has multiple top-level entries, the whole staging dir becomes
  * `dest/` (no hoist).
  *
- * @param identity Written to `dest/.identity`. Changing it triggers re-download.
- * @param cache Directory for the downloaded tarball (keyed by `identity`).
- *   Lets CI agents persist the ~200MB WebKit download across ephemeral
- *   runners (via `BUN_DEPS_CACHE_PATH`) while `dest` stays buildDir-relative
- *   so split-build artifact upload keeps working. Tarball is kept after
+ * @param identity Written to `dest/.identity`. A mismatch triggers
+ *   re-extract; whether that also re-downloads depends on the URL-hash
+ *   key below (for current deps, identity changes imply URL changes).
+ * @param cache Directory for the downloaded tarball (keyed by URL hash —
+ *   `identity` alone doesn't cover os/arch). Lets CI agents persist the
+ *   ~200MB WebKit download across ephemeral runners (via
+ *   `BUN_DEPS_CACHE_PATH`) while `dest` stays buildDir-relative so
+ *   split-build artifact upload keeps working. Tarball is kept after
  *   extraction; a hit skips the download but still re-extracts.
  * @param rmPaths Paths (relative to `dest/`) to delete after extraction.
  *   Used to remove conflicting headers (WebKit's unicode/, nodejs's openssl/).
@@ -217,11 +223,13 @@ export async function fetchPrebuilt(
   const suffix = `.${process.pid}.${Date.now().toString(36)}`;
 
   // ─── Download (with cache) ───
-  // Identity alone is the cache key — it already encodes version + build
-  // variant (e.g. webkit's sha16 + -lto/-asan suffix), and `/` can't appear
-  // in it so the filename is flat.
+  // Keyed on URL hash — same scheme as fetchDep. `identity` is NOT a
+  // sufficient key: WebKit's identity is version + abi suffix but the URL
+  // also varies by os/arch, so identity-keyed cache would collide across
+  // cross-arch agents sharing one BUN_DEPS_CACHE_PATH.
   await mkdir(cache, { recursive: true });
-  const tarballPath = resolve(cache, `${name}-${identity}.tar.gz`);
+  const urlHash = createHash("sha256").update(url).digest("hex").slice(0, 16);
+  const tarballPath = resolve(cache, `${name}-${urlHash}.tar.gz`);
   if (existsSync(tarballPath)) {
     console.log(`cached tarball ${tarballPath}`);
   } else {

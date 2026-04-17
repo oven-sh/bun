@@ -4291,7 +4291,12 @@ pub const Resolver = struct {
                     var current = tsconfig_json;
                     while (current.extends.len > 0) {
                         const parent_config = if (isPackagePath(current.extends))
-                            r.resolvePackagePathForTSConfigExtends(info, current.extends) orelse break
+                            r.resolvePackagePathForTSConfigExtends(info, current.extends) orelse {
+                                r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "ENOENT loading tsconfig.json extends {f}", .{
+                                    bun.fmt.QuotedFormatter{ .text = current.extends },
+                                }) catch {};
+                                break;
+                            }
                         else brk: {
                             const ts_dir_name = Dirname.dirname(current.abs_path);
                             const abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);

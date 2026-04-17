@@ -38,10 +38,9 @@ pub const TSConfigJSON = struct {
 
     use_define_for_class_fields: ?bool = null,
 
-    preserve_imports_not_used_as_values: ?bool = false,
-
     // null means "not specified"; needed so the extends merge can tell a child
     // config that explicitly sets `false` apart from one that leaves it unset.
+    preserve_imports_not_used_as_values: ?bool = null,
     emit_decorator_metadata: ?bool = null,
     experimental_decorators: ?bool = null,
 

@@ -240,6 +240,40 @@ console.log(JSON.stringify(<div />));
       expect(exitCode).toBe(0);
     });
 
+    test("inherits emitDecoratorMetadata (design:type is emitted)", async () => {
+      // Use a minimal Reflect.metadata polyfill so we can observe the
+      // __metadata("design:type", String) call that Bun injects when
+      // emitDecoratorMetadata is active, without depending on the
+      // reflect-metadata package.
+      const metadataFixture = `
+const store = new Map<any, Map<string, Map<string, any>>>();
+(Reflect as any).metadata = (key: string, value: any) => (target: any, prop: string) => {
+  const byTarget = store.get(target) ?? new Map();
+  const byProp = byTarget.get(prop) ?? new Map();
+  byProp.set(key, value);
+  byTarget.set(prop, byProp);
+  store.set(target, byTarget);
+};
+function Prop(_t: any, _k: string) {}
+class Entity {
+  @Prop
+  name: string = "test";
+}
+const designType = store.get(Entity.prototype)?.get("name")?.get("design:type");
+console.log(designType === String ? "String" : String(designType));
+`;
+      using dir = tempDir("issue-6326-dec-meta", {
+        "node_modules/@repo/typescript-config/tsconfig.json": baseConfig,
+        "node_modules/@repo/typescript-config/package.json": JSON.stringify({ name: "@repo/typescript-config" }),
+        "tsconfig.json": JSON.stringify({ extends: "@repo/typescript-config" }),
+        "index.ts": metadataFixture,
+      });
+
+      const { stdout, exitCode } = await run(String(dir), "index.ts");
+      expect(stdout.trim()).toBe("String");
+      expect(exitCode).toBe(0);
+    });
+
     test("child config can override experimentalDecorators back to false", async () => {
       // TypeScript semantics: child overrides parent. When the child sets
       // experimentalDecorators:false, TC39 standard decorators are used even

@@ -1,13 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
-const bun = "bun";
 const thresholdMB = 100;
 const timeout = 60_000;
 
 async function run(dir: string, code: string) {
   await using proc = Bun.spawn({
-    cmd: [bun, "--smol", "-e", code],
+    cmd: [bunExe(), "--smol", "-e", code],
     cwd: dir,
     env: bunEnv,
     stdio: ["inherit", "inherit", "inherit"],

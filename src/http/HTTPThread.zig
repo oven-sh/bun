@@ -18,6 +18,11 @@ http_context: NewHTTPContext(false),
 https_context: NewHTTPContext(true),
 
 queued_tasks: Queue = Queue{},
+/// Tasks popped from `queued_tasks` that couldn't start because
+/// `active_requests_count >= max_simultaneous_requests`. Kept in FIFO order
+/// and processed before `queued_tasks` on the next `drainEvents`. Owned by
+/// the HTTP thread; never accessed concurrently.
+deferred_tasks: std.ArrayListUnmanaged(*AsyncHTTP) = .{},
 
 queued_shutdowns: std.ArrayListUnmanaged(ShutdownMessage) = std.ArrayListUnmanaged(ShutdownMessage){},
 queued_writes: std.ArrayListUnmanaged(WriteMessage) = std.ArrayListUnmanaged(WriteMessage){},
@@ -477,7 +482,6 @@ fn drainEvents(this: *@This()) void {
     var count: usize = 0;
     var active = AsyncHTTP.active_requests_count.load(.monotonic);
     const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
-    if (active >= max) return;
     defer {
         if (comptime Environment.allow_assert) {
             if (count > 0)
@@ -485,25 +489,63 @@ fn drainEvents(this: *@This()) void {
         }
     }
 
-    while (this.queued_tasks.pop()) |http| {
-        var cloned = bun.http.ThreadlocalAsyncHTTP.new(.{
-            .async_http = http.*,
-        });
-        cloned.async_http.real = http;
-        // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
-        // which may point to other AsyncHTTP structs that could be freed before the callback
-        // copies data back to the original. If not cleared, retrying a failed request would
-        // re-queue with stale pointers causing use-after-free.
-        cloned.async_http.next = null;
-        cloned.async_http.task.node.next = null;
-        cloned.async_http.onStart();
-        if (comptime Environment.allow_assert) {
-            count += 1;
+    // Deferred tasks are ones we previously popped from the MPSC queue but
+    // couldn't start because we were at max. They stay in FIFO order ahead of
+    // anything still in `queued_tasks`.
+    //
+    // Already-aborted tasks are started regardless of `max`: `start_()` will
+    // observe the `aborted` signal and fail immediately with
+    // `error.AbortedBeforeConnecting`, and `onAsyncHTTPCallback` decrements
+    // `active_requests_count` in the same turn — so they never hold a slot.
+    // Without this, an aborted fetch that was queued behind `max` would sit
+    // there until some unrelated request completed; if every active request
+    // is itself hung, the aborted one never settles and its promise hangs
+    // forever even though the user called `controller.abort()`.
+    {
+        var kept: usize = 0;
+        var i: usize = 0;
+        while (i < this.deferred_tasks.items.len) : (i += 1) {
+            const http = this.deferred_tasks.items[i];
+            const aborted = http.client.signals.get(.aborted);
+            if (aborted or active < max) {
+                startQueuedTask(http);
+                if (comptime Environment.allow_assert) count += 1;
+                if (!aborted) active += 1;
+            } else {
+                this.deferred_tasks.items[kept] = http;
+                kept += 1;
+            }
         }
-
-        active += 1;
-        if (active >= max) break;
+        this.deferred_tasks.items.len = kept;
     }
+
+    while (this.queued_tasks.pop()) |http| {
+        const aborted = http.client.signals.get(.aborted);
+        if (!aborted and active >= max) {
+            // Can't start this one yet. Defer it (preserves FIFO relative to
+            // later pops) and keep draining — there may be aborted tasks
+            // behind it that we can fail-fast right now.
+            bun.handleOom(this.deferred_tasks.append(bun.default_allocator, http));
+            continue;
+        }
+        startQueuedTask(http);
+        if (comptime Environment.allow_assert) count += 1;
+        if (!aborted) active += 1;
+    }
+}
+
+fn startQueuedTask(http: *AsyncHTTP) void {
+    var cloned = bun.http.ThreadlocalAsyncHTTP.new(.{
+        .async_http = http.*,
+    });
+    cloned.async_http.real = http;
+    // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
+    // which may point to other AsyncHTTP structs that could be freed before the callback
+    // copies data back to the original. If not cleared, retrying a failed request would
+    // re-queue with stale pointers causing use-after-free.
+    cloned.async_http.next = null;
+    cloned.async_http.task.node.next = null;
+    cloned.async_http.onStart();
 }
 
 fn processEvents(this: *@This()) noreturn {

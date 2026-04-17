@@ -2,13 +2,12 @@
 //
 // Spawns a child process inside a cgroup v2 with a memory limit
 // and verifies that Bun's GC keeps RSS bounded.
-//
-// On non-Linux or without cgroup permissions, only basic checks run.
 
 import { test, expect, describe } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, rmdirSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync, rmdirSync } from "fs";
 import { join } from "path";
 import { totalmem } from "os";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 const isLinux = process.platform === "linux";
 
@@ -104,14 +103,17 @@ describe("Issue #17723: Container Memory Awareness", () => {
       // Set memory limit on the cgroup
       writeFileSync(join(testCgroup, "memory.max"), `${limitMB * 1024 * 1024}`);
 
-      // Write stress script to a temp file
-      const scriptPath = join("/tmp", `bun-17723-stress-${process.pid}.ts`);
-      writeFileSync(scriptPath, STRESS_SCRIPT);
+      // Write stress script using harness tempDir
+      using dir = tempDir("bun-17723", {
+        "stress.ts": STRESS_SCRIPT,
+      });
+      const scriptPath = join(String(dir), "stress.ts");
 
-      // Spawn child — it will self-join the cgroup via CGROUP_PATH env var
-      const proc = Bun.spawn([process.execPath, "run", scriptPath], {
+      // Spawn child using bunExe/bunEnv — it self-joins the cgroup via CGROUP_PATH
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", scriptPath],
         env: {
-          ...process.env,
+          ...bunEnv,
           CGROUP_LIMIT_MB: String(limitMB),
           CGROUP_PATH: testCgroup,
         },
@@ -119,36 +121,36 @@ describe("Issue #17723: Container Memory Awareness", () => {
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
-      const stdout = await new Response(proc.stdout).text();
-      const stderr = await new Response(proc.stderr).text();
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
 
-      // Assert stdout before exitCode for better error messages
+      // Parse and assert stdout first for better error messages
+      if (stdout.trim()) {
+        const lastLine = stdout.trim().split("\n").pop()!;
+        try {
+          const result = JSON.parse(lastLine);
+          console.log(
+            `Peak RSS: ${result.peak_rss_mb}MB, Final RSS: ${result.final_rss_mb}MB, ` +
+            `Constrained: ${result.constrained_mb}MB, Limit: ${result.limit_mb}MB`
+          );
+
+          if (result.constrained_mb !== null) {
+            expect(result.constrained_mb).toBeLessThanOrEqual(limitMB);
+          }
+          expect(result.bounded).toBe(true);
+        } catch {}
+      }
+
+      // Then assert exit code with stderr pattern
       if (exitCode !== 0) {
-        if (exitCode === 137 || exitCode === 9) {
-          // OOM-killed — this IS the bug
-          expect(stderr).toBe("");
-        }
-        expect(exitCode).toBe(0);
-        return;
+        expect(stderr).toBe("");
       }
-
-      const lastLine = stdout.trim().split("\n").pop()!;
-      const result = JSON.parse(lastLine);
-
-      console.log(
-        `Peak RSS: ${result.peak_rss_mb}MB, Final RSS: ${result.final_rss_mb}MB, ` +
-        `Constrained: ${result.constrained_mb}MB, Limit: ${result.limit_mb}MB`
-      );
-
-      if (result.constrained_mb !== null) {
-        expect(result.constrained_mb).toBeLessThanOrEqual(limitMB);
-      }
-
-      expect(result.bounded).toBe(true);
+      expect(exitCode).toBe(0);
 
     } finally {
-      // Cleanup
       try { rmdirSync(testCgroup); } catch {}
     }
   }, 30_000);

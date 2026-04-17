@@ -268,10 +268,9 @@ pub const Coordinator = struct {
 
     pub fn onWorkerExit(this: *Coordinator, w: *Worker, status: bun.spawn.Status) void {
         w.exit_status = status;
-        // Windows: BufferedReader.read() is unpause(); the EOF callback drives
-        // tryReap when libuv delivers it. POSIX: usockets delivers any
-        // remaining buffered data then onClose, so no explicit drain needed.
-        if (Environment.isWindows) if (!w.ipc.done) w.ipc.reader.read();
+        // The Channel delivers any remaining buffered data then close (which
+        // sets ipc.done and calls tryReap), so no explicit drain is needed —
+        // tryReap here covers the case where the channel already closed first.
         this.tryReap(w);
     }
 
@@ -308,7 +307,7 @@ pub const Coordinator = struct {
             w.ipc.deinit();
             w.out.deinit();
             w.err.deinit();
-            w.ipc = if (Environment.isPosix) .{ .owner = w } else .{ .role = .ipc, .worker = w };
+            w.ipc = .{ .owner = w };
             w.out = .{ .role = .stdout, .worker = w };
             w.err = .{ .role = .stderr, .worker = w };
             w.process = null;

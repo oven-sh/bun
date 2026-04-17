@@ -112,7 +112,7 @@ pub fn runAsCoordinator(
             .coord = &coord,
             .idx = idx,
             .range = .{ .lo = idx * N / K, .hi = (idx + 1) * N / K },
-            .ipc = if (Environment.isPosix) .{ .owner = w } else .{ .role = .ipc, .worker = w },
+            .ipc = .{ .owner = w },
             .out = .{ .role = .stdout, .worker = w },
             .err = .{ .role = .stderr, .worker = w },
         };
@@ -237,19 +237,16 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
     return argv.items[0 .. argv.items.len - 1 :null];
 }
 
-/// Event-loop-driven coordinator → worker command channel. The worker pumps
+/// Event-loop-driven coordinator ↔ worker channel. The worker pumps
 /// `vm.eventLoop()` between files instead of sitting in a blocking read(), so
 /// any post-swap cleanup the loop owns (timers the generation guard let
 /// through, async dispose, etc.) gets to run, and on macOS — where there's no
-/// PDEATHSIG — coordinator death surfaces as channel close. POSIX uses the
-/// same usockets `Channel` as the coordinator side (full-duplex socketpair on
-/// fd 3, write backpressure handled via onWritable). Windows reads stdin via
-/// `BufferedReader` and writes results to fd 3 with a blocking `writeAll`.
+/// PDEATHSIG — coordinator death surfaces as channel close. Same `Channel`
+/// abstraction as the coordinator side: usockets over the socketpair on POSIX,
+/// `uv.Pipe` over the inherited duplex named-pipe on Windows.
 const WorkerCommands = struct {
     vm: *jsc.VirtualMachine,
-    channel: if (Environment.isPosix) Channel(WorkerCommands) else void = if (Environment.isPosix) undefined else {},
-    win_reader: if (Environment.isWindows) bun.io.BufferedReader else void = if (Environment.isWindows) bun.io.BufferedReader.init(WorkerCommands) else {},
-    win_buf: if (Environment.isWindows) std.ArrayListUnmanaged(u8) else void = if (Environment.isWindows) .empty else {},
+    channel: Channel(WorkerCommands) = undefined,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
     pending_idx: ?u32 = null,
@@ -257,7 +254,11 @@ const WorkerCommands = struct {
     /// EOF, error, `.shutdown`, or a corrupt frame.
     done: bool = false,
 
-    fn handleFrame(this: *WorkerCommands, kind: Frame.Kind, rd: *Frame.Reader) void {
+    pub fn send(this: *WorkerCommands, frame_bytes: []const u8) void {
+        this.channel.send(frame_bytes);
+    }
+
+    pub fn onChannelFrame(this: *WorkerCommands, kind: Frame.Kind, rd: *Frame.Reader) void {
         switch (kind) {
             .run => {
                 this.pending_idx = rd.u32_();
@@ -268,58 +269,8 @@ const WorkerCommands = struct {
             else => {},
         }
     }
-
-    pub fn send(this: *WorkerCommands, frame_bytes: []const u8) void {
-        if (Environment.isPosix) return this.channel.send(frame_bytes);
-        Frame.writeAll(.fromUV(3), frame_bytes);
-    }
-
-    // POSIX `Channel` owner callbacks
-    pub fn onChannelFrame(this: *WorkerCommands, kind: Frame.Kind, rd: *Frame.Reader) void {
-        this.handleFrame(kind, rd);
-    }
     pub fn onChannelDone(this: *WorkerCommands) void {
         this.done = true;
-    }
-
-    // Windows `BufferedReader` parent callbacks
-    pub fn onReadChunk(this: *WorkerCommands, chunk: []const u8, _: bun.io.ReadState) bool {
-        if (comptime !Environment.isWindows) unreachable;
-        bun.handleOom(this.win_buf.appendSlice(bun.default_allocator, chunk));
-        var head: usize = 0;
-        while (this.win_buf.items.len - head >= 5) {
-            const len = std.mem.readInt(u32, this.win_buf.items[head..][0..4], .little);
-            if (len > Frame.max_payload) {
-                this.done = true;
-                break;
-            }
-            if (this.win_buf.items.len - head < @as(usize, 5) + len) break;
-            const kind = std.meta.intToEnum(Frame.Kind, this.win_buf.items[head + 4]) catch {
-                head += @as(usize, 5) + len;
-                continue;
-            };
-            var rd = Frame.Reader{ .p = this.win_buf.items[head + 5 ..][0..len] };
-            this.handleFrame(kind, &rd);
-            head += @as(usize, 5) + len;
-        }
-        if (head > 0) {
-            const rest = this.win_buf.items.len - head;
-            std.mem.copyForwards(u8, this.win_buf.items[0..rest], this.win_buf.items[head..]);
-            this.win_buf.items.len = rest;
-        }
-        return !this.done;
-    }
-    pub fn onReaderDone(this: *WorkerCommands) void {
-        this.done = true;
-    }
-    pub fn onReaderError(this: *WorkerCommands, _: bun.sys.Error) void {
-        this.done = true;
-    }
-    pub fn eventLoop(this: *WorkerCommands) *jsc.EventLoop {
-        return this.vm.eventLoop();
-    }
-    pub fn loop(this: *WorkerCommands) *bun.Async.Loop {
-        return this.vm.uvLoop();
     }
 };
 
@@ -349,18 +300,10 @@ pub fn runAsWorker(
         cmds: WorkerCommands,
 
         pub fn begin(self: *@This()) void {
-            if (Environment.isPosix) {
-                self.cmds.channel = .{ .owner = &self.cmds };
-                if (!self.cmds.channel.adopt(self.vm, .fromUV(3))) {
-                    Output.prettyErrorln("<red>error<r>: test worker failed to adopt IPC fd", .{});
-                    bun.Global.exit(1);
-                }
-            } else {
-                self.cmds.win_reader.setParent(&self.cmds);
-                self.cmds.win_reader.start(bun.FD.stdin(), true).unwrap() catch |e| {
-                    Output.err(e, "test worker failed to start command reader", .{});
-                    bun.Global.exit(1);
-                };
+            self.cmds.channel = .{ .owner = &self.cmds };
+            if (!self.cmds.channel.adopt(self.vm, .fromUV(3))) {
+                Output.prettyErrorln("<red>error<r>: test worker failed to adopt IPC fd", .{});
+                bun.Global.exit(1);
             }
             worker_cmds = &self.cmds;
 
@@ -413,14 +356,12 @@ pub fn runAsWorker(
     vm.runWithAPILock(WorkerLoop, &loop, WorkerLoop.begin);
 
     workerFlushAggregates(reporter, vm, ctx, worker_tmp, &loop.cmds);
-    if (Environment.isPosix) {
-        // Drain any backpressure-buffered frames before exit so the
-        // coordinator sees repeat_bufs/junit_file/coverage_file.
-        while (loop.cmds.channel.out.items.len > 0 and !loop.cmds.channel.done) {
-            vm.eventLoop().tick();
-            if (loop.cmds.channel.out.items.len == 0 or loop.cmds.channel.done) break;
-            vm.eventLoop().autoTick();
-        }
+    // Drain any backpressure-buffered frames before exit so the coordinator
+    // sees repeat_bufs/junit_file/coverage_file.
+    while (loop.cmds.channel.hasPendingWrites() and !loop.cmds.channel.done) {
+        vm.eventLoop().tick();
+        if (!loop.cmds.channel.hasPendingWrites() or loop.cmds.channel.done) break;
+        vm.eventLoop().autoTick();
     }
     bun.Global.exit(0);
 }

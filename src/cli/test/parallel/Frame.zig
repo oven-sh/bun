@@ -1,4 +1,4 @@
-//! Wire protocol on both stdin and fd 3: length-prefixed binary frames.
+//! Wire protocol over the fd-3 IPC channel: length-prefixed binary frames.
 //!   [u32 LE payload_len][u8 kind][payload]
 //! Strings within a payload are [u32 LE len][bytes].
 
@@ -44,9 +44,8 @@ pub fn str(self: *Frame, s: []const u8) void {
     self.u32_(@intCast(s.len));
     bun.handleOom(self.buf.appendSlice(bun.default_allocator, s));
 }
-/// Finalize the header and return the encoded bytes. Caller hands them to a
-/// transport (`Channel.send` on POSIX, `writeAll` on Windows). Valid until the
-/// next `begin()`.
+/// Finalize the header and return the encoded bytes. Caller hands them to
+/// `Channel.send`. Valid until the next `begin()`.
 pub fn finish(self: *Frame) []const u8 {
     const payload_len: u32 = @intCast(self.buf.items.len - 5);
     std.mem.writeInt(u32, self.buf.items[0..4], payload_len, .little);
@@ -73,22 +72,6 @@ pub const Reader = struct {
         return s;
     }
 };
-
-/// Windows-only blocking write to a uv pipe end. POSIX uses `Channel.send`
-/// (usockets, event-loop-buffered) instead.
-pub fn writeAll(fd: bun.FD, bytes: []const u8) void {
-    if (comptime !bun.Environment.isWindows) @compileError("use Channel.send on POSIX");
-    var remaining = bytes;
-    while (remaining.len > 0) {
-        switch (bun.sys.write(fd, remaining)) {
-            .result => |n| remaining = remaining[n..],
-            .err => |e| switch (e.getErrno()) {
-                .INTR => continue,
-                else => return,
-            },
-        }
-    }
-}
 
 const bun = @import("bun");
 const std = @import("std");

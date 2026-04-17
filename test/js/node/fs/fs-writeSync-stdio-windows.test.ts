@@ -1,10 +1,12 @@
-// On Windows, `FD.fromJSValidated(0|1|2)` returns the stdio HANDLE cached at
-// process startup, and `FD.uv()` must map that `.system` FD back to libuv fd
-// 0/1/2 before calling `uv_fs_write`. If `FD.uv()` compares against the *live*
-// `GetStdHandle()` instead of the cached value, a user-space `SetStdHandle`
-// (or `AllocConsole`/`AttachConsole`) makes the round-trip fail and
-// `fs.writeSync(1, ...)` panics with:
+// Regression: on Windows, `FD.fromJSValidated(0|1|2)` used to return the
+// stdio HANDLE cached at process startup, forcing `sys_uv` to map that
+// `.system` FD back to libuv fd 0/1/2 via `FD.uv()`. `FD.uv()` compared the
+// handle against the *live* `GetStdHandle()` result, so a user-space
+// `SetStdHandle` (or `AllocConsole`/`AttachConsole`) made the round-trip fail
+// and `fs.writeSync(1, ...)` panicked with:
 //   "Cast bun.FD.uv(N[handle]) makes closing impossible!"
+// Now `fromJS`/`fromJSValidated` return `.fromUV(0|1|2)` directly, and
+// `FD.uv()` checks the cached stdio handles before `GetStdHandle`.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -40,7 +42,7 @@ test.skipIf(!isWindows)("fs.writeSync(1, ...) does not panic after SetStdHandle 
       0,
       null,
     );
-    if (nul === null || nul === -1n || nul === BigInt("0xffffffffffffffff")) {
+    if (nul === null) {
       throw new Error("CreateFileW(NUL) failed");
     }
 

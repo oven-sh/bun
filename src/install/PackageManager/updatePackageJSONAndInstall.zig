@@ -562,6 +562,8 @@ fn packageNameFromNodeModulesPath(path_: string) ?string {
     var best: ?usize = null;
     for (needles) |needle| {
         if (strings.lastIndexOf(path_, needle)) |i| {
+            // Must sit on a segment boundary so e.g. `foo-node_modules/` doesn't match.
+            if (i > 0 and !isPathSep(path_[i - 1])) continue;
             const after = i + needle.len;
             if (best == null or after > best.?) best = after;
         }

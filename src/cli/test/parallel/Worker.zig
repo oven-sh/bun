@@ -8,16 +8,18 @@ pub const Worker = @This();
 coord: *Coordinator,
 idx: u32,
 process: ?*bun.spawn.Process = null,
-/// Where the coordinator writes `.run`/`.shutdown` frames. On POSIX this is
-/// the same fd `ipc.reader` reads results from (the socketpair is full-duplex)
-/// — owned by the reader, so close paths skip it. On Windows it's the separate
-/// stdin write end and is owned here.
-cmd_fd: ?bun.FD = null,
-cmd_fd_shared_with_ipc: bool = false,
 
-ipc: WorkerPipe,
+/// Bidirectional IPC. POSIX: usockets-backed `Channel` over the socketpair on
+/// fd 3 (commands and results on the same fd, backpressure handled via the
+/// loop). Windows: read via `WorkerPipe`, write via `cmd_fd` (uv anonymous
+/// pipes are unidirectional).
+ipc: Ipc,
 out: WorkerPipe,
 err: WorkerPipe,
+
+/// Windows only — stdin write end for `.run`/`.shutdown` frames. Unused on
+/// POSIX (commands go through `ipc.send`).
+cmd_fd: if (Environment.isWindows) ?bun.FD else void = if (Environment.isWindows) null else {},
 
 /// Index into `Coordinator.files` currently running on this worker.
 inflight: ?u32 = null,
@@ -44,7 +46,7 @@ pub fn start(this: *Worker) !void {
     bun.assert(!this.alive);
     const coord = this.coord;
 
-    this.ipc.reader.setParent(&this.ipc);
+    if (Environment.isWindows) this.ipc.reader.setParent(&this.ipc);
     this.out.reader.setParent(&this.out);
     this.err.reader.setParent(&this.err);
 
@@ -58,19 +60,20 @@ pub fn start(this: *Worker) !void {
             p.close();
             this.process = null;
         }
-        if (this.cmd_fd) |fd| {
-            if (!this.cmd_fd_shared_with_ipc) fd.close();
+        if (Environment.isWindows) if (this.cmd_fd) |fd| {
+            fd.close();
             this.cmd_fd = null;
-        }
+        };
         this.ipc.deinit();
         this.out.deinit();
         this.err.deinit();
     }
 
     if (Environment.isPosix) {
-        // `.buffer` extra_fd creates a socketpair (full-duplex). The parent
-        // end is both the IPC reader's fd and the command-write fd; stdin is
-        // unused.
+        // `.buffer` extra_fd creates an AF_UNIX socketpair. The parent end is
+        // adopted into a usockets `Channel` which handles both directions
+        // (frame decode in the data callback, write backpressure via
+        // onWritable). Stdin is unused.
         this.extra_fd_stdio = .{.buffer};
         const options: bun.spawn.SpawnOptions = .{
             .stdin = .ignore,
@@ -91,10 +94,7 @@ pub fn start(this: *Worker) !void {
         if (spawned.stdout) |fd| try this.out.reader.start(fd, true).unwrap();
         if (spawned.stderr) |fd| try this.err.reader.start(fd, true).unwrap();
         if (spawned.extra_pipes.items.len > 0) {
-            const ipc_fd = spawned.extra_pipes.items[0];
-            this.cmd_fd = ipc_fd;
-            this.cmd_fd_shared_with_ipc = true;
-            try this.ipc.reader.start(ipc_fd, true).unwrap();
+            if (!this.ipc.adopt(coord.vm, spawned.extra_pipes.items[0])) return error.ChannelAdoptFailed;
         } else {
             this.ipc.done = true;
         }
@@ -134,7 +134,6 @@ pub fn start(this: *Worker) !void {
         ipc_pair[1].close();
         ipc_pair[1] = bun.FD.invalid;
         this.cmd_fd = stdin_pair[1];
-        this.cmd_fd_shared_with_ipc = false;
         stdin_pair[1] = bun.FD.invalid;
 
         try this.ipc.reader.start(ipc_pair[0], true).unwrap();
@@ -173,10 +172,10 @@ pub fn start(this: *Worker) !void {
 
 pub fn onProcessExit(this: *Worker, _: *bun.spawn.Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
     this.alive = false;
-    if (this.cmd_fd) |fd| {
-        if (!this.cmd_fd_shared_with_ipc) fd.close();
+    if (Environment.isWindows) if (this.cmd_fd) |fd| {
+        fd.close();
         this.cmd_fd = null;
-    }
+    };
     this.coord.onWorkerExit(this, status);
 }
 
@@ -187,34 +186,60 @@ pub fn loop(this: *Worker) *bun.Async.Loop {
     return this.coord.vm.uvLoop();
 }
 
+fn writeFrame(this: *Worker, bytes: []const u8) void {
+    if (Environment.isPosix) return this.ipc.send(bytes);
+    if (this.cmd_fd) |fd| Frame.writeAll(fd, bytes);
+}
+
 pub fn dispatch(this: *Worker, file_idx: u32, file: []const u8) void {
-    const fd = this.cmd_fd orelse return;
     const f = &this.coord.frame;
     f.begin(.run);
     f.u32_(file_idx);
     f.str(file);
-    f.send(fd);
+    this.writeFrame(f.finish());
     this.inflight = file_idx;
     this.dispatched_at = std.time.milliTimestamp();
 }
 
 pub fn shutdown(this: *Worker) void {
-    if (this.cmd_fd) |fd| {
-        const f = &this.coord.frame;
-        f.begin(.shutdown);
-        f.send(fd);
-        // When the command fd is the IPC socketpair end, leave it open: the
-        // worker exits on `.shutdown` and the IPC reader still needs the fd to
-        // drain trailing repeat_bufs/junit_file/coverage_file frames.
-        if (!this.cmd_fd_shared_with_ipc) fd.close();
+    const f = &this.coord.frame;
+    f.begin(.shutdown);
+    this.writeFrame(f.finish());
+    // Leave the channel open so the reader drains trailing
+    // repeat_bufs/junit_file/coverage_file frames; the worker exits on
+    // `.shutdown` and its exit closes the peer end.
+    if (Environment.isWindows) if (this.cmd_fd) |fd| {
+        fd.close();
         this.cmd_fd = null;
-    }
+    };
 }
 
-/// Reads worker output (IPC, stdout, or stderr) and routes it. One per pipe.
-/// IPC bytes are frame-decoded; stdout/stderr accumulate into the worker's
-/// `captured` buffer and flush atomically with the next test result so console
-/// output from concurrent files never interleaves.
+/// IPC transport per platform. On POSIX it's a usockets `Channel` (full-duplex
+/// over the socketpair, backpressure handled by the loop). On Windows it's a
+/// `WorkerPipe` reading the unidirectional results pipe; commands go out the
+/// separate `cmd_fd`.
+pub const Ipc = if (Environment.isPosix) Channel(Worker) else WorkerPipe;
+
+/// `Channel` owner callback: a decoded frame arrived.
+pub fn onChannelFrame(this: *Worker, kind: Frame.Kind, rd: *Frame.Reader) void {
+    this.coord.onFrame(this, kind, rd);
+}
+
+/// `Channel` owner callback: peer closed, errored, or sent a corrupt frame.
+/// Gates `tryReap` so kernel-buffered frames written just before exit() are
+/// decoded before the worker slot is torn down.
+pub fn onChannelDone(this: *Worker) void {
+    if (this.ipc.done and !this.ipc.socket.isDetached()) {
+        // Corrupt frame path — kill the worker so onWorkerExit accounts for
+        // the in-flight file and the slot can respawn.
+        if (this.process) |p| _ = p.kill(9);
+    }
+    this.coord.tryReap(this);
+}
+
+/// Reads worker stdout/stderr (and on Windows, IPC). stdout/stderr accumulate
+/// into the worker's `captured` buffer and flush atomically with the next test
+/// result so console output from concurrent files never interleaves.
 pub const WorkerPipe = struct {
     reader: bun.io.BufferedReader = bun.io.BufferedReader.init(WorkerPipe),
     worker: *Worker,
@@ -235,14 +260,12 @@ pub const WorkerPipe = struct {
             bun.handleOom(this.worker.captured.appendSlice(bun.default_allocator, chunk));
             return true;
         }
+        // Windows-only IPC decode (POSIX uses `Channel`).
         bun.handleOom(this.buf.appendSlice(bun.default_allocator, chunk));
         var head: usize = 0;
         while (this.buf.items.len - head >= 5) {
             const len = std.mem.readInt(u32, this.buf.items[head..][0..4], .little);
             if (len > Frame.max_payload) {
-                // Corrupt or hostile frame (test JS wrote to fd 3). Kill the
-                // worker so onWorkerExit accounts for the in-flight file and
-                // the slot can respawn.
                 this.buf.clearRetainingCapacity();
                 this.done = true;
                 if (this.worker.process) |p| _ = p.kill(9);
@@ -284,6 +307,7 @@ const FileRange = @import("./FileRange.zig");
 const Frame = @import("./Frame.zig");
 const std = @import("std");
 const Coordinator = @import("./Coordinator.zig").Coordinator;
+const Channel = @import("./Channel.zig").Channel;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

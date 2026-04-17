@@ -2416,6 +2416,7 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
 
     {
         const skip_spawn_ipc = if (this.rare_data) |rare| rare.spawn_ipc_usockets_context else null;
+        const skip_test_parallel_ipc = if (this.rare_data) |rare| rare.test_parallel_ipc_context else null;
         // When this process is itself a forked child (NODE_CHANNEL_FD set),
         // its inbound process.send/on('message') channel lives on a separate
         // uws context that must survive the swap.
@@ -2429,7 +2430,7 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
         var maybe_ctx = bun.uws.Loop.get().internal_loop_data.head;
         while (maybe_ctx) |ctx| {
             const next_ctx = ctx.next();
-            if (ctx != skip_spawn_ipc and ctx != skip_process_ipc) {
+            if (ctx != skip_spawn_ipc and ctx != skip_process_ipc and ctx != skip_test_parallel_ipc) {
                 // ssl=false routes through the base on_close which, for SSL
                 // contexts, is ssl_on_close (SSL_free + user callback). Letting
                 // the real callbacks run lets wrappers drop Strong<> refs so

@@ -25,6 +25,10 @@ global_dns_data: ?*bun.api.dns.GlobalData = null,
 
 spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 
+/// `bun test --parallel` IPC channel (worker ↔ coordinator). Survives the
+/// per-file isolation swap so the worker keeps its link to the coordinator.
+test_parallel_ipc_context: ?*uws.SocketContext = null,
+
 mime_types: ?bun.http.MimeType.Map = null,
 
 node_fs_stat_watcher_scheduler: ?bun.ptr.RefPtr(StatWatcherScheduler) = null,

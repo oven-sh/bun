@@ -44,10 +44,13 @@ pub fn str(self: *Frame, s: []const u8) void {
     self.u32_(@intCast(s.len));
     bun.handleOom(self.buf.appendSlice(bun.default_allocator, s));
 }
-pub fn send(self: *Frame, fd: bun.FD) void {
+/// Finalize the header and return the encoded bytes. Caller hands them to a
+/// transport (`Channel.send` on POSIX, `writeAll` on Windows). Valid until the
+/// next `begin()`.
+pub fn finish(self: *Frame) []const u8 {
     const payload_len: u32 = @intCast(self.buf.items.len - 5);
     std.mem.writeInt(u32, self.buf.items[0..4], payload_len, .little);
-    writeAll(fd, self.buf.items);
+    return self.buf.items;
 }
 pub fn deinit(self: *Frame) void {
     self.buf.deinit(bun.default_allocator);
@@ -71,22 +74,10 @@ pub const Reader = struct {
     }
 };
 
-/// fd 3 in the worker — results out. On Windows this must be a libuv (CRT) fd
-/// so `uv_get_osfhandle(3)` resolves to the inherited handle; can't be a
-/// file-scope const because `FD.fromUV` rejects >2 at comptime.
-pub fn ipcFd() bun.FD {
-    return .fromUV(3);
-}
-
-/// Where the worker reads coordinator commands from. On POSIX fd 3 is a
-/// socketpair (full-duplex), so commands and results share one channel. On
-/// Windows fd 3 is a unidirectional named-pipe end, so commands arrive on
-/// stdin instead.
-pub fn cmdFd() bun.FD {
-    return if (bun.Environment.isWindows) bun.FD.stdin() else .fromUV(3);
-}
-
+/// Windows-only blocking write to a uv pipe end. POSIX uses `Channel.send`
+/// (usockets, event-loop-buffered) instead.
 pub fn writeAll(fd: bun.FD, bytes: []const u8) void {
+    if (comptime !bun.Environment.isWindows) @compileError("use Channel.send on POSIX");
     var remaining = bytes;
     while (remaining.len > 0) {
         switch (bun.sys.write(fd, remaining)) {

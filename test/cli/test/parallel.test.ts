@@ -27,6 +27,21 @@ test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID
   });
   expect(seen.sort()).toEqual(["1", "2", "3"]);
   expect(exitCode).toBe(0);
+
+  // K<=1 serial-fallback (single file, or --parallel=1) still sets WORKER_ID=1
+  // so tests can rely on it whenever --parallel is passed (matches Jest).
+  using single = tempDir("parallel-worker-id-single", { "a.test.js": fixture });
+  await using p2 = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=5"],
+    env: bunEnv,
+    cwd: String(single),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [o2, e2, c2] = await Promise.all([p2.stdout.text(), p2.stderr.text(), p2.exited]);
+  expect(o2 + e2).toContain("WID=1 1");
+  expect(o2 + e2).not.toContain("WID=undefined");
+  expect(c2).toBe(0);
 });
 
 test("--parallel runs files across workers and aggregates totals", async () => {

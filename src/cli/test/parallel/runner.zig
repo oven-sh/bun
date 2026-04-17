@@ -22,6 +22,10 @@ pub fn runAsCoordinator(
     const N: u32 = @intCast(files.len);
     const K: u32 = @min(ctx.test_options.parallel, N);
     if (K <= 1) {
+        // Jest sets JEST_WORKER_ID=1 even with --maxWorkers=1; match that so
+        // tests can rely on the var whenever --parallel is passed.
+        bun.handleOom(vm.transpiler.env.map.put("JEST_WORKER_ID", "1"));
+        bun.handleOom(vm.transpiler.env.map.put("BUN_TEST_WORKER_ID", "1"));
         TestCommand.runAllTests(reporter, vm, files, allocator);
         return false;
     }

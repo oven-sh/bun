@@ -1725,38 +1725,36 @@ pub const JSBundler = struct {
             switch (which.to(i32)) {
                 0 => {
                     const resolve: *JSBundler.Resolve = bun.cast(*Resolve, ctx);
-                    resolve.value = .{
-                        .err = logger.Msg.fromJS(
-                            bun.default_allocator,
-                            plugin.globalObject(),
-                            resolve.import_record.source_file,
-                            exception,
-                        ) catch |err| switch (err) {
-                            error.OutOfMemory => bun.outOfMemory(),
-                            error.JSError, error.JSTerminated => {
-                                plugin.globalObject().reportActiveExceptionAsUnhandled(err);
-                                return;
-                            },
+                    const msg = logger.Msg.fromJS(
+                        bun.default_allocator,
+                        plugin.globalObject(),
+                        resolve.import_record.source_file,
+                        exception,
+                    ) catch |err| switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                        error.JSError, error.JSTerminated => {
+                            plugin.globalObject().reportActiveExceptionAsUnhandled(err);
+                            return;
                         },
                     };
+                    resolve.value = .{ .err = msg };
                     resolve.bv2.onResolveAsync(resolve);
                 },
                 1 => {
                     const load: *Load = bun.cast(*Load, ctx);
-                    load.value = .{
-                        .err = logger.Msg.fromJS(
-                            bun.default_allocator,
-                            plugin.globalObject(),
-                            load.path,
-                            exception,
-                        ) catch |err| switch (err) {
-                            error.OutOfMemory => bun.outOfMemory(),
-                            error.JSError, error.JSTerminated => {
-                                plugin.globalObject().reportActiveExceptionAsUnhandled(err);
-                                return;
-                            },
+                    const msg = logger.Msg.fromJS(
+                        bun.default_allocator,
+                        plugin.globalObject(),
+                        load.path,
+                        exception,
+                    ) catch |err| switch (err) {
+                        error.OutOfMemory => bun.outOfMemory(),
+                        error.JSError, error.JSTerminated => {
+                            plugin.globalObject().reportActiveExceptionAsUnhandled(err);
+                            return;
                         },
                     };
+                    load.value = .{ .err = msg };
                     load.bv2.onLoadAsync(load);
                 },
                 else => @panic("invalid error type"),

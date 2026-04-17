@@ -149,20 +149,19 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
             // someone to ask for it
             errdefer this.deinit();
 
-            this.listener = .{
-                // we need to add support for the backlog parameter on listen here we use the
-                // default value of nodejs
-                .namedPipe = WindowsNamedPipeListeningContext.listen(
-                    globalObject,
-                    pipe_name,
-                    511,
-                    ssl,
-                    this,
-                ) catch return globalObject.throwInvalidArguments(
-                    "Failed to listen at {s}",
-                    .{pipe_name},
-                ),
-            };
+            // we need to add support for the backlog parameter on listen here we use the
+            // default value of nodejs
+            const named_pipe = WindowsNamedPipeListeningContext.listen(
+                globalObject,
+                pipe_name,
+                511,
+                ssl,
+                this,
+            ) catch return globalObject.throwInvalidArguments(
+                "Failed to listen at {s}",
+                .{pipe_name},
+            );
+            this.listener = .{ .namedPipe = named_pipe };
 
             const this_value = this.toJS(globalObject);
             this.strong_self.set(globalObject, this_value);

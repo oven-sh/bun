@@ -346,6 +346,14 @@ pub const PathWatcherManager = struct {
             // keep the path alive
             manager._incrementPathRef(path.path);
             errdefer manager._decrementPathRef(path.path);
+
+            // unrefPendingDirectory() may cascade to PathWatcher.deinit()
+            // → manager.unregisterWatcher() which acquires manager.mutex.
+            // Defer it so it runs after manager.mutex is released (defers
+            // fire LIFO). Same pattern as unregisterWatcher/unrefPendingTask.
+            var needs_unref_pending_directory = false;
+            defer if (needs_unref_pending_directory) watcher.unrefPendingDirectory();
+
             var routine: *DirectoryRegisterTask = undefined;
             {
                 manager.mutex.lock();
@@ -357,7 +365,7 @@ pub const PathWatcherManager = struct {
 
                     if (watcher.refPendingDirectory()) {
                         routine.watcher_list.append(bun.default_allocator, watcher) catch |err| {
-                            watcher.unrefPendingDirectory();
+                            needs_unref_pending_directory = true;
                             return err;
                         };
                     } else {
@@ -378,14 +386,14 @@ pub const PathWatcherManager = struct {
                 errdefer routine.deinit();
                 if (watcher.refPendingDirectory()) {
                     routine.watcher_list.append(bun.default_allocator, watcher) catch |err| {
-                        watcher.unrefPendingDirectory();
+                        needs_unref_pending_directory = true;
                         return err;
                     };
                 } else {
                     return error.UnexpectedFailure;
                 }
                 manager.current_fd_task.put(path.fd, routine) catch |err| {
-                    watcher.unrefPendingDirectory();
+                    needs_unref_pending_directory = true;
                     return err;
                 };
             }

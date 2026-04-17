@@ -29,7 +29,7 @@ test("--parallel runs files across workers and aggregates totals", async () => {
   expect(stderr).toContain("7 pass");
   expect(stderr).toContain("0 fail");
   expect(stderr).toContain("Ran 7 tests across 4 files.");
-  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`"bun test <version> (<revision>) >>> 2x PARALLEL"`);
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`"bun test <version> (<revision>) 2x PARALLEL"`);
   expect(exitCode).toBe(0);
 });
 

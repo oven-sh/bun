@@ -1384,14 +1384,20 @@ pub const TestCommand = struct {
 
         if (!ctx.test_options.test_worker) {
             // print the version so you know its doing stuff if it takes a sec
+            const w = Output.writer();
+            const colors = Output.enable_ansi_colors_stdout;
+            w.writeAll(if (colors)
+                Output.prettyFmt("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", true)
+            else
+                Output.prettyFmt("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", false)) catch {};
             if (ctx.test_options.parallel > 0) {
-                Output.prettyln(
-                    "<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r> <b><red>\\><magenta>\\>\\> {d}x <blue>PARA<cyan>LLEL<r>",
-                    .{ctx.test_options.parallel},
-                );
-            } else {
-                Output.prettyln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+                if (colors) {
+                    w.print(" \x1b[1;36m{d}\u{00d7} PARALLEL\x1b[0m", .{ctx.test_options.parallel}) catch {};
+                } else {
+                    w.print(" {d}x PARALLEL", .{ctx.test_options.parallel}) catch {};
+                }
             }
+            w.writeAll("\n") catch {};
             Output.flush();
         }
 

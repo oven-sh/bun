@@ -1,6 +1,49 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
+test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
+  // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
+  // remaining files; otherwise one fast worker handles all three.
+  const fixture = `import {test} from "bun:test"; test("t", async () => { await Bun.sleep(200); console.log("WID="+process.env.JEST_WORKER_ID+" "+process.env.BUN_TEST_WORKER_ID); });`;
+  using dir = tempDir("parallel-worker-id", {
+    "a.test.js": fixture,
+    "b.test.js": fixture,
+    "c.test.js": fixture,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=3"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = stdout + stderr;
+  expect(out).not.toContain("WID=undefined");
+  // 1-indexed; JEST_WORKER_ID and BUN_TEST_WORKER_ID always match.
+  const seen = [...out.matchAll(/WID=(\d+) (\d+)/g)].map(m => {
+    expect(m[1]).toBe(m[2]);
+    return m[1];
+  });
+  expect(seen.sort()).toEqual(["1", "2", "3"]);
+  expect(exitCode).toBe(0);
+
+  // K<=1 serial-fallback (single file, or --parallel=1) still sets WORKER_ID=1
+  // so tests can rely on it whenever --parallel is passed (matches Jest).
+  using single = tempDir("parallel-worker-id-single", { "a.test.js": fixture });
+  await using p2 = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=5"],
+    env: bunEnv,
+    cwd: String(single),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [o2, e2, c2] = await Promise.all([p2.stdout.text(), p2.stderr.text(), p2.exited]);
+  expect(o2 + e2).toContain("WID=1 1");
+  expect(o2 + e2).not.toContain("WID=undefined");
+  expect(c2).toBe(0);
+});
+
 test("--parallel runs files across workers and aggregates totals", async () => {
   using dir = tempDir("parallel-basic", {
     "a.test.js": `import {test,expect} from "bun:test"; test("a1",()=>expect(1).toBe(1)); test("a2",()=>expect(1).toBe(1));`,

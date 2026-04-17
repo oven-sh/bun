@@ -214,10 +214,10 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
         if (task.err) |*err| {
             if (err.* == .sys and
                 err.sys.getErrno() == .BUSY and
-                (task.tgt_absolute != null and
+                ((task.tgt_absolute != null and
                     err.sys.path.eqlUTF8(task.tgt_absolute.?)) or
-                (task.src_absolute != null and
-                    err.sys.path.eqlUTF8(task.src_absolute.?)))
+                    (task.src_absolute != null and
+                        err.sys.path.eqlUTF8(task.src_absolute.?))))
             {
                 log("{f} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
                 bun.handleOom(this.state.exec.ebusy.tasks.append(bun.default_allocator, task));
@@ -249,9 +249,25 @@ pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) Yield {
         .state = .waiting_write_err,
     });
     if (bun.take(&task.err)) |err| {
-        this.state.exec.err = err;
-        const error_string = this.bltn().taskErrorToString(.cp, this.state.exec.err.?);
-        return output_task.start(error_string);
+        if (this.state == .exec) {
+            const error_string = error_string: {
+                if (this.state.exec.err == null) {
+                    this.state.exec.err = err;
+                    break :error_string this.bltn().taskErrorToString(.cp, this.state.exec.err.?);
+                }
+
+                var exec_err = err;
+                defer exec_err.deinit(bun.default_allocator);
+                break :error_string this.bltn().taskErrorToString(.cp, exec_err);
+            };
+            return output_task.start(error_string);
+        } else {
+            var e = err;
+            defer e.deinit(bun.default_allocator);
+            this.state.ebusy.main_exit_code = 1;
+            const error_string = this.bltn().taskErrorToString(.cp, e);
+            return output_task.start(error_string);
+        }
     }
     return output_task.start(null);
 }
@@ -266,7 +282,7 @@ pub const ShellCpOutputTask = OutputTask(Cp, .{
 
 const ShellCpOutputTaskVTable = struct {
     pub fn writeErr(this: *Cp, childptr: anytype, errbuf: []const u8) ?Yield {
-        this.state.exec.output_waiting += 1;
+        if (this.state == .exec) this.state.exec.output_waiting += 1;
         if (this.bltn().stderr.needsIO()) |safeguard| {
             return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
@@ -275,11 +291,11 @@ const ShellCpOutputTaskVTable = struct {
     }
 
     pub fn onWriteErr(this: *Cp) void {
-        this.state.exec.output_done += 1;
+        if (this.state == .exec) this.state.exec.output_done += 1;
     }
 
     pub fn writeOut(this: *Cp, childptr: anytype, output: *OutputSrc) ?Yield {
-        this.state.exec.output_waiting += 1;
+        if (this.state == .exec) this.state.exec.output_waiting += 1;
         if (this.bltn().stdout.needsIO()) |safeguard| {
             return this.bltn().stdout.enqueue(childptr, output.slice(), safeguard);
         }
@@ -288,7 +304,7 @@ const ShellCpOutputTaskVTable = struct {
     }
 
     pub fn onWriteOut(this: *Cp) void {
-        this.state.exec.output_done += 1;
+        if (this.state == .exec) this.state.exec.output_done += 1;
     }
 
     pub fn onDone(this: *Cp) Yield {

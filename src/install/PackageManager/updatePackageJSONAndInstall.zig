@@ -505,15 +505,17 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 /// If `<name>` resolves to a binary on $PATH, try to figure out the owning package name and
 /// suggest it. Otherwise just warn that the package is not installed globally.
 fn warnGlobalPackageNotFound(name: string) void {
-    var which_buf: bun.PathBuffer = undefined;
+    const which_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(which_buf);
     const found_in_path: ?[:0]const u8 = if (bun.env_var.PATH.get()) |PATH|
-        bun.which(&which_buf, PATH, FileSystem.instance.top_level_dir, name)
+        bun.which(which_buf, PATH, FileSystem.instance.top_level_dir, name)
     else
         null;
 
     if (found_in_path) |binary_path| {
-        var link_buf: bun.PathBuffer = undefined;
-        if (packageNameFromBinary(binary_path, &link_buf)) |pkg| {
+        const link_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(link_buf);
+        if (packageNameFromBinary(binary_path, link_buf)) |pkg| {
             if (!strings.eql(pkg, name)) {
                 Output.warn(
                     "<b>{s}<r> is not in global package.json. Did you mean <b><cyan>bun remove -g {s}<r>?",

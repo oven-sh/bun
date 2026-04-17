@@ -30,6 +30,13 @@ gc_timer_interval: i32 = 0,
 gc_repeating_timer_fast: bool = true,
 disabled: bool = false,
 
+/// Container memory awareness (Issue #17723)
+/// When running inside a Docker/Kubernetes container with a cgroup memory limit,
+/// these fields enable RSS-based GC pressure thresholds that prevent OOM kills.
+cgroup_memory_limit: ?usize = null,
+cgroup_pressure_threshold: usize = 0, // 75% of limit — trigger async GC
+cgroup_critical_threshold: usize = 0, // 85% of limit — trigger sync full GC
+
 pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
     const actual = uws.Loop.get();
     this.gc_timer = uws.Timer.createFallthrough(actual, this);
@@ -61,6 +68,21 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
     }
 
     this.disabled = vm.transpiler.env.has("BUN_GC_TIMER_DISABLE");
+
+    // Container memory awareness (Issue #17723)
+    // Detect cgroup memory limit to enable RSS-based GC pressure thresholds.
+    if (bun.cgroup.getCachedMemoryLimit()) |limit| {
+        this.cgroup_memory_limit = limit;
+        this.cgroup_pressure_threshold = limit * 3 / 4; // 75%
+        this.cgroup_critical_threshold = limit * 85 / 100; // 85%
+
+        // In containers, force mimalloc to return freed pages to the OS immediately
+        // instead of caching them for 1000ms (default). This prevents RSS from
+        // staying elevated after GC, which would cause Kubernetes to OOM-kill.
+        if (comptime bun.use_mimalloc) {
+            bun.mimalloc.mi_option_set(.purge_delay, 0);
+        }
+    }
 
     if (!this.disabled)
         this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
@@ -98,6 +120,10 @@ pub fn onGCTimer(timer: *uws.Timer) callconv(.c) void {
 // When the heap size is increasing, we always switch to fast mode
 // When the heap size has been the same or less for 30 seconds, we switch to slow mode
 pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting: @Type(.enum_literal)) void {
+    // Never switch to slow mode inside containers — we need frequent RSS checks
+    // to prevent OOM kills (Issue #17723).
+    if (this.cgroup_memory_limit != null and setting == .slow) return;
+
     if (setting == .fast and !this.gc_repeating_timer_fast) {
         this.gc_repeating_timer_fast = true;
         this.gc_repeating_timer.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
@@ -111,6 +137,12 @@ pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting:
 
 pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.c) void {
     var this = timer.as(*GarbageCollectionController);
+
+    // Container-aware RSS pressure check (Issue #17723)
+    if (this.cgroup_memory_limit != null) {
+        this.checkContainerMemoryPressure();
+    }
+
     const prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
     this.performGC();
     this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
@@ -172,6 +204,38 @@ pub fn performGC(this: *GarbageCollectionController) void {
     var vm = this.bunVM().jsc_vm;
     vm.collectAsync();
     this.gc_last_heap_size = vm.blockBytesAllocated();
+}
+
+/// Check RSS against container memory thresholds and trigger aggressive GC
+/// when approaching the cgroup limit. This is the core fix for Issue #17723.
+///
+/// At 75% of the limit: trigger async GC + partial mimalloc purge
+/// At 85% of the limit: trigger synchronous full GC + forced mimalloc purge
+fn checkContainerMemoryPressure(this: *GarbageCollectionController) void {
+    const rss = bun.cgroup.getCurrentRSS();
+    if (rss == 0) return;
+
+    if (rss > this.cgroup_critical_threshold) {
+        // CRITICAL: RSS is above 85% of the container limit.
+        // Run a synchronous full GC immediately and force mimalloc to
+        // return all freed pages to the OS.
+        var vm = this.bunVM().jsc_vm;
+        _ = vm.runGC(true);
+        vm.shrinkFootprint();
+        if (comptime bun.use_mimalloc) {
+            bun.mimalloc.mi_collect(true);
+        }
+        this.gc_last_heap_size = vm.blockBytesAllocated();
+    } else if (rss > this.cgroup_pressure_threshold) {
+        // PRESSURE: RSS is above 75% of the container limit.
+        // Run an async GC and do a partial mimalloc purge.
+        var vm = this.bunVM().jsc_vm;
+        vm.collectAsync();
+        if (comptime bun.use_mimalloc) {
+            bun.mimalloc.mi_collect(false);
+        }
+        this.gc_last_heap_size = vm.blockBytesAllocated();
+    }
 }
 
 pub const GCTimerState = enum {

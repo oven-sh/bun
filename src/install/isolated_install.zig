@@ -623,10 +623,6 @@ pub fn installIsolatedPackages(
             peers: Store.OrderedArraySet(Store.Node.TransitivePeer, Store.Node.TransitivePeer.OrderedArraySetCtx),
         };
 
-        if (bun.getenvTruthy("BUN_DEBUG_ISOLATED_NODES")) {
-            bun.Output.prettyErrorln("[isolated] first pass: {d} nodes", .{nodes.len});
-        }
-
         var dedupe: std.AutoHashMapUnmanaged(PackageID, std.ArrayListUnmanaged(DedupeInfo)) = .empty;
         defer dedupe.deinit(lockfile.allocator);
 
@@ -1009,10 +1005,6 @@ pub fn installIsolatedPackages(
     {
         var root_node: *Progress.Node = undefined;
         var download_node: Progress.Node = undefined;
-        if (bun.getenvTruthy("BUN_DEBUG_ISOLATED_NODES")) {
-            bun.Output.prettyErrorln("[isolated] second pass: {d} entries", .{store.entries.len});
-        }
-
         var install_node: Progress.Node = undefined;
         var scripts_node: Progress.Node = undefined;
         var progress = &manager.progress;

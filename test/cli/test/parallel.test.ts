@@ -541,7 +541,7 @@ test("--parallel partitions by directory and steals from the end", async () => {
     .trim()
     .split("\n")
     .map(l => JSON.parse(l));
-  const dirOf = (r: Row) => r.file.split("/").slice(-2, -1)[0]!;
+  const dirOf = (r: Row) => r.file.replaceAll("\\", "/").split("/").slice(-2, -1)[0]!;
   const byPid = new Map<number, Row[]>();
   for (const r of rows) (byPid.get(r.pid) ?? byPid.set(r.pid, []).get(r.pid)!).push(r);
 
@@ -589,8 +589,9 @@ test("--parallel work-stealing balances an uneven directory split", async () => 
     .map(l => JSON.parse(l));
   // The PID that ran b0/c0/d0 (worker 3's chunk) must also appear on at least
   // one a/ file — that's the steal.
-  const fastPid = rows.find(r => r.file.includes("/d/"))!.pid;
-  const aRows = rows.filter(r => r.file.includes("/a/"));
+  const norm = (s: string) => s.replaceAll("\\", "/");
+  const fastPid = rows.find(r => norm(r.file).includes("/d/"))!.pid;
+  const aRows = rows.filter(r => norm(r.file).includes("/a/"));
   expect(aRows.length).toBe(8);
   expect(aRows.some(r => r.pid === fastPid)).toBe(true);
   expect(exitCode).toBe(0);

@@ -2,8 +2,39 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import path from "node:path";
 
+// A property decorator that reports how it was invoked. When Bun correctly
+// inherits experimentalDecorators/emitDecoratorMetadata from an extended
+// tsconfig, the decorator is called with legacy semantics
+// (target = prototype, propertyKey = string). When the extended config is
+// ignored, TC39 standard decorator lowering is used and target is undefined.
+const decoratorFixture = `
+function Prop(target: any, propertyKey: any) {
+  console.log(JSON.stringify({
+    targetType: typeof target,
+    propertyKey: typeof propertyKey === "string" ? propertyKey : "<context-object>",
+  }));
+}
+class Entity {
+  @Prop
+  name: string = "test";
+}
+new Entity();
+`;
+
+async function run(cwd: string, entry: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(cwd, entry)],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
 describe("tsconfig extends with package specifiers", () => {
-  test("resolves extends from node_modules", async () => {
+  test("resolves extends from node_modules (explicit subpath)", async () => {
     using dir = tempDir("issue-6326", {
       "node_modules/@acme/configuration/tsconfig.base.json": JSON.stringify({
         compilerOptions: {
@@ -25,15 +56,7 @@ console.log(JSON.stringify(<div id="test" />));
 `,
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", path.join(String(dir), "index.tsx")],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, exitCode } = await run(String(dir), "index.tsx");
 
     // If jsxFactory "h" was inherited, we get our custom element object.
     // If not inherited, React.createElement is used and fails.
@@ -41,7 +64,7 @@ console.log(JSON.stringify(<div id="test" />));
     expect(exitCode).toBe(0);
   });
 
-  test("resolves extends for scoped package", async () => {
+  test("resolves extends for scoped package (explicit subpath)", async () => {
     using dir = tempDir("issue-6326-scoped", {
       "node_modules/@acme/configuration/tsconfig.base.json": JSON.stringify({
         compilerOptions: {
@@ -64,21 +87,13 @@ console.log(JSON.stringify(<><span /></>));
 `,
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", path.join(String(dir), "index.tsx")],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, exitCode } = await run(String(dir), "index.tsx");
 
     expect(stdout).toContain('"tag":"fragment"');
     expect(exitCode).toBe(0);
   });
 
-  test("resolves extends for unscoped package", async () => {
+  test("resolves extends for unscoped package (explicit subpath)", async () => {
     using dir = tempDir("issue-6326-unscoped", {
       "node_modules/my-config/tsconfig.json": JSON.stringify({
         compilerOptions: {
@@ -99,15 +114,7 @@ console.log(JSON.stringify(<div />));
 `,
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", path.join(String(dir), "index.tsx")],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, exitCode } = await run(String(dir), "index.tsx");
 
     expect(stdout).toContain('"tag":"div"');
     expect(exitCode).toBe(0);
@@ -134,17 +141,103 @@ console.log(JSON.stringify(<div />));
 `,
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", path.join(String(dir), "index.tsx")],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, exitCode } = await run(String(dir), "index.tsx");
 
     expect(stdout).toContain('"tag":"div"');
     expect(exitCode).toBe(0);
+  });
+
+  // The original bug report: experimentalDecorators + emitDecoratorMetadata
+  // inherited from an extended tsconfig in node_modules. If the extends is
+  // not resolved, Bun falls back to TC39 standard decorators and the
+  // decorator's first argument (target) is undefined — which breaks TypeORM,
+  // MikroORM, NestJS, etc.
+  describe("inherits experimentalDecorators from extended config", () => {
+    const baseConfig = JSON.stringify({
+      compilerOptions: {
+        experimentalDecorators: true,
+        emitDecoratorMetadata: true,
+      },
+    });
+
+    const expected = JSON.stringify({ targetType: "object", propertyKey: "name" });
+
+    test("scoped package with explicit file", async () => {
+      using dir = tempDir("issue-6326-dec-a", {
+        "node_modules/@repo/typescript-config/tsconfig.json": baseConfig,
+        "node_modules/@repo/typescript-config/package.json": JSON.stringify({ name: "@repo/typescript-config" }),
+        "tsconfig.json": JSON.stringify({ extends: "@repo/typescript-config/tsconfig.json" }),
+        "index.ts": decoratorFixture,
+      });
+
+      const { stdout, exitCode } = await run(String(dir), "index.ts");
+      expect(stdout.trim()).toBe(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    test("scoped package, bare name (implicit tsconfig.json)", async () => {
+      using dir = tempDir("issue-6326-dec-b", {
+        "node_modules/@repo/typescript-config/tsconfig.json": baseConfig,
+        "node_modules/@repo/typescript-config/package.json": JSON.stringify({ name: "@repo/typescript-config" }),
+        "tsconfig.json": JSON.stringify({ extends: "@repo/typescript-config" }),
+        "index.ts": decoratorFixture,
+      });
+
+      const { stdout, exitCode } = await run(String(dir), "index.ts");
+      expect(stdout.trim()).toBe(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    test("unscoped package, bare name (implicit tsconfig.json)", async () => {
+      using dir = tempDir("issue-6326-dec-c", {
+        "node_modules/base-config/tsconfig.json": baseConfig,
+        "node_modules/base-config/package.json": JSON.stringify({ name: "base-config" }),
+        "tsconfig.json": JSON.stringify({ extends: "base-config" }),
+        "index.ts": decoratorFixture,
+      });
+
+      const { stdout, exitCode } = await run(String(dir), "index.ts");
+      expect(stdout.trim()).toBe(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    test("scoped package, extensionless subpath", async () => {
+      using dir = tempDir("issue-6326-dec-d", {
+        "node_modules/@repo/typescript-config/base.json": baseConfig,
+        "node_modules/@repo/typescript-config/package.json": JSON.stringify({ name: "@repo/typescript-config" }),
+        "tsconfig.json": JSON.stringify({ extends: "@repo/typescript-config/base" }),
+        "index.ts": decoratorFixture,
+      });
+
+      const { stdout, exitCode } = await run(String(dir), "index.ts");
+      expect(stdout.trim()).toBe(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    test("scoped package, subpath is a directory (implicit tsconfig.json)", async () => {
+      using dir = tempDir("issue-6326-dec-e", {
+        "node_modules/@repo/typescript-config/configs/tsconfig.json": baseConfig,
+        "node_modules/@repo/typescript-config/package.json": JSON.stringify({ name: "@repo/typescript-config" }),
+        "tsconfig.json": JSON.stringify({ extends: "@repo/typescript-config/configs" }),
+        "index.ts": decoratorFixture,
+      });
+
+      const { stdout, exitCode } = await run(String(dir), "index.ts");
+      expect(stdout.trim()).toBe(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    test("node_modules in a parent directory", async () => {
+      using dir = tempDir("issue-6326-dec-f", {
+        "node_modules/@repo/typescript-config/tsconfig.json": baseConfig,
+        "node_modules/@repo/typescript-config/package.json": JSON.stringify({ name: "@repo/typescript-config" }),
+        "packages/app/tsconfig.json": JSON.stringify({ extends: "@repo/typescript-config" }),
+        "packages/app/index.ts": decoratorFixture,
+      });
+
+      const { stdout, exitCode } = await run(path.join(String(dir), "packages", "app"), "index.ts");
+      expect(stdout.trim()).toBe(expected);
+      expect(exitCode).toBe(0);
+    });
   });
 });

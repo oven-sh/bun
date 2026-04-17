@@ -3987,20 +3987,81 @@ pub const Resolver = struct {
     /// directories to find it in node_modules.
     /// Returns the resolved *TSConfigJSON if found.
     fn resolvePackagePathForTSConfigExtends(r: *ThisResolver, starting_info: *const DirInfo, extends: string) ?*TSConfigJSON {
+        // Detect whether the extends value points at a subpath inside the
+        // package (e.g. "@scope/pkg/tsconfig.base.json") or is just the
+        // package name (e.g. "@scope/pkg" or "pkg"), in which case TypeScript
+        // resolves "<pkg>/tsconfig.json".
+        const has_subpath = brk: {
+            if (strings.startsWithChar(extends, '@')) {
+                // Scoped: the first '/' separates scope from package name, so a
+                // subpath requires a second '/'.
+                const first_slash = strings.indexOfChar(extends, '/') orelse break :brk false;
+                break :brk strings.indexOfChar(extends[first_slash + 1 ..], '/') != null;
+            }
+            break :brk strings.indexOfChar(extends, '/') != null;
+        };
+        // If the subpath already ends in ".json" we don't need to try the
+        // implicit "<path>.json" fallback. TypeScript allows omitting the
+        // extension (e.g. "extends": "expo/tsconfig.base").
+        const has_json_ext = strings.hasSuffixComptime(extends, ".json");
+
+        const buf = bufs(.tsconfig_path_abs);
+
         // Walk up the directory tree using the already-populated parent chain.
         var cur_dir: ?*const DirInfo = starting_info;
-        while (cur_dir) |dir| {
-            if (dir.hasNodeModules()) {
-                var parts = [_]string{ dir.abs_path, "node_modules", extends };
-                const candidate = r.fs.absBuf(&parts, bufs(.tsconfig_path_abs));
-                const persistent_path = r.fs.dirname_store.append(string, candidate) catch return null;
-                if (r.parseTSConfig(persistent_path, bun.invalid_fd) catch null) |parent_config| {
-                    return parent_config;
+        while (cur_dir) |dir| : (cur_dir = dir.getParent()) {
+            if (!dir.hasNodeModules()) continue;
+
+            var parts = [_]string{ dir.abs_path, "node_modules", extends };
+            const candidate = r.fs.absBuf(&parts, buf);
+            // 1. Try the path exactly as written: "<node_modules>/<extends>"
+            if (r.tryParseTSConfigPath(candidate)) |parent_config| {
+                return parent_config;
+            }
+            // candidate is a slice of buf starting at offset 0; we can extend
+            // it in place for the implicit-suffix probes below.
+            const base_len = candidate.len;
+
+            if (has_subpath) {
+                // 2. "<node_modules>/<extends>.json" for extensionless subpaths
+                if (!has_json_ext) {
+                    const suffix = ".json";
+                    if (base_len + suffix.len <= buf.len) {
+                        @memcpy(buf[base_len..][0..suffix.len], suffix);
+                        if (r.tryParseTSConfigPath(buf[0 .. base_len + suffix.len])) |parent_config| {
+                            return parent_config;
+                        }
+                    }
+                }
+                // 3. "<node_modules>/<extends>/tsconfig.json" in case the subpath
+                //    names a directory inside the package.
+                {
+                    const suffix = std.fs.path.sep_str ++ "tsconfig.json";
+                    if (base_len + suffix.len <= buf.len) {
+                        @memcpy(buf[base_len..][0..suffix.len], suffix);
+                        if (r.tryParseTSConfigPath(buf[0 .. base_len + suffix.len])) |parent_config| {
+                            return parent_config;
+                        }
+                    }
+                }
+            } else {
+                // "<node_modules>/<extends>/tsconfig.json" when extends is a bare
+                // package name (matches TypeScript's implicit tsconfig.json lookup).
+                const suffix = std.fs.path.sep_str ++ "tsconfig.json";
+                if (base_len + suffix.len <= buf.len) {
+                    @memcpy(buf[base_len..][0..suffix.len], suffix);
+                    if (r.tryParseTSConfigPath(buf[0 .. base_len + suffix.len])) |parent_config| {
+                        return parent_config;
+                    }
                 }
             }
-            cur_dir = dir.getParent();
         }
         return null;
+    }
+
+    fn tryParseTSConfigPath(r: *ThisResolver, candidate: string) ?*TSConfigJSON {
+        const persistent_path = r.fs.dirname_store.append(string, candidate) catch return null;
+        return r.parseTSConfig(persistent_path, bun.invalid_fd) catch null;
     }
 
     fn dirInfoUncached(

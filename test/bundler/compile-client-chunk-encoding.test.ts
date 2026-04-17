@@ -9,12 +9,13 @@ import { dirname, join } from "path";
 // test guards against treating those bytes as Latin-1 in the standalone
 // module graph, which would mojibake non-ASCII string literals.
 //
-// Skipped on Windows because dynamic import() of a sibling $bunfs module
-// resolves the specifier relative to the process executable
-// (e.g. `B/~BUN/root/app.exe`) instead of the importing module's URL, so
-// `./chunk-xxx.js` yields "Cannot find module". That is a separate bug in
-// bun's Windows module resolver for compiled binaries and unrelated to the
-// encoding change this test is guarding.
+// Skipped on Windows: dynamic import() of a sibling $bunfs module resolves
+// the specifier relative to the process executable (e.g. `B/~BUN/root/app.exe`)
+// instead of the importing module's URL, so `./chunk-xxx.js` yields
+// "Cannot find module". That is a separate pre-existing bug in bun's
+// Windows module resolver for compiled binaries — reproduces on plain main
+// without any of this PR's changes (#29387) — and is unrelated to the
+// encoding behavior this test guards.
 test.skipIf(isWindows)(
   "compiled client-side chunk with non-ASCII source can be imported on the server",
   async () => {

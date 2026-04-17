@@ -1,4 +1,86 @@
 //! Shared implementation of Web and Node `Worker`
+//!
+//! Lifetime / threading model
+//! ==========================
+//!
+//! There are three objects, two threads, and one ownership rule:
+//!
+//!   ┌─ PARENT THREAD ──────────────────────────────────────────────────────┐
+//!   │  JSWorker (GC'd JSCell)                                              │
+//!   │    └─ Ref<WebCore::Worker>                                           │
+//!   │                                                                      │
+//!   │  WebCore::Worker (ThreadSafeRefCounted, EventTarget)                 │
+//!   │    ├─ void* impl_  ─────────────────────────────┐ raw pointer to ↓   │
+//!   │    └─ ScriptExecutionContext* (parent ctx)      │                    │
+//!   └────────────────────────────────────────────────  │  ──────────────────┘
+//!                                                      ▼
+//!   ┌─ EITHER THREAD (owned by ~Worker) ──────────────────────────────────┐
+//!   │  Zig WebWorker (this struct, default_allocator)                      │
+//!   │    ├─ vm: ?*VirtualMachine    – worker thread writes; vm_lock guards │
+//!   │    │                            cross-thread read in terminate()     │
+//!   │    ├─ status / requested_terminate – atomics                         │
+//!   │    ├─ parent_poll_ref          – PARENT-THREAD-ONLY (KeepAlive)      │
+//!   │    └─ parent / cpp_worker      – set once in create()                │
+//!   └──────────────────────────────────────────────────────────────────────┘
+//!
+//! Ownership rule: the Zig WebWorker struct is OWNED BY the C++ Worker. It is
+//! allocated in `create()` and freed in `WebCore::Worker::~Worker()` via
+//! `WebWorker__destroy`. The worker thread NEVER frees it. Because JSWorker
+//! holds a `Ref<Worker>`, `impl_` is valid for the entire time JS can call
+//! `terminate()`/`ref()`/`unref()` — those calls cannot UAF.
+//!
+//! Refcounting on `WebCore::Worker`:
+//!   - JSWorker wrapper holds +1 (dropped when GC'd)
+//!   - `Worker::create()` takes +1 "on Zig's behalf" after `WebWorker__create`
+//!     succeeds. This +1 is dropped on the PARENT thread inside `dispatchExit`'s
+//!     posted close-event task (or in `updatePtr()` on spawn failure). It is
+//!     never dropped on the worker thread, so `~Worker` (and the
+//!     `EventListenerMap` it tears down) never runs on the worker thread. If
+//!     posting fails because the parent context is gone, the +1 is leaked —
+//!     parent VM teardown is in progress so the leak is bounded.
+//!
+//! Worker thread lifecycle (`startWithErrorHandling` → `start` → `spin` →
+//! `exitAndDeinit`):
+//!   1. spin() runs the worker's event loop until it drains or
+//!      `requested_terminate` is observed.
+//!   2. exitAndDeinit() runs ON THE WORKER THREAD. It:
+//!        - sets `status = .terminated`
+//!        - under `vm_lock`: nulls `vm` (so a racing `notifyNeedTermination`
+//!          sees null and skips `wakeup()` instead of touching freed memory)
+//!        - copies `arena`/`cpp_worker`/exit_code to locals so nothing reads
+//!          `this.*` after the next step
+//!        - calls `WebWorker__dispatchExit`, which on the worker thread:
+//!            a) tears down the worker's JSC VM (collectNow, vm.deref×2)
+//!            b) THEN posts the close-event task to the parent context
+//!          The close-event task runs ON THE PARENT THREAD and does:
+//!            - dispatch the `close` event
+//!            - `WebWorker__releaseParentPollRef` (parent-thread unref)
+//!            - drop the Zig-held `Worker` ref
+//!          (a)-before-(b) keeps the parent process alive through the worker's
+//!          collectNow() — once parent_poll_ref is released the parent can exit.
+//!        - frees the worker's arena and exits the thread. `this` may already
+//!          be freed by the time arena.deinit() runs (the parent's close task
+//!          can complete and `~Worker` can fire in between); that's fine
+//!          because nothing here dereferences `this` after dispatchExit.
+//!
+//! `parent_poll_ref` (the keep-alive on the parent's event loop) is mutated
+//! ONLY on the parent thread:
+//!   - `create()`      – ref   (parent thread)
+//!   - `setRef()`      – ref/unref via JS .ref()/.unref()  (parent thread)
+//!   - `releaseParentPollRef()` – unref in close-event task (parent thread)
+//!   - `WebWorker__updatePtr` spawn-fail path – unref       (parent thread)
+//! `KeepAlive.status` is non-atomic, so the worker thread MUST NOT touch it.
+//!
+//! `vm_lock` is held only briefly around three sites: `start()` setting `vm`,
+//! `exitAndDeinit()` nulling `vm`, and `notifyNeedTermination()` reading `vm`
+//! to call `wakeup()`. It exists solely to close the TOCTOU between the parent
+//! reading a non-null `vm` and the worker freeing the arena that contains it.
+//!
+//! Known gaps vs Node.js (not handled here): the worker thread is detached,
+//! not joined, so `await worker.terminate()` resolves before the OS thread is
+//! fully gone; `terminate()` does not call `vm->TerminateExecution()` so a
+//! worker stuck in `while(true){}` never observes it; nested workers are not
+//! stopped/joined when their parent exits.
 
 const WebWorker = @This();
 

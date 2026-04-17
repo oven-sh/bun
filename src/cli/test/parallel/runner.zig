@@ -59,18 +59,17 @@ pub fn runAsCoordinator(
             reporter.reporters.junit = null;
         }
     }
-    const base_envp = try vm.transpiler.env.map.createNullDelimitedEnvMap(arena.allocator());
-    // Each worker gets the shared environment plus a unique JEST_WORKER_ID and
-    // BUN_TEST_WORKER_ID (1-indexed, matching Jest) so tests can pick distinct
-    // ports/databases.
+    // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed,
+    // matching Jest) so tests can pick distinct ports/databases. Serialize the
+    // env map once per worker after .put() — appending after the fact would
+    // create duplicate entries when the parent already has the variable set,
+    // and POSIX getenv() returns the first match.
     const envps = try arena.allocator().alloc([:null]?[*:0]const u8, K);
     for (envps, 0..) |*envp, i| {
-        const id = try std.fmt.allocPrintSentinel(arena.allocator(), "{d}", .{i + 1}, 0);
-        const slot = try arena.allocator().allocSentinel(?[*:0]const u8, base_envp.len + 2, null);
-        @memcpy(slot[0..base_envp.len], base_envp);
-        slot[base_envp.len] = try std.fmt.allocPrintSentinel(arena.allocator(), "JEST_WORKER_ID={s}", .{id}, 0);
-        slot[base_envp.len + 1] = try std.fmt.allocPrintSentinel(arena.allocator(), "BUN_TEST_WORKER_ID={s}", .{id}, 0);
-        envp.* = slot;
+        const id = try std.fmt.allocPrint(arena.allocator(), "{d}", .{i + 1});
+        bun.handleOom(vm.transpiler.env.map.put("JEST_WORKER_ID", id));
+        bun.handleOom(vm.transpiler.env.map.put("BUN_TEST_WORKER_ID", id));
+        envp.* = try vm.transpiler.env.map.createNullDelimitedEnvMap(arena.allocator());
     }
     const argv = try buildWorkerArgv(arena.allocator(), ctx);
 

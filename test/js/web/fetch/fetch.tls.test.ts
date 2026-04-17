@@ -152,7 +152,9 @@ describe.concurrent("fetch-tls", () => {
         socket.once("data", () => socket.destroy());
       });
       try {
-        await new Promise<void>(resolve => server.listen(0, resolve));
+        const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+        server.listen(0, onListening);
+        await listening;
         const port = (server.address() as import("node:net").AddressInfo).port;
 
         const controller = withAbortSignal ? new AbortController() : undefined;
@@ -187,6 +189,10 @@ describe.concurrent("fetch-tls", () => {
         controller?.abort();
         if (controller) expect(controller.signal.aborted).toBe(true);
       } finally {
+        // Not awaited: Bun's tls.Server currently doesn't decrement its
+        // connection count when the server-side socket is destroyed, so the
+        // close callback never fires here. The listening handle is released
+        // immediately regardless.
         server.close();
       }
     });

@@ -343,16 +343,18 @@ pub const PathWatcherManager = struct {
         }
 
         fn schedule(manager: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) !void {
-            // keep the path alive
-            manager._incrementPathRef(path.path);
-            errdefer manager._decrementPathRef(path.path);
-
-            // unrefPendingDirectory() may cascade to PathWatcher.deinit()
-            // → manager.unregisterWatcher() which acquires manager.mutex.
-            // Defer it so it runs after manager.mutex is released (defers
-            // fire LIFO). Same pattern as unregisterWatcher/unrefPendingTask.
+            // unrefPendingDirectory() may cascade through PathWatcher.deinit()
+            // → manager.unregisterWatcher() → manager.deinit() → destroy(manager).
+            // Register this defer FIRST so it fires LAST (after the errdefer
+            // below and after manager.mutex is released).
             var needs_unref_pending_directory = false;
             defer if (needs_unref_pending_directory) watcher.unrefPendingDirectory();
+
+            // keep the path alive. errdefer registered after the defer above so
+            // LIFO ordering fires _decrementPathRef BEFORE unrefPendingDirectory
+            // — otherwise the latter could destroy(manager) and this would UAF.
+            manager._incrementPathRef(path.path);
+            errdefer manager._decrementPathRef(path.path);
 
             var routine: *DirectoryRegisterTask = undefined;
             {

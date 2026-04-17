@@ -116,6 +116,11 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             current_package_json.root.asProperty("optionalDependencies") == null and
             current_package_json.root.asProperty("peerDependencies") == null)
         {
+            if (manager.options.global and log_level != .silent) {
+                for (updates.*) |request| {
+                    if (request.name.len > 0) warnGlobalPackageNotFound(request.name);
+                }
+            }
             Output.prettyErrorln("package.json doesn't have dependencies, there's nothing to {s}!", .{@tagName(subcommand)});
             Global.exit(0);
         }
@@ -569,18 +574,36 @@ fn packageNameFromNodeModulesPath(path_: string) ?string {
     var seen_sep: usize = 0;
     var end: usize = 0;
     while (end < remain.len) : (end += 1) {
-        const c = remain[end];
-        if (c == '/' or (Environment.isWindows and c == '\\')) {
+        if (isPathSep(remain[end])) {
             seen_sep += 1;
             if (!is_scoped or seen_sep == 2) break;
         }
     }
     remain = remain[0..end];
 
+    // Strip a trailing separator, e.g. `node_modules/@scope/` with no package name after it.
+    while (remain.len > 0 and isPathSep(remain[remain.len - 1])) {
+        remain = remain[0 .. remain.len - 1];
+    }
+
     if (remain.len == 0 or strings.eqlComptime(remain, ".bin")) return null;
-    if (is_scoped and seen_sep == 0) return null;
+
+    if (is_scoped) {
+        // Require `@scope/<name>` with a non-empty <name>.
+        var i: usize = 1;
+        while (i < remain.len and !isPathSep(remain[i])) : (i += 1) {}
+        if (i + 1 >= remain.len) return null;
+        // On Windows the separator between scope and name may be `\`; since we return a slice
+        // into the (possibly const) input we can't normalize it here, so skip the suggestion and
+        // let the caller fall back to the generic $PATH message.
+        if (Environment.isWindows and remain[i] == '\\') return null;
+    }
 
     return remain;
+}
+
+inline fn isPathSep(c: u8) bool {
+    return c == '/' or (Environment.isWindows and c == '\\');
 }
 
 pub fn updatePackageJSONAndInstallCatchError(

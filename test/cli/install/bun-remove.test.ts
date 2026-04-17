@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmod, mkdir, symlink, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isWindows, tempDir, tmpdirSync } from "harness";
 import { join, relative } from "path";
 import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
 
@@ -287,10 +287,9 @@ it("should retain a new line in the end of package.json", async () => {
 });
 
 describe("bun remove -g with a package that isn't installed", () => {
-  // Sets up a throwaway $BUN_INSTALL with one global dependency (a local file: package) so that
-  // the global package.json has a non-empty "dependencies" section.
-  async function setupGlobalDir() {
-    const root = tmpdirSync();
+  // Sets up a throwaway $BUN_INSTALL under `root`. When `withExistingDep` is true the global
+  // package.json gets one local file: dependency so its "dependencies" section is non-empty.
+  async function setupGlobalDir(root: string, { withExistingDep = true } = {}) {
     const bunInstall = join(root, "bun-install");
     const globalDir = join(bunInstall, "install", "global");
     const globalBin = join(bunInstall, "bin");
@@ -299,18 +298,15 @@ describe("bun remove -g with a package that isn't installed", () => {
 
     await mkdir(globalDir, { recursive: true });
     await mkdir(globalBin, { recursive: true });
-    await mkdir(depDir, { recursive: true });
     await mkdir(extraBin, { recursive: true });
 
-    await writeFile(join(depDir, "package.json"), JSON.stringify({ name: "existing-dep", version: "1.0.0" }));
-    await writeFile(
-      join(globalDir, "package.json"),
-      JSON.stringify({
-        dependencies: {
-          "existing-dep": `file:${depDir.replace(/\\/g, "/")}`,
-        },
-      }),
-    );
+    const pkg: Record<string, unknown> = { name: "global" };
+    if (withExistingDep) {
+      await mkdir(depDir, { recursive: true });
+      await writeFile(join(depDir, "package.json"), JSON.stringify({ name: "existing-dep", version: "1.0.0" }));
+      pkg.dependencies = { "existing-dep": `file:${depDir.replace(/\\/g, "/")}` };
+    }
+    await writeFile(join(globalDir, "package.json"), JSON.stringify(pkg));
 
     return { root, bunInstall, globalDir, globalBin, extraBin };
   }
@@ -326,7 +322,8 @@ describe("bun remove -g with a package that isn't installed", () => {
   }
 
   it("warns when the package is not installed globally", async () => {
-    const { bunInstall, globalDir, extraBin } = await setupGlobalDir();
+    using dir = tempDir("remove-g", {});
+    const { bunInstall, globalDir, extraBin } = await setupGlobalDir(String(dir));
 
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "remove", "-g", "definitely-not-installed"],
@@ -350,8 +347,30 @@ describe("bun remove -g with a package that isn't installed", () => {
     });
   });
 
+  it("warns even when the global package.json has no dependency sections", async () => {
+    using dir = tempDir("remove-g", {});
+    const { bunInstall, globalDir, extraBin } = await setupGlobalDir(String(dir), { withExistingDep: false });
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "remove", "-g", "definitely-not-installed"],
+      cwd: globalDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: globalEnv(bunInstall, extraBin),
+    });
+
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+    expect(err).toContain("warn:");
+    expect(err).toContain("definitely-not-installed is not in global package.json");
+    expect(err).toContain("package.json doesn't have dependencies");
+    expect(out).toContain("bun remove");
+    expect(code).toBe(0);
+  });
+
   it("mentions the $PATH location when the name is a binary on $PATH", async () => {
-    const { bunInstall, globalDir, extraBin } = await setupGlobalDir();
+    using dir = tempDir("remove-g", {});
+    const { bunInstall, globalDir, extraBin } = await setupGlobalDir(String(dir));
 
     // a binary on $PATH that is not managed by bun and doesn't point at node_modules/
     const target = join(extraBin, "somebin-target");
@@ -383,7 +402,8 @@ describe("bun remove -g with a package that isn't installed", () => {
   });
 
   it.skipIf(isWindows)("suggests the package name when the binary on $PATH points into node_modules/", async () => {
-    const { root, bunInstall, globalDir, extraBin } = await setupGlobalDir();
+    using dir = tempDir("remove-g", {});
+    const { root, bunInstall, globalDir, extraBin } = await setupGlobalDir(String(dir));
 
     // simulate e.g. `tsc` -> `.../node_modules/typescript/bin/tsc`
     const nmBin = join(root, "some-other-tool", "node_modules", "some-real-package", "bin");
@@ -414,7 +434,8 @@ describe("bun remove -g with a package that isn't installed", () => {
   it.skipIf(isWindows)(
     "suggests scoped package names when the binary on $PATH points into node_modules/@scope/name/",
     async () => {
-      const { root, bunInstall, globalDir, extraBin } = await setupGlobalDir();
+      using dir = tempDir("remove-g", {});
+      const { root, bunInstall, globalDir, extraBin } = await setupGlobalDir(String(dir));
 
       const nmBin = join(root, "other", "node_modules", "@my-scope", "the-pkg", "bin");
       await mkdir(nmBin, { recursive: true });
@@ -442,7 +463,8 @@ describe("bun remove -g with a package that isn't installed", () => {
   );
 
   it("does not warn when the package is installed globally", async () => {
-    const { bunInstall, globalDir, extraBin } = await setupGlobalDir();
+    using dir = tempDir("remove-g", {});
+    const { bunInstall, globalDir, extraBin } = await setupGlobalDir(String(dir));
 
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "remove", "-g", "existing-dep"],
@@ -458,7 +480,7 @@ describe("bun remove -g with a package that isn't installed", () => {
     expect(err).not.toContain("error:");
     expect(out).toContain("bun remove");
     expect(code).toBe(0);
-    expect(await file(join(globalDir, "package.json")).json()).toEqual({});
+    expect(await file(join(globalDir, "package.json")).json()).toEqual({ name: "global" });
   });
 });
 

@@ -84,7 +84,7 @@ pub fn start(this: *Worker) !void {
             .new_process_group = true,
             .linux_pdeathsig = if (Environment.isLinux) std.posix.SIG.KILL else null,
         };
-        var spawned = try (try bun.spawn.spawnProcess(&options, coord.argv.ptr, coord.envp)).unwrap();
+        var spawned = try (try bun.spawn.spawnProcess(&options, coord.argv.ptr, coord.envps[this.idx].ptr)).unwrap();
         defer spawned.extra_pipes.deinit();
         this.process = spawned.toProcess(coord.vm.eventLoop(), false);
         if (spawned.stdout) |fd| try this.out.reader.start(fd, true).unwrap();
@@ -117,7 +117,7 @@ pub fn start(this: *Worker) !void {
             .windows = .{ .loop = jsc.EventLoopHandle.init(coord.vm) },
             .stream = true,
         };
-        var spawned = try (try bun.spawn.spawnProcess(&options, coord.argv.ptr, coord.envp)).unwrap();
+        var spawned = try (try bun.spawn.spawnProcess(&options, coord.argv.ptr, coord.envps[this.idx].ptr)).unwrap();
         defer spawned.extra_pipes.deinit();
         this.process = spawned.toProcess(coord.vm.eventLoop(), false);
 

@@ -55,7 +55,19 @@ pub fn runAsCoordinator(
             reporter.reporters.junit = null;
         }
     }
-    const envp = try vm.transpiler.env.map.createNullDelimitedEnvMap(arena.allocator());
+    const base_envp = try vm.transpiler.env.map.createNullDelimitedEnvMap(arena.allocator());
+    // Each worker gets the shared environment plus a unique JEST_WORKER_ID and
+    // BUN_TEST_WORKER_ID (1-indexed, matching Jest) so tests can pick distinct
+    // ports/databases.
+    const envps = try arena.allocator().alloc([:null]?[*:0]const u8, K);
+    for (envps, 0..) |*envp, i| {
+        const id = try std.fmt.allocPrintSentinel(arena.allocator(), "{d}", .{i + 1}, 0);
+        const slot = try arena.allocator().allocSentinel(?[*:0]const u8, base_envp.len + 2, null);
+        @memcpy(slot[0..base_envp.len], base_envp);
+        slot[base_envp.len] = try std.fmt.allocPrintSentinel(arena.allocator(), "JEST_WORKER_ID={s}", .{id}, 0);
+        slot[base_envp.len + 1] = try std.fmt.allocPrintSentinel(arena.allocator(), "BUN_TEST_WORKER_ID={s}", .{id}, 0);
+        envp.* = slot;
+    }
     const argv = try buildWorkerArgv(arena.allocator(), ctx);
 
     // Sort lexicographically so adjacent indices share parent directories.
@@ -83,7 +95,7 @@ pub fn runAsCoordinator(
         .files = sorted,
         .cwd = bun.fs.FileSystem.instance.top_level_dir,
         .argv = argv,
-        .envp = envp,
+        .envps = envps,
         .workers = workers,
         .retries = retries,
         .pending_retry = pending_retry,

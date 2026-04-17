@@ -78,6 +78,12 @@ phase: enum {
 out_fd: ?bun.FD = null,
 use_pwrite: bool = Environment.isPosix,
 use_lseek: bool = true,
+/// Per-entry write cursors, carried across `writeDataBlock` calls so
+/// the sparse-file handling in `closeOutputFile` matches
+/// `Archive.readDataIntoFd` exactly (which tracks these across its own
+/// block loop). Reset in `beginEntry` when a new output file is opened.
+entry_actual_offset: i64 = 0,
+entry_final_offset: i64 = 0,
 
 /// Temp directory files are written into before being renamed into the
 /// cache. Lazily opened on the first drain so the HTTP thread never
@@ -115,6 +121,14 @@ package_manager: *PackageManager,
 pub const new = bun.TrivialNew(@This());
 
 const log = Output.scoped(.TarballStream, .hidden);
+
+/// Minimum Content-Length for which the streaming path is used. Below
+/// this the whole body is buffered as before; the resumable libarchive
+/// state machine is only worth its per-chunk overhead for tarballs that
+/// would otherwise consume a noticeable amount of memory.
+pub fn minSize() usize {
+    return @intCast(bun.env_var.BUN_INSTALL_STREAMING_MIN_SIZE.get());
+}
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -323,7 +337,7 @@ fn step(this: *TarballStream) !void {
                     .retry => return,
                     .ok, .warn => {
                         if (this.out_fd) |fd| {
-                            try writeDataBlock(fd, block, &this.use_pwrite, &this.use_lseek);
+                            try this.writeDataBlock(fd, block);
                         }
                     },
                     else => {
@@ -385,6 +399,13 @@ fn openDestination(this: *TarballStream) !void {
 
 fn closeOutputFile(this: *TarballStream) void {
     if (this.out_fd) |fd| {
+        // Same trailing-hole handling as `Archive.readDataIntoFd`:
+        // extend the file to cover the furthest block we were asked
+        // to write even if the pwrite/lseek fallback path left
+        // `actual_offset` behind.
+        if (this.entry_final_offset > this.entry_actual_offset) {
+            _ = bun.sys.ftruncate(fd, this.entry_final_offset);
+        }
         fd.close();
         this.out_fd = null;
     }
@@ -555,6 +576,8 @@ fn beginEntry(this: *TarballStream, entry: *lib.Archive.Entry) !void {
             }
 
             this.out_fd = fd;
+            this.entry_actual_offset = 0;
+            this.entry_final_offset = 0;
             this.phase = .want_data;
         },
         else => {
@@ -656,34 +679,57 @@ fn applyWindowsNpmPathEscapes(path: [:0]bun.OSPathChar) void {
 /// Write one data block from `archive_read_data_block`. Mirrors the
 /// sparse/pwrite handling in `Archive.readDataIntoFd` but operates on a
 /// single block so it can be interleaved with ARCHIVE_RETRY yields.
-fn writeDataBlock(
-    fd: bun.FD,
-    block: lib.Archive.Block,
-    use_pwrite: *bool,
-    use_lseek: *bool,
-) !void {
+/// `entry_actual_offset` / `entry_final_offset` persist across calls so
+/// `closeOutputFile` can perform the same trailing `ftruncate` the
+/// buffered path does after its block loop.
+fn writeDataBlock(this: *TarballStream, fd: bun.FD, block: lib.Archive.Block) !void {
     const file = bun.sys.File{ .handle = fd };
     const data = block.bytes;
     if (data.len == 0) return;
 
+    this.entry_final_offset = @max(
+        this.entry_final_offset,
+        block.offset + @as(i64, @intCast(data.len)),
+    );
+
     if (comptime Environment.isPosix) {
-        if (use_pwrite.*) {
+        if (this.use_pwrite) {
             switch (file.pwriteAll(data, block.offset)) {
-                .result => return,
-                .err => use_pwrite.* = false,
+                .result => {
+                    this.entry_actual_offset = @max(
+                        this.entry_actual_offset,
+                        block.offset + @as(i64, @intCast(data.len)),
+                    );
+                    return;
+                },
+                .err => this.use_pwrite = false,
             }
         }
     }
 
-    if (use_lseek.*) {
-        switch (bun.sys.setFileOffset(fd, @intCast(block.offset))) {
-            .result => {},
-            .err => use_lseek.* = false,
+    if (block.offset != this.entry_actual_offset) seek: {
+        if (this.use_lseek) {
+            switch (bun.sys.setFileOffset(fd, @intCast(block.offset))) {
+                .result => {
+                    this.entry_actual_offset = block.offset;
+                    break :seek;
+                },
+                .err => this.use_lseek = false,
+            }
+        }
+        if (block.offset > this.entry_actual_offset) {
+            const zero_count: usize = @intCast(block.offset - this.entry_actual_offset);
+            switch (lib.Archive.writeZerosToFile(file, zero_count)) {
+                .ok => this.entry_actual_offset = block.offset,
+                else => return error.Fail,
+            }
+        } else {
+            return error.Fail;
         }
     }
 
     switch (file.writeAll(data)) {
-        .result => {},
+        .result => this.entry_actual_offset += @intCast(data.len),
         .err => |e| return bun.errnoToZigErr(e.errno),
     }
 }
@@ -695,12 +741,12 @@ fn finish(this: *TarballStream) void {
 
     this.closeOutputFile();
 
-    // At this point the HTTP thread has delivered the final
-    // `has_more=false` chunk (that's the only way `closed` gets set),
-    // so no more writes to the NetworkTask's `response_buffer` are
-    // possible. The main thread reads only `streaming_committed` when
-    // it later processes the NetworkTask, so freeing the buffer here
-    // is safe and matches the `defer buffer.deinit()` in the buffered
+    // The HTTP thread has delivered the final `has_more=false` chunk
+    // (that's the only way `closed` gets set) and `notify()` does not
+    // touch `response_buffer` again after that hand-off, so we own it
+    // now. The main thread reads only `streaming_committed` when it
+    // later processes the NetworkTask, so freeing the buffer here is
+    // safe and matches the `defer buffer.deinit()` in the buffered
     // `.extract` arm of `Task.callback`.
     network.response_buffer.deinit();
 
@@ -711,21 +757,24 @@ fn finish(this: *TarballStream) void {
     // `task.request.extract.tarball.temp_dir` become invalid once
     // `this.deinit()` runs / the main thread recycles the Task.
     if (task.status != .success and this.tmpname.len > 0) {
+        // `populateResult` closes `dest` on the success path before the
+        // rename; the early-return failure paths leave it open, so close
+        // it here first — Windows can't remove an open directory.
+        // `deinit()` null-checks so this is not a double-close.
+        if (this.dest) |*d| {
+            d.close();
+            this.dest = null;
+        }
         task.request.extract.tarball.temp_dir.deleteTree(this.tmpname) catch {};
     }
 
     this.deinit();
 
-    if (task.status == .success) {
-        if (task.apply_patch_task) |pt| {
-            defer pt.deinit();
-            bun.handleOom(pt.apply());
-            if (pt.callback.apply.logger.errors > 0) {
-                defer pt.callback.apply.logger.deinit();
-                pt.callback.apply.logger.print(Output.errorWriter()) catch {};
-            }
-        }
-    }
+    // `task.apply_patch_task` is intentionally not touched: the
+    // buffered `.extract` path (`enqueueExtractNPMPackage` →
+    // `Task.callback`) never populates it for npm tarballs either —
+    // patching is handled later by the install phase.
+    //
     // Publish last: once the task is on `resolve_tasks` the main
     // thread may immediately recycle it *and* the NetworkTask it
     // references, so nothing below this line may touch either.

@@ -9,6 +9,7 @@ import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 
@@ -110,11 +111,12 @@ function makeEntries(): Entry[] {
       body: Buffer.from("long path ok\n"),
     },
   ];
-  // Bulk entries: SHA-chained bytes so gzip can't collapse them away
-  // and the compressed tarball is large enough to span many chunks
-  // (→ many ARCHIVE_RETRY yields in libarchive).
-  for (let i = 0; i < 40; i++) {
-    const bytes = Buffer.alloc(2 * 1024);
+  // Bulk entries: SHA-chained bytes so gzip can't collapse them away.
+  // Sized so the compressed tarball exceeds the default
+  // BUN_INSTALL_STREAMING_MIN_SIZE (2 MB) — streaming only commits
+  // when Content-Length is above that threshold.
+  for (let i = 0; i < 48; i++) {
+    const bytes = Buffer.alloc(48 * 1024);
     let seed = createHash("sha256").update(`chunk-${i}`).digest();
     for (let off = 0; off < bytes.length; off += 32) {
       seed.copy(bytes, off);
@@ -130,63 +132,68 @@ function makeEntries(): Entry[] {
 // a microtask yield between each so `NetworkTask.notify` is called
 // repeatedly with `has_more=true`, which is what commits the request
 // to the streaming extractor.
+//
+// Uses node:http rather than Bun.serve so the response can carry both
+// an explicit Content-Length *and* be drip-fed — Bun.serve forces
+// `Transfer-Encoding: chunked` for stream bodies, which would bypass
+// the BUN_INSTALL_STREAMING_MIN_SIZE gate.
 // -------------------------------------------------------------------
 
-function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chunkBytes: number) {
+async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chunkBytes: number) {
   let tarballHits = 0;
-  const server = Bun.serve({
-    port: 0,
-    fetch(req) {
-      const url = new URL(req.url);
-      if (url.pathname.endsWith("/stream-pkg")) {
-        const base = `http://${server.hostname}:${server.port}`;
-        return Response.json({
-          name: "stream-pkg",
-          "dist-tags": { latest: "1.0.0" },
-          versions: {
-            "1.0.0": {
-              name: "stream-pkg",
-              version: "1.0.0",
-              dist: {
-                shasum,
-                integrity,
-                tarball: `${base}/stream-pkg/-/stream-pkg-1.0.0.tgz`,
-              },
+  const server: Server = createServer((req, res) => {
+    const url = new URL(req.url!, "http://x");
+    if (url.pathname.endsWith("/stream-pkg")) {
+      const body = JSON.stringify({
+        name: "stream-pkg",
+        "dist-tags": { latest: "1.0.0" },
+        versions: {
+          "1.0.0": {
+            name: "stream-pkg",
+            version: "1.0.0",
+            dist: {
+              shasum,
+              integrity,
+              tarball: `http://127.0.0.1:${port}/stream-pkg/-/stream-pkg-1.0.0.tgz`,
             },
           },
-        });
-      }
-      if (url.pathname.endsWith("/stream-pkg-1.0.0.tgz")) {
-        tarballHits++;
-        return new Response(
-          new ReadableStream({
-            type: "direct",
-            async pull(controller) {
-              for (let i = 0; i < tgz.length; i += chunkBytes) {
-                controller.write(tgz.subarray(i, Math.min(i + chunkBytes, tgz.length)));
-                await controller.flush();
-                // Yield so each write lands as its own socket packet.
-                await Bun.sleep(0);
-              }
-              controller.close();
-            },
-          }),
-          {
-            headers: {
-              "content-type": "application/octet-stream",
-              "content-length": String(tgz.length),
-            },
-          },
-        );
-      }
-      return new Response("not found", { status: 404 });
-    },
+        },
+      });
+      res.setHeader("content-type", "application/json");
+      res.setHeader("content-length", String(Buffer.byteLength(body)));
+      res.end(body);
+      return;
+    }
+    if (url.pathname.endsWith("/stream-pkg-1.0.0.tgz")) {
+      tarballHits++;
+      res.setHeader("content-type", "application/octet-stream");
+      res.setHeader("content-length", String(tgz.length));
+      // Prevent Nagle coalescing so each write() is its own packet.
+      req.socket.setNoDelay(true);
+      let i = 0;
+      const step = () => {
+        if (i >= tgz.length) {
+          res.end();
+          return;
+        }
+        res.write(tgz.subarray(i, Math.min(i + chunkBytes, tgz.length)));
+        i += chunkBytes;
+        setImmediate(step);
+      };
+      step();
+      return;
+    }
+    res.statusCode = 404;
+    res.end("not found");
   });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
   return {
-    server,
+    url: `http://127.0.0.1:${port}/`,
     get tarballHits() {
       return tarballHits;
     },
+    [Symbol.asyncDispose]: () => new Promise<void>(resolve => server.close(() => resolve())),
   };
 }
 
@@ -213,16 +220,21 @@ describe("streaming tarball extraction", () => {
   // Keep chunks small enough that tar headers, pax payloads and file
   // bodies all span multiple read-callback invocations, but not so
   // small that the drip-feed itself dominates the test runtime on a
-  // debug build.
-  const chunkBytes = 1024;
+  // debug build. 4 KB × ~580 chunks ≈ 2.3 MB.
+  const chunkBytes = 4096;
+
+  // Sanity: the generated tarball must be larger than the default
+  // streaming threshold, otherwise the "streaming" case silently
+  // takes the buffered fallback and the assertion below becomes a
+  // false pass.
+  expect(tgz.length).toBeGreaterThan(2 * 1024 * 1024);
 
   test.each([
     ["streaming", {}],
     ["buffered", { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }],
   ] as const)("extracts a drip-fed tarball correctly (%s)", async (label, env) => {
-    const reg = makeRegistry(tgz, shasum, integrity, chunkBytes);
-    await using server = reg.server;
-    const registry = `http://${server.hostname}:${server.port}/`;
+    await using reg = await makeRegistry(tgz, shasum, integrity, chunkBytes);
+    const registry = reg.url;
 
     using dir = tempDir("streaming-extract", {
       "package.json": JSON.stringify({
@@ -255,7 +267,37 @@ describe("streaming tarball extraction", () => {
       expect([path, got.equals(body)]).toEqual([path, true]);
     }
 
-    expect(await readdirSorted(join(pkgRoot, "data"))).toHaveLength(40);
+    expect(await readdirSorted(join(pkgRoot, "data"))).toHaveLength(48);
+    expect(exitCode).toBe(0);
+  });
+
+  test("tarballs below BUN_INSTALL_STREAMING_MIN_SIZE take the buffered path", async () => {
+    // Reuse the same large tarball but raise the threshold above it.
+    // The server sends Content-Length, so `notify()` sees a body_size
+    // below the minimum and never commits to streaming even though
+    // the body arrives over many packets.
+    await using reg = await makeRegistry(tgz, shasum, integrity, chunkBytes);
+    const registry = reg.url;
+
+    using dir = tempDir("streaming-extract-small", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "stream-pkg": "1.0.0" },
+      }),
+      "bunfig.toml": `[install]\nregistry = "${registry}"\n`,
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir), registry, {
+      BUN_INSTALL_STREAMING_MIN_SIZE: String(tgz.length + 1),
+    });
+    expect(stderr).not.toContain("Streamed ");
+    expect(stderr).not.toContain("error:");
+    const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+    for (const { path, body } of entries) {
+      const got = readFileSync(join(pkgRoot, path));
+      expect([path, got.equals(body)]).toEqual([path, true]);
+    }
     expect(exitCode).toBe(0);
   });
 
@@ -269,9 +311,8 @@ describe("streaming tarball extraction", () => {
     const other = buildTarball([
       { path: "package.json", body: Buffer.from('{"name":"stream-pkg","version":"1.0.0"}\n') },
     ]);
-    const reg = makeRegistry(tgz, other.shasum, other.integrity, chunkBytes);
-    await using server = reg.server;
-    const registry = `http://${server.hostname}:${server.port}/`;
+    await using reg = await makeRegistry(tgz, other.shasum, other.integrity, chunkBytes);
+    const registry = reg.url;
 
     using dir = tempDir("streaming-extract-bad", {
       "package.json": JSON.stringify({

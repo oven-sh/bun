@@ -29,13 +29,13 @@ tarball_stream: ?*TarballStream = null,
 /// Extract `Task` pre-created on the main thread so the HTTP thread can
 /// schedule it on the worker pool as soon as the first body chunk arrives.
 streaming_extract_task: ?*Task = null,
-/// Set by the HTTP thread the first time it commits this request to the
-/// streaming path, and never cleared. The main thread reads this (via
-/// `isStreamingExtractInFlight`) after the HTTP response has finished
-/// to decide whether to skip its own extract enqueue; using a sticky
-/// bool here (rather than `tarball_stream != null`) avoids a race where
-/// the drain task frees the stream before the main thread processes
-/// the NetworkTask.
+/// Set by the HTTP thread the first time it commits this request to
+/// the streaming path. Once true, `notify` never pushes this task to
+/// `async_network_task_queue` — the extract Task published by
+/// `TarballStream.finish()` owns the NetworkTask's lifetime instead
+/// (its `resolve_tasks` handler returns it to the pool). Also read by
+/// the main-thread fallback / retry paths in `runTasks.zig` to assert
+/// the stream was never started.
 streaming_committed: bool = false,
 /// Backing store for the streaming signal the HTTP client polls.
 signal_store: HTTP.Signals.Store = .{},
@@ -64,26 +64,32 @@ pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, result: bun.http.HTTPC
         const chunk = this.response_buffer.list.items;
 
         // Only commit to streaming extraction once we've seen a 2xx
-        // status. For 4xx/5xx we fall back to the buffered path so the
-        // existing retry / error-reporting code in runTasks.zig keeps
-        // working and the user sees "404" instead of "archive error".
+        // status *and* the tarball is large enough to be worth the
+        // overhead. For small bodies, or any 4xx/5xx / transport error,
+        // fall back to the buffered path so the existing retry and
+        // error-reporting code in runTasks.zig keeps working.
         const ok_status = stream.status_code >= 200 and stream.status_code <= 299;
+        const big_enough = switch (result.body_size) {
+            .content_length => |len| len >= TarballStream.minSize(),
+            // No Content-Length (chunked encoding): we can't know up
+            // front, so stream — it avoids an unbounded buffer.
+            else => true,
+        };
         const committed = this.streaming_committed;
 
-        if (committed or (ok_status and result.fail == null)) {
+        if (committed or (ok_status and big_enough and result.fail == null)) {
             if (result.has_more) {
                 if (chunk.len > 0) {
-                    // `streaming_committed` is what the main thread
-                    // checks to skip its own extract enqueue. The
-                    // drain task itself is scheduled by `onChunk`
+                    // The drain task is scheduled by `onChunk`
                     // (guarded by its own `draining` atomic) so it
                     // runs at most once at a time, releases the
                     // worker on ARCHIVE_RETRY, and is re-enqueued by
                     // the next chunk. Pending-task accounting stays
-                    // balanced: the main thread skips
-                    // `decrementPendingTasks()` for this NetworkTask
-                    // (see runTasks.zig) and the extract Task pushed
-                    // by `TarballStream.finish()` decrements instead.
+                    // balanced: this NetworkTask is never pushed to
+                    // `async_network_task_queue` once committed, so
+                    // its `incrementPendingTasks()` is satisfied by
+                    // the extract Task that `TarballStream.finish()`
+                    // publishes to `resolve_tasks`.
                     this.streaming_committed = true;
                     stream.onChunk(chunk, false, null);
                     // Hand the buffer back to the HTTP client empty so
@@ -96,25 +102,35 @@ pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, result: bun.http.HTTPC
             // Final callback. If we've already started streaming, hand
             // over the last bytes and close; the drain task will run
             // once more, finish up and push to `resolve_tasks`. If not
-            // (whole body arrived in one go), leave `response_buffer`
-            // intact so the buffered extractor handles it.
+            // (whole body arrived in one go, or too small), leave
+            // `response_buffer` intact so the buffered extractor
+            // handles it.
             if (committed) {
                 stream.onChunk(chunk, true, result.fail);
-                this.response_buffer.reset();
+                // Do NOT touch `this` — or anything it owns — after
+                // this point: `onChunk(…, true, …)` sets `closed` and
+                // schedules a drain that may reach `finish()` on a
+                // worker thread before we return here. `finish()`
+                // frees `response_buffer`, publishes the extract Task
+                // to `resolve_tasks`, and the main thread's processing
+                // of that Task returns this NetworkTask to
+                // `preallocated_network_tasks` (poisoning it under
+                // ASAN). The NetworkTask is therefore *not* pushed to
+                // `async_network_task_queue` here; the extract Task
+                // owns its lifetime from now on.
+                return;
             }
         } else if (result.has_more) {
-            // Non-2xx response still streaming its error body:
-            // accumulate in `response_buffer` (we did *not* reset above)
-            // so the main thread can inspect it. Do not enqueue until
-            // the stream ends.
+            // Non-2xx response (or too small to stream) still
+            // delivering its body: accumulate in `response_buffer`
+            // (we did *not* reset above) so the main thread can
+            // inspect it. Do not enqueue until the stream ends.
             return;
         }
-        // The remaining case — `!committed and !has_more` with a
-        // non-2xx status or `fail != null` — leaves `response_buffer`
-        // untouched so the buffered error/retry path in runTasks.zig
-        // handles it. `committed and !has_more` is always handled in
-        // the first branch above because `committed` short-circuits
-        // the outer condition.
+        // Fall through to the normal completion path for anything that
+        // did not commit: the buffered extractor / retry logic in
+        // runTasks.zig handles it exactly as it would without
+        // streaming support.
     }
 
     defer this.package_manager.wake();
@@ -126,19 +142,6 @@ pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, result: bun.http.HTTPC
     this.response = result;
     if (this.response.metadata == null) this.response.metadata = saved_metadata;
     this.package_manager.async_network_task_queue.push(this);
-}
-
-/// True when this tarball download committed to the streaming path and the
-/// extraction result will be delivered via `resolve_tasks`. The main thread
-/// uses this to skip its own bookkeeping for the network task and let the
-/// streaming extractor's completion drive progress instead.
-///
-/// Only safe to call once the HTTP response has been fully delivered
-/// (i.e. from the main thread after popping this task from
-/// `async_network_task_queue`). By then `streaming_committed` is stable:
-/// the HTTP thread set it under the final `notify` call.
-pub fn isStreamingExtractInFlight(this: *const NetworkTask) bool {
-    return this.streaming_committed;
 }
 
 pub const Authorization = enum {
@@ -457,14 +460,6 @@ pub fn discardUnusedStreamingState(this: *NetworkTask, manager: *PackageManager)
         this.tarball_stream = null;
     }
     if (this.streaming_extract_task) |task| {
-        // Restore the patch task we moved in
-        // `createExtractTaskForStreaming` so the buffered extract Task
-        // that `enqueueExtractNPMPackage` is about to allocate picks
-        // it up.
-        if (task.apply_patch_task) |pt| {
-            this.apply_patch_task = pt;
-            task.apply_patch_task = null;
-        }
         manager.preallocated_resolve_tasks.put(task);
         this.streaming_extract_task = null;
     }

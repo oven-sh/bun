@@ -129,15 +129,7 @@ pub fn runTasks(
     var network_tasks_iter = network_tasks_batch.iterator();
     while (network_tasks_iter.next()) |task| {
         if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
-
-        // Streaming extraction shares this NetworkTask's pending-task slot
-        // with the extract Task that the HTTP thread scheduled on a worker.
-        // Decrementing here would let `pendingTaskCount()` hit zero while
-        // extraction is still running, so defer it to the extract Task's
-        // completion (handled via `resolve_tasks` below).
-        if (!task.isStreamingExtractInFlight()) {
-            manager.decrementPendingTasks();
-        }
+        manager.decrementPendingTasks();
         // We cannot free the network task at the end of this scope.
         // It may continue to be referenced in a future task.
 
@@ -337,25 +329,12 @@ pub fn runTasks(
                 manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueParseNPMPackage(task.task_id, name, task)));
             },
             .extract => |*extract| {
-                if (task.isStreamingExtractInFlight()) {
-                    // A worker thread is already extracting from the
-                    // streamed body. Errors (including non-2xx responses)
-                    // are surfaced by that Task via `resolve_tasks`; avoid
-                    // double-reporting here and do not enqueue extraction.
-                    if (log_level.isVerbose() and task.response.metadata != null) {
-                        Output.prettyError("    ", .{});
-                        Output.printElapsed(@as(f64, @floatCast(@as(f64, @floatFromInt(task.unsafe_http_client.elapsed)) / std.time.ns_per_ms)));
-                        Output.prettyError("<d> Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
-                        Output.flush();
-                    }
-                    if (log_level.showProgress()) {
-                        if (!has_updated_this_run) {
-                            manager.setNodeName(manager.downloads_node.?, extract.name.slice(), ProgressStrings.extract_emoji, true);
-                            has_updated_this_run = true;
-                        }
-                    }
-                    continue;
-                }
+                // Streaming extraction never pushes its NetworkTask to
+                // `async_network_task_queue` once committed — the
+                // extract Task published by `TarballStream.finish()`
+                // owns its lifetime — so every `.extract` task that
+                // arrives here is taking the buffered path.
+                bun.debugAssert(!task.streaming_committed);
 
                 if (!has_network_error and task.response.metadata == null) {
                     has_network_error = true;
@@ -371,7 +350,7 @@ pub fn runTasks(
 
                     if (task.retried < manager.options.max_retry_count) {
                         task.retried += 1;
-                        // Streaming never committed (checked above), so
+                        // Streaming never committed (asserted above), so
                         // the pre-allocated stream is safe to reuse for
                         // the retry attempt.
                         task.resetStreamingForRetry();

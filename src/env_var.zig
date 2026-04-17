@@ -61,6 +61,11 @@ pub const BUN_INSPECT_PRELOAD = New(kind.string, "BUN_INSPECT_PRELOAD", .{});
 pub const BUN_INSTALL = New(kind.string, "BUN_INSTALL", .{});
 pub const BUN_INSTALL_BIN = New(kind.string, "BUN_INSTALL_BIN", .{});
 pub const BUN_INSTALL_GLOBAL_DIR = New(kind.string, "BUN_INSTALL_GLOBAL_DIR", .{});
+/// Minimum response `Content-Length` (in bytes) for `bun install` to
+/// stream a tarball directly into libarchive instead of buffering the
+/// whole body first. Smaller tarballs stay on the buffered path where
+/// the fixed overhead of the resumable state machine isn't worth it.
+pub const BUN_INSTALL_STREAMING_MIN_SIZE = New(kind.unsigned, "BUN_INSTALL_STREAMING_MIN_SIZE", .{ .default = 2 * 1024 * 1024 });
 pub const BUN_NEEDS_PROC_SELF_WORKAROUND = New(kind.boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", .{ .default = false });
 pub const BUN_OPTIONS = New(kind.string, "BUN_OPTIONS", .{});
 pub const BUN_POSTGRES_SOCKET_MONITOR = New(kind.string, "BUN_POSTGRES_SOCKET_MONITOR", .{});

@@ -1245,10 +1245,11 @@ pub fn createExtractTaskForStreaming(
         .data = undefined,
     };
     task.request.extract.tarball.skip_verify = !this.options.do.verify_integrity;
-    if (network_task.apply_patch_task) |patch| {
-        task.apply_patch_task = patch;
-        network_task.apply_patch_task = null;
-    }
+    // Intentionally does *not* move `network_task.apply_patch_task`:
+    // `enqueueExtractNPMPackage` (the buffered path this mirrors) leaves
+    // it on the NetworkTask and the install phase creates its own
+    // PatchTask via `PackageInstaller`. Applying it here would run the
+    // patch twice.
     return task;
 }
 

@@ -658,9 +658,11 @@ pub const JSGlobalObject = opaque {
 
     extern fn JSC__JSGlobalObject__handleRejectedPromises(*JSGlobalObject) void;
     pub fn handleRejectedPromises(this: *JSGlobalObject) void {
-        // A worker terminate() can fire a TerminationException at the safepoint
-        // inside this call; nothing left to do in that case.
-        return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch return;
+        return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch |err| switch (err) {
+            // A worker terminate() can fire a TerminationException at the
+            // safepoint inside this call; nothing left to do in that case.
+            error.JSError => if (this.vm().hasTerminationRequest()) return else @panic("unexpected exception in handleRejectedPromises"),
+        };
     }
 
     extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;

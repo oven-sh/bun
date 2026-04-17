@@ -515,6 +515,7 @@ pub fn destroy(this: *WebWorker) callconv(.c) void {
         bun.default_allocator.free(preload);
     }
     bun.default_allocator.free(this.preloads);
+    if (this.name.len > 0) bun.default_allocator.free(this.name);
     bun.default_allocator.destroy(this);
 }
 
@@ -698,6 +699,12 @@ pub fn setRef(this: *WebWorker, value: bool) callconv(.c) void {
 pub fn exit(this: *WebWorker) void {
     this.exit_called = true;
     _ = this.setRequestedTerminate();
+    // Stop subsequent JS at the next safepoint. (Process_functionReallyExit
+    // also calls vm.notifyNeedTermination() after Bun__Process__exit returns,
+    // but doing it here covers any Zig caller and keeps the contract local.)
+    if (this.vm) |vm| {
+        vm.jsc_vm.notifyNeedTermination();
+    }
 }
 
 /// Request a terminate from the parent thread (worker.terminate()). The struct is

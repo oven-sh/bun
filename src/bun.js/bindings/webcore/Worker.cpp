@@ -511,9 +511,13 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
     // through the worker's collectNow()/vm.deref().
     //
     // The Zig-held ref is dropped inside the posted task on the parent thread. If
-    // posting fails (parent context gone — parent VM teardown), the ref is
-    // intentionally leaked: dropping it here would run ~Worker on the worker
-    // thread and trip EventListenerMap's thread assertion.
+    // posting fails (parent context gone — middle worker in a nested chain has
+    // already torn down), the ref is intentionally leaked: dropping it here would
+    // run ~Worker on the worker thread and trip EventListenerMap's thread assert.
+    // This leaks the C++ Worker, the Zig WebWorker, and the allWorkers() entry
+    // until process exit. The proper fix is for a worker to stop+join its
+    // sub-workers before tearing down its own context (Node does this in
+    // Environment::stop_sub_worker_contexts); tracked as a follow-up.
     worker->dispatchExit(exitCode);
 }
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)

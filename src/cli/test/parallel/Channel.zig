@@ -78,8 +78,15 @@ pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
         /// socketpair end. Windows: the inherited named-pipe end (worker side).
         pub fn adopt(self: *Self, vm: *jsc.VirtualMachine, fd: bun.FD) bool {
             if (Environment.isWindows) {
+                // ipc=true matches ipc.zig windowsConfigureClient. With ipc=true
+                // libuv wraps reads/writes in its own framing; both ends use it
+                // so the wrapping is transparent and our payload bytes pass
+                // through unchanged. With ipc=false the parent end (created by
+                // uv_spawn for the .ipc stdio container, which always inits with
+                // ipc=true) and child end disagree on framing and the channel
+                // never delivers a frame.
                 const pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe));
-                pipe.init(uv.Loop.get(), false).unwrap() catch {
+                pipe.init(uv.Loop.get(), true).unwrap() catch {
                     bun.destroy(pipe);
                     return false;
                 };

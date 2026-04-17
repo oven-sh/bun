@@ -89,16 +89,19 @@ pub fn start(this: *Worker) !void {
             this.ipc.done = true;
         }
     } else {
-        // Windows: `.buffer` extra_fd creates a duplex `uv.Pipe` (named pipe
-        // under the hood, UV_READABLE | UV_WRITABLE | UV_OVERLAPPED). The
-        // child side is overlapped too — fine, since the worker also reads via
-        // libuv now. TODO: verify on Windows CI.
+        // Windows: `.ipc` extra_fd creates a duplex `uv.Pipe` (named pipe
+        // under the hood, UV_READABLE | UV_WRITABLE | UV_OVERLAPPED) and
+        // initialises the parent end with uv_pipe_init(loop, ipc=1) — the
+        // same dance Bun.spawn({ipc}) / process.send() use. The child opens
+        // CRT fd 3 with uv_pipe_init(ipc=1) + uv_pipe_open in Channel.adopt.
+        // Both ends agreeing on the libuv IPC framing is what matters; our
+        // own [u32 len][u8 kind] frames ride inside it unchanged.
         const uv = bun.windows.libuv;
 
         const ipc_pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe));
         errdefer if (this.ipc.backend.pipe == null) ipc_pipe.closeAndDestroy();
 
-        this.extra_fd_stdio = .{.{ .buffer = ipc_pipe }};
+        this.extra_fd_stdio = .{.{ .ipc = ipc_pipe }};
         const options: bun.spawn.SpawnOptions = .{
             .stdin = .ignore,
             .stdout = .{ .buffer = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe)) },

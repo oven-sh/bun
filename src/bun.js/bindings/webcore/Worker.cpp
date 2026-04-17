@@ -71,6 +71,10 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
 extern "C" void WebWorker__notifyNeedTermination(
     void* worker);
+extern "C" void WebWorker__destroy(
+    void* worker);
+extern "C" void WebWorker__releaseParentPollRef(
+    void* worker);
 
 static Lock allWorkersLock;
 static HashMap<ScriptExecutionContextIdentifier, Worker*>& allWorkers() WTF_REQUIRES_LOCK(allWorkersLock)
@@ -141,6 +145,9 @@ bool Worker::updatePtr()
     if (!WebWorker__updatePtr(impl_, this)) {
         m_onlineClosingFlags = ClosingFlag;
         m_terminationFlags.fetch_or(TerminatedFlag);
+        // Thread never started, so dispatchExit will never run; drop the ref
+        // that create() took on Zig's behalf here on the parent thread.
+        this->deref();
         return false;
     }
 
@@ -207,8 +214,6 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         execArgv.size(),
         preloadModules.begin(),
         preloadModules.size());
-    // now referenced by Zig
-    worker->ref();
 
     preloadModuleStrings.clear();
 
@@ -216,6 +221,9 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
     }
 
+    // now referenced by Zig — this ref is dropped on the parent thread inside
+    // dispatchExit's posted task (or in updatePtr() if the thread fails to spawn).
+    worker->ref();
     worker->impl_ = impl;
     worker->m_workerCreationTime = MonotonicTime::now();
 
@@ -228,7 +236,9 @@ Worker::~Worker()
         Locker locker { allWorkersLock };
         allWorkers().remove(m_clientIdentifier);
     }
-    // m_contextProxy.workerObjectDestroyed();
+    if (impl_) {
+        WebWorker__destroy(impl_);
+    }
 }
 
 ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
@@ -430,13 +440,13 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
     return true;
 }
 
-void Worker::dispatchExit(int32_t exitCode)
+bool Worker::dispatchExit(int32_t exitCode)
 {
     auto* ctx = scriptExecutionContext();
     if (!ctx)
-        return;
+        return false;
 
-    ScriptExecutionContext::postTaskTo(ctx->identifier(), [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
+    return ScriptExecutionContext::postTaskTo(ctx->identifier(), [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) -> void {
         protectedThis->m_onlineClosingFlags = ClosingFlag;
 
         if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
@@ -444,6 +454,11 @@ void Worker::dispatchExit(int32_t exitCode)
             protectedThis->dispatchCloseEvent(event);
         }
         protectedThis->m_terminationFlags.fetch_or(TerminatedFlag);
+        WebWorker__releaseParentPollRef(protectedThis->impl_);
+        // Drop the ref Zig held since Worker::create. protectedThis keeps us alive
+        // across this line; its own deref happens at lambda destruction on this
+        // (parent) thread, so ~Worker can never run on the worker thread.
+        protectedThis->deref();
     });
 }
 
@@ -467,10 +482,6 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
 
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
 {
-    worker->dispatchExit(exitCode);
-    // no longer referenced by Zig
-    worker->deref();
-
     if (globalObject) {
         auto& vm = JSC::getVM(globalObject);
         vm.setHasTerminationRequest();
@@ -493,6 +504,17 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
         vm.derefSuppressingSaferCPPChecking(); // NOLINT
         vm.derefSuppressingSaferCPPChecking(); // NOLINT
     }
+
+    // Post the close-event task only after the worker's JSC VM teardown above is
+    // done. The task releases parent_poll_ref on the parent thread; once that
+    // happens the parent process can exit, so this ordering keeps the parent alive
+    // through the worker's collectNow()/vm.deref().
+    //
+    // The Zig-held ref is dropped inside the posted task on the parent thread. If
+    // posting fails (parent context gone — parent VM teardown), the ref is
+    // intentionally leaked: dropping it here would run ~Worker on the worker
+    // thread and trip EventListenerMap's thread assertion.
+    worker->dispatchExit(exitCode);
 }
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
 {

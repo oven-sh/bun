@@ -6,6 +6,10 @@ const log = Output.scoped(.Worker, .hidden);
 
 /// null when haven't started yet
 vm: ?*jsc.VirtualMachine = null,
+/// Serializes `vm` against cross-thread reads in `notifyNeedTermination`. Held briefly
+/// around the assignment in `start()`, the null in `exitAndDeinit()`, and the wakeup
+/// call from the parent.
+vm_lock: bun.Mutex = .{},
 status: std.atomic.Value(Status) = .init(.start),
 /// To prevent UAF, the `spin` function (aka the worker's event loop) will call deinit once this is set and properly exit the loop.
 requested_terminate: std.atomic.Value(bool) = .init(false),
@@ -73,7 +77,9 @@ export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
         startWithErrorHandling,
         .{worker},
     ) catch {
-        worker.deinit();
+        // Called from the parent thread (Worker JS constructor), so plain unref is correct.
+        // The struct itself stays allocated; ~Worker frees it via WebWorker__destroy.
+        worker.parent_poll_ref.unref(worker.parent);
         return false;
     };
     thread.detach();
@@ -395,16 +401,28 @@ pub fn start(
     vm.onUnhandledRejection = onUnhandledRejection;
     const callback = jsc.OpaqueWrap(WebWorker, WebWorker.spin);
 
-    this.vm = vm;
+    {
+        this.vm_lock.lock();
+        defer this.vm_lock.unlock();
+        this.vm = vm;
+    }
 
     vm.global.vm().holdAPILock(this, callback);
 }
 
-/// Deinit will clean up vm and everything.
-/// Early deinit may be called from caller thread, but full vm deinit will only be called within worker's thread.
-fn deinit(this: *WebWorker) void {
-    log("[{d}] deinit", .{this.execution_context_id});
-    this.parent_poll_ref.unrefConcurrently(this.parent);
+/// Release the keep-alive on the parent's event loop. Called on the parent thread
+/// from the close-event task posted by `WebWorker__dispatchExit`, so plain `unref`
+/// (not `unrefConcurrently`) is correct.
+pub fn releaseParentPollRef(this: *WebWorker) callconv(.c) void {
+    this.parent_poll_ref.unref(this.parent);
+}
+
+/// Free the struct and its owned strings. Called from `WebCore::Worker::~Worker()`,
+/// so the lifetime of `impl_` matches the C++ Worker — `terminate()`/`ref()`/`unref()`
+/// can never observe a freed struct. Allocator is mimalloc (thread-safe), so the
+/// caller's thread doesn't matter for the free itself.
+pub fn destroy(this: *WebWorker) callconv(.c) void {
+    log("[{d}] destroy", .{this.execution_context_id});
     bun.default_allocator.free(this.unresolved_specifier);
     for (this.preloads) |preload| {
         bun.default_allocator.free(preload);
@@ -475,7 +493,6 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.written()), error_instance);
     if (vm.worker) |worker_| {
         _ = worker.setRequestedTerminate();
-        worker.parent_poll_ref.unrefConcurrently(worker.parent);
         worker_.exitAndDeinit();
     }
 }
@@ -576,16 +593,13 @@ fn spin(this: *WebWorker) void {
     log("[{d}] spin done", .{this.execution_context_id});
 }
 
-/// This is worker.ref()/.unref() from JS (Caller thread)
+/// This is worker.ref()/.unref() from JS (parent thread). The struct is guaranteed
+/// alive here: it's freed by ~Worker, and JSWorker holds a Ref<Worker>.
 pub fn setRef(this: *WebWorker, value: bool) callconv(.c) void {
-    if (this.hasRequestedTerminate()) {
+    if (this.hasRequestedTerminate() or this.status.load(.acquire) == .terminated) {
         return;
     }
 
-    this.setRefInternal(value);
-}
-
-pub fn setRefInternal(this: *WebWorker, value: bool) void {
     if (value) {
         this.parent_poll_ref.ref(this.parent);
     } else {
@@ -596,31 +610,34 @@ pub fn setRefInternal(this: *WebWorker, value: bool) void {
 /// Implement process.exit(). May only be called from the Worker thread.
 pub fn exit(this: *WebWorker) void {
     this.exit_called = true;
-    this.notifyNeedTermination();
+    _ = this.setRequestedTerminate();
 }
 
-/// Request a terminate from any thread.
+/// Request a terminate from the parent thread (worker.terminate()). The struct is
+/// guaranteed alive: it's freed by ~Worker, which can't run while JSWorker (the
+/// caller) holds its Ref<Worker>.
 pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
-    if (this.status.load(.acquire) == .terminated) {
-        return;
-    }
     if (this.setRequestedTerminate()) {
         return;
     }
     log("[{d}] notifyNeedTermination", .{this.execution_context_id});
 
+    // Wake the worker's event loop so it observes requested_terminate promptly.
+    // vm_lock serializes against exitAndDeinit nulling vm and freeing the arena.
+    this.vm_lock.lock();
+    defer this.vm_lock.unlock();
     if (this.vm) |vm| {
         vm.eventLoop().wakeup();
-        // TODO(@190n) notifyNeedTermination
     }
-
-    // TODO(@190n) delete
-    this.setRefInternal(false);
 }
 
-/// This handles cleanup, emitting the "close" event, and deinit.
+/// This handles VM/arena cleanup and posts the "close" event to the parent.
 /// Only call after the VM is initialized AND on the same thread as the worker.
 /// Otherwise, call `notifyNeedTermination` to cause the event loop to safely terminate.
+///
+/// This does NOT free `this` — the WebWorker struct outlives the worker thread and
+/// is freed by `WebCore::Worker::~Worker()` via `WebWorker__destroy`, so the parent
+/// thread can safely call terminate()/ref()/unref() at any point.
 pub fn exitAndDeinit(this: *WebWorker) noreturn {
     jsc.markBinding(@src());
     this.setStatus(.terminated);
@@ -632,19 +649,32 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     var globalObject: ?*jsc.JSGlobalObject = null;
     var vm_to_deinit: ?*jsc.VirtualMachine = null;
     var loop: ?*bun.uws.Loop = null;
-    if (this.vm) |vm| {
-        loop = vm.uwsLoop();
-        this.vm = null;
+
+    {
+        // Publish vm = null before the arena (and the VM inside it) is freed, so a
+        // concurrent notifyNeedTermination() either sees null or completes its
+        // wakeup() before we proceed.
+        this.vm_lock.lock();
+        defer this.vm_lock.unlock();
+        if (this.vm) |vm| {
+            loop = vm.uwsLoop();
+            this.vm = null;
+            vm_to_deinit = vm;
+        }
+    }
+    if (vm_to_deinit) |vm| {
         vm.is_shutting_down = true;
         vm.onExit();
         jsc.API.cron.CronJob.clearAllForVM(vm, .teardown);
         exit_code = vm.exit_handler.exit_code;
         globalObject = vm.global;
-        vm_to_deinit = vm;
     }
     var arena = this.arena;
+    this.arena = null;
 
     WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
+    // Past this point `this` may be freed at any time (the C++ Worker's last ref can
+    // drop on the parent thread once the close-event task runs).
     if (loop) |loop_| {
         loop_.internal_loop_data.jsc_vm = null;
     }
@@ -658,8 +688,6 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     if (comptime Environment.isWindows) {
         bun.windows.libuv.Loop.shutdown();
     }
-
-    this.deinit();
 
     if (vm_to_deinit) |vm| {
         vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
@@ -676,6 +704,8 @@ comptime {
     @export(&create, .{ .name = "WebWorker__create" });
     @export(&notifyNeedTermination, .{ .name = "WebWorker__notifyNeedTermination" });
     @export(&setRef, .{ .name = "WebWorker__setRef" });
+    @export(&destroy, .{ .name = "WebWorker__destroy" });
+    @export(&releaseParentPollRef, .{ .name = "WebWorker__releaseParentPollRef" });
     _ = WebWorker__updatePtr;
 }
 

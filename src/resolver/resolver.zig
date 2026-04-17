@@ -4064,7 +4064,19 @@ pub const Resolver = struct {
 
     fn tryParseTSConfigPath(r: *ThisResolver, candidate: string) ?*TSConfigJSON {
         const persistent_path = r.fs.dirname_store.append(string, candidate) catch return null;
-        return r.parseTSConfig(persistent_path, bun.invalid_fd) catch null;
+        return r.parseTSConfig(persistent_path, bun.invalid_fd) catch |err| {
+            switch (err) {
+                // Expected while probing: keep walking quietly.
+                error.ENOENT, error.FileNotFound, error.ENOTDIR, error.NotDir, error.IsDir, error.EISDIR => {},
+                // Unexpected (EACCES, EIO, etc.): surface in debug logs so a
+                // file that exists but can't be read doesn't vanish silently.
+                else => r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {f}", .{
+                    @errorName(err),
+                    bun.fmt.QuotedFormatter{ .text = persistent_path },
+                }) catch {},
+            }
+            return null;
+        };
     }
 
     fn dirInfoUncached(

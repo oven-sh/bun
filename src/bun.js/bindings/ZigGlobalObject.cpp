@@ -3453,9 +3453,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     // require(esm) needs the entire dependency graph to load without yielding
     // to microtasks. The async fetch path goes through Zig's transpiler thread
     // pool; route to the synchronous fetch instead so the returned promise is
-    // already fulfilled and the loader keeps executing in
-    // m_synchronousModuleLoadingDepth mode (see JSPromise.cpp).
-    if (vm.m_synchronousModuleLoadingDepth) {
+    // already fulfilled and the loader keeps draining its private queue (see
+    // JSModuleLoader::loadModuleSync / VM::m_synchronousModuleQueue).
+    if (vm.m_synchronousModuleQueue) {
         JSValue result = Bun::fetchESMSourceCodeSync(
             static_cast<Zig::GlobalObject*>(globalObject),
             moduleKeyJS,

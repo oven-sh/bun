@@ -251,6 +251,7 @@ pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
         // -- frame decode (shared) -----------------------------------------
 
         fn ingest(self: *Self, data: []const u8) void {
+            if (self.done) return;
             bun.handleOom(self.in.appendSlice(bun.default_allocator, data));
             var head: usize = 0;
             while (self.in.items.len - head >= 5) {

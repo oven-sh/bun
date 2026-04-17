@@ -252,10 +252,10 @@ pub fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.Code
             avg.lines /= avg_n;
             avg.stmts /= avg_n;
         }
-        CoverageReportText.writeFormatWithValues("All files", max_len, avg, base, failing, console, false, enable_colors) catch {};
-        console.writeAll(Output.prettyFmt("<r><d> |<r>\n", enable_colors)) catch {};
         body.writer.flush() catch {};
         console.writeAll(body.written()) catch {};
+        CoverageReportText.writeFormatWithValues("All files", max_len, avg, base, failing, console, false, enable_colors) catch {};
+        console.writeAll(Output.prettyFmt("<r><d> |<r>\n", enable_colors)) catch {};
         sep(console, max_len, enable_colors);
 
         Output.flush();

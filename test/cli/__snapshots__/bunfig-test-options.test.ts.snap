@@ -2,10 +2,10 @@
 
 exports[`bunfig.toml test options randomize with seed produces consistent order 1`] = `
 [
-  "echo",
-  "alpha",
-  "bravo",
   "charlie",
+  "alpha",
   "delta",
+  "bravo",
+  "echo",
 ]
 `;

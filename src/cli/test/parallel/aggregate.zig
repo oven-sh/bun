@@ -188,9 +188,8 @@ pub fn mergeCoverageFragments(paths: []const []const u8, opts: *TestCommand.Code
     for (by_file.values(), fracs) |*fc, *frac| {
         const lf: f64 = @floatFromInt(fc.da.count());
         const lh_: f64 = @floatFromInt(fc.lh());
-        const fnf: f64 = @floatFromInt(@max(fc.fnf, 1));
         frac.* = .{
-            .functions = @as(f64, @floatFromInt(fc.fnh)) / fnf,
+            .functions = if (fc.fnf > 0) @as(f64, @floatFromInt(fc.fnh)) / @as(f64, @floatFromInt(fc.fnf)) else 1.0,
             .lines = if (lf > 0) lh_ / lf else 1.0,
             .stmts = if (lf > 0) lh_ / lf else 1.0,
         };

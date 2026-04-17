@@ -18,6 +18,18 @@ http_context: NewHTTPContext(false),
 https_context: NewHTTPContext(true),
 
 queued_tasks: Queue = Queue{},
+/// Tasks popped from `queued_tasks` that couldn't start because
+/// `active_requests_count >= max_simultaneous_requests`. Kept in FIFO order
+/// and processed before `queued_tasks` on the next `drainEvents`. Owned by
+/// the HTTP thread; never accessed concurrently.
+deferred_tasks: std.ArrayListUnmanaged(*AsyncHTTP) = .{},
+/// Set by `drainQueuedShutdowns` when a shutdown's `async_http_id` wasn't in
+/// `socket_async_http_abort_tracker` — the request is either not yet started
+/// (still in `queued_tasks`/`deferred_tasks`) or already done. `drainEvents`
+/// uses this to decide whether it must scan the queued/deferred lists for
+/// aborted tasks when `active >= max`; without it the common at-capacity
+/// path stays O(1). Owned by the HTTP thread.
+has_pending_queued_abort: bool = false,
 
 queued_shutdowns: std.ArrayListUnmanaged(ShutdownMessage) = std.ArrayListUnmanaged(ShutdownMessage){},
 queued_writes: std.ArrayListUnmanaged(WriteMessage) = std.ArrayListUnmanaged(WriteMessage){},
@@ -379,6 +391,13 @@ fn drainQueuedShutdowns(this: *@This()) void {
                         socket.close(.failure);
                     },
                 }
+            } else {
+                // No socket for this id: the request either hasn't started
+                // yet (still in `queued_tasks`/`deferred_tasks`) or has
+                // already completed. Flag it so `drainEvents` knows to scan
+                // the queue for aborted-but-unstarted tasks even when
+                // `active >= max` would otherwise short-circuit.
+                this.has_pending_queued_abort = true;
             }
         }
         if (queued_shutdowns.items.len == 0) {
@@ -477,7 +496,6 @@ fn drainEvents(this: *@This()) void {
     var count: usize = 0;
     var active = AsyncHTTP.active_requests_count.load(.monotonic);
     const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
-    if (active >= max) return;
     defer {
         if (comptime Environment.allow_assert) {
             if (count > 0)
@@ -485,25 +503,76 @@ fn drainEvents(this: *@This()) void {
         }
     }
 
-    while (this.queued_tasks.pop()) |http| {
-        var cloned = bun.http.ThreadlocalAsyncHTTP.new(.{
-            .async_http = http.*,
-        });
-        cloned.async_http.real = http;
-        // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
-        // which may point to other AsyncHTTP structs that could be freed before the callback
-        // copies data back to the original. If not cleared, retrying a failed request would
-        // re-queue with stale pointers causing use-after-free.
-        cloned.async_http.next = null;
-        cloned.async_http.task.node.next = null;
-        cloned.async_http.onStart();
-        if (comptime Environment.allow_assert) {
-            count += 1;
-        }
+    // Fast path: at capacity and no queued/deferred task could possibly be
+    // aborted. A queued task can only become aborted via `scheduleShutdown`,
+    // which we just drained — `drainQueuedShutdowns` sets
+    // `has_pending_queued_abort` for any id it couldn't find in the socket
+    // tracker. If that's clear, there's nothing to fail-fast and nothing can
+    // start, so don't walk the lists.
+    if (active >= max and !this.has_pending_queued_abort) return;
 
-        active += 1;
-        if (active >= max) break;
+    // Deferred tasks are ones we previously popped from the MPSC queue but
+    // couldn't start because we were at max. They stay in FIFO order ahead of
+    // anything still in `queued_tasks`.
+    //
+    // Already-aborted tasks are started regardless of `max`: `start_()` will
+    // observe the `aborted` signal and fail immediately with
+    // `error.AbortedBeforeConnecting`, and `onAsyncHTTPCallback` decrements
+    // `active_requests_count` in the same turn — so they never hold a slot.
+    // Without this, an aborted fetch that was queued behind `max` would sit
+    // there until some unrelated request completed; if every active request
+    // is itself hung, the aborted one never settles and its promise hangs
+    // forever even though the user called `controller.abort()`.
+    //
+    // `startQueuedTask` can re-enter `onAsyncHTTPCallback` synchronously (for
+    // aborted tasks, or when connect() fails immediately), which reads both
+    // `active_requests_count` and `deferred_tasks.items.len` to decide whether
+    // to wake the loop. To keep those reads accurate we swap the deferred list
+    // out before iterating so the field reflects only tasks still waiting, and
+    // reload `active` from the atomic after every start rather than tracking
+    // it locally.
+    this.has_pending_queued_abort = false;
+    {
+        var pending = this.deferred_tasks;
+        this.deferred_tasks = .{};
+        defer pending.deinit(bun.default_allocator);
+        for (pending.items) |http| {
+            if (http.client.signals.get(.aborted) or active < max) {
+                startQueuedTask(http);
+                if (comptime Environment.allow_assert) count += 1;
+                active = AsyncHTTP.active_requests_count.load(.monotonic);
+            } else {
+                bun.handleOom(this.deferred_tasks.append(bun.default_allocator, http));
+            }
+        }
     }
+
+    while (this.queued_tasks.pop()) |http| {
+        if (!http.client.signals.get(.aborted) and active >= max) {
+            // Can't start this one yet. Defer it (preserves FIFO relative to
+            // later pops) and keep draining — there may be aborted tasks
+            // behind it that we can fail-fast right now.
+            bun.handleOom(this.deferred_tasks.append(bun.default_allocator, http));
+            continue;
+        }
+        startQueuedTask(http);
+        if (comptime Environment.allow_assert) count += 1;
+        active = AsyncHTTP.active_requests_count.load(.monotonic);
+    }
+}
+
+fn startQueuedTask(http: *AsyncHTTP) void {
+    var cloned = bun.http.ThreadlocalAsyncHTTP.new(.{
+        .async_http = http.*,
+    });
+    cloned.async_http.real = http;
+    // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
+    // which may point to other AsyncHTTP structs that could be freed before the callback
+    // copies data back to the original. If not cleared, retrying a failed request would
+    // re-queue with stale pointers causing use-after-free.
+    cloned.async_http.next = null;
+    cloned.async_http.task.node.next = null;
+    cloned.async_http.onStart();
 }
 
 fn processEvents(this: *@This()) noreturn {

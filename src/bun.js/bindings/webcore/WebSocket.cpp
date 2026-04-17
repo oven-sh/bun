@@ -378,7 +378,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const String& protocol)
 {
-    return create(context, url, Vector<String> { 1, protocol });
+    return create(context, url, Vector<String> { protocol });
 }
 
 ExceptionOr<void> WebSocket::connect(const String& url)
@@ -388,7 +388,7 @@ ExceptionOr<void> WebSocket::connect(const String& url)
 
 ExceptionOr<void> WebSocket::connect(const String& url, const String& protocol)
 {
-    return connect(url, Vector<String> { 1, protocol }, std::nullopt);
+    return connect(url, Vector<String> { protocol }, std::nullopt);
 }
 
 static String resourceName(const URL& url)

@@ -222,7 +222,7 @@ pub const ModuleInfo = struct {
         try self._addRecord(if (only_used_as_type) .import_info_single_type_script else .import_info_single, &.{ module_name, import_name, local_name });
     }
     pub fn addImportInfoNamespace(self: *ModuleInfo, module_name: StringID, local_name: StringID) !void {
-        try self._addRecord(.import_info_namespace, &.{ module_name, try self.str("*"), local_name });
+        try self._addRecord(.import_info_namespace, &.{ module_name, .star_namespace, local_name });
     }
     pub fn addExportInfoIndirect(self: *ModuleInfo, export_name: StringID, import_name: StringID, module_name: StringID) !void {
         if (try self._hasOrAddExportedName(export_name)) return; // a syntax error will be emitted later in this case
@@ -317,13 +317,15 @@ pub const ModuleInfo = struct {
     /// find any exports marked as 'local' that are actually 'indirect' and fix them
     pub fn finalize(self: *ModuleInfo) !void {
         bun.assert(!self.finalized);
-        var local_name_to_module_name = std.AutoArrayHashMap(StringID, struct { module_name: StringID, import_name: StringID, record_kinds_idx: usize }).init(bun.default_allocator);
+        var local_name_to_module_name = std.AutoArrayHashMap(StringID, struct { module_name: StringID, import_name: StringID, record_kinds_idx: usize, is_namespace: bool }).init(bun.default_allocator);
         defer local_name_to_module_name.deinit();
         {
             var i: usize = 0;
             for (self.record_kinds.items, 0..) |k, idx| {
                 if (k == .import_info_single or k == .import_info_single_type_script) {
-                    try local_name_to_module_name.put(self.buffer.items[i + 2], .{ .module_name = self.buffer.items[i], .import_name = self.buffer.items[i + 1], .record_kinds_idx = idx });
+                    try local_name_to_module_name.put(self.buffer.items[i + 2], .{ .module_name = self.buffer.items[i], .import_name = self.buffer.items[i + 1], .record_kinds_idx = idx, .is_namespace = false });
+                } else if (k == .import_info_namespace) {
+                    try local_name_to_module_name.put(self.buffer.items[i + 2], .{ .module_name = self.buffer.items[i], .import_name = .star_namespace, .record_kinds_idx = idx, .is_namespace = true });
                 }
                 i += k.len() catch unreachable;
             }
@@ -334,13 +336,17 @@ pub const ModuleInfo = struct {
             for (self.record_kinds.items) |*k| {
                 if (k.* == .export_info_local) {
                     if (local_name_to_module_name.get(self.buffer.items[i + 1])) |ip| {
+                        // `import * as z from M; export { z }` is a Namespace export per
+                        // spec; encode it as indirect with import_name = .star_namespace
+                        // so the record stays the same length and toJSModuleRecord
+                        // dispatches to addNamespaceExport.
                         k.* = .export_info_indirect;
                         self.buffer.items[i + 1] = ip.import_name;
                         self.buffer.items[i + 2] = ip.module_name;
                         // In TypeScript, the re-exported import may target a type-only
                         // export that was elided. Convert the import to SingleTypeScript
                         // so JSC tolerates it being NotFound during linking.
-                        if (self.flags.is_typescript) {
+                        if (!ip.is_namespace and self.flags.is_typescript) {
                             self.record_kinds.items[ip.record_kinds_idx] = .import_info_single_type_script;
                         }
                     }
@@ -387,7 +393,10 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     lexical_variables: *VariableEnvironment,
     res: *ModuleInfoDeserialized,
 ) ?*JSModuleRecord {
-    defer res.deinit();
+    // Ownership of `res` stays with the caller; this function only reads it.
+    // The caller (BunAnalyzeTranspiledModule.cpp) decides whether to free
+    // immediately or keep it alive on the SourceProvider for the isolation
+    // SourceProvider cache.
 
     var identifiers = IdentifierArray.create(res.strings_lens.len);
     defer identifiers.destroy();
@@ -434,7 +443,10 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                 .import_info_single => module_record.addImportEntrySingle(identifiers, res.buffer[i + 1], res.buffer[i + 2], res.buffer[i]),
                 .import_info_single_type_script => module_record.addImportEntrySingleTypeScript(identifiers, res.buffer[i + 1], res.buffer[i + 2], res.buffer[i]),
                 .import_info_namespace => module_record.addImportEntryNamespace(identifiers, res.buffer[i + 1], res.buffer[i + 2], res.buffer[i]),
-                .export_info_indirect => module_record.addIndirectExport(identifiers, res.buffer[i + 0], res.buffer[i + 1], res.buffer[i + 2]),
+                .export_info_indirect => if (res.buffer[i + 1] == .star_namespace)
+                    module_record.addNamespaceExport(identifiers, res.buffer[i + 0], res.buffer[i + 2])
+                else
+                    module_record.addIndirectExport(identifiers, res.buffer[i + 0], res.buffer[i + 1], res.buffer[i + 2]),
                 .export_info_local => module_record.addLocalExport(identifiers, res.buffer[i], res.buffer[i + 1]),
                 .export_info_namespace => module_record.addNamespaceExport(identifiers, res.buffer[i], res.buffer[i + 1]),
                 .export_info_star => module_record.addStarExport(identifiers, res.buffer[i]),
@@ -448,6 +460,9 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 }
 export fn zig__ModuleInfo__destroy(info: *ModuleInfo) void {
     info.destroy();
+}
+export fn zig__ModuleInfoDeserialized__deinit(info: *ModuleInfoDeserialized) void {
+    info.deinit();
 }
 
 const VariableEnvironment = opaque {

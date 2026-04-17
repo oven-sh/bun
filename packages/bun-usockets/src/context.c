@@ -201,6 +201,10 @@ struct us_loop_t *us_socket_context_loop(int ssl, struct us_socket_context_t *co
     return context->loop;
 }
 
+struct us_socket_context_t *us_socket_context_next(struct us_socket_context_t *context) {
+    return context->next;
+}
+
 /* Not shared with SSL */
 
 /* Lookup userdata by server name pattern */

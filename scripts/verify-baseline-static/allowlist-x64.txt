@@ -584,11 +584,12 @@ rsaz_1024_sqr_avx2             [AVX, AVX2]
 
 # ----------------------------------------------------------------------------
 # BoringSSL Curve25519.
-# (3 symbols)
+# (4 symbols)
 # ----------------------------------------------------------------------------
-fiat_curve25519_adx_mul     [ADX, BMI2]
-fiat_curve25519_adx_square  [ADX, BMI2]
-x25519_scalar_mult_adx      [BMI2]
+fiat_curve25519_adx_mul                            [ADX, BMI2]
+fiat_curve25519_adx_square                         [ADX, BMI2]
+_ZN4bssl22x25519_scalar_mult_adxEPhPKhS2_          [ADX, BMI2]
+_ZN4bssl29x25519_ge_scalarmult_base_adxEPA32_hPKh  [ADX, BMI2]
 
 
 # ----------------------------------------------------------------------------

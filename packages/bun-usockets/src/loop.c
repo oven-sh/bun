@@ -302,8 +302,15 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
 
 void us_internal_loop_post(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
-    us_internal_free_closed_sockets(loop);
-    us_internal_free_closed_contexts(loop);
+    /* A poll callback may re-enter the loop (e.g. expect().toThrow() →
+     * waitForPromise → us_loop_run_bun_tick). The inner tick must not free
+     * closed sockets/contexts: the outer tick's dispatch is mid-iteration
+     * and may still hold a pointer to one (it reads s->flags right after
+     * on_data returns). Defer to the outermost tick's loop_post. */
+    if (loop->data.tick_depth <= 1) {
+        us_internal_free_closed_sockets(loop);
+        us_internal_free_closed_contexts(loop);
+    }
     loop->data.post_cb(loop);
 }
 

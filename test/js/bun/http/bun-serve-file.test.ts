@@ -443,6 +443,14 @@ describe("Bun.file in serve routes", () => {
     );
 
     it("memory usage stays reasonable", async () => {
+      // Warm up so one-time allocations (connection pool, file read buffers, response
+      // body buffers that the allocator retains) aren't counted as a leak. RSS rarely
+      // shrinks after GC on Linux, so the baseline must be taken at steady state.
+      for (let i = 0; i < 5; i++) {
+        const res = await fetch(new URL(`/large.txt`, server.url));
+        await res.text();
+      }
+
       Bun.gc(true);
       const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
 

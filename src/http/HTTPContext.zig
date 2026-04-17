@@ -65,6 +65,17 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
         pub const PooledSocketHiveAllocator = bun.HiveArray(PooledSocket, pool_size);
 
+        /// Heap-allocated custom-SSL contexts only. The cache entry in
+        /// custom_ssl_context_map holds 1; each in-flight HTTPClient that set
+        /// `client.custom_ssl_ctx = this` holds 1. Eviction drops the cache
+        /// ref but the context survives until the last client releases it,
+        /// so deinit() never runs while a request is mid-flight. The global
+        /// http_context/https_context start at 1 and are never deref'd.
+        const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+        pub const ref = RefCount.ref;
+        pub const deref = RefCount.deref;
+
+        ref_count: RefCount,
         pending_sockets: PooledSocketHiveAllocator,
         us_socket_context: *uws.SocketContext,
 
@@ -96,7 +107,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             return @as(*BoringSSL.SSL_CTX, @ptrCast(this.us_socket_context.getNativeHandle(true)));
         }
 
-        pub fn deinit(this: *@This()) void {
+        fn deinit(this: *@This()) void {
             // Replace callbacks with no-ops first to avoid UAF when closing sockets.
             this.us_socket_context.cleanCallbacks(ssl);
 

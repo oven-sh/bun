@@ -491,19 +491,24 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
     if (Environment.isWindows) {
         return sys_uv.stat(path);
     } else {
-        var stat_ = mem.zeroes(bun.Stat);
-        const rc = if (Environment.isLinux)
-            // aarch64 linux doesn't implement a "stat" syscall. It's all fstatat.
-            linux.fstatat(std.posix.AT.FDCWD, path, &stat_, 0)
-        else
-            workaround_symbols.stat(path, &stat_);
+        while (true) {
+            var stat_ = mem.zeroes(bun.Stat);
+            const rc = if (Environment.isLinux)
+                // aarch64 linux doesn't implement a "stat" syscall. It's all fstatat.
+                linux.fstatat(std.posix.AT.FDCWD, path, &stat_, 0)
+            else
+                workaround_symbols.stat(path, &stat_);
 
-        if (comptime Environment.allow_assert)
-            log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
+            if (comptime Environment.allow_assert)
+                log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
 
-        if (Maybe(bun.Stat).errnoSysP(rc, .stat, path)) |err| return err;
+            if (Maybe(bun.Stat).errnoSysP(rc, .stat, path)) |err| {
+                if (err.getErrno() == .INTR) continue;
+                return err;
+            }
 
-        return Maybe(bun.Stat){ .result = stat_ };
+            return Maybe(bun.Stat){ .result = stat_ };
+        }
     }
 }
 
@@ -511,19 +516,24 @@ pub fn statfs(path: [:0]const u8) Maybe(bun.StatFS) {
     if (Environment.isWindows) {
         return .{ .err = Error.fromCode(.ENOSYS, .statfs) };
     } else {
-        var statfs_ = mem.zeroes(bun.StatFS);
-        const rc = if (Environment.isLinux)
-            c.statfs(path, &statfs_)
-        else if (Environment.isMac)
-            c.statfs(path, &statfs_)
-        else
-            @compileError("Unsupported platform");
+        while (true) {
+            var statfs_ = mem.zeroes(bun.StatFS);
+            const rc = if (Environment.isLinux)
+                c.statfs(path, &statfs_)
+            else if (Environment.isMac)
+                c.statfs(path, &statfs_)
+            else
+                @compileError("Unsupported platform");
 
-        if (comptime Environment.allow_assert)
-            log("statfs({s}) = {d}", .{ bun.asByteSlice(path), rc });
+            if (comptime Environment.allow_assert)
+                log("statfs({s}) = {d}", .{ bun.asByteSlice(path), rc });
 
-        if (Maybe(bun.StatFS).errnoSysP(rc, .statfs, path)) |err| return err;
-        return Maybe(bun.StatFS){ .result = statfs_ };
+            if (Maybe(bun.StatFS).errnoSysP(rc, .statfs, path)) |err| {
+                if (err.getErrno() == .INTR) continue;
+                return err;
+            }
+            return Maybe(bun.StatFS){ .result = statfs_ };
+        }
     }
 }
 
@@ -531,9 +541,14 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
     if (Environment.isWindows) {
         return sys_uv.lstat(path);
     } else {
-        var stat_buf = mem.zeroes(bun.Stat);
-        if (Maybe(bun.Stat).errnoSysP(workaround_symbols.lstat(path, &stat_buf), .lstat, path)) |err| return err;
-        return Maybe(bun.Stat){ .result = stat_buf };
+        while (true) {
+            var stat_buf = mem.zeroes(bun.Stat);
+            if (Maybe(bun.Stat).errnoSysP(workaround_symbols.lstat(path, &stat_buf), .lstat, path)) |err| {
+                if (err.getErrno() == .INTR) continue;
+                return err;
+            }
+            return Maybe(bun.Stat){ .result = stat_buf };
+        }
     }
 }
 
@@ -545,16 +560,21 @@ pub fn fstat(fd: bun.FD) Maybe(bun.Stat) {
         return sys_uv.fstat(uvfd);
     }
 
-    var stat_ = mem.zeroes(bun.Stat);
+    while (true) {
+        var stat_ = mem.zeroes(bun.Stat);
 
-    const rc = workaround_symbols.fstat(fd.cast(), &stat_);
+        const rc = workaround_symbols.fstat(fd.cast(), &stat_);
 
-    if (comptime Environment.allow_assert)
-        log("fstat({f}) = {d}", .{ fd, rc });
+        if (comptime Environment.allow_assert)
+            log("fstat({f}) = {d}", .{ fd, rc });
 
-    if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| return err;
+        if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
 
-    return Maybe(bun.Stat){ .result = stat_ };
+        return Maybe(bun.Stat){ .result = stat_ };
+    }
 }
 
 pub const StatxField = enum(comptime_int) {
@@ -790,14 +810,17 @@ pub fn fstatat(fd: bun.FD, path: [:0]const u8) Maybe(bun.Stat) {
             .err => |err| Maybe(bun.Stat){ .err = err },
         };
     }
-    var stat_buf = mem.zeroes(bun.Stat);
     const fd_valid = if (fd == bun.invalid_fd) std.posix.AT.FDCWD else fd.native();
-    if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd_valid, path, &stat_buf, 0), .fstatat, fd, path)) |err| {
-        log("fstatat({f}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
-        return err;
+    while (true) {
+        var stat_buf = mem.zeroes(bun.Stat);
+        if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd_valid, path, &stat_buf, 0), .fstatat, fd, path)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            log("fstatat({f}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
+            return err;
+        }
+        log("fstatat({f}, {s}) = 0", .{ fd, path });
+        return Maybe(bun.Stat){ .result = stat_buf };
     }
-    log("fstatat({f}, {s}) = 0", .{ fd, path });
-    return Maybe(bun.Stat){ .result = stat_buf };
 }
 
 /// Like fstatat but does not follow symlinks (uses AT.SYMLINK_NOFOLLOW).
@@ -813,14 +836,17 @@ pub fn lstatat(fd: bun.FD, path: [:0]const u8) Maybe(bun.Stat) {
             .err => |err| Maybe(bun.Stat){ .err = err },
         };
     }
-    var stat_buf = mem.zeroes(bun.Stat);
     const fd_valid = if (fd == bun.invalid_fd) std.posix.AT.FDCWD else fd.native();
-    if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd_valid, path, &stat_buf, std.posix.AT.SYMLINK_NOFOLLOW), .fstatat, fd, path)) |err| {
-        log("lstatat({f}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
-        return err;
+    while (true) {
+        var stat_buf = mem.zeroes(bun.Stat);
+        if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd_valid, path, &stat_buf, std.posix.AT.SYMLINK_NOFOLLOW), .fstatat, fd, path)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            log("lstatat({f}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
+            return err;
+        }
+        log("lstatat({f}, {s}) = 0", .{ fd, path });
+        return Maybe(bun.Stat){ .result = stat_buf };
     }
-    log("lstatat({f}, {s}) = 0", .{ fd, path });
-    return Maybe(bun.Stat){ .result = stat_buf };
 }
 
 pub fn mkdir(file_path: [:0]const u8, flags: mode_t) Maybe(void) {

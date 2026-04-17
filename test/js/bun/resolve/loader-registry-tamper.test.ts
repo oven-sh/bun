@@ -1,13 +1,22 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("esmRegistryMap initialization with tampered Loader", () => {
   const cases = [
     ["globalThis.Loader replaced with a primitive", `delete globalThis.Loader; globalThis.Loader = 3875;`],
-    ["globalThis.Loader replaced with a plain object", `delete globalThis.Loader; globalThis.Loader = { registry: 123 };`],
-    ["globalThis.Loader replaced with a throwing getter", `Object.defineProperty(globalThis, "Loader", { get() { throw new Error("boom"); } });`],
+    [
+      "globalThis.Loader replaced with a plain object",
+      `delete globalThis.Loader; globalThis.Loader = { registry: 123 };`,
+    ],
+    [
+      "globalThis.Loader replaced with a throwing getter",
+      `Object.defineProperty(globalThis, "Loader", { get() { throw new Error("boom"); } });`,
+    ],
     ["Loader.registry replaced with a primitive", `Loader.registry = 123;`],
-    ["Loader.registry replaced with a throwing getter", `Object.defineProperty(Loader, "registry", { get() { throw new Error("boom"); } });`],
+    [
+      "Loader.registry replaced with a throwing getter",
+      `Object.defineProperty(Loader, "registry", { get() { throw new Error("boom"); } });`,
+    ],
   ] as const;
 
   for (const [name, setup] of cases) {

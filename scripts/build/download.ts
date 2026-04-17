@@ -123,6 +123,20 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
 }
 
 /**
+ * Integrity probe: does `tar -tzf` walk the whole archive without error?
+ *
+ * Used to decide whether a cached tarball is itself bad vs. extraction
+ * failed for environmental reasons (disk full, staging dir unwritable).
+ * Listing reads and gunzips every block but writes nothing to disk, so it
+ * isolates the archive from the destination. Spawn failure (tar not found)
+ * counts as "lists cleanly" — can't judge the file, so don't delete it.
+ */
+function tarballListsCleanly(tarball: string): boolean {
+  const r = spawnSync("tar", ["-tzf", tarball], { stdio: "ignore" });
+  return r.error !== undefined || r.status === 0;
+}
+
+/**
  * Extract a .zip archive with mtime normalization.
  *
  * Tries `unzip` first (most systems), falls back to `tar` (bsdtar — what
@@ -229,10 +243,19 @@ export async function fetchPrebuilt(
     try {
       await extractTarGz(tarballPath, stagingDir, 0);
     } catch (err) {
-      // Corrupt cached tarball (truncated download that slipped past the
-      // atomic rename, or disk-level damage). Drop it so the next run
-      // re-downloads instead of failing forever on the same bad file.
-      await rm(tarballPath, { force: true });
+      // Extraction failed. Distinguish a corrupt cached tarball from an
+      // environment failure (ENOSPC on the staging disk, tar missing,
+      // signal): `tar -tzf` walks the whole archive without writing
+      // anything. If THAT also fails the tarball is bad — drop it so the
+      // next run re-downloads instead of failing forever on the same
+      // file. If it succeeds the tarball is fine; keep it (it may be a
+      // shared 200MB artifact we'd otherwise re-fetch for no reason).
+      // Swallow the rm rejection so the ORIGINAL extraction error is what
+      // surfaces, not a secondary EACCES/EROFS from a read-only cache.
+      if (!tarballListsCleanly(tarballPath)) {
+        console.log(`dropping unreadable cached tarball ${tarballPath}`);
+        await rm(tarballPath, { force: true }).catch(() => {});
+      }
       throw err;
     }
 

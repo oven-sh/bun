@@ -705,8 +705,8 @@ pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) voi
     var promise = this.pending_internal_promise orelse return;
 
     if (promise.status() == .rejected and !promise.isHandled()) {
-        this.unhandledRejection(this.global, promise.result(), promise.asValue());
-        promise.setHandled(this.global.vm());
+        this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.toJS());
+        promise.setHandled();
     }
 }
 

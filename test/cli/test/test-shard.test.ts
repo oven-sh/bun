@@ -174,14 +174,15 @@ describe.concurrent("--shard", () => {
   });
 
   test("composes with --parallel: shard filters first, then workers run the subset", async () => {
-    // 4 files; --shard=1/2 keeps f00 and f02. --parallel=2 runs those across
-    // workers; each file should report a JEST_WORKER_ID in {1,2} (not the
-    // shard index), and the other shard's files must not run.
+    // 4 files; --shard=1/2 keeps f00 and f02. --parallel runs that subset.
+    // This proves the file filter happens before the coordinator distributes;
+    // worker distribution itself is covered by the JEST_WORKER_ID test in
+    // parallel.test.ts.
     const files: Record<string, string> = {};
     for (let i = 0; i < 4; i++) {
       const id = String(i).padStart(2, "0");
       files[`f${id}.test.ts`] =
-        `import {test} from "bun:test"; test("t", async () => { await Bun.sleep(200); console.log("RAN f${id} WID="+process.env.JEST_WORKER_ID); });`;
+        `import {test} from "bun:test"; test("t", () => console.log("RAN f${id} WID="+process.env.JEST_WORKER_ID));`;
     }
     using dir = tempDir("shard-parallel", files);
     await using proc = Bun.spawn({
@@ -196,10 +197,11 @@ describe.concurrent("--shard", () => {
     expect(stdout).toContain("PARALLEL");
     expect(stderr).toContain("--shard=1/2:");
     expect(stderr).toContain("running 2/4 test files");
-    // Only shard-1 files ran:
     const ran = [...out.matchAll(/RAN (f\d\d) WID=(\S+)/g)].map(m => ({ file: m[1], wid: m[2] }));
+    // Only shard-1 files ran, in any worker:
     expect(ran.map(r => r.file).sort()).toEqual(["f00", "f02"]);
-    // JEST_WORKER_ID is the local worker, not the shard:
+    // JEST_WORKER_ID is the local worker (1..K), never undefined and never the
+    // shard index. With 2 sharded files and lazy spawn, K may collapse to 1.
     for (const r of ran) {
       expect(["1", "2"]).toContain(r.wid);
     }

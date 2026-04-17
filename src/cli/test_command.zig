@@ -2089,6 +2089,9 @@ pub const TestCommand = struct {
                 try vm.clearEntryPoint();
                 var entry = jsc.ZigString.init(file_path);
                 try vm.global.deleteModuleRegistryEntry(&entry);
+                // Reset per-test snapshot counters so rerun N matches the same
+                // snapshot keys as run 1 instead of looking for "test name 2", etc.
+                reporter.jest.snapshots.resetCounts();
             }
 
             var bun_test_root = &jest.Jest.runner.?.bun_test_root;

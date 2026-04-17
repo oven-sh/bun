@@ -1969,7 +1969,31 @@ pub const RunCommand = struct {
             );
         };
 
-        Run.boot(ctx, normalized_filename, null) catch |err| {
+        // Like Node.js, resolve symlinks on the main entry point by default.
+        // This is critical for .bin/ symlinks: without resolution, __dirname and
+        // module resolution are relative to .bin/ instead of the real package location.
+        // Controlled by --preserve-symlinks-main / NODE_PRESERVE_SYMLINKS_MAIN=1.
+        const entry_point = if (ctx.runtime_options.preserve_symlinks_main or
+            bun.env_var.NODE_PRESERVE_SYMLINKS_MAIN.get())
+            normalized_filename
+        else brk: {
+            var realpath_buf: bun.PathBuffer = undefined;
+            const flags = if (comptime Environment.isLinux)
+                bun.O.PATH
+            else
+                bun.O.RDONLY | bun.O.NONBLOCK | bun.O.NOCTTY;
+            const fd = switch (bun.sys.openA(normalized_filename, flags, 0)) {
+                .err => break :brk normalized_filename,
+                .result => |fd_| fd_,
+            };
+            defer fd.close();
+            break :brk switch (bun.sys.getFdPath(fd, &realpath_buf)) {
+                .err => normalized_filename,
+                .result => |real| bun.handleOom(bun.default_allocator.dupe(u8, real)),
+            };
+        };
+
+        Run.boot(ctx, entry_point, null) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
 
             Output.err(err, "Failed to run script \"<b>{s}<r>\"", .{std.fs.path.basename(normalized_filename)});

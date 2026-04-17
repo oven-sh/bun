@@ -2688,8 +2688,9 @@ class ServerHttp2Stream extends Http2Stream {
       // request() already wrote END_STREAM on the HEADERS frame — driving
       // the wantTrailers path from `_final` on such a stream would call
       // `noTrailers`/`emit("wantTrailers")` on an already-half-closed
-      // stream and corrupt state.
-      if (options.waitForTrailers && !endStream) {
+      // stream and corrupt state. Use optional chaining: `options` may be
+      // `null` here (typeof null === "object" enters this else branch).
+      if (options?.waitForTrailers && !endStream) {
         this[bunHTTP2WaitForTrailers] = true;
       }
     }
@@ -2849,7 +2850,11 @@ class ServerHttp2Session extends Http2Session {
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = {
     headerTableSize: 4096,
-    enablePush: true,
+    // RFC 9113 §7.2.2: servers MUST NOT advertise ENABLE_PUSH != 0. The
+    // initial SETTINGS frame forces this to 0 in the constructor — keep the
+    // default here in sync so `session.localSettings.enablePush` agrees with
+    // the wire before the peer's SETTINGS ACK arrives.
+    enablePush: false,
     maxConcurrentStreams: 100,
     initialWindowSize: 65535,
     maxFrameSize: 16384,
@@ -3267,13 +3272,16 @@ class ServerHttp2Session extends Http2Session {
     if (callback !== undefined && typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    // Validate the caller-supplied object FIRST so null / arrays / primitives
+    // still throw ERR_INVALID_ARG_TYPE — spreading ({ ...null }) would hide
+    // these from the type guard in validateSettings.
+    validateSettings(settings);
     // RFC 9113 §7.2.2: a server MUST NOT advertise SETTINGS_ENABLE_PUSH != 0.
     // Force-override whatever the caller passes so a mid-connection SETTINGS
     // frame stays compliant (the initial SETTINGS frame already clamps this
     // in ServerHttp2Session's constructor). Clients still accept `enablePush`
     // via their own `settings()` method.
     settings = { ...settings, enablePush: false };
-    validateSettings(settings);
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
     if (typeof callback === "function") {

@@ -72,9 +72,7 @@ test.skipIf(!isWindows)("fs.writeSync(1, ...) does not panic after SetStdHandle 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("wrote=19");
-  expect(stderr).not.toContain("makes closing impossible");
-  expect(stderr).not.toContain("panic");
+  expect(stderr).toBe("wrote=19\n");
   expect(stdout).toBe("after-setstdhandle\n");
   expect(exitCode).toBe(0);
 });

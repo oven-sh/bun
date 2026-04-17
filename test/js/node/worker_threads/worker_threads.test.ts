@@ -7,6 +7,7 @@ import wt, {
   BroadcastChannel,
   getEnvironmentData,
   isMainThread,
+  markAsUncloneable,
   markAsUntransferable,
   MessageChannel,
   MessagePort,
@@ -35,6 +36,7 @@ test("support eval in worker", async () => {
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");
+  expect(wt).toHaveProperty("markAsUncloneable");
   expect(wt).toHaveProperty("markAsUntransferable");
   expect(wt).toHaveProperty("moveMessagePortToContext");
   expect(wt).toHaveProperty("parentPort");
@@ -51,6 +53,7 @@ test("all worker_threads module properties are present", () => {
 
   expect(getEnvironmentData).toBeFunction();
   expect(isMainThread).toBeBoolean();
+  expect(markAsUncloneable).toBeFunction();
   expect(markAsUntransferable).toBeFunction();
   expect(moveMessagePortToContext).toBeFunction();
   expect(parentPort).toBeNull();

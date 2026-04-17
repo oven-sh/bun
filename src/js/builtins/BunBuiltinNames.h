@@ -152,6 +152,7 @@ using namespace JSC;
     macro(isAbsolute) \
     macro(isDisturbed) \
     macro(isPaused) \
+    macro(isUncloneable) \
     macro(isWindows) \
     macro(join) \
     macro(kind) \

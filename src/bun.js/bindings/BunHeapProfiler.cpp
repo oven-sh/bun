@@ -3,7 +3,7 @@
 #include "headers-handwritten.h"
 #include <JavaScriptCore/HeapProfiler.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
-#include <JavaScriptCore/BunV8HeapSnapshotBuilder.h>
+#include "V8HeapSnapshotBuilder.h"
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSONObject.h>
@@ -942,7 +942,7 @@ WTF::String generateHeapSnapshotV8(JSC::VM& vm)
     auto& heapProfiler = *vm.heapProfiler();
     heapProfiler.clearSnapshots();
 
-    JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
+    Bun::V8HeapSnapshotBuilder builder(heapProfiler);
     return builder.json();
 }
 

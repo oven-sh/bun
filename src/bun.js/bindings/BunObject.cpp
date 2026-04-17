@@ -38,7 +38,7 @@
 #include "BunObject+exports.h"
 #include "ErrorCode.h"
 #include "GeneratedBunObject.h"
-#include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
+#include "V8HeapSnapshotBuilder.h"
 #include "BunObjectModule.h"
 #include "JSCookie.h"
 #include "JSCookieMap.h"
@@ -847,7 +847,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
         }
 
         if (useArrayBuffer) {
-            JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
+            Bun::V8HeapSnapshotBuilder builder(heapProfiler);
             auto bytes = builder.jsonBytes();
             auto released = bytes.releaseBuffer();
             auto span = released.leakSpan();
@@ -857,8 +857,13 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
             return JSC::JSValue::encode(JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTF::move(buffer)));
         }
 
-        JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
-        return JSC::JSValue::encode(jsString(vm, builder.json()));
+        Bun::V8HeapSnapshotBuilder builder(heapProfiler);
+        auto jsonString = builder.json();
+        if (jsonString.isNull()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, throwScope);
+            return {};
+        }
+        return JSC::JSValue::encode(jsString(vm, WTF::move(jsonString)));
     }
 
     JSC::HeapSnapshotBuilder builder(heapProfiler);

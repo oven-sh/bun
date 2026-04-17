@@ -56,7 +56,7 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/HeapProfiler.h>
-#include <JavaScriptCore/BunV8HeapSnapshotBuilder.h>
+#include "V8HeapSnapshotBuilder.h"
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
@@ -694,11 +694,15 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         vm.ensureHeapProfiler();
         auto& heapProfiler = *vm.heapProfiler();
         heapProfiler.clearSnapshots();
-        JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
+        Bun::V8HeapSnapshotBuilder builder(heapProfiler);
         String snapshot = builder.json();
 
         ScriptExecutionContext::postTaskTo(parentId,
             [strong, snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) {
+                if (snapshot.isNull()) [[unlikely]] {
+                    strong.get()->reject(parentCtx.vm(), parentCtx.globalObject(), JSC::createOutOfMemoryError(parentCtx.globalObject()));
+                    return;
+                }
                 strong.get()->resolve(parentCtx.globalObject(), parentCtx.vm(), jsString(parentCtx.vm(), snapshot));
             });
     });

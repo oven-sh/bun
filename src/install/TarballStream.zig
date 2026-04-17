@@ -453,18 +453,25 @@ fn beginEntry(this: *TarballStream, entry: *lib.Archive.Entry) !void {
 
     if (this.want_first_dirname) {
         this.want_first_dirname = false;
+        // GitHub's archive API always emits an explicit `repo-sha/`
+        // directory entry first, which is what the buffered path
+        // relies on. Take only the leading component so a tarball
+        // whose first member is `repo-sha/file` (no directory entry)
+        // still yields the correct cache-folder name.
+        var root_it = std.mem.tokenizeScalar(bun.OSPathChar, pathname, '/');
+        const root = root_it.next() orelse pathname[0..0];
         if (comptime Environment.isWindows) {
             const list = std.array_list.Managed(u8).init(bun.default_allocator);
-            var result = try strings.toUTF8ListWithType(list, pathname[0..pathname.len]);
+            var result = try strings.toUTF8ListWithType(list, root);
             defer result.deinit();
             this.resolved_github_dirname = FileSystem.DirnameStore.instance.append(
                 []const u8,
-                strings.withoutTrailingSlash(result.items),
+                result.items,
             ) catch unreachable;
         } else {
             this.resolved_github_dirname = FileSystem.DirnameStore.instance.append(
                 []const u8,
-                strings.withoutTrailingSlash(bun.asByteSlice(pathname)),
+                bun.asByteSlice(root),
             ) catch unreachable;
         }
     }

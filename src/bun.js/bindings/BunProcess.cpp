@@ -2991,6 +2991,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
 
     auto* zigGlobal = defaultGlobalObject(globalObject);
     Bun__Process__exit(zigGlobal, exitCode);
+    // Main-thread Bun__Process__exit is noreturn. Reaching here means we're in a
+    // worker; request termination so JS following process.exit() stops at the
+    // next safepoint (matches Node.js). The host-call return path is itself a
+    // safepoint, so this fires before the next JS statement without leaving an
+    // exception pending across native frames that don't expect one.
+    vm.notifyNeedTermination();
+    throwScope.release();
     return JSC::JSValue::encode(jsUndefined());
 }
 

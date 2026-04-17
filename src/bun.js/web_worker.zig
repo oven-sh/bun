@@ -67,10 +67,16 @@
 //! ONLY on the parent thread:
 //!   - `create()`      – ref   (parent thread)
 //!   - `setRef()`      – ref/unref via JS .ref()/.unref()  (parent thread)
-//!   - `notifyNeedTermination()` – unref on terminate()     (parent thread)
 //!   - `releaseParentPollRef()` – unref in close-event task (parent thread)
 //!   - `WebWorker__updatePtr` spawn-fail path – unref       (parent thread)
 //! `KeepAlive.status` is non-atomic, so the worker thread MUST NOT touch it.
+//!
+//! `terminate()` and worker-side `process.exit()` call
+//! `vm.jsc_vm.notifyNeedTermination()`, which makes JSC throw a
+//! TerminationException at the next safepoint. Combined with `wakeup()` this
+//! lets the worker reach `exitAndDeinit` even if it was in a tight loop, so
+//! `await worker.terminate()` resolves and `parent_poll_ref` is released via
+//! the close-event task rather than eagerly.
 //!
 //! `vm_lock` is held only briefly around three sites: `start()` setting `vm`,
 //! `exitAndDeinit()` nulling `vm`, and `notifyNeedTermination()` reading `vm`
@@ -79,9 +85,7 @@
 //!
 //! Known gaps vs Node.js (not handled here): the worker thread is detached,
 //! not joined, so `await worker.terminate()` resolves before the OS thread is
-//! fully gone; `terminate()` does not call `vm->TerminateExecution()` so a
-//! worker stuck in `while(true){}` never observes it; nested workers are not
-//! stopped/joined when their parent exits.
+//! fully gone; nested workers are not stopped/joined when their parent exits.
 
 const WebWorker = @This();
 
@@ -705,19 +709,15 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
     }
     log("[{d}] notifyNeedTermination", .{this.execution_context_id});
 
-    // Release the parent's keep-alive immediately. terminate() does not yet
-    // interrupt running JS, so a worker stuck in synchronous code will never
-    // reach exitAndDeinit and post the close-event task; without this the
-    // parent's event loop would stay ref'd forever. This is parent-thread-only
-    // (the only caller is Worker::terminate()), so plain unref is correct, and
-    // KeepAlive.unref is idempotent so the later releaseParentPollRef is a no-op.
-    this.parent_poll_ref.unref(this.parent);
-
-    // Wake the worker's event loop so it observes requested_terminate promptly.
+    // Interrupt running JS in the worker (TerminationException at the next
+    // safepoint) and wake its event loop so it observes requested_terminate.
     // vm_lock serializes against exitAndDeinit nulling vm and freeing the arena.
+    // parent_poll_ref stays held until the close-event task runs so that
+    // `await worker.terminate()` keeps the parent alive until 'exit' fires.
     this.vm_lock.lock();
     defer this.vm_lock.unlock();
     if (this.vm) |vm| {
+        vm.jsc_vm.notifyNeedTermination();
         vm.eventLoop().wakeup();
     }
 }
@@ -754,6 +754,10 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         }
     }
     if (vm_to_deinit) |vm| {
+        // terminate() set the JSC termination flag to interrupt running JS; clear
+        // it so process.on('exit') handlers can run. WebWorker__dispatchExit
+        // re-sets it for the JSC VM teardown.
+        vm.jsc_vm.clearHasTerminationRequest();
         vm.is_shutting_down = true;
         vm.onExit();
         jsc.API.cron.CronJob.clearAllForVM(vm, .teardown);

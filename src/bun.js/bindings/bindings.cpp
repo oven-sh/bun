@@ -4893,6 +4893,10 @@ bool JSC__VM__isTerminationException(JSC::VM* vm, JSC::Exception* exception)
 }
 
 [[ZIG_EXPORT(nothrow)]]
+void JSC__VM__clearHasTerminationRequest(JSC::VM* vm)
+{
+    vm->clearHasTerminationRequest();
+}
 bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
 {
     return vm->hasTerminationRequest();

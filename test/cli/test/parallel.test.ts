@@ -18,7 +18,7 @@ test("--parallel runs files across workers and aggregates totals", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("(parallel)");
+  expect(stdout).toContain("PARALLEL");
   // workers are an implementation detail; output never mentions them
   expect(stderr).not.toContain("worker");
   // every file reported once
@@ -29,7 +29,7 @@ test("--parallel runs files across workers and aggregates totals", async () => {
   expect(stderr).toContain("7 pass");
   expect(stderr).toContain("0 fail");
   expect(stderr).toContain("Ran 7 tests across 4 files.");
-  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`"bun test <version> (<revision>)"`);
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`"bun test <version> (<revision>) >>> 2x PARALLEL"`);
   expect(exitCode).toBe(0);
 });
 
@@ -46,9 +46,9 @@ test("--parallel surfaces failures and exits non-zero", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("(parallel)");
+  expect(stdout).toContain("PARALLEL");
   expect(stderr).toContain("bad.test.js");
   expect(stderr).toContain("1 pass");
   expect(stderr).toContain("1 fail");
@@ -69,7 +69,7 @@ test("--parallel re-queues a file when its worker crashes mid-run", async () => 
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // good files still ran and passed
   expect(stderr).toContain("a.test.js");
@@ -99,8 +99,8 @@ test("--parallel without N is accepted and runs all files", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("(parallel)");
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
   expect(stderr).toContain("Ran 2 tests across 2 files.");
   expect(exitCode).toBe(0);
 });
@@ -120,9 +120,9 @@ test("--parallel forwards -t to workers", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("(parallel)");
+  expect(stdout).toContain("PARALLEL");
   // Only keep_a and keep_c run; drop_* tests would fail if executed.
   expect(stderr).toContain("2 pass");
   expect(stderr).toContain("0 fail");
@@ -145,9 +145,9 @@ test("--parallel --bail stops dispatching new files after threshold", async () =
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("(parallel)");
+  expect(stdout).toContain("PARALLEL");
   expect(stderr).toContain("Bailed out after 1 failure");
   // At most the two initially-dispatched files ran; the other four never did.
   const m = stderr.match(/across (\d+) files?\./);
@@ -172,9 +172,9 @@ test("--parallel prints per-test lines under their file's header", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("(parallel)");
+  expect(stdout).toContain("PARALLEL");
   // Per-test lines appear (matching serial output's "(pass) name" format).
   expect(stderr).toMatch(/\(pass\) alpha-one/);
   expect(stderr).toMatch(/\(pass\) alpha-two/);
@@ -226,9 +226,9 @@ test("--parallel streams test results in realtime, not buffered per-file", async
     if (!firstSlowAt && /\(pass\) [ab]-slow/.test(acc)) firstSlowAt = now;
     if (firstFastAt && firstSlowAt) break;
   }
-  const exitCode = await proc.exited;
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(acc).toContain("(parallel)");
+  expect(stdout).toContain("PARALLEL");
   expect(firstFastAt).toBeGreaterThan(0);
   expect(firstSlowAt).toBeGreaterThan(0);
   // The slow result cannot arrive before ~600ms, so this proves the fast
@@ -253,9 +253,9 @@ test("--parallel aggregates failure summary across workers", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("(parallel)");
+  expect(stdout).toContain("PARALLEL");
   expect(stderr).toContain("24 pass");
   expect(stderr).toContain("1 fail");
   // The repeat-at-end section reprints the failure line (so it appears twice).
@@ -277,8 +277,8 @@ test("--parallel --reporter=junit produces a merged report covering all files", 
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("(parallel)");
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
 
   const xml = await Bun.file(String(dir) + "/out.xml").text();
   expect(xml).toContain('<testsuites name="bun test"');
@@ -312,8 +312,8 @@ test("--parallel --coverage merges LCOV across workers", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("(parallel)");
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
   expect(stderr).not.toContain("not yet aggregated");
 
   const lcov = await Bun.file(String(dir) + "/cov/lcov.info").text();
@@ -347,9 +347,9 @@ test("--parallel --coverage prints merged text table", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("(parallel)");
+  expect(stdout).toContain("PARALLEL");
   // Table header + both source files present with a numeric % Lines column.
   expect(stderr).toContain("% Funcs");
   expect(stderr).toContain("% Lines");
@@ -375,8 +375,8 @@ test("--parallel --coverage enforces coverageThreshold with lcov-only reporter",
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("(parallel)");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("PARALLEL");
     expect(stderr).toContain("2 pass");
     // lib.js has 1/3 functions covered → below 0.9 threshold → must fail.
     expect({ reporter, exitCode }).toEqual({ reporter, exitCode: 1 });
@@ -403,7 +403,7 @@ test("--parallel --dots prints one status character per test", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // No file headers in dots mode.
   expect(stderr).not.toContain(".test.js:");
@@ -434,7 +434,7 @@ test("--parallel never interleaves console output across files", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Serial execution would trivially avoid interleaving; assert the two files
   // actually ran in different processes so the test proves something.
@@ -479,7 +479,7 @@ test("--parallel lazily scales workers based on file duration", async () => {
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stderr, exitCode, pids: new Set((await Bun.file(pids).text()).trim().split("\n")) };
   };
 
@@ -532,8 +532,8 @@ test("--parallel partitions by directory and steals from the end", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("(parallel)");
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
   expect(stderr).toContain("16 pass");
 
   type Row = { pid: number; file: string };
@@ -577,8 +577,8 @@ test("--parallel work-stealing balances an uneven directory split", async () => 
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("(parallel)");
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
   expect(stderr).toContain("11 pass");
   expect(stderr).toContain("0 fail");
 
@@ -615,8 +615,8 @@ test("--parallel writes new snapshots from every worker", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr1, code1] = await Promise.all([first.stdout.text(), first.stderr.text(), first.exited]);
-  expect(stderr1).toContain("(parallel)");
+  const [stdout1, stderr1, code1] = await Promise.all([first.stdout.text(), first.stderr.text(), first.exited]);
+  expect(stdout1).toContain("PARALLEL");
   expect(stderr1).toContain("4 pass");
   expect(code1).toBe(0);
 
@@ -633,8 +633,8 @@ test("--parallel writes new snapshots from every worker", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr2, code2] = await Promise.all([second.stdout.text(), second.stderr.text(), second.exited]);
-  expect(stderr2).toContain("(parallel)");
+  const [stdout2, stderr2, code2] = await Promise.all([second.stdout.text(), second.stderr.text(), second.exited]);
+  expect(stdout2).toContain("PARALLEL");
   expect(stderr2).toContain("4 pass");
   expect(stderr2).toContain("0 fail");
   expect(code2).toBe(0);
@@ -658,8 +658,8 @@ test("--parallel: a test writing garbage to fd 3 does not hang the coordinator",
     Bun.sleep(15000).then(() => "TIMEOUT" as const),
   ]);
   expect(result).not.toBe("TIMEOUT");
-  const [, stderr, exitCode] = result as [string, string, number];
-  expect(stderr).toContain("(parallel)");
+  const [stdout, stderr, exitCode] = result as [string, string, number];
+  expect(stdout).toContain("PARALLEL");
   // ok.test.js's pass survives; bad.test.js's worker is treated as crashed once
   // its IPC pipe is dropped, then retried. We don't assert exact counts (the
   // retry may also corrupt fd 3) — only that the run completes deterministically.
@@ -684,8 +684,8 @@ test("--parallel --randomize without --seed is reproducible via the printed seed
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("(parallel)");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("PARALLEL");
     expect(stderr).toContain("16 pass");
     expect(exitCode).toBe(0);
     const order = (tag: string) => [...stderr.matchAll(new RegExp(`ORDER:${tag}:(\\w)`, "g"))].map(m => m[1]).join("");
@@ -721,8 +721,8 @@ test("--parallel forwards --conditions to workers", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("(parallel)");
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
   expect(stderr).toContain("2 pass");
   expect(stderr).toContain("0 fail");
   expect(exitCode).toBe(0);

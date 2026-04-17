@@ -26,9 +26,6 @@ pub fn runAsCoordinator(
         return false;
     }
 
-    Output.prettyError("<d>(parallel)<r>\n", .{});
-    Output.flush();
-
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
@@ -218,6 +215,8 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
         try argv.append(arena, "--no-addons");
     if (ctx.debug.macros == .disable)
         try argv.append(arena, "--no-macros");
+    if (ctx.args.disable_default_env_files)
+        try argv.append(arena, "--no-env-file");
     if (ctx.args.jsx) |jsx| {
         if (jsx.factory.len > 0)
             try argv.append(arena, try printZ(arena, "--jsx-factory={s}", .{jsx.factory}));

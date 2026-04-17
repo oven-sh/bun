@@ -1384,7 +1384,14 @@ pub const TestCommand = struct {
 
         if (!ctx.test_options.test_worker) {
             // print the version so you know its doing stuff if it takes a sec
-            Output.prettyln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+            if (ctx.test_options.parallel > 0) {
+                Output.prettyln(
+                    "<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r> <b><red>\\><magenta>\\>\\> {d}x <blue>PARA<cyan>LLEL<r>",
+                    .{ctx.test_options.parallel},
+                );
+            } else {
+                Output.prettyln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+            }
             Output.flush();
         }
 

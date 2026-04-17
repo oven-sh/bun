@@ -100,6 +100,7 @@ pub const Coordinator = struct {
                 }
             }
         }
+        if (this.worker_tmpdir) |d| bun.FD.cwd().deleteTree(d) catch {};
         bun.Global.exit(130);
     }
 

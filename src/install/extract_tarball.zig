@@ -126,6 +126,42 @@ threadlocal var final_path_buf: bun.PathBuffer = undefined;
 threadlocal var folder_name_buf: bun.PathBuffer = undefined;
 threadlocal var json_path_buf: bun.PathBuffer = undefined;
 
+pub fn usesStreamingExtraction() bool {
+    return !bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL.get();
+}
+
+pub fn nameAndBasename(this: *const ExtractTarball) struct { []const u8, []const u8 } {
+    const name = if (this.name.slice().len > 0) this.name.slice() else brk: {
+        Output.warn("Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.", .{});
+        bun.debugAssert(false);
+        break :brk "unnamed-package";
+    };
+    const basename = brk: {
+        var tmp = name;
+        if (strings.hasPrefixComptime(tmp, "https://") or strings.hasPrefixComptime(tmp, "http://")) {
+            tmp = std.fs.path.basename(tmp);
+            if (strings.endsWithComptime(tmp, ".tgz")) {
+                tmp = tmp[0 .. tmp.len - 4];
+            } else if (strings.endsWithComptime(tmp, ".tar.gz")) {
+                tmp = tmp[0 .. tmp.len - 7];
+            }
+        } else if (tmp[0] == '@') {
+            if (strings.indexOfChar(tmp, '/')) |i| {
+                tmp = tmp[i + 1 ..];
+            }
+        }
+
+        if (comptime Environment.isWindows) {
+            if (strings.lastIndexOfChar(tmp, ':')) |i| {
+                tmp = tmp[i + 1 ..];
+            }
+        }
+
+        break :brk tmp;
+    };
+    return .{ name, basename };
+}
+
 fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8) !Install.ExtractData {
     const tracer = bun.perf.trace("ExtractTarball.extract");
     defer tracer.end();
@@ -309,6 +345,22 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
             Output.flush();
         }
     }
+
+    return this.moveToCacheDirectory(log, tmpname, name, basename, resolved);
+}
+
+/// Rename the freshly-extracted temp directory into the cache, read
+/// `package.json` if required, and build the `ExtractData` result. Shared
+/// between the buffered and streaming extraction paths.
+pub fn moveToCacheDirectory(
+    this: *const ExtractTarball,
+    log: *logger.Log,
+    tmpname: [:0]const u8,
+    name: []const u8,
+    basename: []const u8,
+    resolved: []const u8,
+) !Install.ExtractData {
+    const tmpdir = this.temp_dir;
     const folder_name = switch (this.resolution.tag) {
         .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version, null),
         .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved, null),
@@ -367,11 +419,10 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                                 // we rename it back into the temp dir
                                 // and then delete that temp dir
                                 // The goal is to make it more difficult for an application to reach this folder
-                                var tmpname_bytes = std.mem.asBytes(&tmpname_buf);
-                                const tmpname_len = tmpname.len;
-
-                                tmpname_bytes[tmpname_len..][0..4].* = .{ 't', 'm', 'p', 0 };
-                                const tempdest = tmpname_bytes[0 .. tmpname_len + 3 :0];
+                                var tempdest_buf: bun.PathBuffer = undefined;
+                                @memcpy(tempdest_buf[0..tmpname.len], tmpname);
+                                tempdest_buf[tmpname.len..][0..4].* = .{ 't', 'm', 'p', 0 };
+                                const tempdest = tempdest_buf[0 .. tmpname.len + 3 :0];
                                 switch (bun.sys.renameat(
                                     .fromStdDir(cache_dir),
                                     folder_name,
@@ -383,7 +434,6 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                                         tmpdir.deleteTree(tempdest) catch {};
                                     },
                                 }
-                                tmpname_bytes[tmpname_len] = 0;
                                 did_retry = true;
                                 continue;
                             },

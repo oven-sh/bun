@@ -1220,6 +1220,38 @@ pub fn enqueueExtractNPMPackage(
     return &task.threadpool_task;
 }
 
+/// Allocate the extract Task up front so the HTTP thread can schedule it
+/// as soon as the first tarball chunk arrives. The returned Task is not
+/// yet pushed onto any batch; `NetworkTask.notify` hands it to the thread
+/// pool directly, and the NetworkTask's pending-task slot is reused for
+/// the extraction so progress counters stay balanced.
+pub fn createExtractTaskForStreaming(
+    this: *PackageManager,
+    tarball: *const ExtractTarball,
+    network_task: *NetworkTask,
+) *Task {
+    var task = this.preallocated_resolve_tasks.get();
+    task.* = Task{
+        .package_manager = this,
+        .log = logger.Log.init(this.allocator),
+        .tag = Task.Tag.extract,
+        .request = .{
+            .extract = .{
+                .network = network_task,
+                .tarball = tarball.*,
+            },
+        },
+        .id = network_task.task_id,
+        .data = undefined,
+    };
+    task.request.extract.tarball.skip_verify = !this.options.do.verify_integrity;
+    if (network_task.apply_patch_task) |patch| {
+        task.apply_patch_task = patch;
+        network_task.apply_patch_task = null;
+    }
+    return task;
+}
+
 fn enqueueGitClone(
     this: *PackageManager,
     task_id: Task.Id,

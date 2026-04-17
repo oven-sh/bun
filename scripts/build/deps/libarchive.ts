@@ -24,7 +24,15 @@ export const libarchive: Dependency = {
     commit: LIBARCHIVE_COMMIT,
   }),
 
-  patches: ["patches/libarchive/archive_write_add_filter_gzip.c.patch", "patches/libarchive/CMakeLists.txt.patch"],
+  patches: [
+    "patches/libarchive/archive_write_add_filter_gzip.c.patch",
+    "patches/libarchive/CMakeLists.txt.patch",
+    // Propagate ARCHIVE_RETRY from the client read callback up through
+    // the gzip filter and tar reader so `bun install` can stream tarball
+    // extraction from the HTTP thread without blocking a worker. See
+    // src/install/TarballStream.zig.
+    "patches/libarchive/nonblocking-read.patch",
+  ],
 
   // libarchive's configure-time check_include_file("zlib.h") needs zlib's
   // headers on disk. We don't LINK zlib into libarchive (ENABLE_ZLIB=OFF) —

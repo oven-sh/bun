@@ -162,6 +162,10 @@ pub const feature_flag = struct {
     pub const BUN_FEATURE_FLAG_DISABLE_DNS_CACHE = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX", .{});
+    /// Disable streaming tarball extraction in `bun install`. When disabled,
+    /// the whole .tgz is buffered in memory before being decompressed and
+    /// extracted. Useful for bisecting streaming-specific bugs.
+    pub const BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_IO_POOL = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IO_POOL", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_IPV4 = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IPV4", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_IPV6 = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IPV6", .{});

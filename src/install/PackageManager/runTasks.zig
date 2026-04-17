@@ -129,7 +129,15 @@ pub fn runTasks(
     var network_tasks_iter = network_tasks_batch.iterator();
     while (network_tasks_iter.next()) |task| {
         if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
-        manager.decrementPendingTasks();
+
+        // Streaming extraction shares this NetworkTask's pending-task slot
+        // with the extract Task that the HTTP thread scheduled on a worker.
+        // Decrementing here would let `pendingTaskCount()` hit zero while
+        // extraction is still running, so defer it to the extract Task's
+        // completion (handled via `resolve_tasks` below).
+        if (!task.isStreamingExtractInFlight()) {
+            manager.decrementPendingTasks();
+        }
         // We cannot free the network task at the end of this scope.
         // It may continue to be referenced in a future task.
 
@@ -329,6 +337,26 @@ pub fn runTasks(
                 manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueParseNPMPackage(task.task_id, name, task)));
             },
             .extract => |*extract| {
+                if (task.isStreamingExtractInFlight()) {
+                    // A worker thread is already extracting from the
+                    // streamed body. Errors (including non-2xx responses)
+                    // are surfaced by that Task via `resolve_tasks`; avoid
+                    // double-reporting here and do not enqueue extraction.
+                    if (log_level.isVerbose() and task.response.metadata != null) {
+                        Output.prettyError("    ", .{});
+                        Output.printElapsed(@as(f64, @floatCast(@as(f64, @floatFromInt(task.unsafe_http_client.elapsed)) / std.time.ns_per_ms)));
+                        Output.prettyError("<d> Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
+                        Output.flush();
+                    }
+                    if (log_level.showProgress()) {
+                        if (!has_updated_this_run) {
+                            manager.setNodeName(manager.downloads_node.?, extract.name.slice(), ProgressStrings.extract_emoji, true);
+                            has_updated_this_run = true;
+                        }
+                    }
+                    continue;
+                }
+
                 if (!has_network_error and task.response.metadata == null) {
                     has_network_error = true;
                     const min = manager.options.min_simultaneous_requests;
@@ -343,6 +371,10 @@ pub fn runTasks(
 
                     if (task.retried < manager.options.max_retry_count) {
                         task.retried += 1;
+                        // Streaming never committed (checked above), so
+                        // the pre-allocated stream is safe to reuse for
+                        // the retry attempt.
+                        task.resetStreamingForRetry();
                         manager.enqueueNetworkTask(task);
 
                         if (manager.options.log_level.isVerbose()) {
@@ -364,6 +396,13 @@ pub fn runTasks(
                         continue;
                     }
                 }
+
+                // Past this point we will not retry. If streaming state was
+                // allocated but never scheduled, release it now so the
+                // pre-created Task goes back to the pool and the stream
+                // buffers are freed. The buffered `enqueueExtractNPMPackage`
+                // path below allocates its own Task.
+                task.discardUnusedStreamingState(manager);
 
                 const metadata = task.response.metadata orelse {
                     const err = task.response.fail orelse error.TarballFailedToDownload;
@@ -1082,6 +1121,16 @@ pub fn generateNetworkTaskForTarball(
         authorization,
     );
 
+    if (ExtractTarball.usesStreamingExtraction()) {
+        // Pre-create the extract Task and streaming state here on the
+        // main thread: `preallocated_resolve_tasks` is not thread-safe,
+        // and the streaming extractor needs a stable `Task` pointer so
+        // it can push the result onto `resolve_tasks` when it finishes.
+        const extract_task = this.createExtractTaskForStreaming(&network_task.callback.extract, network_task);
+        network_task.streaming_extract_task = extract_task;
+        network_task.tarball_stream = TarballStream.init(this.allocator, extract_task, network_task, this);
+    }
+
     return network_task;
 }
 
@@ -1104,8 +1153,10 @@ const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 
 const DependencyID = bun.install.DependencyID;
+const ExtractTarball = bun.install.ExtractTarball;
 const Features = bun.install.Features;
 const NetworkTask = bun.install.NetworkTask;
+const TarballStream = bun.install.TarballStream;
 const Npm = bun.install.Npm;
 const PackageID = bun.install.PackageID;
 const PackageManifestError = bun.install.PackageManifestError;

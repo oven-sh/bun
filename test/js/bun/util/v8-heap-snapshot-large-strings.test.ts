@@ -14,7 +14,7 @@ test("generateHeapSnapshot('v8') truncates string node names like V8", async () 
   // flat (non-rope) heap cell when the snapshot is taken, and so the test runner's
   // own heap doesn't interfere with the measurement.
   const script = `
-    const marker = "FINDME_MARKER_" + "Q".repeat(100000) + "_MARKER_END";
+    const marker = "FINDME_MARKER_" + Buffer.alloc(100000, "Q").toString() + "_MARKER_END";
     // Flatten the rope so the heap contains a single 100k+ character JSString.
     void marker.charCodeAt(50000);
     globalThis.__keep = marker;
@@ -58,7 +58,8 @@ test("generateHeapSnapshot('v8') handles a large UTF-16 string in the heap", asy
   const script = `
     // U+2014 is outside Latin-1, so the resulting WTF::String is 16-bit and the
     // JSON builder has to upconvert when it reaches this entry in the strings table.
-    const s = "\\u2014".repeat(4 * 1024 * 1024);
+    const N = 4 * 1024 * 1024;
+    const s = Buffer.alloc(N * 2, "\\u2014", "utf16le").toString("utf16le");
     globalThis.__keep = s;
     const snap = Bun.generateHeapSnapshot("v8");
     const parsed = JSON.parse(snap);
@@ -88,7 +89,7 @@ test("generateHeapSnapshot('v8') handles a large UTF-16 string in the heap", asy
 
 test("generateHeapSnapshot('v8', 'arraybuffer') also truncates string node names", async () => {
   const script = `
-    const marker = "FINDMEAB_" + "Z".repeat(100000) + "_ABEND";
+    const marker = "FINDMEAB_" + Buffer.alloc(100000, "Z").toString() + "_ABEND";
     void marker.charCodeAt(50000);
     globalThis.__keep = marker;
     const snap = Bun.generateHeapSnapshot("v8", "arraybuffer");

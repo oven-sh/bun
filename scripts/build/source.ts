@@ -15,8 +15,8 @@
  * `buildDir/deps/<name>/`. This supports "local" dep mode where the user edits
  * vendored source directly — the fetch step is skipped and no .ref is written.
  *
- * Tarballs are cached in `downloadCacheDir/tarballs/<identity-hash>.tar.gz` so
- * re-extraction after a failed patch doesn't re-download.
+ * Tarballs are cached in `downloadCacheDir/tarballs/<name>-<url-hash>.tar.gz`
+ * so re-extraction after a failed patch doesn't re-download.
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";

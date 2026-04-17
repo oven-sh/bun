@@ -185,7 +185,9 @@ export async function extractZip(zipPath: string, dest: string): Promise<void> {
  * If a tarball has multiple top-level entries, the whole staging dir becomes
  * `dest/` (no hoist).
  *
- * @param identity Written to `dest/.identity`. Changing it triggers re-download.
+ * @param identity Written to `dest/.identity`. A mismatch triggers
+ *   re-extract; whether that also re-downloads depends on the URL-hash
+ *   key below (for current deps, identity changes imply URL changes).
  * @param cache Directory for the downloaded tarball (keyed by URL hash —
  *   `identity` alone doesn't cover os/arch). Lets CI agents persist the
  *   ~200MB WebKit download across ephemeral runners (via

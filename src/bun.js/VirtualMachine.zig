@@ -143,7 +143,8 @@ rare_data: ?*jsc.RareData = null,
 /// lock-free and correct). ~56 bytes — negligible on VirtualMachine.
 proxy_env_storage: jsc.RareData.ProxyEnvStorage = .{},
 is_us_loop_entered: bool = false,
-pending_internal_promise: PendingInternalPromise = .{},
+pending_internal_promise: ?*JSInternalPromise = null,
+pending_internal_promise_is_protected: bool = false,
 entry_point_result: struct {
     value: jsc.Strong.Optional = .empty,
     cjs_set_value: bool = false,
@@ -212,36 +213,6 @@ test_isolation_generation: u32 = 0,
 /// When true, listening sockets and subprocesses are tracked so they can
 /// be force-closed between test files. Set by `bun test --isolate`.
 test_isolation_enabled: bool = false,
-
-/// Strong-referenced storage for the entry-point/preload promise. Replaces
-/// the old `?*JSInternalPromise` + manual `protect()`/`_is_protected` bool
-/// dance which leaked roots when a writer forgot to unprotect (e.g. --hot).
-pub const PendingInternalPromise = struct {
-    strong: jsc.Strong.Optional = .empty,
-
-    pub fn set(this: *PendingInternalPromise, global: *JSGlobalObject, promise: ?*JSInternalPromise) void {
-        if (promise) |p| {
-            this.strong.set(global, JSValue.fromCell(p));
-        } else {
-            this.strong.clearWithoutDeallocation();
-        }
-    }
-
-    pub fn get(this: *const PendingInternalPromise) ?*JSInternalPromise {
-        const v = this.strong.get() orelse return null;
-        // Several callers historically store a plain JSPromise* here through a
-        // lying extern (e.g. Bun__loadHTMLEntryPoint, the old
-        // JSC__JSInternalPromise__resolvedPromise). All consumers only call
-        // JSPromise base-class methods (status/result/isHandled), so cast the
-        // cell directly instead of jsDynamicCast<JSInternalPromise*> which
-        // would correctly-but-unhelpfully return null for those cases.
-        return @ptrCast(v.asCell());
-    }
-
-    pub fn deinit(this: *PendingInternalPromise) void {
-        this.strong.deinit();
-    }
-};
 
 extern "C" fn Bake__getAsyncLocalStorage(globalObject: *JSGlobalObject) callconv(jsc.conv) jsc.JSValue;
 
@@ -731,7 +702,7 @@ pub fn uncaughtException(this: *jsc.VirtualMachine, globalObject: *JSGlobalObjec
 
 pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) void {
     defer this.addMainToWatcherIfNeeded();
-    var promise = this.pending_internal_promise.get() orelse return;
+    var promise = this.pending_internal_promise orelse return;
 
     if (promise.status() == .rejected and !promise.isHandled()) {
         this.unhandledRejection(this.global, promise.result(), promise.asValue());
@@ -793,7 +764,11 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
     jsc.API.cron.CronJob.clearAllForVM(this, .reload);
     this.global.reload() catch @panic("Failed to reload");
     this.hot_reload_counter += 1;
-    // reloadEntryPoint() already stores into pending_internal_promise on every return path.
+    if (this.pending_internal_promise_is_protected) {
+        if (this.pending_internal_promise) |p| JSValue.fromCell(p).unprotect();
+        this.pending_internal_promise_is_protected = false;
+    }
+    // reloadEntryPoint() stores into pending_internal_promise on every return path.
     _ = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
 }
 
@@ -2161,17 +2136,19 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
         };
         var promise = try JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text));
 
-        this.pending_internal_promise.set(this.global, promise);
+        this.pending_internal_promise = promise;
+        JSValue.fromCell(promise).protect();
+        defer JSValue.fromCell(promise).unprotect();
 
         // pending_internal_promise can change if hot module reloading is enabled
         if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
-            switch (this.pending_internal_promise.get().?.status()) {
+            switch (this.pending_internal_promise.?.status()) {
                 .pending => {
-                    while (this.pending_internal_promise.get().?.status() == .pending) {
+                    while (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.get().?.status() == .pending) {
+                        if (this.pending_internal_promise.?.status() == .pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -2232,20 +2209,25 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
     if (!this.transpiler.options.disable_transpilation) {
         if (this.preload.len > 0) {
             if (try this.loadPreloads()) |promise| {
-                this.pending_internal_promise.set(this.global, promise);
+                JSValue.fromCell(promise).ensureStillAlive();
+                JSValue.fromCell(promise).protect();
+                this.pending_internal_promise = promise;
+                this.pending_internal_promise_is_protected = true;
                 return promise;
             }
 
             // Check if Module.runMain was patched
             if (this.has_patched_run_main) {
                 @branchHint(.cold);
-                this.pending_internal_promise.set(this.global, null);
+                this.pending_internal_promise = null;
+                this.pending_internal_promise_is_protected = false;
                 const ret = try jsc.fromJSHostCall(this.global, @src(), NodeModuleModule__callOverriddenRunMain, .{ this.global, try bun.String.createUTF8ForJS(this.global, main_file_name) });
                 // If the override stored a promise itself, use that; otherwise
                 // wrap its return value.
-                if (this.pending_internal_promise.get()) |stored| return stored;
+                if (this.pending_internal_promise) |stored| return stored;
                 const resolved = JSInternalPromise.resolvedPromise(this.global, ret);
-                this.pending_internal_promise.set(this.global, resolved);
+                this.pending_internal_promise = resolved;
+                this.pending_internal_promise_is_protected = false;
                 return resolved;
             }
         }
@@ -2255,11 +2237,16 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
         else
             try jsc.fromJSHostCallGeneric(this.global, @src(), Bun__loadHTMLEntryPoint, .{this.global});
 
-        this.pending_internal_promise.set(this.global, promise);
+        this.pending_internal_promise = promise;
+        this.pending_internal_promise_is_protected = false;
+        JSValue.fromCell(promise).ensureStillAlive();
         return promise;
     } else {
         const promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(this.main)) orelse return error.JSError;
-        this.pending_internal_promise.set(this.global, promise);
+        this.pending_internal_promise = promise;
+        this.pending_internal_promise_is_protected = false;
+        JSValue.fromCell(promise).ensureStillAlive();
+
         return promise;
     }
 }
@@ -2279,8 +2266,9 @@ export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm: *VirtualMachine, is_
     }
 }
 export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm: *VirtualMachine, promise: *JSInternalPromise) void {
-    if (vm.pending_internal_promise.get() == null) {
-        vm.pending_internal_promise.set(vm.global, promise);
+    if (vm.pending_internal_promise == null) {
+        vm.pending_internal_promise = promise;
+        vm.pending_internal_promise_is_protected = false;
     }
 }
 
@@ -2298,13 +2286,20 @@ pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const 
 
     if (!this.transpiler.options.disable_transpilation) {
         if (try this.loadPreloads()) |promise| {
-            this.pending_internal_promise.set(this.global, promise);
+            JSValue.fromCell(promise).ensureStillAlive();
+            this.pending_internal_promise = promise;
+            JSValue.fromCell(promise).protect();
+            this.pending_internal_promise_is_protected = true;
+
             return promise;
         }
     }
 
     const promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(this.main)) orelse return error.JSError;
-    this.pending_internal_promise.set(this.global, promise);
+    this.pending_internal_promise = promise;
+    this.pending_internal_promise_is_protected = false;
+    JSValue.fromCell(promise).ensureStillAlive();
+
     return promise;
 }
 
@@ -2320,7 +2315,7 @@ pub fn loadEntryPointForWebWorker(this: *VirtualMachine, entry_path: string) any
             return error.WorkerTerminated;
         }
     }
-    return this.pending_internal_promise.get().?;
+    return this.pending_internal_promise.?;
 }
 
 pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
@@ -2329,12 +2324,12 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
     // pending_internal_promise can change if hot module reloading is enabled
     if (this.isWatcherEnabled()) {
         this.eventLoop().performGC();
-        switch (this.pending_internal_promise.get().?.status()) {
+        switch (this.pending_internal_promise.?.status()) {
             .pending => {
-                while (this.pending_internal_promise.get().?.status() == .pending) {
+                while (this.pending_internal_promise.?.status() == .pending) {
                     this.eventLoop().tick();
 
-                    if (this.pending_internal_promise.get().?.status() == .pending) {
+                    if (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().autoTick();
                     }
                 }
@@ -2352,7 +2347,7 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
 
     this.eventLoop().autoTick();
 
-    return this.pending_internal_promise.get().?;
+    return this.pending_internal_promise.?;
 }
 
 pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInternalPromise {
@@ -2361,12 +2356,12 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
     // pending_internal_promise can change if hot module reloading is enabled
     if (this.isWatcherEnabled()) {
         this.eventLoop().performGC();
-        switch (this.pending_internal_promise.get().?.status()) {
+        switch (this.pending_internal_promise.?.status()) {
             .pending => {
-                while (this.pending_internal_promise.get().?.status() == .pending) {
+                while (this.pending_internal_promise.?.status() == .pending) {
                     this.eventLoop().tick();
 
-                    if (this.pending_internal_promise.get().?.status() == .pending) {
+                    if (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().autoTick();
                     }
                 }
@@ -2382,7 +2377,7 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
         this.waitForPromise(.{ .internal = promise });
     }
 
-    return this.pending_internal_promise.get().?;
+    return this.pending_internal_promise.?;
 }
 
 pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FD) void {
@@ -2457,7 +2452,13 @@ pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
     this.overridden_main.deinit();
     this.entry_point_result.value.deinit();
     this.entry_point_result.cjs_set_value = false;
-    this.pending_internal_promise.deinit();
+    if (this.pending_internal_promise) |promise| {
+        if (this.pending_internal_promise_is_protected) {
+            JSValue.fromCell(promise).unprotect();
+            this.pending_internal_promise_is_protected = false;
+        }
+        this.pending_internal_promise = null;
+    }
     this.has_patched_run_main = false;
     this.main = "";
     this.main_hash = 0;

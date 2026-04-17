@@ -86,11 +86,13 @@ pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
                 // ipc=true) and child end disagree on framing and the channel
                 // never delivers a frame.
                 const pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe));
-                pipe.init(uv.Loop.get(), true).unwrap() catch {
+                pipe.init(uv.Loop.get(), true).unwrap() catch |e| {
+                    bun.Output.debugWarn("Channel.adopt: uv_pipe_init failed: {s}", .{@errorName(e)});
                     bun.destroy(pipe);
                     return false;
                 };
-                pipe.open(fd).unwrap() catch {
+                pipe.open(fd).unwrap() catch |e| {
+                    bun.Output.debugWarn("Channel.adopt: uv_pipe_open({d}) failed: {s}", .{ fd.uv(), @errorName(e) });
                     pipe.closeAndDestroy();
                     return false;
                 };
@@ -108,12 +110,21 @@ pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
         }
 
         /// Windows-only: adopt a `uv.Pipe` already initialized by spawn (the
-        /// `.buffer` extra-fd parent end). Starts reading. On failure the
-        /// caller still owns `pipe` and must free it.
+        /// `.ipc` extra-fd parent end, or the worker's just-opened pipe).
+        /// Starts reading. On failure the caller still owns `pipe`.
+        ///
+        /// Unlike ipc.zig's windowsConfigureServer/Client we keep the pipe
+        /// ref'd: the worker (and the coordinator before workers register
+        /// process exit handles) has nothing else keeping `uv_loop_alive()`
+        /// true, so unref'ing here makes autoTick() take the tickWithoutIdle
+        /// (NOWAIT) path and never block for the peer's first frame. The pipe
+        /// is closed explicitly in `close()` / `deinit()`, and both sides exit
+        /// via Global.exit / drive() returning, so the extra ref never holds
+        /// the process open.
         pub fn adoptPipe(self: *Self, _: *jsc.VirtualMachine, pipe: *uv.Pipe) bool {
             if (comptime !Environment.isWindows) @compileError("adoptPipe is Windows-only");
-            pipe.unref();
-            pipe.readStart(self, WindowsHandlers.onAlloc, WindowsHandlers.onError, WindowsHandlers.onRead).unwrap() catch {
+            pipe.readStart(self, WindowsHandlers.onAlloc, WindowsHandlers.onError, WindowsHandlers.onRead).unwrap() catch |e| {
+                bun.Output.debugWarn("Channel.adoptPipe: readStart failed: {s}", .{@errorName(e)});
                 return false;
             };
             self.backend.pipe = pipe;

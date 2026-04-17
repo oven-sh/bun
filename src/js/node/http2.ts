@@ -2859,7 +2859,7 @@ class ServerHttp2Session extends Http2Session {
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = {
     headerTableSize: 4096,
-    // RFC 9113 §7.2.2: servers MUST NOT advertise ENABLE_PUSH != 0. The
+    // RFC 9113 §6.5.2: servers MUST NOT advertise ENABLE_PUSH != 0. The
     // initial SETTINGS frame forces this to 0 in the constructor — keep the
     // default here in sync so `session.localSettings.enablePush` agrees with
     // the wire before the peer's SETTINGS ACK arrives.
@@ -3138,7 +3138,7 @@ class ServerHttp2Session extends Http2Session {
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,
-      // RFC 9113 §7.2.2: a server MUST NOT send SETTINGS_ENABLE_PUSH with a
+      // RFC 9113 §6.5.2: a server MUST NOT send SETTINGS_ENABLE_PUSH with a
       // value other than 0 — any non-zero value is treated by a client as a
       // PROTOCOL_ERROR (nghttp2 reports this as callback failure). This is
       // unconditional at the protocol level, so `enablePush: false` is
@@ -3285,7 +3285,7 @@ class ServerHttp2Session extends Http2Session {
     // still throw ERR_INVALID_ARG_TYPE — spreading ({ ...null }) would hide
     // these from the type guard in validateSettings.
     validateSettings(settings);
-    // RFC 9113 §7.2.2: a server MUST NOT advertise SETTINGS_ENABLE_PUSH != 0.
+    // RFC 9113 §6.5.2: a server MUST NOT advertise SETTINGS_ENABLE_PUSH != 0.
     // Force-override whatever the caller passes so a mid-connection SETTINGS
     // frame stays compliant (the initial SETTINGS frame already clamps this
     // in ServerHttp2Session's constructor). Clients still accept `enablePush`

@@ -6,7 +6,7 @@
 // http2 client) to reject Bun's server with "callback failure":
 //
 //   1. The server's initial SETTINGS frame advertised `ENABLE_PUSH=1`.
-//      RFC 9113 §7.2.2 says any value other than 0 for ENABLE_PUSH sent
+//      RFC 9113 §6.5.2 says any value other than 0 for ENABLE_PUSH sent
 //      by a server MUST be treated by the client as a PROTOCOL_ERROR.
 //
 //   2. `res.end("ok")` wrote an extra empty DATA frame followed by an
@@ -116,7 +116,7 @@ test("http2.createServer serves h2c response with well-formed frames (#29073)", 
     const frames = await rawH2cRequest(port);
 
     // A) The server's initial SETTINGS frame must not advertise
-    // ENABLE_PUSH != 0 — that's a connection error per RFC 9113 §7.2.2.
+    // ENABLE_PUSH != 0 — that's a connection error per RFC 9113 §6.5.2.
     const serverSettings = frames.find(f => f.type === 4 && (f.flags & 0x1) === 0);
     expect(serverSettings).toBeDefined();
     // Walk settings entries (6 bytes each: 2-byte id, 4-byte value) and
@@ -157,7 +157,7 @@ test("http2.createServer serves h2c response with well-formed frames (#29073)", 
   }
 });
 
-// RFC 9113 §7.2.2 is unconditional: a server MUST NOT advertise
+// RFC 9113 §6.5.2 is unconditional: a server MUST NOT advertise
 // SETTINGS_ENABLE_PUSH != 0. The override must apply even when the
 // caller explicitly passes `enablePush: true` in createServer settings —
 // the spread order inside ServerHttp2Session puts `enablePush: false`
@@ -195,7 +195,7 @@ test("http2.createServer forces enablePush=0 even when caller requests true (#29
   }
 });
 
-// RFC 9113 §7.2.2 is unconditional for BOTH the initial SETTINGS frame AND
+// RFC 9113 §6.5.2 is unconditional for BOTH the initial SETTINGS frame AND
 // any subsequent SETTINGS updates the server sends mid-connection. A caller
 // that passes `enablePush: true` to session.settings(...) on a server
 // session must not re-enable push on the wire. ServerHttp2Session.settings

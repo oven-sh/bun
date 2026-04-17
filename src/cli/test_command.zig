@@ -1,7 +1,7 @@
 var path_buf: bun.PathBuffer = undefined;
 var path_buf2: bun.PathBuffer = undefined;
 
-fn escapeXml(str: string, writer: anytype) !void {
+pub fn escapeXml(str: string, writer: anytype) !void {
     var last: usize = 0;
     var i: usize = 0;
     const len = str.len;
@@ -573,6 +573,12 @@ pub const CommandLineReporter = struct {
     repeat_count: u32 = 1,
     last_printed_dot: bool = false,
 
+    /// When running as a `--parallel` worker, this is the coordinator-assigned
+    /// index of the file currently being executed. While set, per-test output
+    /// is sent over the IPC pipe instead of to stderr; the coordinator owns
+    /// the terminal.
+    worker_ipc_file_idx: ?u32 = null,
+
     failures_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     skips_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
     todos_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
@@ -913,8 +919,12 @@ pub const CommandLineReporter = struct {
             },
         }
 
-        const output_writer = Output.errorWriter(); // unbuffered. buffered is errorWriterBuffered() / Output.flush()
-        output_writer.writeAll(output_buf.items[initial_length..]) catch {};
+        const formatted_line = output_buf.items[initial_length..];
+        if (buntest.reporter != null and buntest.reporter.?.worker_ipc_file_idx != null) {
+            ParallelRunner.workerEmitTestDone(buntest.reporter.?.worker_ipc_file_idx.?, formatted_line);
+        } else {
+            Output.errorWriter().writeAll(formatted_line) catch {};
+        }
 
         var this: *CommandLineReporter = buntest.reporter orelse return; // command line reporter is missing! uh oh!
 
@@ -1010,6 +1020,53 @@ pub const CommandLineReporter = struct {
         );
 
         try this.printCodeCoverage(vm, opts, byte_ranges.items, reporters, enable_ansi_colors);
+    }
+
+    /// Write an LCOV-only report to a specific path. Used by `--parallel`
+    /// workers to emit a fragment the coordinator merges.
+    pub fn writeLcovOnly(_: *CommandLineReporter, vm: *jsc.VirtualMachine, opts: *const TestCommand.CodeCoverageOptions, out_path: [:0]const u8) !void {
+        var map = coverage.ByteRangeMapping.map orelse return;
+        var iter = map.valueIterator();
+        var byte_ranges = try std.array_list.Managed(bun.SourceMap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+        defer byte_ranges.deinit();
+        while (iter.next()) |entry| byte_ranges.appendAssumeCapacity(entry.*);
+        if (byte_ranges.items.len == 0) return;
+        std.sort.pdq(
+            bun.SourceMap.coverage.ByteRangeMapping,
+            byte_ranges.items,
+            {},
+            bun.SourceMap.coverage.ByteRangeMapping.isLessThan,
+        );
+
+        const relative_dir = vm.transpiler.fs.top_level_dir;
+        const file = switch (bun.sys.File.openat(.cwd(), out_path, bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC, 0o644)) {
+            .err => |e| {
+                Output.err(.lcovCoverageError, "failed to open coverage fragment {s}\n{f}", .{ out_path, e });
+                return error.OpenFailed;
+            },
+            .result => |f| f,
+        };
+        defer file.close();
+        const buf = try bun.default_allocator.alloc(u8, 64 * 1024);
+        defer bun.default_allocator.free(buf);
+        var buffered = file.writer().adaptToNewApi(buf);
+        const writer = &buffered.new_interface;
+
+        for (byte_ranges.items) |*entry| {
+            if (opts.ignore_patterns.len > 0) {
+                const rel = bun.path.relative(relative_dir, entry.source_url.slice());
+                var skip = false;
+                for (opts.ignore_patterns) |p| if (bun.glob.match(p, rel).matches()) {
+                    skip = true;
+                    break;
+                };
+                if (skip) continue;
+            }
+            var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
+            defer report.deinit(bun.default_allocator);
+            CodeCoverageReport.Lcov.writeFormat(&report, relative_dir, writer) catch continue;
+        }
+        try writer.flush();
     }
 
     pub fn printCodeCoverage(
@@ -1325,9 +1382,24 @@ pub const TestCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         Output.is_github_action = Output.isGithubAction();
 
-        // print the version so you know its doing stuff if it takes a sec
-        Output.prettyln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-        Output.flush();
+        if (!ctx.test_options.test_worker) {
+            // print the version so you know its doing stuff if it takes a sec
+            const w = Output.writer();
+            const colors = Output.enable_ansi_colors_stdout;
+            w.writeAll(if (colors)
+                Output.prettyFmt("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", true)
+            else
+                Output.prettyFmt("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", false)) catch {};
+            if (ctx.test_options.parallel > 0) {
+                if (colors) {
+                    w.print(" \x1b[1;2m{d}\u{00d7} PARALLEL\x1b[0m", .{ctx.test_options.parallel}) catch {};
+                } else {
+                    w.print(" {d}x PARALLEL", .{ctx.test_options.parallel}) catch {};
+                }
+            }
+            w.writeAll("\n") catch {};
+            Output.flush();
+        }
 
         var env_loader = brk: {
             const map = try ctx.allocator.create(DotEnv.Map);
@@ -1342,6 +1414,10 @@ pub const TestCommand = struct {
 
         const enable_random = ctx.test_options.randomize;
         const seed: u32 = if (enable_random) ctx.test_options.seed orelse @truncate(bun.fastRandom()) else 0; // seed is limited to u32 so storing it in js doesn't lose precision
+        // Persist the chosen seed so --parallel forwards it to every worker;
+        // otherwise each worker would draw its own and the printed --seed=N
+        // would not reproduce the run.
+        if (enable_random) ctx.test_options.seed = seed;
         var random_instance: ?std.Random.DefaultPrng = if (enable_random) std.Random.DefaultPrng.init(seed) else null;
         const random = if (random_instance) |*instance| instance.random() else null;
 
@@ -1363,6 +1439,7 @@ pub const TestCommand = struct {
                 .default_timeout_ms = ctx.test_options.default_timeout_ms,
                 .concurrent = ctx.test_options.concurrent,
                 .randomize = random,
+                .randomize_seed = if (enable_random) seed else null,
                 .concurrent_test_glob = ctx.test_options.concurrent_test_glob,
                 .run_todo = ctx.test_options.run_todo,
                 .only = ctx.test_options.only,
@@ -1435,6 +1512,11 @@ pub const TestCommand = struct {
         vm.is_main_thread = true;
         jsc.VirtualMachine.is_main_thread_vm = true;
 
+        if (ctx.test_options.isolate) {
+            vm.test_isolation_enabled = true;
+            vm.auto_killer.enabled = true;
+        }
+
         if (ctx.test_options.coverage.enabled) {
             vm.transpiler.options.code_coverage = true;
             vm.transpiler.options.minify_syntax = false;
@@ -1456,6 +1538,12 @@ pub const TestCommand = struct {
 
         if (TZ_NAME.len > 0) {
             _ = vm.global.setTimeZone(&jsc.ZigString.init(TZ_NAME));
+        }
+
+        if (ctx.test_options.test_worker) {
+            // Worker mode: skip discovery; files arrive over stdin and
+            // results go out over fd 3. Never returns.
+            try ParallelRunner.runAsWorker(reporter, vm, ctx);
         }
 
         // Start the debugger before we scan for files
@@ -1609,13 +1697,20 @@ pub const TestCommand = struct {
             }
         }
 
+        var coverage_options = ctx.test_options.coverage;
+        var ran_parallel = false;
+
         if (test_files.len > 0) {
             // Randomize the order of test files if --randomize flag is set
             if (random) |rand| {
                 rand.shuffle(PathString, test_files);
             }
 
-            runAllTests(reporter, vm, test_files, ctx.allocator);
+            if (ctx.test_options.parallel > 0) {
+                ran_parallel = try ParallelRunner.runAsCoordinator(reporter, vm, test_files, ctx, &coverage_options);
+            } else {
+                runAllTests(reporter, vm, test_files, ctx.allocator);
+            }
         }
 
         // With --changed, only a subset of test files (possibly none) runs,
@@ -1642,7 +1737,6 @@ pub const TestCommand = struct {
 
         const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
-        var coverage_options = ctx.test_options.coverage;
         if (reporter.summary().pass > 20 and !Output.isAIAgent() and !reporter.reporters.dots and !reporter.reporters.only_failures) {
             if (reporter.summary().skip > 0) {
                 Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary().skip});
@@ -1745,7 +1839,7 @@ pub const TestCommand = struct {
         } else {
             Output.prettyError("\n", .{});
 
-            if (coverage_options.enabled) {
+            if (coverage_options.enabled and !ran_parallel) {
                 switch (Output.enable_ansi_colors_stderr) {
                     inline else => |colors| switch (coverage_options.reporters.text) {
                         inline else => |console| switch (coverage_options.reporters.lcov) {
@@ -1915,15 +2009,27 @@ pub const TestCommand = struct {
                 var files = this.files;
                 bun.assert(files.len > 0);
 
+                const isolate = vm.test_isolation_enabled;
+
                 if (files.len > 1) {
                     for (files[0 .. files.len - 1], 0..) |file_name, i| {
-                        TestCommand.run(reporter, vm, file_name.slice(), .{ .first = i == 0, .last = false }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                        TestCommand.run(reporter, vm, file_name.slice(), .{
+                            .first = isolate or i == 0,
+                            .last = isolate,
+                        }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
                         reporter.jest.default_timeout_override = std.math.maxInt(u32);
                         Global.mimalloc_cleanup(false);
+                        if (isolate) {
+                            vm.swapGlobalForTestIsolation();
+                            reporter.jest.bun_test_root.resetHookScopeForTestIsolation();
+                        }
                     }
                 }
 
-                TestCommand.run(reporter, vm, files[files.len - 1].slice(), .{ .first = files.len == 1, .last = true }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                TestCommand.run(reporter, vm, files[files.len - 1].slice(), .{
+                    .first = isolate or files.len == 1,
+                    .last = true,
+                }) catch |err| handleTopLevelTestErrorBeforeJavaScriptStart(err);
             }
         };
 
@@ -2070,14 +2176,18 @@ pub const TestCommand = struct {
                 Output.flush();
             }
 
-            // Ensure these never linger across files.
-            vm.auto_killer.clear();
-            vm.auto_killer.disable();
+            if (!vm.test_isolation_enabled) {
+                // Ensure these never linger across files. Under --isolate this
+                // is done by swapGlobalForTestIsolation() (kill+clear) and we
+                // need tracking to remain enabled and populated until then.
+                vm.auto_killer.clear();
+                vm.auto_killer.disable();
+            }
         }
     }
 };
 
-fn handleTopLevelTestErrorBeforeJavaScriptStart(err: anyerror) noreturn {
+pub fn handleTopLevelTestErrorBeforeJavaScriptStart(err: anyerror) noreturn {
     if (comptime Environment.isDebug) {
         if (err != error.ModuleNotFound) {
             Output.debugWarn("Unhandled error: {s}\n", .{@errorName(err)});
@@ -2094,6 +2204,7 @@ const string = []const u8;
 
 const ChangedFilesFilter = @import("./test/ChangedFilesFilter.zig");
 const DotEnv = @import("../env_loader.zig");
+const ParallelRunner = @import("./test/ParallelRunner.zig");
 const Scanner = @import("./test/Scanner.zig");
 const bun_test = @import("../bun.js/test/bun_test.zig");
 const options = @import("../options.zig");

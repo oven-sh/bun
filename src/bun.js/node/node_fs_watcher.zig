@@ -603,6 +603,8 @@ pub const FSWatcher = struct {
 
     // this can be called multiple times
     pub fn detach(this: *FSWatcher) void {
+        if (this.ctx.test_isolation_enabled) this.ctx.rareData().removeFSWatcherForIsolation(this);
+
         if (this.path_watcher) |path_watcher| {
             this.path_watcher = null;
             path_watcher.detach(this);
@@ -680,6 +682,7 @@ pub const FSWatcher = struct {
         else
             null;
         ctx.initJS(args.listener.withAsyncContextIfNeeded(args.global_this));
+        if (vm.test_isolation_enabled) vm.rareData().addFSWatcherForIsolation(ctx);
         return .{ .result = ctx };
     }
 };

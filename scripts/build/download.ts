@@ -169,6 +169,11 @@ export async function extractZip(zipPath: string, dest: string): Promise<void> {
  * `dest/` (no hoist).
  *
  * @param identity Written to `dest/.identity`. Changing it triggers re-download.
+ * @param cache Directory for the downloaded tarball (keyed by `identity`).
+ *   Lets CI agents persist the ~200MB WebKit download across ephemeral
+ *   runners (via `BUN_DEPS_CACHE_PATH`) while `dest` stays buildDir-relative
+ *   so split-build artifact upload keeps working. Tarball is kept after
+ *   extraction; a hit skips the download but still re-extracts.
  * @param rmPaths Paths (relative to `dest/`) to delete after extraction.
  *   Used to remove conflicting headers (WebKit's unicode/, nodejs's openssl/).
  *   Deleted via fs.rm — no shell, cross-platform.
@@ -178,6 +183,7 @@ export async function fetchPrebuilt(
   url: string,
   dest: string,
   identity: string,
+  cache: string,
   rmPaths: string[] = [],
 ): Promise<void> {
   const stampPath = resolve(dest, ".identity");
@@ -192,29 +198,43 @@ export async function fetchPrebuilt(
     console.log(`identity changed (was ${existing.slice(0, 16)}, now ${identity.slice(0, 16)}), re-fetching`);
   }
 
-  console.log(`fetching ${url}`);
-
   // Process-unique temp paths so concurrent builds (shared cacheDir across
   // checkouts) can't stomp each other's download/extraction.
   const suffix = `.${process.pid}.${Date.now().toString(36)}`;
 
-  // ─── Download ───
-  const destParent = resolve(dest, "..");
-  await mkdir(destParent, { recursive: true });
-  const tarballPath = `${dest}${suffix}.tar.gz`;
-  await downloadWithRetry(url, tarballPath, name);
+  // ─── Download (with cache) ───
+  // Identity alone is the cache key — it already encodes version + build
+  // variant (e.g. webkit's sha16 + -lto/-asan suffix), and `/` can't appear
+  // in it so the filename is flat.
+  await mkdir(cache, { recursive: true });
+  const tarballPath = resolve(cache, `${name}-${identity}.tar.gz`);
+  if (existsSync(tarballPath)) {
+    console.log(`cached tarball ${tarballPath}`);
+  } else {
+    console.log(`fetching ${url}`);
+    await downloadWithRetry(url, tarballPath, name);
+  }
 
   // ─── Extract ───
   // Extract to a private staging dir, then hoist. We don't extract directly
   // into dest/ because the tarball's top-level dir name is unpredictable
   // (e.g. `bun-webkit/` vs `libfoo-1.2.3/`).
+  const destParent = resolve(dest, "..");
+  await mkdir(destParent, { recursive: true });
   const stagingDir = `${dest}${suffix}.staging`;
   await mkdir(stagingDir, { recursive: true });
 
   try {
     // stripComponents=0: keep top-level dir for hoisting.
-    await extractTarGz(tarballPath, stagingDir, 0);
-    await rm(tarballPath, { force: true });
+    try {
+      await extractTarGz(tarballPath, stagingDir, 0);
+    } catch (err) {
+      // Corrupt cached tarball (truncated download that slipped past the
+      // atomic rename, or disk-level damage). Drop it so the next run
+      // re-downloads instead of failing forever on the same bad file.
+      await rm(tarballPath, { force: true });
+      throw err;
+    }
 
     // Hoist: if single top-level dir, promote its contents to dest.
     // If multiple entries (unusual), the staging dir becomes dest.
@@ -249,6 +269,6 @@ export async function fetchPrebuilt(
     console.log(`extracted to ${dest}`);
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
-    await rm(tarballPath, { force: true });
+    // Tarball stays in cache for the next runner.
   }
 }

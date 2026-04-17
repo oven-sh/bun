@@ -29,7 +29,7 @@ export const nodejsHeaders: Dependency = {
     // Delete headers that conflict with BoringSSL / our libuv.
     // Tarball top-level is `node-v<version>/` (hoisted), inside is `include/node/`.
     rmAfterExtract: ["include/node/openssl", "include/node/uv", "include/node/uv.h"],
-    destDir: resolve(cfg.downloadCacheDir, `nodejs-headers-${cfg.nodejsVersion}`),
+    destDir: resolve(cfg.cacheDir, `nodejs-headers-${cfg.nodejsVersion}`),
   }),
 
   build: () => ({ kind: "none" }),

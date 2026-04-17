@@ -239,21 +239,21 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime platform: Pl
                 }
             }
 
-            var string_index: usize = 1;
-            while (string_index < input.len) : (string_index += 1) {
-                while (index < min_length) : (index += 1) {
-                    if (platform == .windows) {
-                        if (std.ascii.toLower(input[0][index]) != std.ascii.toLower(input[string_index][index])) {
-                            break;
-                        }
-                    } else {
-                        if (input[0][index] != input[string_index][index]) {
-                            break;
-                        }
+            while (index < min_length) : (index += 1) {
+                const c = input[0][index];
+                var all_equal = true;
+                for (input[1..]) |str| {
+                    const matches = if (platform == .windows)
+                        std.ascii.toLower(c) == std.ascii.toLower(str[index])
+                    else
+                        c == str[index];
+                    if (!matches) {
+                        all_equal = false;
+                        break;
                     }
                 }
-                if (index == min_length) index -= 1;
-                if (@call(bun.callmod_inline, isPathSeparator, .{input[0][index]})) {
+                if (!all_equal) break;
+                if (@call(bun.callmod_inline, isPathSeparator, .{c})) {
                     last_common_separator = index;
                 }
             }

@@ -133,12 +133,25 @@ extern "C" void WebWorker__setRef(
 
 void Worker::setKeepAlive(bool keepAlive)
 {
-    WebWorker__setRef(impl_, keepAlive);
+    Locker lock { m_implLock };
+    if (impl_)
+        WebWorker__setRef(impl_, keepAlive);
+}
+
+void Worker::clearImpl()
+{
+    Locker lock { m_implLock };
+    impl_ = nullptr;
 }
 
 bool Worker::updatePtr()
 {
-    if (!WebWorker__updatePtr(impl_, this)) {
+    void* impl;
+    {
+        Locker lock { m_implLock };
+        impl = impl_;
+    }
+    if (!impl || !WebWorker__updatePtr(impl, this)) {
         m_onlineClosingFlags = ClosingFlag;
         m_terminationFlags.fetch_or(TerminatedFlag);
         return false;
@@ -216,7 +229,10 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         return Exception { TypeError, errorMessage.toWTFString(BunString::ZeroCopy) };
     }
 
-    worker->impl_ = impl;
+    {
+        Locker lock { worker->m_implLock };
+        worker->impl_ = impl;
+    }
     worker->m_workerCreationTime = MonotonicTime::now();
 
     return worker;
@@ -263,7 +279,9 @@ void Worker::terminate()
 {
     // m_contextProxy.terminateWorkerGlobalScope();
     m_terminationFlags.fetch_or(TerminateRequestedFlag);
-    WebWorker__notifyNeedTermination(impl_);
+    Locker lock { m_implLock };
+    if (impl_)
+        WebWorker__notifyNeedTermination(impl_);
 }
 
 // const char* Worker::activeDOMObjectName() const
@@ -463,6 +481,11 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
     Locker locker { allWorkersLock };
     for (auto& contextIdentifier : allWorkers().keys())
         ScriptExecutionContext::postTaskTo(contextIdentifier, callback());
+}
+
+extern "C" void WebWorker__clearImpl(Worker* worker)
+{
+    worker->clearImpl();
 }
 
 extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)

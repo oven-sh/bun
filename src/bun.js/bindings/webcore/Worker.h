@@ -76,6 +76,9 @@ public:
     void dispatchEvent(Event&);
     void dispatchCloseEvent(Event&);
     void setKeepAlive(bool);
+    // Called from the worker thread just before its WebWorker is freed, so
+    // that the main thread never calls into a freed impl_.
+    void clearImpl();
 
     void postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
 
@@ -119,6 +122,9 @@ private:
     // Tracks TerminateRequestedFlag and TerminatedFlag
     std::atomic<uint8_t> m_terminationFlags { 0 };
     const ScriptExecutionContextIdentifier m_clientIdentifier;
+    // Protects impl_ from being used by the main thread after the worker
+    // thread has freed it in WebWorker.exitAndDeinit.
+    Lock m_implLock;
     void* impl_ { nullptr };
 };
 

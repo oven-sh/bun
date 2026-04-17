@@ -107,6 +107,11 @@ pub const Coordinator = struct {
     fn spawnWorker(this: *Coordinator) bool {
         bun.assert(this.spawned_count < this.parallel_limit);
         const w = &this.workers[this.spawned_count];
+        // A prior failed start()'s errdefer leaves ipc.done = true; reset so a
+        // retry on the same slot starts with a fresh channel.
+        w.ipc = .{ .owner = w };
+        w.out = .{ .role = .stdout, .worker = w };
+        w.err = .{ .role = .stderr, .worker = w };
         w.start() catch |e| {
             Output.err(e, "failed to spawn test worker", .{});
             if (this.live_workers == 0) bun.Global.exit(1);

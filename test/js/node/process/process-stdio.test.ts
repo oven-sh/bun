@@ -162,7 +162,7 @@ describe.concurrent("process-stdio", () => {
   // Regression: process.stdout.write(string, encoding) was ignoring the encoding
   // parameter on the fast path and UTF-8 encoding the string instead.
   test.each(["binary", "latin1"] as const)("process.stdout.write(string, '%s') writes raw bytes", encoding => {
-    const { stdout } = spawnSync({
+    const { stdout, exitCode } = spawnSync({
       cmd: [
         bunExe(),
         "-e",
@@ -178,10 +178,11 @@ describe.concurrent("process-stdio", () => {
     const expected = Buffer.alloc(256);
     for (let i = 0; i < 256; i++) expected[i] = i;
     expect(Buffer.compare(stdout, expected)).toBe(0);
+    expect(exitCode).toBe(0);
   });
 
   test("process.stdout.write(string, 'hex') decodes hex", () => {
-    const { stdout } = spawnSync({
+    const { stdout, exitCode } = spawnSync({
       cmd: [bunExe(), "-e", `process.stdout.write("deadbeef", "hex");`],
       stdout: "pipe",
       stdin: null,
@@ -189,10 +190,11 @@ describe.concurrent("process-stdio", () => {
       env: bunEnv,
     });
     expect(Buffer.compare(stdout, Buffer.from([0xde, 0xad, 0xbe, 0xef]))).toBe(0);
+    expect(exitCode).toBe(0);
   });
 
   test("process.stdout.write(string) defaults to UTF-8", () => {
-    const { stdout } = spawnSync({
+    const { stdout, exitCode } = spawnSync({
       cmd: [bunExe(), "-e", `process.stdout.write("héllo");`],
       stdout: "pipe",
       stdin: null,
@@ -201,5 +203,6 @@ describe.concurrent("process-stdio", () => {
     });
     // é = U+00E9 = UTF-8 c3 a9
     expect(Buffer.compare(stdout, Buffer.from([0x68, 0xc3, 0xa9, 0x6c, 0x6c, 0x6f]))).toBe(0);
+    expect(exitCode).toBe(0);
   });
 });

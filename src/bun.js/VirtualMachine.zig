@@ -2239,15 +2239,14 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
             // Check if Module.runMain was patched
             if (this.has_patched_run_main) {
                 @branchHint(.cold);
-                const prev = this.pending_internal_promise.get();
                 this.pending_internal_promise.set(this.global, null);
                 const ret = try jsc.fromJSHostCall(this.global, @src(), NodeModuleModule__callOverriddenRunMain, .{ this.global, try bun.String.createUTF8ForJS(this.global, main_file_name) });
-                if (this.pending_internal_promise.get() == prev or this.pending_internal_promise.get() == null) {
-                    const resolved = JSInternalPromise.resolvedPromise(this.global, ret);
-                    this.pending_internal_promise.set(this.global, resolved);
-                    return resolved;
-                }
-                return (this.pending_internal_promise.get() orelse prev).?;
+                // If the override stored a promise itself, use that; otherwise
+                // wrap its return value.
+                if (this.pending_internal_promise.get()) |stored| return stored;
+                const resolved = JSInternalPromise.resolvedPromise(this.global, ret);
+                this.pending_internal_promise.set(this.global, resolved);
+                return resolved;
             }
         }
 

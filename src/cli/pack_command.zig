@@ -137,10 +137,7 @@ pub const PackCommand = struct {
     }
 
     pub fn exec(ctx: Command.Context) !void {
-        const cli = switch (try PackageManager.CommandLineArguments.parse(ctx.allocator, .pack)) {
-            .args => |a| a,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
+        const cli = (try PackageManager.CommandLineArguments.parse(ctx.allocator, .pack)).unwrapCli();
 
         const init_result = PackageManager.init(ctx, cli, .pack) catch |err| {
             if (!cli.silent) {
@@ -159,10 +156,7 @@ pub const PackCommand = struct {
 
             Global.crash();
         };
-        const manager, const original_cwd = switch (init_result) {
-            .ok => |r| r,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
+        const manager, const original_cwd = init_result.unwrapCli();
         defer ctx.allocator.free(original_cwd);
 
         return execWithManager(ctx, manager);

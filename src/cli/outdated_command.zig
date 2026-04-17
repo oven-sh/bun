@@ -10,10 +10,7 @@ pub const OutdatedCommand = struct {
         Output.prettyln("<r><b>bun outdated <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
-        const cli = switch (try PackageManager.CommandLineArguments.parse(ctx.allocator, .outdated)) {
-            .args => |a| a,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
+        const cli = (try PackageManager.CommandLineArguments.parse(ctx.allocator, .outdated)).unwrapCli();
 
         const init_result = PackageManager.init(ctx, cli, .outdated) catch |err| {
             if (!cli.silent) {
@@ -25,10 +22,7 @@ pub const OutdatedCommand = struct {
 
             Global.crash();
         };
-        const manager, const original_cwd = switch (init_result) {
-            .ok => |r| r,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
+        const manager, const original_cwd = init_result.unwrapCli();
         defer ctx.allocator.free(original_cwd);
 
         try outdated(ctx, original_cwd, manager);

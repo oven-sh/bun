@@ -35,14 +35,8 @@ pub const PackageManagerCommand = struct {
     pub fn printHash(ctx: Command.Context, file: File) !void {
         @branchHint(.cold);
 
-        const cli = switch (try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm)) {
-            .args => |a| a,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
-        var pm, const cwd = switch (try PackageManager.init(ctx, cli, PackageManager.Subcommand.pm)) {
-            .ok => |r| r,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
+        const cli = (try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm)).unwrapCli();
+        var pm, const cwd = (try PackageManager.init(ctx, cli, PackageManager.Subcommand.pm)).unwrapCli();
         defer ctx.allocator.free(cwd);
 
         const bytes = file.readToEnd(ctx.allocator).unwrap() catch |err| {
@@ -148,10 +142,7 @@ pub const PackageManagerCommand = struct {
         // Check if we're being invoked directly as "bun whoami" instead of "bun pm whoami"
         const is_direct_whoami = if (bun.argv.len > 1) strings.eqlComptime(bun.argv[1], "whoami") else false;
 
-        const cli = switch (try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm)) {
-            .args => |a| a,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
+        const cli = (try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm)).unwrapCli();
         const init_result = PackageManager.init(ctx, cli, PackageManager.Subcommand.pm) catch |err| {
             if (err == error.MissingPackageJSON) {
                 var cwd_buf: bun.PathBuffer = undefined;
@@ -165,10 +156,7 @@ pub const PackageManagerCommand = struct {
             }
             return err;
         };
-        var pm, const cwd = switch (init_result) {
-            .ok => |r| r,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
+        var pm, const cwd = init_result.unwrapCli();
         defer ctx.allocator.free(cwd);
 
         var subcommand = if (is_direct_whoami) "whoami" else getSubcommand(&pm.options.positionals);

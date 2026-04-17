@@ -20,6 +20,15 @@ const CommandLineArguments = @This();
 pub const ParseResult = union(enum) {
     args: CommandLineArguments,
     err: bun.install.InstallResult.Failure,
+
+    /// CLI-side unwrap: return parsed args, or print errors and exit.
+    /// ONLY for src/cli/*.zig — never call from src/install/.
+    pub fn unwrapCli(this: ParseResult) CommandLineArguments {
+        return switch (this) {
+            .args => |a| a,
+            .err => |f| bun.install.InstallResult.exitForCli(f),
+        };
+    }
 };
 
 const ParamType = clap.Param(clap.Help);

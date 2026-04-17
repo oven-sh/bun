@@ -120,10 +120,7 @@ pub const UpdateInteractiveCommand = struct {
         Output.prettyln("<r><b>bun update --interactive <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
-        const cli = switch (try PackageManager.CommandLineArguments.parse(ctx.allocator, .update)) {
-            .args => |a| a,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
+        const cli = (try PackageManager.CommandLineArguments.parse(ctx.allocator, .update)).unwrapCli();
 
         const init_result = PackageManager.init(ctx, cli, .update) catch |err| {
             if (!cli.silent) {
@@ -135,10 +132,7 @@ pub const UpdateInteractiveCommand = struct {
 
             Global.crash();
         };
-        const manager, const original_cwd = switch (init_result) {
-            .ok => |r| r,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
+        const manager, const original_cwd = init_result.unwrapCli();
         defer ctx.allocator.free(original_cwd);
 
         (try updateInteractive(ctx, original_cwd, manager)).handleCli();

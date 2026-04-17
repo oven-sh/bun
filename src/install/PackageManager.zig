@@ -589,6 +589,15 @@ fn httpThreadOnInitError(err: HTTP.InitError, opts: HTTP.HTTPThread.InitOpts) no
 pub const InitResult = union(enum) {
     ok: struct { *PackageManager, string },
     err: InstallResult.Failure,
+
+    /// CLI-side unwrap: return `(pm, cwd)`, or print errors and exit.
+    /// ONLY for src/cli/*.zig — never call from src/install/.
+    pub fn unwrapCli(this: InitResult) struct { *PackageManager, string } {
+        return switch (this) {
+            .ok => |r| r,
+            .err => |f| InstallResult.exitForCli(f),
+        };
+    }
 };
 
 pub fn init(

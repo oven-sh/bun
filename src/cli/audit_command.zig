@@ -49,10 +49,7 @@ const AuditResult = struct {
 
 pub const AuditCommand = struct {
     pub fn exec(ctx: Command.Context) !noreturn {
-        const cli = switch (try PackageManager.CommandLineArguments.parse(ctx.allocator, .audit)) {
-            .args => |a| a,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
+        const cli = (try PackageManager.CommandLineArguments.parse(ctx.allocator, .audit)).unwrapCli();
         const init_result = PackageManager.init(ctx, cli, .audit) catch |err| {
             if (err == error.MissingPackageJSON) {
                 var cwd_buf: bun.PathBuffer = undefined;
@@ -67,10 +64,7 @@ pub const AuditCommand = struct {
 
             return err;
         };
-        const manager, _ = switch (init_result) {
-            .ok => |r| r,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
+        const manager, _ = init_result.unwrapCli();
 
         const code = try audit(ctx, manager, manager.options.json_output, cli.audit_level, cli.production, cli.audit_ignore_list);
         Global.exit(code);

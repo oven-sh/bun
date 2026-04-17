@@ -211,14 +211,8 @@ pub const WhyCommand = struct {
     }
 
     pub fn exec(ctx: Command.Context) !void {
-        const cli = switch (try PackageManager.CommandLineArguments.parse(ctx.allocator, .why)) {
-            .args => |a| a,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
-        const pm, _ = switch (try PackageManager.init(ctx, cli, PackageManager.Subcommand.why)) {
-            .ok => |r| r,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
+        const cli = (try PackageManager.CommandLineArguments.parse(ctx.allocator, .why)).unwrapCli();
+        const pm, _ = (try PackageManager.init(ctx, cli, PackageManager.Subcommand.why)).unwrapCli();
 
         if (cli.positionals.len < 1) {
             printUsage();

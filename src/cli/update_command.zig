@@ -1,9 +1,6 @@
 pub const UpdateCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        const cli = switch (try PackageManager.CommandLineArguments.parse(ctx.allocator, .update)) {
-            .args => |a| a,
-            .err => |f| bun.install.InstallResult.exitForCli(f),
-        };
+        const cli = (try PackageManager.CommandLineArguments.parse(ctx.allocator, .update)).unwrapCli();
 
         if (cli.interactive) {
             const UpdateInteractiveCommand = @import("./update_interactive_command.zig").UpdateInteractiveCommand;

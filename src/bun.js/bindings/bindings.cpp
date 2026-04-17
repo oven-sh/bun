@@ -3791,8 +3791,10 @@ void JSC__JSInternalPromise__rejectAsHandledException(JSC::JSInternalPromise* ar
 JSC::JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC::JSGlobalObject* arg0,
     JSC::EncodedJSValue JSValue1)
 {
-    return jsCast<JSC::JSInternalPromise*>(
-        JSC::JSInternalPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1)));
+    auto& vm = arg0->vm();
+    auto* promise = JSC::JSInternalPromise::create(vm, arg0->internalPromiseStructure());
+    promise->reject(vm, arg0, JSC::JSValue::decode(JSValue1));
+    return promise;
 }
 
 [[ZIG_EXPORT(check_slow)]]
@@ -3804,8 +3806,10 @@ void JSC__JSInternalPromise__resolve(JSC::JSInternalPromise* arg0, JSC::JSGlobal
 JSC::JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC::JSGlobalObject* arg0,
     JSC::EncodedJSValue JSValue1)
 {
-    return reinterpret_cast<JSC::JSInternalPromise*>(
-        JSC::JSInternalPromise::resolvedPromise(arg0, JSC::JSValue::decode(JSValue1)));
+    auto& vm = arg0->vm();
+    auto* promise = JSC::JSInternalPromise::create(vm, arg0->internalPromiseStructure());
+    promise->resolve(arg0, vm, JSC::JSValue::decode(JSValue1));
+    return promise;
 }
 
 JSC::EncodedJSValue JSC__JSInternalPromise__result(const JSC::JSInternalPromise* arg0)

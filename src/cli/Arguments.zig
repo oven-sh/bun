@@ -243,6 +243,10 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
     clap.parseParam("--path-ignore-patterns <STR>...   Glob patterns for test file paths to ignore.") catch unreachable,
     clap.parseParam("--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against.") catch unreachable,
+    clap.parseParam("--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another.") catch unreachable,
+    clap.parseParam("--parallel <NUMBER>?             Run test files in parallel using N worker processes. Implies --isolate. Defaults to CPU core count.") catch unreachable,
+    clap.parseParam("--parallel-delay <NUMBER>        Milliseconds the first --parallel worker must be busy before spawning the rest. 0 spawns all immediately. Default 5.") catch unreachable,
+    clap.parseParam("--test-worker                    (internal) Run as a --parallel worker, receiving files over IPC.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -615,6 +619,32 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         ctx.test_options.pass_with_no_tests = args.flag("--pass-with-no-tests");
         ctx.test_options.concurrent = args.flag("--concurrent");
         ctx.test_options.randomize = args.flag("--randomize");
+        ctx.test_options.isolate = args.flag("--isolate");
+        ctx.test_options.test_worker = args.flag("--test-worker");
+
+        if (args.option("--parallel")) |parallel_str| {
+            const parsed: u32 = if (parallel_str.len > 0)
+                std.fmt.parseInt(u32, parallel_str, 10) catch {
+                    Output.prettyErrorln("<red>error<r>: --parallel expects a positive integer, received \"{s}\"", .{parallel_str});
+                    Global.exit(1);
+                }
+            else
+                @max(bun.getThreadCount(), 1);
+            if (parsed == 0) {
+                Output.prettyErrorln("<red>error<r>: --parallel expects a positive integer, received \"0\"", .{});
+                Global.exit(1);
+            }
+            ctx.test_options.parallel = parsed;
+            // --parallel implies --isolate inside each worker.
+            ctx.test_options.isolate = true;
+        }
+
+        if (args.option("--parallel-delay")) |delay_str| {
+            ctx.test_options.parallel_delay_ms = std.fmt.parseInt(u32, delay_str, 10) catch {
+                Output.prettyErrorln("<red>error<r>: --parallel-delay expects a non-negative integer (milliseconds), received \"{s}\"", .{delay_str});
+                Global.exit(1);
+            };
+        }
 
         if (args.option("--seed")) |seed_str| {
             ctx.test_options.randomize = true;

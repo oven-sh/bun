@@ -606,7 +606,17 @@ pub const BunTest = struct {
                 try debug.dumpDescribe(this.collection.root_scope);
 
                 const has_filter = if (this.reporter) |reporter| if (reporter.jest.filter_regex) |_| true else false else false;
-                const should_randomize: ?std.Random = if (this.reporter) |reporter| reporter.jest.randomize else null;
+                // Derive a per-file shuffle PRNG from (seed, file_path) so a
+                // file's test order depends only on the path and the printed
+                // seed — not on which worker ran it or what files preceded it
+                // on that worker. This is what makes --parallel --randomize
+                // reproducible via --seed=N.
+                var per_file_prng: ?std.Random.DefaultPrng = if (this.reporter) |reporter| blk: {
+                    const seed = reporter.jest.randomize_seed orelse break :blk null;
+                    const path = reporter.jest.files.items(.source)[this.file_id].path.text;
+                    break :blk std.Random.DefaultPrng.init(bun.hash(path) +% seed);
+                } else null;
+                const should_randomize: ?std.Random = if (per_file_prng) |*p| p.random() else null;
 
                 var order = Order.init(this.gpa, this.arena, .{
                     .always_use_hooks = this.collection.root_scope.base.only == .no and !has_filter,

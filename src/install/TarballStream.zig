@@ -826,20 +826,19 @@ pub fn resetForRetry(this: *TarballStream) void {
 }
 
 const std = @import("std");
-
-const bun = @import("bun");
-const Environment = bun.Environment;
-const Mutex = bun.threading.Mutex;
-const Output = bun.Output;
-const ThreadPool = bun.ThreadPool;
-const strings = bun.strings;
-const FileSystem = bun.fs.FileSystem;
-const logger = bun.logger;
-
-const lib = bun.libarchive.lib;
+const Integrity = @import("./integrity.zig").Integrity;
 
 const install = @import("./install.zig");
 const NetworkTask = install.NetworkTask;
 const PackageManager = install.PackageManager;
 const Task = install.Task;
-const Integrity = @import("./integrity.zig").Integrity;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const ThreadPool = bun.ThreadPool;
+const logger = bun.logger;
+const strings = bun.strings;
+const FileSystem = bun.fs.FileSystem;
+const Mutex = bun.threading.Mutex;
+const lib = bun.libarchive.lib;

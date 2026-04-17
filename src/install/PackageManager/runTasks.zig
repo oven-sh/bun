@@ -1156,13 +1156,13 @@ const DependencyID = bun.install.DependencyID;
 const ExtractTarball = bun.install.ExtractTarball;
 const Features = bun.install.Features;
 const NetworkTask = bun.install.NetworkTask;
-const TarballStream = bun.install.TarballStream;
 const Npm = bun.install.Npm;
 const PackageID = bun.install.PackageID;
 const PackageManifestError = bun.install.PackageManifestError;
 const PatchTask = bun.install.PatchTask;
 const Repository = bun.install.Repository;
 const Store = bun.install.Store;
+const TarballStream = bun.install.TarballStream;
 const Task = bun.install.Task;
 const invalid_package_id = bun.install.invalid_package_id;
 

@@ -5,12 +5,12 @@
 // vendor/libarchive) must reassemble them into the same on-disk layout
 // the buffered extractor would produce.
 
-import { beforeAll, describe, test, expect, setDefaultTimeout } from "bun:test";
-import { bunEnv, bunExe, tempDir, readdirSorted } from "harness";
+import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
-import { gzipSync } from "node:zlib";
-import { join } from "node:path";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
@@ -106,8 +106,7 @@ function makeEntries(): Entry[] {
     {
       // > 100 chars → pax extended header → exercises the resumable
       // header path in the libarchive patch.
-      path:
-        "very/deeply/nested/directory/structure/that/exceeds/the/one/hundred/byte/ustar/limit/long-name-file.txt",
+      path: "very/deeply/nested/directory/structure/that/exceeds/the/one/hundred/byte/ustar/limit/long-name-file.txt",
       body: Buffer.from("long path ok\n"),
     },
   ];

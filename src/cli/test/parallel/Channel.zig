@@ -299,6 +299,8 @@ pub fn Channel(comptime Owner: type) type {
     };
 }
 
+const uv = if (Environment.isWindows) bun.windows.libuv else struct {};
+
 const Frame = @import("./Frame.zig");
 const std = @import("std");
 
@@ -306,4 +308,3 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const jsc = bun.jsc;
 const uws = bun.uws;
-const uv = if (Environment.isWindows) bun.windows.libuv else struct {};

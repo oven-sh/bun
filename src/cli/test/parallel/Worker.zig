@@ -227,8 +227,8 @@ pub const WorkerPipe = struct {
 const FileRange = @import("./FileRange.zig");
 const Frame = @import("./Frame.zig");
 const std = @import("std");
-const Coordinator = @import("./Coordinator.zig").Coordinator;
 const Channel = @import("./Channel.zig").Channel;
+const Coordinator = @import("./Coordinator.zig").Coordinator;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

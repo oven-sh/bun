@@ -702,6 +702,22 @@ it("MessageEvent", () => {
   `);
 });
 
+it("inspect object with Proxy prototype that throws in getPrototypeOf does not crash", () => {
+  const obj = {};
+  Object.setPrototypeOf(
+    obj,
+    new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error("nope");
+        },
+      },
+    ),
+  );
+  expect(typeof Bun.inspect(obj)).toBe("string");
+});
+
 it("CustomEvent", () => {
   const customEvent = new CustomEvent("custom", {
     detail: { value: 42, name: "test" },

@@ -500,6 +500,18 @@ fn beginEntry(this: *TarballStream, entry: *lib.Archive.Entry) !void {
         this.out_fd = null;
         return;
     }
+    // `normalizeBufT` collapses interior `..` but leaves a leading `..`
+    // on a relative input. Reject those so `openat(dest_fd, ...)` can
+    // never escape the temp extraction root. `Archiver.extractToDir`
+    // sees the same normalised path; this check is belt-and-braces on
+    // top of the integrity gate.
+    if (path.len >= 2 and path[0] == '.' and path[1] == '.' and
+        (path.len == 2 or path[2] == std.fs.path.sep))
+    {
+        this.phase = .want_data;
+        this.out_fd = null;
+        return;
+    }
     if (comptime Environment.isWindows) {
         if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
             this.phase = .want_data;

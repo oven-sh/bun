@@ -28,8 +28,8 @@ export const libarchive: Dependency = {
     "patches/libarchive/archive_write_add_filter_gzip.c.patch",
     "patches/libarchive/CMakeLists.txt.patch",
     // Propagate ARCHIVE_RETRY from the client read callback up through
-    // the gzip filter and tar reader so `bun install` can stream tarball
-    // extraction from the HTTP thread without blocking a worker. See
+    // the gzip filter and tar reader so the worker-thread extract loop
+    // in `bun install` can yield and resume as HTTP chunks arrive. See
     // src/install/TarballStream.zig.
     "patches/libarchive/nonblocking-read.patch",
   ],

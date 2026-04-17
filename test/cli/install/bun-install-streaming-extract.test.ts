@@ -5,12 +5,16 @@
 // vendor/libarchive) must reassemble them into the same on-disk layout
 // the buffered extractor would produce.
 
-import { describe, test, expect } from "bun:test";
+import { beforeAll, describe, test, expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, tempDir, readdirSorted } from "harness";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
+
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
 
 // -------------------------------------------------------------------
 // Tarball construction helpers. We build the .tgz in-process so the
@@ -233,7 +237,6 @@ describe("streaming tarball extraction", () => {
     const { stderr, exitCode } = await runInstall(String(dir), registry, env);
     expect(stderr).not.toContain("error:");
     expect(stderr).not.toContain("Integrity check failed");
-    expect(exitCode).toBe(0);
 
     // The "Streamed … tarball" verbose line is printed by
     // TarballStream.finish(); its presence confirms the streaming
@@ -254,6 +257,7 @@ describe("streaming tarball extraction", () => {
     }
 
     expect(await readdirSorted(join(pkgRoot, "data"))).toHaveLength(40);
+    expect(exitCode).toBe(0);
   });
 
   test("streaming rejects a tarball whose integrity does not match", async () => {

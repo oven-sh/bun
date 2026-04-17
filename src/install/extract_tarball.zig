@@ -130,8 +130,14 @@ pub fn usesStreamingExtraction() bool {
     return !bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL.get();
 }
 
+/// Derive the display name and a filesystem-safe basename for this
+/// package. Shared by the buffered `extract()` path below and the
+/// streaming extractor in `TarballStream.zig` so both pick identical
+/// temp-dir and cache-folder names.
 pub fn nameAndBasename(this: *const ExtractTarball) struct { []const u8, []const u8 } {
     const name = if (this.name.slice().len > 0) this.name.slice() else brk: {
+        // Not sure where this case hits yet.
+        // BUN-2WQ
         Output.warn("Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.", .{});
         bun.debugAssert(false);
         break :brk "unnamed-package";
@@ -168,39 +174,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
     const tmpdir = this.temp_dir;
     var tmpname_buf: if (Environment.isWindows) bun.WPathBuffer else bun.PathBuffer = undefined;
-    const name = if (this.name.slice().len > 0) this.name.slice() else brk: {
-        // Not sure where this case hits yet.
-        // BUN-2WQ
-        Output.warn("Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.", .{});
-        bun.debugAssert(false);
-        break :brk "unnamed-package";
-    };
-    const basename = brk: {
-        var tmp = name;
-
-        // Handle URLs - extract just the filename from the URL
-        if (strings.hasPrefixComptime(tmp, "https://") or strings.hasPrefixComptime(tmp, "http://")) {
-            tmp = std.fs.path.basename(tmp);
-            // Remove .tgz or .tar.gz extension if present
-            if (strings.endsWithComptime(tmp, ".tgz")) {
-                tmp = tmp[0 .. tmp.len - 4];
-            } else if (strings.endsWithComptime(tmp, ".tar.gz")) {
-                tmp = tmp[0 .. tmp.len - 7];
-            }
-        } else if (tmp[0] == '@') {
-            if (strings.indexOfChar(tmp, '/')) |i| {
-                tmp = tmp[i + 1 ..];
-            }
-        }
-
-        if (comptime Environment.isWindows) {
-            if (strings.lastIndexOfChar(tmp, ':')) |i| {
-                tmp = tmp[i + 1 ..];
-            }
-        }
-
-        break :brk tmp;
-    };
+    const name, const basename = this.nameAndBasename();
 
     var resolved: string = "";
     const tmpname = try FileSystem.tmpname(basename[0..@min(basename.len, 32)], std.mem.asBytes(&tmpname_buf), bun.fastRandom());

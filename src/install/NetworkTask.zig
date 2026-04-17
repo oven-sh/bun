@@ -108,12 +108,13 @@ pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, result: bun.http.HTTPC
             // so the main thread can inspect it. Do not enqueue until
             // the stream ends.
             return;
-        } else if (committed) {
-            // HTTP failed after extraction had already begun. Propagate
-            // the error so the next drain run aborts and reports it.
-            stream.onChunk(chunk, true, result.fail orelse error.TarballFailedToDownload);
-            this.response_buffer.reset();
         }
+        // The remaining case — `!committed and !has_more` with a
+        // non-2xx status or `fail != null` — leaves `response_buffer`
+        // untouched so the buffered error/retry path in runTasks.zig
+        // handles it. `committed and !has_more` is always handled in
+        // the first branch above because `committed` short-circuits
+        // the outer condition.
     }
 
     defer this.package_manager.wake();

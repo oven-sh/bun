@@ -239,5 +239,28 @@ console.log(JSON.stringify(<div />));
       expect(stdout.trim()).toBe(expected);
       expect(exitCode).toBe(0);
     });
+
+    test("child config can override experimentalDecorators back to false", async () => {
+      // TypeScript semantics: child overrides parent. When the child sets
+      // experimentalDecorators:false, TC39 standard decorators are used even
+      // though the extended base enables legacy decorators.
+      using dir = tempDir("issue-6326-dec-g", {
+        "node_modules/@repo/typescript-config/tsconfig.json": baseConfig,
+        "node_modules/@repo/typescript-config/package.json": JSON.stringify({ name: "@repo/typescript-config" }),
+        "tsconfig.json": JSON.stringify({
+          extends: "@repo/typescript-config",
+          compilerOptions: {
+            experimentalDecorators: false,
+            emitDecoratorMetadata: false,
+          },
+        }),
+        "index.ts": decoratorFixture,
+      });
+
+      const { stdout, exitCode } = await run(String(dir), "index.ts");
+      // Standard decorators: target is undefined, second arg is context object.
+      expect(stdout.trim()).toBe(JSON.stringify({ targetType: "undefined", propertyKey: "<context-object>" }));
+      expect(exitCode).toBe(0);
+    });
   });
 });

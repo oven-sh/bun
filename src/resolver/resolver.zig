@@ -1000,8 +1000,8 @@ pub const Resolver = struct {
 
             if (dir.enclosing_tsconfig_json) |tsconfig| {
                 result.jsx = tsconfig.mergeJSX(result.jsx);
-                result.flags.emit_decorator_metadata = result.flags.emit_decorator_metadata or tsconfig.emit_decorator_metadata;
-                result.flags.experimental_decorators = result.flags.experimental_decorators or tsconfig.experimental_decorators;
+                result.flags.emit_decorator_metadata = result.flags.emit_decorator_metadata or (tsconfig.emit_decorator_metadata orelse false);
+                result.flags.experimental_decorators = result.flags.experimental_decorators or (tsconfig.experimental_decorators orelse false);
             }
 
             // If you use mjs or mts, then you're using esm
@@ -4023,24 +4023,27 @@ pub const Resolver = struct {
             const base_len = candidate.len;
 
             if (has_subpath) {
-                // 2. "<node_modules>/<extends>.json" for extensionless subpaths
                 if (!has_json_ext) {
-                    const suffix = ".json";
-                    if (base_len + suffix.len <= buf.len) {
-                        @memcpy(buf[base_len..][0..suffix.len], suffix);
-                        if (r.tryParseTSConfigPath(buf[0 .. base_len + suffix.len])) |parent_config| {
-                            return parent_config;
+                    // 2. "<node_modules>/<extends>.json" for extensionless subpaths
+                    {
+                        const suffix = ".json";
+                        if (base_len + suffix.len <= buf.len) {
+                            @memcpy(buf[base_len..][0..suffix.len], suffix);
+                            if (r.tryParseTSConfigPath(buf[0 .. base_len + suffix.len])) |parent_config| {
+                                return parent_config;
+                            }
                         }
                     }
-                }
-                // 3. "<node_modules>/<extends>/tsconfig.json" in case the subpath
-                //    names a directory inside the package.
-                {
-                    const suffix = std.fs.path.sep_str ++ "tsconfig.json";
-                    if (base_len + suffix.len <= buf.len) {
-                        @memcpy(buf[base_len..][0..suffix.len], suffix);
-                        if (r.tryParseTSConfigPath(buf[0 .. base_len + suffix.len])) |parent_config| {
-                            return parent_config;
+                    // 3. "<node_modules>/<extends>/tsconfig.json" in case the subpath
+                    //    names a directory inside the package. Skipped when the path
+                    //    already ends in ".json" since that is a file, not a directory.
+                    {
+                        const suffix = std.fs.path.sep_str ++ "tsconfig.json";
+                        if (base_len + suffix.len <= buf.len) {
+                            @memcpy(buf[base_len..][0..suffix.len], suffix);
+                            if (r.tryParseTSConfigPath(buf[0 .. base_len + suffix.len])) |parent_config| {
+                                return parent_config;
+                            }
                         }
                     }
                 }
@@ -4310,8 +4313,14 @@ pub const Resolver = struct {
                     // starting from the base config (end of the list)
                     // successively apply the inheritable attributes to the next config
                     while (parent_configs.pop()) |parent_config| {
-                        merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
-                        merged_config.experimental_decorators = merged_config.experimental_decorators or parent_config.experimental_decorators;
+                        // Child overrides parent when explicitly set. These are
+                        // popped child-after-parent, so assignment is the override.
+                        if (parent_config.emit_decorator_metadata) |value| {
+                            merged_config.emit_decorator_metadata = value;
+                        }
+                        if (parent_config.experimental_decorators) |value| {
+                            merged_config.experimental_decorators = value;
+                        }
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;
                         }

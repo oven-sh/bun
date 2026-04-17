@@ -40,8 +40,10 @@ pub const TSConfigJSON = struct {
 
     preserve_imports_not_used_as_values: ?bool = false,
 
-    emit_decorator_metadata: bool = false,
-    experimental_decorators: bool = false,
+    // null means "not specified"; needed so the extends merge can tell a child
+    // config that explicitly sets `false` apart from one that leaves it unset.
+    emit_decorator_metadata: ?bool = null,
+    experimental_decorators: ?bool = null,
 
     pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;

@@ -487,7 +487,8 @@ pub fn onDevServerBuildComplete(ctx: *anyopaque, dev: *bun.bake.DevServer, succe
     this.source_map_generation = std.crypto.random.int(u32);
 
     const script_id = this.sourceMapId();
-    const payload = dev.generateStandaloneClientBundleForEntryPoint(this.path, script_id) catch |err| bun.handleOom(err);
+    const is_worker = if (this.config.target) |t| t == .worker else false;
+    const payload = dev.generateStandaloneClientBundleForEntryPoint(this.path, script_id, is_worker) catch |err| bun.handleOom(err);
     this.updateDevEntrypoint(payload, dev);
 
     const globalThis = this.global;

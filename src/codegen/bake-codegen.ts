@@ -45,8 +45,10 @@ async function run() {
   writeIfNotChanged(join(base_dir, "generated.ts"), convertZigEnum(devServerZig, ["IncomingMessageId", "MessageId"]));
 
   const results = await Promise.allSettled(
-    ["client", "server", "error"].map(async file => {
-      const side = file === "error" ? "client" : file;
+    ["client", "server", "error", "worker"].map(async file => {
+      // "worker" shares the client's codebase (DOM-free subset); it uses
+      // `side === "client"` for conditional exports in hmr-module.ts et al.
+      const side = file === "error" || file === "worker" ? "client" : file;
       let result = await Bun.build({
         entrypoints: [join(base_dir, `hmr-runtime-${file}.ts`)],
         define: {
@@ -141,12 +143,20 @@ async function run() {
           code = `let ${outName("unloadedModuleRegistry")}={},${outName("config")}={separateSSRGraph:${outName("$separateSSRGraph")}},${outName("server_exports")};${code}`;
 
           code = debug ? `((${params}) => {${code}})\n` : `((${params})=>{${code}})\n`;
+        } else if (file === "worker") {
+          // Service workers require a synchronous IIFE so top-level
+          // `self.addEventListener` calls in user code register before the
+          // install phase returns. No `await` allowed in the wrapper.
+          code = debug ? `((${names}) => {${code}})({\n` : `((${names})=>{${code}})({`;
         } else {
           code = debug ? `(async (${names}) => {${code}})({\n` : `(async(${names})=>{${code}})({`;
         }
       }
 
-      if (side === "client" && code.match(/\beval\(|,\s*eval\s*\)/)) {
+      // Worker runtime uses `new Function(src)()` for HMR updates, which is
+      // not a direct call to `eval` — but the regex below matches `Function(`
+      // too if we're not careful. Restrict the check to the true client file.
+      if (file === "client" && code.match(/\beval\(|,\s*eval\s*\)/)) {
         throw new AggregateError([
           new Error(
             "eval is not allowed in the HMR runtime. there are problems in all " +
@@ -162,13 +172,14 @@ async function run() {
 
   // print failures in a de-duplicated fashion.
   interface Err {
-    kind: ("client" | "server" | "error")[];
+    kind: ("client" | "server" | "error" | "worker")[];
     err: any;
   }
   const failed = [
     { kind: ["client"], result: results[0] },
     { kind: ["server"], result: results[1] },
     { kind: ["error"], result: results[2] },
+    { kind: ["worker"], result: results[3] },
   ]
     .filter(x => x.result.status === "rejected")
     // @ts-ignore
@@ -194,13 +205,18 @@ async function run() {
       }
     }
     for (const { kind, err } of flattened_errors) {
-      const map = { error: "error runtime", client: "client runtime", server: "server runtime" };
+      const map = {
+        error: "error runtime",
+        client: "client runtime",
+        server: "server runtime",
+        worker: "worker runtime",
+      };
       console.error(`Errors while bundling Bake ${kind.map(x => map[x]).join(" and ")}:`);
       console.error(err);
     }
     process.exit(1);
   } else {
-    console.log("-> bake.client.js, bake.server.js, bake.error.js");
+    console.log("-> bake.client.js, bake.server.js, bake.error.js, bake.worker.js");
 
     const empty_file = join(codegenRoot, "bake_empty_file");
     if (!existsSync(empty_file)) writeIfNotChanged(empty_file, "this is used to fulfill a cmake dependency");

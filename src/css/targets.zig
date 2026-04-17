@@ -79,7 +79,7 @@ pub const Targets = struct {
         }
         return switch (target) {
             .node, .bun => runtimeDefault(),
-            .browser, .bun_macro, .bake_server_components_ssr => browserDefault(),
+            .browser, .worker, .bun_macro, .bake_server_components_ssr => browserDefault(),
         };
     }
 

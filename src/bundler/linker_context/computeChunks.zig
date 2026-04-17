@@ -426,6 +426,7 @@ pub noinline fn computeChunks(
             const chunk_target = ast_targets[chunk.entry_point.source_index];
             chunk.template.placeholder.target = switch (chunk_target) {
                 .browser => "browser",
+                .worker => "worker",
                 .bun => "bun",
                 .node => "node",
                 .bun_macro => "macro",

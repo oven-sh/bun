@@ -755,6 +755,13 @@ pub const Framework = struct {
         out.options.hot_module_reloading = mode == .development;
         out.options.code_splitting = mode != .development;
 
+        // Client-side bundles run in the browser (or worker), where `process`
+        // is not a global. Without the polyfill, code that touches `process`
+        // (including common patterns like `process.env.NODE_ENV`) throws a
+        // ReferenceError at runtime. `fromCLIOptions` sets this for the CLI
+        // bundler path; set it here for the dev server's client/ssr paths too.
+        out.options.polyfill_node_globals = out.options.target.isBrowserLike();
+
         // force disable filesystem output, even though bundle_v2
         // is special cased to return before that code is reached.
         out.options.output_dir = "";
@@ -877,6 +884,17 @@ pub fn getHmrRuntime(side: Side) callconv(bun.callconv_inline) HmrRuntime {
             // server runtime is loaded once, so it is pointless to make this eager.
             .server => bun.runtimeEmbedFile(.codegen, "bake.server.js"),
         });
+}
+
+/// Service-worker-compatible HMR runtime. Same graph and manifest format as
+/// the client runtime, but the outer IIFE is synchronous and the entry point
+/// is loaded via `loadModuleSync` so that top-level `self.addEventListener`
+/// calls in user code register before the install phase completes.
+pub fn getWorkerHmrRuntime() callconv(bun.callconv_inline) HmrRuntime {
+    return if (Environment.codegen_embed)
+        .init(@embedFile("bake-codegen/bake.worker.js"))
+    else
+        .init(bun.runtimeEmbedFile(.codegen_eager, "bake.worker.js"));
 }
 
 pub const Mode = enum {

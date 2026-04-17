@@ -815,11 +815,22 @@ pub fn initStandalone(opts: StandaloneOptions) bun.JSOOM!*DevServer {
             0,
             uws.WebSocketBehavior.Wrap(DevServer, HmrSocket, false).apply(.{}),
         );
+        // Allow pinning the HMR WebSocket port via env var so that the port
+        // stays stable across `bun --hot` process restarts. When the port
+        // changes, service workers (and cached pages) hold onto the old port
+        // in their baked-in `config.origin`, producing a stream of
+        // `ERR_CONNECTION_REFUSED` errors until the SW updates.
+        const hmr_port: u16 = if (bun.getenvZ("BUN_DEV_HMR_PORT")) |s| blk: {
+            const p = std.fmt.parseInt(u16, s, 10) catch 0;
+            bun.Output.prettyErrorln("[DevServer] BUN_DEV_HMR_PORT={s} -> port {d}", .{ s, p });
+            bun.Output.flush();
+            break :blk p;
+        } else 0;
         app.listenWithConfig(*DevServer, dev, struct {
             pub fn handler(dev_inner: *DevServer, listen_socket: ?*TcpApp.ListenSocket) void {
                 dev_inner.standalone_listen_socket = listen_socket;
             }
-        }.handler, .{ .port = 0 });
+        }.handler, .{ .port = hmr_port });
         dev.standalone_app = app;
 
         if (dev.standalone_listen_socket == null) {
@@ -1026,6 +1037,10 @@ pub fn generateStandaloneClientBundleForEntryPoint(
     dev: *DevServer,
     entry_point: []const u8,
     script_id: SourceMapStore.Key,
+    /// When true, emit the service-worker-compatible runtime (synchronous
+    /// IIFE + `loadModuleSync`) so user code registers event listeners
+    /// during initial script evaluation.
+    worker: bool,
 ) bun.OOM![]u8 {
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
@@ -1060,14 +1075,17 @@ pub fn generateStandaloneClientBundleForEntryPoint(
     }
 
     var react_fast_refresh_id: []const u8 = "";
-    if (dev.framework.react_fast_refresh) |rfr| brk: {
-        const rfr_index = dev.client_graph.getFileIndex(rfr.import_source) orelse
-            break :brk;
-        if (rfr_index.get() < dev.client_graph.stale_files.bit_length and
-            !dev.client_graph.stale_files.isSet(rfr_index.get()))
-        {
-            try dev.client_graph.traceImports(rfr_index, &gts, .find_client_modules);
-            react_fast_refresh_id = rfr.import_source;
+    // Workers never need React Fast Refresh (no React in a service worker).
+    if (!worker) {
+        if (dev.framework.react_fast_refresh) |rfr| brk: {
+            const rfr_index = dev.client_graph.getFileIndex(rfr.import_source) orelse
+                break :brk;
+            if (rfr_index.get() < dev.client_graph.stale_files.bit_length and
+                !dev.client_graph.stale_files.isSet(rfr_index.get()))
+            {
+                try dev.client_graph.traceImports(rfr_index, &gts, .find_client_modules);
+                react_fast_refresh_id = rfr.import_source;
+            }
         }
     }
 
@@ -1094,6 +1112,82 @@ pub fn generateStandaloneClientBundleForEntryPoint(
         .shared => {},
     }
 
+    // Compute manifests for all standalone entry points (each is a ?bundle).
+    // The HMR runtime uses these to answer `__bun_submanifest(path)` calls
+    // emitted by `patchSubBuildExports`. This is how the server and worker
+    // (and client) observe the same manifest at runtime, including CSS
+    // files traced here AFTER linking is complete (edges are available).
+    var manifests_json = std.array_list.Managed(u8).init(dev.allocator());
+    defer manifests_json.deinit();
+    {
+        const w = manifests_json.writer();
+        try w.writeAll("{");
+        var first = true;
+        for (dev.standalone_entry_points) |ep| {
+            const ep_file_index = dev.client_graph.getFileIndex(ep.path) orelse continue;
+            if (ep_file_index.get() >= dev.client_graph.stale_files.bit_length) continue;
+            if (dev.client_graph.stale_files.isSet(ep_file_index.get())) continue;
+
+            // Trace CSS for this entry point. Resize gts in case the graph
+            // has grown since this gts was initialized.
+            try gts.resize(.client, sfa, dev.client_graph.bundled_files.count());
+            dev.client_graph.current_css_files.clearRetainingCapacity();
+            gts.clear();
+            try dev.client_graph.traceImports(ep_file_index, &gts, .find_css);
+
+            if (!first) try w.writeAll(",");
+            first = false;
+
+            // Key: absolute path to the entry
+            try bun.js_printer.writeJSONString(ep.path, @TypeOf(w), w, .utf8);
+            try w.writeAll(":{");
+
+            // Compute HMR entry name: "{basename}.js"
+            const base = bun.path.basename(ep.path);
+            const dot = std.mem.lastIndexOfScalar(u8, base, '.') orelse base.len;
+            var ep_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const ep_name = std.fmt.bufPrint(&ep_name_buf, "{s}.js", .{base[0..dot]}) catch continue;
+
+            // entrypoint object
+            try w.writeAll("\"entrypoint\":{\"name\":");
+            try bun.js_printer.writeJSONString(ep_name, @TypeOf(w), w, .utf8);
+            try w.writeAll(",\"kind\":\"entry-point\",\"type\":\"text/javascript;charset=utf-8\",\"size\":0},\"files\":[");
+
+            // First: the entry itself
+            try w.writeAll("{\"name\":");
+            try bun.js_printer.writeJSONString(ep_name, @TypeOf(w), w, .utf8);
+            try w.writeAll(",\"kind\":\"entry-point\",\"type\":\"text/javascript;charset=utf-8\",\"size\":0}");
+
+            // Then: all CSS files traced from this entry
+            for (dev.client_graph.current_css_files.items) |css_id| {
+                if (dev.assets.get(css_id) == null) continue;
+                var css_name_buf: [16 + ".css".len]u8 = undefined;
+                const css_name = std.fmt.bufPrint(&css_name_buf, "{s}.css", .{
+                    &std.fmt.bytesToHex(std.mem.asBytes(&css_id), .lower),
+                }) catch continue;
+                try w.writeAll(",{\"name\":");
+                try bun.js_printer.writeJSONString(css_name, @TypeOf(w), w, .utf8);
+                try w.writeAll(",\"kind\":\"asset\",\"type\":\"text/css\",\"size\":0}");
+            }
+
+            try w.writeAll("]}");
+        }
+        try w.writeAll("}");
+    }
+
+    // Re-trace CSS for the current entry (we just clobbered current_css_files).
+    // This is what JSBundle.onDevServerBuildComplete reads after this function
+    // returns to populate the current entry's CSS in its own files_value.
+    dev.client_graph.current_css_files.clearRetainingCapacity();
+    if (entry_index) |file_index| {
+        gts.clear();
+        if (file_index.get() < dev.client_graph.stale_files.bit_length and
+            !dev.client_graph.stale_files.isSet(file_index.get()))
+        {
+            try dev.client_graph.traceImports(file_index, &gts, .find_css);
+        }
+    }
+
     const result = try dev.client_graph.takeJSBundle(&.{
         .kind = .initial_response,
         .initial_response_entry_point = entry_point_name,
@@ -1101,6 +1195,8 @@ pub fn generateStandaloneClientBundleForEntryPoint(
         .hmr_origin = hmr_origin,
         .script_id = script_id,
         .console_log = false,
+        .worker = worker,
+        .manifests_json = manifests_json.items,
     });
     // The bundle's trailing config block (emitted by `takeJSBundle` after
     // the per-file chunks) has no source mappings. Pass its newline count

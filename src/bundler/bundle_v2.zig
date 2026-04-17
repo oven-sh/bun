@@ -3192,28 +3192,54 @@ pub const BundleV2 = struct {
         };
         if (sub_builds.len == 0) return;
 
-        const sub_build_results = this.runSubBuilds(sub_builds) catch |err| {
-            sub_build_log("sub-build failed: {s}", .{@errorName(err)});
-            return;
-        };
+        // In dev server mode, synthesize metadata from the dev server's state
+        // (HMR entry name) instead of running separate production sub-builds.
+        // This ensures the server's JSBundle.files_value and the worker's
+        // baked-in `frontend.files` reference the SAME file list: the HMR
+        // entry + CSS files. No production chunks anywhere in dev mode.
+        const alloc = this.allocator();
+        const sub_build_results = bun.handleOom(bun.default_allocator.alloc(SubBuildResult, sub_builds.len));
 
-        // Patch the lazy export ASTs for .bundle sources with sub-build result metadata.
+        for (sub_builds, 0..) |sb, i| {
+            // Synthesize a single OutputFile representing the HMR entry:
+            //   name = "{basename}.js" (matches what onDevServerBuildComplete uses)
+            //   kind = .entry-point
+            //   loader = .js
+            //   content = empty (we never actually serve via .file() in dev mode;
+            //                    the HMR bundle is served separately by the dev server)
+            const base = bun.path.basename(sb.entry_point);
+            const dot = std.mem.lastIndexOfScalar(u8, base, '.') orelse base.len;
+            const ep_name = try std.fmt.allocPrint(alloc, "./{s}.js", .{base[0..dot]});
+
+            var output_files = std.array_list.Managed(options.OutputFile).init(bun.default_allocator);
+            try output_files.append(.{
+                .loader = .js,
+                .src_path = bun.fs.Path.init(sb.entry_point),
+                .dest_path = ep_name,
+                .value = .{ .buffer = .{
+                    .allocator = bun.default_allocator,
+                    .bytes = "",
+                } },
+                .size = 0,
+                .size_without_sourcemap = 0,
+                .output_kind = .@"entry-point",
+                .side = null,
+                .entry_point_index = 0,
+            });
+
+            sub_build_results[i] = .{
+                .output_files = output_files,
+                .entry_point_index = 0,
+                .direct_file_count = 1,
+            };
+        }
+
+        // Patch the lazy export ASTs for .bundle sources with synthesized metadata.
         this.patchSubBuildExports(sub_builds, sub_build_results) catch |err| {
             sub_build_log("patchSubBuildExports failed: {s}", .{@errorName(err)});
         };
 
-        // Store sub-build output files on the DevServer for HTTP serving.
-        for (sub_build_results) |result| {
-            for (result.output_files.items) |of| {
-                const dest = bun.strings.trimPrefixComptime(u8, of.dest_path, "./");
-                switch (of.value) {
-                    .buffer => |buf| {
-                        try dev_server.addSubBuildFile(dest, buf.bytes, of.loader);
-                    },
-                    else => {},
-                }
-            }
-        }
+        _ = dev_server;
     }
 
     fn collectSubBuilds(this: *BundleV2) ![]SubBuild {
@@ -3234,8 +3260,28 @@ pub const BundleV2 = struct {
                     record.source_index.isValid(),
                     record.path.text,
                 });
-                if (record.loader == .bundle and record.source_index.isValid()) {
-                    const resolved_idx = record.source_index.get();
+                if (record.loader == .bundle) {
+                    // Try the linked source_index first (normal bundler path),
+                    // fall back to a path-based lookup (dev server path where
+                    // the source exists but isn't linked to the import record).
+                    const resolved_idx: u32 = if (record.source_index.isValid()) blk: {
+                        break :blk record.source_index.get();
+                    } else blk: {
+                        // Find a .bundle source with a matching path
+                        var found: ?u32 = null;
+                        for (sources, 0..) |candidate, i| {
+                            if (loaders[i] == .bundle and
+                                bun.strings.eql(candidate.path.text, record.path.text))
+                            {
+                                found = @intCast(i);
+                                break;
+                            }
+                        }
+                        break :blk (found orelse {
+                            sub_build_log("    -> .bundle import with no resolved source: {s}", .{record.path.text});
+                            continue;
+                        });
+                    };
                     sub_build_log("    -> .bundle import found! resolved_loader={s}", .{@tagName(loaders[resolved_idx])});
                     const resolved_source = &sources[resolved_idx];
                     // Only process if the resolved file has `.bundle` loader
@@ -3449,12 +3495,27 @@ pub const BundleV2 = struct {
             jsc.WorkPool.get(),
             heap,
         );
-        // Phase 2 of the bake v2 plan: sub-builds inherit the parent
-        // pipeline so they can read/write the same parse cache
-        // (Phase 3) and participate in incremental rebuilds (Phase 4).
-        // Ownership stays with the parent's top-level entry point.
-        sub_bundler.pipeline = this.pipeline;
-        defer sub_bundler.deinitWithoutFreeingArena();
+        // Sub-builds are always one-shot, even when the parent is a dev
+        // server (incremental) build. Inheriting the incremental pipeline
+        // would route the sub-build's completion through
+        // `finishFromBakeDevServer`, which panics because the sub-bundler's
+        // transpiler has no dev_server attached.
+        if (this.pipeline) |parent_pipeline| {
+            if (parent_pipeline.mode == .oneshot) {
+                sub_bundler.pipeline = parent_pipeline;
+            } else {
+                sub_bundler.pipeline = try BuildPipeline.createOneshot();
+            }
+        }
+        defer {
+            // If we created our own oneshot pipeline, free it.
+            if (sub_bundler.pipeline != null and
+                (this.pipeline == null or sub_bundler.pipeline.? != this.pipeline.?))
+            {
+                sub_bundler.pipeline.?.deinit();
+            }
+            sub_bundler.deinitWithoutFreeingArena();
+        }
 
         // Run the sub-build
         const build_result = sub_bundler.runFromJSInNewThread(&entry_points) catch |err| {
@@ -3502,11 +3563,29 @@ pub const BundleV2 = struct {
         const parts_lists = this.linker.graph.ast.items(.parts);
         const loc = Logger.Loc.Empty;
 
+        const sources_for_lookup = this.graph.input_files.items(.source);
+        const loaders_for_lookup = this.graph.input_files.items(.loader);
+
         for (sub_builds, sub_build_results) |sb, result| {
             // Find the resolved source index (the .bundle source in the graph)
             const record = import_records_lists[sb.source_index].slice()[sb.import_record_index];
-            if (!record.source_index.isValid()) continue;
-            const resolved_source_index = record.source_index.get();
+            // In the dev server path, the import record's `source_index` is
+            // not linked to the resolved source. Fall back to path-based
+            // lookup (same logic as `collectSubBuilds`).
+            const resolved_source_index: u32 = if (record.source_index.isValid()) blk: {
+                break :blk record.source_index.get();
+            } else blk: {
+                var found: ?u32 = null;
+                for (sources_for_lookup, 0..) |candidate, i| {
+                    if (loaders_for_lookup[i] == .bundle and
+                        bun.strings.eql(candidate.path.text, sb.entry_point))
+                    {
+                        found = @intCast(i);
+                        break;
+                    }
+                }
+                break :blk (found orelse continue);
+            };
 
             // Access the s_lazy_export in the resolved source's AST (part index 1)
             const parts = &parts_lists[resolved_source_index];
@@ -3528,12 +3607,45 @@ pub const BundleV2 = struct {
             // Bun.file() and import.meta.dir are only available in server-side targets.
             // For browser targets, skip the file() accessor entirely since Bun.file
             // doesn't exist and import.meta is invalid in classic (non-module) scripts.
-            const is_server_target = this.transpiler.options.target != .browser;
+            const is_server_target = !this.transpiler.options.target.isBrowserLike();
+            const is_dev_server = this.transpiler.options.dev_server != null;
+
+            const source_symbols = &this.linker.graph.ast.items(.symbols)[resolved_source_index];
+
+            // In dev server mode, replace the entire object literal with a call
+            // to a runtime helper `__bun_submanifest(path)` registered by the HMR
+            // runtime. This lets the server and worker observe the same manifest
+            // (including CSS files traced at onDevServerBuildComplete time)
+            // without needing to know the final file list at patch time.
+            if (is_dev_server) {
+                // Register an unbound symbol for the helper name.
+                var helper_ref = Ref.init(
+                    @truncate(source_symbols.len),
+                    @truncate(resolved_source_index),
+                    false,
+                );
+                helper_ref.tag = .symbol;
+                source_symbols.append(alloc, .{
+                    .kind = .unbound,
+                    .original_name = "__bun_submanifest",
+                }) catch bun.outOfMemory();
+                this.linker.graph.ast.items(.module_scope)[resolved_source_index].generated.append(alloc, helper_ref) catch bun.outOfMemory();
+
+                const call_args = try alloc.dupe(Expr, &.{
+                    Expr.init(E.String, E.String.init(try alloc.dupe(u8, sb.entry_point)), loc),
+                });
+                const call_expr = Expr.init(E.Call, E.Call{
+                    .target = Expr.init(E.Identifier, E.Identifier{ .ref = helper_ref }, loc),
+                    .args = js_ast.ExprNodeList.fromOwnedSlice(call_args),
+                }, loc);
+
+                part.stmts[0].data.s_lazy_export.* = call_expr.data;
+                continue;
+            }
 
             // Create an unbound "Bun" symbol so we can reference it in generated code.
             // Add directly to the linker graph AST's symbol list (the linker graph's
             // Symbol.Map isn't populated until link(), but the AST symbols are available).
-            const source_symbols = &this.linker.graph.ast.items(.symbols)[resolved_source_index];
             const bun_ref = if (is_server_target) brk: {
                 var ref = Ref.init(
                     @truncate(source_symbols.len),

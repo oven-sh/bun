@@ -386,6 +386,9 @@ pub const Target = enum {
     bun,
     bun_macro,
     node,
+    /// Service worker / web worker target. Browser-like (no Bun/Node APIs)
+    /// but bypasses HMR wrapping so event listeners stay synchronous top-level.
+    worker,
 
     /// This is used by bake.Framework.ServerComponents.separate_ssr_graph
     bake_server_components_ssr,
@@ -396,6 +399,7 @@ pub const Target = enum {
         .{ "bun_macro", .bun_macro },
         .{ "macro", .bun_macro },
         .{ "node", .node },
+        .{ "worker", .worker },
     });
 
     pub fn fromJS(global: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Target {
@@ -408,9 +412,18 @@ pub const Target = enum {
     pub fn toAPI(this: Target) api.Target {
         return switch (this) {
             .node => .node,
-            .browser => .browser,
+            .browser, .worker => .browser,
             .bun, .bake_server_components_ssr => .bun,
             .bun_macro => .bun_macro,
+        };
+    }
+
+    /// Returns true for targets that run in a browser-like environment
+    /// (no Bun/Node APIs, browser main fields, polyfill node globals).
+    pub inline fn isBrowserLike(this: Target) bool {
+        return switch (this) {
+            .browser, .worker => true,
+            else => false,
         };
     }
 
@@ -437,14 +450,14 @@ pub const Target = enum {
 
     pub inline fn processBrowserDefineValue(this: Target) ?string {
         return switch (this) {
-            .browser => "true",
+            .browser, .worker => "true",
             else => "false",
         };
     }
 
     pub fn bakeGraph(target: Target) bun.bake.Graph {
         return switch (target) {
-            .browser => .client,
+            .browser, .worker => .client,
             .bake_server_components_ssr => .ssr,
             .bun_macro, .bun, .node => .server,
         };
@@ -522,6 +535,7 @@ pub const Target = enum {
         const listd = [_]string{ MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2], MAIN_FIELD_NAMES[3] };
 
         array.set(Target.browser, &listc);
+        array.set(Target.worker, &listc);
         array.set(Target.bun, &listd);
         array.set(Target.bun_macro, &listd);
         array.set(Target.bake_server_components_ssr, &listd);
@@ -542,6 +556,11 @@ pub const Target = enum {
             "node",
         });
         array.set(Target.browser, &.{
+            "browser",
+            "module",
+        });
+        array.set(Target.worker, &.{
+            "worker",
             "browser",
             "module",
         });
@@ -1670,7 +1689,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?api.
         allocator,
         input_loaders.extensions.len +
             if (target.isBun()) default_loader_ext_bun.len else 0 +
-                if (target == .browser) default_loader_ext_browser.len else 0 +
+                if (target.isBrowserLike()) default_loader_ext_browser.len else 0 +
                     default_loader_ext.len,
         input_loaders.extensions,
         loader_values,
@@ -1687,7 +1706,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?api.
         }
     }
 
-    if (target == .browser) {
+    if (target.isBrowserLike()) {
         inline for (default_loader_ext_browser) |ext| {
             _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
         }
@@ -2178,7 +2197,7 @@ pub const BundleOptions = struct {
             opts.output_dir = try fs.getFdPath(.fromStdDir(opts.output_dir_handle.?));
         }
 
-        opts.polyfill_node_globals = opts.target == .browser;
+        opts.polyfill_node_globals = opts.target.isBrowserLike();
 
         if (transform.tsconfig_override) |tsconfig| {
             opts.tsconfig_override = tsconfig;

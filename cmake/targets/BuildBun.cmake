@@ -403,6 +403,7 @@ list(APPEND BUN_BAKE_RUNTIME_CODEGEN_SOURCES
 set(BUN_BAKE_RUNTIME_OUTPUTS
   ${CODEGEN_PATH}/bake.client.js
   ${CODEGEN_PATH}/bake.server.js
+  ${CODEGEN_PATH}/bake.worker.js
 )
 
 register_command(

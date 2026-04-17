@@ -778,8 +778,8 @@ pub fn transpileSourceCode(
 
             if (jsc_vm.hot_reload == .hot) {
                 // --hot: register with shared DevServer for incremental rebuilds + HMR.
-                // Bundle output uses .internal_bake_dev format which prepends an HMR
-                // runtime that auto-detects its WebSocket origin from import.meta.url.
+                // Worker targets get a synchronous service-worker-compatible HMR runtime
+                // via the `worker` flag threaded through generateStandaloneClientBundleForEntryPoint.
                 try js_bundle.attachToSharedDevServer(jsc_vm);
             } else {
                 // Oneshot: full BundleV2 build at import time.

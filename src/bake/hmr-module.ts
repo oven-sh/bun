@@ -942,7 +942,13 @@ export function fullReload() {
   try {
     emitEvent("bun:beforeFullReload", null);
   } catch {}
-  location.reload();
+  // `location.reload()` is undefined in service workers. A service worker
+  // cannot reload itself; clients must reload to pick up changes.
+  if (typeof location !== "undefined" && typeof location.reload === "function") {
+    location.reload();
+  } else {
+    console.warn("[Bun HMR] Cannot self-reload in this environment (likely a service worker).");
+  }
 }
 
 class AsyncImportError extends Error {

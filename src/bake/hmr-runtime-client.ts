@@ -77,6 +77,15 @@ const scriptTags: Map<string, PendingHmrQueue> =
   new Map<string, PendingHmrQueue>();
 (globalThis as any)[pendingScriptSymbol] = scriptTags;
 
+// `?bundle` imports are patched at bundle time to call `__bun_submanifest(path)`
+// so that the server and client observe the same manifest at runtime (including
+// CSS files traced after linking). The HMR runtime populates this helper with
+// the manifest data sent in `config.manifests` by the dev server.
+(globalThis as any).__bun_submanifest = (path: string) => {
+  const manifests = (config as any).manifests ?? {};
+  return manifests[path] ?? { files: [] };
+};
+
 globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   const queue = scriptTags.get(id);
   let entry = queue?.shift() ?? null;

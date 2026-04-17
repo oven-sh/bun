@@ -159,6 +159,7 @@ export function initWebSocket(
     // Clear the send queue.
     sendQueue.length = sendQueueLength = 0;
 
+    let failedAttempts = 0;
     while (true) {
       if (closed) return;
 
@@ -182,6 +183,19 @@ export function initWebSocket(
 
       if (await promise) {
         break;
+      }
+      failedAttempts++;
+      // After a few failures, warn loudly: the bundle's baked-in HMR port
+      // is likely stale (e.g. server was restarted and got a new port).
+      // Without HMR, the page silently runs old code — users need to know.
+      if (failedAttempts === 3) {
+        console.warn(
+          "[Bun] Hot-reload is OFFLINE — this page is running code from " +
+            "when it first loaded. Updates WILL NOT appear.\n" +
+            "  If the server restarted, the HMR port likely changed.\n" +
+            "  Reload the page to pick up a fresh bundle, or set " +
+            "BUN_DEV_HMR_PORT=<port> to pin the WebSocket port.",
+        );
       }
       await wait();
     }

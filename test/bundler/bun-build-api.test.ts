@@ -1700,4 +1700,136 @@ console.log(JSON.stringify({
     expect(result.hasBunFile).toBe(false);
     expect(exitCode).toBe(0);
   });
+
+  // target: "worker" produces a synchronous bundle (no async wrapper) suitable
+  // for service workers. In production builds it should behave like browser
+  // but with "worker" in export conditions.
+  test("target: 'worker' produces synchronous output without import.meta", async () => {
+    const dir = tempDirWithFiles("bundle-target-worker", {
+      "app.ts": `export const greeting = "hello";`,
+      "sw.ts": `
+        import bundle from "./app.ts?bundle" with { target: "worker" };
+        const names = bundle.files.map(f => f.name);
+        self.addEventListener("install", () => {});
+      `,
+      "server.ts": `
+        import worker from "./sw.ts?bundle" with { target: "worker", format: "iife" };
+        const entry = worker.files.find(f => f.kind === "entry-point");
+        const workerCode = await entry.file().text();
+        console.log(JSON.stringify({
+          hasImportMeta: workerCode.includes("import.meta"),
+          hasBunFile: workerCode.includes("Bun.file"),
+          hasAsyncWrapper: workerCode.includes("async"),
+          hasAddEventListener: workerCode.includes("addEventListener"),
+        }));
+      `,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "server.ts")],
+      outdir: join(dir, "dist"),
+      target: "bun",
+    });
+
+    expect(build.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "dist", "server.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const result = JSON.parse(stdout.trim());
+    expect(result.hasImportMeta).toBe(false);
+    expect(result.hasBunFile).toBe(false);
+    expect(result.hasAsyncWrapper).toBe(false);
+    expect(result.hasAddEventListener).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  // In hot mode, the dev server's worker HMR runtime should produce output
+  // that starts with a SYNCHRONOUS IIFE so service worker event listeners
+  // register during initial script evaluation. Additionally, the server's
+  // `frontend.files` and the worker's baked-in `frontend.files` (via
+  // `import frontend from "./bundle"`) must be IDENTICAL — both should point
+  // to the HMR entry, not split production chunks.
+  test("target: 'worker' in hot mode uses sync HMR runtime and shares manifest with server", async () => {
+    const dir = tempDirWithFiles("bundle-worker-hmr", {
+      "app.ts": `export const greeting = "hello";`,
+      "bundle.ts": `import b from "./app.ts?bundle"; export default b;`,
+      "worker.ts": `
+        import frontend from "./bundle";
+        const assetPaths = new Set(frontend.files.map(f => f.name));
+        self.addEventListener("install", () => { (globalThis as any).__assets = [...assetPaths]; });
+      `,
+      "server.ts": `
+        import frontend from "./bundle";
+        import worker from "./worker.ts?bundle" with { target: "worker" };
+        import { serve } from "bun";
+        const srv = serve({
+          port: 0,
+          routes: { "/worker.js": () => new Response(worker.files.find(f => f.kind === "entry-point").file()) },
+          development: { hmr: false },
+        });
+        const res = await fetch(srv.url + "worker.js");
+        const body = await res.text();
+
+        // Evaluate worker in a VM simulating a service worker environment
+        const vm = require("node:vm");
+        let installed = false;
+        let workerAssets = null;
+        const ctx: any = {
+          self: {
+            addEventListener(evt: string, handler: Function) {
+              if (evt === "install") { installed = true; handler({}); }
+            },
+            registration: undefined,
+          },
+          console, URL, TextDecoder, TextEncoder, Blob: class { constructor() {} },
+          location: { origin: "http://localhost" },
+          Symbol, Object, Array, Map, Set, Promise, Error, Uint8Array, DataView, ArrayBuffer, Function,
+          WebSocket: class { constructor() {} send() {} close() {} addEventListener() {} },
+        };
+        ctx.globalThis = ctx;
+        ctx.self = new Proxy(ctx.self, { get(t, p) { return (t as any)[p] ?? ctx[p]; }, set(t, p, v) { (t as any)[p] = v; return true; } });
+        try {
+          vm.runInNewContext(body, ctx, { filename: "worker.js" });
+        } catch (e: any) {
+          console.error("EVAL FAILED:", e.message);
+        }
+        workerAssets = ctx.__assets;
+
+        console.log(JSON.stringify({
+          startsWithSyncIIFE: body.startsWith("((") && !body.startsWith("(async"),
+          installListenerRegistered: installed,
+          serverFiles: frontend.files.map(f => f.name).sort(),
+          workerFiles: (workerAssets ?? []).sort(),
+        }));
+        srv.stop();
+        process.exit(0);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", join(dir, "server.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Extract the JSON line — --hot may produce extra output
+    const jsonLine = stdout.split("\n").find(l => l.startsWith("{"));
+    expect(jsonLine, `no JSON line in stdout: ${stdout}\nstderr: ${stderr}`).toBeDefined();
+    const result = JSON.parse(jsonLine!);
+
+    expect(result.startsWithSyncIIFE).toBe(true);
+    expect(result.installListenerRegistered).toBe(true);
+    expect(result.serverFiles).toEqual(result.workerFiles);
+    expect(exitCode).toBe(0);
+  });
 });

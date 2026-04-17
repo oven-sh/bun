@@ -1058,7 +1058,15 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
 
                 if (!import_record.source_index.isRuntime()) try_index_record: {
                     // TODO: move this block into a function
-                    const key = import_record.path.keyForIncrementalGraph();
+                    const base_key = import_record.path.keyForIncrementalGraph();
+                    // `.bundle` sources are stored in `bundled_files` under
+                    // `{path}?bundle` to avoid colliding with the entry-point
+                    // source for the same file. Match the key here.
+                    var bundle_key_buf: [bun.MAX_PATH_BYTES + 8]u8 = undefined;
+                    const key: []const u8 = if (import_record.loader == .bundle)
+                        std.fmt.bufPrint(&bundle_key_buf, "{s}?bundle", .{base_key}) catch base_key
+                    else
+                        base_key;
                     const imported_file_index: FileIndex = brk: {
                         if (import_record.source_index.isValid()) {
                             if (ctx.getCachedIndex(side, import_record.source_index).*.unwrap()) |i| {
@@ -1699,6 +1707,15 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 react_refresh_entry_point: []const u8 = "",
                 hmr_origin: []const u8 = "",
                 console_log: bool,
+                /// When true, emit the service-worker-compatible runtime
+                /// (synchronous IIFE, no `await` on entry point) instead of
+                /// the default client runtime.
+                worker: bool = false,
+                /// Pre-serialized JSON object mapping `?bundle` entry paths to
+                /// `{ entrypoint: {...}, files: [{...}] }`. The HMR runtime
+                /// uses this to satisfy `__bun_submanifest(path)` calls
+                /// emitted by `patchSubBuildExports`.
+                manifests_json: []const u8 = "",
             },
             .server => struct {
                 kind: ChunkKind,
@@ -1737,7 +1754,10 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             assert(g.current_chunk_len > 0);
 
             const runtime: bake.HmrRuntime = switch (kind) {
-                .initial_response => bun.bake.getHmrRuntime(side),
+                .initial_response => if (side == .client and options.worker)
+                    bun.bake.getWorkerHmrRuntime()
+                else
+                    bun.bake.getHmrRuntime(side),
                 .hmr_chunk => switch (side) {
                     .server => comptime .init("({"),
                     .client => comptime .init("self[Symbol.for(\"bun:hmr\")]({\n"),
@@ -1803,6 +1823,10 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                                 w,
                                 .utf8,
                             );
+                        }
+                        if (options.manifests_json.len > 0) {
+                            try w.writeAll(",\n  manifests: ");
+                            try w.writeAll(options.manifests_json);
                         }
                         try w.writeAll("\n})");
                     },

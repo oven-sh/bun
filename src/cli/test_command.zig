@@ -1392,7 +1392,7 @@ pub const TestCommand = struct {
                 Output.prettyFmt("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", false)) catch {};
             if (ctx.test_options.parallel > 0) {
                 if (colors) {
-                    w.print(" \x1b[1;36m{d}\u{00d7} PARALLEL\x1b[0m", .{ctx.test_options.parallel}) catch {};
+                    w.print(" \x1b[1;2m{d}\u{00d7} PARALLEL\x1b[0m", .{ctx.test_options.parallel}) catch {};
                 } else {
                     w.print(" {d}x PARALLEL", .{ctx.test_options.parallel}) catch {};
                 }

@@ -645,7 +645,7 @@ test("--parallel: a test producing a >64MB result line is truncated, not treated
   // itself exceeds it. The encoder must truncate so the receiver doesn't drop
   // the channel and mark the whole file as crashed.
   using dir = tempDir("parallel-huge-frame", {
-    "huge.test.js": `import {test,expect} from "bun:test"; test("X".repeat(65_000_000),()=>expect(1).toBe(2));`,
+    "huge.test.js": `import {test,expect} from "bun:test"; test("X".repeat(68_000_000),()=>expect(1).toBe(2));`,
     "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
   });
   await using proc = Bun.spawn({

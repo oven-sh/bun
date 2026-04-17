@@ -319,3 +319,37 @@ test("http2.createServer responds with 204 without corrupting stream state (#290
     server.close();
   }
 });
+
+// Wire-level check for the above. Bun's own http2.connect client is lenient
+// about a DATA frame following HEADERS+END_STREAM, so the previous test
+// passes even when the server violates RFC 9113 §5.1. Inspect the raw
+// frames: a 204 must terminate via HEADERS+END_STREAM with NO subsequent
+// DATA frame. Before the fix, respond() forwarded waitForTrailers:true to
+// the native layer alongside the forced endStream:true, and native
+// request() dispatched onWantTrailers AFTER writing HEADERS+END_STREAM —
+// the compat trailers handler then called noTrailers → sendData("", true)
+// emitting a spurious empty DATA frame on the already-half-closed stream.
+test("http2.createServer 204 terminates via HEADERS+END_STREAM with no spurious DATA (#29073)", async () => {
+  const server = http2.createServer((req, res) => {
+    res.writeHead(204);
+    res.end();
+  });
+  await once(server.listen(0), "listening");
+  try {
+    const port = (server.address() as net.AddressInfo).port;
+    const frames = await rawH2cRequest(port);
+
+    // The response HEADERS frame on stream 1 must carry END_STREAM.
+    const stream1Headers = frames.filter(f => f.type === 1 && f.streamId === 1);
+    expect(stream1Headers).toHaveLength(1);
+    expect(stream1Headers[0].flags & 0x1).toBe(0x1);
+
+    // RFC 9113 §5.1: after HEADERS+END_STREAM the stream is half-closed
+    // (local); the server MUST NOT send DATA on it. A DATA frame here is
+    // exactly what strict peers (nghttp2) reject as STREAM_CLOSED.
+    const stream1Data = frames.filter(f => f.type === 0 && f.streamId === 1);
+    expect(stream1Data).toHaveLength(0);
+  } finally {
+    server.close();
+  }
+});

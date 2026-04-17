@@ -2667,7 +2667,16 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
       this.headRequest === true
     ) {
-      options = { ...options, endStream: true };
+      // When endStream is true the HEADERS frame itself carries END_STREAM
+      // and the stream moves to HALF_CLOSED_LOCAL inside native request().
+      // If waitForTrailers is ALSO true the native layer dispatches
+      // onWantTrailers immediately after, whose JS handler calls
+      // noTrailers → sendData("", true) and emits a spurious DATA frame on
+      // the already-half-closed stream (RFC 9113 §5.1 violation). Strip
+      // waitForTrailers here so the native never fires that path; the JS
+      // guard further down (`options?.waitForTrailers && !endStream`) only
+      // covers the `_final` side and runs AFTER the native call.
+      options = { ...options, endStream: true, waitForTrailers: false };
       endStream = true;
     }
     const sendDate = options?.sendDate;

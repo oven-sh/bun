@@ -688,9 +688,12 @@ JSValue fetchCommonJSModule(
                 }
                 if (!wasModuleMock) {
                     auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result());
-                    vm.m_synchronousModuleLoadingDepth++;
+                    Vector<JSC::VM::SynchronousModuleTask> queue;
+                    auto* prev = vm.m_synchronousModuleQueue;
+                    vm.m_synchronousModuleQueue = &queue;
                     globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
-                    vm.m_synchronousModuleLoadingDepth--;
+                    if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+                    vm.m_synchronousModuleQueue = prev;
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 RELEASE_AND_RETURN(scope, jsNumber(-1));
@@ -740,9 +743,12 @@ JSValue fetchCommonJSModule(
                 }
                 if (!wasModuleMock) {
                     auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result());
-                    vm.m_synchronousModuleLoadingDepth++;
+                    Vector<JSC::VM::SynchronousModuleTask> queue;
+                    auto* prev = vm.m_synchronousModuleQueue;
+                    vm.m_synchronousModuleQueue = &queue;
                     globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
-                    vm.m_synchronousModuleLoadingDepth--;
+                    if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+                    vm.m_synchronousModuleQueue = prev;
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 RELEASE_AND_RETURN(scope, jsNumber(-1));
@@ -860,11 +866,17 @@ JSValue fetchCommonJSModuleNonBuiltin(
         Bun::IsolatedModuleCache::insert(vm, specifierWtfString, provider.get());
     // provideFetch() now drives the C++ loader pipeline (parse -> module record)
     // via internal microtasks. We're about to hand this entry to require(esm)'s
-    // synchronous load path, so run those reactions inline instead of leaving
-    // them queued behind the user microtask we're currently inside of.
-    vm.m_synchronousModuleLoadingDepth++;
-    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(provider));
-    vm.m_synchronousModuleLoadingDepth--;
+    // synchronous load path, so run those reactions through the loader's
+    // private queue instead of leaving them on the user microtask queue we're
+    // currently inside of.
+    {
+        Vector<JSC::VM::SynchronousModuleTask> queue;
+        auto* prev = vm.m_synchronousModuleQueue;
+        vm.m_synchronousModuleQueue = &queue;
+        globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(provider));
+        if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+        vm.m_synchronousModuleQueue = prev;
+    }
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, jsNumber(-1));
 }

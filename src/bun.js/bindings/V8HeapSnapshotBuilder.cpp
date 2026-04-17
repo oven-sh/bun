@@ -799,7 +799,7 @@ String V8HeapSnapshotBuilder::generateV8HeapSnapshot()
     json.append("}\n"_s);
 
     if (json.hasOverflowed()) [[unlikely]]
-        return { };
+        return {};
 
     return json.toString();
 }
@@ -815,11 +815,26 @@ static void appendUTF8BytesQuotedJSON(Vector<uint8_t>& out, const WTF::String& s
             if (ch < 0x20) {
                 // Control characters need \uXXXX escaping (matches escapedFormsForJSON behavior)
                 switch (ch) {
-                case '\b': out.append('\\'); out.append('b'); break;
-                case '\t': out.append('\\'); out.append('t'); break;
-                case '\n': out.append('\\'); out.append('n'); break;
-                case '\f': out.append('\\'); out.append('f'); break;
-                case '\r': out.append('\\'); out.append('r'); break;
+                case '\b':
+                    out.append('\\');
+                    out.append('b');
+                    break;
+                case '\t':
+                    out.append('\\');
+                    out.append('t');
+                    break;
+                case '\n':
+                    out.append('\\');
+                    out.append('n');
+                    break;
+                case '\f':
+                    out.append('\\');
+                    out.append('f');
+                    break;
+                case '\r':
+                    out.append('\\');
+                    out.append('r');
+                    break;
                 default:
                     out.append('\\');
                     out.append('u');

@@ -21,6 +21,7 @@
 //     surface a JS-level OutOfMemory error.
 
 #include <JavaScriptCore/HeapAnalyzer.h>
+#include <limits>
 #include <optional>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>

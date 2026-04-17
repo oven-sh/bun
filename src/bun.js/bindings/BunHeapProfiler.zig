@@ -16,7 +16,11 @@ pub fn generateAndWriteProfile(vm: *jsc.VM, config: HeapProfilerConfig) !void {
     defer profile_string.deref();
 
     if (profile_string.isEmpty()) {
-        // No profile data generated
+        // Bun::V8HeapSnapshotBuilder::json() returns a null String when the
+        // serialized snapshot overflows String::MaxLength or OOMs. Tell the
+        // user instead of silently producing no file.
+        Output.prettyErrorln("<r><yellow>warn<r>: heap profile not written (snapshot too large to serialize)", .{});
+        Output.flush();
         return;
     }
 

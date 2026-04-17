@@ -542,11 +542,17 @@ unsigned V8HeapSnapshotBuilder::getEdgeTypeIndex(const String& type)
     return static_cast<unsigned>(V8EdgeType::Internal);
 }
 
-unsigned V8HeapSnapshotBuilder::addString(const String& str)
+unsigned V8HeapSnapshotBuilder::addString(const String& input)
 {
     // Never return 0 for non-empty strings
-    if (str.isEmpty())
+    if (input.isEmpty())
         return 0;
+
+    // Every entry in the strings table is capped at maxNodeNameLength. Node
+    // names are already truncated at their assignment site, but this also
+    // covers property/variable edge names (which come from arbitrary user
+    // identifiers) and any other caller.
+    auto str = truncateNodeName(input);
 
     // Check if string already exists
     unsigned hash = str.hash();
@@ -594,9 +600,11 @@ std::optional<V8HeapSnapshotBuilder::TraceLocation> V8HeapSnapshotBuilder::getTr
 
 String V8HeapSnapshotBuilder::generateV8HeapSnapshot()
 {
-    // Extra pass #1: fill in the node names
+    // Extra pass #1: fill in the node names. Truncate here so every return
+    // path from getDetailedNodeType (including function display names and
+    // calculated class names) stays within maxNodeNameLength.
     for (auto& node : m_nodes) {
-        node.name = getDetailedNodeType(node.cell);
+        node.name = truncateNodeName(getDetailedNodeType(node.cell));
         node.edgesCount = 0; // Reset edge counts for deduplication pass
     }
 
@@ -888,9 +896,11 @@ static void appendUnsigned(Vector<uint8_t>& out, size_t value)
 
 Vector<uint8_t> V8HeapSnapshotBuilder::generateV8HeapSnapshotBytes()
 {
-    // Extra pass #1: fill in the node names
+    // Extra pass #1: fill in the node names. Truncate here so every return
+    // path from getDetailedNodeType (including function display names and
+    // calculated class names) stays within maxNodeNameLength.
     for (auto& node : m_nodes) {
-        node.name = getDetailedNodeType(node.cell);
+        node.name = truncateNodeName(getDetailedNodeType(node.cell));
         node.edgesCount = 0; // Reset edge counts for deduplication pass
     }
 

@@ -1992,6 +1992,7 @@ pub const sync = struct {
             remain = remain[chunk.len..];
             chunks_allocator.free(chunk);
         }
+        chunks_allocator.free(chunks);
 
         return result;
     }

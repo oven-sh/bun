@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmod, mkdir, symlink, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isWindows, mergeWindowEnvs, tempDir, tmpdirSync } from "harness";
 import { join, relative } from "path";
 import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
 
@@ -313,12 +313,16 @@ describe("bun remove -g with a package that isn't installed", () => {
 
   function globalEnv(bunInstall: string, extraPath: string) {
     const sep = isWindows ? ";" : ":";
-    return {
-      ...env,
-      BUN_INSTALL: bunInstall,
-      BUN_INSTALL_BIN: join(bunInstall, "bin"),
-      PATH: `${extraPath}${sep}${join(bunInstall, "bin")}${sep}${env.PATH ?? ""}`,
-    };
+    // mergeWindowEnvs handles the `Path` vs `PATH` key-casing difference on Windows so the
+    // child process actually sees our override.
+    return mergeWindowEnvs([
+      env,
+      {
+        BUN_INSTALL: bunInstall,
+        BUN_INSTALL_BIN: join(bunInstall, "bin"),
+        PATH: `${extraPath}${sep}${join(bunInstall, "bin")}${sep}${process.env.PATH ?? ""}`,
+      },
+    ]);
   }
 
   it("warns when the package is not installed globally", async () => {

@@ -588,16 +588,11 @@ fn packageNameFromNodeModulesPath(path_: string) ?string {
 
     if (remain.len == 0 or strings.eqlComptime(remain, ".bin")) return null;
 
-    if (is_scoped) {
-        // Require `@scope/<name>` with a non-empty <name>.
-        var i: usize = 1;
-        while (i < remain.len and !isPathSep(remain[i])) : (i += 1) {}
-        if (i + 1 >= remain.len) return null;
-        // On Windows the separator between scope and name may be `\`; since we return a slice
-        // into the (possibly const) input we can't normalize it here, so skip the suggestion and
-        // let the caller fall back to the generic $PATH message.
-        if (Environment.isWindows and remain[i] == '\\') return null;
-    }
+    // Only suggest names that are actually valid npm package names. This also rejects
+    // `@scope` with no `/name`, `@/name` with an empty scope, `@scope/` with an empty name,
+    // and on Windows `@scope\name` (we return a slice into the possibly-const input so we
+    // can't normalize the separator here; the caller falls back to the generic $PATH message).
+    if (!strings.isNPMPackageName(remain)) return null;
 
     return remain;
 }

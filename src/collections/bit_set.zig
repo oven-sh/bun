@@ -1060,18 +1060,6 @@ pub const DynamicBitSetUnmanaged = struct {
         }
     }
 
-    /// Performs a set difference of two bit sets, and stores
-    /// the result in the first one.  Bits in the result are
-    /// set if they were set in the first input but not the second.
-    /// The two sets must both be the same bit_length.
-    pub fn setDifference(self: *Self, other: Self) void {
-        if (comptime Environment.allow_assert) bun.assert(other.bit_length == self.bit_length);
-        const num_masks = numMasks(self.bit_length);
-        for (self.masks[0..num_masks], other.masks) |*mask, other_mask| {
-            mask.* &= ~other_mask;
-        }
-    }
-
     pub fn setExcludeTwo(self: *Self, other: Self, third: Self) void {
         if (comptime Environment.allow_assert) bun.assert(other.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);

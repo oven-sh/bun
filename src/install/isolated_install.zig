@@ -160,7 +160,7 @@ pub fn installIsolatedPackages(
                             }
                         }
                     }
-                    scratch.setDifference(provides.at(pkg_id));
+                    scratch.setExclude(provides.at(pkg_id));
 
                     var dst = leaking_peers.at(pkg_id);
                     if (!scratch.eql(dst)) {

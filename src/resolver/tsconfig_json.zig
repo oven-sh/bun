@@ -250,7 +250,9 @@ pub const TSConfigJSON = struct {
                         .preserve, .err => {
                             result.preserve_imports_not_used_as_values = true;
                         },
-                        .remove => {},
+                        .remove => {
+                            result.preserve_imports_not_used_as_values = false;
+                        },
                         else => {
                             log.addRangeWarningFmt(source, source.rangeOfString(jsx_prop.loc), allocator, "Invalid value \"{s}\" for \"importsNotUsedAsValues\"", .{str}) catch {};
                         },

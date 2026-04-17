@@ -88,8 +88,8 @@ entry_final_offset: i64 = 0,
 /// Temp directory files are written into before being renamed into the
 /// cache. Lazily opened on the first drain so the HTTP thread never
 /// touches the filesystem.
-dest: ?std.fs.Dir = null,
-tmpname_buf: bun.PathBuffer = undefined,
+dest: ?bun.FD = null,
+/// Owned copy of the temp-directory name; freed in `deinit()`.
 tmpname: [:0]const u8 = "",
 
 /// Incremental SHA over the *compressed* bytes, matching
@@ -162,11 +162,12 @@ pub fn init(
 
 pub fn deinit(this: *TarballStream) void {
     if (this.out_fd) |fd| fd.close();
-    if (this.dest) |*d| d.close();
+    if (this.dest) |d| d.close();
     if (this.archive) |a| {
         _ = a.readClose();
         _ = a.readFree();
     }
+    if (this.tmpname.len > 0) this.allocator.free(this.tmpname);
     this.pending.deinit(this.allocator);
     this.reading.deinit(this.allocator);
     bun.destroy(this);
@@ -388,13 +389,15 @@ fn openArchive(this: *TarballStream) !void {
 fn openDestination(this: *TarballStream) !void {
     const tarball = &this.extract_task.request.extract.tarball;
     _, const basename = tarball.nameAndBasename();
-    this.tmpname = try FileSystem.tmpname(
+    var buf: bun.PathBuffer = undefined;
+    const tmpname = try FileSystem.tmpname(
         basename[0..@min(basename.len, 32)],
-        this.tmpname_buf[0..],
+        buf[0..],
         bun.fastRandom(),
     );
+    this.tmpname = try this.allocator.dupeZ(u8, tmpname);
 
-    this.dest = try bun.MakePath.makeOpenPath(tarball.temp_dir, this.tmpname, .{});
+    this.dest = .fromStdDir(try bun.MakePath.makeOpenPath(tarball.temp_dir, this.tmpname, .{}));
 }
 
 fn closeOutputFile(this: *TarballStream) void {
@@ -588,19 +591,20 @@ fn beginEntry(this: *TarballStream, entry: *lib.Archive.Entry) !void {
 }
 
 fn openOutputFile(
-    dest: std.fs.Dir,
+    dest_fd: bun.FD,
     path: [:0]bun.OSPathChar,
     path_slice: bun.OSPathSlice,
     mode: bun.Mode,
 ) !bun.FD {
+    const dest = dest_fd.stdDir();
     const flags = bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC;
     if (comptime Environment.isWindows) {
-        return switch (bun.sys.openatWindows(.fromStdDir(dest), path, flags, 0)) {
+        return switch (bun.sys.openatWindows(dest_fd, path, flags, 0)) {
             .result => |fd| fd,
             .err => |e| switch (e.errno) {
                 @intFromEnum(bun.sys.E.PERM), @intFromEnum(bun.sys.E.NOENT) => brk: {
                     bun.MakePath.makePath(u16, dest, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
-                    break :brk try bun.sys.openatWindows(.fromStdDir(dest), path, flags, 0).unwrap();
+                    break :brk try bun.sys.openatWindows(dest_fd, path, flags, 0).unwrap();
                 },
                 else => return bun.errnoToZigErr(e.errno),
             },
@@ -617,10 +621,11 @@ fn openOutputFile(
 
 fn makeDirectory(
     entry: *lib.Archive.Entry,
-    dest: std.fs.Dir,
+    dest_fd: bun.FD,
     path: [:0]bun.OSPathChar,
     path_slice: bun.OSPathSlice,
 ) void {
+    const dest = dest_fd.stdDir();
     var mode = @as(i32, @intCast(entry.perm()));
     // if dirs are readable, then they should be listable
     // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
@@ -640,7 +645,7 @@ fn makeDirectory(
 
 fn makeSymlink(
     entry: *lib.Archive.Entry,
-    dest: std.fs.Dir,
+    dest_fd: bun.FD,
     path: [:0]bun.OSPathChar,
     path_slice: bun.OSPathSlice,
 ) void {
@@ -654,10 +659,9 @@ fn makeSymlink(
         const resolved = bun.path.joinAbsStringBuf("/packages/", &join_buf, &.{ symlink_dir, target }, .posix);
         if (!strings.hasPrefix(resolved, "/packages/")) return;
     }
-    const dest_fd = bun.FD.fromStdDir(dest);
     bun.sys.symlinkat(target, dest_fd, path).unwrap() catch |err| switch (err) {
         error.EPERM, error.ENOENT => {
-            dest.makePath(std.fs.path.dirname(path_slice) orelse return) catch {};
+            dest_fd.stdDir().makePath(std.fs.path.dirname(path_slice) orelse return) catch {};
             bun.sys.symlinkat(target, dest_fd, path).unwrap() catch {};
         },
         else => {},
@@ -761,7 +765,7 @@ fn finish(this: *TarballStream) void {
         // rename; the early-return failure paths leave it open, so close
         // it here first — Windows can't remove an open directory.
         // `deinit()` null-checks so this is not a double-close.
-        if (this.dest) |*d| {
+        if (this.dest) |d| {
             d.close();
             this.dest = null;
         }
@@ -816,16 +820,16 @@ fn populateResult(this: *TarballStream, task: *Task) void {
 
     if (tarball.resolution.tag == .github) {
         if (this.resolved_github_dirname.len > 0) insert_tag: {
-            const gh_tag = this.dest.?.createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;
+            const gh_tag = this.dest.?.stdDir().createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;
             defer gh_tag.close();
             gh_tag.writeAll(this.resolved_github_dirname) catch {
-                this.dest.?.deleteFileZ(".bun-tag") catch {};
+                this.dest.?.stdDir().deleteFileZ(".bun-tag") catch {};
             };
         }
     }
 
     // Close the temp dir handle before renaming so Windows can move it.
-    if (this.dest) |*d| {
+    if (this.dest) |d| {
         d.close();
         this.dest = null;
     }

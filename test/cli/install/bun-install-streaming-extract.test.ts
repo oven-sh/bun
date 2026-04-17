@@ -197,7 +197,7 @@ async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chun
   };
 }
 
-async function runInstall(cwd: string, registry: string, extraEnv: Record<string, string> = {}) {
+async function runInstall(cwd: string, extraEnv: Record<string, string> = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "install", "--verbose", "--linker=hoisted"],
     cwd,
@@ -245,7 +245,7 @@ describe("streaming tarball extraction", () => {
       "bunfig.toml": `[install]\nregistry = "${registry}"\n`,
     });
 
-    const { stderr, exitCode } = await runInstall(String(dir), registry, env);
+    const { stderr, exitCode } = await runInstall(String(dir), env);
     expect(stderr).not.toContain("error:");
     expect(stderr).not.toContain("Integrity check failed");
 
@@ -288,7 +288,7 @@ describe("streaming tarball extraction", () => {
       "bunfig.toml": `[install]\nregistry = "${registry}"\n`,
     });
 
-    const { stderr, exitCode } = await runInstall(String(dir), registry, {
+    const { stderr, exitCode } = await runInstall(String(dir), {
       BUN_INSTALL_STREAMING_MIN_SIZE: String(tgz.length + 1),
     });
     expect(stderr).not.toContain("Streamed ");
@@ -323,7 +323,7 @@ describe("streaming tarball extraction", () => {
       "bunfig.toml": `[install]\nregistry = "${registry}"\n`,
     });
 
-    const { stderr, exitCode } = await runInstall(String(dir), registry);
+    const { stderr, exitCode } = await runInstall(String(dir));
     expect(stderr).toContain("Integrity check failed");
     expect(exitCode).not.toBe(0);
   });

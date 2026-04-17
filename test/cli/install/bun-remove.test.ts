@@ -382,37 +382,34 @@ describe("bun remove -g with a package that isn't installed", () => {
     expect(code).toBe(0);
   });
 
-  it.skipIf(isWindows)(
-    "suggests the package name when the binary on $PATH points into node_modules/",
-    async () => {
-      const { root, bunInstall, globalDir, extraBin } = await setupGlobalDir();
+  it.skipIf(isWindows)("suggests the package name when the binary on $PATH points into node_modules/", async () => {
+    const { root, bunInstall, globalDir, extraBin } = await setupGlobalDir();
 
-      // simulate e.g. `tsc` -> `.../node_modules/typescript/bin/tsc`
-      const nmBin = join(root, "some-other-tool", "node_modules", "some-real-package", "bin");
-      await mkdir(nmBin, { recursive: true });
-      const target = join(nmBin, "mybin");
-      await writeFile(target, "#!/bin/sh\necho hi\n");
-      await chmod(target, 0o755);
-      await symlink(target, join(extraBin, "mybin"));
+    // simulate e.g. `tsc` -> `.../node_modules/typescript/bin/tsc`
+    const nmBin = join(root, "some-other-tool", "node_modules", "some-real-package", "bin");
+    await mkdir(nmBin, { recursive: true });
+    const target = join(nmBin, "mybin");
+    await writeFile(target, "#!/bin/sh\necho hi\n");
+    await chmod(target, 0o755);
+    await symlink(target, join(extraBin, "mybin"));
 
-      const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "remove", "-g", "mybin"],
-        cwd: globalDir,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: globalEnv(bunInstall, extraBin),
-      });
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "remove", "-g", "mybin"],
+      cwd: globalDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: globalEnv(bunInstall, extraBin),
+    });
 
-      const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
-      expect(err).toContain("warn:");
-      expect(err).toContain("mybin is not in global package.json");
-      expect(err).toContain("bun remove -g some-real-package");
-      expect(err).not.toContain("error:");
-      expect(out).toContain("bun remove");
-      expect(code).toBe(0);
-    },
-  );
+    expect(err).toContain("warn:");
+    expect(err).toContain("mybin is not in global package.json");
+    expect(err).toContain("bun remove -g some-real-package");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("bun remove");
+    expect(code).toBe(0);
+  });
 
   it.skipIf(isWindows)(
     "suggests scoped package names when the binary on $PATH points into node_modules/@scope/name/",

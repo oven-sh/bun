@@ -4014,15 +4014,17 @@ pub const Resolver = struct {
 
             var parts = [_]string{ dir.abs_path, "node_modules", extends };
             const candidate = r.fs.absBuf(&parts, buf);
-            // 1. Try the path exactly as written: "<node_modules>/<extends>"
-            if (r.tryParseTSConfigPath(candidate)) |parent_config| {
-                return parent_config;
-            }
             // candidate is a slice of buf starting at offset 0; we can extend
             // it in place for the implicit-suffix probes below.
             const base_len = candidate.len;
 
             if (has_subpath) {
+                // 1. Try the path exactly as written: "<node_modules>/<extends>".
+                //    Skipped for bare package names since those always name a
+                //    directory in node_modules (would always EISDIR).
+                if (r.tryParseTSConfigPath(candidate)) |parent_config| {
+                    return parent_config;
+                }
                 if (!has_json_ext) {
                     // 2. "<node_modules>/<extends>.json" for extensionless subpaths
                     {

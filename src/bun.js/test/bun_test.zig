@@ -614,7 +614,9 @@ pub const BunTest = struct {
                 var per_file_prng: ?std.Random.DefaultPrng = if (this.reporter) |reporter| blk: {
                     const seed = reporter.jest.randomize_seed orelse break :blk null;
                     const path = reporter.jest.files.items(.source)[this.file_id].path.text;
-                    break :blk std.Random.DefaultPrng.init(bun.hash(path) +% seed);
+                    // Basename only so the hash is platform-independent (path
+                    // separators and absolute prefixes differ on Windows).
+                    break :blk std.Random.DefaultPrng.init(bun.hash(std.fs.path.basename(path)) +% seed);
                 } else null;
                 const should_randomize: ?std.Random = if (per_file_prng) |*p| p.random() else null;
 

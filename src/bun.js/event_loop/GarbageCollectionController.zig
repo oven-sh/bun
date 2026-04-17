@@ -36,6 +36,7 @@ disabled: bool = false,
 cgroup_memory_limit: ?usize = null,
 cgroup_pressure_threshold: usize = 0, // 75% of limit — trigger async GC
 cgroup_critical_threshold: usize = 0, // 85% of limit — trigger sync full GC
+    cgroup_last_critical_gc: i64 = 0, // timestamp of last critical GC (5s cooldown)
 
 pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
     const actual = uws.Loop.get();
@@ -79,8 +80,9 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
         // In containers, force mimalloc to return freed pages to the OS immediately
         // instead of caching them for 1000ms (default). This prevents RSS from
         // staying elevated after GC, which would cause Kubernetes to OOM-kill.
+        // Uses std.once to set this process-wide exactly once, even with Workers.
         if (comptime bun.use_mimalloc) {
-            bun.mimalloc.mi_option_set(.purge_delay, 0);
+            mimalloc_purge_once.call();
         }
     }
 
@@ -211,6 +213,10 @@ pub fn performGC(this: *GarbageCollectionController) void {
 ///
 /// At 75% of the limit: trigger async GC + partial mimalloc purge
 /// At 85% of the limit: trigger synchronous full GC + forced mimalloc purge
+///
+/// Note: Each Worker has its own VirtualMachine with its own GarbageCollectionController.
+/// RSS is process-wide, so multiple Workers may detect pressure simultaneously.
+/// The 5-second cooldown on the critical path prevents compounding pause time.
 fn checkContainerMemoryPressure(this: *GarbageCollectionController) void {
     const rss = bun.cgroup.getCurrentRSS();
     if (rss == 0) return;
@@ -219,6 +225,12 @@ fn checkContainerMemoryPressure(this: *GarbageCollectionController) void {
         // CRITICAL: RSS is above 85% of the container limit.
         // Run a synchronous full GC immediately and force mimalloc to
         // return all freed pages to the OS.
+        // Cooldown: skip if we already ran a critical GC within the last 5 seconds
+        // to avoid compounding event-loop pause time.
+        const now = std.time.milliTimestamp();
+        if (now - this.cgroup_last_critical_gc < 5000) return;
+        this.cgroup_last_critical_gc = now;
+
         var vm = this.bunVM().jsc_vm;
         _ = vm.runGC(true);
         vm.shrinkFootprint();
@@ -237,6 +249,12 @@ fn checkContainerMemoryPressure(this: *GarbageCollectionController) void {
         this.gc_last_heap_size = vm.blockBytesAllocated();
     }
 }
+
+var mimalloc_purge_once = std.once(struct {
+    fn set() void {
+        bun.mimalloc.mi_option_set(.purge_delay, 0);
+    }
+}.set);
 
 pub const GCTimerState = enum {
     pending,

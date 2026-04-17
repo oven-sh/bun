@@ -22,6 +22,11 @@
 ///
 /// A limit of "max" (cgroup v2) or a value >= 90% of physical RAM (cgroup v1)
 /// is treated as "unlimited" and returns `null`.
+///
+/// NOTE: This reads the root cgroup files, which resolve to the container's own
+/// limit when running inside a Docker/K8s cgroup namespace (the common case).
+/// Nested cgroup setups without namespace isolation may need /proc/self/cgroup
+/// parsing as a follow-up.
 pub fn getMemoryLimit() ?usize {
     if (comptime !bun.Environment.isLinux) return null;
 
@@ -70,7 +75,7 @@ pub fn getCurrentRSS() usize {
     const resident_str = rest[0..second_space];
 
     const pages = std.fmt.parseInt(usize, resident_str, 10) catch return 0;
-    return pages * std.mem.page_size;
+    return pages * std.heap.pageSize();
 }
 
 /// Read and parse a cgroup memory limit file.
@@ -101,34 +106,26 @@ fn readCgroupFile(path: [:0]const u8) ?usize {
     return std.fmt.parseInt(usize, trimmed, 10) catch null;
 }
 
-// Cached memory limit — read once on first call.
-// This is safe for single-threaded event loop usage because each
-// VirtualMachine has its own thread and its own GarbageCollectionController.
-var cached_limit: CachedState = .uninitialized;
+// Cached memory limit — initialized exactly once via std.once.
+// Uses std.once for thread safety since Bun__cgroup__getMemoryLimit() can be
+// called from any Worker thread via process.constrainedMemory().
 var cached_limit_value: usize = 0;
+var cached_has_limit: bool = false;
 
-const CachedState = enum {
-    uninitialized,
-    no_limit,
-    has_limit,
-};
+var once_init = std.once(initCachedLimit);
 
-/// Returns the cached cgroup memory limit. Called from GarbageCollectionController.init().
-pub fn getCachedMemoryLimit() ?usize {
-    switch (cached_limit) {
-        .uninitialized => {
-            if (getMemoryLimit()) |limit| {
-                cached_limit_value = limit;
-                cached_limit = .has_limit;
-                return limit;
-            } else {
-                cached_limit = .no_limit;
-                return null;
-            }
-        },
-        .no_limit => return null,
-        .has_limit => return cached_limit_value,
+fn initCachedLimit() void {
+    if (getMemoryLimit()) |limit| {
+        cached_limit_value = limit;
+        cached_has_limit = true;
     }
+}
+
+/// Returns the cached cgroup memory limit. Thread-safe.
+pub fn getCachedMemoryLimit() ?usize {
+    once_init.call();
+    if (cached_has_limit) return cached_limit_value;
+    return null;
 }
 
 /// Export for C++ side (BunProcess.cpp) to call from process.constrainedMemory()

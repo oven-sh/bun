@@ -55,7 +55,7 @@ pub const debug_allocator_data = struct {
 
     fn free(_: *anyopaque, mem: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
         return backing.?.allocator().rawFree(mem, alignment, ret_addr);
-    }f
+    }
 };
 
 pub extern "c" fn powf(x: f32, y: f32) f32;

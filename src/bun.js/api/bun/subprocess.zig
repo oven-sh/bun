@@ -28,7 +28,6 @@ observable_getters: std.enums.EnumSet(enum {
     stdin,
     stdout,
     stderr,
-    stdio,
 }) = .{},
 closed: std.enums.EnumSet(StdioKind) = .{},
 this_value: jsc.JSRef = jsc.JSRef.empty(),
@@ -474,7 +473,6 @@ pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue 
     try array.push(global, .null); // TODO: align this with options
     try array.push(global, .null); // TODO: align this with options
 
-    this.observable_getters.insert(.stdio);
     var pipes = this.stdio_pipes.items;
     if (this.ipc_data != null) {
         try array.push(global, .null);
@@ -741,7 +739,7 @@ pub fn finalizeStreams(this: *Subprocess) void {
             if (item == .buffer) {
                 item.buffer.close(onPipeClose);
             }
-        } else {
+        } else if (item.isValid()) {
             item.close();
         }
     }

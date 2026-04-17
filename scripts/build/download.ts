@@ -74,6 +74,16 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
       // partial; a failed unlink must not abort the retry loop. Next attempt's
       // createWriteStream truncates anyway.
       await rm(tmpPath, { force: true }).catch(() => {});
+      // Concurrent writer won? With a shared BUN_DEPS_CACHE_PATH two agents
+      // can race the same URL-hash-keyed tarball; on Windows the loser's
+      // rename can EPERM if AV/indexer has the freshly-written dest open.
+      // Callers only reach here after checking !existsSync(dest), so a file
+      // appearing mid-call is the same content (same URL) — treat as done
+      // instead of re-downloading 200MB on every retry.
+      if (existsSync(dest)) {
+        console.log(`${dest} now present (concurrent download won the race)`);
+        return;
+      }
     }
   }
 

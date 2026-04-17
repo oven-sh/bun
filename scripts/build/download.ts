@@ -186,10 +186,11 @@ export async function extractZip(zipPath: string, dest: string): Promise<void> {
  * `dest/` (no hoist).
  *
  * @param identity Written to `dest/.identity`. Changing it triggers re-download.
- * @param cache Directory for the downloaded tarball (keyed by `identity`).
- *   Lets CI agents persist the ~200MB WebKit download across ephemeral
- *   runners (via `BUN_DEPS_CACHE_PATH`) while `dest` stays buildDir-relative
- *   so split-build artifact upload keeps working. Tarball is kept after
+ * @param cache Directory for the downloaded tarball (keyed by URL hash —
+ *   `identity` alone doesn't cover os/arch). Lets CI agents persist the
+ *   ~200MB WebKit download across ephemeral runners (via
+ *   `BUN_DEPS_CACHE_PATH`) while `dest` stays buildDir-relative so
+ *   split-build artifact upload keeps working. Tarball is kept after
  *   extraction; a hit skips the download but still re-extracts.
  * @param rmPaths Paths (relative to `dest/`) to delete after extraction.
  *   Used to remove conflicting headers (WebKit's unicode/, nodejs's openssl/).

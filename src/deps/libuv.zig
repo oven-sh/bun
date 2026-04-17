@@ -2840,6 +2840,7 @@ pub fn translateUVErrorToE(code_in: anytype) bun.sys.E {
         UV_ECANCELED => bun.sys.E.CANCELED,
         UV_ECHARSET => bun.sys.E.CHARSET,
         UV_EOF => bun.sys.E.EOF,
+        UV_UNKNOWN => bun.sys.E.UNKNOWN,
         else => @enumFromInt(-code),
     };
 }

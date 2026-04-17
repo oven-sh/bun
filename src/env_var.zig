@@ -42,6 +42,10 @@ pub const BUN_DEBUG = New(kind.string, "BUN_DEBUG", .{});
 pub const BUN_DEBUG_ALL = New(kind.boolean, "BUN_DEBUG_ALL", .{});
 pub const BUN_DEBUG_CSS_ORDER = New(kind.boolean, "BUN_DEBUG_CSS_ORDER", .{ .default = false });
 pub const BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE = New(kind.boolean, "BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE", .{ .default = false });
+/// Testing hook for `bun build --compile`: force `hostUsesNixStoreInterpreter()`
+/// to return true without mutating `/etc/NIXOS` on the shared rootfs. Used by
+/// `test/regression/issue/29290.test.ts` to exercise the Nix-host branch.
+pub const BUN_DEBUG_FORCE_NIX_HOST = New(kind.boolean, "BUN_DEBUG_FORCE_NIX_HOST", .{ .default = false });
 pub const BUN_DEBUG_HASH_RANDOM_SEED = New(kind.unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", .{ .deser = .{ .error_handling = .not_set } });
 pub const BUN_DEBUG_QUIET_LOGS = New(kind.boolean, "BUN_DEBUG_QUIET_LOGS", .{});
 pub const BUN_DEBUG_TEST_TEXT_LOCKFILE = New(kind.boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", .{ .default = false });

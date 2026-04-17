@@ -520,9 +520,12 @@ enum class CryptoAlgorithmIdentifierTag {
     PBKDF2 = 21,
     ED25519 = 22,
     X25519 = 23,
+    SHA3_256 = 24,
+    SHA3_384 = 25,
+    SHA3_512 = 26,
 };
 
-const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 22;
+const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 26;
 
 static unsigned countUsages(CryptoKeyUsageBitmap usages)
 {
@@ -2394,6 +2397,15 @@ private:
         case CryptoAlgorithmIdentifier::SHA_512:
             write(CryptoAlgorithmIdentifierTag::SHA_512);
             break;
+        case CryptoAlgorithmIdentifier::SHA3_256:
+            write(CryptoAlgorithmIdentifierTag::SHA3_256);
+            break;
+        case CryptoAlgorithmIdentifier::SHA3_384:
+            write(CryptoAlgorithmIdentifierTag::SHA3_384);
+            break;
+        case CryptoAlgorithmIdentifier::SHA3_512:
+            write(CryptoAlgorithmIdentifierTag::SHA3_512);
+            break;
         case CryptoAlgorithmIdentifier::HKDF:
             write(CryptoAlgorithmIdentifierTag::HKDF);
             break;
@@ -3879,6 +3891,15 @@ private:
             break;
         case CryptoAlgorithmIdentifierTag::SHA_512:
             result = CryptoAlgorithmIdentifier::SHA_512;
+            break;
+        case CryptoAlgorithmIdentifierTag::SHA3_256:
+            result = CryptoAlgorithmIdentifier::SHA3_256;
+            break;
+        case CryptoAlgorithmIdentifierTag::SHA3_384:
+            result = CryptoAlgorithmIdentifier::SHA3_384;
+            break;
+        case CryptoAlgorithmIdentifierTag::SHA3_512:
+            result = CryptoAlgorithmIdentifier::SHA3_512;
             break;
         case CryptoAlgorithmIdentifierTag::HKDF:
             result = CryptoAlgorithmIdentifier::HKDF;

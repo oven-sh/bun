@@ -81,7 +81,7 @@ const ca = readKey('fake-startcom-root-cert.pem', 'binary');
   }));
 
   server.listen(0, mustCall(() => {
-    const originSet = [`https://127.0.0.1:${server.address().port}`];
+    const originSet = [`https://localhost:${server.address().port}`];
     const client = connect(originSet[0], { ca });
     const checks = [
       ['https://foo.org', 'https://bar.org'],
@@ -116,7 +116,7 @@ const ca = readKey('fake-startcom-root-cert.pem', 'binary');
 
   server.listen(0, mustCall(() => {
     const check = ['https://foo.org', 'https://bar.org'];
-    const originSet = [`https://127.0.0.1:${server.address().port}`];
+    const originSet = [`https://localhost:${server.address().port}`];
     const client = connect(originSet[0], { ca });
 
     const countdown = new Countdown(2, () => {
@@ -148,7 +148,7 @@ const ca = readKey('fake-startcom-root-cert.pem', 'binary');
   }));
 
   server.listen(0, mustCall(() => {
-    const origin = `https://127.0.0.1:${server.address().port}`;
+    const origin = `https://localhost:${server.address().port}`;
     const client = connect(origin, { ca });
 
     client.on('origin', mustCall((origins) => {

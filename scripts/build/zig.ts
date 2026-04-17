@@ -19,7 +19,7 @@ import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
-import type { Config } from "./config.ts";
+import type { Config, OS } from "./config.ts";
 import { downloadWithRetry, extractZip } from "./download.ts";
 import { assert } from "./error.ts";
 import { fetchCliPath } from "./fetch-cli.ts";
@@ -39,11 +39,34 @@ import { streamPath } from "./stream.ts";
  * is trusted, collapse both back to one constant.
  */
 export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
-export const ZIG_COMMIT_LOCAL = "6093f9372660953a6b95532e45373037174fa76c";
+export const ZIG_COMMIT_PARALLEL = "445fc0cbba4eea579e5c846f2b8be7c9bdc4e1cc";
 
-/** Which zig commit to download by default — see TEMPORARY SPLIT note above. */
-export function defaultZigCommit(ci: boolean): string {
-  return ci ? ZIG_COMMIT : ZIG_COMMIT_LOCAL;
+/**
+ * The one place that picks which compiler to use. Everything coupled to
+ * the parallel compiler (ZIG_PARALLEL_SEMA, -Dllvm_codegen_threads) keys
+ * on the resolved cfg.zigCommit via usingParallelCompiler(), so changing
+ * this — or passing --zigCommit=<hash> — is sufficient.
+ *
+ * Parallel compiler is darwin-local only for now. Linux is gated off
+ * because oven-sh/zig's self-hosted ELF `-r` merge (used to combine
+ * sharded codegen output when no_link_obj=true) currently emits an
+ * incomplete bun-zig.o — link fails with every Zig symbol undefined on
+ * a fresh build. macOS's Mach-O merge path works. See #29132. CI and
+ * Windows stay on the stable compiler regardless.
+ */
+export function defaultZigCommit(ci: boolean, hostOs: OS): string {
+  if (ci || hostOs !== "darwin") return ZIG_COMMIT;
+  return ZIG_COMMIT_PARALLEL;
+}
+
+/**
+ * True iff `cfg` is using the parallel-sema compiler. All parallel-only
+ * build knobs (ZIG_PARALLEL_SEMA env, -Dllvm_codegen_threads>0) must key
+ * on this — the stable compiler emits N sharded .o files under those
+ * options but leaves getEmittedBin() as a 0-byte stub, so link fails.
+ */
+function usingParallelCompiler(cfg: Config): boolean {
+  return cfg.zigCommit !== ZIG_COMMIT;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -217,9 +240,7 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
   // our fork (upstream added Feb 2026, not backported).
   const interleave = false;
   const consoleMode = !interleave || hostWin;
-  // Parallel sema: local-only while the parallel compiler is being proven
-  // out — CI stays on the stable compiler which ignores this env var anyway.
-  const parallelSema = cfg.ci ? "" : " --env=ZIG_PARALLEL_SEMA=1";
+  const parallelSema = usingParallelCompiler(cfg) ? " --env=ZIG_PARALLEL_SEMA=1" : "";
   n.rule("zig_build", {
     command: `${stream} ${consoleMode ? "--console" : "--zig-progress"} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache${parallelSema} $zig build $step $args`,
     description: "zig $step → $out",
@@ -380,11 +401,10 @@ function zigBuildArgs(cfg: Config): string[] {
     // Always ON — bun uses mimalloc as its default allocator. The flag
     // exists for experimentation; in practice it's never OFF.
     `-Duse_mimalloc=true`,
-    // Sharded LLVM codegen — one shard per host core locally, disabled
-    // in CI. Zig has no "auto" value (0 = single-threaded). CI MUST stay
-    // at 0: the stable compiler's sharder emits N separate .o files
-    // without merging, which would break our single-output ninja edge.
-    `-Dllvm_codegen_threads=${cfg.ci ? 0 : availableParallelism()}`,
+    // Sharded LLVM codegen — one shard per host core on the parallel
+    // compiler. Zig has no "auto" value (0 = single-threaded). MUST be 0
+    // on the stable compiler — see usingParallelCompiler().
+    `-Dllvm_codegen_threads=${usingParallelCompiler(cfg) ? availableParallelism() : 0}`,
 
     // Versioning
     `-Dversion=${cfg.version}`,

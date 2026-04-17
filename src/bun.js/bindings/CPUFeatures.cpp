@@ -97,7 +97,7 @@ static uint8_t aarch64_cpu_features()
 #elif OS(MACOS)
     int value = 0;
     size_t size = sizeof(value);
-    if (sysctlbyname("hw.optional.AdvSIMD", &value, &size, NULL, 0) == 0 && value == 1)
+    if (sysctlbyname("hw.optional.arm.AdvSIMD", &value, &size, NULL, 0) == 0 && value == 1)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::neon);
     if (sysctlbyname("hw.optional.floatingpoint", &value, &size, NULL, 0) == 0 && value == 1)
         features |= 1 << static_cast<uint8_t>(AArch64CPUFeature::fp);

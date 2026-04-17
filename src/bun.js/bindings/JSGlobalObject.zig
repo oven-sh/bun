@@ -877,6 +877,11 @@ pub const JSGlobalObject = opaque {
         return global;
     }
 
+    extern fn Zig__GlobalObject__createForTestIsolation(old_global: *JSGlobalObject, console: *anyopaque) *JSGlobalObject;
+    pub fn createForTestIsolation(old_global: *JSGlobalObject, console: *anyopaque) *JSGlobalObject {
+        return Zig__GlobalObject__createForTestIsolation(old_global, console);
+    }
+
     extern fn Zig__GlobalObject__getModuleRegistryMap(*JSGlobalObject) *anyopaque;
     pub fn getModuleRegistryMap(global: *JSGlobalObject) *anyopaque {
         return Zig__GlobalObject__getModuleRegistryMap(global);

@@ -705,9 +705,9 @@ pub fn setRef(this: *WebWorker, value: bool) callconv(.c) void {
 pub fn exit(this: *WebWorker) void {
     this.exit_called = true;
     _ = this.setRequestedTerminate();
-    // Stop subsequent JS at the next safepoint. (Process_functionReallyExit
-    // also calls vm.notifyNeedTermination() after Bun__Process__exit returns,
-    // but doing it here covers any Zig caller and keeps the contract local.)
+    // Stop subsequent JS at the next safepoint. `this.vm` is null during
+    // vm.onExit() (exitAndDeinit nulls it first), so a re-entrant
+    // process.exit() from an exit handler does not re-arm the trap.
     if (this.vm) |vm| {
         vm.jsc_vm.notifyNeedTermination();
     }

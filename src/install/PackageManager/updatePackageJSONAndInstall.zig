@@ -588,10 +588,10 @@ fn packageNameFromNodeModulesPath(path_: string) ?string {
 
     if (remain.len == 0 or strings.eqlComptime(remain, ".bin")) return null;
 
-    // Only suggest names that are actually valid npm package names. This also rejects
-    // `@scope` with no `/name`, `@/name` with an empty scope, `@scope/` with an empty name,
-    // and on Windows `@scope\name` (we return a slice into the possibly-const input so we
-    // can't normalize the separator here; the caller falls back to the generic $PATH message).
+    // Only suggest names that pass bun's own package-name validator. This also rejects
+    // `@scope` with no `/name`, `@scope/` with an empty name, and on Windows `@scope\name`
+    // (we return a slice into the possibly-const input so we can't normalize the separator
+    // here; the caller falls back to the generic $PATH message).
     if (!strings.isNPMPackageName(remain)) return null;
 
     return remain;

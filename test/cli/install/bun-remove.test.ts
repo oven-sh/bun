@@ -286,7 +286,7 @@ it("should retain a new line in the end of package.json", async () => {
   );
 });
 
-describe("bun remove -g with a package that isn't installed", () => {
+describe.concurrent("bun remove -g with a package that isn't installed", () => {
   // Sets up a throwaway $BUN_INSTALL under `root`. When `withExistingDep` is true the global
   // package.json gets one local file: dependency so its "dependencies" section is non-empty.
   async function setupGlobalDir(root: string, { withExistingDep = true } = {}) {

@@ -237,8 +237,71 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
     return argv.items[0 .. argv.items.len - 1 :null];
 }
 
-/// Worker side: read framed commands from stdin, run each file with isolation,
-/// stream per-test events to fd 3. Never returns.
+/// Event-loop-driven decoder for coordinator → worker frames. The worker pumps
+/// `vm.eventLoop()` between files instead of sitting in a blocking read(), so
+/// any post-swap cleanup the loop owns (timers the generation guard let
+/// through, async dispose, etc.) gets to run, and on macOS — where there's no
+/// PDEATHSIG — coordinator death surfaces as EOF here.
+const WorkerCommands = struct {
+    reader: bun.io.BufferedReader = bun.io.BufferedReader.init(WorkerCommands),
+    vm: *jsc.VirtualMachine,
+    buf: std.ArrayListUnmanaged(u8) = .empty,
+    /// Coordinator dispatches one `.run` and waits for `.file_done` before
+    /// the next, so a single slot is sufficient. Owned path storage.
+    pending_idx: ?u32 = null,
+    pending_path: std.ArrayListUnmanaged(u8) = .empty,
+    /// EOF, error, `.shutdown`, or a corrupt frame.
+    done: bool = false,
+
+    pub fn onReadChunk(this: *WorkerCommands, chunk: []const u8, _: bun.io.ReadState) bool {
+        bun.handleOom(this.buf.appendSlice(bun.default_allocator, chunk));
+        var head: usize = 0;
+        while (this.buf.items.len - head >= 5) {
+            const len = std.mem.readInt(u32, this.buf.items[head..][0..4], .little);
+            if (len > Frame.max_payload) {
+                this.done = true;
+                break;
+            }
+            if (this.buf.items.len - head < @as(usize, 5) + len) break;
+            const kind = std.meta.intToEnum(Frame.Kind, this.buf.items[head + 4]) catch {
+                head += @as(usize, 5) + len;
+                continue;
+            };
+            var rd = Frame.Reader{ .p = this.buf.items[head + 5 ..][0..len] };
+            switch (kind) {
+                .run => {
+                    this.pending_idx = rd.u32_();
+                    this.pending_path.clearRetainingCapacity();
+                    bun.handleOom(this.pending_path.appendSlice(bun.default_allocator, rd.str()));
+                },
+                .shutdown => this.done = true,
+                else => {},
+            }
+            head += @as(usize, 5) + len;
+        }
+        if (head > 0) {
+            const rest = this.buf.items.len - head;
+            std.mem.copyForwards(u8, this.buf.items[0..rest], this.buf.items[head..]);
+            this.buf.items.len = rest;
+        }
+        return !this.done;
+    }
+    pub fn onReaderDone(this: *WorkerCommands) void {
+        this.done = true;
+    }
+    pub fn onReaderError(this: *WorkerCommands, _: bun.sys.Error) void {
+        this.done = true;
+    }
+    pub fn eventLoop(this: *WorkerCommands) *jsc.EventLoop {
+        return this.vm.eventLoop();
+    }
+    pub fn loop(this: *WorkerCommands) *bun.Async.Loop {
+        return this.vm.uvLoop();
+    }
+};
+
+/// Worker side: read framed commands from `Frame.cmdFd()` via the event loop,
+/// run each file with isolation, stream per-test events to fd 3. Never returns.
 pub fn runAsWorker(
     reporter: *CommandLineReporter,
     vm: *jsc.VirtualMachine,
@@ -257,52 +320,46 @@ pub fn runAsWorker(
         reporter.reporters.junit = test_command.JunitReporter.init();
     }
 
-    worker_frame.begin(.ready);
-    worker_frame.send(Frame.ipcFd());
-
-    const stdin = bun.FD.stdin();
-    var stdin_buf: std.ArrayListUnmanaged(u8) = .empty;
-    var path_buf: std.ArrayListUnmanaged(u8) = .empty;
-
-    const Runner = struct {
+    const WorkerLoop = struct {
         reporter: *CommandLineReporter,
         vm: *jsc.VirtualMachine,
-        file: []const u8,
-        pub fn begin(r: *@This()) void {
-            // Workers always run with --isolate; every file is its own complete
-            // run from the preload's perspective.
-            TestCommand.run(r.reporter, r.vm, r.file, .{ .first = true, .last = true }) catch |err| test_command.handleTopLevelTestErrorBeforeJavaScriptStart(err);
-            r.vm.swapGlobalForTestIsolation();
-            r.reporter.jest.bun_test_root.resetHookScopeForTestIsolation();
-            r.reporter.jest.default_timeout_override = std.math.maxInt(u32);
-        }
-    };
+        cmds: WorkerCommands,
 
-    while (Frame.readBlocking(stdin, &stdin_buf)) |hd| {
-        var rd = Frame.Reader{ .p = stdin_buf.items[5 .. 5 + hd.len] };
-        const consumed: usize = 5 + hd.len;
-        switch (hd.kind) {
-            .shutdown => break,
-            .run => {
-                const idx = rd.u32_();
-                // Copy out before consuming; rd points into stdin_buf.
-                path_buf.clearRetainingCapacity();
-                bun.handleOom(path_buf.appendSlice(bun.default_allocator, rd.str()));
-                std.mem.copyForwards(u8, stdin_buf.items, stdin_buf.items[consumed..]);
-                stdin_buf.items.len -= consumed;
+        pub fn begin(self: *@This()) void {
+            self.cmds.reader.setParent(&self.cmds);
+            self.cmds.reader.start(Frame.cmdFd(), true).unwrap() catch |e| {
+                Output.err(e, "test worker failed to start command reader", .{});
+                bun.Global.exit(1);
+            };
 
-                reporter.worker_ipc_file_idx = idx;
+            worker_frame.begin(.ready);
+            worker_frame.send(Frame.ipcFd());
+
+            while (true) {
+                while (self.cmds.pending_idx == null and !self.cmds.done) {
+                    self.vm.eventLoop().tick();
+                    if (self.cmds.pending_idx != null or self.cmds.done) break;
+                    self.vm.eventLoop().autoTick();
+                }
+                const idx = self.cmds.pending_idx orelse break;
+                self.cmds.pending_idx = null;
+
+                self.reporter.worker_ipc_file_idx = idx;
                 worker_frame.begin(.file_start);
                 worker_frame.u32_(idx);
                 worker_frame.send(Frame.ipcFd());
 
-                const before = reporter.summary().*;
-                const before_unhandled = reporter.jest.unhandled_errors_between_tests;
+                const before = self.reporter.summary().*;
+                const before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
 
-                var runner = Runner{ .reporter = reporter, .vm = vm, .file = path_buf.items };
-                vm.runWithAPILock(Runner, &runner, Runner.begin);
+                // Workers always run with --isolate; every file is its own
+                // complete run from the preload's perspective.
+                TestCommand.run(self.reporter, self.vm, self.cmds.pending_path.items, .{ .first = true, .last = true }) catch |err| test_command.handleTopLevelTestErrorBeforeJavaScriptStart(err);
+                self.vm.swapGlobalForTestIsolation();
+                self.reporter.jest.bun_test_root.resetHookScopeForTestIsolation();
+                self.reporter.jest.default_timeout_override = std.math.maxInt(u32);
 
-                const after = reporter.summary().*;
+                const after = self.reporter.summary().*;
                 worker_frame.begin(.file_done);
                 inline for (.{
                     idx,
@@ -313,16 +370,16 @@ pub fn runAsWorker(
                     after.expectations - before.expectations,
                     after.skipped_because_label - before.skipped_because_label,
                     after.files - before.files,
-                    reporter.jest.unhandled_errors_between_tests - before_unhandled,
+                    self.reporter.jest.unhandled_errors_between_tests - before_unhandled,
                 }) |v| worker_frame.u32_(v);
                 worker_frame.send(Frame.ipcFd());
-            },
-            else => {
-                std.mem.copyForwards(u8, stdin_buf.items, stdin_buf.items[consumed..]);
-                stdin_buf.items.len -= consumed;
-            },
+            }
         }
-    }
+    };
+
+    var loop = WorkerLoop{ .reporter = reporter, .vm = vm, .cmds = .{ .vm = vm } };
+    vm.runWithAPILock(WorkerLoop, &loop, WorkerLoop.begin);
+
     workerFlushAggregates(reporter, vm, ctx, worker_tmp);
     bun.Global.exit(0);
 }

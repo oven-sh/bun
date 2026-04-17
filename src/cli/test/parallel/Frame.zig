@@ -71,11 +71,19 @@ pub const Reader = struct {
     }
 };
 
-/// fd 3 in the worker. On Windows this must be a libuv (CRT) fd so
-/// `uv_get_osfhandle(3)` resolves to the inherited handle; can't be a
+/// fd 3 in the worker — results out. On Windows this must be a libuv (CRT) fd
+/// so `uv_get_osfhandle(3)` resolves to the inherited handle; can't be a
 /// file-scope const because `FD.fromUV` rejects >2 at comptime.
 pub fn ipcFd() bun.FD {
     return .fromUV(3);
+}
+
+/// Where the worker reads coordinator commands from. On POSIX fd 3 is a
+/// socketpair (full-duplex), so commands and results share one channel. On
+/// Windows fd 3 is a unidirectional named-pipe end, so commands arrive on
+/// stdin instead.
+pub fn cmdFd() bun.FD {
+    return if (bun.Environment.isWindows) bun.FD.stdin() else .fromUV(3);
 }
 
 pub fn writeAll(fd: bun.FD, bytes: []const u8) void {
@@ -86,33 +94,6 @@ pub fn writeAll(fd: bun.FD, bytes: []const u8) void {
             .err => |e| switch (e.getErrno()) {
                 .INTR => continue,
                 else => return,
-            },
-        }
-    }
-}
-
-/// Blocking read until one complete frame header sits at buf[0..]. Returns
-/// {kind, len}; payload is buf.items[5 .. 5+len]. Caller consumes before the
-/// next call.
-pub fn readBlocking(fd: bun.FD, buf: *std.ArrayListUnmanaged(u8)) ?struct { kind: Kind, len: u32 } {
-    while (true) {
-        if (buf.items.len >= 5) {
-            const len = std.mem.readInt(u32, buf.items[0..4], .little);
-            if (len > max_payload) return null;
-            if (buf.items.len >= @as(usize, 5) + len) {
-                const kind = std.meta.intToEnum(Kind, buf.items[4]) catch return null;
-                return .{ .kind = kind, .len = len };
-            }
-        }
-        var chunk: [4096]u8 = undefined;
-        switch (bun.sys.read(fd, &chunk)) {
-            .result => |n| {
-                if (n == 0) return null;
-                bun.handleOom(buf.appendSlice(bun.default_allocator, chunk[0..n]));
-            },
-            .err => |e| switch (e.getErrno()) {
-                .INTR => continue,
-                else => return null,
             },
         }
     }

@@ -8,7 +8,12 @@ pub const Worker = @This();
 coord: *Coordinator,
 idx: u32,
 process: ?*bun.spawn.Process = null,
-stdin_fd: ?bun.FD = null,
+/// Where the coordinator writes `.run`/`.shutdown` frames. On POSIX this is
+/// the same fd `ipc.reader` reads results from (the socketpair is full-duplex)
+/// — owned by the reader, so close paths skip it. On Windows it's the separate
+/// stdin write end and is owned here.
+cmd_fd: ?bun.FD = null,
+cmd_fd_shared_with_ipc: bool = false,
 
 ipc: WorkerPipe,
 out: WorkerPipe,
@@ -53,9 +58,9 @@ pub fn start(this: *Worker) !void {
             p.close();
             this.process = null;
         }
-        if (this.stdin_fd) |fd| {
-            fd.close();
-            this.stdin_fd = null;
+        if (this.cmd_fd) |fd| {
+            if (!this.cmd_fd_shared_with_ipc) fd.close();
+            this.cmd_fd = null;
         }
         this.ipc.deinit();
         this.out.deinit();
@@ -63,9 +68,12 @@ pub fn start(this: *Worker) !void {
     }
 
     if (Environment.isPosix) {
+        // `.buffer` extra_fd creates a socketpair (full-duplex). The parent
+        // end is both the IPC reader's fd and the command-write fd; stdin is
+        // unused.
         this.extra_fd_stdio = .{.buffer};
         const options: bun.spawn.SpawnOptions = .{
-            .stdin = .buffer,
+            .stdin = .ignore,
             .stdout = .buffer,
             .stderr = .buffer,
             .extra_fds = &this.extra_fd_stdio,
@@ -80,22 +88,22 @@ pub fn start(this: *Worker) !void {
         var spawned = try (try bun.spawn.spawnProcess(&options, coord.argv.ptr, coord.envp)).unwrap();
         defer spawned.extra_pipes.deinit();
         this.process = spawned.toProcess(coord.vm.eventLoop(), false);
-        this.stdin_fd = spawned.stdin;
         if (spawned.stdout) |fd| try this.out.reader.start(fd, true).unwrap();
         if (spawned.stderr) |fd| try this.err.reader.start(fd, true).unwrap();
         if (spawned.extra_pipes.items.len > 0) {
-            try this.ipc.reader.start(spawned.extra_pipes.items[0], true).unwrap();
+            const ipc_fd = spawned.extra_pipes.items[0];
+            this.cmd_fd = ipc_fd;
+            this.cmd_fd_shared_with_ipc = true;
+            try this.ipc.reader.start(ipc_fd, true).unwrap();
         } else {
             this.ipc.done = true;
         }
     } else {
-        // Windows: stdin and the fd-3 results pipe are created with
-        // bun.sys.pipe() (uv_pipe(0,0) → both ends non-overlapped) so the
-        // worker's blocking ReadFile/WriteFile and the coordinator's
-        // bun.sys.write(stdin_fd) work. Same approach security_scanner.zig
-        // uses for its child-sync-IO pipes. stdout/stderr stay as libuv
-        // .buffer pipes since the child writes via the CRT and the
-        // coordinator reads async via startWithPipe().
+        // Windows: uv_pipe() pairs are unidirectional, so commands and
+        // results need separate channels (stdin for commands, fd 3 for
+        // results). Both are non-overlapped so the coordinator's sync
+        // bun.sys.write(cmd_fd) and the worker's sync write(ipcFd) work;
+        // BufferedReader handles async reads on either via libuv.
         // TODO: verify on Windows CI.
         const uv = bun.windows.libuv;
 
@@ -125,7 +133,8 @@ pub fn start(this: *Worker) !void {
         stdin_pair[0] = bun.FD.invalid;
         ipc_pair[1].close();
         ipc_pair[1] = bun.FD.invalid;
-        this.stdin_fd = stdin_pair[1];
+        this.cmd_fd = stdin_pair[1];
+        this.cmd_fd_shared_with_ipc = false;
         stdin_pair[1] = bun.FD.invalid;
 
         try this.ipc.reader.start(ipc_pair[0], true).unwrap();
@@ -164,9 +173,9 @@ pub fn start(this: *Worker) !void {
 
 pub fn onProcessExit(this: *Worker, _: *bun.spawn.Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
     this.alive = false;
-    if (this.stdin_fd) |fd| {
-        fd.close();
-        this.stdin_fd = null;
+    if (this.cmd_fd) |fd| {
+        if (!this.cmd_fd_shared_with_ipc) fd.close();
+        this.cmd_fd = null;
     }
     this.coord.onWorkerExit(this, status);
 }
@@ -179,7 +188,7 @@ pub fn loop(this: *Worker) *bun.Async.Loop {
 }
 
 pub fn dispatch(this: *Worker, file_idx: u32, file: []const u8) void {
-    const fd = this.stdin_fd orelse return;
+    const fd = this.cmd_fd orelse return;
     const f = &this.coord.frame;
     f.begin(.run);
     f.u32_(file_idx);
@@ -190,12 +199,15 @@ pub fn dispatch(this: *Worker, file_idx: u32, file: []const u8) void {
 }
 
 pub fn shutdown(this: *Worker) void {
-    if (this.stdin_fd) |fd| {
+    if (this.cmd_fd) |fd| {
         const f = &this.coord.frame;
         f.begin(.shutdown);
         f.send(fd);
-        fd.close();
-        this.stdin_fd = null;
+        // When the command fd is the IPC socketpair end, leave it open: the
+        // worker exits on `.shutdown` and the IPC reader still needs the fd to
+        // drain trailing repeat_bufs/junit_file/coverage_file frames.
+        if (!this.cmd_fd_shared_with_ipc) fd.close();
+        this.cmd_fd = null;
     }
 }
 

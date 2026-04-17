@@ -813,7 +813,7 @@ static void appendUTF8BytesQuotedJSON(Vector<uint8_t>& out, const WTF::String& s
         for (size_t i = 0; i < data.size(); ++i) {
             uint8_t ch = data[i];
             if (ch < 0x20) {
-                // Control characters need \uXXXX escaping (matches escapedFormsForJSON behavior)
+                // Control characters need \u00NN escaping (matches escapedFormsForJSON behavior)
                 switch (ch) {
                 case '\b':
                     out.append('\\');

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 // Regression test for a segfault in WTF::StringBuilder::reallocateBuffer during
 // BunV8HeapSnapshotBuilder::generateV8HeapSnapshot. Large JSString values in the
@@ -117,9 +117,9 @@ test("generateHeapSnapshot('v8', 'arraybuffer') also truncates string node names
 
 // The original crash reproduction: one string long enough that len * 6 + 2 overflows
 // CheckedInt32 inside StringBuilder::appendQuotedJSONString. This needs a ~700MB
-// allocation and a full heap walk, which is too slow under the debug/ASAN build;
-// run it against release builds only.
-test.skipIf(isDebug)(
+// allocation and a full heap walk, which is too slow under debug and/or ASAN
+// builds; run it against non-sanitized release builds only.
+test.skipIf(isDebug || isASAN)(
   "generateHeapSnapshot('v8') does not crash when a single string exceeds the CheckedInt32 worst-case bound",
   async () => {
     const script = `

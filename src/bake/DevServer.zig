@@ -820,12 +820,10 @@ pub fn initStandalone(opts: StandaloneOptions) bun.JSOOM!*DevServer {
         // changes, service workers (and cached pages) hold onto the old port
         // in their baked-in `config.origin`, producing a stream of
         // `ERR_CONNECTION_REFUSED` errors until the SW updates.
-        const hmr_port: u16 = if (bun.getenvZ("BUN_DEV_HMR_PORT")) |s| blk: {
-            const p = std.fmt.parseInt(u16, s, 10) catch 0;
-            bun.Output.prettyErrorln("[DevServer] BUN_DEV_HMR_PORT={s} -> port {d}", .{ s, p });
-            bun.Output.flush();
-            break :blk p;
-        } else 0;
+        const hmr_port: u16 = if (bun.getenvZ("BUN_DEV_HMR_PORT")) |s|
+            std.fmt.parseInt(u16, s, 10) catch 0
+        else
+            0;
         app.listenWithConfig(*DevServer, dev, struct {
             pub fn handler(dev_inner: *DevServer, listen_socket: ?*TcpApp.ListenSocket) void {
                 dev_inner.standalone_listen_socket = listen_socket;

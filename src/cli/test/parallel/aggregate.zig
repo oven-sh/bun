@@ -76,7 +76,10 @@ pub fn mergeJUnitFragments(coord: *Coordinator, outfile: []const u8, summary: *c
         .err => |err| Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{f}", .{ outfile, err }),
         .result => |fd| {
             defer _ = fd.close();
-            _ = bun.sys.File.writeAll(fd, contents.items);
+            switch (bun.sys.File.writeAll(fd, contents.items)) {
+                .err => |err| Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{f}", .{ outfile, err }),
+                .result => {},
+            }
         },
     }
 }

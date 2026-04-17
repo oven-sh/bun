@@ -2049,7 +2049,22 @@ pub const Formatter = struct {
         try value.getClassName(globalThis, &name_str);
         if (!name_str.eqlComptime("Object")) {
             return name_str;
-        } else if (value.getPrototype(globalThis).eqlValue(JSValue.null)) {
+        }
+        
+        // Special handling for async generator function expressions
+        // They have "Object" as className but should be displayed specially
+        if (value.isCallable()) {
+            // It's a function-like object, check if it's an async generator
+            const name = try value.getName(globalThis);
+            if (name.length() > 0) {
+                // This is a named function expression
+                // We'll format it as "AsyncGenerator" in the printAs function
+                // Just return the name here, and let the formatter handle the type
+                return null;
+            }
+        }
+        
+        if (value.getPrototype(globalThis).eqlValue(JSValue.jsNull)) {
             return ZigString.static("[Object: null prototype]").*;
         }
         return null;
@@ -3376,7 +3391,26 @@ pub const Formatter = struct {
                         try this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
                     else if (value.isCallable())
                         try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
-                    else {
+                    else if (value.isEmptyObject()) {
+                        // Check for async generator function or other special objects
+                        // by examining Symbol.toStringTag
+                        const tag_symbol = jsc.ZigString.static("Symbol.toStringTag");
+                        if (value.get(globalThis, tag_symbol) catch null) |tag_value| {
+                            if (tag_value.isString()) {
+                                const tag_str = tag_value.toZigString(this.globalThis) catch null;
+                                if (tag_str) |ts| {
+                                    writer.print("<r><cyan>[{s} <d:italic>Object<r><cyan>]", .{ts.slice()});
+                                    writer.writeAll("{}");
+                                    return;
+                                }
+                            }
+                        }
+                        
+                        if (try getObjectName(this.globalThis, value)) |name_str| {
+                            writer.print("{f} ", .{name_str});
+                        }
+                        writer.writeAll("{}");
+                    } else {
                         if (try getObjectName(this.globalThis, value)) |name_str| {
                             writer.print("{f} ", .{name_str});
                         }

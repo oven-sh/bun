@@ -202,6 +202,7 @@ pub const Coordinator = struct {
             .test_done => {
                 const idx = rd.u32_();
                 const formatted = rd.str();
+                if (w.inflight != idx) return;
                 this.flushCaptured(w);
                 if (formatted.len == 0) return; // e.g. pass under --only-failures
                 // dots-mode failures print a full line (writeTestStatusLine);

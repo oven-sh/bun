@@ -1,6 +1,6 @@
 #include "root.h"
 
-#include "JavaScriptCore/JSInternalPromise.h"
+#include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/Nodes.h"
@@ -140,8 +140,8 @@ extern "C" void JSC_JSModuleRecord__addImportEntryNamespace(JSModuleRecord* modu
     });
 }
 
-static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise, JSModuleRecord* resultValue = nullptr);
-extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise)
+static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue = nullptr);
+extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -176,7 +176,7 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     RELEASE_AND_RETURN(scope, JSValue::encode(promise));
 #endif
 }
-static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSInternalPromise* promise, JSModuleRecord* resultValue)
+static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

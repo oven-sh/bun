@@ -477,10 +477,7 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
 
         {
             auto scope = DECLARE_THROW_SCOPE(vm);
-            auto* esmRegistryMap = globalObject->esmRegistryMap();
-            scope.exception(); // TODO: handle or assert none?
-            esmRegistryMap->clear(globalObject);
-            scope.exception(); // TODO: handle or assert none?
+            globalObject->moduleLoader()->clearAll();
             globalObject->requireMap()->clear(globalObject);
             scope.exception(); // TODO: handle or assert none?
             vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);

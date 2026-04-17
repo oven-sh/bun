@@ -10,6 +10,7 @@
 #include "JavaScriptCore/JSLock.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSModuleLoader.h"
+#include "JavaScriptCore/ModuleRegistryEntry.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
@@ -53,8 +54,8 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* gl
   RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, fn, callData, JSC::jsUndefined(), args)));
 }
 
-extern "C" JSC::JSInternalPromise* BakeLoadModuleByKey(GlobalObject* global, JSC::JSString* key) {
-  return global->moduleLoader()->loadAndEvaluateModule(global, key, JSC::jsUndefined(), JSC::jsUndefined());
+extern "C" JSC::JSPromise* BakeLoadModuleByKey(GlobalObject* global, JSC::JSString* key) {
+  return JSC::loadAndEvaluateModule(global, key->getString(global), JSC::jsUndefined(), JSC::jsUndefined());
 }
 
 extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunString source) {
@@ -113,14 +114,11 @@ extern "C" JSC::EncodedJSValue BakeGetModuleNamespace(
 ) {
   JSC::JSString* key = JSC::jsCast<JSC::JSString*>(keyValue);
   auto& vm = JSC::getVM(global);
-  JSC::JSMap* map = JSC::jsCast<JSC::JSMap*>(
-    global->moduleLoader()->getDirect(
-      vm, JSC::Identifier::fromString(global->vm(), "registry"_s)
-    ));
-  JSC::JSValue entry = map->get(global, key);
-  ASSERT(entry.isObject()); // should have called BakeLoadServerCode and wait for that promise
-  JSC::JSValue module = entry.getObject()->get(global, JSC::Identifier::fromString(global->vm(), "module"_s));
-  ASSERT(module.isCell());
+  auto keyIdent = JSC::Identifier::fromString(vm, key->value(global));
+  auto* entry = global->moduleLoader()->registryEntry(keyIdent);
+  ASSERT(entry); // should have called BakeLoadServerCode and wait for that promise
+  auto* module = entry ? entry->record() : nullptr;
+  ASSERT(module);
   JSC::JSModuleNamespaceObject* namespaceObject = global->moduleLoader()->getModuleNamespaceObject(global, module);
   ASSERT(namespaceObject);
   return JSC::JSValue::encode(namespaceObject);
@@ -164,7 +162,7 @@ extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* 
     JSC::SourceProviderSourceType::Module
   ));
 
-  global->moduleLoader()->provideFetch(global, key, sourceCode);
+  global->moduleLoader()->provideFetch(global, JSC::Identifier::fromString(vm, key->getString(global)), JSC::ScriptFetchParameters::Type::JavaScript, WTF::move(sourceCode));
   RETURN_IF_EXCEPTION(scope, {});
 
   return JSC::JSValue::encode(key);

@@ -200,7 +200,7 @@ pub fn init(
 
     switch (loaded_result.unwrap(vm.jsc_vm, .leave_unhandled)) {
         .rejected => |result| {
-            vm.unhandledRejection(vm.global, result, loaded_result.asValue());
+            vm.unhandledRejection(vm.global, result, loaded_result.toJS());
             vm.disableMacroMode();
             return error.MacroLoadError;
         },

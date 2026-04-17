@@ -193,9 +193,9 @@ public:
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
-    static JSC::JSInternalPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, JSC::JSValue parameters, const JSC::SourceOrigin&);
-    static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, JSC::JSValue origin);
-    static JSC::JSInternalPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue parameters, JSC::JSValue script);
+    static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, JSC::JSValue parameters, const JSC::SourceOrigin&);
+    static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, JSC::JSValue origin, bool useImportMap);
+    static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue parameters, JSC::JSValue script);
     static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, JSC::JSValue val);
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSValue key, JSValue moduleRecordValue, JSValue scriptFetcher, JSValue sentValue, JSValue resumeMode);
     static JSC::JSPromise* compileStreaming(JSGlobalObject*, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&&);
@@ -267,7 +267,9 @@ public:
 
     JSC::JSMap* readableStreamNativeMap() const { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
-    JSC::JSMap* esmRegistryMap() const { return m_esmRegistryMap.getInitializedOnMainThread(this); }
+    // The JSC module loader registry is no longer a JS Map. Use
+    // moduleLoader()->registryEntry(key) / moduleMap() / removeEntry(key) /
+    // clearAll() instead.
 
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 
@@ -586,7 +588,6 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_wasmStreamingConsumeStreamFunction)                 \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_lazyReadableStreamPrototypeMap)                          \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_requireMap)                                              \
-    V(private, LazyPropertyOfGlobalObject<JSMap>, m_esmRegistryMap)                                          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSArrayBufferControllerPrototype)                     \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSHTTPSResponseControllerPrototype)                   \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFetchTaskletChunkedRequestControllerPrototype)      \

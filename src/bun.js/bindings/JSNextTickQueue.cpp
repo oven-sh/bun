@@ -1,7 +1,7 @@
 #include "root.h"
 
 #include "JavaScriptCore/JSCJSValueInlines.h"
-#include "JavaScriptCore/JSInternalPromise.h"
+#include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/LazyPropertyInlines.h"
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/GetterSetter.h>

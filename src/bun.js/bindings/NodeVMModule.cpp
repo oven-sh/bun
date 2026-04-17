@@ -164,7 +164,7 @@ void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractMo
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     for (const auto& request : record->requestedModules()) {
-        if (auto iter = m_resolveCache.find(WTF::String(*request.m_specifier)); iter != m_resolveCache.end()) {
+        if (auto iter = m_resolveCache.find(request.m_specifier.string()); iter != m_resolveCache.end()) {
             auto* dependency = jsCast<NodeVMModule*>(iter->value.get());
             RELEASE_ASSERT(dependency != nullptr);
 

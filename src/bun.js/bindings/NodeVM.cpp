@@ -48,7 +48,7 @@
 
 #include "AsyncContextFrame.h"
 #include "JavaScriptCore/JSCInlines.h"
-#include "JavaScriptCore/JSInternalPromise.h"
+#include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/BytecodeCacheError.h"
 #include "JavaScriptCore/CodeCache.h"
@@ -66,11 +66,11 @@
 namespace Bun {
 using namespace WebCore;
 
-static JSInternalPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, JSC::JSValue parameters, const JSC::SourceOrigin& sourceOrigin);
+static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, JSC::JSValue parameters, const JSC::SourceOrigin& sourceOrigin);
 
 namespace NodeVM {
 
-static JSInternalPromise* importModuleInner(JSGlobalObject* globalObject, JSString* moduleName, JSValue parameters, const SourceOrigin& sourceOrigin, JSValue dynamicImportCallback, JSValue owner);
+static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* moduleName, JSValue parameters, const SourceOrigin& sourceOrigin, JSValue dynamicImportCallback, JSValue owner);
 
 bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedData)
 {
@@ -217,7 +217,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     return function;
 }
 
-JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleName, JSValue parameters, const SourceOrigin& sourceOrigin)
+JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleName, JSValue parameters, const SourceOrigin& sourceOrigin)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -253,7 +253,7 @@ JSInternalPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNa
     RELEASE_AND_RETURN(scope, importModuleInner(globalObject, moduleName, parameters, sourceOrigin, dynamicImportCallback, fetcher->owner()));
 }
 
-static JSInternalPromise* importModuleInner(JSGlobalObject* globalObject, JSString* moduleName, JSValue parameters, const SourceOrigin& sourceOrigin, JSValue dynamicImportCallback, JSValue owner)
+static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* moduleName, JSValue parameters, const SourceOrigin& sourceOrigin, JSValue dynamicImportCallback, JSValue owner)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -289,11 +289,11 @@ static JSInternalPromise* importModuleInner(JSGlobalObject* globalObject, JSStri
         return nullptr;
     }
 
-    if (auto* promise = jsDynamicCast<JSInternalPromise*>(result)) {
+    if (auto* promise = jsDynamicCast<JSPromise*>(result)) {
         return promise;
     }
 
-    auto* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
@@ -319,10 +319,10 @@ static JSInternalPromise* importModuleInner(JSGlobalObject* globalObject, JSStri
     promise->fulfill(vm, globalObject, result);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    promise = promise->then(globalObject, transformer, globalObject->promiseEmptyOnRejectedFunction());
+    JSObject* thenResult = promise->then(globalObject, transformer, globalObject->promiseEmptyOnRejectedFunction());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    RELEASE_AND_RETURN(scope, promise);
+    RELEASE_AND_RETURN(scope, jsCast<JSPromise*>(thenResult));
 }
 
 // Helper function to create an anonymous function expression with parameters
@@ -1417,12 +1417,12 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
 }
 
-static JSInternalPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, JSC::JSValue parameters, const JSC::SourceOrigin& sourceOrigin)
+static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, JSC::JSValue parameters, const JSC::SourceOrigin& sourceOrigin)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
 
     if (sourceOrigin.fetcher() == nullptr && sourceOrigin.url().isEmpty()) {
         if (globalObject->dynamicImportCallback().isCallable()) {
@@ -1442,11 +1442,11 @@ static JSInternalPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* glob
     return promise;
 }
 
-JSInternalPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, JSC::JSValue parameters, const JSC::SourceOrigin& sourceOrigin)
+JSPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, JSC::JSValue parameters, const JSC::SourceOrigin& sourceOrigin)
 {
     auto* nodeVmGlobalObject = static_cast<NodeVMGlobalObject*>(globalObject);
 
-    if (JSInternalPromise* result = NodeVM::importModule(nodeVmGlobalObject, moduleName, parameters, sourceOrigin)) {
+    if (JSPromise* result = NodeVM::importModule(nodeVmGlobalObject, moduleName, parameters, sourceOrigin)) {
         return result;
     }
 

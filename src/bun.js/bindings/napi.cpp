@@ -46,7 +46,7 @@
 #include <JavaScriptCore/InitializeThreading.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
-#include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBuffer.h>

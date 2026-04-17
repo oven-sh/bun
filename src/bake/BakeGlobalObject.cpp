@@ -2,7 +2,7 @@
 #include "BakeSourceProvider.h"
 #include "JSNextTickQueue.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
-#include "JavaScriptCore/JSInternalPromise.h"
+#include "JavaScriptCore/JSPromise.h"
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/Completion.h"
@@ -14,7 +14,7 @@ extern "C" BunString BakeToWindowsPath(BunString a);
 namespace Bake {
 using namespace JSC;
 
-JSC::JSInternalPromise*
+JSC::JSPromise*
 bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleNameValue,
     JSC::JSValue parameters,
@@ -24,7 +24,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     if (keyString.startsWith("bake:/"_s)) {
         auto& vm = JSC::getVM(global);
         return JSC::importModule(global, JSC::Identifier::fromString(vm, keyString),
-            JSC::jsUndefined(), parameters, JSC::jsUndefined());
+            JSC::Identifier(), parameters, JSC::jsUndefined());
     }
 
     if (!sourceOrigin.isNull() && sourceOrigin.string().startsWith("bake:/"_s)) {
@@ -35,7 +35,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
         WTF::String keyString = moduleNameValue->getString(global);
 
         if (!keyString) {
-            auto promise = JSC::JSInternalPromise::create(vm, global->internalPromiseStructure());
+            auto promise = JSC::JSPromise::create(vm, global->promiseStructure());
             promise->reject(vm, global, JSC::createError(global, "import() requires a string"_s));
             return promise;
         }
@@ -44,7 +44,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
         RETURN_IF_EXCEPTION(scope, nullptr);
 
         return JSC::importModule(global, JSC::Identifier::fromString(vm, result.toWTFString()),
-            JSC::jsUndefined(), parameters, JSC::jsUndefined());
+            JSC::Identifier(), parameters, JSC::jsUndefined());
     }
 
     // TODO: make static cast instead of jscast
@@ -54,7 +54,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
 
 JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
     JSC::JSModuleLoader* loader, JSC::JSValue key,
-    JSC::JSValue referrer, JSC::JSValue origin)
+    JSC::JSValue referrer, JSC::JSValue origin, bool useImportMap)
 {
     Bake::GlobalObject* global = jsCast<Bake::GlobalObject*>(jsGlobal);
     auto& vm = JSC::getVM(global);
@@ -87,21 +87,21 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
     }
 
     // Use Zig::GlobalObject's function
-    return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, origin);
+    return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, origin, useImportMap);
 }
 
-static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
-    JSC::JSInternalPromise* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     promise->rejectAsHandled(vm, globalObject, value);
     return promise;
 }
 
-static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
-    JSC::JSInternalPromise* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     promise->fulfill(vm, globalObject, value);
     return promise;
 }
@@ -119,7 +119,7 @@ extern "C" void* BakeGlobalObject__getPerThreadData(JSC::JSGlobalObject* global)
     return bake->m_perThreadData;
 }
 
-JSC::JSInternalPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
+JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
     JSC::JSModuleLoader* loader, JSC::JSValue key,
     JSC::JSValue parameters, JSC::JSValue script)
 {

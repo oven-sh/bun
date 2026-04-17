@@ -13,6 +13,7 @@
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSModuleRecord.h>
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -155,10 +156,11 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     requireMap->remove(globalObject, moduleIdValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* esmRegistry = global->esmRegistryMap();
-    RETURN_IF_EXCEPTION(scope, {});
-    esmRegistry->remove(globalObject, moduleIdValue);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (moduleIdValue.isString()) {
+        auto idIdent = JSC::Identifier::fromString(vm, asString(moduleIdValue)->value(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+        global->moduleLoader()->removeEntry(idIdent);
+    }
 
     return JSValue::encode(callframe->thisValue());
 }
@@ -591,9 +593,6 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback);
 
-    auto* esm = globalObject->esmRegistryMap();
-    RETURN_IF_EXCEPTION(scope, {});
-
     auto getJSValue = [&]() -> JSValue {
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSValue result = mock->executeOnce(globalObject);
@@ -626,16 +625,13 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     bool removeFromESM = false;
     bool removeFromCJS = false;
 
-    JSValue entryValue = esm->get(globalObject, specifierString);
+    auto specifierIdent = JSC::Identifier::fromString(vm, specifierString->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    if (entryValue) {
+    if (auto* entry = globalObject->moduleLoader()->registryEntry(specifierIdent)) {
         removeFromESM = true;
-        JSObject* entry = entryValue ? entryValue.getObject() : nullptr;
-        if (entry) {
-            auto moduleValue = entry->getIfPropertyExists(globalObject, Identifier::fromString(vm, String("module"_s)));
-            RETURN_IF_EXCEPTION(scope, {});
-            if (moduleValue) {
-                if (auto* mod = jsDynamicCast<JSC::AbstractModuleRecord*>(moduleValue)) {
+        if (auto* mod = entry->record()) {
+            {
+                {
                     JSC::JSModuleNamespaceObject* moduleNamespaceObject = mod->getModuleNamespace(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (moduleNamespaceObject) {
@@ -676,7 +672,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         }
     }
 
-    entryValue = globalObject->requireMap()->get(globalObject, specifierString);
+    JSValue entryValue = globalObject->requireMap()->get(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
     if (entryValue) {
         removeFromCJS = true;
@@ -691,8 +687,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     }
 
     if (removeFromESM) {
-        esm->remove(globalObject, specifierString);
-        RETURN_IF_EXCEPTION(scope, {});
+        globalObject->moduleLoader()->removeEntry(specifierIdent);
     }
 
     if (removeFromCJS) {

@@ -9,7 +9,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/CallData.h>
-#include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
@@ -789,7 +789,7 @@ static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalO
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSInternalPromise* promise);
+extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -799,11 +799,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String(), resolverFunctionCallback);
-
-    auto result = promise->then(globalObject, resolverFunction, globalObject->promiseEmptyOnRejectedFunction());
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), result);
+    Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), promise);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

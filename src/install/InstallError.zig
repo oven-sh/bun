@@ -648,5 +648,5 @@ pub const InstallError = union(enum) {
 const std = @import("std");
 
 const bun = @import("bun");
-const Output = bun.Output;
 const Environment = bun.Environment;
+const Output = bun.Output;

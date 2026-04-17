@@ -195,8 +195,8 @@ pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
     return .success;
 }
 
-const std = @import("std");
 const Walker = @import("../../walker_skippable.zig");
+const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

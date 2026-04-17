@@ -2060,8 +2060,8 @@ const E = JSAst.E;
 const Expr = JSAst.Expr;
 
 const Install = bun.install;
-const InstallResult = Install.InstallResult;
 const DependencyID = Install.DependencyID;
+const InstallResult = Install.InstallResult;
 const PackageID = Install.PackageID;
 const invalid_package_id = Install.invalid_package_id;
 const Behavior = Install.Dependency.Behavior;

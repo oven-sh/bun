@@ -1118,7 +1118,6 @@ const LoadResult = Lockfile.LoadResult;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const Output = bun.Output;
 const logger = bun.logger;
 const strings = bun.strings;

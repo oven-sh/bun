@@ -765,7 +765,6 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const InstallResult = bun.install.InstallResult;
 const JSON = bun.json;
 const JSPrinter = bun.js_printer;
 const Output = bun.Output;
@@ -773,13 +772,15 @@ const logger = bun.logger;
 const strings = bun.strings;
 const Command = bun.cli.Command;
 const File = bun.sys.File;
-const PackageNameHash = bun.install.PackageNameHash;
 
 const Semver = bun.Semver;
 const String = Semver.String;
 
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;
+
+const InstallResult = bun.install.InstallResult;
+const PackageNameHash = bun.install.PackageNameHash;
 
 const PackageManager = bun.install.PackageManager;
 const CommandLineArguments = PackageManager.CommandLineArguments;

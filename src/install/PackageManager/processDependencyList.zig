@@ -330,10 +330,8 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const JSAst = bun.ast;
 const JSON = bun.json;
-const Output = bun.Output;
 const Path = bun.path;
 const Syscall = bun.sys;
 const logger = bun.logger;

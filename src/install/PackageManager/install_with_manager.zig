@@ -1177,9 +1177,9 @@ const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;
 
 const Dependency = bun.install.Dependency;
-const InstallResult = bun.install.InstallResult;
 const DependencyID = bun.install.DependencyID;
 const Features = bun.install.Features;
+const InstallResult = bun.install.InstallResult;
 const PackageID = bun.install.PackageID;
 const PackageInstall = bun.install.PackageInstall;
 const PackageNameHash = bun.install.PackageNameHash;

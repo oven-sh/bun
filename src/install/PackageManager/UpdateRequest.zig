@@ -244,7 +244,6 @@ const string = []const u8;
 const std = @import("std");
 
 const bun = @import("bun");
-const Global = bun.Global;
 const JSAst = bun.ast;
 const Output = bun.Output;
 const jsc = bun.jsc;

@@ -166,8 +166,8 @@ pub const FileCopier = struct {
     }
 };
 
-const std = @import("std");
 const Walker = @import("../../walker_skippable.zig");
+const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -2205,7 +2205,6 @@ const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 const Environment = bun.Environment;
-const Global = bun.Global;
 const JSON = bun.json;
 const Output = bun.Output;
 const PackageJSON = bun.PackageJSON;

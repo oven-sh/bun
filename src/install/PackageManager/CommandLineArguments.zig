@@ -1164,6 +1164,7 @@ const Path = bun.path;
 const URL = bun.URL;
 const clap = bun.clap;
 const strings = bun.strings;
-const PackageInstall = bun.install.PackageInstall;
+
 const InstallResult = bun.install.InstallResult;
+const PackageInstall = bun.install.PackageInstall;
 const Subcommand = bun.install.PackageManager.Subcommand;

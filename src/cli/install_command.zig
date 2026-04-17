@@ -95,8 +95,8 @@ const Global = bun.Global;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 const Command = bun.cli.Command;
-
 const InstallResult = bun.install.InstallResult;
+
 const PackageManager = bun.install.PackageManager;
 const CommandLineArguments = PackageManager.CommandLineArguments;
 const Subcommand = PackageManager.Subcommand;

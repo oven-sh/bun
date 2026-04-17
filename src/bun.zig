@@ -55,7 +55,7 @@ pub const debug_allocator_data = struct {
 
     fn free(_: *anyopaque, mem: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
         return backing.?.allocator().rawFree(mem, alignment, ret_addr);
-    }
+    }f
 };
 
 pub extern "c" fn powf(x: f32, y: f32) f32;
@@ -671,6 +671,7 @@ pub fn isHeapMemory(mem: anytype) bool {
 }
 
 pub const memory = @import("./memory.zig");
+pub const cgroup = @import("./cgroup.zig");
 pub const allocators = @import("./allocators.zig");
 pub const mimalloc = allocators.mimalloc;
 pub const MimallocArena = allocators.MimallocArena;

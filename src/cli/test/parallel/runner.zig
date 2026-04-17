@@ -383,20 +383,19 @@ pub fn workerEmitTestDone(file_idx: u32, formatted_line: []const u8) void {
     worker_frame.send(Frame.ipcFd());
 }
 
+const Frame = @import("./Frame.zig");
+const Worker = @import("./Worker.zig");
+const aggregate = @import("./aggregate.zig");
 const std = @import("std");
+const Command = @import("../../../cli.zig").Command;
+const Coordinator = @import("./Coordinator.zig").Coordinator;
+
+const test_command = @import("../../test_command.zig");
+const CommandLineReporter = test_command.CommandLineReporter;
+const TestCommand = test_command.TestCommand;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const PathString = bun.PathString;
 const jsc = bun.jsc;
-
-const Command = @import("../../../cli.zig").Command;
-const test_command = @import("../../test_command.zig");
-const CommandLineReporter = test_command.CommandLineReporter;
-const TestCommand = test_command.TestCommand;
-
-const Frame = @import("./Frame.zig");
-const Worker = @import("./Worker.zig");
-const Coordinator = @import("./Coordinator.zig").Coordinator;
-const aggregate = @import("./aggregate.zig");

@@ -273,15 +273,14 @@ fn writeRange(w: *std.Io.Writer, first: *bool, a: u32, b: u32, comptime colors: 
 }
 
 const std = @import("std");
+const Coordinator = @import("./Coordinator.zig").Coordinator;
+
+const test_command = @import("../../test_command.zig");
+const TestCommand = test_command.TestCommand;
 
 const bun = @import("bun");
 const Output = bun.Output;
 const jsc = bun.jsc;
 const CoverageFraction = bun.SourceMap.coverage.Fraction;
-const CoverageReportText = bun.SourceMap.coverage.Report.Text;
 const TestRunner = jsc.Jest.TestRunner;
-
-const test_command = @import("../../test_command.zig");
-const TestCommand = test_command.TestCommand;
-
-const Coordinator = @import("./Coordinator.zig").Coordinator;
+const CoverageReportText = bun.SourceMap.coverage.Report.Text;

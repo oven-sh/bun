@@ -443,16 +443,15 @@ pub const Coordinator = struct {
     }
 };
 
+const Frame = @import("./Frame.zig");
+const Worker = @import("./Worker.zig");
 const std = @import("std");
+
+const test_command = @import("../../test_command.zig");
+const CommandLineReporter = test_command.CommandLineReporter;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const PathString = bun.PathString;
 const jsc = bun.jsc;
-
-const test_command = @import("../../test_command.zig");
-const CommandLineReporter = test_command.CommandLineReporter;
-
-const Frame = @import("./Frame.zig");
-const Worker = @import("./Worker.zig");

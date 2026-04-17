@@ -1060,7 +1060,9 @@ pub const DynamicBitSetUnmanaged = struct {
         }
     }
 
-    /// Removes from `self` every bit that is set in `other` (self &= ~other).
+    /// Performs a set difference of two bit sets, and stores
+    /// the result in the first one.  Bits in the result are
+    /// set if they were set in the first input but not the second.
     /// The two sets must both be the same bit_length.
     pub fn setDifference(self: *Self, other: Self) void {
         if (comptime Environment.allow_assert) bun.assert(other.bit_length == self.bit_length);

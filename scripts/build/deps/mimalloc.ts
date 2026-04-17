@@ -5,7 +5,7 @@
 
 import type { Dependency, NestedCmakeBuild, Provides } from "../source.ts";
 
-const MIMALLOC_COMMIT = "a29368ef60d5c90bd760ff42a36ad4ad919a9ad7";
+const MIMALLOC_COMMIT = "ac2e0d58bd008347ad78d0aae0af829458a2d1de";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",

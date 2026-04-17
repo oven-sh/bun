@@ -109,7 +109,7 @@ pub const Coordinator = struct {
         const w = &this.workers[this.spawned_count];
         // A prior failed start()'s errdefer leaves ipc.done = true; reset so a
         // retry on the same slot starts with a fresh channel.
-        w.ipc = .{ .owner = w };
+        w.ipc = .{};
         w.out = .{ .role = .stdout, .worker = w };
         w.err = .{ .role = .stderr, .worker = w };
         w.start() catch |e| {
@@ -314,7 +314,7 @@ pub const Coordinator = struct {
             w.ipc.deinit();
             w.out.deinit();
             w.err.deinit();
-            w.ipc = .{ .owner = w };
+            w.ipc = .{};
             w.out = .{ .role = .stdout, .worker = w };
             w.err = .{ .role = .stderr, .worker = w };
             w.process = null;

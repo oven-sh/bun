@@ -8,17 +8,17 @@
 //! Windows backend: `uv.Pipe` over the inherited duplex named-pipe end (same
 //! mechanism as `Bun.spawn({ipc})` / `process.send()`).
 //!
-//! Lifetime: a `Channel` is embedded in a heap-allocated owner that outlives
-//! all uv/usockets callbacks (the coordinator's `Worker[]`, or the worker's
-//! `WorkerLoop` which lives for the process). `deinit` assumes no write is in
-//! flight — true for both call sites (start() errdefer and reapWorker after
-//! the peer has exited).
+//! Lifetime: a `Channel` is embedded as `owner_field` in an owner that
+//! outlives all uv/usockets callbacks (the coordinator's `Worker[]`, or the
+//! worker's `WorkerLoop` which lives for the process). The owner is recovered
+//! via `@fieldParentPtr` so the channel default-inits without a self-pointer.
+//! `deinit` assumes no write is in flight — true for both call sites (start()
+//! errdefer and reapWorker after the peer has exited).
 
-pub fn Channel(comptime Owner: type) type {
+pub fn Channel(comptime Owner: type, comptime owner_field: []const u8) type {
     return struct {
         const Self = @This();
 
-        owner: *Owner,
         /// Incoming bytes that don't yet form a complete frame.
         in: std.ArrayListUnmanaged(u8) = .empty,
         /// Outgoing bytes the kernel didn't accept yet.
@@ -27,6 +27,10 @@ pub fn Channel(comptime Owner: type) type {
 
         backend: Backend = .{},
         const Backend = if (Environment.isWindows) WindowsBackend else PosixBackend;
+
+        inline fn owner(self: *Self) *Owner {
+            return @alignCast(@fieldParentPtr(owner_field, self));
+        }
 
         // -- POSIX (usockets) ----------------------------------------------
 
@@ -59,7 +63,7 @@ pub fn Channel(comptime Owner: type) type {
         const WindowsBackend = struct {
             pipe: ?*uv.Pipe = null,
             /// Read scratch — libuv asks us to allocate before each read.
-            read_chunk: [16 * 1024]u8 = undefined,
+            read_chunk: [16 * 1024]u8 = [_]u8{0} ** (16 * 1024),
             /// Payload owned by the in-flight uv_write; must stay stable until
             /// the callback. New writes go to `out` until this completes, then
             /// the buffers swap.
@@ -232,7 +236,7 @@ pub fn Channel(comptime Owner: type) type {
                     continue;
                 };
                 var rd = Frame.Reader{ .p = self.in.items[head + 5 ..][0..len] };
-                self.owner.onChannelFrame(kind, &rd);
+                self.owner().onChannelFrame(kind, &rd);
                 head += @as(usize, 5) + len;
             }
             if (head > 0) {
@@ -245,7 +249,7 @@ pub fn Channel(comptime Owner: type) type {
         fn markDone(self: *Self) void {
             if (self.done) return;
             self.done = true;
-            self.owner.onChannelDone();
+            self.owner().onChannelDone();
         }
 
         // -- platform callbacks --------------------------------------------

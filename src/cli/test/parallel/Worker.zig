@@ -14,7 +14,7 @@ process: ?*bun.spawn.Process = null,
 /// Commands and results both flow through this channel; backpressure is
 /// handled by the loop, so a busy worker writing thousands of `test_done`
 /// frames never truncates and the coordinator never blocks.
-ipc: Channel(Worker),
+ipc: Channel(Worker, "ipc") = .{},
 out: WorkerPipe,
 err: WorkerPipe,
 

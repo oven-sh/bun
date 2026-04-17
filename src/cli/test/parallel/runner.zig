@@ -109,7 +109,6 @@ pub fn runAsCoordinator(
             .coord = &coord,
             .idx = idx,
             .range = .{ .lo = idx * N / K, .hi = (idx + 1) * N / K },
-            .ipc = .{ .owner = w },
             .out = .{ .role = .stdout, .worker = w },
             .err = .{ .role = .stderr, .worker = w },
         };
@@ -245,7 +244,7 @@ fn buildWorkerArgv(arena: std.mem.Allocator, ctx: Command.Context) ![:null]?[*:0
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
 const WorkerCommands = struct {
     vm: *jsc.VirtualMachine,
-    channel: Channel(WorkerCommands) = undefined,
+    channel: Channel(WorkerCommands, "channel") = .{},
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
     pending_idx: ?u32 = null,
@@ -299,7 +298,6 @@ pub fn runAsWorker(
         cmds: WorkerCommands,
 
         pub fn begin(self: *@This()) void {
-            self.cmds.channel = .{ .owner = &self.cmds };
             if (!self.cmds.channel.adopt(self.vm, .fromUV(3))) {
                 Output.prettyErrorln("<red>error<r>: test worker failed to adopt IPC fd", .{});
                 bun.Global.exit(1);

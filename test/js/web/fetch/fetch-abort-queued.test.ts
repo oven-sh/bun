@@ -38,9 +38,8 @@ const fixture = /* js */ `
   const queued = fetch("http://127.0.0.1:" + port + "/queued", {
     signal: controller.signal,
   });
-
-  let settled = false;
-  queued.catch(() => { settled = true; });
+  // Suppress unhandled-rejection noise while we wait below.
+  queued.catch(() => {});
 
   // Give the HTTP thread a chance to pick it up (it can't — slot is full).
   await new Promise(r => setImmediate(r));
@@ -79,8 +78,15 @@ test("aborting a fetch that is queued behind max_simultaneous_requests rejects t
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  // ASAN debug builds unconditionally print a signal-handler warning to
+  // stderr at startup; ignore that line.
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrLines).toBe("");
   expect(stdout.trim().split("\n")).toEqual(["OK: queued fetch rejected with AbortError", "hung request is pending"]);
   expect(exitCode).toBe(0);
 });

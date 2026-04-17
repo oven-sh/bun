@@ -506,11 +506,9 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 
 extern "C" void WebWorker__dispatchExit(Worker* worker, int32_t exitCode)
 {
-    // Post the close-event task only after the worker's JSC VM teardown and the
-    // Zig-side mimalloc cleanup (arena, pools, vm.deinit) are done. The task
-    // releases parent_poll_ref on the parent thread; once that happens the parent
-    // process can exit, and its atexit `mi_process_done` will free this thread's
-    // mimalloc TLD — so any mimalloc use after this call is a cross-thread UAF.
+    // Post the close-event task. It releases parent_poll_ref on the parent
+    // thread; once that happens the parent process can exit. Called after
+    // WebWorker__teardownJSCVM so the parent stays alive through collectNow().
     //
     // The Zig-held ref is dropped inside the posted task on the parent thread. If
     // posting fails (parent context gone — middle worker in a nested chain has

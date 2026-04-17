@@ -52,20 +52,18 @@
 //!        - calls `WebWorker__teardownJSCVM` to tear down the worker's JSC VM
 //!          (collectNow, vm.deref×2). This can re-enter Zig (finalizers), so it
 //!          runs before any mimalloc-backed state is destroyed.
-//!        - frees gc_controller timers, vm.deinit(), thread pools, and the
-//!          worker's mimalloc arena.
 //!        - calls `WebWorker__dispatchExit`, which posts the close-event task to
 //!          the parent context. The close-event task runs ON THE PARENT THREAD
 //!          and does:
 //!            - dispatch the `close` event
 //!            - `WebWorker__releaseParentPollRef` (parent-thread unref)
 //!            - drop the Zig-held `Worker` ref
-//!          This is ordered last so the parent stays alive (parent_poll_ref
-//!          held) through both JSC teardown and the mimalloc cleanup above —
-//!          once released, the parent can exit and its `mi_process_done` will
-//!          free this thread's mimalloc TLD.
-//!        - exits the thread. `this` may already be freed by now (the parent's
-//!          close task can complete and `~Worker` fire in between); that's fine
+//!          This is ordered after JSC teardown so the parent stays alive
+//!          (parent_poll_ref held) through the worker's collectNow().
+//!        - frees gc_controller timers, libuv Loop.shutdown(), vm.deinit(),
+//!          thread pools, and the worker's mimalloc arena, then exits the
+//!          thread. `this` may already be freed by now (the parent's close
+//!          task can complete and `~Worker` fire in between); that's fine
 //!          because nothing here dereferences `this` after dispatchExit.
 //!
 //! `parent_poll_ref` (the keep-alive on the parent's event loop) is mutated
@@ -786,6 +784,14 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         WebWorker__teardownJSCVM(global);
     }
 
+    // Post the close-event task. It releases parent_poll_ref on the parent
+    // thread; the parent can exit any time after this runs. Loop.shutdown()
+    // below can block on Windows (uv_run(.default) with active requests), so
+    // posting first lets the parent proceed regardless.
+    WebWorker__dispatchExit(cpp_worker, exit_code);
+    // Past this point `this` may be freed at any time (the C++ Worker's last ref can
+    // drop on the parent thread once the close-event task runs).
+
     if (loop) |loop_| {
         loop_.internal_loop_data.jsc_vm = null;
     }
@@ -807,14 +813,6 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     if (arena) |*arena_| {
         arena_.deinit();
     }
-
-    // Only now post the close-event task. It releases parent_poll_ref on the
-    // parent thread; once that happens the parent can reach Global.exit() →
-    // mi_process_done() → _mi_thread_locals_done(), which frees this thread's
-    // mimalloc TLD. Everything mimalloc-touching above must be done first.
-    WebWorker__dispatchExit(cpp_worker, exit_code);
-    // Past this point `this` may be freed at any time (the C++ Worker's last ref can
-    // drop on the parent thread once the close-event task runs).
 
     bun.exitThread();
 }

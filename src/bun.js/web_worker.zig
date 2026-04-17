@@ -67,6 +67,7 @@
 //! ONLY on the parent thread:
 //!   - `create()`      – ref   (parent thread)
 //!   - `setRef()`      – ref/unref via JS .ref()/.unref()  (parent thread)
+//!   - `notifyNeedTermination()` – unref on terminate()     (parent thread)
 //!   - `releaseParentPollRef()` – unref in close-event task (parent thread)
 //!   - `WebWorker__updatePtr` spawn-fail path – unref       (parent thread)
 //! `KeepAlive.status` is non-atomic, so the worker thread MUST NOT touch it.
@@ -703,6 +704,14 @@ pub fn notifyNeedTermination(this: *WebWorker) callconv(.c) void {
         return;
     }
     log("[{d}] notifyNeedTermination", .{this.execution_context_id});
+
+    // Release the parent's keep-alive immediately. terminate() does not yet
+    // interrupt running JS, so a worker stuck in synchronous code will never
+    // reach exitAndDeinit and post the close-event task; without this the
+    // parent's event loop would stay ref'd forever. This is parent-thread-only
+    // (the only caller is Worker::terminate()), so plain unref is correct, and
+    // KeepAlive.unref is idempotent so the later releaseParentPollRef is a no-op.
+    this.parent_poll_ref.unref(this.parent);
 
     // Wake the worker's event loop so it observes requested_terminate promptly.
     // vm_lock serializes against exitAndDeinit nulling vm and freeing the arena.

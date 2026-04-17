@@ -480,35 +480,37 @@ void Worker::forEachWorker(const Function<Function<void(ScriptExecutionContext&)
         ScriptExecutionContext::postTaskTo(contextIdentifier, callback());
 }
 
-extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker* worker, int32_t exitCode)
+extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 {
-    if (globalObject) {
-        auto& vm = JSC::getVM(globalObject);
-        vm.setHasTerminationRequest();
+    auto& vm = JSC::getVM(globalObject);
+    vm.setHasTerminationRequest();
 
-        {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            auto* esmRegistryMap = globalObject->esmRegistryMap();
-            scope.exception(); // TODO: handle or assert none?
-            esmRegistryMap->clear(globalObject);
-            scope.exception(); // TODO: handle or assert none?
-            globalObject->requireMap()->clear(globalObject);
-            scope.exception(); // TODO: handle or assert none?
-            vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
-            gcUnprotect(globalObject);
-            globalObject = nullptr;
-        }
-
-        vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
-
-        vm.derefSuppressingSaferCPPChecking(); // NOLINT
-        vm.derefSuppressingSaferCPPChecking(); // NOLINT
+    {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* esmRegistryMap = globalObject->esmRegistryMap();
+        scope.exception(); // TODO: handle or assert none?
+        esmRegistryMap->clear(globalObject);
+        scope.exception(); // TODO: handle or assert none?
+        globalObject->requireMap()->clear(globalObject);
+        scope.exception(); // TODO: handle or assert none?
+        vm.deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
+        gcUnprotect(globalObject);
+        globalObject = nullptr;
     }
 
-    // Post the close-event task only after the worker's JSC VM teardown above is
-    // done. The task releases parent_poll_ref on the parent thread; once that
-    // happens the parent process can exit, so this ordering keeps the parent alive
-    // through the worker's collectNow()/vm.deref().
+    vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+
+    vm.derefSuppressingSaferCPPChecking(); // NOLINT
+    vm.derefSuppressingSaferCPPChecking(); // NOLINT
+}
+
+extern "C" void WebWorker__dispatchExit(Worker* worker, int32_t exitCode)
+{
+    // Post the close-event task only after the worker's JSC VM teardown and the
+    // Zig-side mimalloc cleanup (arena, pools, vm.deinit) are done. The task
+    // releases parent_poll_ref on the parent thread; once that happens the parent
+    // process can exit, and its atexit `mi_process_done` will free this thread's
+    // mimalloc TLD — so any mimalloc use after this call is a cross-thread UAF.
     //
     // The Zig-held ref is dropped inside the posted task on the parent thread. If
     // posting fails (parent context gone — middle worker in a nested chain has

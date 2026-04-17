@@ -431,7 +431,7 @@ String V8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell, bool recurse)
         auto* symbol = jsCast<Symbol*>(cell);
         auto description = symbol->description();
         if (!description.isEmpty()) {
-            return makeString("Symbol("_s, truncateNodeName(description), ')');
+            return truncateNodeName(makeString("Symbol("_s, truncateNodeName(description), ')'));
         }
         break;
     }
@@ -465,7 +465,7 @@ String V8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell, bool recurse)
             JSValue result = promise->result();
             if (result.isCell() && recurse) {
                 // set recurse to false to make sure we don't infinitely expand promises
-                return makeString("Promise (fulfilled: "_s, getDetailedNodeType(result.asCell(), false), ")"_s);
+                return truncateNodeName(makeString("Promise (fulfilled: "_s, getDetailedNodeType(result.asCell(), false), ")"_s));
             }
             return "Promise (fulfilled)"_s;
         }

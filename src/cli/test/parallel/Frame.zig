@@ -41,13 +41,29 @@ pub fn u32_(self: *Frame, v: u32) void {
     bun.handleOom(self.buf.appendSlice(bun.default_allocator, &le));
 }
 pub fn str(self: *Frame, s: []const u8) void {
-    self.u32_(@intCast(s.len));
-    bun.handleOom(self.buf.appendSlice(bun.default_allocator, s));
+    // Never let a single frame exceed `max_payload` — the receiver treats that
+    // as a corrupt-channel signal and closes, which would surface as a spurious
+    // worker crash. Truncate the string in place instead. Leave a small
+    // headroom so a few following u32s/short paths in the same frame still fit.
+    const trunc = "\n... [output truncated: would exceed --parallel IPC frame limit]\n";
+    const headroom = 256;
+    const used: usize = (self.buf.items.len - 5) + 4; // current payload + str-len prefix
+    const room: usize = if (max_payload > used + headroom) max_payload - used - headroom else 0;
+    if (s.len <= room) {
+        self.u32_(@intCast(s.len));
+        bun.handleOom(self.buf.appendSlice(bun.default_allocator, s));
+        return;
+    }
+    const keep: usize = if (room > trunc.len) room - trunc.len else 0;
+    self.u32_(@intCast(keep + trunc.len));
+    bun.handleOom(self.buf.appendSlice(bun.default_allocator, s[0..keep]));
+    bun.handleOom(self.buf.appendSlice(bun.default_allocator, trunc));
 }
 /// Finalize the header and return the encoded bytes. Caller hands them to
 /// `Channel.send`. Valid until the next `begin()`.
 pub fn finish(self: *Frame) []const u8 {
     const payload_len: u32 = @intCast(self.buf.items.len - 5);
+    bun.assert(payload_len <= max_payload);
     std.mem.writeInt(u32, self.buf.items[0..4], payload_len, .little);
     return self.buf.items;
 }

@@ -83,7 +83,11 @@ pub fn Channel(comptime Owner: type) type {
                     pipe.closeAndDestroy();
                     return false;
                 };
-                return self.adoptPipe(vm, pipe);
+                if (!self.adoptPipe(vm, pipe)) {
+                    pipe.closeAndDestroy();
+                    return false;
+                }
+                return true;
             }
             const ctx = ensurePosixContext(vm);
             const sock = Socket.fromFd(ctx, fd, Self, self, null, true) orelse return false;
@@ -93,16 +97,15 @@ pub fn Channel(comptime Owner: type) type {
         }
 
         /// Windows-only: adopt a `uv.Pipe` already initialized by spawn (the
-        /// `.buffer` extra-fd parent end). Starts reading.
+        /// `.buffer` extra-fd parent end). Starts reading. On failure the
+        /// caller still owns `pipe` and must free it.
         pub fn adoptPipe(self: *Self, _: *jsc.VirtualMachine, pipe: *uv.Pipe) bool {
             if (comptime !Environment.isWindows) @compileError("adoptPipe is Windows-only");
             pipe.unref();
-            self.backend.pipe = pipe;
             pipe.readStart(self, WindowsHandlers.onAlloc, WindowsHandlers.onError, WindowsHandlers.onRead).unwrap() catch {
-                self.backend.pipe = null;
-                pipe.closeAndDestroy();
                 return false;
             };
+            self.backend.pipe = pipe;
             return true;
         }
 

@@ -652,13 +652,12 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
 extern "C" void* Zig__GlobalObject__getModuleRegistryMap(JSC::JSGlobalObject* arg0)
 {
     if (JSC::JSObject* loader = JSC::jsDynamicCast<JSC::JSObject*>(arg0->moduleLoader())) {
-        JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(
-            loader->getDirect(arg0->vm(), JSC::Identifier::fromString(arg0->vm(), "registry"_s)));
-
-        JSC::JSMap* cloned = map->clone(arg0, arg0->vm(), arg0->mapStructure());
-        JSC::gcProtect(cloned);
-
-        return cloned;
+        if (JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(
+                loader->getDirect(arg0->vm(), JSC::Identifier::fromString(arg0->vm(), "registry"_s)))) {
+            JSC::JSMap* cloned = map->clone(arg0, arg0->vm(), arg0->mapStructure());
+            JSC::gcProtect(cloned);
+            return cloned;
+        }
     }
 
     return nullptr;
@@ -3102,11 +3101,13 @@ void GlobalObject::reload()
     JSModuleLoader* moduleLoader = this->moduleLoader();
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSMap* registry = jsCast<JSC::JSMap*>(moduleLoader->get(this, Identifier::fromString(vm, "registry"_s)));
+    auto registryValue = moduleLoader->get(this, Identifier::fromString(vm, "registry"_s));
     RETURN_IF_EXCEPTION(scope, );
 
-    registry->clear(this);
-    RETURN_IF_EXCEPTION(scope, );
+    if (auto* registry = jsDynamicCast<JSC::JSMap*>(registryValue)) {
+        registry->clear(this);
+        RETURN_IF_EXCEPTION(scope, );
+    }
     this->requireMap()->clear(this);
     RETURN_IF_EXCEPTION(scope, );
 

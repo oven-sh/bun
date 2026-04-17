@@ -22,6 +22,10 @@ pub fn runAsCoordinator(
     const N: u32 = @intCast(files.len);
     const K: u32 = @min(ctx.test_options.parallel, N);
     if (K <= 1) {
+        // Jest sets JEST_WORKER_ID=1 even with --maxWorkers=1; match that so
+        // tests can rely on the var whenever --parallel is passed.
+        bun.handleOom(vm.transpiler.env.map.put("JEST_WORKER_ID", "1"));
+        bun.handleOom(vm.transpiler.env.map.put("BUN_TEST_WORKER_ID", "1"));
         TestCommand.runAllTests(reporter, vm, files, allocator);
         return false;
     }
@@ -55,7 +59,18 @@ pub fn runAsCoordinator(
             reporter.reporters.junit = null;
         }
     }
-    const envp = try vm.transpiler.env.map.createNullDelimitedEnvMap(arena.allocator());
+    // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed,
+    // matching Jest) so tests can pick distinct ports/databases. Serialize the
+    // env map once per worker after .put() — appending after the fact would
+    // create duplicate entries when the parent already has the variable set,
+    // and POSIX getenv() returns the first match.
+    const envps = try arena.allocator().alloc([:null]?[*:0]const u8, K);
+    for (envps, 0..) |*envp, i| {
+        const id = try std.fmt.allocPrint(arena.allocator(), "{d}", .{i + 1});
+        bun.handleOom(vm.transpiler.env.map.put("JEST_WORKER_ID", id));
+        bun.handleOom(vm.transpiler.env.map.put("BUN_TEST_WORKER_ID", id));
+        envp.* = try vm.transpiler.env.map.createNullDelimitedEnvMap(arena.allocator());
+    }
     const argv = try buildWorkerArgv(arena.allocator(), ctx);
 
     // Sort lexicographically so adjacent indices share parent directories.
@@ -83,7 +98,7 @@ pub fn runAsCoordinator(
         .files = sorted,
         .cwd = bun.fs.FileSystem.instance.top_level_dir,
         .argv = argv,
-        .envp = envp,
+        .envps = envps,
         .workers = workers,
         .retries = retries,
         .pending_retry = pending_retry,

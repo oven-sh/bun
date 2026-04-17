@@ -9,7 +9,9 @@ pub const Coordinator = struct {
     files: []const PathString,
     cwd: [:0]const u8,
     argv: [:null]?[*:0]const u8,
-    envp: [*:null]?[*:0]const u8,
+    /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
+    /// and BUN_TEST_WORKER_ID appended.
+    envps: []const [:null]?[*:0]const u8,
 
     workers: []Worker,
     /// retries[i] counts how many times files[i] has been re-queued after a

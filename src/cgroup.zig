@@ -20,7 +20,7 @@
 /// Tries cgroup v2 first (`/sys/fs/cgroup/memory.max`), then falls back to
 /// cgroup v1 (`/sys/fs/cgroup/memory/memory.limit_in_bytes`).
 ///
-/// A limit of "max" (cgroup v2) or a value >= 90% of physical RAM (cgroup v1)
+/// A limit of "max" (cgroup v2) or a value >= 1 TiB (cgroup v1 sentinel)
 /// is treated as "unlimited" and returns `null`.
 ///
 /// NOTE: This reads the root cgroup files, which resolve to the container's own
@@ -74,9 +74,9 @@ pub fn getCurrentRSS() usize {
 
     // /proc/self/statm format: "total_pages resident_pages ..."
     // We need the second field (resident pages)
-    const first_space = std.mem.indexOfScalar(u8, content, ' ') orelse return 0;
+    const first_space = bun.strings.indexOfChar(content, ' ') orelse return 0;
     const rest = content[first_space + 1 ..];
-    const second_space = std.mem.indexOfScalar(u8, rest, ' ') orelse rest.len;
+    const second_space = bun.strings.indexOfChar(rest, ' ') orelse rest.len;
     const resident_str = rest[0..second_space];
 
     const pages = std.fmt.parseInt(usize, resident_str, 10) catch return 0;

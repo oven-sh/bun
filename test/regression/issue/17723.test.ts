@@ -1,31 +1,41 @@
 // Test for Issue #17723: Container memory awareness
 //
-// Spawns a child process inside a cgroup (on Linux) with a memory limit
+// Spawns a child process inside a cgroup v2 with a memory limit
 // and verifies that Bun's GC keeps RSS bounded.
 //
-// On non-Linux, only the basic process.constrainedMemory() checks run.
+// On non-Linux or without cgroup permissions, only basic checks run.
 
 import { test, expect, describe } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, rmdirSync } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
+import { totalmem } from "os";
 
 const isLinux = process.platform === "linux";
 
-// The stress script that the child process runs inside the cgroup.
-// It allocates and discards buffers in a loop, checking that RSS stays
-// below the cgroup ceiling. If the GC is unaware of the cgroup limit,
-// RSS will climb until the kernel OOM-kills the process.
+// The stress script joins itself into the cgroup as its first action,
+// then allocates and discards buffers. If the GC doesn't respect the
+// cgroup limit, RSS will climb until the kernel OOM-kills the process.
 const STRESS_SCRIPT = `
+const { writeFileSync } = require("fs");
+
+// Self-join: move this process into the cgroup before allocating
+const cgroupPath = process.env.CGROUP_PATH;
+if (cgroupPath) {
+  try {
+    writeFileSync(cgroupPath + "/cgroup.procs", String(process.pid));
+  } catch (e) {
+    console.error("Failed to join cgroup:", e.message);
+  }
+}
+
 const LIMIT_MB = parseInt(process.env.CGROUP_LIMIT_MB || "256");
-const TARGET_RSS_MB = LIMIT_MB * 0.85; // fail if RSS exceeds 85% of limit
+const TARGET_RSS_MB = LIMIT_MB * 0.85;
 const ITERATIONS = 200;
-const CHUNK_SIZE = 1024 * 1024; // 1 MB per allocation
+const CHUNK_SIZE = 1024 * 1024; // 1 MB
 
 let peak_rss = 0;
 
 for (let i = 0; i < ITERATIONS; i++) {
-  // Allocate ~1 MB that becomes garbage immediately
   const buf = Buffer.alloc(CHUNK_SIZE, 0x42);
   void buf;
 
@@ -45,7 +55,6 @@ if (final_rss > peak_rss) peak_rss = final_rss;
 const constrained = process.constrainedMemory();
 const constrained_mb = constrained ? constrained / 1024 / 1024 : null;
 
-// Output JSON for the parent to parse
 console.log(JSON.stringify({
   peak_rss_mb: Math.round(peak_rss),
   final_rss_mb: Math.round(final_rss),
@@ -59,34 +68,31 @@ describe("Issue #17723: Container Memory Awareness", () => {
 
   test("process.constrainedMemory() returns a positive number", () => {
     const mem = process.constrainedMemory();
+    // Bun intentionally returns WTF::ramSize() (>0) when no cgroup is detected,
+    // unlike Node.js which returns 0. This divergence is intentional.
     expect(typeof mem).toBe("number");
     expect(mem).toBeGreaterThan(0);
   });
 
   test("process.constrainedMemory() <= os.totalmem()", () => {
     const constrained = process.constrainedMemory();
-    const { totalmem } = require("os");
-    // In a container, constrained <= total. Outside, they may be equal.
     expect(constrained).toBeLessThanOrEqual(totalmem());
   });
 
   test.skipIf(!isLinux)("cgroup: RSS stays bounded under allocation pressure", async () => {
-    // This test requires root or cgroup v2 delegation.
-    // On CI (GitHub Actions), the runner is root inside a container.
     const cgroupBase = "/sys/fs/cgroup";
     const testCgroup = join(cgroupBase, "bun-test-17723");
     const limitMB = 256;
 
-    // Check if we can create cgroups
+    // Check if we can create cgroups (requires root or delegation)
     let canCreateCgroup = false;
     try {
       if (existsSync(join(cgroupBase, "cgroup.controllers"))) {
-        // cgroup v2
         mkdirSync(testCgroup, { recursive: true });
         canCreateCgroup = true;
       }
     } catch {
-      // No permission to create cgroups — skip
+      // No permission
     }
 
     if (!canCreateCgroup) {
@@ -95,63 +101,56 @@ describe("Issue #17723: Container Memory Awareness", () => {
     }
 
     try {
-      // Set memory limit
+      // Set memory limit on the cgroup
       writeFileSync(join(testCgroup, "memory.max"), `${limitMB * 1024 * 1024}`);
 
-      // Write the stress script to a temp file
-      const scriptPath = join(tmpdir(), "bun-17723-stress.ts");
+      // Write stress script to a temp file
+      const scriptPath = join("/tmp", `bun-17723-stress-${process.pid}.ts`);
       writeFileSync(scriptPath, STRESS_SCRIPT);
 
-      // Spawn bun inside the cgroup using cgexec or by writing to cgroup.procs
-      const proc = Bun.spawn(["bun", "run", scriptPath], {
-        env: { ...process.env, CGROUP_LIMIT_MB: String(limitMB) },
+      // Spawn child — it will self-join the cgroup via CGROUP_PATH env var
+      const proc = Bun.spawn([process.execPath, "run", scriptPath], {
+        env: {
+          ...process.env,
+          CGROUP_LIMIT_MB: String(limitMB),
+          CGROUP_PATH: testCgroup,
+        },
         stdout: "pipe",
         stderr: "pipe",
-        // Move the process into the cgroup
-        onSpawn: (subprocess) => {
-          try {
-            writeFileSync(join(testCgroup, "cgroup.procs"), String(subprocess.pid));
-          } catch (e) {
-            console.error("Failed to move process to cgroup:", e);
-          }
-        },
       });
 
       const exitCode = await proc.exited;
       const stdout = await new Response(proc.stdout).text();
       const stderr = await new Response(proc.stderr).text();
 
+      // Assert stdout before exitCode for better error messages
       if (exitCode !== 0) {
-        // If the process was OOM-killed, exitCode is typically 137 (SIGKILL)
         if (exitCode === 137 || exitCode === 9) {
-          throw new Error(
-            `Child was OOM-killed (exit ${exitCode}). ` +
-            `This confirms the bug: GC did not respect the ${limitMB}MB cgroup limit.\n` +
-            `stderr: ${stderr}`
-          );
+          // OOM-killed — this IS the bug
+          expect(stderr).toBe("");
         }
-        throw new Error(`Child exited with ${exitCode}: ${stderr}`);
+        expect(exitCode).toBe(0);
+        return;
       }
 
-      // Parse the JSON output
       const lastLine = stdout.trim().split("\n").pop()!;
       const result = JSON.parse(lastLine);
 
-      console.log(`Peak RSS: ${result.peak_rss_mb}MB, Final RSS: ${result.final_rss_mb}MB, ` +
-                  `Constrained: ${result.constrained_mb}MB, Limit: ${result.limit_mb}MB`);
+      console.log(
+        `Peak RSS: ${result.peak_rss_mb}MB, Final RSS: ${result.final_rss_mb}MB, ` +
+        `Constrained: ${result.constrained_mb}MB, Limit: ${result.limit_mb}MB`
+      );
 
-      // The constrained memory should match the cgroup limit
       if (result.constrained_mb !== null) {
         expect(result.constrained_mb).toBeLessThanOrEqual(limitMB);
       }
 
-      // RSS should stay bounded below 85% of the limit
       expect(result.bounded).toBe(true);
 
     } finally {
-      // Cleanup cgroup
+      // Cleanup
       try { rmdirSync(testCgroup); } catch {}
     }
-  }, 30_000); // 30s timeout
+  }, 30_000);
 
 });

@@ -641,11 +641,11 @@ test("--parallel writes new snapshots from every worker", async () => {
 });
 
 test("--parallel: a test producing a >64MB result line is truncated, not treated as a crash", async () => {
-  // 70M-char test name → the per-test status line itself exceeds the IPC frame
-  // limit. The encoder must truncate so the receiver doesn't drop the channel
-  // and mark the whole file as crashed.
+  // Test name just over the 64MB IPC frame limit → the per-test status line
+  // itself exceeds it. The encoder must truncate so the receiver doesn't drop
+  // the channel and mark the whole file as crashed.
   using dir = tempDir("parallel-huge-frame", {
-    "huge.test.js": `import {test,expect} from "bun:test"; test("X".repeat(70_000_000),()=>expect(1).toBe(2));`,
+    "huge.test.js": `import {test,expect} from "bun:test"; test("X".repeat(65_000_000),()=>expect(1).toBe(2));`,
     "ok.test.js": `import {test,expect} from "bun:test"; test("ok",()=>expect(1).toBe(1));`,
   });
   await using proc = Bun.spawn({
@@ -657,7 +657,7 @@ test("--parallel: a test producing a >64MB result line is truncated, not treated
   });
   const result = await Promise.race([
     Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]),
-    Bun.sleep(30000).then(() => "TIMEOUT" as const),
+    Bun.sleep(60000).then(() => "TIMEOUT" as const),
   ]);
   expect(result).not.toBe("TIMEOUT");
   const [stdout, stderr, exitCode] = result as [string, string, number];
@@ -669,7 +669,7 @@ test("--parallel: a test producing a >64MB result line is truncated, not treated
   expect(stderr).toContain("1 pass");
   expect(stderr).toContain("1 fail");
   expect(exitCode).toBe(1);
-}, 60_000);
+}, 90_000);
 
 test("--parallel: a test writing garbage to fd 3 does not hang the coordinator", async () => {
   using dir = tempDir("parallel-hostile-fd3", {

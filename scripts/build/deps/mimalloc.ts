@@ -83,9 +83,14 @@ export const mimalloc: Dependency = {
       args.MI_OVERRIDE = "ON";
       args.MI_OSX_ZONE = "OFF";
       args.MI_OSX_INTERPOSE = "OFF";
+    } else if (cfg.windows) {
+      // Bun links the static CRT and calls mi_* directly; nothing routes
+      // through CRT malloc. With override ON, dev3's alloc-override.c
+      // emits _expand/_msize/free into the static lib and lld-link
+      // duplicates against libucrt(d). mimalloc's *default* is ON, so
+      // this must be explicit.
+      args.MI_OVERRIDE = "OFF";
     }
-    // Windows: use mimalloc's defaults (no override; Windows has its own
-    // mechanism via the static CRT we link).
 
     if (cfg.debug) {
       // Heavy debug checks: guard bytes, freed-memory poisoning, double-free

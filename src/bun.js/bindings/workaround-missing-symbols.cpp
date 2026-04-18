@@ -150,12 +150,18 @@ double __wrap_log2(double x) { return log2(x); }
     __builtin_unreachable();
 }
 
-// glibc 2.25 added a getrandom() wrapper around the syscall (kernel ≥ 3.17).
-// Bypass libc and call the syscall directly so we don't need GLIBC_2.25.
-// All callers (BoringSSL, c-ares, highway) already handle ENOSYS by falling
-// back to /dev/urandom, so older kernels degrade gracefully.
+// glibc 2.25 added getrandom(); 2.41 added vDSO acceleration. Forward to
+// glibc's when present so we keep the vDSO fast path on modern systems; on
+// glibc < 2.25 issue the raw syscall ourselves. The kernel syscall has existed
+// since Linux 3.17; on older kernels syscall() returns -1/ENOSYS, which all
+// callers (BoringSSL, c-ares, highway) handle by falling back to /dev/urandom.
 ssize_t __wrap_getrandom(void* buf, size_t buflen, unsigned int flags)
 {
+    using gr_fn = ssize_t (*)(void*, size_t, unsigned int);
+    static gr_fn real = reinterpret_cast<gr_fn>(dlsym(RTLD_NEXT, "getrandom"));
+    if (real) {
+        return real(buf, buflen, flags);
+    }
     return syscall(SYS_getrandom, buf, buflen, flags);
 }
 

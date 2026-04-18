@@ -863,16 +863,17 @@ pub const Bin = extern struct {
         ///
         /// When redirected into a platform-specific optional dependency (native
         /// binlink optimization), the platform package may lay the binary out
-        /// differently than the parent's `bin` field expects. esbuild mirrors
-        /// the path exactly (`bin/esbuild` in both) but other packages ship the
-        /// binary at the package root under the bin name (e.g.
-        /// `@anthropic-ai/claude-code` has `bin/claude.exe` in the parent but
-        /// `claude` at the root of `@anthropic-ai/claude-code-linux-x64`).
+        /// differently than the root package's `bin` field expects. esbuild
+        /// mirrors the path exactly (`bin/esbuild` in both) but other packages
+        /// ship the binary at the package root under the bin name (e.g.
+        /// `@anthropic-ai/claude-code` has `bin/claude.exe` in the root package
+        /// but `claude` at the root of `@anthropic-ai/claude-code-linux-x64`,
+        /// which has no `bin` field of its own).
         ///
-        /// Tries, in order:
-        ///   1. `<package_dir>/<target>` - the path from the parent bin field
-        ///   2. `<package_dir>/<bin_name>` - bin name at package root
-        ///   3. `<package_dir>/bin/<bin_name>` - bin name under `bin/`
+        /// Both candidates come from the root package's `bin` entry - its
+        /// value (`target`) and its key (`bin_name`):
+        ///   1. `<package_dir>/<target>` - the path from the root `bin` field
+        ///   2. `<package_dir>/<bin_name>` - the bin name at package root
         ///
         /// Falls through to (1) when nothing exists so the existing
         /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
@@ -891,11 +892,6 @@ pub const Bin = extern struct {
                 const at_root = path.joinAbsStringZ(package_dir, &.{bin_name}, .auto);
                 if (bun.sys.exists(at_root)) {
                     return at_root;
-                }
-
-                const under_bin = path.joinAbsStringZ(package_dir, &.{ "bin", bin_name }, .auto);
-                if (bun.sys.exists(under_bin)) {
-                    return under_bin;
                 }
             }
 

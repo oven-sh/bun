@@ -151,8 +151,10 @@ for rc in "$USER_HOME/.bash_profile" "$USER_HOME/.bashrc"; do
   fi
 done
 
-# fish
-if [[ -d "$USER_HOME/.config/fish" ]] || command -v fish >/dev/null 2>&1; then
+# fish — only if the user has actually set it up. `command -v fish` would
+# probe root's PATH (where Homebrew often has fish as a transitive dep) and
+# create config for users who've never touched it.
+if [[ -d "$USER_HOME/.config/fish" || "$(dscl . -read "/Users/$CONSOLE_USER" UserShell 2>/dev/null)" == *"/fish" ]]; then
   append_once_fish "$USER_HOME/.config/fish/config.fish"
   wrote_any=1
 fi

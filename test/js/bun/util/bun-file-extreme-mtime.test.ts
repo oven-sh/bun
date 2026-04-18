@@ -59,8 +59,11 @@ describe.skipIf(!isLinux)("Bun.file() with extreme mtime", () => {
     try {
       fs.writeFileSync(path, "hello");
       const fd = fs.openSync(path, "r");
-      fs.futimesSync(fd, 1e16, 1e16);
-      fs.closeSync(fd);
+      try {
+        fs.futimesSync(fd, 1e16, 1e16);
+      } finally {
+        fs.closeSync(fd);
+      }
 
       const file = Bun.file(path);
       expect(Number.isFinite(file.lastModified)).toBe(true);

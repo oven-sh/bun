@@ -4,7 +4,6 @@ function generate(ssl) {
   return define({
     name: !ssl ? "TCPSocket" : "TLSSocket",
     JSType: "0b11101110",
-    hasPendingActivity: true,
     noConstructor: true,
     configurable: false,
     memoryCost: true,

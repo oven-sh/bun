@@ -86,7 +86,7 @@ pub fn markInactive(this: *Handlers) void {
             // allow it to be GC'd once the last connection is closed and it's not listening anymore
             if (listen_socket.listener == .none) {
                 listen_socket.poll_ref.unref(this.vm);
-                listen_socket.strong_self.deinit();
+                listen_socket.strong_self.downgrade();
             }
         } else {
             const vm = this.vm;

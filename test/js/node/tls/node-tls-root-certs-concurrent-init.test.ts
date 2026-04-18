@@ -31,15 +31,18 @@ describe("root certificate initialization", () => {
 
     using dir = tempDir("tls-root-certs-race", {
       "extra-ca-bundle.pem": bundle,
-      "fixture.mjs": `
+      "concurrent-init.fixture.ts": `
         import { Worker } from "node:worker_threads";
 
         const N = 16;
-        const results = [];
-        let done = 0;
+        const results: Array<{ extra: number; def: number }> = [];
+        let messaged = 0;
+        let exited = 0;
 
-        function finish() {
-          process.stdout.write(JSON.stringify(results));
+        function maybeFinish() {
+          if (messaged === N && exited === N) {
+            process.stdout.write(JSON.stringify(results));
+          }
         }
 
         for (let i = 0; i < N; i++) {
@@ -57,18 +60,27 @@ describe("root certificate initialization", () => {
           );
           w.on("message", m => {
             results.push(m);
-            if (++done === N) finish();
+            messaged++;
+            maybeFinish();
           });
           w.on("error", err => {
-            console.error(err);
+            console.error("worker error:", err);
             process.exit(1);
+          });
+          w.on("exit", code => {
+            if (code !== 0) {
+              console.error("worker exited with code", code);
+              process.exit(1);
+            }
+            exited++;
+            maybeFinish();
           });
         }
       `,
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(String(dir), "fixture.mjs")],
+      cmd: [bunExe(), path.join(String(dir), "concurrent-init.fixture.ts")],
       env: {
         ...bunEnv,
         NODE_EXTRA_CA_CERTS: path.join(String(dir), "extra-ca-bundle.pem"),
@@ -79,7 +91,10 @@ describe("root certificate initialization", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    // On unpatched builds this segfaults and writes the crash panel to stderr,
+    // so surface that first for a readable failure diff.
     expect(stderr).toBe("");
+    expect(stdout).not.toBe("");
 
     const results = JSON.parse(stdout) as Array<{ extra: number; def: number }>;
     expect(results.length).toBe(16);

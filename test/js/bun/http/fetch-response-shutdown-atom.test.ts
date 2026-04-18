@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { fetchTestingInternals } from "bun:internal-for-testing";
 
 // Regression test for a flaky RELEASE_ASSERT observed in proxy.test.js under
 // the x64 ASAN lane:
@@ -12,25 +13,43 @@ import { bunEnv, bunExe } from "harness";
 // for Response.status_text and Response.url. Atom strings live in a
 // per-thread table. If the process exits while the HTTP thread is between
 // releasing the callback mutex and running derefFromThread(), and
-// BUN_DESTRUCT_VM_ON_EXIT is set (as the CI ASAN lane does), the
-// HTTP thread ends up holding the last FetchTasklet ref after the JS
-// thread has already finalized the JS Response wrapper. derefFromThread()'s
+// BUN_DESTRUCT_VM_ON_EXIT is set (as the CI ASAN lane does), the HTTP
+// thread ends up holding the last FetchTasklet ref after the JS thread has
+// already finalized the JS Response wrapper. derefFromThread()'s
 // isShuttingDown() branch then runs FetchTasklet.deinit() on the HTTP
 // thread, which drops the last native Response ref and derefs the atom
 // strings from the wrong thread -> assert.
 //
 // The fix uses bun.String.cloneUTF8 (plain WTFStringImpl, atomic refcount,
-// no per-thread table) for status_text / url.
-//
-// This test recreates the CI conditions: BUN_DESTRUCT_VM_ON_EXIT=1 so the
-// JS Response wrapper is finalized during the shutdown GC, http_proxy +
-// NO_PROXY set so the env-proxy resolution path runs, and a batch of
-// subprocesses spawned in parallel so the HTTP thread is contending for
-// CPU at exit time. Before the fix this trips the assert intermittently
-// on ASAN builds; after the fix it cannot, since the strings are no
-// longer atoms.
+// no per-thread table) for status_text / url. The race itself is a handful
+// of instructions wide and not reproducible via timing alone, so this test
+// directly asserts the invariant that makes the race harmless: the backing
+// strings are NOT atoms. A stress loop under the same CI conditions
+// (BUN_DESTRUCT_VM_ON_EXIT + parallel subprocesses) additionally exercises
+// the shutdown path end-to-end.
 
 describe("fetch Response status_text/url are safe to destroy off-thread", () => {
+  test("backing strings are not atom StringImpls", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("x", { status: 200, statusText: "OK" });
+      },
+    });
+
+    // Use a short URL so it would have been atomized under the old
+    // `createAtomIfPossible` (< 64 bytes, ASCII).
+    const resp = await fetch(server.url);
+    expect(resp.statusText).toBe("OK");
+    expect(resp.url).toBe(String(server.url));
+
+    // The actual invariant: neither backing string may be an atom, because
+    // Response.destroy() can run on the HTTP thread during VM shutdown and
+    // atom strings are per-thread — destroying one off-thread asserts.
+    const flags = fetchTestingInternals.responseAtomFlags(resp);
+    expect(flags).toEqual({ statusText: false, url: false });
+  });
+
   test("parallel fetch-then-exit under BUN_DESTRUCT_VM_ON_EXIT does not trip AtomStringImpl::remove", async () => {
     await using server = Bun.serve({
       port: 0,
@@ -68,24 +87,21 @@ describe("fetch Response status_text/url are safe to destroy off-thread", () => 
       no_proxy: noProxy,
     };
 
-    const iterations = 16;
-    const concurrency = 8;
+    // One parallel batch is enough to document the end-to-end shutdown
+    // path — the deterministic invariant is covered by the test above.
+    const batch = Array.from({ length: 8 }, () =>
+      Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env,
+        stdout: "ignore",
+        stderr: "pipe",
+      }),
+    );
     const failures: string[] = [];
-
-    for (let i = 0; i < iterations; i += concurrency) {
-      const batch = Array.from({ length: Math.min(concurrency, iterations - i) }, () =>
-        Bun.spawn({
-          cmd: [bunExe(), "-e", script],
-          env,
-          stdout: "ignore",
-          stderr: "pipe",
-        }),
-      );
-      for (const proc of batch) {
-        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-        if (exitCode !== 0) {
-          failures.push(`exit ${exitCode}: ${stderr.slice(0, 500)}`);
-        }
+    for (const proc of batch) {
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) {
+        failures.push(`exit ${exitCode}: ${stderr.slice(0, 500)}`);
       }
     }
 

@@ -180,6 +180,31 @@ pub inline fn setSizeHint(this: *Response, size_hint: Blob.SizeType) void {
     }
 }
 
+/// Testing helper: returns `{ statusText: bool, url: bool }` indicating
+/// whether each backing `bun.String` is an atom StringImpl. These must be
+/// `false` for fetch responses — atom strings live in a per-thread table,
+/// and `FetchTasklet.derefFromThread()` can run `Response.destroy()` on the
+/// HTTP thread during VM shutdown, which would trip
+/// `RELEASE_ASSERT(wasRemoved)` in `AtomStringImpl::remove()`. Exposed via
+/// `bun:internal-for-testing` as `fetchTestingInternals.responseAtomFlags`.
+pub fn jsResponseAtomFlagsForTesting(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const arguments = callframe.arguments_old(1);
+    const this_value = arguments.ptr[0];
+    const response = this_value.as(Response) orelse {
+        return globalObject.throwInvalidArgumentTypeValue("response", "Response", this_value);
+    };
+
+    const status_is_atom = response.#init.status_text.tag == .WTFStringImpl and
+        response.#init.status_text.value.WTFStringImpl.isAtom();
+    const url_is_atom = response.#url.tag == .WTFStringImpl and
+        response.#url.value.WTFStringImpl.isAtom();
+
+    const obj = jsc.JSValue.createEmptyObject(globalObject, 2);
+    obj.put(globalObject, ZigString.static("statusText"), jsc.JSValue.jsBoolean(status_is_atom));
+    obj.put(globalObject, ZigString.static("url"), jsc.JSValue.jsBoolean(url_is_atom));
+    return obj;
+}
+
 pub export fn jsFunctionRequestOrResponseHasBodyValue(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
     const arguments = callframe.arguments_old(1);
     const this_value = arguments.ptr[0];

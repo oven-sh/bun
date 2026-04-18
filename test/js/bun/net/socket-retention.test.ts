@@ -8,6 +8,51 @@ import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
 
+test("socket.data setter works inside connectError", async () => {
+  // Before the JSRef migration, handleConnectError reset the cached raw
+  // JSValue to .zero *before* invoking the connectError callback. The
+  // `socket.data = x` setter then called `dataSetCached(.zero, ...)` —
+  // a null JSCell — which segfaulted (release) / tripped UBSan (debug).
+  // With JSRef the wrapper is downgraded (not zeroed) and setData resolves
+  // the wrapper via getThisValue(), so the assignment works and the data
+  // round-trips.
+  //
+  // Run in a subprocess so a crash is observed as a non-zero exit instead
+  // of taking down the test runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { promise, resolve } = Promise.withResolvers();
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: 1,
+          socket: {
+            connectError(socket) {
+              socket.data = { marker: "after-connect-error" };
+              console.log(JSON.stringify(socket.data));
+              resolve();
+            },
+            data() {},
+          },
+        }).catch(() => {});
+        await promise;
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Positive assertion first: if the setter crashed, stdout is empty and
+  // this fails with a clear message. On release builds the crash surfaces
+  // as a non-zero exit; on debug-asan it surfaces as a UBSan null-deref.
+  expect(stdout.trim()).toBe('{"marker":"after-connect-error"}');
+  expect(exitCode).toBe(0);
+  void stderr;
+});
+
 // Drive GC until the given object-type count is at or below `max`, or the
 // iteration budget is exhausted. Returns the final count so the assertion
 // message is useful on failure.

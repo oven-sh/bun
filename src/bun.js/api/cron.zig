@@ -926,7 +926,14 @@ pub const CronJob = struct {
     }
 
     fn scheduleNext(this: *CronJob, vm: *jsc.VirtualMachine) void {
-        if (this.stopped) return this.finishDeferredStop(vm);
+        // Every path into here has just returned from user JS (the callback,
+        // an uncaughtException handler, or an unhandledRejection handler). If
+        // that JS called process.exit() / worker.terminate(), don't re-arm
+        // the timer into a VM whose teardown now owns it.
+        if (this.stopped or vm.scriptExecutionStatus() != .running) {
+            this.stopped = true;
+            return this.finishDeferredStop(vm);
+        }
         const next_time = this.computeNextTimespec() orelse
             return this.finishDeferredStop(vm);
         vm.timer.update(&this.event_loop_timer, &next_time);
@@ -975,12 +982,6 @@ pub const CronJob = struct {
                     return;
                 }
                 _ = vm.uncaughtException(vm.global, err, false);
-            }
-            // uncaughtException() may have run a handler that called
-            // process.exit(); don't re-arm the timer into a dying VM.
-            if (vm.scriptExecutionStatus() != .running) {
-                this.selfStop(vm);
-                return;
             }
             this.scheduleNext(vm);
             return;

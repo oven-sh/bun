@@ -15,12 +15,12 @@ if (process.platform === "linux") {
     const lines = output.split("\n");
     const errors = [];
     for (const line of lines) {
-      const match = line.match(/\(GLIBC_2(.*)\)\s/);
+      const match = line.match(/\(GLIBC_(\d+(?:\.\d+){1,2})\)\s/);
       if (match?.[1]) {
-        let version = "2." + match[1];
-        if (version.startsWith("2..")) {
-          version = "2." + version.slice(3);
-        }
+        // Bun.semver.order("2.17", "2.17.0") === 1, so normalize to 3 parts.
+        const parts = match[1].split(".");
+        while (parts.length < 3) parts.push("0");
+        const version = parts.join(".");
         if (semver.order(version, "2.17.0") > 0) {
           errors.push({
             symbol: line.slice(line.lastIndexOf(")") + 1).trim(),

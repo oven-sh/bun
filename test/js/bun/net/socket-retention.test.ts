@@ -4,8 +4,8 @@
 // socket is active so callbacks can always recover the wrapper, weak once the
 // socket is closed so GC can reclaim it. This test exercises both directions.
 
-import { expect, test } from "bun:test";
 import { heapStats } from "bun:jsc";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
 
 // Drive GC until the given object-type count is at or below `max`, or the

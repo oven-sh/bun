@@ -256,6 +256,14 @@ sed \
   -e "s/@INSTALL_KB@/$INSTALL_KB/g" \
   "$SCRIPT_DIR/distribution.xml.template" > "$DIST_XML"
 
+# productbuild validates every file referenced from --resources; if
+# render_background() couldn't produce the PNGs (headless agent, no
+# rsvg-convert) drop the <background> elements so the build still succeeds.
+if [[ ! -f "$RESOURCES_DIR/background.png" || ! -f "$RESOURCES_DIR/background-dark.png" ]]; then
+  warn "Omitting <background> from distribution.xml (PNGs not available)"
+  sed -i '' -e '/<background /d' -e '/<background-darkAqua /d' "$DIST_XML"
+fi
+
 PRODUCT_PKG="$BUILD_DIR/$PKG_NAME"
 
 log "Building product archive"

@@ -64,6 +64,7 @@ extern "C" int kill(int pid, int sig)
 #include <errno.h>
 #include <math.h>
 #include <mutex>
+#include <pthread.h>
 #include <semaphore.h>
 #include <stdio.h>
 #include <signal.h>
@@ -149,6 +150,92 @@ ssize_t __wrap_getrandom(void* buf, size_t buflen, unsigned int flags)
 }
 
 } // extern "C"
+
+// glibc 2.18 added __cxa_thread_atexit_impl for C++11 thread_local destructors.
+// All in-tree callers (libstdc++, libc++abi, Rust std) weak-reference it, but
+// lld emits a non-weak GLIBC_2.18 verneed entry regardless, which the loader
+// rejects on 2.17. Providing a strong definition here satisfies the link-time
+// reference and removes the dynamic dependency.
+//
+// At runtime we forward to glibc's real implementation when present (≥ 2.18,
+// i.e. effectively always); this preserves glibc's DSO-refcount handling so
+// dlclose() of FFI/napi addons stays safe.
+//
+// The fallback for glibc 2.17 is libc++abi's, taken verbatim (modulo
+// __libcpp_tls_* → pthread_* and abort_message → abort) from
+// https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/libcxxabi/src/cxa_thread_atexit.cpp
+// under the Apache-2.0 WITH LLVM-exception license. See LICENSE.md for the
+// full text. Its documented limitations (dso_symbol ignored; main-thread dtors
+// run at static-destruction time) apply only on glibc 2.17.
+namespace {
+
+using Dtor = void (*)(void*);
+
+struct DtorList {
+    Dtor dtor;
+    void* obj;
+    DtorList* next;
+};
+
+__thread DtorList* dtors = nullptr;
+__thread bool dtors_alive = false;
+pthread_key_t dtors_key;
+
+void run_dtors(void*)
+{
+    while (auto head = dtors) {
+        dtors = head->next;
+        head->dtor(head->obj);
+        ::free(head);
+    }
+    dtors_alive = false;
+}
+
+struct DtorsManager {
+    DtorsManager()
+    {
+        if (pthread_key_create(&dtors_key, run_dtors) != 0) {
+            abort();
+        }
+    }
+    ~DtorsManager()
+    {
+        run_dtors(nullptr);
+    }
+};
+
+} // namespace
+
+extern "C" int __cxa_thread_atexit_impl(Dtor dtor, void* obj, void* dso_symbol)
+{
+    using impl_fn = int (*)(Dtor, void*, void*);
+    static impl_fn real = reinterpret_cast<impl_fn>(dlsym(RTLD_NEXT, "__cxa_thread_atexit_impl"));
+    if (real) {
+        return real(dtor, obj, dso_symbol);
+    }
+
+    (void)dso_symbol;
+    static DtorsManager manager;
+
+    if (!dtors_alive) {
+        if (pthread_setspecific(dtors_key, &dtors_key) != 0) {
+            return -1;
+        }
+        dtors_alive = true;
+    }
+
+    auto head = static_cast<DtorList*>(::malloc(sizeof(DtorList)));
+    if (!head) {
+        return -1;
+    }
+
+    head->dtor = dtor;
+    head->obj = obj;
+    head->next = dtors;
+    dtors = head;
+
+    return 0;
+}
 
 typedef int (*fcntl64_func)(int fd, int cmd, ...);
 

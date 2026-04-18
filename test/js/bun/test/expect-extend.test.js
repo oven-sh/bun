@@ -247,6 +247,16 @@ describe("invalid matcher implementations errors", () => {
     expect(() => expect(0)._toCustomA()).toThrow("MyError");
   });
 
+  it("propagates exceptions from asymmetricMatch", () => {
+    expect.extend({
+      _toCustomThrow: _received => {
+        throw new Error("MyError");
+      },
+    });
+    const matcher = expect._toCustomThrow();
+    expect(() => matcher.asymmetricMatch({})).toThrow("MyError");
+  });
+
   it("throws when returns undefined", () => {
     expect.extend({
       // @ts-expect-error

@@ -592,8 +592,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime Context: type,
             ctx: *Context,
             comptime socket_field_name: []const u8,
+            allowHalfOpen: bool,
+            err: *c_int,
         ) !*Context {
-            const this_socket = try connectUnixAnon(path, socket_ctx, ctx);
+            const this_socket = try connectUnixAnon(path, socket_ctx, ctx, allowHalfOpen, err);
             @field(ctx, socket_field_name) = this_socket;
             return ctx;
         }

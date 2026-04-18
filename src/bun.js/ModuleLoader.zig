@@ -1147,7 +1147,7 @@ fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded:
     return switch (hardcoded) {
         .@"bun:main" => if (jsc_vm.entry_point.generated) .{
             .allocator = null,
-            .source_code = bun.String.cloneUTF8(jsc_vm.entry_point.source.contents),
+            .source_code = bun.String.cloneUTF8(jsc_vm.entry_point.contents),
             .specifier = specifier,
             .source_url = specifier,
             .tag = .esm,

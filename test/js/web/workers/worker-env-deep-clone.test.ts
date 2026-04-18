@@ -18,15 +18,17 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 // test is gated to sanitizer builds. The .env file forces the parent
 // worker to allocate key/value bytes in its own arena (via Parser.parse →
 // allocator.dupe), which is what makes the shallow clone dangerous.
-test.skipIf(!isASAN && !isDebug)("worker env map is deep-cloned from parent", async () => {
-  // Keys that are NOT in the process environment, so the parent worker's
-  // .env parse inserts them fresh (key slice into the worker-arena file
-  // buffer, value duped into the worker arena).
-  const envLines = Array.from({ length: 64 }, (_, i) => `WORKER_ENV_DEEP_CLONE_${i}=value_${i}_${"x".repeat(32)}`);
+test.skipIf(!isASAN && !isDebug)(
+  "worker env map is deep-cloned from parent",
+  async () => {
+    // Keys that are NOT in the process environment, so the parent worker's
+    // .env parse inserts them fresh (key slice into the worker-arena file
+    // buffer, value duped into the worker arena).
+    const envLines = Array.from({ length: 64 }, (_, i) => `WORKER_ENV_DEEP_CLONE_${i}=value_${i}_${"x".repeat(32)}`);
 
-  using dir = tempDir("worker-env-deep-clone", {
-    ".env": envLines.join("\n") + "\n",
-    "main.js": `
+    using dir = tempDir("worker-env-deep-clone", {
+      ".env": envLines.join("\n") + "\n",
+      "main.js": `
       const { Worker } = require("node:worker_threads");
       let done = 0;
       const total = 8;
@@ -58,18 +60,20 @@ test.skipIf(!isASAN && !isDebug)("worker env map is deep-cloned from parent", as
         });
       }
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.js"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout.trim()).toBe("ok");
-  expect(exitCode).toBe(0);
-}, 30_000);
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

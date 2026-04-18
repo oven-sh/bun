@@ -181,15 +181,15 @@ pub inline fn setSizeHint(this: *Response, size_hint: Blob.SizeType) void {
 }
 
 /// Testing helper: returns `{ statusText: bool, url: bool }` indicating
-/// whether each backing `bun.String` is an atom StringImpl. These must be
-/// `false` for fetch responses — atom strings live in a per-thread table,
-/// and `FetchTasklet.derefFromThread()` can run `Response.destroy()` on the
-/// HTTP thread during VM shutdown, which would trip
-/// `RELEASE_ASSERT(wasRemoved)` in `AtomStringImpl::remove()`. Exposed via
-/// `bun:internal-for-testing` as `fetchTestingInternals.responseAtomFlags`.
+/// whether each backing `bun.String` is an atom StringImpl. fetch responses
+/// atomize both for dedup; atom strings live in a per-thread table, so
+/// `Response.destroy()` must run on the JS thread that created them.
+/// `FetchTasklet.callback()` holds the tasklet mutex through
+/// `derefFromThread()` to guarantee the HTTP thread is never the last ref.
+/// Exposed via `bun:internal-for-testing` as
+/// `fetchTestingInternals.responseAtomFlags`.
 pub fn jsResponseAtomFlagsForTesting(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-    const arguments = callframe.arguments_old(1);
-    const this_value = arguments.ptr[0];
+    const this_value = callframe.argument(0);
     const response = this_value.as(Response) orelse {
         return globalObject.throwInvalidArgumentTypeValue("response", "Response", this_value);
     };

@@ -9,27 +9,34 @@ import { bunEnv, bunExe } from "harness";
 //   WTF/wtf/text/AtomStringImpl.cpp(409) : static void WTF::AtomStringImpl::remove(AtomStringImpl *)
 //   "The string being removed is an atom in the string table of an other thread!"
 //
-// Root cause: FetchTasklet.toResponse() used bun.String.createAtomIfPossible
-// for Response.status_text and Response.url. Atom strings live in a
-// per-thread table. If the process exits while the HTTP thread is between
-// releasing the callback mutex and running derefFromThread(), and
-// BUN_DESTRUCT_VM_ON_EXIT is set (as the CI ASAN lane does), the HTTP
-// thread ends up holding the last FetchTasklet ref after the JS thread has
-// already finalized the JS Response wrapper. derefFromThread()'s
-// isShuttingDown() branch then runs FetchTasklet.deinit() on the HTTP
-// thread, which drops the last native Response ref and derefs the atom
-// strings from the wrong thread -> assert.
+// Root cause: FetchTasklet.toResponse() atomizes Response.status_text and
+// Response.url for dedup (many responses share "OK"). Atom strings live in
+// a per-thread table. In FetchTasklet.callback() (HTTP thread), the defer
+// order used to be: enqueue onProgressUpdate -> unlock mutex ->
+// derefFromThread(). In the gap between unlock and derefFromThread(), the
+// JS thread could run onProgressUpdate (which derefs the tasklet 2->1 and
+// unrefs poll_ref), finish the user script, and — with
+// BUN_DESTRUCT_VM_ON_EXIT=1 as the ASAN CI lane sets — run destructOnExit's
+// full GC, finalizing the JS Response wrapper. Then the HTTP thread's
+// derefFromThread() would see count==1 + isShuttingDown() and run deinit()
+// on the HTTP thread, dropping the last native Response ref and deref'ing
+// the atom strings from the wrong thread -> assert.
 //
-// The fix uses bun.String.cloneUTF8 (plain WTFStringImpl, atomic refcount,
-// no per-thread table) for status_text / url. The race itself is a handful
-// of instructions wide and not reproducible via timing alone, so this test
-// directly asserts the invariant that makes the race harmless: the backing
-// strings are NOT atoms. A stress loop under the same CI conditions
-// (BUN_DESTRUCT_VM_ON_EXIT + parallel subprocesses) additionally exercises
-// the shutdown path end-to-end.
+// Fix: callback() now runs derefFromThread() BEFORE releasing the mutex.
+// onProgressUpdate needs that mutex, so while the HTTP thread holds it the
+// JS side cannot have dropped its baseline ref — the HTTP deref is always
+// N->N-1 with N>=2, never the last ref. poll_ref (unref'd inside
+// onProgressUpdate) therefore keeps the VM alive until the HTTP thread is
+// done with the tasklet, and deinit() only ever runs on the JS thread where
+// the atom strings were registered.
+//
+// The race window was a handful of instructions and not reproducible via
+// timing alone. This test documents the intent (status_text/url remain
+// atomized for memory dedup — deliberately, since the race is now closed
+// structurally) and exercises the shutdown path end-to-end.
 
-describe("fetch Response status_text/url are safe to destroy off-thread", () => {
-  test("backing strings are not atom StringImpls", async () => {
+describe("fetch Response status_text/url atom strings are JS-thread-owned", () => {
+  test("backing strings are atomized (dedup) and survive a round-trip", async () => {
     await using server = Bun.serve({
       port: 0,
       fetch() {
@@ -37,17 +44,16 @@ describe("fetch Response status_text/url are safe to destroy off-thread", () => 
       },
     });
 
-    // Use a short URL so it would have been atomized under the old
-    // `createAtomIfPossible` (< 64 bytes, ASCII).
     const resp = await fetch(server.url);
     expect(resp.statusText).toBe("OK");
     expect(resp.url).toBe(String(server.url));
 
-    // The actual invariant: neither backing string may be an atom, because
-    // Response.destroy() can run on the HTTP thread during VM shutdown and
-    // atom strings are per-thread — destroying one off-thread asserts.
+    // status_text and url are intentionally atomized for memory dedup.
+    // This is safe because callback() holds the tasklet mutex through
+    // derefFromThread(), guaranteeing the HTTP thread is never the last
+    // ref and Response.destroy() runs on the JS thread that owns the atoms.
     const flags = fetchTestingInternals.responseAtomFlags(resp);
-    expect(flags).toEqual({ statusText: false, url: false });
+    expect(flags).toEqual({ statusText: true, url: true });
   });
 
   test("parallel fetch-then-exit under BUN_DESTRUCT_VM_ON_EXIT does not trip AtomStringImpl::remove", async () => {
@@ -55,14 +61,14 @@ describe("fetch Response status_text/url are safe to destroy off-thread", () => 
       port: 0,
       fetch() {
         // Tiny body so headers + body arrive in a single HTTP callback —
-        // that's the path where derefFromThread() can be the last ref.
+        // that's the path where derefFromThread() is the HTTP-side deref.
         return new Response("x");
       },
     });
 
     const script = `
       const resp = await fetch(${JSON.stringify(String(server.url))});
-      // Touch the formerly-atomized fields so they're materialized.
+      // Touch the atomized fields so they're materialized.
       resp.statusText;
       resp.url;
       resp.headers.get("x-proxy-used");
@@ -88,7 +94,7 @@ describe("fetch Response status_text/url are safe to destroy off-thread", () => 
     };
 
     // One parallel batch is enough to document the end-to-end shutdown
-    // path — the deterministic invariant is covered by the test above.
+    // path — the invariant is guaranteed structurally by the defer order.
     const batch = Array.from({ length: 8 }, () =>
       Bun.spawn({
         cmd: [bunExe(), "-e", script],

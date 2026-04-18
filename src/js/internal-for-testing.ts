@@ -148,10 +148,10 @@ export const fetchTestingInternals = {
   /**
    * Returns `{ statusText: boolean, url: boolean }` — whether each native
    * backing string on a fetch `Response` is an atom `StringImpl`. Atom
-   * strings live in a per-thread table; the `Response` can be destroyed
-   * from the HTTP thread during VM shutdown (FetchTasklet.derefFromThread),
-   * so these MUST both be `false` or the process trips
-   * `RELEASE_ASSERT(wasRemoved)` in `AtomStringImpl::remove()`.
+   * strings live in a per-thread table, so `Response.destroy()` must run
+   * on the JS thread that created them. `FetchTasklet.callback()` holds
+   * the tasklet mutex through `derefFromThread()` so the HTTP thread is
+   * never the last ref; see `fetch-response-shutdown-atom.test.ts`.
    */
   responseAtomFlags: $newZigFunction("webcore/Response.zig", "jsResponseAtomFlagsForTesting", 1) as (
     response: Response,

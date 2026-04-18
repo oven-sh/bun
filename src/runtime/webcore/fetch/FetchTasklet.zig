@@ -76,15 +76,21 @@ pub const FetchTasklet = struct {
     pub fn derefFromThread(this: *FetchTasklet) void {
         const count = this.ref_count.fetchSub(1, .monotonic);
         bun.debugAssert(count > 0);
+        // The only caller is callback(), which holds task.mutex during this
+        // deref. The JS-side baseline deref is in onProgressUpdate, which
+        // needs that mutex — so it can't have run yet and count must be ≥2
+        // here. That means the branch below is unreachable from callback()
+        // today; it's kept as a defensive enqueue for any future caller.
+        bun.debugAssert(count > 1);
 
         if (count == 1) {
             if (this.javascript_vm.isShuttingDown()) {
-                this.deinit() catch |err| switch (err) {};
+                // deinit() touches JS-thread-only state (Response holds
+                // per-thread atom strings, jsc.Weak, jsc.Strong). Leak
+                // rather than crash — the process is exiting.
                 return;
             }
-            // this is really unlikely to happen, but can happen
             // lets make sure that we always call deinit from main thread
-
             this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
         }
     }
@@ -977,22 +983,20 @@ pub const FetchTasklet = struct {
         const metadata = this.metadata.?;
         const http_response = metadata.response;
         this.is_waiting_body = this.result.has_more;
-        // status_text and url must NOT be atomized: the Response can be
-        // destroyed from the HTTP thread via derefFromThread() -> deinit()
-        // when the VM is shutting down (see isShuttingDown() branch), and
-        // atom strings are per-thread — deref'ing them off-thread trips
-        // the `wasRemoved` RELEASE_ASSERT in AtomStringImpl::remove().
-        // Regular WTFStringImpl refcounts are atomic so cloneUTF8 is safe.
+        // status_text and url are atomized for dedup (many responses share
+        // "OK"). Atom strings live in a per-thread table, so Response.destroy
+        // must run on this thread — see the defer-order note in callback()
+        // for why derefFromThread() can never drop the last ref.
         return Response.init(
             .{
                 .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
                 .status_code = @as(u16, @truncate(http_response.status_code)),
-                .status_text = bun.String.cloneUTF8(http_response.status),
+                .status_text = bun.String.createAtomIfPossible(http_response.status),
             },
             Body{
                 .value = this.toBodyValue(),
             },
-            bun.String.cloneUTF8(metadata.url),
+            bun.String.createAtomIfPossible(metadata.url),
             this.result.redirected,
         );
     }
@@ -1407,13 +1411,25 @@ pub const FetchTasklet = struct {
     pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
         // at this point only this thread is accessing result to is no race condition
         const is_done = !result.has_more;
-        // we are done with the http client so we can deref our side
-        // this is a atomic operation and will enqueue a task to deinit on the main thread
-        defer if (is_done) task.derefFromThread();
 
         task.mutex.lock();
-        // we need to unlock before task.deref();
         defer task.mutex.unlock();
+        // derefFromThread() runs BEFORE the mutex is released (inner defer
+        // runs first). The JS-side baseline deref lives in onProgressUpdate,
+        // which must acquire this mutex, so while we hold it the JS side
+        // cannot have dropped its ref yet — our deref is therefore always
+        // N→N-1 with N≥2, never the last ref. That guarantees deinit()
+        // (and with it Response.destroy(), which derefs per-thread atom
+        // strings for status_text/url) only ever runs on the JS thread.
+        // Previously derefFromThread ran after unlock; if the JS thread
+        // fully processed the request and started VM teardown in that gap,
+        // the isShuttingDown() branch in derefFromThread() would deinit on
+        // the HTTP thread and trip AtomStringImpl::remove()'s wasRemoved
+        // assert. poll_ref is unref'd inside onProgressUpdate, so holding
+        // the mutex through our deref also keeps the VM alive until the
+        // HTTP thread is done with this tasklet.
+        defer if (is_done) task.derefFromThread();
+
         task.http.?.* = async_http.*;
         task.http.?.response_buffer = async_http.response_buffer;
 

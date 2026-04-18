@@ -428,13 +428,17 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         pub fn clone(this: *const @This(), allocator: Allocator) @This() {
             var ret = this.*;
             if (!this.spilled()) return ret;
-            ret.data.heap.ptr = bun.handleOom(allocator.dupe(T, ret.data.heap.ptr[0..ret.data.heap.len])).ptr;
+            // Preserve the invariant that the heap allocation holds `capacity` elements,
+            // otherwise a later append that trusts `capacity` would write out of bounds.
+            const buf = bun.handleOom(allocator.alloc(T, this.capacity));
+            @memcpy(buf[0..ret.data.heap.len], ret.data.heap.ptr[0..ret.data.heap.len]);
+            ret.data.heap.ptr = buf.ptr;
             return ret;
         }
 
         pub fn deinit(this: *@This(), allocator: Allocator) void {
             if (this.spilled()) {
-                allocator.free(this.data.heap.ptr[0..this.data.heap.len]);
+                allocator.free(this.data.heap.ptr[0..this.capacity]);
             }
         }
 
@@ -593,16 +597,16 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             if (new_cap <= N) {
                 if (unspilled) return;
                 this.data = .{ .inlined = undefined };
-                @memcpy(ptr[0..length], this.data.inlined[0..length]);
+                @memcpy(this.data.inlined[0..length], ptr[0..length]);
                 this.capacity = length;
-                allocator.free(ptr[0..length]);
+                allocator.free(ptr[0..cap]);
             } else if (new_cap != cap) {
                 const new_alloc: [*]T = if (unspilled) new_alloc: {
                     const new_alloc = bun.handleOom(allocator.alloc(T, new_cap));
                     @memcpy(new_alloc[0..length], ptr[0..length]);
                     break :new_alloc new_alloc.ptr;
                 } else new_alloc: {
-                    break :new_alloc bun.handleOom(allocator.realloc(ptr[0..length], new_cap * @sizeOf(T))).ptr;
+                    break :new_alloc bun.handleOom(allocator.realloc(ptr[0..cap], new_cap)).ptr;
                 };
                 this.data = .{ .heap = .{ .ptr = new_alloc, .len = length } };
                 this.capacity = new_cap;

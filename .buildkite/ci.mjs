@@ -813,6 +813,32 @@ function getWindowsSignStep(windowsPlatforms, options) {
 }
 
 /**
+ * Builds the universal macOS .pkg installer from the two darwin build-bun
+ * artifacts. Runs on a build-darwin agent (needs lipo/pkgbuild/productbuild/
+ * codesign/notarytool). Uploads bun-darwin-universal.pkg for the release
+ * step to pick up.
+ * @param {Platform[]} darwinPlatforms
+ * @returns {Step}
+ */
+function getMacOSPkgStep(darwinPlatforms) {
+  return {
+    key: "darwin-pkg",
+    label: `${getBuildkiteEmoji("darwin")} pkg`,
+    depends_on: darwinPlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+    agents: {
+      queue: "build-darwin",
+      os: "darwin",
+      // Any arch can assemble the .pkg (lipo/pkgbuild are universal), but
+      // prefer aarch64 since that's where most of the fleet is.
+      arch: darwinPlatforms.find(p => p.arch === "aarch64")?.arch ?? darwinPlatforms[0].arch,
+    },
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    command: "./packages/bun-darwin-pkg/build.sh",
+  };
+}
+
+/**
  * Aggregates stripped-binary sizes from every release build, compares them
  * against the latest main build's binary-sizes.json, and fails if any grew
  * past the threshold. Runs on PR builds (comparison) and main (record-only,
@@ -856,7 +882,7 @@ const BINARY_SIZE_THRESHOLD_MB = 0.5;
  * @param {{ signed: boolean }} [extra]
  * @returns {Step}
  */
-function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
+function getReleaseStep(buildPlatforms, options, { signed = false, darwinPkg = false } = {}) {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
 
@@ -865,6 +891,10 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
   const depends_on = signed
     ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
     : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
+
+  if (darwinPkg) {
+    depends_on.push("darwin-pkg");
+  }
 
   return {
     key: "release",
@@ -878,6 +908,8 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
       // Tells upload-release.sh to fetch Windows zips from the sign step
       // (same filenames, but the signed re-uploads are the ones we want).
       WINDOWS_ARTIFACT_STEP: signed ? "windows-sign" : "",
+      // Tells upload-release.sh the macOS .pkg is available to upload.
+      DARWIN_PKG_STEP: darwinPkg ? "darwin-pkg" : "",
     },
     command: ".buildkite/scripts/upload-release.sh",
   };
@@ -969,6 +1001,7 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
  * @property {string | boolean} [forceTests]
  * @property {string | boolean} [buildImages]
  * @property {string | boolean} [signWindows]
+ * @property {string | boolean} [buildPkg]
  * @property {string | boolean} [publishImages]
  * @property {number} [canary]
  * @property {Platform[]} [buildPlatforms]
@@ -1246,6 +1279,7 @@ async function getPipelineOptions() {
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
+    buildPkg: parseOption(/\[(build pkg|build macos pkg)\]/i),
     buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
     dryRun: parseOption(/\[(dry run)\]/i),
     publishImages: parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
@@ -1376,8 +1410,20 @@ async function getPipeline(options = {}) {
     }
   }
 
+  // Build the macOS .pkg installer on main, or when [build pkg] is in the
+  // commit message (for testing on a branch). Needs both darwin arches to
+  // produce a universal binary, so skip if the platform filter dropped one.
+  const darwinPlatforms = buildPlatforms.filter(p => p.os === "darwin" && (p.profile ?? "release") === "release");
+  const shouldBuildPkg =
+    (isMainBranch() || options.buildPkg) &&
+    darwinPlatforms.some(p => p.arch === "aarch64") &&
+    darwinPlatforms.some(p => p.arch === "x64");
+  if (shouldBuildPkg) {
+    steps.push(getMacOSPkgStep(darwinPlatforms));
+  }
+
   if (isMainBranch()) {
-    steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows }));
+    steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows, darwinPkg: shouldBuildPkg }));
   }
 
   /** @type {Map<string, GroupStep>} */

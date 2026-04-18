@@ -61,6 +61,17 @@ Bun ships as a single, dependency-free executable. You can install it via script
 
     </Tab>
 
+    <Tab title="macOS Installer">
+      Download the universal `.pkg` installer from the [latest GitHub release](https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-universal.pkg) and double-click it. It installs `bun` and `bunx` to `/usr/local/bin`, adds them to your `PATH`, and sets `BUN_INSTALL` to `~/.bun` for global packages. Works on both Apple Silicon and Intel Macs.
+
+      To uninstall:
+
+      ```bash terminal icon="terminal"
+      sudo rm -f /usr/local/bin/bun /usr/local/bin/bunx /etc/paths.d/200-bun
+      sudo pkgutil --forget sh.bun.bun
+      ```
+    </Tab>
+
   <Tab title="Docker">
     Bun provides a Docker image that supports both Linux x64 and arm64.
 

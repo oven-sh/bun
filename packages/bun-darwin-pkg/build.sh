@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+#
+# Build a universal macOS .pkg installer for Bun.
+#
+# This script is intended to run on a macOS CI agent after the
+# darwin-aarch64 and darwin-x64 build-bun steps have completed. It:
+#
+#   1. Downloads (or uses pre-staged) bun-darwin-{aarch64,x64}.zip artifacts
+#   2. Lipo's the two binaries into a single universal binary
+#   3. Codesigns the binary with Hardened Runtime + entitlements (if creds
+#      are present)
+#   4. Lays out a payload root at /usr/local, plus /etc/paths.d
+#   5. Renders the kawaii installer background from the Bun logo
+#   6. Runs pkgbuild + productbuild to produce Bun.pkg
+#   7. Signs the installer with a Developer ID Installer identity and
+#      submits it for notarization (if creds are present)
+#
+# When signing credentials are not available (e.g. local dry-run) the
+# script still produces an unsigned .pkg so the pipeline can be tested
+# end-to-end on a branch.
+#
+# Required environment when running in CI:
+#   BUILDKITE                    - detected to enable artifact download/upload
+#
+# Optional signing environment (all must be set together to sign):
+#   APPLE_DEVELOPER_ID_APPLICATION  - "Developer ID Application: Oven (XXXXXXXXXX)"
+#   APPLE_DEVELOPER_ID_INSTALLER    - "Developer ID Installer: Oven (XXXXXXXXXX)"
+#   APPLE_KEYCHAIN_PROFILE          - notarytool keychain profile name
+#     (created via `xcrun notarytool store-credentials`)
+#
+# Usage:
+#   ./build.sh [version]
+#   ./build.sh --local <path/to/bun-aarch64> <path/to/bun-x64>   # local testing
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BUILD_DIR="$SCRIPT_DIR/build"
+PAYLOAD_ROOT="$BUILD_DIR/root"
+RESOURCES_DIR="$SCRIPT_DIR/resources"
+SCRIPTS_DIR="$SCRIPT_DIR/scripts"
+
+PKG_IDENTIFIER="sh.bun.bun"
+INSTALL_LOCATION="/usr/local"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+Color_Off=''; Red=''; Green=''; Yellow=''; Dim=''; Bold=''
+if [[ -t 1 ]]; then
+  Color_Off='\033[0m'
+  Red='\033[0;31m'
+  Green='\033[0;32m'
+  Yellow='\033[0;33m'
+  Dim='\033[0;2m'
+  Bold='\033[1m'
+fi
+
+log()    { echo -e "${Dim}[pkg]${Color_Off} $*"; }
+ok()     { echo -e "${Green}[pkg]${Color_Off} $*"; }
+warn()   { echo -e "${Yellow}[pkg]${Color_Off} $*"; }
+fail()   { echo -e "${Red}[pkg] error:${Color_Off} $*" >&2; exit 1; }
+run()    { echo -e "${Dim}\$ $*${Color_Off}"; "$@"; }
+
+# ---------------------------------------------------------------------------
+# Version
+# ---------------------------------------------------------------------------
+
+BUN_VERSION="${1:-}"
+if [[ "${BUN_VERSION}" == "--local" ]]; then
+  LOCAL_MODE=1
+  LOCAL_ARM64="${2:?--local requires <arm64-bun> <x64-bun>}"
+  LOCAL_X64="${3:?--local requires <arm64-bun> <x64-bun>}"
+  BUN_VERSION=""
+else
+  LOCAL_MODE=0
+fi
+
+if [[ -z "$BUN_VERSION" ]]; then
+  BUN_VERSION="$(cat "$REPO_ROOT/LATEST" 2>/dev/null || true)"
+fi
+[[ -n "$BUN_VERSION" ]] || fail "Could not determine Bun version (pass as \$1 or ensure LATEST exists)"
+
+PKG_NAME="Bun-v${BUN_VERSION}.pkg"
+
+log "Building ${Bold}${PKG_NAME}${Color_Off} (identifier: ${PKG_IDENTIFIER})"
+
+# ---------------------------------------------------------------------------
+# Workspace
+# ---------------------------------------------------------------------------
+
+rm -rf "$BUILD_DIR"
+mkdir -p "$BUILD_DIR" "$PAYLOAD_ROOT/bin" "$BUILD_DIR/flat"
+
+# ---------------------------------------------------------------------------
+# Fetch per-arch binaries
+# ---------------------------------------------------------------------------
+
+download_artifact() {
+  local name="$1" step="$2"
+  if [[ -f "$BUILD_DIR/$name" ]]; then
+    log "Using pre-staged $name"
+    return
+  fi
+  if [[ "${BUILDKITE:-}" == "true" ]]; then
+    log "Downloading $name from step $step"
+    run buildkite-agent artifact download "$name" "$BUILD_DIR/" --step "$step"
+    [[ -f "$BUILD_DIR/$name" ]] || fail "artifact download produced no file: $name"
+  else
+    fail "Missing $name. Stage it under $BUILD_DIR/ or run in Buildkite."
+  fi
+}
+
+extract_bin() {
+  local zip="$1" triplet="$2" out="$3"
+  log "Extracting $triplet/bun from $zip"
+  run unzip -oq "$BUILD_DIR/$zip" -d "$BUILD_DIR"
+  [[ -f "$BUILD_DIR/$triplet/bun" ]] || fail "Expected $triplet/bun inside $zip"
+  cp "$BUILD_DIR/$triplet/bun" "$out"
+  chmod +x "$out"
+}
+
+ARM64_BIN="$BUILD_DIR/bun-arm64"
+X64_BIN="$BUILD_DIR/bun-x64"
+
+if [[ "$LOCAL_MODE" == "1" ]]; then
+  cp "$LOCAL_ARM64" "$ARM64_BIN"
+  cp "$LOCAL_X64" "$X64_BIN"
+  chmod +x "$ARM64_BIN" "$X64_BIN"
+else
+  download_artifact "bun-darwin-aarch64.zip" "darwin-aarch64-build-bun"
+  download_artifact "bun-darwin-x64.zip"     "darwin-x64-build-bun"
+  extract_bin "bun-darwin-aarch64.zip" "bun-darwin-aarch64" "$ARM64_BIN"
+  extract_bin "bun-darwin-x64.zip"     "bun-darwin-x64"     "$X64_BIN"
+fi
+
+# ---------------------------------------------------------------------------
+# Universal binary
+# ---------------------------------------------------------------------------
+
+UNIVERSAL_BIN="$PAYLOAD_ROOT/bin/bun"
+
+log "Creating universal binary"
+run lipo -create -output "$UNIVERSAL_BIN" "$ARM64_BIN" "$X64_BIN"
+run lipo -info "$UNIVERSAL_BIN"
+chmod 755 "$UNIVERSAL_BIN"
+
+# bunx is a symlink to bun; create it in the payload so pkgbuild records it.
+ln -sf bun "$PAYLOAD_ROOT/bin/bunx"
+
+# ---------------------------------------------------------------------------
+# Codesign (binary)
+# ---------------------------------------------------------------------------
+
+ENTITLEMENTS="$REPO_ROOT/entitlements.plist"
+
+if [[ -n "${APPLE_DEVELOPER_ID_APPLICATION:-}" ]]; then
+  log "Codesigning with Developer ID Application + Hardened Runtime"
+  run codesign --force --timestamp --options runtime \
+    --entitlements "$ENTITLEMENTS" \
+    --sign "$APPLE_DEVELOPER_ID_APPLICATION" \
+    "$UNIVERSAL_BIN"
+  run codesign --verify --verbose "$UNIVERSAL_BIN"
+else
+  warn "APPLE_DEVELOPER_ID_APPLICATION not set; using ad-hoc signature"
+  run codesign --force --sign - \
+    --entitlements "$ENTITLEMENTS" \
+    "$UNIVERSAL_BIN"
+fi
+
+# ---------------------------------------------------------------------------
+# Installer background (the huge kawaii Bun logo)
+# ---------------------------------------------------------------------------
+
+render_background() {
+  local out="$RESOURCES_DIR/background.png"
+  local out_dark="$RESOURCES_DIR/background-dark.png"
+  local svg="$REPO_ROOT/src/logo.svg"
+
+  # Already committed? Keep it — lets a designer drop in a bespoke image.
+  if [[ -f "$out" && -f "$out_dark" ]]; then
+    log "Using existing background images"
+    return
+  fi
+
+  log "Rendering installer background from $svg"
+
+  # The Installer window is roughly 620x418pt. Render @2x for Retina and let
+  # Installer scale. We pad the logo into the bottom-right corner so it
+  # doesn't collide with the text panes on the left.
+  local tmp="$BUILD_DIR/logo@2x.png"
+
+  if command -v rsvg-convert >/dev/null 2>&1; then
+    run rsvg-convert -w 720 -h 630 "$svg" -o "$tmp"
+  elif command -v qlmanage >/dev/null 2>&1; then
+    # qlmanage renders to a directory with the source name + .png
+    run qlmanage -t -s 720 -o "$BUILD_DIR" "$svg" >/dev/null
+    mv "$BUILD_DIR/$(basename "$svg").png" "$tmp"
+  else
+    fail "Need rsvg-convert or qlmanage to render the installer background"
+  fi
+
+  # Compose onto a 1240x836 canvas (620x418 @2x), logo anchored bottom-right.
+  # sips alone can't composite, so emit the logo as the full background and
+  # rely on distribution.xml's alignment="bottomleft" + scaling="none" so it
+  # sits behind the content without being stretched.
+  run sips -s format png --resampleHeightWidthMax 700 "$tmp" --out "$out" >/dev/null
+  cp "$out" "$out_dark"
+
+  ok "Rendered $(basename "$out")"
+}
+
+render_background
+
+# ---------------------------------------------------------------------------
+# License
+# ---------------------------------------------------------------------------
+
+# Installer wants plain text for the license pane.
+if [[ ! -f "$RESOURCES_DIR/license.txt" ]]; then
+  cp "$REPO_ROOT/LICENSE.md" "$RESOURCES_DIR/license.txt"
+fi
+
+# ---------------------------------------------------------------------------
+# Component package
+# ---------------------------------------------------------------------------
+
+COMPONENT_PKG="$BUILD_DIR/flat/bun-component.pkg"
+
+log "Building component package"
+run pkgbuild \
+  --root "$PAYLOAD_ROOT" \
+  --identifier "$PKG_IDENTIFIER" \
+  --version "$BUN_VERSION" \
+  --install-location "$INSTALL_LOCATION" \
+  --scripts "$SCRIPTS_DIR" \
+  "$COMPONENT_PKG"
+
+# ---------------------------------------------------------------------------
+# Distribution package (adds the UI: background, welcome, conclusion)
+# ---------------------------------------------------------------------------
+
+DIST_XML="$BUILD_DIR/distribution.xml"
+
+# Compute installed size in KB for the choice description.
+INSTALL_KB="$(du -sk "$PAYLOAD_ROOT" | awk '{print $1}')"
+
+sed \
+  -e "s/@BUN_VERSION@/$BUN_VERSION/g" \
+  -e "s/@PKG_IDENTIFIER@/$PKG_IDENTIFIER/g" \
+  -e "s/@INSTALL_KB@/$INSTALL_KB/g" \
+  "$SCRIPT_DIR/distribution.xml.template" > "$DIST_XML"
+
+PRODUCT_PKG="$BUILD_DIR/$PKG_NAME"
+
+log "Building product archive"
+run productbuild \
+  --distribution "$DIST_XML" \
+  --resources "$RESOURCES_DIR" \
+  --package-path "$BUILD_DIR/flat" \
+  "$PRODUCT_PKG"
+
+# ---------------------------------------------------------------------------
+# Sign + notarize the installer
+# ---------------------------------------------------------------------------
+
+FINAL_PKG="$BUILD_DIR/signed-$PKG_NAME"
+
+if [[ -n "${APPLE_DEVELOPER_ID_INSTALLER:-}" ]]; then
+  log "Signing installer with Developer ID Installer"
+  run productsign --timestamp \
+    --sign "$APPLE_DEVELOPER_ID_INSTALLER" \
+    "$PRODUCT_PKG" "$FINAL_PKG"
+  run pkgutil --check-signature "$FINAL_PKG"
+
+  if [[ -n "${APPLE_KEYCHAIN_PROFILE:-}" ]]; then
+    log "Submitting for notarization (this can take a few minutes)"
+    run xcrun notarytool submit "$FINAL_PKG" \
+      --keychain-profile "$APPLE_KEYCHAIN_PROFILE" \
+      --wait
+    log "Stapling notarization ticket"
+    run xcrun stapler staple "$FINAL_PKG"
+    run xcrun stapler validate "$FINAL_PKG"
+  else
+    warn "APPLE_KEYCHAIN_PROFILE not set; skipping notarization"
+  fi
+else
+  warn "APPLE_DEVELOPER_ID_INSTALLER not set; installer will be unsigned"
+  cp "$PRODUCT_PKG" "$FINAL_PKG"
+fi
+
+mv "$FINAL_PKG" "$BUILD_DIR/$PKG_NAME"
+# Also emit a stable, version-less filename for the GitHub releases "latest"
+# redirect, matching the bun-<triplet>.zip convention.
+cp "$BUILD_DIR/$PKG_NAME" "$BUILD_DIR/bun-darwin-universal.pkg"
+
+ok "Built ${Bold}$BUILD_DIR/$PKG_NAME${Color_Off}"
+ls -lh "$BUILD_DIR/$PKG_NAME"
+
+# ---------------------------------------------------------------------------
+# Upload
+# ---------------------------------------------------------------------------
+
+if [[ "${BUILDKITE:-}" == "true" ]]; then
+  log "Uploading artifacts"
+  (cd "$BUILD_DIR" && run buildkite-agent artifact upload "$PKG_NAME")
+  (cd "$BUILD_DIR" && run buildkite-agent artifact upload "bun-darwin-universal.pkg")
+fi
+
+ok "Done ✨"

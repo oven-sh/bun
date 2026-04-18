@@ -1,0 +1,155 @@
+#!/bin/bash
+#
+# Runs as root after the payload has been copied to /usr/local/bin.
+# Mirrors the behavior of src/cli/install.sh so that a .pkg install lands in
+# the same state as `curl -fsSL https://bun.com/install | bash`:
+#
+#   - /usr/local/bin is on PATH (via /etc/paths.d, survives shells that
+#     don't already include it)
+#   - BUN_INSTALL is exported for the installing user so `bun add -g` and
+#     friends write to ~/.bun rather than a root-owned directory
+#   - ~/.bun/bin is on PATH so globally-installed package bins resolve
+#   - shell completions are installed
+#
+# Installer.app invokes this with:
+#   $1 = package path, $2 = target location, $3 = target volume, $4 = /
+# and sets $HOME/$USER to the *logged-in* user, not root, but that isn't
+# guaranteed for CLI installs — so resolve the console user explicitly.
+#
+set -euo pipefail
+
+BIN_DIR="/usr/local/bin"
+BUN_EXE="$BIN_DIR/bun"
+
+# ---------------------------------------------------------------------------
+# System-wide PATH entry
+# ---------------------------------------------------------------------------
+
+# /usr/local/bin is already in the default macOS PATH for login shells via
+# /etc/paths, but some contexts (LaunchAgents, cron, IDE-spawned shells)
+# don't source it. Adding an explicit paths.d entry is cheap and idempotent.
+mkdir -p /etc/paths.d
+printf '%s\n' "$BIN_DIR" > /etc/paths.d/200-bun
+
+# ---------------------------------------------------------------------------
+# Ensure the bunx symlink survived (pkgbuild preserves symlinks in the
+# payload, but be defensive in case a previous install left a real file).
+# ---------------------------------------------------------------------------
+
+if [[ -e "$BIN_DIR/bunx" && ! -L "$BIN_DIR/bunx" ]]; then
+  rm -f "$BIN_DIR/bunx"
+fi
+ln -sf bun "$BIN_DIR/bunx"
+
+# ---------------------------------------------------------------------------
+# Per-user configuration
+# ---------------------------------------------------------------------------
+
+# Figure out who actually ran the installer. Installer.app exports $USER as
+# the console user, but `installer -pkg ... -target /` from a root shell does
+# not. Fall back to the console owner.
+CONSOLE_USER="${USER:-}"
+if [[ -z "$CONSOLE_USER" || "$CONSOLE_USER" == "root" ]]; then
+  CONSOLE_USER="$(stat -f%Su /dev/console 2>/dev/null || true)"
+fi
+
+# Headless / CI install with no console user — nothing per-user to do.
+if [[ -z "$CONSOLE_USER" || "$CONSOLE_USER" == "root" ]]; then
+  exit 0
+fi
+
+USER_HOME=$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+if [[ -z "$USER_HOME" || ! -d "$USER_HOME" ]]; then
+  exit 0
+fi
+
+BUN_INSTALL="$USER_HOME/.bun"
+
+# Create ~/.bun/bin so `bun add -g <pkg>` has somewhere to link into, and so
+# the PATH entry we add below points at something that exists.
+sudo -u "$CONSOLE_USER" mkdir -p "$BUN_INSTALL/bin"
+
+# ---------------------------------------------------------------------------
+# Shell profile: export BUN_INSTALL and put ~/.bun/bin on PATH.
+#
+# We append to every shell config that exists (or the zsh default if none
+# do — zsh is the macOS default since Catalina). The block is guarded so
+# re-running the installer doesn't duplicate it.
+# ---------------------------------------------------------------------------
+
+append_once() {
+  local file="$1"
+  # Skip if the marker is already present.
+  if [[ -f "$file" ]] && grep -q '# bun (installed via .pkg)' "$file" 2>/dev/null; then
+    return
+  fi
+  # Create the file as the user if it doesn't exist yet.
+  if [[ ! -f "$file" ]]; then
+    sudo -u "$CONSOLE_USER" touch "$file"
+  fi
+  cat >> "$file" <<EOF
+
+# bun (installed via .pkg)
+export BUN_INSTALL="\$HOME/.bun"
+export PATH="\$BUN_INSTALL/bin:\$PATH"
+EOF
+  chown "$CONSOLE_USER" "$file"
+}
+
+append_once_fish() {
+  local file="$1"
+  if [[ -f "$file" ]] && grep -q '# bun (installed via .pkg)' "$file" 2>/dev/null; then
+    return
+  fi
+  sudo -u "$CONSOLE_USER" mkdir -p "$(dirname "$file")"
+  if [[ ! -f "$file" ]]; then
+    sudo -u "$CONSOLE_USER" touch "$file"
+  fi
+  cat >> "$file" <<EOF
+
+# bun (installed via .pkg)
+set --export BUN_INSTALL "\$HOME/.bun"
+set --export PATH "\$BUN_INSTALL/bin" \$PATH
+EOF
+  chown "$CONSOLE_USER" "$file"
+}
+
+wrote_any=0
+
+# zsh — macOS default shell.
+if [[ -f "$USER_HOME/.zshrc" || "$(dscl . -read "/Users/$CONSOLE_USER" UserShell 2>/dev/null)" == *"/zsh" ]]; then
+  append_once "$USER_HOME/.zshrc"
+  wrote_any=1
+fi
+
+# bash
+for rc in "$USER_HOME/.bash_profile" "$USER_HOME/.bashrc"; do
+  if [[ -f "$rc" ]]; then
+    append_once "$rc"
+    wrote_any=1
+  fi
+done
+
+# fish
+if [[ -d "$USER_HOME/.config/fish" ]] || command -v fish >/dev/null 2>&1; then
+  append_once_fish "$USER_HOME/.config/fish/config.fish"
+  wrote_any=1
+fi
+
+# If we didn't find any shell config, fall back to .zprofile so a fresh
+# account still gets configured on next login.
+if [[ "$wrote_any" == "0" ]]; then
+  append_once "$USER_HOME/.zprofile"
+fi
+
+# ---------------------------------------------------------------------------
+# Shell completions — best-effort, ignore failure.
+# ---------------------------------------------------------------------------
+
+sudo -u "$CONSOLE_USER" env \
+  HOME="$USER_HOME" \
+  BUN_INSTALL="$BUN_INSTALL" \
+  IS_BUN_AUTO_UPDATE=true \
+  "$BUN_EXE" completions >/dev/null 2>&1 || true
+
+exit 0

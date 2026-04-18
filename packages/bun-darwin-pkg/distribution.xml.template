@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+  <title>Bun</title>
+  <welcome file="welcome.html" mime-type="text/html"/>
+  <license file="license.txt" mime-type="text/plain"/>
+  <conclusion file="conclusion.html" mime-type="text/html"/>
+
+  <!-- The huge kawaii Bun logo. Rendered from src/logo.svg at build time,
+       anchored bottom-left so it peeks out from behind the content pane
+       like it's saying hi. -->
+  <background file="background.png" alignment="bottomleft" scaling="none" mime-type="image/png"/>
+  <background-darkAqua file="background-dark.png" alignment="bottomleft" scaling="none" mime-type="image/png"/>
+
+  <!-- Require macOS 13 (Ventura) or later, matching Bun's minimum supported
+       version, and refuse to install on non-system volumes. -->
+  <volume-check>
+    <allowed-os-versions>
+      <os-version min="13.0"/>
+    </allowed-os-versions>
+  </volume-check>
+  <options customize="never" require-scripts="true" rootVolumeOnly="true" hostArchitectures="arm64,x86_64"/>
+  <domains enable_localSystem="true"/>
+
+  <choices-outline>
+    <line choice="default">
+      <line choice="@PKG_IDENTIFIER@"/>
+    </line>
+  </choices-outline>
+
+  <choice id="default" title="Bun" versStr="@BUN_VERSION@"/>
+  <choice id="@PKG_IDENTIFIER@" visible="false" title="Bun v@BUN_VERSION@"
+          description="Installs the bun and bunx binaries to /usr/local/bin, adds them to your PATH, and sets BUN_INSTALL for the current user.">
+    <pkg-ref id="@PKG_IDENTIFIER@"/>
+  </choice>
+
+  <pkg-ref id="@PKG_IDENTIFIER@" version="@BUN_VERSION@" installKBytes="@INSTALL_KB@" onConclusion="none">bun-component.pkg</pkg-ref>
+</installer-gui-script>

@@ -37,9 +37,12 @@
  *   command = bun /path/to/stream.ts $name --console $zig build obj ...
  *   pool = console
  *
- * --cwd=DIR / --env=K=V / --console / --zig-progress go between <name> and
- * <command>. They exist so the rule doesn't need `sh -c '...'` (which would
- * conflict with shell-quoted ninja vars like $args).
+ * --cwd=DIR / --env=K=V / --console / --zig-progress / --stamp=PATH go
+ * between <name> and <command>. They exist so the rule doesn't need
+ * `sh -c '...'` (which would conflict with shell-quoted ninja vars like
+ * $args). --stamp=PATH writes an empty file at PATH when the child exits
+ * 0 — used for rules whose command doesn't naturally produce an output
+ * file (e.g. `zig build check`) so ninja can still chain on it.
  *
  * --zig-progress (prefix mode, posix only): sets ZIG_PROGRESS=3, decodes
  * zig's binary progress protocol into `[zig] Stage [N/M]` lines. Without it,
@@ -47,7 +50,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { createWriteStream, writeSync } from "node:fs";
+import { closeSync, createWriteStream, openSync, writeSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { nameColor } from "./tty.ts";
 
@@ -98,6 +101,7 @@ function main(): void {
   let cwd: string | undefined;
   let zigProgress = false;
   let consoleMode = false;
+  let stampPath: string | undefined;
   const envOverrides: Record<string, string> = {};
   while (argv[0]?.startsWith("--")) {
     const opt = argv.shift()!;
@@ -111,11 +115,23 @@ function main(): void {
       zigProgress = true;
     } else if (opt === "--console") {
       consoleMode = true;
+    } else if (opt.startsWith("--stamp=")) {
+      stampPath = opt.slice(8);
     } else {
       process.stderr.write(`stream.ts: unknown option ${opt}\n`);
       process.exit(2);
     }
   }
+
+  // Create an empty stamp file after the child exits 0. Lets ninja chain
+  // dependents on commands that don't naturally produce an output file
+  // (e.g. `zig build check`, typecheck runs) — cross-platform, no shell
+  // tricks. If the child fails, skip the stamp so ninja will retry.
+  const writeStamp = (): void => {
+    if (stampPath !== undefined) {
+      closeSync(openSync(stampPath, "w"));
+    }
+  };
 
   const cmd = argv;
   if (cmd.length === 0) {
@@ -137,7 +153,9 @@ function main(): void {
       process.stderr.write(`[${name}] spawn failed: ${result.error.message}\n`);
       process.exit(127);
     }
-    process.exit(result.status ?? (result.signal ? 1 : 0));
+    const exitCode = result.status ?? (result.signal ? 1 : 0);
+    if (exitCode === 0) writeStamp();
+    process.exit(exitCode);
   }
 
   // Probe STREAM_FD. If build.ts set it up, it's a dup of the terminal.
@@ -246,6 +264,7 @@ function main(): void {
       writeFinal(`killed by ${signal}\n`);
       process.exit(1);
     }
+    if (code === 0) writeStamp();
     process.exit(code ?? 1);
   });
 }

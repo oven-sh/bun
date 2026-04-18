@@ -13,6 +13,7 @@ postgresql_context: bun.api.Postgres.PostgresSQLContext = .{},
 entropy_cache: ?*EntropyCache = null,
 
 hot_map: ?HotMap = null,
+cron_jobs: std.ArrayListUnmanaged(*bun.api.cron.CronJob) = .{},
 
 // TODO: make this per JSGlobalObject instead of global
 // This does not handle ShadowRealm correctly!
@@ -24,12 +25,19 @@ global_dns_data: ?*bun.api.dns.GlobalData = null,
 
 spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 
+/// `bun test --parallel` IPC channel (worker ↔ coordinator). Survives the
+/// per-file isolation swap so the worker keeps its link to the coordinator.
+test_parallel_ipc_context: ?*uws.SocketContext = null,
+
 mime_types: ?bun.http.MimeType.Map = null,
 
 node_fs_stat_watcher_scheduler: ?bun.ptr.RefPtr(StatWatcherScheduler) = null,
 
-listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
+listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FD) = .{},
 listening_sockets_for_watch_mode_lock: bun.Mutex = .{},
+
+fs_watchers_for_isolation: std.ArrayListUnmanaged(*FSWatcher) = .{},
+stat_watchers_for_isolation: std.ArrayListUnmanaged(*StatWatcher) = .{},
 
 temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 
@@ -271,16 +279,16 @@ pub fn pipeReadBuffer(this: *RareData) *PipeReadBuffer {
     };
 }
 
-pub fn addListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
+pub fn addListeningSocketForWatchMode(this: *RareData, socket: bun.FD) void {
     this.listening_sockets_for_watch_mode_lock.lock();
     defer this.listening_sockets_for_watch_mode_lock.unlock();
     this.listening_sockets_for_watch_mode.append(bun.default_allocator, socket) catch {};
 }
 
-pub fn removeListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
+pub fn removeListeningSocketForWatchMode(this: *RareData, socket: bun.FD) void {
     this.listening_sockets_for_watch_mode_lock.lock();
     defer this.listening_sockets_for_watch_mode_lock.unlock();
-    if (std.mem.indexOfScalar(bun.FileDescriptor, this.listening_sockets_for_watch_mode.items, socket)) |i| {
+    if (std.mem.indexOfScalar(bun.FD, this.listening_sockets_for_watch_mode.items, socket)) |i| {
         _ = this.listening_sockets_for_watch_mode.swapRemove(i);
     }
 }
@@ -294,6 +302,35 @@ pub fn closeAllListenSocketsForWatchMode(this: *RareData) void {
         socket.close();
     }
     this.listening_sockets_for_watch_mode = .{};
+}
+
+pub fn addFSWatcherForIsolation(this: *RareData, watcher: *FSWatcher) void {
+    bun.handleOom(this.fs_watchers_for_isolation.append(bun.default_allocator, watcher));
+}
+
+pub fn removeFSWatcherForIsolation(this: *RareData, watcher: *FSWatcher) void {
+    if (std.mem.indexOfScalar(*FSWatcher, this.fs_watchers_for_isolation.items, watcher)) |i| {
+        _ = this.fs_watchers_for_isolation.swapRemove(i);
+    }
+}
+
+pub fn addStatWatcherForIsolation(this: *RareData, watcher: *StatWatcher) void {
+    bun.handleOom(this.stat_watchers_for_isolation.append(bun.default_allocator, watcher));
+}
+
+pub fn removeStatWatcherForIsolation(this: *RareData, watcher: *StatWatcher) void {
+    if (std.mem.indexOfScalar(*StatWatcher, this.stat_watchers_for_isolation.items, watcher)) |i| {
+        _ = this.stat_watchers_for_isolation.swapRemove(i);
+    }
+}
+
+pub fn closeAllWatchersForIsolation(this: *RareData) void {
+    while (this.fs_watchers_for_isolation.pop()) |watcher| {
+        watcher.detach();
+    }
+    while (this.stat_watchers_for_isolation.pop()) |watcher| {
+        watcher.close();
+    }
 }
 
 pub fn hotMap(this: *RareData, allocator: std.mem.Allocator) *HotMap {
@@ -721,6 +758,8 @@ pub fn deinit(this: *RareData) void {
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);
+    bun.debugAssert(this.cron_jobs.items.len == 0);
+    this.cron_jobs.deinit(bun.default_allocator);
     this.path_buf.deinit();
 
     if (this.websocket_deflate) |deflate| {
@@ -759,8 +798,11 @@ const UUID = @import("./uuid.zig");
 const WebSocketDeflate = @import("../http/websocket_client/WebSocketDeflate.zig");
 const std = @import("std");
 const EditorContext = @import("../open.zig").EditorContext;
-const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+const FSWatcher = @import("./node/node_fs_watcher.zig").FSWatcher;
 const ValkeyContext = @import("../valkey/valkey.zig").ValkeyContext;
+
+const StatWatcher = @import("./node/node_fs_stat_watcher.zig").StatWatcher;
+const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 
 const bun = @import("bun");
 const Async = bun.Async;

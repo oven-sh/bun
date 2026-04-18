@@ -3,6 +3,7 @@
 #include "helpers.h"
 
 #include "ZigSourceProvider.h"
+#include "BunAnalyzeTranspiledModule.h"
 
 #include <JavaScriptCore/BytecodeCacheError.h>
 #include "ZigGlobalObject.h"
@@ -125,7 +126,7 @@ Ref<SourceProvider> SourceProvider::create(
 
             Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
             auto provider = adoptRef(*new SourceProvider(
-                globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
+                globalObject->bunVM(),
                 resolvedSource,
                 string.isNull() ? *StringImpl::empty() : *string.impl(),
                 JSC::SourceTaintedOrigin::Untainted,
@@ -137,7 +138,7 @@ Ref<SourceProvider> SourceProvider::create(
         }
 
         return adoptRef(*new SourceProvider(
-            globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
+            globalObject->bunVM(),
             resolvedSource,
             string.isNull() ? *StringImpl::empty() : *string.impl(),
             JSC::SourceTaintedOrigin::Untainted,
@@ -168,7 +169,11 @@ SourceProvider::~SourceProvider()
 {
     if (m_resolvedSource.already_bundled) {
         BunString str = Bun::toString(sourceURL());
-        Bun__removeSourceProviderSourceMap(m_globalObject->bunVM(), this, &str);
+        Bun__removeSourceProviderSourceMap(m_bunVM, this, &str);
+    }
+    if (m_resolvedSource.module_info != nullptr) {
+        zig__ModuleInfoDeserialized__deinit(static_cast<bun_ModuleInfoDeserialized*>(m_resolvedSource.module_info));
+        m_resolvedSource.module_info = nullptr;
     }
 }
 

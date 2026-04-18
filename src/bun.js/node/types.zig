@@ -895,7 +895,7 @@ pub fn modeFromJS(ctx: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Mod
 }
 
 pub const PathOrFileDescriptor = union(Tag) {
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     path: PathLike,
 
     pub const Tag = enum { fd, path };

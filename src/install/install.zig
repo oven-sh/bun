@@ -245,6 +245,7 @@ pub const PackageManifestError = error{
 
 pub const ExtractTarball = @import("./extract_tarball.zig");
 pub const NetworkTask = @import("./NetworkTask.zig");
+pub const TarballStream = @import("./TarballStream.zig");
 pub const Npm = @import("./npm.zig");
 pub const PackageManager = @import("./PackageManager.zig");
 pub const PackageManifestMap = @import("./PackageManifestMap.zig");

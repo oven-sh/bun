@@ -226,6 +226,10 @@ pub fn ResumableSink(
         }
 
         pub fn cancel(this: *ThisSink, reason: jsc.JSValue) void {
+            // onEnd must fire at most once. After the first cancel(), #js_this is downgraded
+            // to .weak (which still resolves via tryGet), so this guard is the only thing
+            // preventing a second cancel() from re-invoking onEnd.
+            if (this.status == .done) return;
             if (this.status == .piped) {
                 reason.ensureStillAlive();
                 this.endPipe(reason);

@@ -132,6 +132,10 @@ struct us_cert_string_t {
 char *us_udp_packet_buffer_payload(struct us_udp_packet_buffer_t *buf, int index);
 int us_udp_packet_buffer_payload_length(struct us_udp_packet_buffer_t *buf, int index);
 
+/* Returns 1 if the received datagram was truncated (larger than recv buffer),
+ * 0 otherwise. Backed by MSG_TRUNC in msg_hdr.msg_flags on POSIX. */
+int us_udp_packet_buffer_truncated(struct us_udp_packet_buffer_t *buf, int index);
+
 /* Copies out local (received destination) ip (4 or 16 bytes) of received packet */
 int us_udp_packet_buffer_local_ip(struct us_udp_packet_buffer_t *buf, int index, char *ip);
 
@@ -161,7 +165,7 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 //struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), char *host, unsigned short port);
 
-struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, int flags, int *err, void *user);
+struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int), const char *host, unsigned short port, int flags, int *err, void *user);
 
 void us_udp_socket_close(struct us_udp_socket_t *s);
 
@@ -313,6 +317,11 @@ void *us_socket_context_ext(int ssl, us_socket_context_r context);
 
 /* Closes all open sockets, including listen sockets. Does not invalidate the socket context. */
 void us_socket_context_close(int ssl, us_socket_context_r context);
+
+/* Iterate the loop's linked list of contexts. Returns NULL at the end. The
+ * caller must own the loop (single-threaded access); does not pin the
+ * returned context against concurrent unlink/free. */
+struct us_socket_context_t *us_socket_context_next(us_socket_context_r context);
 
 /* Listen for connections. Acts as the main driving cog in a server. Will call set async callbacks. */
 struct us_listen_socket_t *us_socket_context_listen(int ssl, us_socket_context_r context,

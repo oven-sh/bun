@@ -9,7 +9,11 @@ pub const off_t = _off_t;
 const voidpf = *anyopaque;
 const Bytef = [*]u8;
 const uInt = c_uint;
-const uLong = u64;
+// zlib-ng compat (and stock zlib) typedef uLong as `unsigned long` — 4 bytes on
+// Windows LLP64. cloudflare/zlib used uint64_t, which is why this was u64. With
+// the wrong width, sizeof(z_stream) mismatches and inflateInit_/deflateInit_
+// return Z_VERSION_ERROR.
+const uLong = c_ulong;
 const z_size_t = usize;
 const uLongf = uLong;
 const voidpc = ?*const anyopaque;
@@ -144,12 +148,6 @@ pub extern fn inflateResetKeep(z_streamp) ReturnCode;
 pub extern fn deflateResetKeep(z_streamp) ReturnCode;
 
 pub const z_off_t = c_long;
-pub const ZLIB_VERSION = "1.2.13";
-pub const ZLIB_VERNUM = @as(c_int, 0x12d0);
-pub const ZLIB_VER_MAJOR = @as(c_int, 1);
-pub const ZLIB_VER_MINOR = @as(c_int, 2);
-pub const ZLIB_VER_REVISION = @as(c_int, 13);
-pub const ZLIB_VER_SUBREVISION = @as(c_int, 0);
 pub const Z_NO_FLUSH = @as(c_int, 0);
 pub const Z_PARTIAL_FLUSH = @as(c_int, 1);
 pub const Z_SYNC_FLUSH = @as(c_int, 2);

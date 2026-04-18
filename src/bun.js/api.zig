@@ -25,6 +25,7 @@ pub const TLSSocket = @import("./api/bun/socket.zig").TLSSocket;
 pub const SocketHandlers = @import("./api/bun/socket.zig").Handlers;
 
 pub const Subprocess = @import("./api/bun/subprocess.zig");
+pub const cron = @import("./api/cron.zig");
 pub const Terminal = @import("./api/bun/Terminal.zig");
 pub const WebViewHostProcess = @import("./webview/HostProcess.zig");
 pub const ChromeProcess = @import("./webview/ChromeProcess.zig");

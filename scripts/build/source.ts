@@ -99,6 +99,14 @@ export type Source =
        * The user is responsible for putting the source there.
        */
       kind: "local";
+      /**
+       * Absolute path to the source. Defaults to vendor/<name>/. Override
+       * when the source lives outside the worktree (e.g. a shared WebKit
+       * clone reused across worktrees).
+       */
+      path?: string;
+      /** Custom hint for the "source not found" error. */
+      hint?: string;
     }
   | {
       /**
@@ -366,11 +374,15 @@ export interface Dependency {
   patches?: string[] | ((cfg: Config) => string[]);
 
   /**
-   * Other deps whose SOURCE must be ready before this dep's build runs.
+   * Other deps that must be BUILT before this dep's configure runs.
    * Used for header-level dependencies — e.g. libarchive needs zlib's
-   * headers at compile time (`-I${vendorDir}/zlib`), so zlib must be
-   * fetched first. This adds an order-only dep on the other dep's source
-   * stamp — it does NOT link the other dep's libs (that's `provides.libs`).
+   * headers at configure time (`check_include_file("zlib.h")`). zlib-ng
+   * generates `zlib.h` during its own cmake configure, so libarchive must
+   * wait for zlib's full build, not just its source fetch.
+   *
+   * Resolves to the named dep's build outputs (lib files for nested-cmake,
+   * source stamp for header-only). Order-only on configure, implicit on
+   * build. Does NOT link the other dep's libs (that's `provides.libs`).
    */
   fetchDeps?: string[];
 
@@ -567,8 +579,8 @@ export function depSourceDir(cfg: Config, name: string): string {
 }
 
 /**
- * Path to a dep's fetch stamp. Used by fetchDeps to add cross-dep
- * ordering (e.g. libarchive's build waits for zlib's .ref).
+ * Path to a dep's fetch stamp. Used by zig-only mode to depend on zstd's
+ * source being on disk without resolving the full dep graph.
  */
 export function depSourceStamp(cfg: Config, name: string): string {
   return resolve(depSourceDir(cfg, name), ".ref");
@@ -589,7 +601,12 @@ export function depBuildDir(cfg: Config, name: string): string {
  * If the dep is disabled (enabled() returns false), returns null. Caller
  * should skip.
  */
-export function resolveDep(n: Ninja, cfg: Config, dep: Dependency): ResolvedDep | null {
+export function resolveDep(
+  n: Ninja,
+  cfg: Config,
+  dep: Dependency,
+  resolved: ReadonlyMap<string, ResolvedDep>,
+): ResolvedDep | null {
   if (dep.enabled && !dep.enabled(cfg)) {
     return null;
   }
@@ -608,8 +625,14 @@ export function resolveDep(n: Ninja, cfg: Config, dep: Dependency): ResolvedDep 
   }
 
   // Source directory. For in-tree deps (sqlite), this points into the bun
-  // repo instead of vendor/. For everything else it's vendor/<name>/.
-  const srcDir = source.kind === "in-tree" ? resolve(cfg.cwd, source.path) : depSourceDir(cfg, dep.name);
+  // repo instead of vendor/. Local deps can override via `path` to point
+  // outside the worktree. Everything else is vendor/<name>/.
+  const srcDir =
+    source.kind === "in-tree"
+      ? resolve(cfg.cwd, source.path)
+      : source.kind === "local" && source.path
+        ? source.path
+        : depSourceDir(cfg, dep.name);
 
   // Resolve conditional patches. Same list for the whole configure run —
   // we don't want patches changing between emitFetch and the hash check.
@@ -667,24 +690,28 @@ export function resolveDep(n: Ninja, cfg: Config, dep: Dependency): ResolvedDep 
       hint:
         source.kind === "in-tree"
           ? `Expected ${stampFile || "source"} at ${source.path}/ — check deps/${dep.name}.ts`
-          : `Clone the dep to vendor/${dep.name}/ manually`,
+          : (source.hint ?? `Clone the dep to vendor/${dep.name}/ manually`),
     });
   }
 
   // ─── Resolve fetchDeps → extra inputs on configure + build ───
-  // These are deps whose SOURCE must be ready before we build (not link).
-  // E.g. libarchive compiles with -I${vendorDir}/zlib so zlib must be fetched.
+  // These are deps that must be BUILT before we configure (not link).
+  // E.g. libarchive's configure runs check_include_file("zlib.h"), and
+  // zlib-ng generates zlib.h during its own cmake configure — so we depend
+  // on zlib's lib output (which implies its configure ran).
   //
-  // On CONFIGURE: order-only. Configure needs the headers to exist (for
-  //   check_include_file), but doesn't track their content — feature
-  //   detection results are cached in CMakeCache.txt regardless.
+  // On CONFIGURE: order-only. Configure needs the headers to exist, but
+  //   doesn't track their content — feature detection is cached in
+  //   CMakeCache.txt regardless.
   //
-  // On BUILD: implicit. If the cross-dep source is re-fetched (commit bump),
-  //   its headers may have changed; our .o files track them via the inner
-  //   ninja's .d files. We need to re-invoke `cmake --build` so the inner
-  //   ninja can detect staleness. Restat on the build rule ensures that if
-  //   the headers DIDN'T actually change, the inner no-op prunes downstream.
-  const fetchDepStamps = (dep.fetchDeps ?? []).map(d => depSourceStamp(cfg, d));
+  // On BUILD: implicit. If the cross-dep rebuilds (commit bump), its
+  //   headers may have changed; our .o files track them via the inner
+  //   ninja's .d files. Restat prunes downstream when nothing changed.
+  const fetchDepStamps = (dep.fetchDeps ?? []).flatMap(d => {
+    const r = resolved.get(d);
+    assert(r, `${dep.name}: fetchDeps references '${d}' but it wasn't resolved first — fix allDeps ordering`);
+    return r.outputs;
+  });
 
   // ─── Step 2+3: build ───
   let libs: string[];
@@ -1209,7 +1236,7 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   const lib = resolve(targetDir, outSubdir, `${cfg.libPrefix}${spec.libName}${cfg.libSuffix}`);
 
   // ─── Build args ───
-  const args: string[] = ["--target-dir", targetDir];
+  const args: string[] = ["--locked", "--target-dir", targetDir];
   if (cfg.release) args.push("--release");
   if (spec.rustTarget) args.push("--target", spec.rustTarget);
 
@@ -1329,7 +1356,9 @@ function emitDirect(
   if (spec.codegen !== undefined) {
     const cg = spec.codegen;
     const toolSrc = resolve(srcDir, cg.tool);
-    const toolOut = resolve(buildDir, "codegen-tool");
+    // Host exe suffix: clang on Windows auto-appends .exe to `-o foo`, so
+    // the ninja output name must match or the edge is permanently dirty.
+    const toolOut = resolve(buildDir, `codegen-tool${cfg.host.exeSuffix}`);
 
     // Host tool: runs at build time to generate headers, so it must target
     // the BUILD host, not the bun target. cc()/link() add cfg's target/arch

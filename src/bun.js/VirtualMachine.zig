@@ -1650,7 +1650,7 @@ fn _resolve(
         return;
     } else if (strings.eqlComptime(specifier, main_file_name) and jsc_vm.entry_point.generated) {
         ret.result = null;
-        ret.path = jsc_vm.entry_point.source.path.text;
+        ret.path = main_file_name;
         return;
     } else if (strings.hasPrefixComptime(specifier, js_ast.Macro.namespaceWithColon)) {
         ret.result = null;
@@ -2021,6 +2021,7 @@ pub fn deinit(this: *VirtualMachine) void {
     }
     this.proxy_env_storage.deinit();
     this.overridden_main.deinit();
+    this.entry_point.deinit();
     this.has_terminated = true;
 }
 
@@ -2199,10 +2200,8 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
 
     if (!this.main_is_html_entrypoint) {
         try this.entry_point.generate(
-            this.allocator,
             this.bun_watcher != .none,
             entry_path,
-            main_file_name,
         );
     }
 

@@ -279,6 +279,7 @@ function getPriority() {
  * @property {number} cpuCount
  * @property {number} threadsPerCore
  * @property {boolean} dryRun
+ * @property {boolean} [preemptible]
  */
 
 /**

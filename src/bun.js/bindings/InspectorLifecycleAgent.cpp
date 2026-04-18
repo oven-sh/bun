@@ -150,9 +150,16 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
     auto* cjsMap = global->requireMap();
 
     Ref<JSON::ArrayOf<String>> esm = JSON::ArrayOf<String>::create();
-    for (auto& [key, entry] : global->moduleLoader()->moduleMap()) {
-        if (key.first)
-            esm->addItem(String { key.first });
+    {
+        Vector<String> keys;
+        for (auto& [key, entry] : global->moduleLoader()->moduleMap()) {
+            if (key.first)
+                keys.append(String { key.first });
+        }
+        // ModuleMap is hash-ordered; sort so the inspector output is stable.
+        std::sort(keys.begin(), keys.end(), WTF::codePointCompareLessThan);
+        for (auto& k : keys)
+            esm->addItem(k);
     }
 
     Ref<JSON::ArrayOf<String>> cjs = JSON::ArrayOf<String>::create();

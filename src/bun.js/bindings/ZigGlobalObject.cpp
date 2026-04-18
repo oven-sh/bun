@@ -299,7 +299,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // JSC::Options::useSigillCrashAnalyzer() = true;
             JSC::Options::useSourceProviderCache() = true;
             // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
-            JSC::Options::exposeInternalModuleLoader() = true;
+            // JSModuleLoader is now a JSCell (not a JSObject) so exposing it as
+            // the global `Loader` would let user code dereference a non-object
+            // and trip JSValue::synthesizePrototype's isSymbol() debug assert.
+            JSC::Options::exposeInternalModuleLoader() = false;
             JSC::Options::useSharedArrayBuffer() = true;
             JSC::Options::useJITCage() = false;
             JSC::Options::useShadowRealm() = true;
@@ -755,6 +758,18 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     }
     case JSPromise::Status::Pending: {
         promise->markAsHandled();
+        // The load promise stays Pending when this module shares an SCC with an
+        // outer module that is still Evaluating (e.g. ESM entry → CJS shim →
+        // require(esm) → imports something the entry already loaded). For a
+        // non-TLA record that has reached Evaluating, the body has already run
+        // synchronously; only the status flip waits on the SCC root. Treat that
+        // as success — the namespace is fully populated.
+        if (auto* entry = loader->registryEntry(key)) {
+            if (auto* cyclic = jsDynamicCast<JSC::CyclicModuleRecord*>(entry->record())) {
+                if (cyclic->status() >= JSC::CyclicModuleRecord::Status::Evaluating && !cyclic->hasTLA() && !cyclic->evaluationError())
+                    break;
+            }
+        }
         loader->removeEntry(key);
         return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
     }
@@ -764,15 +779,20 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     if (!entry || !entry->record()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, makeString("require() failed to evaluate module \""_s, keyString, "\". This is an internal consistentency error."_s));
 
+    // The loadModule promise resolved, so the entire graph linked + evaluated
+    // synchronously. We deliberately do NOT gate on CyclicModuleRecord::status()
+    // here: when require(esm) is called from inside an outer ESM graph that is
+    // itself mid-evaluation (a CJS shim imported by an ESM entry), the inner
+    // record's body has already run but its status only flips to Evaluated once
+    // the SCC root (the outer module we're currently inside) settles. Returning
+    // the namespace in that state matches the old loader's behaviour and Node's
+    // require(esm) cycle semantics. evaluationError() still surfaces a real
+    // throw from the module body.
     auto* record = entry->record();
     if (auto* cyclic = jsDynamicCast<JSC::CyclicModuleRecord*>(record)) {
         if (JSValue err = cyclic->evaluationError()) {
             scope.throwException(globalObject, err);
             return {};
-        }
-        if (cyclic->status() != JSC::CyclicModuleRecord::Status::Evaluated) {
-            loader->removeEntry(key);
-            return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
         }
     }
 
@@ -3368,7 +3388,12 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
                 if (type) {
                     if (type.isString()) {
                         const auto typeString = type.toWTFString(globalObject);
-                        if (auto knownType = ScriptFetchParameters::parseType(typeString))
+                        // parseType returns HostDefined for any non-empty unknown
+                        // string under USE(BUN_JSC_ADDITIONS); the single-arg
+                        // create(Type) asserts on HostDefined, so route those
+                        // through the string overload which carries the type name.
+                        auto knownType = ScriptFetchParameters::parseType(typeString);
+                        if (knownType && *knownType != ScriptFetchParameters::Type::HostDefined)
                             parameters = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(*knownType));
                         else
                             parameters = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(typeString));

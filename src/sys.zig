@@ -1102,7 +1102,7 @@ fn openDirAtWindowsNtPath(
         0,
     );
 
-    if (comptime Environment.allow_assert) {
+    if (Environment.allow_assert and Environment.enable_logs) {
         if (rc == .INVALID_PARAMETER) {
             // Double check what flags you are passing to this
             //
@@ -1113,7 +1113,11 @@ fn openDirAtWindowsNtPath(
         } else if (rc == .OBJECT_PATH_SYNTAX_BAD or rc == .OBJECT_NAME_INVALID) {
             bun.Output.debugWarn("NtCreateFile({f}, {f}) = {s} (dir) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
         } else {
-            log("NtCreateFile({f}, {f}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
+            // NtCreateFile may return NTSTATUS codes that are not named in Zig's
+            // non-exhaustive NTSTATUS enum (e.g. STATUS_UNTRUSTED_MOUNT_POINT = 0xC00004BC
+            // on newer Windows 11 builds). `@tagName` on an unnamed tag panics with
+            // "invalid enum value", so use the default formatter which handles them.
+            log("NtCreateFile({f}, {f}) = {} (dir) = {d}", .{ dirFd, bun.fmt.utf16(path), rc, @intFromPtr(fd) });
         }
     }
 
@@ -1319,7 +1323,10 @@ pub fn openFileAtWindowsNtPath(
                 if (rc == .SUCCESS) {
                     log("NtCreateFile({f}, {f}) = {s} (file) = {f}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.FD.fromNative(result) });
                 } else {
-                    log("NtCreateFile({f}, {f}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), rc });
+                    // Use the default formatter instead of `@tagName` here: `rc` may
+                    // be an NTSTATUS not named in Zig's non-exhaustive enum, and
+                    // `@tagName` on an unnamed tag panics with "invalid enum value".
+                    log("NtCreateFile({f}, {f}) = {} (file)", .{ dir, bun.fmt.utf16(path), rc });
                 }
             }
         }

@@ -859,7 +859,7 @@ fn populateResult(this: *TarballStream, task: *Task) void {
             ).unwrap() catch break :insert_tag;
             defer gh_tag.close();
             (bun.sys.File{ .handle = gh_tag }).writeAll(this.resolved_github_dirname).unwrap() catch {
-                _ = bun.sys.unlinkat(this.dest.?, ".bun-tag");
+                _ = bun.sys.unlinkat(this.dest.?, @as([:0]const u8, ".bun-tag"));
             };
         }
     }

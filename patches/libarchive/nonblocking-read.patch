@@ -1,20 +1,23 @@
 --- a/libarchive/archive_read_private.h
 +++ b/libarchive/archive_read_private.h
-@@ -182,2 +182,11 @@
+@@ -182,2 +182,14 @@
  
 +	/*
-+	 * BUN PATCH: set by archive_read_next_header2 when the format's
-+	 * read_header callback returns ARCHIVE_RETRY from a non-blocking
-+	 * source. On the next call we skip archive_entry_clear() so that
++	 * BUN PATCH: set by the format's read_header callback when it
++	 * returns ARCHIVE_RETRY from a non-blocking source and wants
++	 * the next call to skip archive_entry_clear() so that
 +	 * attributes already populated by consumed extension headers
-+	 * (pax, GNU long name/link, etc.) survive the resume.
++	 * (pax, GNU long name/link, etc.) survive the resume. Format
++	 * readers that return ARCHIVE_RETRY without setting this —
++	 * e.g. upstream tar's damaged-block skip — get the original
++	 * reset-everything semantics on re-entry.
 +	 */
 +	int		  read_header_in_progress;
 +
  	/* Nodes and offsets of compressed data block */
 --- a/libarchive/archive_read.c
 +++ b/libarchive/archive_read.c
-@@ -616,25 +616,48 @@
+@@ -616,25 +616,58 @@
  
 -	archive_entry_clear(entry);
 -	archive_clear_error(&a->archive);
@@ -77,10 +80,20 @@
 +		++_a->file_count;
 +	}
  	r2 = (a->format->read_header)(a, entry);
-+	/* BUN PATCH: remember whether this header read is mid-flight. */
-+	a->read_header_in_progress = (r2 == ARCHIVE_RETRY);
++	/*
++	 * BUN PATCH: the format reader sets read_header_in_progress
++	 * itself when a non-blocking source yields mid-header (see
++	 * `bun_retry` in the tar reader). Clear it on any terminal
++	 * result so the next call runs the full reset above. An
++	 * ARCHIVE_RETRY that did not set the flag — upstream tar's
++	 * pre-existing damaged-block skip — therefore behaves exactly
++	 * as upstream: the next call re-runs archive_entry_clear /
++	 * archive_clear_error.
++	 */
++	if (r2 != ARCHIVE_RETRY)
++		a->read_header_in_progress = 0;
  
-@@ -1384,2 +1407,29 @@
+@@ -1384,2 +1417,29 @@
  			    &filter->client_buff);
 +			/*
 +			 * BUN PATCH: non-blocking read support.
@@ -110,7 +123,7 @@
 +				return (NULL);
 +			}
  			if (bytes_read < 0) {		/* Read error. */
-@@ -1579,3 +1629,10 @@
+@@ -1579,3 +1639,10 @@
  			filter->client_buff = NULL;
 -			filter->fatal = 1;
 +			/*
@@ -444,18 +457,21 @@
  		}
 -		tar->sconv = tar->sconv_default;
  	}
-@@ -562,2 +638,10 @@
+@@ -562,2 +638,13 @@
  
 +	/*
-+	 * BUN PATCH: on ARCHIVE_RETRY, `tar_read_header` guarantees
-+	 * `*unconsumed == 0` (nothing pending that isn't already
-+	 * flushed) so the caller can yield and re-enter later.
++	 * BUN PATCH: a non-blocking yield leaves `header_in_progress`
++	 * set; in that case `*unconsumed == 0` (nothing pending that
++	 * isn't already flushed) so the caller can yield and re-enter
++	 * later. Upstream's damaged-block ARCHIVE_RETRY clears the
++	 * flag and falls through to the original post-read handling
++	 * below (which is what upstream did).
 +	 */
-+	if (r == ARCHIVE_RETRY)
++	if (r == ARCHIVE_RETRY && tar->header_in_progress)
 +		return (ARCHIVE_RETRY);
 +
  	tar_flush_unconsumed(a, &unconsumed);
-@@ -637,5 +721,16 @@
+@@ -637,5 +724,16 @@
  
 -			if (__archive_read_consume(a, request) != request)
 +			/*
@@ -473,7 +489,7 @@
  			tar->entry_padding = 0;
 +			tar->entry_bytes_remaining = 0;
  			*buff = NULL;
-@@ -648,2 +743,11 @@
+@@ -648,2 +746,11 @@
  		if (*buff == NULL) {
 +			/*
 +			 * BUN PATCH: propagate non-blocking retry. Every
@@ -485,11 +501,11 @@
 +			if (bytes_read == ARCHIVE_RETRY)
 +				return (ARCHIVE_RETRY);
  			archive_set_error(&a->archive, ARCHIVE_ERRNO_MISC,
-@@ -676,2 +780,3 @@
+@@ -676,2 +783,3 @@
  	int64_t request;
 +	int cr;
  	struct tar* tar;
-@@ -683,3 +788,14 @@
+@@ -683,3 +791,14 @@
  
 -	if (__archive_read_consume(a, request) != request)
 +	/*
@@ -505,23 +521,23 @@
 +		return (ARCHIVE_RETRY);
 +	if (cr != ARCHIVE_OK)
  		return (ARCHIVE_FATAL);
-@@ -687,3 +803,2 @@
+@@ -687,3 +806,2 @@
  	tar->entry_bytes_remaining = 0;
 -	tar->entry_bytes_unconsumed = 0;
  	tar->entry_padding = 0;
-@@ -721,4 +836,4 @@
+@@ -721,4 +839,4 @@
  	ssize_t bytes;
 -	int err = ARCHIVE_OK, err2;
 -	int eof_fatal = 0; /* EOF is okay at some points... */
 +	int err, err2;
 +	int eof_fatal; /* EOF is okay at some points... */
  	const char *h;
-@@ -728,3 +843,3 @@
+@@ -728,3 +846,3 @@
  	/* Bitmask of what header types we've seen. */
 -	int32_t seen_headers = 0;
 +	int32_t seen_headers;
  	static const int32_t seen_A_header = 1;
-@@ -737,3 +852,20 @@
+@@ -737,3 +855,20 @@
  
 -	tar_reset_header_state(tar);
 +	/*
@@ -543,7 +559,7 @@
 +	eof_fatal = tar->header_eof_fatal;
 +	err = tar->header_err;
  
-@@ -745,2 +877,13 @@
+@@ -745,2 +880,13 @@
  
 +/*
 + * BUN PATCH: every terminal exit from this function (anything other
@@ -557,12 +573,12 @@
 +	} while (0)
 +
  	/*
-@@ -757,3 +900,3 @@
+@@ -757,3 +903,3 @@
  			if (tar_flush_unconsumed(a, unconsumed) != ARCHIVE_OK) {
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -762,2 +905,13 @@
+@@ -762,2 +908,13 @@
  			h = __archive_read_ahead(a, 512, &bytes);
 +			if (h == NULL && bytes == ARCHIVE_RETRY) {
 +				/*
@@ -576,7 +592,7 @@
 +				goto bun_retry;
 +			}
  			if (bytes == 0) { /* EOF at a block boundary. */
-@@ -769,5 +923,5 @@
+@@ -769,5 +926,5 @@
  							  "Damaged tar archive (end-of-archive within a sequence of headers)");
 -					return (ARCHIVE_FATAL);
 +					TAR_HEADER_RETURN(ARCHIVE_FATAL);
@@ -584,39 +600,43 @@
 -					return (ARCHIVE_EOF);
 +					TAR_HEADER_RETURN(ARCHIVE_EOF);
  				}
-@@ -779,3 +933,3 @@
+@@ -779,3 +936,3 @@
  				    " detected while reading next header");
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -799,3 +953,3 @@
+@@ -799,3 +956,3 @@
  				archive_clear_error(&a->archive);
 -				return (ARCHIVE_EOF);
 +				TAR_HEADER_RETURN(ARCHIVE_EOF);
  			}
-@@ -805,3 +959,3 @@
+@@ -805,3 +962,3 @@
  				if (tar_flush_unconsumed(a, unconsumed) != ARCHIVE_OK) {
 -					return (ARCHIVE_FATAL);
 +					TAR_HEADER_RETURN(ARCHIVE_FATAL);
  				}
-@@ -812,5 +966,14 @@
+@@ -812,5 +969,18 @@
  				if (eof_fatal) {
 -					return (ARCHIVE_FATAL);
 +					TAR_HEADER_RETURN(ARCHIVE_FATAL);
  				} else {
 -					return (ARCHIVE_RETRY);
 +					/*
-+					 * BUN PATCH: this RETRY means
-+					 * "skip this block and look for
-+					 * the next valid header", which
-+					 * is also the non-blocking
-+					 * contract: persist state so
-+					 * re-entry does not reset
-+					 * `seen_headers`.
++					 * BUN PATCH: upstream's
++					 * "damaged block, skip and retry
++					 * the next one" — NOT a
++					 * non-blocking yield. The next
++					 * call must re-run the full
++					 * state reset (archive_entry_clear,
++					 * tar_reset_header_state) exactly
++					 * as upstream, so clear both
++					 * in-progress flags instead of
++					 * routing through bun_retry.
 +					 */
-+					goto bun_retry;
++					a->read_header_in_progress = 0;
++					TAR_HEADER_RETURN(ARCHIVE_RETRY);
  				}
-@@ -822,2 +985,55 @@
+@@ -822,2 +992,55 @@
  		header = (const struct archive_entry_header_ustar *)h;
 +
 +		/*
@@ -672,47 +692,47 @@
 +		}
 +
  		switch(header->typeflag[0]) {
-@@ -827,3 +1043,3 @@
+@@ -827,3 +1050,3 @@
  						  "Redundant 'A' header");
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -838,3 +1054,3 @@
+@@ -838,3 +1061,3 @@
  						  "Redundant 'g' header");
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -882,3 +1098,3 @@
+@@ -882,3 +1105,3 @@
  						  "Redundant 'X'/'x' header");
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -894,3 +1110,3 @@
+@@ -894,3 +1117,3 @@
  						  "Redundant 'x' header");
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -921,3 +1137,3 @@
+@@ -921,3 +1144,3 @@
  			if (err < ARCHIVE_WARN) {
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -940,3 +1156,3 @@
+@@ -940,3 +1163,3 @@
  				if (err2 < ARCHIVE_WARN) {
 -					return (ARCHIVE_FATAL);
 +					TAR_HEADER_RETURN(ARCHIVE_FATAL);
  				}
-@@ -955,3 +1171,3 @@
+@@ -955,3 +1178,3 @@
  							  "Non-regular file cannot be sparse");
 -					return (ARCHIVE_WARN);
 +					TAR_HEADER_RETURN(ARCHIVE_WARN);
  				} else if (tar->sparse_gnu_major == 0 &&
-@@ -968,3 +1184,3 @@
+@@ -968,3 +1191,3 @@
  					if (bytes_read < 0)
 -						return ((int)bytes_read);
 +						TAR_HEADER_RETURN((int)bytes_read);
  					tar->entry_bytes_remaining -= bytes_read;
-@@ -974,6 +1190,6 @@
+@@ -974,6 +1197,6 @@
  							  "Unrecognized GNU sparse file format");
 -					return (ARCHIVE_WARN);
 +					TAR_HEADER_RETURN(ARCHIVE_WARN);
@@ -721,12 +741,12 @@
 -			return (err);
 +			TAR_HEADER_RETURN(err);
  		}
-@@ -983,3 +1199,3 @@
+@@ -983,3 +1206,3 @@
  		if (err == ARCHIVE_FATAL)
 -			return (err);
 +			TAR_HEADER_RETURN(err);
  
-@@ -993,2 +1209,17 @@
+@@ -993,2 +1216,22 @@
  	}
 +
 +bun_retry:
@@ -736,11 +756,16 @@
 +	 * (either nothing was added this iteration, or we rolled the
 +	 * 512-byte header back above), so
 +	 * `archive_read_format_tar_read_header` can return
-+	 * ARCHIVE_RETRY without flushing.
++	 * ARCHIVE_RETRY without flushing. Setting
++	 * `read_header_in_progress` here (rather than having
++	 * archive_read_next_header2 set it on every RETRY) is what
++	 * lets upstream's damaged-block RETRY keep its original
++	 * reset-everything semantics.
 +	 */
 +	tar->header_seen = seen_headers;
 +	tar->header_eof_fatal = eof_fatal;
 +	tar->header_err = err;
++	a->read_header_in_progress = 1;
 +	return (ARCHIVE_RETRY);
 +#undef TAR_HEADER_RETURN
  }

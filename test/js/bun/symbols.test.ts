@@ -19,6 +19,15 @@ if (process.platform === "linux") {
   }
 
   test("objdump -T does not include symbols from glibc > 2.17", async () => {
+    // Self-check the comparator so a bug in it can't silently let symbols through.
+    expect(glibcVersionAboveFloor("2.2.5")).toBe(false);
+    expect(glibcVersionAboveFloor("2.3.4")).toBe(false);
+    expect(glibcVersionAboveFloor("2.17")).toBe(false);
+    expect(glibcVersionAboveFloor("2.17.1")).toBe(true);
+    expect(glibcVersionAboveFloor("2.18")).toBe(true);
+    expect(glibcVersionAboveFloor("2.25")).toBe(true);
+    expect(glibcVersionAboveFloor("3.0")).toBe(true);
+
     const objdump = Bun.which("objdump") || Bun.which("llvm-objdump");
     if (!objdump) {
       throw new Error("objdump executable not found. Please install it.");

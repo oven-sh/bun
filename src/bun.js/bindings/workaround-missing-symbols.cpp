@@ -64,10 +64,14 @@ extern "C" int kill(int pid, int sig)
 #include <errno.h>
 #include <math.h>
 #include <mutex>
+#include <pthread.h>
 #include <semaphore.h>
 #include <stdio.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <sys/random.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 #include <dlfcn.h>
 
 #ifndef _STAT_VER
@@ -90,6 +94,7 @@ __asm__(".symver log2f,log2f@GLIBC_2.2.5");
 __asm__(".symver logf,logf@GLIBC_2.2.5");
 __asm__(".symver pow,pow@GLIBC_2.2.5");
 __asm__(".symver powf,powf@GLIBC_2.2.5");
+__asm__(".symver quick_exit,quick_exit@GLIBC_2.10");
 #elif defined(__aarch64__)
 __asm__(".symver expf,expf@GLIBC_2.17");
 __asm__(".symver exp,exp@GLIBC_2.17");
@@ -100,6 +105,7 @@ __asm__(".symver log2f,log2f@GLIBC_2.17");
 __asm__(".symver logf,logf@GLIBC_2.17");
 __asm__(".symver pow,pow@GLIBC_2.17");
 __asm__(".symver powf,powf@GLIBC_2.17");
+__asm__(".symver quick_exit,quick_exit@GLIBC_2.17");
 #endif
 
 #if defined(__x86_64__) || defined(__aarch64__)
@@ -120,6 +126,8 @@ double BUN_WRAP_GLIBC_SYMBOL(pow)(double, double);
 double BUN_WRAP_GLIBC_SYMBOL(log)(double);
 double BUN_WRAP_GLIBC_SYMBOL(log2)(double);
 int BUN_WRAP_GLIBC_SYMBOL(fcntl64)(int, int, ...);
+ssize_t BUN_WRAP_GLIBC_SYMBOL(getrandom)(void*, size_t, unsigned int);
+void BUN_WRAP_GLIBC_SYMBOL(quick_exit)(int) __attribute__((noreturn));
 
 float __wrap_expf(float x) { return expf(x); }
 float __wrap_powf(float x, float y) { return powf(x, y); }
@@ -130,8 +138,73 @@ double __wrap_exp2(double x) { return exp2(x); }
 double __wrap_pow(double x, double y) { return pow(x, y); }
 double __wrap_log(double x) { return log(x); }
 double __wrap_log2(double x) { return log2(x); }
+void __wrap_quick_exit(int code) { quick_exit(code); }
+
+// glibc 2.25 added a getrandom() wrapper around the syscall (kernel ≥ 3.17).
+// Bypass libc and call the syscall directly so we don't need GLIBC_2.25.
+// All callers (BoringSSL, c-ares, highway) already handle ENOSYS by falling
+// back to /dev/urandom, so older kernels degrade gracefully.
+ssize_t __wrap_getrandom(void* buf, size_t buflen, unsigned int flags)
+{
+    return syscall(SYS_getrandom, buf, buflen, flags);
+}
 
 } // extern "C"
+
+// glibc 2.18 added __cxa_thread_atexit_impl for C++11 thread_local destructors.
+// libstdc++ weak-references it, but lld still emits a non-weak GLIBC_2.18
+// verneed entry that the loader rejects on 2.17. Providing a strong definition
+// here satisfies the static-link reference and removes the dynamic dependency.
+//
+// At runtime we forward to glibc's real implementation when present (≥ 2.18);
+// otherwise we maintain our own per-thread destructor list — the same fallback
+// libstdc++ would have used had its weak reference resolved to null.
+namespace {
+struct DtorEntry {
+    void (*func)(void*);
+    void* obj;
+    DtorEntry* next;
+};
+
+pthread_key_t g_dtor_key;
+pthread_once_t g_dtor_key_once = PTHREAD_ONCE_INIT;
+
+void run_thread_dtors(void* head)
+{
+    // C++ requires reverse-construction order; the list is already a stack.
+    auto* entry = static_cast<DtorEntry*>(head);
+    while (entry) {
+        entry->func(entry->obj);
+        auto* next = entry->next;
+        ::free(entry);
+        entry = next;
+    }
+}
+
+void make_dtor_key()
+{
+    pthread_key_create(&g_dtor_key, run_thread_dtors);
+}
+} // namespace
+
+extern "C" int __cxa_thread_atexit_impl(void (*func)(void*), void* obj, void* dso_handle)
+{
+    using impl_fn = int (*)(void (*)(void*), void*, void*);
+    static impl_fn real = reinterpret_cast<impl_fn>(dlsym(RTLD_NEXT, "__cxa_thread_atexit_impl"));
+    if (real) {
+        return real(func, obj, dso_handle);
+    }
+
+    (void)dso_handle;
+    pthread_once(&g_dtor_key_once, make_dtor_key);
+    auto* entry = static_cast<DtorEntry*>(::malloc(sizeof(DtorEntry)));
+    if (!entry) return -1;
+    entry->func = func;
+    entry->obj = obj;
+    entry->next = static_cast<DtorEntry*>(pthread_getspecific(g_dtor_key));
+    pthread_setspecific(g_dtor_key, entry);
+    return 0;
+}
 
 typedef int (*fcntl64_func)(int fd, int cmd, ...);
 

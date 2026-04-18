@@ -247,6 +247,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--parallel <NUMBER>?             Run test files in parallel using N worker processes. Implies --isolate. Defaults to CPU core count.") catch unreachable,
     clap.parseParam("--parallel-delay <NUMBER>        Milliseconds the first --parallel worker must be busy before spawning the rest. 0 spawns all immediately. Default 5.") catch unreachable,
     clap.parseParam("--test-worker                    (internal) Run as a --parallel worker, receiving files over IPC.") catch unreachable,
+    clap.parseParam("--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -612,6 +613,31 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         }
         if (args.option("--changed")) |since| {
             ctx.test_options.changed = since;
+        }
+        if (args.option("--shard")) |shard| {
+            const sep = bun.strings.indexOfChar(shard, '/') orelse {
+                Output.prettyErrorln("<r><red>error<r>: --shard expects <d>'<r>index/count<d>'<r>, e.g. --shard=1/3", .{});
+                Global.exit(1);
+            };
+            const index_str = shard[0..sep];
+            const count_str = shard[sep + 1 ..];
+            const index = std.fmt.parseInt(u32, index_str, 10) catch {
+                Output.prettyErrorln("<r><red>error<r>: --shard index must be a positive integer, got \"{s}\"", .{index_str});
+                Global.exit(1);
+            };
+            const count = std.fmt.parseInt(u32, count_str, 10) catch {
+                Output.prettyErrorln("<r><red>error<r>: --shard count must be a positive integer, got \"{s}\"", .{count_str});
+                Global.exit(1);
+            };
+            if (count == 0) {
+                Output.prettyErrorln("<r><red>error<r>: --shard count must be greater than 0", .{});
+                Global.exit(1);
+            }
+            if (index == 0 or index > count) {
+                Output.prettyErrorln("<r><red>error<r>: --shard index must be between 1 and {d}, got {d}", .{ count, index });
+                Global.exit(1);
+            }
+            ctx.test_options.shard = .{ .index = index, .count = count };
         }
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");

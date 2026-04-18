@@ -696,6 +696,7 @@ _bun_test_completion() {
         '--todo[Include tests that are marked with "test.todo()"]' \
         '--coverage[Generate a coverage profile]' \
         '--bail[Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.]:bail' \
+        '--shard[Run a subset of test files, e.g. 1/3. Useful for splitting tests across CI jobs.]:shard' \
         '--test-name-pattern[Run only tests with a name that matches the given regex]:pattern' \
         '-t[Run only tests with a name that matches the given regex]:pattern' &&
         ret=0

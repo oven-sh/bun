@@ -1631,13 +1631,17 @@ pub const TestCommand = struct {
         defer ctx.allocator.free(all_test_files);
         const search_count = scanner.search_count;
 
-        var pass_with_no_tests_from_changed = false;
+        // When --changed or --shard filters the discovered test files
+        // down to zero, the "No tests found!" error path is suppressed
+        // and the run exits 0 — an empty shard or an unchanged tree
+        // is not a misconfiguration.
+        var pass_with_no_tests_from_filter = false;
         var changed_module_graph_files: []const []const u8 = &.{};
         defer {
             for (changed_module_graph_files) |p| ctx.allocator.free(p);
             ctx.allocator.free(changed_module_graph_files);
         }
-        const test_files: []PathString = if (ctx.test_options.changed) |changed_since| brk: {
+        var test_files: []PathString = if (ctx.test_options.changed) |changed_since| brk: {
             // If the Scanner found nothing, fall through to the existing
             // "no tests found" error path rather than treating it as a
             // --changed success.
@@ -1650,13 +1654,13 @@ pub const TestCommand = struct {
             changed_module_graph_files = result.module_graph_files;
             if (result.test_files.len == 0 and result.changed_count == 0) {
                 Output.prettyError("<r><d>--changed:<r> no changed files, nothing to run\n", .{});
-                pass_with_no_tests_from_changed = true;
+                pass_with_no_tests_from_filter = true;
             } else if (result.test_files.len == 0) {
                 Output.prettyError(
                     "<r><d>--changed:<r> {d} changed file{s}, but no test files are affected\n",
                     .{ result.changed_count, if (result.changed_count == 1) "" else "s" },
                 );
-                pass_with_no_tests_from_changed = true;
+                pass_with_no_tests_from_filter = true;
             } else {
                 Output.prettyError(
                     "<r><d>--changed:<r> {d} changed file{s}, running {d}/{d} test file{s}\n",
@@ -1672,6 +1676,52 @@ pub const TestCommand = struct {
             Output.flush();
             break :brk result.test_files;
         } else all_test_files;
+
+        // --shard=M/N: sort the test files for determinism, then keep only
+        // every Nth file starting at M-1. This round-robin distribution
+        // keeps shards roughly balanced regardless of how many files there
+        // are, and is stable across runs and machines as long as the set of
+        // test files is the same.
+        //
+        // Only runs when there are files to shard — if the scanner or
+        // --changed already produced an empty list, fall through to the
+        // existing "No tests found!" / --changed messaging rather than
+        // printing a confusing "running 0/0 test files".
+        if (ctx.test_options.shard) |shard| if (test_files.len > 0) {
+            std.sort.pdq(PathString, test_files, {}, struct {
+                pub fn lessThan(_: void, a: PathString, b: PathString) bool {
+                    return strings.order(a.slice(), b.slice()) == .lt;
+                }
+            }.lessThan);
+
+            var write: usize = 0;
+            for (test_files, 0..) |file, i| {
+                if (i % shard.count == shard.index - 1) {
+                    test_files[write] = file;
+                    write += 1;
+                }
+            }
+
+            Output.prettyError(
+                "<r><d>--shard={d}/{d}:<r> running {d}/{d} test file{s}\n",
+                .{
+                    shard.index,
+                    shard.count,
+                    write,
+                    test_files.len,
+                    if (test_files.len == 1) "" else "s",
+                },
+            );
+            Output.flush();
+
+            if (write == 0) {
+                // There were test files, but fewer than the shard count so
+                // this shard got none. That's fine — not a "no tests
+                // found" error.
+                pass_with_no_tests_from_filter = true;
+            }
+            test_files = test_files[0..write];
+        };
 
         // Normally the watcher is only enabled when there are test files to
         // run; `bun test --watch` with nothing matching should still exit.
@@ -1775,7 +1825,7 @@ pub const TestCommand = struct {
 
         var failed_to_find_any_tests = false;
 
-        if (test_files.len == 0 and !pass_with_no_tests_from_changed) {
+        if (test_files.len == 0 and !pass_with_no_tests_from_filter) {
             failed_to_find_any_tests = true;
 
             // "bun test" - positionals[0] == "test"
@@ -2089,6 +2139,9 @@ pub const TestCommand = struct {
                 try vm.clearEntryPoint();
                 var entry = jsc.ZigString.init(file_path);
                 try vm.global.deleteModuleRegistryEntry(&entry);
+                // Reset per-test snapshot counters so rerun N matches the same
+                // snapshot keys as run 1 instead of looking for "test name 2", etc.
+                reporter.jest.snapshots.resetCounts();
             }
 
             var bun_test_root = &jest.Jest.runner.?.bun_test_root;

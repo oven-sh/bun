@@ -375,6 +375,10 @@ pub const Command = struct {
         /// Otherwise the value is a git ref (commit, branch, tag) to diff
         /// against.
         changed: ?[]const u8 = null,
+        /// `bun test --shard=M/N`. When set, test files are sorted by path
+        /// and only every Nth file (starting from M-1) is run. index is
+        /// 1-based; both are validated at parse time so `1 <= index <= count`.
+        shard: ?struct { index: u32, count: u32 } = null,
 
         reporters: struct {
             dots: bool = false,

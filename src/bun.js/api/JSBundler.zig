@@ -1763,7 +1763,7 @@ pub const JSBundler = struct {
                                 u8,
                                 "A bundler plugin threw a value that could not be converted to a string",
                             )),
-                            .location = .{ .file = file, .line = 0, .column = 0 },
+                            .location = .{ .file = file, .line = -1, .column = -1 },
                         },
                     };
                 },

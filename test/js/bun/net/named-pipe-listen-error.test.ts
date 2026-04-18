@@ -62,5 +62,5 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
       exitCode: 0,
       signalCode: null,
     });
-  }, 30_000);
+  });
 });

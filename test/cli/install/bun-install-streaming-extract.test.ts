@@ -8,7 +8,7 @@
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -28,7 +28,7 @@ function octal(n: number, width: number): string {
   return n.toString(8).padStart(width - 1, "0") + "\0";
 }
 
-function tarHeader(name: string, size: number, type: "0" | "5" | "x"): Buffer {
+function tarHeader(name: string, size: number, type: "0" | "5" | "x" | "g"): Buffer {
   const buf = Buffer.alloc(512, 0);
   buf.write(name, 0, 100, "utf8");
   buf.write(octal(0o644, 8), 100); // mode
@@ -327,4 +327,71 @@ describe("streaming tarball extraction", () => {
     expect(stderr).toContain("Integrity check failed");
     expect(exitCode).not.toBe(0);
   });
+});
+
+// -------------------------------------------------------------------
+// Regression: the nonblocking-read patch routed upstream libarchive's
+// pre-existing damaged-block ARCHIVE_RETRY through the same `bun_retry`
+// path as a non-blocking yield, so `seen_headers` / entry state leaked
+// across the retry. A second pax 'g' global header after the damaged
+// block would then trip "Redundant 'g' header" → ARCHIVE_FATAL even
+// though upstream libarchive (and a `tar` CLI) accepts this layout.
+//
+// This test goes through the buffered extractor only: local `file:`
+// tarballs are read fully into memory by PackageManagerTask.readAndExtract
+// and handed to Archiver.extractToDir, which loops on readNextHeader with
+// `.retry => continue`. The streaming reader is never involved, so any
+// behaviour change here is the libarchive patch leaking into the shared
+// buffered codepath.
+// -------------------------------------------------------------------
+test("buffered extract: damaged-block retry resets header state (upstream semantics)", async () => {
+  // One pax 'g' extended-header payload. libarchive's header_pax_global
+  // just skips it, but parsing it sets `seen_headers |= seen_g_header`;
+  // seeing a second one without an intervening state reset is what
+  // triggers the "Redundant 'g' header" FATAL.
+  const pax = Buffer.from("16 comment=test\n", "utf8");
+  expect(pax.length).toBe(16);
+  const paxEntry = () => [tarHeader("pax_global_header", pax.length, "g"), pax, pad512(pax.length)];
+
+  // A 512-byte block that is neither all-zero (would be treated as the
+  // end-of-archive marker) nor has a valid checksum: upstream tar emits
+  // "Damaged tar archive (bad header checksum)" and returns
+  // ARCHIVE_RETRY, which the Zig extract loop handles as `continue`.
+  const damaged = Buffer.alloc(512, 0);
+  damaged.write("junk", 0, "utf8");
+  damaged.fill(" ", 148, 156); // checksum field left as spaces → guaranteed mismatch
+
+  const fileBody = Buffer.from("damaged-block-retry ok\n", "utf8");
+  const file = [tarHeader("package/index.js", fileBody.length, "0"), fileBody, pad512(fileBody.length)];
+
+  const pkgJson = Buffer.from(JSON.stringify({ name: "damaged-pkg", version: "1.0.0", main: "index.js" }) + "\n");
+  const pkgJsonEntry = [tarHeader("package/package.json", pkgJson.length, "0"), pkgJson, pad512(pkgJson.length)];
+
+  // [g][damaged][g][package.json][index.js][EOF EOF]
+  const tar = Buffer.concat([...paxEntry(), damaged, ...paxEntry(), ...pkgJsonEntry, ...file, Buffer.alloc(1024, 0)]);
+  const tgz = gzipSync(tar);
+
+  using dir = tempDir("damaged-block-retry", {
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { "damaged-pkg": "file:./damaged-pkg.tgz" },
+    }),
+  });
+  writeFileSync(join(String(dir), "damaged-pkg.tgz"), tgz);
+
+  const { stderr, exitCode } = await runInstall(String(dir));
+
+  // With the broken patch the second 'g' header trips
+  // "Redundant 'g' header" → ARCHIVE_FATAL inside libarchive; the Zig
+  // extract loop surfaces that as `error.Fail` → "Fail extracting
+  // tarball". With upstream semantics restored the damaged block is
+  // skipped, state is fully reset, and the file following the second
+  // 'g' header is extracted normally.
+  expect(stderr).not.toContain("Fail extracting tarball");
+  expect(stderr).not.toContain("failed to resolve");
+  expect(exitCode).toBe(0);
+
+  const extracted = readFileSync(join(String(dir), "node_modules", "damaged-pkg", "index.js"));
+  expect(extracted.equals(fileBody)).toBe(true);
 });

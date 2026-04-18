@@ -61,10 +61,7 @@ pub fn NewSocket(comptime ssl: bool) type {
         ref_count: RefCount,
         wrapped: WrappedType = .none,
         handlers: ?*Handlers,
-        /// Reference to the JS wrapper. Held strong while the socket is active so the
-        /// wrapper cannot be garbage-collected out from under in-flight callbacks, and
-        /// downgraded to weak once the socket is closed/inactive so GC can reclaim it.
-        this_value: jsc.JSRef = .empty(),
+        this_value: jsc.JSValue = .zero,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         ref_pollref_on_connect: bool = true,
         connection: ?Listener.UnixOrHost = null,
@@ -73,7 +70,15 @@ pub fn NewSocket(comptime ssl: bool) type {
         buffered_data_for_node_net: bun.ByteList = .{},
         bytes_written: u64 = 0,
 
+        // TODO: switch to something that uses `visitAggregate` and have the
+        // `Listener` keep a list of all the sockets JSValue in there
+        // This is wasteful because it means we are keeping a JSC::Weak for every single open socket
+        has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
         native_callback: NativeCallbacks = .none,
+
+        pub fn hasPendingActivity(this: *This) callconv(.c) bool {
+            return this.has_pending_activity.load(.acquire);
+        }
 
         pub fn memoryCost(this: *This) usize {
             return @sizeOf(This) + this.buffered_data_for_node_net.cap;
@@ -314,14 +319,12 @@ pub fn NewSocket(comptime ssl: bool) type {
             defer scope.exit();
 
             if (callback == .zero) {
-                // Connection failed before open; allow the wrapper to be GC'd
-                // regardless of whether this path is promise-backed (e.g. the
-                // duplex TLS upgrade flow has no connect promise).
-                if (this.this_value != .finalized) {
-                    this.this_value.downgrade();
-                }
                 if (handlers.promise.trySwap()) |promise| {
                     handlers.promise.deinit();
+                    if (this.this_value != .zero) {
+                        this.this_value = .zero;
+                    }
+                    this.has_pending_activity.store(false, .release);
 
                     // reject the promise on connect() error
                     const js_promise = promise.asPromise().?;
@@ -333,10 +336,8 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
 
             const this_value = this.getThisValue(globalObject);
-            this_value.ensureStillAlive();
-            // Connection failed before open; allow the wrapper to be GC'd once this
-            // callback returns. The on-stack `this_value` keeps it alive for the call.
-            this.this_value.downgrade();
+            this.this_value = .zero;
+            this.has_pending_activity.store(false, .release);
 
             const err_value = err.toErrorInstance(globalObject);
             const result = callback.call(globalObject, this_value, &[_]JSValue{ this_value, err_value }) catch |e| globalObject.takeException(e);
@@ -360,16 +361,9 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn markActive(this: *This) void {
             if (!this.flags.is_active) {
-                const handlers = this.getHandlers();
-                handlers.markActive();
+                this.getHandlers().markActive();
                 this.flags.is_active = true;
-                // Keep the JS wrapper alive while the socket is active.
-                // `getThisValue` may not have been called yet (e.g. server-side
-                // sockets without default data), in which case the ref is still
-                // empty and there's nothing to upgrade.
-                if (this.this_value.isNotEmpty()) {
-                    this.this_value.upgrade(handlers.globalObject);
-                }
+                this.has_pending_activity.store(true, .release);
             }
         }
 
@@ -395,22 +389,11 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
 
                 this.flags.is_active = false;
-                // Allow the JS wrapper to be GC'd now that the socket is idle.
-                // Do this BEFORE touching `handlers`: for the last server-side
-                // connection on a stopped listener, `handlers.markInactive()`
-                // releases the listener's own strong ref, and in client mode it
-                // frees the Handlers allocation entirely. The old atomic store
-                // here was a simple write to `this` with no JSC interaction, so
-                // ordering didn't matter; the Strong release must come first so
-                // all JSC work on this socket is done while `this` and
-                // `handlers` are both still guaranteed valid.
-                if (this.this_value != .finalized) {
-                    this.this_value.downgrade();
-                }
                 const handlers = this.getHandlers();
                 const vm = handlers.vm;
                 handlers.markInactive();
                 this.poll_ref.unref(vm);
+                this.has_pending_activity.store(false, .release);
             }
         }
 
@@ -507,17 +490,14 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn getThisValue(this: *This, globalObject: *jsc.JSGlobalObject) JSValue {
-            if (this.this_value.tryGet()) |value| return value;
-            if (this.this_value == .finalized) {
-                // The JS wrapper was already garbage-collected. Creating a new one
-                // here would result in a second `finalize` (and double-deref) later.
-                return .js_undefined;
+            if (this.this_value == .zero) {
+                const value = this.toJS(globalObject);
+                value.ensureStillAlive();
+                this.this_value = value;
+                return value;
             }
-            const value = this.toJS(globalObject);
-            value.ensureStillAlive();
-            // Hold strong until the socket is closed / marked inactive.
-            this.this_value.setStrong(value, globalObject);
-            return value;
+
+            return this.this_value;
         }
 
         pub fn onEnd(this: *This, _: Socket) void {
@@ -707,7 +687,7 @@ pub fn NewSocket(comptime ssl: bool) type {
 
         pub fn setData(this: *This, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) void {
             log("setData()", .{});
-            This.js.dataSetCached(this.getThisValue(globalObject), globalObject, value);
+            This.js.dataSetCached(this.this_value, globalObject, value);
         }
 
         pub fn getListener(this: *This, _: *jsc.JSGlobalObject) JSValue {
@@ -1315,7 +1295,6 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn deinit(this: *This) void {
             this.markInactive();
             this.detachNativeCallback();
-            this.this_value.deinit();
 
             this.buffered_data_for_node_net.deinit(bun.default_allocator);
 
@@ -1347,7 +1326,6 @@ pub fn NewSocket(comptime ssl: bool) type {
         pub fn finalize(this: *This) void {
             log("finalize() {d} {}", .{ @intFromPtr(this), this.socket_context != null });
             this.flags.finalizing = true;
-            this.this_value.finalize();
             if (!this.socket.isClosed()) {
                 this.closeAndDetach(.failure);
             }
@@ -1468,6 +1446,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             var tls = bun.new(TLSSocket, .{
                 .ref_count = .init(),
                 .handlers = handlers_ptr,
+                .this_value = .zero,
                 .socket = TLSSocket.Socket.detached,
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tls,
@@ -1547,6 +1526,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             const raw = bun.new(TLSSocket, .{
                 .ref_count = .init(),
                 .handlers = raw_handlers_ptr,
+                .this_value = .zero,
                 .socket = new_socket,
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tcp,
@@ -1582,8 +1562,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 // the connection can be upgraded inside a handler call so we need to guarantee that it will be still alive
                 this.getHandlers().markInactive();
 
-                // The old socket is now superseded by the upgraded pair; allow GC.
-                this.this_value.downgrade();
+                this.has_pending_activity.store(false, .release);
             }
 
             const array = try jsc.JSValue.createEmptyArray(globalObject, 2);
@@ -1734,9 +1713,7 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
                 defer {
                     if (!this.tcp.socket.isDetached()) {
                         this.tcp.socket.detach();
-                        if (this.tcp.this_value != .finalized) {
-                            this.tcp.this_value.downgrade();
-                        }
+                        this.tcp.has_pending_activity.store(false, .release);
                         this.tcp.deref();
                     }
                 }
@@ -2006,6 +1983,7 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
     var tls = bun.new(TLSSocket, .{
         .ref_count = .init(),
         .handlers = handlers_ptr,
+        .this_value = .zero,
         .socket = TLSSocket.Socket.detached,
         .connection = null,
         .wrapped = .tls,

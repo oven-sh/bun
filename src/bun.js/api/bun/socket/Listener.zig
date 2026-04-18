@@ -348,6 +348,7 @@ pub fn onNamePipeCreated(comptime ssl: bool, listener: *Listener) *NewSocket(ssl
     var this_socket = Socket.new(.{
         .ref_count = .init(),
         .handlers = &listener.handlers,
+        .this_value = .zero,
         // here we start with a detached socket and attach it later after accept
         .socket = Socket.Socket.detached,
         .protos = listener.protos,
@@ -374,6 +375,7 @@ pub fn onCreate(comptime ssl: bool, socket: uws.NewSocketHandler(ssl)) void {
     const this_socket = bun.new(Socket, .{
         .ref_count = .init(),
         .handlers = &listener.handlers,
+        .this_value = .zero,
         .socket = socket,
         .protos = listener.protos,
         .flags = .{ .owned_protos = false },
@@ -662,7 +664,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                         prev_handlers.deinit();
                         handlers.vm.allocator.destroy(prev_handlers);
                     }
-                    bun.assert(prev.this_value.isNotEmpty());
+                    bun.assert(prev.this_value != .zero);
                     prev.handlers = handlers_ptr;
                     bun.assert(prev.socket.socket == .detached);
                     // Free old resources before reassignment to prevent memory leaks
@@ -689,6 +691,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 } else TLSSocket.new(.{
                     .ref_count = .init(),
                     .handlers = handlers_ptr,
+                    .this_value = .zero,
                     .socket = TLSSocket.Socket.detached,
                     .connection = connection,
                     .protos = if (ssl) |s| s.takeProtos() else null,
@@ -718,7 +721,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 tls.socket = TLSSocket.Socket.fromNamedPipe(named_pipe);
             } else {
                 var tcp = if (prev_maybe_tcp) |prev| blk: {
-                    bun.assert(prev.this_value.isNotEmpty());
+                    bun.assert(prev.this_value != .zero);
                     if (prev.handlers) |prev_handlers| {
                         prev_handlers.deinit();
                         handlers.vm.allocator.destroy(prev_handlers);
@@ -733,6 +736,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 } else TCPSocket.new(.{
                     .ref_count = .init(),
                     .handlers = handlers_ptr,
+                    .this_value = .zero,
                     .socket = TCPSocket.Socket.detached,
                     .connection = null,
                     .protos = null,
@@ -807,7 +811,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
                 prev_maybe_tcp;
 
             const socket = if (maybe_previous) |prev| blk: {
-                bun.assert(prev.this_value.isNotEmpty());
+                bun.assert(prev.this_value != .zero);
                 if (prev.handlers) |prev_handlers| {
                     prev_handlers.deinit();
                     handlers.vm.allocator.destroy(prev_handlers);
@@ -838,6 +842,7 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             } else bun.new(SocketType, .{
                 .ref_count = .init(),
                 .handlers = handlers_ptr,
+                .this_value = .zero,
                 .socket = SocketType.Socket.detached,
                 .connection = connection,
                 .protos = if (ssl) |s| s.takeProtos() else null,

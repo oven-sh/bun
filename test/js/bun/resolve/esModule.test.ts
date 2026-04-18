@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 
-const Self = await import("./esModule.test.ts");
+// Top-level `await import(self)` is a spec-level deadlock under the new
+// pure-C++ module loader (Node prints an "unsettled top-level await" warning
+// and exits). A static self-import yields the same namespace object without
+// blocking evaluation on itself.
+import * as Self from "./esModule.test.ts";
 
 test("__esModule defaults to undefined", () => {
   expect(Self.__esModule).toBeUndefined();

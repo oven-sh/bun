@@ -358,6 +358,11 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
         globalObject = nodeVmGlobalObject;
     }
 
+    // CyclicModuleRecord::link asserts the record is at least Unlinked. Records
+    // built directly here never go through the loader's
+    // finishLoadingImportedModule, so move them off Status::New manually.
+    if (record->status() == JSC::CyclicModuleRecord::Status::New)
+        record->status(JSC::CyclicModuleRecord::Status::Unlinked);
     record->link(globalObject, scriptFetcher);
     RETURN_IF_EXCEPTION(scope, {});
 

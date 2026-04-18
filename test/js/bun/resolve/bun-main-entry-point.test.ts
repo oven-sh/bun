@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 // `bun:main` is backed by ServerEntryPoint.contents — a slice that is
 // regenerated on every hot-reload cycle. Previously the backing
@@ -80,7 +80,8 @@ test("ServerEntryPoint regenerates cleanly across --hot reloads", async () => {
   const waitForLine = async (needle: string) => {
     while (!buffered.includes(needle)) {
       const { value, done } = await reader.read();
-      if (done) throw new Error(`stdout closed before seeing ${JSON.stringify(needle)}; buffer=${JSON.stringify(buffered)}`);
+      if (done)
+        throw new Error(`stdout closed before seeing ${JSON.stringify(needle)}; buffer=${JSON.stringify(buffered)}`);
       buffered += decoder.decode(value, { stream: true });
     }
   };

@@ -208,7 +208,7 @@ Third-party C/C++ libraries are vendored locally and can be read from disk (thes
 - `vendor/tinycc/` - TinyCC (FFI JIT compiler, fork: oven-sh/tinycc)
 - `vendor/WebKit/` - WebKit/JavaScriptCore (JS engine)
 - `vendor/zig/` - Zig compiler/stdlib
-- `vendor/zlib/` - zlib (compression, cloudflare fork)
+- `vendor/zlib/` - zlib-ng (compression, zlib-compat mode)
 - `vendor/zstd/` - Zstandard (compression)
 
 Build configuration for these is in `scripts/build/deps/*.ts`.

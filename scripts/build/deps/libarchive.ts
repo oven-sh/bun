@@ -10,7 +10,7 @@
  */
 
 import type { Dependency } from "../source.ts";
-import { depSourceDir } from "../source.ts";
+import { depBuildDir } from "../source.ts";
 
 const LIBARCHIVE_COMMIT = "ded82291ab41d5e355831b96b0e1ff49e24d8939";
 
@@ -35,9 +35,11 @@ export const libarchive: Dependency = {
   ],
 
   // libarchive's configure-time check_include_file("zlib.h") needs zlib's
-  // headers on disk. We don't LINK zlib into libarchive (ENABLE_ZLIB=OFF) —
-  // we just need the compile-time knowledge that deflate exists so
-  // libarchive compiles its gzip filter instead of fork/exec'ing gzip(1).
+  // headers on disk. zlib-ng generates zlib.h during its own cmake configure,
+  // so we need zlib BUILT (not just fetched) before libarchive configures.
+  // We don't LINK zlib into libarchive (ENABLE_ZLIB=OFF) — we just need the
+  // compile-time knowledge that deflate exists so libarchive compiles its
+  // gzip filter instead of fork/exec'ing gzip(1).
   fetchDeps: ["zlib"],
 
   build: cfg => ({
@@ -46,9 +48,9 @@ export const libarchive: Dependency = {
     pic: true,
     libSubdir: "libarchive",
 
-    // -I into zlib's SOURCE dir (vendor/zlib/). This is why fetchDeps exists:
-    // the zlib source must be on disk before libarchive's configure runs.
-    extraCFlags: [`-I${depSourceDir(cfg, "zlib")}`],
+    // -I into zlib's BUILD dir (zlib-ng generates zlib.h there at configure
+    // time). zlib must be built before libarchive's configure runs.
+    extraCFlags: [`-I${depBuildDir(cfg, "zlib")}`],
 
     args: {
       ENABLE_INSTALL: "OFF",

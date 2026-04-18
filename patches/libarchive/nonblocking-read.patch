@@ -636,7 +636,7 @@
 +					a->read_header_in_progress = 0;
 +					TAR_HEADER_RETURN(ARCHIVE_RETRY);
  				}
-@@ -822,2 +992,55 @@
+@@ -822,2 +992,56 @@
  		header = (const struct archive_entry_header_ustar *)h;
 +
 +		/*
@@ -660,20 +660,21 @@
 +		case 'V': case 'X': case 'x': {
 +			int64_t ext_size = tar_atol(header->size,
 +			    sizeof(header->size));
-+			if (ext_size < 0)
-+				ext_size = 0;
-+			int64_t ext_padded = (ext_size + 511) & ~511;
-+			/* Bound the prebuffer. A corrupted stream can
-+			 * produce garbage that decodes as an extension
-+			 * header with a multi-GB `size`; retrying
-+			 * `ahead(512 + huge)` every chunk would never
-+			 * make progress. Real pax/GNU extension
-+			 * payloads are path-length-bounded (a few KB),
-+			 * so anything beyond this is handed to the
-+			 * handler below, which will fail cleanly on
-+			 * its own `__archive_read_ahead`. */
-+			if (ext_padded > (int64_t)(1u << 20))
++			/* Bound the prebuffer before rounding
++			 * (tar_atol saturates to INT64_MAX on
++			 * overflow, so adding 511 first would be UB).
++			 * A corrupted stream can produce garbage that
++			 * decodes as an extension header with a
++			 * multi-GB `size`; retrying `ahead(512+huge)`
++			 * every chunk would never make progress. Real
++			 * pax/GNU extension payloads are path-length
++			 * bounded (a few KB), so anything beyond this
++			 * is handed to the handler below, which will
++			 * fail cleanly on its own
++			 * `__archive_read_ahead`. */
++			if (ext_size < 0 || ext_size > (int64_t)(1u << 20))
 +				break;
++			int64_t ext_padded = (ext_size + 511) & ~511;
 +			if (__archive_read_ahead(a,
 +			    (size_t)(512 + ext_padded), &bytes) == NULL &&
 +			    bytes == ARCHIVE_RETRY) {
@@ -692,47 +693,47 @@
 +		}
 +
  		switch(header->typeflag[0]) {
-@@ -827,3 +1050,3 @@
+@@ -827,3 +1051,3 @@
  						  "Redundant 'A' header");
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -838,3 +1061,3 @@
+@@ -838,3 +1062,3 @@
  						  "Redundant 'g' header");
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -882,3 +1105,3 @@
+@@ -882,3 +1106,3 @@
  						  "Redundant 'X'/'x' header");
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -894,3 +1117,3 @@
+@@ -894,3 +1118,3 @@
  						  "Redundant 'x' header");
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -921,3 +1144,3 @@
+@@ -921,3 +1145,3 @@
  			if (err < ARCHIVE_WARN) {
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -940,3 +1163,3 @@
+@@ -940,3 +1164,3 @@
  				if (err2 < ARCHIVE_WARN) {
 -					return (ARCHIVE_FATAL);
 +					TAR_HEADER_RETURN(ARCHIVE_FATAL);
  				}
-@@ -955,3 +1178,3 @@
+@@ -955,3 +1179,3 @@
  							  "Non-regular file cannot be sparse");
 -					return (ARCHIVE_WARN);
 +					TAR_HEADER_RETURN(ARCHIVE_WARN);
  				} else if (tar->sparse_gnu_major == 0 &&
-@@ -968,3 +1191,3 @@
+@@ -968,3 +1192,3 @@
  					if (bytes_read < 0)
 -						return ((int)bytes_read);
 +						TAR_HEADER_RETURN((int)bytes_read);
  					tar->entry_bytes_remaining -= bytes_read;
-@@ -974,6 +1197,6 @@
+@@ -974,6 +1198,6 @@
  							  "Unrecognized GNU sparse file format");
 -					return (ARCHIVE_WARN);
 +					TAR_HEADER_RETURN(ARCHIVE_WARN);
@@ -741,12 +742,12 @@
 -			return (err);
 +			TAR_HEADER_RETURN(err);
  		}
-@@ -983,3 +1206,3 @@
+@@ -983,3 +1207,3 @@
  		if (err == ARCHIVE_FATAL)
 -			return (err);
 +			TAR_HEADER_RETURN(err);
  
-@@ -993,2 +1216,22 @@
+@@ -993,2 +1217,22 @@
  	}
 +
 +bun_retry:

@@ -271,12 +271,17 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
       `,
       "main.ts": `
         const N = 20;
-        let closed = 0;
+        let closed = 0, errors = 0;
         for (let i = 0; i < N; i++) {
           const w = new Worker("./worker.ts");
           w.addEventListener("message", () => w.terminate());
+          // Any worker 'error' here means cron routed the TerminationException
+          // through uncaughtException → WebWorker__dispatchError — the
+          // regression this test guards against, independent of whether
+          // VMTraps asserts are compiled in.
+          w.addEventListener("error", () => errors++);
           w.addEventListener("close", () => {
-            if (++closed === N) console.log("ok");
+            if (++closed === N) console.log("errors=" + errors);
           });
         }
       `,
@@ -289,7 +294,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     if (exitCode !== 0) console.error(stderr);
-    expect(stdout.trim()).toBe("ok");
+    expect(stdout.trim()).toBe("errors=0");
     expect(exitCode).toBe(0);
   }, 130_000);
 

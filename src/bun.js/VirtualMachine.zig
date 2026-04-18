@@ -1380,6 +1380,49 @@ pub fn initWorker(
     };
     vm.transpiler.resolver.standalone_module_graph = opts.graph;
 
+    // Inherit auto-install / install resolver settings from the parent VM so
+    // that `bun run` with auto-install continues to work inside Workers.
+    // Without this, the worker's resolver defaults to `global_cache = .disable`
+    // and bare specifiers that the parent resolved via auto-install will fail
+    // with "Cannot find package". See https://github.com/oven-sh/bun/issues/29018
+    //
+    // Workers get downgraded to `.read_only` whenever the parent is configured
+    // to install (`.auto`, `.allow_install`, `.force`, `.fallback`). The shared
+    // PackageManager singleton has a single `pm.onWake` callback slot that
+    // routes wake signals to one VM's `AsyncModule.Queue`. If a worker returned
+    // `.pending` from the resolver, `pm.wake()` would fire the parent's handler
+    // and the worker's `import()` would hang forever. Read-only lets the worker
+    // synchronously resolve anything already in the parent's lockfile / global
+    // disk cache (the common case), and degrade to "Cannot find package" for
+    // packages that are not yet installed — matching the pre-fix behavior for
+    // that edge case. Fixing the async path properly needs a broadcast wake /
+    // per-VM pm routing architecture change outside the scope of this PR.
+    //
+    // We also reuse the parent's already-initialized PackageManager pointer.
+    // `Resolver.getPackageManager` lazy-inits via `bun.once` (same singleton
+    // across all threads) and unconditionally assigns
+    // `pm.onWake = self.onWakePackageManager` on the first call for each
+    // resolver. Without propagation, a worker resolver running that branch
+    // would overwrite the parent's wake handler and hang a concurrent parent
+    // `import()`.
+    {
+        const parent_transpiler = &worker.parent.transpiler;
+        const parent_global_cache = parent_transpiler.resolver.opts.global_cache;
+        const worker_global_cache: Resolver.GlobalCache = if (parent_global_cache.canInstall())
+            .read_only
+        else
+            parent_global_cache;
+        vm.transpiler.resolver.opts.global_cache = worker_global_cache;
+        vm.transpiler.resolver.opts.prefer_offline_install = parent_transpiler.resolver.opts.prefer_offline_install;
+        vm.transpiler.resolver.opts.prefer_latest_install = parent_transpiler.resolver.opts.prefer_latest_install;
+        vm.transpiler.resolver.opts.install = parent_transpiler.resolver.opts.install;
+        vm.transpiler.options.global_cache = worker_global_cache;
+        vm.transpiler.options.prefer_offline_install = parent_transpiler.options.prefer_offline_install;
+        vm.transpiler.options.prefer_latest_install = parent_transpiler.options.prefer_latest_install;
+        vm.transpiler.options.install = parent_transpiler.options.install;
+        vm.transpiler.resolver.package_manager = parent_transpiler.resolver.package_manager;
+    }
+
     if (opts.graph == null) {
         vm.transpiler.configureLinker();
     } else {

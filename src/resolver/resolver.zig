@@ -2181,21 +2181,30 @@ pub const Resolver = struct {
     ) !?*DirInfo {
         assert(r.package_manager != null);
 
-        const dir_path = strings.withoutTrailingSlashWindowsPath(dir_path_maybe_trail_slash);
+        // The incoming slice typically points into a threadlocal scratch buffer
+        // (`bufs(.path_in_global_disk_cache)` via PackageManager.pathForResolution).
+        // The cache lookups below only hash the bytes (`store_keys = false` on both
+        // `dir_cache` and `rfs.entries`), so using the ephemeral slice here is safe.
+        // We only need to persist the path into the shared `DirnameStore` on the
+        // cache-miss path, just before we actually store it in `DirEntry.dir` /
+        // `DirInfo.abs_path`. `r.dir_cache` is a process-wide singleton shared by
+        // every Resolver, so those stored pointers must outlive this call on every
+        // thread. See https://github.com/oven-sh/bun/issues/29018
+        const dir_path_tmp = strings.withoutTrailingSlashWindowsPath(dir_path_maybe_trail_slash);
 
-        assertValidCacheKey(dir_path);
-        var dir_cache_info_result = bun.handleOom(r.dir_cache.getOrPut(dir_path));
+        assertValidCacheKey(dir_path_tmp);
+        var dir_cache_info_result = bun.handleOom(r.dir_cache.getOrPut(dir_path_tmp));
         if (dir_cache_info_result.status == .exists) {
             // we've already looked up this package before
             return r.dir_cache.atIndex(dir_cache_info_result.index).?;
         }
         var rfs = &r.fs.fs;
-        var cached_dir_entry_result = bun.handleOom(rfs.entries.getOrPut(dir_path));
+        var cached_dir_entry_result = bun.handleOom(rfs.entries.getOrPut(dir_path_tmp));
 
         var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
         var needs_iter = true;
         var in_place: ?*Fs.FileSystem.DirEntry = null;
-        const open_dir = bun.openDirForIteration(FD.cwd(), dir_path).unwrap() catch |err| {
+        const open_dir = bun.openDirForIteration(FD.cwd(), dir_path_tmp).unwrap() catch |err| {
             // TODO: handle this error better
             r.log.addErrorFmt(
                 null,
@@ -2206,6 +2215,12 @@ pub const Resolver = struct {
             ) catch unreachable;
             return err;
         };
+        // Close `open_dir` on every exit path that does not transfer ownership
+        // into `dir_entries_ptr.fd` (only done when `r.store_fd` is set). Without
+        // this, long-running auto-install resolves leak directory descriptors.
+        // Matches the pattern used by `RealFS.entriesAt` at src/fs.zig:617.
+        var open_dir_owned = true;
+        defer if (open_dir_owned) open_dir.close();
 
         if (rfs.entries.atIndex(cached_dir_entry_result.index)) |cached_entry| {
             if (cached_entry.* == .entries) {
@@ -2218,10 +2233,23 @@ pub const Resolver = struct {
             }
         }
 
+        // Cache miss — persist the path so stored DirEntry / DirInfo references
+        // remain valid across every thread that reads the shared caches. Both
+        // the generation-refresh path (`in_place != null`) and the
+        // current-generation-hit path (`needs_iter == false`) already have a
+        // `DirEntry.dir` that is itself a persistent slice in `DirnameStore`,
+        // so reuse it and skip the duplicate allocation in those cases.
+        const dir_path = if (in_place) |existing|
+            existing.dir
+        else if (!needs_iter)
+            dir_entries_option.entries.dir
+        else
+            bun.handleOom(Fs.FileSystem.DirnameStore.instance.append(string, dir_path_tmp));
+
         if (needs_iter) {
             const allocator = bun.default_allocator;
             var new_entry = Fs.FileSystem.DirEntry.init(
-                if (in_place) |existing| existing.dir else Fs.FileSystem.DirnameStore.instance.append(string, dir_path) catch unreachable,
+                dir_path,
                 r.generation,
             );
 
@@ -2244,6 +2272,7 @@ pub const Resolver = struct {
 
             if (r.store_fd) {
                 dir_entries_ptr.fd = open_dir;
+                open_dir_owned = false;
             }
 
             bun.fs.debug("readdir({f}, {s}) = {d}", .{ open_dir, dir_path, dir_entries_ptr.data.count() });

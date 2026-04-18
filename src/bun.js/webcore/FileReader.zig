@@ -623,6 +623,11 @@ pub fn onReaderError(this: *FileReader, err: bun.sys.Error) void {
 
     this.pending.result = .{ .err = .{ .Error = err } };
     this.pending.run();
+
+    if (this.waiting_for_onReaderDone) {
+        this.waiting_for_onReaderDone = false;
+        _ = this.parent().decrementCount();
+    }
 }
 
 pub fn setRawMode(this: *FileReader, flag: bool) bun.sys.Maybe(void) {

@@ -494,7 +494,10 @@ for (const cmd of ["link", "unlink"] as const) {
   });
 
   it(`bun ${cmd} reports invalid package.json "name"`, async () => {
-    await writeFile(join(link_dir, "package.json"), JSON.stringify({ name: "not a valid npm name!", version: "1.0.0" }));
+    await writeFile(
+      join(link_dir, "package.json"),
+      JSON.stringify({ name: "not a valid npm name!", version: "1.0.0" }),
+    );
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), cmd],
       cwd: link_dir,

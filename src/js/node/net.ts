@@ -253,7 +253,12 @@ const SocketHandlers: SocketHandler = {
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
     if (!verifyError && typeof checkServerIdentity === "function") {
-      const hostname = self.servername || self._host || "localhost";
+      // Match Node.js onConnectSecure: derive the hostname to verify from the
+      // original connect options. self.servername is the SNI name (empty for IP
+      // hosts) and self._host is unset on the upgrade-over-existing-socket path,
+      // so we must consult options.host / options.socket._host like Node does.
+      const options = self[kConnectOptions];
+      const hostname = options?.servername || options?.host || options?.socket?._host || "localhost";
       const cert = self.getPeerCertificate(true);
       if (cert) {
         verifyError = checkServerIdentity(hostname, cert);
@@ -568,7 +573,12 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.alpnProtocol = socket.alpnProtocol;
     const { checkServerIdentity } = self[bunTLSConnectOptions];
     if (!verifyError && typeof checkServerIdentity === "function") {
-      const hostname = self.servername || self._host || "localhost";
+      // Match Node.js onConnectSecure: derive the hostname to verify from the
+      // original connect options. self.servername is the SNI name (empty for IP
+      // hosts) and self._host is unset on the upgrade-over-existing-socket path,
+      // so we must consult options.host / options.socket._host like Node does.
+      const options = self[kConnectOptions];
+      const hostname = options?.servername || options?.host || options?.socket?._host || "localhost";
       const cert = self.getPeerCertificate(true);
       if (cert) {
         verifyError = checkServerIdentity(hostname, cert);

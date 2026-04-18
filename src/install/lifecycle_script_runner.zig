@@ -186,7 +186,10 @@ pub const LifecycleScriptSubprocess = struct {
             combined_script,
             null,
         };
-        if (Environment.isWindows) {
+        const buffer_output = this.manager.options.log_level != .silent and
+            !this.manager.options.log_level.isVerbose() and
+            !this.foreground;
+        if (Environment.isWindows and buffer_output) {
             this.stdout.source = .{ .pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe)) };
             this.stderr.source = .{ .pipe = bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe)) };
         }
@@ -196,20 +199,16 @@ pub const LifecycleScriptSubprocess = struct {
             else
                 .ignore,
 
-            .stdout = if (this.manager.options.log_level == .silent)
-                .ignore
-            else if (this.manager.options.log_level.isVerbose() or this.foreground)
-                .inherit
+            .stdout = if (!buffer_output)
+                if (this.manager.options.log_level == .silent) .ignore else .inherit
             else if (Environment.isPosix)
                 .buffer
             else
                 .{
                     .buffer = this.stdout.source.?.pipe,
                 },
-            .stderr = if (this.manager.options.log_level == .silent)
-                .ignore
-            else if (this.manager.options.log_level.isVerbose() or this.foreground)
-                .inherit
+            .stderr = if (!buffer_output)
+                if (this.manager.options.log_level == .silent) .ignore else .inherit
             else if (Environment.isPosix)
                 .buffer
             else

@@ -135,10 +135,11 @@ set --export PATH "\$BUN_INSTALL/bin" \$PATH
 EOF
 }
 
+USER_SHELL="$(dscl . -read "/Users/$CONSOLE_USER" UserShell 2>/dev/null | sed 's/^UserShell: //')"
 wrote_any=0
 
 # zsh — macOS default shell.
-if [[ -f "$USER_HOME/.zshrc" || "$(dscl . -read "/Users/$CONSOLE_USER" UserShell 2>/dev/null)" == *"/zsh" ]]; then
+if [[ -f "$USER_HOME/.zshrc" || "$USER_SHELL" == */zsh ]]; then
   append_once "$USER_HOME/.zshrc"
   wrote_any=1
 fi
@@ -150,19 +151,28 @@ for rc in "$USER_HOME/.bash_profile" "$USER_HOME/.bashrc"; do
     wrote_any=1
   fi
 done
+if [[ "$USER_SHELL" == */bash && ! -f "$USER_HOME/.bash_profile" && ! -f "$USER_HOME/.bashrc" ]]; then
+  append_once "$USER_HOME/.bash_profile"
+  wrote_any=1
+fi
 
 # fish — only if the user has actually set it up. `command -v fish` would
 # probe root's PATH (where Homebrew often has fish as a transitive dep) and
 # create config for users who've never touched it.
-if [[ -d "$USER_HOME/.config/fish" || "$(dscl . -read "/Users/$CONSOLE_USER" UserShell 2>/dev/null)" == *"/fish" ]]; then
+if [[ -d "$USER_HOME/.config/fish" || "$USER_SHELL" == */fish ]]; then
   append_once_fish "$USER_HOME/.config/fish/config.fish"
   wrote_any=1
 fi
 
-# If we didn't find any shell config, fall back to .zprofile so a fresh
-# account still gets configured on next login.
+# If we didn't match any shell at all, fall back based on the login shell so
+# a fresh account still gets configured on next login. zsh is the macOS
+# default since Catalina, so .zprofile is the last-resort.
 if [[ "$wrote_any" == "0" ]]; then
-  append_once "$USER_HOME/.zprofile"
+  case "$USER_SHELL" in
+    */bash) append_once "$USER_HOME/.bash_profile" ;;
+    */fish) append_once_fish "$USER_HOME/.config/fish/config.fish" ;;
+    *)      append_once "$USER_HOME/.zprofile" ;;
+  esac
 fi
 
 # ---------------------------------------------------------------------------

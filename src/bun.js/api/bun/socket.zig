@@ -391,14 +391,22 @@ pub fn NewSocket(comptime ssl: bool) type {
                 }
 
                 this.flags.is_active = false;
+                // Allow the JS wrapper to be GC'd now that the socket is idle.
+                // Do this BEFORE touching `handlers`: for the last server-side
+                // connection on a stopped listener, `handlers.markInactive()`
+                // releases the listener's own strong ref, and in client mode it
+                // frees the Handlers allocation entirely. The old atomic store
+                // here was a simple write to `this` with no JSC interaction, so
+                // ordering didn't matter; the Strong release must come first so
+                // all JSC work on this socket is done while `this` and
+                // `handlers` are both still guaranteed valid.
+                if (this.this_value != .finalized) {
+                    this.this_value.downgrade();
+                }
                 const handlers = this.getHandlers();
                 const vm = handlers.vm;
                 handlers.markInactive();
                 this.poll_ref.unref(vm);
-                // Allow the JS wrapper to be GC'd now that the socket is idle.
-                if (this.this_value != .finalized) {
-                    this.this_value.downgrade();
-                }
             }
         }
 

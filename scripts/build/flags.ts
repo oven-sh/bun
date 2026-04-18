@@ -721,6 +721,17 @@ export const linkerFlags: Flag[] = [
     desc: "Wrap glibc 2.18+ symbols (portable down to glibc 2.17)",
   },
   {
+    // glibc 2.18 added __cxa_thread_atexit_impl. All callers (libstdc++,
+    // libc++abi, Rust std) weak-ref it with a runtime null check and their
+    // own pthread_key fallback, but lld doesn't propagate weakness to the
+    // verneed entry, so the loader rejects on 2.17. Forcing the symbol to
+    // absolute 0 makes every caller's null check fail and use its own
+    // (tested) fallback — no shim code required on our side.
+    flag: "-Wl,--defsym,__cxa_thread_atexit_impl=0",
+    when: c => c.linux && c.abi !== "musl",
+    desc: "Resolve __cxa_thread_atexit_impl to null (drop GLIBC_2.18 verneed; callers use own fallback)",
+  },
+  {
     flag: ["-static-libstdc++", "-static-libgcc"],
     when: c => c.linux && c.abi !== "musl",
     desc: "Static C++ runtime (don't depend on host libstdc++)",

@@ -150,22 +150,6 @@ ssize_t __wrap_getrandom(void* buf, size_t buflen, unsigned int flags)
 
 } // extern "C"
 
-// glibc 2.18 added __cxa_thread_atexit_impl for C++11 thread_local destructors.
-// The C++ runtime weak-references it, but lld doesn't propagate symbol weakness
-// to the verneed entry (GNU ld does), so the loader rejects on 2.17 with
-// "version `GLIBC_2.18' not found". Providing a strong definition here satisfies
-// the link-time reference and removes the dynamic dependency.
-//
-// On 2.17 (RHEL 7, EOL 2024) we no-op: the only non-trivial thread_local in the
-// codebase is EventNames (~200 B heap per Worker), and process exit goes through
-// quick_exit which skips these dtors regardless.
-extern "C" int __cxa_thread_atexit_impl(void (*func)(void*), void* obj, void* dso_handle)
-{
-    using impl_fn = int (*)(void (*)(void*), void*, void*);
-    static impl_fn real = reinterpret_cast<impl_fn>(dlsym(RTLD_NEXT, "__cxa_thread_atexit_impl"));
-    return real ? real(func, obj, dso_handle) : 0;
-}
-
 typedef int (*fcntl64_func)(int fd, int cmd, ...);
 
 enum arg_type {

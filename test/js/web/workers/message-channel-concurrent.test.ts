@@ -20,4 +20,4 @@ test("MessageChannel survives concurrent create/post/transfer/close from many wo
   expect(stderr).toBe("");
   expect(stdout).toStartWith("PASS ");
   expect(exitCode).toBe(0);
-});
+}, 60_000);

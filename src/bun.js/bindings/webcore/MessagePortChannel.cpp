@@ -156,6 +156,8 @@ std::optional<MessageWithMessagePorts> MessagePortChannel::tryTakeMessageForPort
 
     auto message = m_pendingMessages[i].first();
     m_pendingMessages[i].removeAt(0);
+    if (m_pendingMessages[i].isEmpty())
+        m_pendingMessageProtectors[i] = nullptr;
     return WTF::move(message);
 }
 

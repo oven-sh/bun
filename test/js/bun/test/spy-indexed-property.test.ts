@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("spyOn with numeric index property does not crash", async () => {
+test.concurrent("spyOn with numeric index property does not crash", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -21,11 +21,12 @@ test("spyOn with numeric index property does not crash", async () => {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("ASSERTION");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
 });
 
-test("spyOn with numeric index on callable property does not crash", async () => {
+test.concurrent("spyOn with numeric index on callable property does not crash", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -45,6 +46,7 @@ test("spyOn with numeric index on callable property does not crash", async () =>
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("ASSERTION");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
 });

@@ -136,9 +136,6 @@ MonotonicTime Performance::monotonicTimeFromRelativeTime(DOMHighResTimeStamp rel
 
 PerformanceTiming* Performance::timing()
 {
-    // if (!is<Document>(scriptExecutionContext()))
-    //     return nullptr;
-    // ASSERT(isMainThread());
     if (!m_timing)
         m_timing = PerformanceTiming::create();
     return m_timing.get();

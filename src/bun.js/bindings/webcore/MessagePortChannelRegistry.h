@@ -31,6 +31,7 @@
 #include "ProcessIdentifier.h"
 #include <wtf/HashMap.h>
 #include <wtf/CheckedRef.h>
+#include <wtf/Lock.h>
 
 namespace WebCore {
 
@@ -51,13 +52,16 @@ public:
     WEBCORE_EXPORT void takeAllMessagesForPort(const MessagePortIdentifier&, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&&);
     WEBCORE_EXPORT std::optional<MessageWithMessagePorts> tryTakeMessageForPort(const MessagePortIdentifier&);
 
-    WEBCORE_EXPORT MessagePortChannel* existingChannelContainingPort(const MessagePortIdentifier&);
-
     WEBCORE_EXPORT void messagePortChannelCreated(MessagePortChannel&);
     WEBCORE_EXPORT void messagePortChannelDestroyed(MessagePortChannel&);
 
 private:
-    UncheckedKeyHashMap<MessagePortIdentifier, WeakRef<MessagePortChannel>> m_openChannels;
+    // WebKit guarantees single-threaded access via ASSERT(isMainThread()) and routes worker calls through
+    // WorkerMessagePortChannelProvider → callOnMainThread. Bun has no equivalent main-thread runloop and
+    // additionally needs synchronous receiveMessageOnPort() from any thread, so we serialize with a lock
+    // instead. All MessagePortChannel state mutation happens via this registry and is covered by m_lock.
+    Lock m_lock;
+    UncheckedKeyHashMap<MessagePortIdentifier, ThreadSafeWeakPtr<MessagePortChannel>> m_openChannels WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace WebCore

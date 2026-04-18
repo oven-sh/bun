@@ -30,15 +30,17 @@
 #include "MessageWithMessagePorts.h"
 #include "ProcessIdentifier.h"
 #include <wtf/HashSet.h>
-#include <wtf/RefCounted.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 #include <wtf/text/WTFString.h>
-#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
 namespace WebCore {
 
 class MessagePortChannelRegistry;
 
-class MessagePortChannel : public RefCountedAndCanMakeWeakPtr<MessagePortChannel> {
+// In WebKit this is RefCountedAndCanMakeWeakPtr because the registry is main-thread-only.
+// Bun serializes registry/channel access with a Lock instead (MessagePortChannelRegistry::m_lock),
+// so the refcount and weak control block must be atomic — RefPtrs can be released on any thread.
+class MessagePortChannel : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MessagePortChannel> {
 public:
     static Ref<MessagePortChannel> create(MessagePortChannelRegistry&, const MessagePortIdentifier& port1, const MessagePortIdentifier& port2);
 
@@ -54,12 +56,8 @@ public:
     void closePort(const MessagePortIdentifier&);
     bool postMessageToRemote(MessageWithMessagePorts&&, const MessagePortIdentifier& remoteTarget);
 
-    void takeAllMessagesForPort(const MessagePortIdentifier&, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&&);
+    Vector<MessageWithMessagePorts> takeAllMessagesForPort(const MessagePortIdentifier&);
     std::optional<MessageWithMessagePorts> tryTakeMessageForPort(const MessagePortIdentifier);
-
-    WEBCORE_EXPORT bool hasAnyMessagesPendingOrInFlight() const;
-
-    uint64_t beingTransferredCount();
 
 #if !LOG_DISABLED
     String logString() const
@@ -78,7 +76,6 @@ private:
     Vector<MessageWithMessagePorts> m_pendingMessages[2];
     UncheckedKeyHashSet<RefPtr<MessagePortChannel>> m_pendingMessagePortTransfers[2];
     RefPtr<MessagePortChannel> m_pendingMessageProtectors[2];
-    uint64_t m_messageBatchesInFlight { 0 };
 
     MessagePortChannelRegistry& m_registry;
 };

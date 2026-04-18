@@ -980,11 +980,11 @@ pub const WindowsBufferedReader = struct {
         MaxBuf.removeFromPipereader(&this.maxbuf);
         this.buffer().deinit();
         const source = this.source orelse return;
-        this.source = null;
         if (!source.isClosed()) {
             // closeImpl will take care of freeing the source
             this.closeImpl(false);
         }
+        this.source = null;
     }
 
     pub fn setRawMode(this: *WindowsBufferedReader, value: bool) bun.sys.Maybe(void) {

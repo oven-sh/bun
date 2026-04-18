@@ -64,7 +64,6 @@ extern "C" int kill(int pid, int sig)
 #include <errno.h>
 #include <math.h>
 #include <mutex>
-#include <pthread.h>
 #include <semaphore.h>
 #include <stdio.h>
 #include <signal.h>
@@ -152,70 +151,19 @@ ssize_t __wrap_getrandom(void* buf, size_t buflen, unsigned int flags)
 } // extern "C"
 
 // glibc 2.18 added __cxa_thread_atexit_impl for C++11 thread_local destructors.
-// The libstdc++ we statically link references it directly (it's built with
-// _GLIBCXX_HAVE___CXA_THREAD_ATEXIT_IMPL), pulling in a GLIBC_2.18 verneed
-// entry that the loader rejects on 2.17. Providing a strong definition here
-// satisfies the link-time reference and removes the dynamic dependency.
+// The C++ runtime weak-references it, but lld doesn't propagate symbol weakness
+// to the verneed entry (GNU ld does), so the loader rejects on 2.17 with
+// "version `GLIBC_2.18' not found". Providing a strong definition here satisfies
+// the link-time reference and removes the dynamic dependency.
 //
-// At runtime we forward to glibc's real implementation when present (≥ 2.18,
-// i.e. effectively always). The fallback below only runs on glibc 2.17 and
-// mirrors what libstdc++ itself does when built without the impl available
-// (libsupc++/atexit_thread.cc): a per-thread singly-linked stack stored under
-// a pthread key, drained on thread exit and again at process exit via atexit.
-namespace {
-struct DtorEntry {
-    void (*func)(void*);
-    void* obj;
-    DtorEntry* next;
-};
-
-pthread_key_t g_dtor_key;
-pthread_once_t g_dtor_key_once = PTHREAD_ONCE_INIT;
-
-void run_thread_dtors(void* head)
-{
-    auto* entry = static_cast<DtorEntry*>(head);
-    while (entry) {
-        entry->func(entry->obj);
-        auto* next = entry->next;
-        ::free(entry);
-        entry = next;
-    }
-}
-
-void run_current_thread_dtors()
-{
-    void* head = pthread_getspecific(g_dtor_key);
-    pthread_setspecific(g_dtor_key, nullptr);
-    run_thread_dtors(head);
-}
-
-void make_dtor_key()
-{
-    pthread_key_create(&g_dtor_key, run_thread_dtors);
-    // pthread_key destructors don't fire on exit(); register an atexit hook so
-    // the calling thread's thread_local dtors still run at process exit.
-    ::atexit(run_current_thread_dtors);
-}
-} // namespace
-
+// On 2.17 (RHEL 7, EOL 2024) we no-op: the only non-trivial thread_local in the
+// codebase is EventNames (~200 B heap per Worker), and process exit goes through
+// quick_exit which skips these dtors regardless.
 extern "C" int __cxa_thread_atexit_impl(void (*func)(void*), void* obj, void* dso_handle)
 {
     using impl_fn = int (*)(void (*)(void*), void*, void*);
     static impl_fn real = reinterpret_cast<impl_fn>(dlsym(RTLD_NEXT, "__cxa_thread_atexit_impl"));
-    if (real) {
-        return real(func, obj, dso_handle);
-    }
-
-    (void)dso_handle;
-    pthread_once(&g_dtor_key_once, make_dtor_key);
-    auto* entry = static_cast<DtorEntry*>(::malloc(sizeof(DtorEntry)));
-    if (!entry) return -1;
-    entry->func = func;
-    entry->obj = obj;
-    entry->next = static_cast<DtorEntry*>(pthread_getspecific(g_dtor_key));
-    pthread_setspecific(g_dtor_key, entry);
-    return 0;
+    return real ? real(func, obj, dso_handle) : 0;
 }
 
 typedef int (*fcntl64_func)(int fd, int cmd, ...);

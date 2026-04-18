@@ -681,7 +681,7 @@ pub extern fn deflateReset(stream: z_streamp) ReturnCode;
 //  to return Z_STREAM_END.  Note that it is possible for the compressed size to
 //  be larger than the value returned by deflateBound() if flush options other
 //  than Z_FINISH or Z_NO_FLUSH are used.
-pub extern fn deflateBound(strm: z_streamp, sourceLen: u64) u64;
+pub extern fn deflateBound(strm: z_streamp, sourceLen: uLong) uLong;
 
 ///
 ///     This is another version of deflateInit with more compression options.  The
@@ -844,7 +844,7 @@ pub const ZlibCompressorArrayList = struct {
             @sizeOf(zStream_struct),
         )) {
             ReturnCode.Ok => {
-                zlib_reader.list.ensureTotalCapacityPrecise(list_allocator, deflateBound(&zlib_reader.zlib, input.len)) catch {
+                zlib_reader.list.ensureTotalCapacityPrecise(list_allocator, deflateBound(&zlib_reader.zlib, @intCast(input.len))) catch {
                     zlib_reader.deinit();
                     return error.OutOfMemory;
                 };

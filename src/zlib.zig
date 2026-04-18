@@ -19,7 +19,11 @@ pub const gzFile = [*c]struct_gzFile_s;
 // https://zlib.net/manual.html#Stream
 const Byte = u8;
 const uInt = u32;
-const uLong = u64;
+// zlib-ng compat (and stock zlib) use `unsigned long` — 4 bytes on Windows
+// LLP64, 8 on LP64 unix. cloudflare/zlib hard-coded uint64_t, which is why
+// this was u64. Must match the C side or compress()/compressBound()/adler32()
+// have an ABI mismatch on Windows.
+const uLong = c_ulong;
 const Bytef = Byte;
 const uLongf = uLong;
 const voidpf = ?*anyopaque;

@@ -25,9 +25,12 @@
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSModuleEnvironment.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
+#include <JavaScriptCore/JSMap.h>
 #include "BunPlugin.h"
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
+#include "helpers.h"
+#include "headers.h"
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsNow);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSetSystemTime);
@@ -637,6 +640,16 @@ extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
         spyObject->clearSpy();
     }
     globalObject->mockModule.activeSpies.clear();
+}
+
+extern "C" void JSMock__beginModuleMockScope(Zig::GlobalObject* globalObject)
+{
+    globalObject->onLoadPlugins.beginModuleMockScope();
+}
+
+extern "C" void JSMock__endModuleMockScope(Zig::GlobalObject* globalObject)
+{
+    globalObject->onLoadPlugins.endModuleMockScope(globalObject);
 }
 
 extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)
@@ -1465,7 +1478,28 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    JSMock__resetSpies(jsCast<Zig::GlobalObject*>(globalObject));
+    auto* zigGlobal = jsCast<Zig::GlobalObject*>(globalObject);
+    JSMock__resetSpies(zigGlobal);
+
+    // Undo module mocks but keep the scope open — mock.module() calls after
+    // this point should still be recorded and cleaned up at file boundary.
+    auto& scopeMarkers = zigGlobal->onLoadPlugins.moduleMockScopeMarkers;
+    if (!scopeMarkers.isEmpty()) {
+        size_t marker = scopeMarkers.last();
+        zigGlobal->onLoadPlugins.revertMockEntries(globalObject, marker);
+        zigGlobal->onLoadPlugins.moduleMockEntries.shrink(marker);
+
+        if (zigGlobal->onLoadPlugins.moduleMocks && zigGlobal->onLoadPlugins.moduleMocks->isEmpty()) {
+            delete zigGlobal->onLoadPlugins.moduleMocks;
+            zigGlobal->onLoadPlugins.moduleMocks = nullptr;
+            if (!zigGlobal->onLoadPlugins.virtualModules)
+                zigGlobal->onLoadPlugins.mustDoExpensiveRelativeLookup = false;
+        }
+        // Advance the scope marker to the current position so subsequent
+        // mock.module() calls within this file start a fresh change set.
+        scopeMarkers.last() = zigGlobal->onLoadPlugins.moduleMockEntries.size();
+    }
+
     return JSValue::encode(jsUndefined());
 }
 

@@ -976,6 +976,12 @@ pub const CronJob = struct {
                 }
                 _ = vm.uncaughtException(vm.global, err, false);
             }
+            // uncaughtException() may have run a handler that called
+            // process.exit(); don't re-arm the timer into a dying VM.
+            if (vm.scriptExecutionStatus() != .running) {
+                this.selfStop(vm);
+                return;
+            }
             this.scheduleNext(vm);
             return;
         };

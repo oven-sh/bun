@@ -240,15 +240,17 @@ function getImageName(platform, options) {
  * @param {number} [limit]
  * @link https://buildkite.com/docs/pipelines/command-step#retry-attributes
  */
-function getRetry() {
+const retryOnAgentLost = [
+  { exit_status: -1, limit: 3 },
+  { signal_reason: "agent_stop", limit: 3 },
+];
+
+function getRetry(automatic = retryOnAgentLost) {
   return {
     manual: {
       permit_on_passed: true,
     },
-    automatic: [
-      { exit_status: -1, limit: 3 },
-      { signal_reason: "agent_stop", limit: 3 },
-    ],
+    automatic,
   };
 }
 
@@ -811,10 +813,7 @@ function getWindowsSignStep(windowsPlatforms, options) {
     agents: getEc2Agent(signPlatform, options, {
       instanceType: getAzureVmSize("windows", "x64", "test"),
     }),
-    retry: {
-      manual: { permit_on_passed: true },
-      automatic: false,
-    },
+    retry: getRetry(false),
     cancel_on_build_failing: isMergeQueue(),
     command: [
       `powershell -NoProfile -ExecutionPolicy Bypass -File .buildkite/scripts/sign-windows-artifacts.ps1 ` +

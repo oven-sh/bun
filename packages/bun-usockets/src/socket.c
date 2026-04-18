@@ -172,10 +172,6 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
     c->closed = 1;
     for (struct us_socket_t *s = c->connecting_head; s; s = s->connect_next) {
         us_internal_socket_context_unlink_socket(ssl, s->context, s);
-        // Detach before stopping the poll so a stale poll event (Windows
-        // libuv can deliver a completion queued before uv_close) cannot
-        // re-enter after_open with a dangling c.
-        s->connect_state = NULL;
 
         us_poll_stop((struct us_poll_t *) s, s->context->loop);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));

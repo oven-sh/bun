@@ -3120,8 +3120,19 @@ pub const MemfdFlags = enum(u32) {
     const MFD_ALLOW_SEALING: u32 = std.os.linux.MFD.ALLOW_SEALING;
 };
 
+/// Set on first ENOSYS so callers can short-circuit without retrying the
+/// syscall on every Blob/spawn. memfd_create requires kernel ≥ 3.17; all
+/// callers already fall back to a heap buffer / pipe / socketpair when this
+/// returns an error.
+var memfd_unsupported = std.atomic.Value(bool).init(false);
+
 pub fn memfd_create(name: [:0]const u8, flags_: MemfdFlags) Maybe(bun.FD) {
     if (comptime !Environment.isLinux) @compileError("linux only!");
+
+    if (memfd_unsupported.load(.monotonic) or bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_MEMFD.get()) {
+        return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NOSYS), .syscall = .memfd_create } };
+    }
+
     var flags: u32 = @intFromEnum(flags_);
     while (true) {
         const rc = std.os.linux.memfd_create(name, flags);
@@ -3138,6 +3149,7 @@ pub fn memfd_create(name: [:0]const u8, flags_: MemfdFlags) Maybe(bun.FD) {
                         continue;
                     }
                 },
+                .NOSYS => memfd_unsupported.store(true, .monotonic),
                 else => {},
             }
 

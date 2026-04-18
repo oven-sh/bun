@@ -3120,25 +3120,15 @@ pub const MemfdFlags = enum(u32) {
     const MFD_ALLOW_SEALING: u32 = std.os.linux.MFD.ALLOW_SEALING;
 };
 
-/// memfd_create requires kernel ≥ 3.17. Tristate: 0 = unknown, 1 = supported,
-/// -1 = unsupported (ENOSYS seen, or disabled). Callers should check
-/// canUseMemfd() first and take their existing fallback (heap buffer / pipe /
-/// socketpair) when it returns false.
-var can_use_memfd = std.atomic.Value(i32).init(0);
+/// memfd_create requires kernel ≥ 3.17. Latched true on first ENOSYS so
+/// callers can take their existing fallback (heap buffer / pipe / socketpair)
+/// without retrying the syscall on every Blob/spawn.
+var memfd_enosys = std.atomic.Value(bool).init(false);
 
 pub fn canUseMemfd() bool {
     if (comptime !Environment.isLinux) return false;
-    const result = can_use_memfd.load(.monotonic);
-    if (result == 0) {
-        if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_MEMFD.get()) {
-            can_use_memfd.store(-1, .monotonic);
-            return false;
-        }
-        // Optimistically allow; first ENOSYS flips to -1.
-        can_use_memfd.store(1, .monotonic);
-        return true;
-    }
-    return result == 1;
+    if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_MEMFD.get()) return false;
+    return !memfd_enosys.load(.monotonic);
 }
 
 pub fn memfd_create(name: [:0]const u8, flags_: MemfdFlags) Maybe(bun.FD) {
@@ -3159,7 +3149,7 @@ pub fn memfd_create(name: [:0]const u8, flags_: MemfdFlags) Maybe(bun.FD) {
                         continue;
                     }
                 },
-                .NOSYS => can_use_memfd.store(-1, .monotonic),
+                .NOSYS => memfd_enosys.store(true, .monotonic),
                 else => {},
             }
 

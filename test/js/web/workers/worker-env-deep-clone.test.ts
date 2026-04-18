@@ -17,13 +17,13 @@ test("worker env map is deep-cloned from parent", async () => {
 
   const { promise, resolve, reject } = Promise.withResolvers();
   const w = new Worker(fixture, { workerData: { depth: 0 } });
-  w.on("message", msg => {
-    resolve(msg);
-  });
-  w.on("error", reject);
+  w.once("message", resolve);
+  w.once("error", reject);
 
-  const msg = await promise;
-  expect(msg).toEqual({ depth: 0, sum: expect.any(Number), ok: true });
-
-  await w.terminate();
+  try {
+    const msg = await promise;
+    expect(msg).toEqual({ depth: 0, sum: expect.any(Number), ok: true });
+  } finally {
+    await w.terminate();
+  }
 });

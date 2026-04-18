@@ -207,58 +207,83 @@ fn drain(this: *TarballStream) void {
     Output.Source.configureThread();
 
     while (true) {
-        const more = this.takePending();
+        if (this.fail == null and this.phase != .done) {
+            // Only pull bytes into `reading` while libarchive is still
+            // going to consume them. After EOF/failure `step()` is
+            // never called again, so appending here would let
+            // `reading` grow by one HTTP chunk per wakeup for the
+            // remainder of the download.
+            const more = this.takePending();
 
-        if (this.fail == null) {
             this.step() catch |err| {
                 this.fail = err;
                 this.closeOutputFile();
             };
-        }
 
-        if (this.phase == .done or this.fail != null) {
-            this.mutex.lock();
-            // Hash any bytes that arrived after libarchive hit
-            // end-of-archive so the integrity digest covers the full
-            // response (tar zero-padding, gzip footer). Skip this
-            // once an error is recorded — the digest won't be
-            // checked anyway.
-            if (this.fail == null and this.pending.items.len > 0) {
-                this.hasher.update(this.pending.items);
-            }
-            // After EOF/failure we stop feeding libarchive but must
-            // keep consuming (and discarding) chunks until the HTTP
-            // thread closes the stream; freeing ourselves earlier
-            // would let the next `notify` dereference a dead pointer.
-            this.pending.clearRetainingCapacity();
-            const closed = this.closed;
-            const http_err = this.http_err;
-            this.mutex.unlock();
-            if (http_err) |e| if (this.fail == null) {
-                this.fail = e;
-            };
-            if (closed) {
-                this.finish();
+            if (this.fail == null and this.phase != .done) {
+                if (more) continue;
+                // libarchive consumed everything we had. Yield the
+                // worker until the HTTP thread delivers the next
+                // chunk.
+                this.draining.store(false, .release);
+                // Close the race between clearing `draining` and a
+                // chunk arriving: if `pending` is non-empty now, try
+                // to reclaim the flag ourselves instead of waiting
+                // for the next schedule.
+                this.mutex.lock();
+                const again = this.pending.items.len > 0 or this.closed;
+                this.mutex.unlock();
+                if (again and !this.draining.swap(true, .acq_rel)) continue;
                 return;
             }
-            // Archive is done (or failed) but the HTTP response has
-            // not finished yet. Fall through to the yield logic below
-            // so we wake up again for the tail / final close.
         }
 
-        if (!more) {
-            // libarchive consumed everything we had. Yield the worker
-            // until the HTTP thread delivers the next chunk.
-            this.draining.store(false, .release);
+        // Terminal: archive finished or extraction failed. libarchive
+        // will not be called again, so `reading` is dead — drop it
+        // now rather than carrying its capacity until `finish()`.
+        // `reading` is drain-local (only the read callback touches
+        // it, and that runs inside `step()`), so this needs no lock.
+        this.reading.clearAndFree(this.allocator);
+        this.read_pos = 0;
 
-            // Close the race between clearing `draining` and a chunk
-            // arriving: if pending is non-empty now, try to reclaim.
-            this.mutex.lock();
-            const again = this.pending.items.len > 0 or this.closed;
-            this.mutex.unlock();
-            if (again and !this.draining.swap(true, .acq_rel)) continue;
+        this.mutex.lock();
+        // Hash any bytes that arrived after libarchive hit
+        // end-of-archive so the integrity digest covers the full
+        // response (tar zero-padding, gzip footer). Skip this once
+        // an error is recorded — the digest won't be checked anyway.
+        if (this.fail == null and this.pending.items.len > 0) {
+            this.hasher.update(this.pending.items);
+        }
+        // After EOF/failure we stop feeding libarchive but must keep
+        // consuming (and discarding) chunks until the HTTP thread
+        // closes the stream; freeing ourselves earlier would let the
+        // next `notify` dereference a dead pointer.
+        this.pending.clearRetainingCapacity();
+        const closed = this.closed;
+        const http_err = this.http_err;
+        this.mutex.unlock();
+        // A transport error that arrives *after* libarchive reached
+        // EOF (e.g. the server RSTs the connection once the last
+        // byte is on the wire) must not override a successful
+        // extraction; the integrity check in `populateResult()` is
+        // the sole arbiter of correctness once `.done` is reached.
+        if (http_err) |e| if (this.fail == null and this.phase != .done) {
+            this.fail = e;
+        };
+        if (closed) {
+            this.finish();
             return;
         }
+
+        // Archive is done (or failed) but the HTTP response has not
+        // finished yet. Yield; the next `onChunk` will reschedule us
+        // to discard the new bytes and eventually observe `closed`.
+        this.draining.store(false, .release);
+        this.mutex.lock();
+        const again = this.pending.items.len > 0 or this.closed;
+        this.mutex.unlock();
+        if (again and !this.draining.swap(true, .acq_rel)) continue;
+        return;
     }
 }
 
@@ -596,27 +621,29 @@ fn openOutputFile(
     path_slice: bun.OSPathSlice,
     mode: bun.Mode,
 ) !bun.FD {
-    const dest = dest_fd.stdDir();
     const flags = bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC;
     if (comptime Environment.isWindows) {
         return switch (bun.sys.openatWindows(dest_fd, path, flags, 0)) {
             .result => |fd| fd,
             .err => |e| switch (e.errno) {
                 @intFromEnum(bun.sys.E.PERM), @intFromEnum(bun.sys.E.NOENT) => brk: {
-                    bun.MakePath.makePath(u16, dest, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
+                    dest_fd.makePath(u16, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
                     break :brk try bun.sys.openatWindows(dest_fd, path, flags, 0).unwrap();
                 },
                 else => return bun.errnoToZigErr(e.errno),
             },
         };
     }
-    return .fromStdFile(dest.createFileZ(path, .{ .truncate = true, .mode = mode }) catch |err| switch (err) {
-        error.AccessDenied, error.FileNotFound => brk: {
-            dest.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
-            break :brk try dest.createFileZ(path, .{ .truncate = true, .mode = mode });
+    return switch (bun.sys.openat(dest_fd, path, flags, mode)) {
+        .result => |fd| fd,
+        .err => |e| switch (e.getErrno()) {
+            .ACCES, .NOENT => brk: {
+                dest_fd.makePath(u8, std.fs.path.dirname(path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
+                break :brk try bun.sys.openat(dest_fd, path, flags, mode).unwrap();
+            },
+            else => return bun.errnoToZigErr(e.errno),
         },
-        else => return err,
-    });
+    };
 }
 
 fn makeDirectory(
@@ -625,7 +652,6 @@ fn makeDirectory(
     path: [:0]bun.OSPathChar,
     path_slice: bun.OSPathSlice,
 ) void {
-    const dest = dest_fd.stdDir();
     var mode = @as(i32, @intCast(entry.perm()));
     // if dirs are readable, then they should be listable
     // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
@@ -633,13 +659,18 @@ fn makeDirectory(
     if ((mode & 0o40) != 0) mode |= 0o10;
     if ((mode & 0o4) != 0) mode |= 0o1;
     if (comptime Environment.isWindows) {
-        bun.MakePath.makePath(u16, dest, path) catch {};
+        dest_fd.makePath(u16, path) catch {};
     } else {
-        std.posix.mkdiratZ(dest.fd, path, @intCast(mode)) catch |err| {
-            if (err == error.PathAlreadyExists or err == error.NotDir) return;
-            bun.makePath(dest, std.fs.path.dirname(path_slice) orelse return) catch {};
-            std.posix.mkdiratZ(dest.fd, path, 0o777) catch {};
-        };
+        switch (bun.sys.mkdiratZ(dest_fd, path, @intCast(mode))) {
+            .result => {},
+            .err => |e| switch (e.getErrno()) {
+                .EXIST, .NOTDIR => {},
+                else => {
+                    dest_fd.makePath(u8, std.fs.path.dirname(path_slice) orelse return) catch {};
+                    _ = bun.sys.mkdiratZ(dest_fd, path, 0o777);
+                },
+            },
+        }
     }
 }
 
@@ -661,7 +692,7 @@ fn makeSymlink(
     }
     bun.sys.symlinkat(target, dest_fd, path).unwrap() catch |err| switch (err) {
         error.EPERM, error.ENOENT => {
-            dest_fd.stdDir().makePath(std.fs.path.dirname(path_slice) orelse return) catch {};
+            dest_fd.makePath(u8, std.fs.path.dirname(path_slice) orelse return) catch {};
             bun.sys.symlinkat(target, dest_fd, path).unwrap() catch {};
         },
         else => {},
@@ -820,10 +851,15 @@ fn populateResult(this: *TarballStream, task: *Task) void {
 
     if (tarball.resolution.tag == .github) {
         if (this.resolved_github_dirname.len > 0) insert_tag: {
-            const gh_tag = this.dest.?.stdDir().createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;
+            const gh_tag = bun.sys.openat(
+                this.dest.?,
+                ".bun-tag",
+                bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC,
+                0o644,
+            ).unwrap() catch break :insert_tag;
             defer gh_tag.close();
-            gh_tag.writeAll(this.resolved_github_dirname) catch {
-                this.dest.?.stdDir().deleteFileZ(".bun-tag") catch {};
+            (bun.sys.File{ .handle = gh_tag }).writeAll(this.resolved_github_dirname).unwrap() catch {
+                _ = bun.sys.unlinkat(this.dest.?, ".bun-tag");
             };
         }
     }

@@ -413,7 +413,6 @@ function getTestAgent(platform, options) {
       instanceType: getAzureVmSize(os, arch, "test"),
       cpuCount: 2,
       threadsPerCore: 1,
-      preemptible: true,
     });
   }
 

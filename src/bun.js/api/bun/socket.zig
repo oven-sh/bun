@@ -314,10 +314,14 @@ pub fn NewSocket(comptime ssl: bool) type {
             defer scope.exit();
 
             if (callback == .zero) {
+                // Connection failed before open; allow the wrapper to be GC'd
+                // regardless of whether this path is promise-backed (e.g. the
+                // duplex TLS upgrade flow has no connect promise).
+                if (this.this_value != .finalized) {
+                    this.this_value.downgrade();
+                }
                 if (handlers.promise.trySwap()) |promise| {
                     handlers.promise.deinit();
-                    // Connection failed before open; allow the wrapper to be GC'd.
-                    this.this_value.downgrade();
 
                     // reject the promise on connect() error
                     const js_promise = promise.asPromise().?;

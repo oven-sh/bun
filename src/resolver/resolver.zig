@@ -4069,8 +4069,10 @@ pub const Resolver = struct {
     }
 
     fn tryParseTSConfigPath(r: *ThisResolver, candidate: string) ?*TSConfigJSON {
-        const persistent_path = r.fs.dirname_store.append(string, candidate) catch return null;
-        return r.parseTSConfig(persistent_path, bun.invalid_fd) catch |err| {
+        // parseTSConfig makes its own persistent copy of `candidate` on
+        // success; don't pre-allocate into dirname_store here or every
+        // failed probe leaves an orphaned entry in the append-only store.
+        return r.parseTSConfig(candidate, bun.invalid_fd) catch |err| {
             switch (err) {
                 // Expected while probing: keep walking quietly.
                 error.ENOENT, error.FileNotFound, error.ENOTDIR, error.NotDir, error.IsDir, error.EISDIR => {},
@@ -4078,7 +4080,7 @@ pub const Resolver = struct {
                 // file that exists but can't be read doesn't vanish silently.
                 else => r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {f}", .{
                     @errorName(err),
-                    bun.fmt.QuotedFormatter{ .text = persistent_path },
+                    bun.fmt.QuotedFormatter{ .text = candidate },
                 }) catch {},
             }
             return null;

@@ -19,19 +19,23 @@
  * interrupted (ctrl-c, network drop, OOM), no partial file claims to be
  * complete. Next build retries from scratch.
  *
- * ## Why not stream to disk
+ * ## Streaming to disk
  *
- * We buffer the whole response in memory (`arrayBuffer()`) before writing.
- * For zig (~50MB) and dep tarballs (~few MB) this is fine. For WebKit
- * (~200MB) it's ~200MB peak memory. If that's ever a problem, switch to
- * `Bun.write(dest, res)` which streams. Haven't bothered because CI
- * machines have GBs of RAM and the whole download is a few seconds.
+ * Response body is piped to the temp file via `pipeline()` rather than
+ * buffered through `res.arrayBuffer()`. Under node on Windows arm64,
+ * `arrayBuffer()` on multi-MB responses intermittently fastfails the
+ * process (0xC0000409) — no exception, just gone. Streaming avoids the
+ * large native allocation and keeps peak memory flat regardless of
+ * tarball size (WebKit is ~200MB).
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { createWriteStream, existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeWebReadable } from "node:stream/web";
 import { BuildError, assert } from "./error.ts";
 
 /**
@@ -50,21 +54,25 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
       await new Promise(r => setTimeout(r, backoffMs));
     }
 
+    const tmpPath = `${dest}.${process.pid}.partial`;
     try {
       const res = await fetch(url, { headers: { "User-Agent": "bun-build-system" } });
-      if (!res.ok) {
+      if (!res.ok || res.body === null) {
         lastError = new BuildError(`HTTP ${res.status} ${res.statusText} for ${url}`);
         continue;
       }
 
-      const tmpPath = `${dest}.partial`;
-      await rm(tmpPath, { force: true });
-      const buf = await res.arrayBuffer();
-      await writeFile(tmpPath, new Uint8Array(buf));
+      // Cast: DOM ReadableStream vs node:stream/web ReadableStream — same
+      // shape at runtime, different TS lib declarations.
+      await pipeline(Readable.fromWeb(res.body as unknown as NodeWebReadable), createWriteStream(tmpPath));
       await rename(tmpPath, dest);
       return;
     } catch (err) {
       lastError = err;
+      // Swallow cleanup errors: on Windows, AV/indexer can briefly lock the
+      // partial; a failed unlink must not abort the retry loop. Next attempt's
+      // createWriteStream truncates anyway.
+      await rm(tmpPath, { force: true }).catch(() => {});
     }
   }
 
@@ -186,43 +194,61 @@ export async function fetchPrebuilt(
 
   console.log(`fetching ${url}`);
 
+  // Process-unique temp paths so concurrent builds (shared cacheDir across
+  // checkouts) can't stomp each other's download/extraction.
+  const suffix = `.${process.pid}.${Date.now().toString(36)}`;
+
   // ─── Download ───
   const destParent = resolve(dest, "..");
   await mkdir(destParent, { recursive: true });
-  const tarballPath = `${dest}.download.tar.gz`;
+  const tarballPath = `${dest}${suffix}.tar.gz`;
   await downloadWithRetry(url, tarballPath, name);
 
   // ─── Extract ───
-  // Wipe dest first — no stale files from a previous version.
-  // Extract to staging dir, then hoist. We don't extract directly into dest/
-  // because the tarball's top-level dir name is unpredictable (e.g.
-  // `bun-webkit/` vs `libfoo-1.2.3/`).
-  await rm(dest, { recursive: true, force: true });
-  const stagingDir = `${dest}.staging`;
-  await rm(stagingDir, { recursive: true, force: true });
+  // Extract to a private staging dir, then hoist. We don't extract directly
+  // into dest/ because the tarball's top-level dir name is unpredictable
+  // (e.g. `bun-webkit/` vs `libfoo-1.2.3/`).
+  const stagingDir = `${dest}${suffix}.staging`;
   await mkdir(stagingDir, { recursive: true });
 
-  // stripComponents=0: keep top-level dir for hoisting.
-  await extractTarGz(tarballPath, stagingDir, 0);
-  await rm(tarballPath, { force: true });
+  try {
+    // stripComponents=0: keep top-level dir for hoisting.
+    await extractTarGz(tarballPath, stagingDir, 0);
+    await rm(tarballPath, { force: true });
 
-  // Hoist: if single top-level dir, promote its contents to dest.
-  // If multiple entries (unusual), the staging dir becomes dest.
-  const entries = await readdir(stagingDir);
-  assert(entries.length > 0, `tarball extracted nothing`, { file: url });
-  const hoistFrom = entries.length === 1 ? resolve(stagingDir, entries[0]!) : stagingDir;
-  await rename(hoistFrom, dest);
-  await rm(stagingDir, { recursive: true, force: true });
+    // Hoist: if single top-level dir, promote its contents to dest.
+    // If multiple entries (unusual), the staging dir becomes dest.
+    const entries = await readdir(stagingDir);
+    assert(entries.length > 0, `tarball extracted nothing`, { file: url });
+    const hoistFrom = entries.length === 1 ? resolve(stagingDir, entries[0]!) : stagingDir;
 
-  // ─── Post-extract cleanup ───
-  // Before stamp so failure → next build retries. force:true → no error if
-  // path already gone (idempotent re-fetch).
-  for (const p of rmPaths) {
-    await rm(resolve(dest, p), { recursive: true, force: true });
+    // ─── Post-extract cleanup + stamp (inside staging) ───
+    // Done BEFORE publish so the rename below is the single step that makes
+    // a complete, stamped tree visible at dest.
+    for (const p of rmPaths) {
+      await rm(resolve(hoistFrom, p), { recursive: true, force: true });
+    }
+    await writeFile(resolve(hoistFrom, ".identity"), identity + "\n");
+
+    // ─── Publish ───
+    // Directory rename can't overwrite on any platform, so rm first. If a
+    // concurrent fetch won the race, our rename fails — treat a matching
+    // stamp at dest as success.
+    try {
+      await rm(dest, { recursive: true, force: true });
+      await rename(hoistFrom, dest);
+    } catch (err) {
+      const landed = existsSync(stampPath) ? readFileSync(stampPath, "utf8").trim() : undefined;
+      if (landed === identity) {
+        console.log(`up to date (concurrent fetch won)`);
+        return;
+      }
+      throw err;
+    }
+
+    console.log(`extracted to ${dest}`);
+  } finally {
+    await rm(stagingDir, { recursive: true, force: true });
+    await rm(tarballPath, { force: true });
   }
-
-  // ─── Write stamp ───
-  // LAST — if anything above throws, no stamp means next build retries.
-  await writeFile(stampPath, identity + "\n");
-  console.log(`extracted to ${dest}`);
 }

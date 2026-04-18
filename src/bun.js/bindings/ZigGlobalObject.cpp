@@ -146,6 +146,7 @@
 #include "napi_external.h"
 #include "napi_handle_scope.h"
 #include "napi_type_tag.h"
+#include "NativePromiseContext.h"
 #include "napi.h"
 #include "NodeHTTP.h"
 #include "NodeVM.h"
@@ -214,12 +215,7 @@
 #include <dlfcn.h>
 #endif
 
-#ifdef __APPLE__
-#include <sys/sysctl.h>
-#elif defined(__linux__)
-// for sysconf
-#include <unistd.h>
-#endif
+#include <wtf/NumberOfCores.h>
 
 using namespace Bun;
 
@@ -566,6 +562,46 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             initializeWorker(*worker);
         }
     }
+
+    return globalObject;
+}
+
+// Create a fresh Zig::GlobalObject on the *same* JSC::VM as `oldGlobal`, then unprotect
+// the old one so GC can reclaim its module graph. Used by `bun test --isolate` to give
+// each test file a clean global without paying for a new JSC::VM.
+extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::GlobalObject* oldGlobal, void* console_client)
+{
+    JSC::VM& vm = oldGlobal->vm();
+    JSC::JSLockHolder locker(vm);
+
+    // The new global must inherit the old one's ScriptExecutionContext identifier so that
+    // `Bun.isMainThread` (identifier == 1) and cross-thread task dispatch keep working.
+    // Move the old context to a fresh identifier first to free the slot.
+    auto* oldContext = oldGlobal->scriptExecutionContext();
+    const auto inheritedId = oldContext->identifier();
+    oldContext->removeFromContextsMap();
+    oldContext->regenerateIdentifier();
+
+    auto* structure = Zig::GlobalObject::createStructure(vm);
+    if (!structure) [[unlikely]] {
+        BUN_PANIC("Failed to allocate global object structure for test isolation");
+    }
+    auto* globalObject = Zig::GlobalObject::create(vm, structure, inheritedId);
+    if (!globalObject) [[unlikely]] {
+        BUN_PANIC("Failed to allocate global object for test isolation");
+    }
+
+    globalObject->setConsole(console_client);
+    globalObject->isThreadLocalDefaultGlobalObject = true;
+    globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT);
+    Bun__setDefaultGlobalObject(globalObject);
+    JSC::gcProtect(globalObject);
+
+    // Drop the permanent root on the previous global so its module registry,
+    // require.cache, and user objects become collectable. JSC's CodeCache and
+    // Bun's RuntimeTranspilerCache are VM/process scoped and survive.
+    oldGlobal->isThreadLocalDefaultGlobalObject = false;
+    JSC::gcUnprotect(oldGlobal);
 
     return globalObject;
 }
@@ -1966,18 +2002,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_navigatorObject.initLater(
         [](const Initializer<JSObject>& init) {
-            int cpuCount = 0;
-#ifdef __APPLE__
-            size_t count_len = sizeof(cpuCount);
-            sysctlbyname("hw.logicalcpu", &cpuCount, &count_len, NULL, 0);
-#elif OS(WINDOWS)
-            SYSTEM_INFO sysinfo;
-            GetSystemInfo(&sysinfo);
-            cpuCount = sysinfo.dwNumberOfProcessors;
-#else
-            // TODO: windows
-            cpuCount = sysconf(_SC_NPROCESSORS_ONLN);
-#endif
+            int cpuCount = WTF::numberOfProcessorCores();
 
             auto str = WTF::String::fromUTF8(Bun__userAgent);
             JSC::Identifier userAgentIdentifier = JSC::Identifier::fromString(init.vm, "userAgent"_s);
@@ -2087,6 +2112,10 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_NapiTypeTagStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
         init.set(Bun::NapiTypeTag::createStructure(init.vm, init.owner));
+    });
+
+    m_NativePromiseContextStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+        init.set(Bun::NativePromiseContext::createStructure(init.vm, init.owner));
     });
 
     m_napiTypeTags.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {
@@ -2737,6 +2766,13 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         builtinNames.evaluateCommonJSModulePrivateName(),
         2,
         Bun::jsFunctionEvaluateCommonJSModule,
+        ImplementationVisibility::Public,
+        NoIntrinsic,
+        PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);
+    putDirectNativeFunction(vm, this,
+        builtinNames.evictIsolationSourceProviderCachePrivateName(),
+        1,
+        jsFunctionEvictIsolationSourceProviderCache,
         ImplementationVisibility::Public,
         NoIntrinsic,
         PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);
@@ -3540,6 +3576,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__FileSink__onResolveStream;
     } else if (handler == Bun__FileSink__onRejectStream) {
         return GlobalObject::PromiseFunctions::Bun__FileSink__onRejectStream;
+    } else if (handler == Bun__CronJob__onPromiseResolve) {
+        return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseResolve;
+    } else if (handler == Bun__CronJob__onPromiseReject) {
+        return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseReject;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

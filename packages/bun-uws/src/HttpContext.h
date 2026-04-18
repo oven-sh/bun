@@ -62,6 +62,7 @@ static constexpr auto supportedHttpMethods = makeArray<std::string_view>(
     "M-SEARCH",
     "MERGE",
     "MKACTIVITY",
+    "MKADDRESSBOOK",
     "MKCALENDAR",
     "MKCOL",
     "MOVE",
@@ -651,7 +652,9 @@ public:
     /* Listen to port using this HttpContext */
     us_listen_socket_t *listen(const char *host, int port, int options) {
         int error = 0;
-        auto socket = us_socket_context_listen(SSL, getSocketContext(), host, port, options, sizeof(HttpResponseData<SSL>), &error);
+        /* HTTP clients always send first (the request, or ClientHello for TLS), so defer
+         * accept() until data arrives and dispatch the read immediately after accept. */
+        auto socket = us_socket_context_listen(SSL, getSocketContext(), host, port, options | LIBUS_LISTEN_DEFER_ACCEPT, sizeof(HttpResponseData<SSL>), &error);
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
           us_socket_unref(&socket->s);

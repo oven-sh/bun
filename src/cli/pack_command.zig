@@ -2067,7 +2067,7 @@ pub const PackCommand = struct {
 
     fn addArchiveEntry(
         ctx: *Context,
-        file: FileDescriptor,
+        file: FD,
         stat: bun.Stat,
         filename: stringZ,
         read_buf: []u8,
@@ -2812,7 +2812,6 @@ const bun = @import("bun");
 const DirIterator = bun.DirIterator;
 const Environment = bun.Environment;
 const FD = bun.FD;
-const FileDescriptor = bun.FileDescriptor;
 const Global = bun.Global;
 const JSON = bun.json;
 const OOM = bun.OOM;

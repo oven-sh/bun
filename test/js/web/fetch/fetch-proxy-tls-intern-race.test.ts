@@ -22,6 +22,14 @@ import { join } from "node:path";
 async function createConnectProxy() {
   const server = net.createServer(client => {
     let head = Buffer.alloc(0);
+    let upstream: net.Socket | undefined;
+    // The probe loop aborts immediately after fetch(), so the client socket
+    // often closes with FIN (not RST) before or during the upstream connect.
+    // Without a "close" handler the proxy→backend socket leaks, and after a
+    // few thousand probes the backend's accept queue / FD table saturates and
+    // the driver's fetch stalls forever. Tear down upstream on any client exit.
+    client.on("error", () => upstream?.destroy());
+    client.on("close", () => upstream?.destroy());
     const onData = (chunk: Buffer) => {
       head = Buffer.concat([head, chunk]);
       const headerEnd = head.indexOf("\r\n\r\n");
@@ -32,15 +40,15 @@ async function createConnectProxy() {
       const colon = hostPort!.lastIndexOf(":");
       const host = hostPort!.slice(0, colon);
       const port = Number(hostPort!.slice(colon + 1));
-      const upstream = net.connect(port, host, () => {
+      upstream = net.connect(port, host, () => {
         client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
         const extra = head.subarray(headerEnd + 4);
-        if (extra.length > 0) upstream.write(extra);
-        client.pipe(upstream);
-        upstream.pipe(client);
+        if (extra.length > 0) upstream!.write(extra);
+        client.pipe(upstream!);
+        upstream!.pipe(client);
       });
       upstream.on("error", () => client.destroy());
-      client.on("error", () => upstream.destroy());
+      upstream.on("close", () => client.destroy());
     };
     client.on("data", onData);
   });

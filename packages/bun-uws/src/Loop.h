@@ -54,9 +54,12 @@ private:
             p.second((Loop *) loop);
         }
 
-        void *corkedSocket = loopData->getCorkedSocket();
-        if (corkedSocket) {
-            if (loopData->isCorkedSSL()) {
+        /* Drain any leftover corks. Two slots max. */
+        for (int i = 0; i < 2; i++) {
+            bool ssl;
+            void *corkedSocket = loopData->getAnyCorkedSocket(&ssl);
+            if (!corkedSocket) break;
+            if (ssl) {
                 ((uWS::AsyncSocket<true> *) corkedSocket)->uncork();
             } else {
                 ((uWS::AsyncSocket<false> *) corkedSocket)->uncork();

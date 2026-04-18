@@ -790,3 +790,119 @@ test("captureStackTrace with constructor function not in stack returns error str
     expect(e.stack).toBe("TypeError: bad type");
   }
 });
+
+test("Error.captureStackTrace includes async frames from the await chain", async () => {
+  async function innerAsync() {
+    await new Promise(r => setImmediate(r));
+    const err = new Error("async test");
+    Error.captureStackTrace(err);
+    return err;
+  }
+  noInline(innerAsync);
+
+  async function outerAsync() {
+    return await innerAsync();
+  }
+  noInline(outerAsync);
+
+  const err = await outerAsync();
+  expect(err.stack).toContain("at innerAsync");
+  expect(err.stack).toContain("at async outerAsync");
+});
+
+test("Error.captureStackTrace with caller argument preserves async frames", async () => {
+  async function innerAsync() {
+    await new Promise(r => setImmediate(r));
+    const err = new Error("async test");
+    Error.captureStackTrace(err, innerAsync);
+    return err;
+  }
+  noInline(innerAsync);
+
+  async function middleAsync() {
+    return await innerAsync();
+  }
+  noInline(middleAsync);
+
+  async function outerAsync() {
+    return await middleAsync();
+  }
+  noInline(outerAsync);
+
+  const err = await outerAsync();
+  // innerAsync should be filtered out, but async parents should remain
+  expect(err.stack).not.toContain("at innerAsync");
+  expect(err.stack).toContain("at async middleAsync");
+  expect(err.stack).toContain("at async outerAsync");
+});
+
+test("Error.captureStackTrace with caller not in stack clears async frames too", async () => {
+  function notInStack() {}
+
+  async function innerAsync() {
+    await new Promise(r => setImmediate(r));
+    const err = new Error("async test");
+    Error.captureStackTrace(err, notInStack);
+    return err;
+  }
+  noInline(innerAsync);
+
+  async function outerAsync() {
+    return await innerAsync();
+  }
+  noInline(outerAsync);
+
+  const err = await outerAsync();
+  // When caller is not found, V8 clears everything
+  expect(err.stack).toBe("Error: async test");
+});
+
+test("Error.captureStackTrace applies stackTraceLimit after caller removal", () => {
+  // Build a deep call chain so the caller sits beyond stackTraceLimit.
+  // If the limit were applied before removal, all collected frames would
+  // be above the caller and get removed, yielding an empty trace.
+  const origLimit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 3;
+  try {
+    function target() {
+      const err = {};
+      Error.captureStackTrace(err, target);
+      return err;
+    }
+    noInline(target);
+
+    function recurse(depth) {
+      if (depth === 0) return target();
+      // Not a tail call — keeps each frame on the stack.
+      const r = recurse(depth - 1);
+      return { ...r };
+    }
+    noInline(recurse);
+
+    const err = recurse(20);
+    const frames = err.stack.split("\n").filter(l => l.includes("    at "));
+    // Should have exactly 3 frames (the limit), all below target()
+    expect(frames.length).toBe(3);
+    expect(err.stack).not.toContain("at target");
+    expect(err.stack).toContain("at recurse");
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+});
+
+test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () => {
+  const origLimit = Error.stackTraceLimit;
+  try {
+    Error.stackTraceLimit = "foo";
+    const obj = {};
+    expect(() => Error.captureStackTrace(obj)).not.toThrow();
+    expect(typeof obj.stack).toBe("string");
+
+    delete Error.stackTraceLimit;
+    const obj2 = {};
+    expect(() => Error.captureStackTrace(obj2)).not.toThrow();
+    expect(typeof obj2.stack).toBe("string");
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+});

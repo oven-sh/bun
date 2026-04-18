@@ -15,6 +15,12 @@ const CurrentFile = struct {
         repeat_index: u32,
         reporter: *CommandLineReporter,
     ) void {
+        if (reporter.worker_ipc_file_idx != null) {
+            // Coordinator owns the terminal and prints its own per-test file
+            // context; the worker should not emit a header to stderr.
+            this.has_printed_filename = true;
+            return;
+        }
         if (reporter.reporters.dots or reporter.reporters.only_failures) {
             this.freeAndClear();
             this.title = bun.handleOom(bun.default_allocator.dupe(u8, title));
@@ -69,6 +75,10 @@ pub const TestRunner = struct {
     run_todo: bool = false,
     concurrent: bool = false,
     randomize: ?std.Random = null,
+    /// The --seed value when --randomize is on. Used to derive a per-file
+    /// shuffle PRNG from hash(seed, file_path) so within-file test order is
+    /// independent of which worker (and which prior files) ran it.
+    randomize_seed: ?u32 = null,
     concurrent_test_glob: ?[]const []const u8 = null,
     last_file: u64 = 0,
     bail: u32 = 0,

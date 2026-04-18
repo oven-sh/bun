@@ -130,8 +130,8 @@ pub fn LinearFifo(
                     var new_bytes = std.mem.sliceAsBytes(buf);
                     const old_bytes = std.mem.sliceAsBytes(self.readableSlice(0));
                     @memcpy(new_bytes[0..old_bytes.len], old_bytes);
-                    self.allocator.free(self.buf);
                 }
+                self.allocator.free(self.buf);
                 self.head = 0;
                 self.buf = buf;
             } else {

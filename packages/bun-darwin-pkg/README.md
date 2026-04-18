@@ -8,12 +8,12 @@ Installer UI is themed around the Bun logo (rendered from
 
 ## What the installer does
 
-| Step        | Result                                                                            |
-| ----------- | --------------------------------------------------------------------------------- |
-| Payload     | `/usr/local/bin/bun` (universal), `/usr/local/bin/bunx → bun`                     |
-| PATH        | `/etc/paths.d/200-bun` → `/usr/local/bin`                                         |
-| Env         | `BUN_INSTALL="$HOME/.bun"` + `~/.bun/bin` on `PATH` in zsh/bash/fish profiles     |
-| Completions | `bun completions` run as the installing user (best-effort)                       |
+| Step        | Result                                                                        |
+| ----------- | ----------------------------------------------------------------------------- |
+| Payload     | `/usr/local/bin/bun` (universal), `/usr/local/bin/bunx → bun`                 |
+| PATH        | `/etc/paths.d/200-bun` → `/usr/local/bin`                                     |
+| Env         | `BUN_INSTALL="$HOME/.bun"` + `~/.bun/bin` on `PATH` in zsh/bash/fish profiles |
+| Completions | `bun completions` run as the installing user (best-effort)                    |
 
 The shell-profile block is guarded with a `# bun (installed via .pkg)`
 marker so reinstalling doesn't duplicate it.
@@ -46,11 +46,11 @@ GitHub release / S3.
 Set these on the CI agent (or export locally) to produce a notarized
 installer that passes Gatekeeper:
 
-| Variable                         | Value                                                       |
-| -------------------------------- | ----------------------------------------------------------- |
-| `APPLE_DEVELOPER_ID_APPLICATION` | `Developer ID Application: <Team> (<TeamID>)`               |
-| `APPLE_DEVELOPER_ID_INSTALLER`   | `Developer ID Installer: <Team> (<TeamID>)`                 |
-| `APPLE_KEYCHAIN_PROFILE`         | name passed to `xcrun notarytool store-credentials`        |
+| Variable                         | Value                                               |
+| -------------------------------- | --------------------------------------------------- |
+| `APPLE_DEVELOPER_ID_APPLICATION` | `Developer ID Application: <Team> (<TeamID>)`       |
+| `APPLE_DEVELOPER_ID_INSTALLER`   | `Developer ID Installer: <Team> (<TeamID>)`         |
+| `APPLE_KEYCHAIN_PROFILE`         | name passed to `xcrun notarytool store-credentials` |
 
 If any of these are missing the script degrades gracefully: the binary is
 ad-hoc signed, the installer is unsigned, and notarization is skipped with

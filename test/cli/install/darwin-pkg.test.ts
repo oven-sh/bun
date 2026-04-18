@@ -5,10 +5,10 @@
 // bits, broken template substitution, malformed XML, or a postinstall that
 // silently stopped setting BUN_INSTALL / PATH.
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv } from "harness";
-import { join } from "node:path";
 import { accessSync, constants, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const pkgDir = join(import.meta.dir, "..", "..", "..", "packages", "bun-darwin-pkg");
 

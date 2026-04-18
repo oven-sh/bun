@@ -42,9 +42,7 @@ describe("Bun.pathToFileURL with inputs that fail URL construction", () => {
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
     // One line per input: either a valid URL or a thrown TypeError — never a crash.
-    expect(stdout.trim().split("\n")).toEqual(
-      inputs.map(() => expect.stringMatching(/^(ok ".*"|threw TypeError)$/)),
-    );
+    expect(stdout.trim().split("\n")).toEqual(inputs.map(() => expect.stringMatching(/^(ok ".*"|threw TypeError)$/)));
     expect(exitCode).toBe(0);
   });
 

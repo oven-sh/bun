@@ -830,7 +830,7 @@ function getMacOSPkgStep(darwinPlatforms) {
       os: "darwin",
       // Any arch can assemble the .pkg (lipo/pkgbuild are universal), but
       // prefer aarch64 since that's where most of the fleet is.
-      arch: darwinPlatforms.find(p => p.arch === "aarch64")?.arch ?? darwinPlatforms[0].arch,
+      arch: darwinPlatforms.some(p => p.arch === "aarch64") ? "aarch64" : "x64",
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),

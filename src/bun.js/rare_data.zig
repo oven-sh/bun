@@ -119,7 +119,7 @@ pub const ProxyEnvStorage = struct {
     no_proxy: ?*RefCountedEnvValue = null,
 
     /// Held by Bun__setEnvValue around the slot swap + env.map.put, and by
-    /// the worker around cloneFrom + env.map.cloneWithAllocator. This closes
+    /// the worker around cloneFrom + env.map.cloneWithAllocatorDeep. This closes
     /// two races: (1) worker's cloneFrom reading a slot pointer concurrently
     /// with the parent's deref → free on the same pointer; (2) the env.map's
     /// backing ArrayHashMap being iterated during clone while the parent's
@@ -174,7 +174,7 @@ pub const ProxyEnvStorage = struct {
     }
 
     /// Overwrite proxy-var entries in an env map with this storage's reffed
-    /// bytes. Used after map.cloneWithAllocator in the worker so the cloned
+    /// bytes. Used after map.cloneWithAllocatorDeep in the worker so the cloned
     /// map and the reffed storage agree — defense-in-depth in case the map
     /// clone captured a snapshot the storage doesn't hold a ref on (e.g. an
     /// initial-environ value later overwritten by the setter).

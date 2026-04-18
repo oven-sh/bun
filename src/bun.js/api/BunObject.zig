@@ -1468,7 +1468,7 @@ pub const EnvironmentVariables = struct {
         const storage = &vm.proxy_env_storage;
 
         // Synchronize the slot swap + env.map.put against a concurrently
-        // spawning worker's cloneFrom + env.map.cloneWithAllocator. Without
+        // spawning worker's cloneFrom + env.map.cloneWithAllocatorDeep. Without
         // this, the worker could load the slot pointer between our deref
         // (refcount → 0 → free) and the null write below, then call ref()
         // on freed memory.

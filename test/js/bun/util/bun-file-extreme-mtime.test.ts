@@ -36,6 +36,11 @@ describe.skipIf(!isLinux)("Bun.file() with extreme mtime", () => {
         // Must not collide with the internal "unresolved" sentinel (maxInt(u52)).
         expect(file.lastModified).not.toBe(2 ** 52 - 1);
         expect(await file.text()).toBe("hello");
+
+        // fs.fstatSync with bigint: true goes through a separate ms
+        // conversion (Stat.zig toTimeMS) that had the same overflow.
+        const st = fs.fstatSync(fd, { bigint: true });
+        expect(typeof st.mtimeMs).toBe("bigint");
       } finally {
         fs.closeSync(fd);
       }

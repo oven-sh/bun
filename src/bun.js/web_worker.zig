@@ -766,9 +766,11 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     }
     if (vm_to_deinit) |vm| {
         // terminate() set the JSC termination flag to interrupt running JS; clear
-        // it so process.on('exit') handlers can run. WebWorker__teardownJSCVM
-        // re-sets it for the JSC VM teardown.
-        vm.jsc_vm.clearHasTerminationRequest();
+        // it (and any already-thrown TerminationException) so process.on('exit')
+        // handlers can run. clearHasTerminationRequest() alone would leave the
+        // exception pending and trip VMTraps::deferTerminationSlow's assertion.
+        // WebWorker__teardownJSCVM re-sets the flag for the JSC VM teardown.
+        vm.global.clearTerminationException();
         vm.is_shutting_down = true;
         vm.onExit();
         jsc.API.cron.CronJob.clearAllForVM(vm, .teardown);

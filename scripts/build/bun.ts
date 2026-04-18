@@ -158,9 +158,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.comment("─── Dependencies ───");
   n.blank();
   const deps: ResolvedDep[] = [];
+  const depsByName = new Map<string, ResolvedDep>();
   for (const dep of allDeps) {
-    const resolved = resolveDep(n, cfg, dep);
-    if (resolved !== null) deps.push(resolved);
+    const resolved = resolveDep(n, cfg, dep, depsByName);
+    if (resolved !== null) {
+      deps.push(resolved);
+      depsByName.set(dep.name, resolved);
+    }
   }
 
   // Collect all dep lib paths, include dirs, output stamps, and directly-
@@ -449,7 +453,7 @@ function emitZigOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // Only dep: zstd, for @cImport headers. resolveDep emits its
   // fetch/configure/build; emitZig only depends on the fetch stamp.
-  const zstdDep = resolveDep(n, cfg, zstd);
+  const zstdDep = resolveDep(n, cfg, zstd, new Map());
   assert(zstdDep !== null, "zstd resolveDep returned null — should never be skipped");
 
   // Codegen: emitted fully, but only zigInputs/zigOrderOnly are pulled.

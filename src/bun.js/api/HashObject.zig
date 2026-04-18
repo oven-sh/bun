@@ -6,7 +6,7 @@ pub const adler32 = hashWrap(std.hash.Adler32);
 pub const crc32 = hashWrap(struct {
     pub fn hash(seed: u32, bytes: []const u8) u32 {
         // zlib takes a 32-bit length, so chunk large inputs to avoid truncation.
-        var crc: u64 = seed;
+        var crc: bun.zlib.uLong = seed;
         var offset: usize = 0;
         while (offset < bytes.len) {
             const remaining = bytes.len - offset;

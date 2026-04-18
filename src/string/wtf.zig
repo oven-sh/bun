@@ -59,8 +59,9 @@ pub const WTFStringImplStruct = extern struct {
 
     /// Atom strings live in a per-thread AtomStringTable — last-deref from
     /// a different thread trips RELEASE_ASSERT(wasRemoved) in
-    /// AtomStringImpl::remove(). Used by tests to assert that strings which
-    /// may be destroyed off the creating thread are NOT atoms.
+    /// AtomStringImpl::remove(). Holders of atom strings must guarantee
+    /// destruction on the creating thread (see e.g. the defer-order note
+    /// in FetchTasklet.callback() for Response.status_text/url).
     pub inline fn isAtom(self: WTFStringImpl) bool {
         return (self.m_hashAndFlags & s_hashFlagStringKindIsAtom) != 0;
     }

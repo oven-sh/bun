@@ -60,8 +60,16 @@ test("internal DNS: aborting many concurrent connects does not free pending work
     stderr: "pipe",
   });
 
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  // ASAN debug builds print a signal-handler warning to stderr at startup
+  // when ASAN_OPTIONS is not set; ignore that line so the assertion works
+  // under both `bun bd` (bun-debug) and the CI bun-asan binary.
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrLines).toBe("");
   expect(stdout.trim()).toBe("ok");
   expect(exitCode).toBe(0);
 }, 60_000);

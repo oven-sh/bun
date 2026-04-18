@@ -284,6 +284,159 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
     expect(stdout).toContain("400");
     expect(exitCode).toBe(0);
   });
+
+  test("rejects Content-Length values that would alias chunked-encoding state bits", async () => {
+    // remainingStreamingBytes is shared between CL and chunked state. CL >= 2^59 would
+    // set STATE_HAS_HEXDIG and route a fixed-length body into the chunked decoder.
+    const script = `
+      let urls = [];
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) { urls.push(new URL(req.url).pathname); return new Response("OK"); },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      let received = "";
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(s, d) { received += d.toString(); },
+          async open(s) {
+            s.write("GET /first HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 576460752303423488\\r\\n\\r\\n");
+            s.flush();
+            await Bun.sleep(20);
+            s.write("\\r\\n\\r\\nGET /smuggled HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+            s.flush();
+          },
+          error() {},
+          close() { console.log(JSON.stringify({ received, urls })); resolve(); },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { received, urls } = JSON.parse(stdout);
+    expect(received).toContain("400");
+    expect(urls).not.toContain("/smuggled");
+    expect(exitCode).toBe(0);
+  });
+
+  describe.each([
+    ["bare CRLF", "\\r\\n"],
+    ["extension only", ";a=b\\r\\n"],
+  ])("rejects chunk-size with zero hex digits (%s)", (_, chunkSizeLine) => {
+    // RFC 7230 4.1: chunk-size = 1*HEXDIG. A chunk-size line with no hex digit
+    // must be rejected. Previously this parsed as size 0 (last-chunk), allowing a
+    // pipelined request after the bogus terminator to be smuggled.
+    test("rejects and does not process trailing pipelined request", async () => {
+      const script = `
+        let requests = 0;
+        const server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            requests++;
+            try {
+              await req.text();
+              return new Response("OK " + req.url);
+            } catch {
+              return new Response("Body error", { status: 400 });
+            }
+          },
+        });
+        const { promise, resolve } = Promise.withResolvers();
+        let received = "";
+        const socket = await Bun.connect({
+          hostname: "localhost",
+          port: server.port,
+          socket: {
+            data(socket, data) { received += data.toString(); },
+            open(socket) {
+              socket.write(
+                "PUT /first HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n" +
+                "${chunkSizeLine}\\r\\n" +
+                "GET /smuggled HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"
+              );
+              socket.flush();
+            },
+            error() {},
+            close() { console.log(JSON.stringify({ received, requests })); resolve(); },
+          },
+        });
+        await promise;
+        server.stop();
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      const { received, requests } = JSON.parse(stdout);
+      expect(received).toContain("400");
+      expect(received).not.toContain("/smuggled");
+      // The smuggled request must never reach the handler.
+      expect(requests).toBeLessThanOrEqual(1);
+      expect(exitCode).toBe(0);
+    });
+
+    test("rejects when chunk-size line is split across packets", async () => {
+      const script = `
+        const server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            try { await req.text(); return new Response("OK"); }
+            catch { return new Response("Body error", { status: 400 }); }
+          },
+        });
+        const { promise, resolve } = Promise.withResolvers();
+        let received = "";
+        const socket = await Bun.connect({
+          hostname: "localhost",
+          port: server.port,
+          socket: {
+            data(socket, data) { received += data.toString(); },
+            async open(socket) {
+              socket.write("PUT / HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
+              socket.flush();
+              await Bun.sleep(20);
+              socket.write("${chunkSizeLine}");
+              socket.flush();
+              await Bun.sleep(20);
+              socket.write("\\r\\n");
+              socket.flush();
+            },
+            error() {},
+            close() { console.log(received); resolve(); },
+          },
+        });
+        await promise;
+        server.stop();
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toContain("400");
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 describe.if(isPosix)("HTTP server handles fragmented requests", () => {

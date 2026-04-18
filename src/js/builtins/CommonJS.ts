@@ -390,6 +390,7 @@ export function createRequireCache() {
       moduleMap.$delete(key);
       $requireMap.$delete(key);
       $esmRegistryDelete(key);
+      $evictIsolationSourceProviderCache(key);
       return true;
     },
 

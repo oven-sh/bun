@@ -92,9 +92,11 @@ pub const BunSpawn = struct {
 
     pub const Attr = struct {
         detached: bool = false,
+        new_process_group: bool = false,
         pty_slave_fd: i32 = -1,
         flags: u16 = 0,
         reset_signals: bool = false,
+        linux_pdeathsig: i32 = 0,
 
         pub fn init() !Attr {
             return Attr{};
@@ -268,8 +270,10 @@ pub const PosixSpawn = struct {
     const BunSpawnRequest = extern struct {
         chdir_buf: ?[*:0]u8 = null,
         detached: bool = false,
+        new_process_group: bool = false,
         actions: ActionsList = .{},
         pty_slave_fd: i32 = -1,
+        linux_pdeathsig: i32 = 0,
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -346,7 +350,9 @@ pub const PosixSpawn = struct {
                     },
                     .chdir_buf = if (actions) |a| a.chdir_buf else null,
                     .detached = detached,
+                    .new_process_group = if (attr) |a| a.new_process_group else false,
                     .pty_slave_fd = pty_slave_fd,
+                    .linux_pdeathsig = if (attr) |a| a.linux_pdeathsig else 0,
                 },
                 argv,
                 envp,
@@ -374,8 +380,13 @@ pub const PosixSpawn = struct {
 
             // Pass through all flags from the BunSpawn.Attr
             if (attr) |a| {
-                if (a.flags != 0) {
-                    posix_attr.set(a.flags) catch {};
+                var flags = a.flags;
+                if (a.new_process_group) {
+                    flags |= bun.c.POSIX_SPAWN_SETPGROUP;
+                    // pgroup defaults to 0 in a freshly-init'd attr, i.e. child's own pid.
+                }
+                if (flags != 0) {
+                    posix_attr.set(flags) catch {};
                 }
                 if (a.reset_signals) {
                     posix_attr.resetSignals() catch {};

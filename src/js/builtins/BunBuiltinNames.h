@@ -108,6 +108,7 @@ using namespace JSC;
     macro(errorSteps) \
     macro(evaluateCommonJSModule) \
     macro(evaluated) \
+    macro(evictIsolationSourceProviderCache) \
     macro(execArgv) \
     macro(expires) \
     macro(exports) \

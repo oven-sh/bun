@@ -6,7 +6,6 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
 pattern: []const u8,
-pattern_codepoints: ?std.array_list.Managed(u32) = null,
 has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
 const ScanOpts = struct {
@@ -189,6 +188,7 @@ pub const WalkTask = struct {
 
     fn deinit(this: *WalkTask) void {
         this.walker.deinit(true);
+        this.alloc.destroy(this.walker);
         this.alloc.destroy(this);
     }
 };
@@ -261,8 +261,6 @@ fn makeGlobWalker(
 }
 
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Glob {
-    const alloc = bun.default_allocator;
-
     const arguments_ = callframe.arguments_old(1);
     var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
@@ -274,23 +272,16 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         return globalThis.throw("Glob.constructor: first argument is not a string", .{});
     }
 
-    const pat_str: []u8 = @constCast((try pat_arg.toSliceClone(globalThis)).slice());
+    const pat_str: []const u8 = (try pat_arg.toSliceClone(globalThis)).slice();
 
-    const glob = bun.handleOom(alloc.create(Glob));
-    glob.* = .{ .pattern = pat_str };
-
-    return glob;
+    return bun.new(Glob, .{ .pattern = pat_str });
 }
 
 pub fn finalize(
     this: *Glob,
 ) callconv(.c) void {
-    const alloc = jsc.VirtualMachine.get().allocator;
-    alloc.free(this.pattern);
-    if (this.pattern_codepoints) |*codepoints| {
-        codepoints.deinit();
-    }
-    alloc.destroy(this);
+    bun.default_allocator.free(this.pattern);
+    bun.destroy(this);
 }
 
 pub fn hasPendingActivity(this: *Glob) callconv(.c) bool {
@@ -313,7 +304,10 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFram
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
-    const globWalker = try this.makeGlobWalker(globalThis, &arguments, "scan", alloc, &arena) orelse {
+    const globWalker = this.makeGlobWalker(globalThis, &arguments, "scan", alloc, &arena) catch |err| {
+        arena.deinit();
+        return err;
+    } orelse {
         arena.deinit();
         return .js_undefined;
     };
@@ -321,6 +315,8 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFram
     incrPendingActivityFlag(&this.has_pending_activity);
     var task = WalkTask.create(globalThis, alloc, globWalker, &this.has_pending_activity) catch {
         decrPendingActivityFlag(&this.has_pending_activity);
+        globWalker.deinit(true);
+        alloc.destroy(globWalker);
         return globalThis.throwOutOfMemory();
     };
     task.schedule();
@@ -336,11 +332,17 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.Call
     defer arguments.deinit();
 
     var arena = std.heap.ArenaAllocator.init(alloc);
-    var globWalker = try this.makeGlobWalker(globalThis, &arguments, "scanSync", alloc, &arena) orelse {
+    var globWalker = this.makeGlobWalker(globalThis, &arguments, "scanSync", alloc, &arena) catch |err| {
+        arena.deinit();
+        return err;
+    } orelse {
         arena.deinit();
         return .js_undefined;
     };
-    defer globWalker.deinit(true);
+    defer {
+        globWalker.deinit(true);
+        alloc.destroy(globWalker);
+    }
 
     switch (try globWalker.walk()) {
         .err => |err| {
@@ -376,14 +378,6 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame
     return jsc.JSValue.jsBoolean(bun.glob.match(this.pattern, str.slice()).matches());
 }
 
-pub fn convertUtf8(codepoints: *std.array_list.Managed(u32), pattern: []const u8) !void {
-    const iter = CodepointIterator.init(pattern);
-    var cursor = CodepointIterator.Cursor{};
-    while (iter.next(&cursor)) {
-        try codepoints.append(@intCast(cursor.c));
-    }
-}
-
 const string = []const u8;
 
 const ResolvePath = @import("../../resolver/resolve_path.zig");
@@ -394,7 +388,6 @@ const Arena = std.heap.ArenaAllocator;
 
 const bun = @import("bun");
 const BunString = bun.String;
-const CodepointIterator = bun.strings.UnsignedCodepointIterator;
 const GlobWalker = bun.glob.BunGlobWalker;
 
 const jsc = bun.jsc;

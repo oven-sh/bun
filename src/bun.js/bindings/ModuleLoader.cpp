@@ -36,6 +36,7 @@
 
 #include "../modules/ObjectModule.h"
 #include "JSCommonJSModule.h"
+#include "IsolatedModuleCache.h"
 #include "../modules/_NativeModule.h"
 
 #include "JSCommonJSExtensions.h"
@@ -503,8 +504,11 @@ extern "C" void Bun__onFulfillAsyncModule(
             }
         }
     } else {
-        auto&& provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
-        promise->resolve(globalObject, vm, JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+        auto provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
+        if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
+            Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
+        }
+        promise->resolve(globalObject, vm, JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider))));
         scope.assertNoExceptionExceptTermination();
     }
 }
@@ -761,6 +765,30 @@ JSValue fetchCommonJSModule(
     if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice) {
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
+
+    if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute)) {
+        if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifierWtfString)) {
+            if (cached->sourceType() == JSC::SourceProviderSourceType::Program) {
+                // The wrapper override only affects CJS evaluation; if it's
+                // active, fall through and re-transpile so the override can run.
+                if (!globalObject->hasOverriddenModuleWrapper) {
+                    target->evaluate(globalObject, Ref(*cached), cached->m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    RELEASE_AND_RETURN(scope, target);
+                }
+            } else {
+                Vector<JSC::VM::SynchronousModuleTask> queue;
+                auto* prev = vm.m_synchronousModuleQueue;
+                vm.m_synchronousModuleQueue = &queue;
+                globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(Ref(*cached)));
+                if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+                vm.m_synchronousModuleQueue = prev;
+                RETURN_IF_EXCEPTION(scope, {});
+                RELEASE_AND_RETURN(scope, jsNumber(-1));
+            }
+        }
+    }
+
     return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
 }
 
@@ -839,6 +867,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
     }
 
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
+    if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute))
+        Bun::IsolatedModuleCache::insert(vm, specifierWtfString, provider.get());
     // provideFetch() now drives the C++ loader pipeline (parse -> module record)
     // via internal microtasks. We're about to hand this entry to require(esm)'s
     // synchronous load path, so run those reactions through the loader's
@@ -969,10 +999,22 @@ static JSValue fetchESMSourceCode(
 
         auto moduleKey = specifier->toWTFString(BunString::ZeroCopy);
 
+        // bun:wrap and a few other builtins return real JS source (not a
+        // synthetic generator). Their providers are identical across globals,
+        // so check the isolation cache before re-creating one.
+        const bool useIsolationCacheForBuiltin = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
+        if (useIsolationCacheForBuiltin) {
+            if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, moduleKey)) {
+                RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached)))));
+            }
+        }
+
         auto tag = res->result.value.tag;
         switch (tag) {
         case SyntheticModuleType::ESM: {
             auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
+            if (useIsolationCacheForBuiltin)
+                Bun::IsolatedModuleCache::insert(vm, moduleKey, provider.get());
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(provider))));
         }
 
@@ -992,6 +1034,8 @@ static JSValue fetchESMSourceCode(
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));
             } else {
                 auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
+                if (useIsolationCacheForBuiltin)
+                    Bun::IsolatedModuleCache::insert(vm, moduleKey, provider.get());
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider))));
             }
         }
@@ -1004,6 +1048,33 @@ static JSValue fetchESMSourceCode(
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
             RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));
+        }
+    }
+
+    const bool useIsolationCache = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
+    if (useIsolationCache) {
+        if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifier->toWTFString(BunString::ZeroCopy))) {
+            if (cached->sourceType() != JSC::SourceProviderSourceType::Program) {
+                RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached)))));
+            }
+            // Mirror the guard in fetchCommonJSModule: a Module.wrap override only
+            // affects CJS evaluation, so don't serve a cached Program-type provider
+            // when one is active in this global — fall through to re-transpile.
+            if (!globalObject->hasOverriddenModuleWrapper) {
+                auto created = Bun::createCommonJSModule(globalObject, specifierJS, Ref(*cached), cached->m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule);
+                EXCEPTION_ASSERT(created.has_value() == !scope.exception());
+                if (created.has_value()) {
+                    RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
+                }
+                if constexpr (allowPromise) {
+                    auto* exception = scope.exception();
+                    (void)scope.tryClearException();
+                    RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
+                } else {
+                    scope.release();
+                    return {};
+                }
+            }
         }
     }
 
@@ -1103,7 +1174,11 @@ static JSValue fetchESMSourceCode(
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
     }
 
-    RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Zig::SourceProvider::create(globalObject, res->result.value)))));
+    auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
+    if (useIsolationCache) {
+        Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
+    }
+    RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider)))));
 }
 
 JSValue fetchESMSourceCodeSync(
@@ -1130,6 +1205,19 @@ JSValue fetchESMSourceCodeAsync(
 }
 
 using namespace Bun;
+
+BUN_DEFINE_HOST_FUNCTION(jsFunctionEvictIsolationSourceProviderCache, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSValue arg = callFrame->argument(0);
+    if (arg.isUndefined()) {
+        Bun::IsolatedModuleCache::clear(vm);
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    if (auto* str = arg.toStringOrNull(globalObject))
+        Bun::IsolatedModuleCache::evict(vm, str->value(globalObject));
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {

@@ -61,6 +61,11 @@ pub const BUN_INSPECT_PRELOAD = New(kind.string, "BUN_INSPECT_PRELOAD", .{});
 pub const BUN_INSTALL = New(kind.string, "BUN_INSTALL", .{});
 pub const BUN_INSTALL_BIN = New(kind.string, "BUN_INSTALL_BIN", .{});
 pub const BUN_INSTALL_GLOBAL_DIR = New(kind.string, "BUN_INSTALL_GLOBAL_DIR", .{});
+/// Minimum response `Content-Length` (in bytes) for `bun install` to
+/// stream a tarball directly into libarchive instead of buffering the
+/// whole body first. Smaller tarballs stay on the buffered path where
+/// the fixed overhead of the resumable state machine isn't worth it.
+pub const BUN_INSTALL_STREAMING_MIN_SIZE = New(kind.unsigned, "BUN_INSTALL_STREAMING_MIN_SIZE", .{ .default = 2 * 1024 * 1024 });
 pub const BUN_NEEDS_PROC_SELF_WORKAROUND = New(kind.boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", .{ .default = false });
 pub const BUN_OPTIONS = New(kind.string, "BUN_OPTIONS", .{});
 pub const BUN_POSTGRES_SOCKET_MONITOR = New(kind.string, "BUN_POSTGRES_SOCKET_MONITOR", .{});
@@ -159,9 +164,14 @@ pub const feature_flag = struct {
 
     pub const BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", .{});
+    pub const BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_DNS_CACHE = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX", .{});
+    /// Disable streaming tarball extraction in `bun install`. When disabled,
+    /// the whole .tgz is buffered in memory before being decompressed and
+    /// extracted. Useful for bisecting streaming-specific bugs.
+    pub const BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_IO_POOL = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IO_POOL", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_IPV4 = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IPV4", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_IPV6 = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IPV6", .{});

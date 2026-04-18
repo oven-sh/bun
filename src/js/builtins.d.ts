@@ -598,6 +598,7 @@ declare function $evaluateCommonJSModule(
   moduleToEvaluate: JSCommonJSModule,
   sourceModule: JSCommonJSModule,
 ): JSCommonJSModule[];
+declare function $evictIsolationSourceProviderCache(key?: string): void;
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
 

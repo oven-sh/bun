@@ -94,7 +94,6 @@ __asm__(".symver log2f,log2f@GLIBC_2.2.5");
 __asm__(".symver logf,logf@GLIBC_2.2.5");
 __asm__(".symver pow,pow@GLIBC_2.2.5");
 __asm__(".symver powf,powf@GLIBC_2.2.5");
-__asm__(".symver quick_exit,quick_exit@GLIBC_2.10");
 #elif defined(__aarch64__)
 __asm__(".symver expf,expf@GLIBC_2.17");
 __asm__(".symver exp,exp@GLIBC_2.17");
@@ -105,7 +104,6 @@ __asm__(".symver log2f,log2f@GLIBC_2.17");
 __asm__(".symver logf,logf@GLIBC_2.17");
 __asm__(".symver pow,pow@GLIBC_2.17");
 __asm__(".symver powf,powf@GLIBC_2.17");
-__asm__(".symver quick_exit,quick_exit@GLIBC_2.17");
 #endif
 
 #if defined(__x86_64__) || defined(__aarch64__)
@@ -127,7 +125,6 @@ double BUN_WRAP_GLIBC_SYMBOL(log)(double);
 double BUN_WRAP_GLIBC_SYMBOL(log2)(double);
 int BUN_WRAP_GLIBC_SYMBOL(fcntl64)(int, int, ...);
 ssize_t BUN_WRAP_GLIBC_SYMBOL(getrandom)(void*, size_t, unsigned int);
-void BUN_WRAP_GLIBC_SYMBOL(quick_exit)(int) __attribute__((noreturn));
 
 float __wrap_expf(float x) { return expf(x); }
 float __wrap_powf(float x, float y) { return powf(x, y); }
@@ -138,7 +135,20 @@ double __wrap_exp2(double x) { return exp2(x); }
 double __wrap_pow(double x, double y) { return pow(x, y); }
 double __wrap_log(double x) { return log(x); }
 double __wrap_log2(double x) { return log2(x); }
-void __wrap_quick_exit(int code) { quick_exit(code); }
+
+// glibc 2.24 added quick_exit@GLIBC_2.24 (the version that correctly skips
+// thread_local dtors per C11/C++11; the older @2.10 version ran them — see
+// glibc bug 20198). dlsym at runtime gets the host's default version: the
+// correct one on ≥ 2.24, the only one available on 2.17–2.23. Either way we
+// call exactly what a natively-built program on that host would call, without
+// a link-time GLIBC_2.24 dependency.
+[[noreturn]] void __wrap_quick_exit(int code)
+{
+    using qe_fn = void (*)(int);
+    static qe_fn real = reinterpret_cast<qe_fn>(dlsym(RTLD_NEXT, "quick_exit"));
+    real(code);
+    __builtin_unreachable();
+}
 
 // glibc 2.25 added a getrandom() wrapper around the syscall (kernel ≥ 3.17).
 // Bypass libc and call the syscall directly so we don't need GLIBC_2.25.

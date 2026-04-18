@@ -429,7 +429,7 @@ pub fn start(
     // env.map entries) so every slice we copy is backed by a ref we hold.
     // The parent's storage.lock serializes against Bun__setEnvValue on the
     // main thread — it covers both the slot swap and the map.put, so
-    // cloneFrom and cloneWithAllocator see the same state.
+    // cloneFrom and cloneWithAllocatorDeep see the same state.
     //
     // proxy_env_storage lives directly on VirtualMachine (not in lazy
     // RareData) so there's no null-check race — it always exists.

@@ -58,7 +58,7 @@ a warning.
 
 ## Layout
 
-```
+```text
 build.sh                      entry point
 distribution.xml.template     productbuild UI definition
 resources/

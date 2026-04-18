@@ -95,6 +95,12 @@ describe("packages/bun-darwin-pkg", () => {
     expect(src).toContain("# bun (installed via .pkg)");
     expect(src).toContain('ln -sf bun "$BIN_DIR/bunx"');
     expect(src).toContain("completions");
+
+    // postinstall runs as root but writes into the user's home directory;
+    // make sure the symlink guard and drop-privileges write stay in place.
+    expect(src).toContain("safe_profile_target");
+    expect(src).toContain('[[ -L "$file" ]]');
+    expect(src).toMatch(/sudo -u "\$CONSOLE_USER" tee -a/);
   });
 
   test("welcome and conclusion pages embed the Bun logo", () => {

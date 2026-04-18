@@ -834,6 +834,9 @@ function getMacOSPkgStep(darwinPlatforms) {
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
+    // notarytool --wait blocks on Apple's external service; typical turnaround
+    // is 5-15 minutes, but bound it so an Apple outage can't hold the agent.
+    timeout_in_minutes: 30,
     command: "./packages/bun-darwin-pkg/build.sh",
   };
 }

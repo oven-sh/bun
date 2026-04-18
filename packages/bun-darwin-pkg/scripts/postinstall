@@ -58,7 +58,9 @@ if [[ -z "$CONSOLE_USER" || "$CONSOLE_USER" == "root" ]]; then
   exit 0
 fi
 
-USER_HOME=$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+# NFSHomeDirectory may contain spaces; strip only the leading key, keep the
+# full path.
+USER_HOME=$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | sed 's/^NFSHomeDirectory: //')
 if [[ -z "$USER_HOME" || ! -d "$USER_HOME" ]]; then
   exit 0
 fi
@@ -75,43 +77,62 @@ sudo -u "$CONSOLE_USER" mkdir -p "$BUN_INSTALL/bin"
 # We append to every shell config that exists (or the zsh default if none
 # do — zsh is the macOS default since Catalina). The block is guarded so
 # re-running the installer doesn't duplicate it.
+#
+# Because this script runs as root but writes into the user's home
+# directory, refuse to touch anything that is (or is reached through) a
+# symlink, and do the actual write as the target user rather than root.
+# Otherwise a user could point ~/.zshrc at a root-owned file and have us
+# append to it.
 # ---------------------------------------------------------------------------
+
+# Returns success iff $1 is a regular file (or doesn't exist yet) inside
+# $USER_HOME with no symlink anywhere along the path.
+safe_profile_target() {
+  local file="$1"
+  # Refuse symlinked target outright.
+  [[ -L "$file" ]] && return 1
+  [[ -e "$file" && ! -f "$file" ]] && return 1
+  # Walk up to USER_HOME; every intermediate component must be a real dir.
+  local dir
+  dir="$(dirname "$file")"
+  while [[ "$dir" != "$USER_HOME" && "$dir" != "/" && -n "$dir" ]]; do
+    [[ -L "$dir" ]] && return 1
+    dir="$(dirname "$dir")"
+  done
+  [[ "$dir" == "$USER_HOME" ]] || return 1
+  return 0
+}
 
 append_once() {
   local file="$1"
+  safe_profile_target "$file" || return 0
   # Skip if the marker is already present.
   if [[ -f "$file" ]] && grep -q '# bun (installed via .pkg)' "$file" 2>/dev/null; then
     return
   fi
-  # Create the file as the user if it doesn't exist yet.
-  if [[ ! -f "$file" ]]; then
-    sudo -u "$CONSOLE_USER" touch "$file"
-  fi
-  cat >> "$file" <<EOF
+  # Create + write as the user, not root, so we can't be tricked into
+  # touching anything the user couldn't already write themselves.
+  sudo -u "$CONSOLE_USER" tee -a "$file" >/dev/null <<EOF
 
 # bun (installed via .pkg)
 export BUN_INSTALL="\$HOME/.bun"
 export PATH="\$BUN_INSTALL/bin:\$PATH"
 EOF
-  chown "$CONSOLE_USER" "$file"
 }
 
 append_once_fish() {
   local file="$1"
+  sudo -u "$CONSOLE_USER" mkdir -p "$(dirname "$file")" 2>/dev/null || return 0
+  safe_profile_target "$file" || return 0
   if [[ -f "$file" ]] && grep -q '# bun (installed via .pkg)' "$file" 2>/dev/null; then
     return
   fi
-  sudo -u "$CONSOLE_USER" mkdir -p "$(dirname "$file")"
-  if [[ ! -f "$file" ]]; then
-    sudo -u "$CONSOLE_USER" touch "$file"
-  fi
-  cat >> "$file" <<EOF
+  sudo -u "$CONSOLE_USER" tee -a "$file" >/dev/null <<EOF
 
 # bun (installed via .pkg)
 set --export BUN_INSTALL "\$HOME/.bun"
 set --export PATH "\$BUN_INSTALL/bin" \$PATH
 EOF
-  chown "$CONSOLE_USER" "$file"
 }
 
 wrote_any=0

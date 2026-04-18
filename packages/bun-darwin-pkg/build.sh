@@ -5,7 +5,7 @@
 # This script is intended to run on a macOS CI agent after the
 # darwin-aarch64 and darwin-x64 build-bun steps have completed. It:
 #
-#   1. Downloads (or uses pre-staged) bun-darwin-{aarch64,x64}.zip artifacts
+#   1. Downloads bun-darwin-{aarch64,x64}.zip from the sibling build-bun steps
 #   2. Lipo's the two binaries into a single universal binary
 #   3. Codesigns the binary with Hardened Runtime + entitlements (if creds
 #      are present)
@@ -100,16 +100,12 @@ mkdir -p "$BUILD_DIR" "$PAYLOAD_ROOT/bin" "$BUILD_DIR/flat"
 
 download_artifact() {
   local name="$1" step="$2"
-  if [[ -f "$BUILD_DIR/$name" ]]; then
-    log "Using pre-staged $name"
-    return
-  fi
   if [[ "${BUILDKITE:-}" == "true" ]]; then
     log "Downloading $name from step $step"
     run buildkite-agent artifact download "$name" "$BUILD_DIR/" --step "$step"
     [[ -f "$BUILD_DIR/$name" ]] || fail "artifact download produced no file: $name"
   else
-    fail "Missing $name. Stage it under $BUILD_DIR/ or run in Buildkite."
+    fail "Not running in Buildkite. For local builds use: ./build.sh --local <arm64-bun> <x64-bun>"
   fi
 }
 
@@ -185,27 +181,34 @@ render_background() {
     return
   fi
 
+  # The background is decorative — the welcome/conclusion panes already
+  # embed the logo inline — so failure to render it is a warning, not
+  # fatal. In particular, qlmanage needs a WindowServer session and will
+  # silently produce nothing on a headless agent.
   log "Rendering installer background from $svg"
-
-  # The Installer window is roughly 620x418pt. Render @2x for Retina and let
-  # Installer scale. We pad the logo into the bottom-right corner so it
-  # doesn't collide with the text panes on the left.
   local tmp="$BUILD_DIR/logo@2x.png"
 
   if command -v rsvg-convert >/dev/null 2>&1; then
-    run rsvg-convert -w 720 -h 630 "$svg" -o "$tmp"
+    run rsvg-convert -w 720 -h 630 "$svg" -o "$tmp" || true
   elif command -v qlmanage >/dev/null 2>&1; then
-    # qlmanage renders to a directory with the source name + .png
-    run qlmanage -t -s 720 -o "$BUILD_DIR" "$svg" >/dev/null
-    mv "$BUILD_DIR/$(basename "$svg").png" "$tmp"
-  else
-    fail "Need rsvg-convert or qlmanage to render the installer background"
+    # qlmanage renders to a directory with the source name + .png. Requires
+    # a GUI session; on headless agents it exits 0 without writing a file.
+    run qlmanage -t -s 720 -o "$BUILD_DIR" "$svg" >/dev/null 2>&1 || true
+    if [[ -f "$BUILD_DIR/$(basename "$svg").png" ]]; then
+      mv "$BUILD_DIR/$(basename "$svg").png" "$tmp"
+    fi
   fi
 
-  # Compose onto a 1240x836 canvas (620x418 @2x), logo anchored bottom-right.
-  # sips alone can't composite, so emit the logo as the full background and
-  # rely on distribution.xml's alignment="bottomleft" + scaling="none" so it
-  # sits behind the content without being stretched.
+  if [[ ! -f "$tmp" ]]; then
+    warn "Could not render installer background (no rsvg-convert, or qlmanage has no WindowServer)."
+    warn "The .pkg will still work; welcome/conclusion panes carry the logo inline."
+    warn "Install 'brew install librsvg' on the agent for the full experience."
+    return
+  fi
+
+  # The Installer window is roughly 620x418pt. We emit the logo as the full
+  # background and rely on distribution.xml's alignment="bottomleft" +
+  # scaling="none" so it sits behind the content without being stretched.
   run sips -s format png --resampleHeightWidthMax 700 "$tmp" --out "$out" >/dev/null
   cp "$out" "$out_dark"
 

@@ -28,6 +28,19 @@ describe("Bun.inspect WeakMap/WeakSet", () => {
     expect(called).toBe(false);
   });
 
+  test("WeakSet with size getter does not invoke it", () => {
+    const ws = new WeakSet();
+    let called = false;
+    Object.defineProperty(ws, "size", {
+      get() {
+        called = true;
+        throw new Error("should not be called");
+      },
+    });
+    expect(Bun.inspect(ws)).toBe("WeakSet {}");
+    expect(called).toBe(false);
+  });
+
   test("toMatchObject diff with WeakMap that has size does not crash", () => {
     const wm = new WeakMap();
     // @ts-expect-error

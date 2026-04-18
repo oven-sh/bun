@@ -25,9 +25,15 @@ test("internal DNS: aborting many concurrent connects does not free pending work
       const closers = [];
       for (let i = 0; i < HOSTS; i++) {
         const host = "abort-" + r + "-" + i + ".invalid";
-        const sock = net.connect({ host, port: 1 });
-        sock.on("error", () => {});
-        closers.push(sock);
+        try {
+          const sock = net.connect({ host, port: 1 });
+          sock.on("error", () => {});
+          closers.push(sock);
+        } catch {
+          // Hitting a per-process socket/handle limit is fine; we only
+          // need the cache past its eviction threshold, not every connect
+          // to succeed.
+        }
       }
       // Let us_socket_context_connect enqueue each Request on the work
       // pool, then race the worker by destroying every connecting socket
@@ -44,8 +50,8 @@ test("internal DNS: aborting many concurrent connects does not free pending work
       await Bun.sleep(50);
       console.log("ok");
       // getaddrinfo() for .invalid names may still be blocked inside the
-      // libc resolver on the work-pool thread; force exit so the test
-      // does not wait for every resolver timeout.
+      // OS resolver on the work-pool thread; force exit so the test does
+      // not wait for every resolver timeout.
       process.exit(0);
     })().catch(e => {
       console.error(e);
@@ -62,14 +68,10 @@ test("internal DNS: aborting many concurrent connects does not free pending work
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // ASAN debug builds print a signal-handler warning to stderr at startup
-  // when ASAN_OPTIONS is not set; ignore that line so the assertion works
-  // under both `bun bd` (bun-debug) and the CI bun-asan binary.
-  const stderrLines = stderr
-    .split("\n")
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  expect(stderrLines).toBe("");
-  expect(stdout.trim()).toBe("ok");
+  // stderr is captured for diagnostics but not asserted empty: the OS
+  // resolver (Windows DNS client, glibc nss) can emit noise for bogus
+  // hostnames that is unrelated to the UAF this test targets. The UAF
+  // manifests as a crash, which stdout/exitCode catch below.
+  expect({ stdout: stdout.trim(), stderr }).toMatchObject({ stdout: "ok" });
   expect(exitCode).toBe(0);
 }, 60_000);

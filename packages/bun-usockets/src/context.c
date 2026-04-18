@@ -728,6 +728,11 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     break;
                 }
             }
+            // Detach before closing so a stale poll event cannot re-enter
+            // after_open with a dangling c; s is no longer in
+            // connecting_head so us_connecting_socket_close will not reach
+            // it either.
+            s->connect_state = NULL;
             us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
 
             // Since CONCURRENT_CONNECTIONS is 2, we know there is room for at least 1 more active connection

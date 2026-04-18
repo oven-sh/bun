@@ -1281,6 +1281,14 @@ pub const internal = struct {
             while (i < len) {
                 var entry = this.cache[i];
                 if (entry.key.hash == key.hash and entry.valid) {
+                    // refcount == 0 with result unset can only happen if the
+                    // caller side over-released (see freeaddrinfo below).
+                    // Skip so a new Request is created rather than adopting
+                    // the orphaned work-pool ref and underflowing later.
+                    if (entry.refcount == 0 and entry.result == null) {
+                        i += 1;
+                        continue;
+                    }
                     if (entry.isExpired(timestamp_to_store)) {
                         log("get: expired entry", .{});
                         if (entry.refcount == 0) {

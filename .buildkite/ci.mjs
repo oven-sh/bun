@@ -245,7 +245,10 @@ function getRetry() {
     manual: {
       permit_on_passed: true,
     },
-    automatic: false,
+    automatic: [
+      { exit_status: -1, limit: 3 },
+      { signal_reason: "agent_stop", limit: 3 },
+    ],
   };
 }
 

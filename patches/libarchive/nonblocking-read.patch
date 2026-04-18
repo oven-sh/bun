@@ -636,7 +636,7 @@
 +					a->read_header_in_progress = 0;
 +					TAR_HEADER_RETURN(ARCHIVE_RETRY);
  				}
-@@ -822,2 +992,56 @@
+@@ -822,2 +992,63 @@
  		header = (const struct archive_entry_header_ustar *)h;
 +
 +		/*
@@ -683,8 +683,15 @@
 +			}
 +			/* Re-establish `h`: the filter may have
 +			 * memmoved its buffer to satisfy the larger
-+			 * request. */
++			 * request. A fatal error from the larger
++			 * read (alloc failure, downstream I/O error)
++			 * leaves `filter->fatal` set, so this read
++			 * can return NULL even though the original
++			 * 512 bytes are still buffered; bail cleanly
++			 * rather than dereferencing `header` below. */
 +			h = __archive_read_ahead(a, 512, NULL);
++			if (h == NULL)
++				TAR_HEADER_RETURN(ARCHIVE_FATAL);
 +			header = (const struct archive_entry_header_ustar *)h;
 +			break;
 +		}
@@ -693,47 +700,47 @@
 +		}
 +
  		switch(header->typeflag[0]) {
-@@ -827,3 +1051,3 @@
+@@ -827,3 +1058,3 @@
  						  "Redundant 'A' header");
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -838,3 +1062,3 @@
+@@ -838,3 +1069,3 @@
  						  "Redundant 'g' header");
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -882,3 +1106,3 @@
+@@ -882,3 +1113,3 @@
  						  "Redundant 'X'/'x' header");
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -894,3 +1118,3 @@
+@@ -894,3 +1125,3 @@
  						  "Redundant 'x' header");
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -921,3 +1145,3 @@
+@@ -921,3 +1152,3 @@
  			if (err < ARCHIVE_WARN) {
 -				return (ARCHIVE_FATAL);
 +				TAR_HEADER_RETURN(ARCHIVE_FATAL);
  			}
-@@ -940,3 +1164,3 @@
+@@ -940,3 +1171,3 @@
  				if (err2 < ARCHIVE_WARN) {
 -					return (ARCHIVE_FATAL);
 +					TAR_HEADER_RETURN(ARCHIVE_FATAL);
  				}
-@@ -955,3 +1179,3 @@
+@@ -955,3 +1186,3 @@
  							  "Non-regular file cannot be sparse");
 -					return (ARCHIVE_WARN);
 +					TAR_HEADER_RETURN(ARCHIVE_WARN);
  				} else if (tar->sparse_gnu_major == 0 &&
-@@ -968,3 +1192,3 @@
+@@ -968,3 +1199,3 @@
  					if (bytes_read < 0)
 -						return ((int)bytes_read);
 +						TAR_HEADER_RETURN((int)bytes_read);
  					tar->entry_bytes_remaining -= bytes_read;
-@@ -974,6 +1198,6 @@
+@@ -974,6 +1205,6 @@
  							  "Unrecognized GNU sparse file format");
 -					return (ARCHIVE_WARN);
 +					TAR_HEADER_RETURN(ARCHIVE_WARN);
@@ -742,12 +749,12 @@
 -			return (err);
 +			TAR_HEADER_RETURN(err);
  		}
-@@ -983,3 +1207,3 @@
+@@ -983,3 +1214,3 @@
  		if (err == ARCHIVE_FATAL)
 -			return (err);
 +			TAR_HEADER_RETURN(err);
  
-@@ -993,2 +1217,22 @@
+@@ -993,2 +1224,22 @@
  	}
 +
 +bun_retry:

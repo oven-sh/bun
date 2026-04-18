@@ -390,8 +390,8 @@ test("buffered extract: damaged-block retry resets header state (upstream semant
   // 'g' header is extracted normally.
   expect(stderr).not.toContain("Fail extracting tarball");
   expect(stderr).not.toContain("failed to resolve");
+  expect(exitCode).toBe(0);
 
   const extracted = readFileSync(join(String(dir), "node_modules", "damaged-pkg", "index.js"));
   expect(extracted.equals(fileBody)).toBe(true);
-  expect(exitCode).toBe(0);
 });

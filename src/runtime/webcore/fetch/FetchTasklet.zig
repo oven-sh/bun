@@ -977,16 +977,22 @@ pub const FetchTasklet = struct {
         const metadata = this.metadata.?;
         const http_response = metadata.response;
         this.is_waiting_body = this.result.has_more;
+        // status_text and url must NOT be atomized: the Response can be
+        // destroyed from the HTTP thread via derefFromThread() -> deinit()
+        // when the VM is shutting down (see isShuttingDown() branch), and
+        // atom strings are per-thread — deref'ing them off-thread trips
+        // the `wasRemoved` RELEASE_ASSERT in AtomStringImpl::remove().
+        // Regular WTFStringImpl refcounts are atomic so cloneUTF8 is safe.
         return Response.init(
             .{
                 .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
                 .status_code = @as(u16, @truncate(http_response.status_code)),
-                .status_text = bun.String.createAtomIfPossible(http_response.status),
+                .status_text = bun.String.cloneUTF8(http_response.status),
             },
             Body{
                 .value = this.toBodyValue(),
             },
-            bun.String.createAtomIfPossible(metadata.url),
+            bun.String.cloneUTF8(metadata.url),
             this.result.redirected,
         );
     }

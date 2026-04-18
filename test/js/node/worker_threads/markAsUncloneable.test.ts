@@ -1,5 +1,7 @@
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test, expect, describe } from "bun:test";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { BroadcastChannel, markAsUncloneable, MessageChannel, Worker } from "node:worker_threads";
 
 // Helper: assert the given thunk throws a DataCloneError DOMException.
@@ -233,14 +235,18 @@ describe("node:worker_threads.markAsUncloneable", () => {
       `,
     });
 
+    // Build the file:// URL via pathToFileURL in the parent scope so paths
+    // with spaces or Windows drive letters (file:///C:/…) are handled
+    // correctly, then inject the finished URL string into the -e script.
+    const workerUrl = pathToFileURL(join(String(dir), "worker.mjs")).href;
+
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
         const { Worker } = require("node:worker_threads");
-        const url = new URL("./worker.mjs", "file://${String(dir).replaceAll("\\\\", "/")}/").href;
-        const w = new Worker(url);
+        const w = new Worker(${JSON.stringify(workerUrl)});
         w.on("message", m => {
           console.log(JSON.stringify(m));
           w.terminate();
@@ -261,6 +267,9 @@ describe("node:worker_threads.markAsUncloneable", () => {
     // that no error from the worker itself made it through.
     expect(stderr).not.toContain("worker error:");
     expect(stdout.trim()).toBe(JSON.stringify({ threw: true, name: "DataCloneError" }));
+    // Surface full stderr if the child exited non-zero for any other reason,
+    // so CI logs show the actual diff rather than just "expected 0 got N".
+    if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 });

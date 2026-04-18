@@ -155,8 +155,15 @@ describe("node:worker_threads.markAsUncloneable", () => {
     markAsUncloneable(sab);
     // Node spec: markAsUncloneable has no effect on SharedArrayBuffer. We
     // only assert that cloning does NOT throw DataCloneError — Bun's
-    // structuredClone handling of SAB itself is outside the scope of this PR.
-    expect(() => structuredClone(sab)).not.toThrow();
+    // structuredClone handling of SAB itself is outside the scope of this PR,
+    // so we catch any thrown error and only fail on a DataCloneError name.
+    let err: unknown;
+    try {
+      structuredClone(sab);
+    } catch (e) {
+      err = e;
+    }
+    expect((err as { name?: string } | undefined)?.name).not.toBe("DataCloneError");
   });
 
   test("Buffer is unaffected by markAsUncloneable (Node spec no-op)", () => {

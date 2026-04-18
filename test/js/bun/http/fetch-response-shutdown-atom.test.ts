@@ -49,15 +49,23 @@ describe("fetch Response status_text/url are safe to destroy off-thread", () => 
       resp.headers.get("x-proxy-used");
     `;
 
+    // Reproduce the original report's environment: proxy resolution runs,
+    // NO_PROXY matches so the request goes direct. Set BOTH casings for
+    // the proxy vars — env_loader.getHttpProxy / isNoProxy read lowercase
+    // first, so an inherited lowercase value from bunEnv would otherwise
+    // win over our uppercase one and send the subprocess at the dead proxy.
+    const noProxy = `example.com, localhost:1, localhost:${server.port}, 127.0.0.1`;
     const env = {
       ...bunEnv,
       // Force VM teardown + full GC at exit so the JS Response wrapper is
       // finalized before bun.Global.exit(). The ASAN CI lane sets this.
       BUN_DESTRUCT_VM_ON_EXIT: "1",
-      // Reproduce the original report's environment: proxy resolution runs,
-      // NO_PROXY matches so the request goes direct.
       http_proxy: `http://127.0.0.1:1`,
-      NO_PROXY: `example.com, localhost:1, localhost:${server.port}, 127.0.0.1`,
+      HTTP_PROXY: `http://127.0.0.1:1`,
+      https_proxy: "",
+      HTTPS_PROXY: "",
+      NO_PROXY: noProxy,
+      no_proxy: noProxy,
     };
 
     const iterations = 40;

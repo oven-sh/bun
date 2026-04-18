@@ -38,7 +38,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BUILD_DIR="$SCRIPT_DIR/build"
 PAYLOAD_ROOT="$BUILD_DIR/root"
-RESOURCES_DIR="$SCRIPT_DIR/resources"
+# Committed sources (HTML, any bespoke backgrounds) live here; we stage them
+# into a per-build directory so generated assets (background*.png,
+# license.txt) from a previous run can never leak into this package.
+SRC_RESOURCES_DIR="$SCRIPT_DIR/resources"
+RESOURCES_DIR="$BUILD_DIR/resources"
 SCRIPTS_DIR="$SCRIPT_DIR/scripts"
 
 PKG_IDENTIFIER="sh.bun.bun"
@@ -92,7 +96,15 @@ log "Building ${Bold}${PKG_NAME}${Color_Off} (identifier: ${PKG_IDENTIFIER})"
 # ---------------------------------------------------------------------------
 
 rm -rf "$BUILD_DIR"
-mkdir -p "$BUILD_DIR" "$PAYLOAD_ROOT/bin" "$BUILD_DIR/flat"
+mkdir -p "$BUILD_DIR" "$PAYLOAD_ROOT/bin" "$BUILD_DIR/flat" "$RESOURCES_DIR"
+
+# Stage committed resources into the per-build dir. Generated assets
+# (background*.png, license.txt) are gitignored, so on a clean checkout this
+# only copies the HTML pages; on a dev machine with bespoke backgrounds
+# committed it copies those too.
+for f in "$SRC_RESOURCES_DIR"/*; do
+  [[ -f "$f" ]] && cp "$f" "$RESOURCES_DIR/"
+done
 
 # ---------------------------------------------------------------------------
 # Fetch per-arch binaries

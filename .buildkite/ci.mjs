@@ -828,9 +828,9 @@ function getMacOSPkgStep(darwinPlatforms) {
     agents: {
       queue: "build-darwin",
       os: "darwin",
-      // Any arch can assemble the .pkg (lipo/pkgbuild are universal), but
-      // prefer aarch64 since that's where most of the fleet is.
-      arch: darwinPlatforms.some(p => p.arch === "aarch64") ? "aarch64" : "x64",
+      // No arch constraint: lipo/pkgbuild/productbuild are universal, so any
+      // build-darwin agent can run this. (Buildkite agent tags are hard
+      // requirements, not preferences — pinning arch would prevent fallback.)
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),

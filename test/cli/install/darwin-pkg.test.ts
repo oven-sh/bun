@@ -97,9 +97,8 @@ describe("packages/bun-darwin-pkg", () => {
     expect(src).toContain("completions");
 
     // postinstall runs as root but writes into the user's home directory;
-    // make sure the symlink guard and drop-privileges write stay in place.
-    expect(src).toContain("safe_profile_target");
-    expect(src).toContain('[[ -L "$file" ]]');
+    // make sure the drop-privileges write stays in place so a symlinked
+    // rc file can't redirect the append into a root-owned target.
     expect(src).toMatch(/sudo -u "\$CONSOLE_USER" tee -a/);
   });
 

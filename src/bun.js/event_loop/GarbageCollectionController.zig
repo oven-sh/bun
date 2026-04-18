@@ -14,6 +14,8 @@
 //! - Adaptive timing based on heap growth patterns
 //! - Configurable intervals via BUN_GC_TIMER_INTERVAL environment variable
 //! - Can be disabled via BUN_GC_TIMER_DISABLE for debugging/testing
+//! - Reports mimalloc committed memory to JSC so the GC doubling heuristic
+//!   accounts for native allocations (Issue #17723)
 //!
 //! Thread Safety: This type must be unique per JavaScript thread and is not
 //! thread-safe. Each VirtualMachine instance should have its own controller.
@@ -29,14 +31,6 @@ gc_repeating_timer: *uws.Timer = undefined,
 gc_timer_interval: i32 = 0,
 gc_repeating_timer_fast: bool = true,
 disabled: bool = false,
-
-/// Container memory awareness (Issue #17723)
-/// When running inside a Docker/Kubernetes container with a cgroup memory limit,
-/// these fields enable RSS-based GC pressure thresholds that prevent OOM kills.
-cgroup_memory_limit: ?usize = null,
-cgroup_pressure_threshold: usize = 0, // 75% of limit — trigger async GC
-cgroup_critical_threshold: usize = 0, // 85% of limit — trigger sync full GC
-    cgroup_last_critical_gc: i64 = 0, // timestamp of last critical GC (5s cooldown)
 
 pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
     const actual = uws.Loop.get();
@@ -71,16 +65,11 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
     this.disabled = vm.transpiler.env.has("BUN_GC_TIMER_DISABLE");
 
     // Container memory awareness (Issue #17723)
-    // Detect cgroup memory limit to enable RSS-based GC pressure thresholds.
-    if (bun.cgroup.getCachedMemoryLimit()) |limit| {
-        this.cgroup_memory_limit = limit;
-        this.cgroup_pressure_threshold = limit * 3 / 4; // 75%
-        this.cgroup_critical_threshold = limit * 85 / 100; // 85%
-
-        // In containers, force mimalloc to return freed pages to the OS immediately
-        // instead of caching them for 1000ms (default). This prevents RSS from
-        // staying elevated after GC, which would cause Kubernetes to OOM-kill.
-        // Uses std.once to set this process-wide exactly once, even with Workers.
+    // When running in a cgroup-constrained container, force mimalloc to return
+    // freed pages to the OS immediately instead of caching them for 1000ms.
+    // This prevents RSS from staying elevated after GC, which would cause
+    // Kubernetes/Docker to OOM-kill the process.
+    if (bun.cgroup.getCachedMemoryLimit() != null) {
         if (comptime bun.use_mimalloc) {
             mimalloc_purge_once.call();
         }
@@ -100,58 +89,69 @@ pub fn scheduleGCTimer(this: *GarbageCollectionController) void {
     this.gc_timer.set(this, onGCTimer, 16, 0);
 }
 
-pub fn bunVM(this: *GarbageCollectionController) *VirtualMachine {
-    return @alignCast(@fieldParentPtr("gc_controller", this));
+pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime which: enum { fast, slow }) void {
+    const interval = switch (which) {
+        .fast => this.gc_timer_interval,
+        .slow => this.gc_timer_interval * 4,
+    };
+
+    if (this.gc_repeating_timer_fast != (which == .fast)) {
+        this.gc_repeating_timer_fast = (which == .fast);
+        this.gc_repeating_timer.set(this, onGCRepeatingTimer, interval, interval);
+    }
 }
 
 pub fn onGCTimer(timer: *uws.Timer) callconv(.c) void {
-    var this = timer.as(*GarbageCollectionController);
-    if (this.disabled) return;
-    this.gc_timer_state = .run_on_next_tick;
+    timer.as(*GarbageCollectionController).processGCTimer();
 }
 
-// We want to always run GC once in awhile
-// But if you have a long-running instance of Bun, you don't want the
-// program constantly using CPU doing GC for no reason
-//
-// So we have two settings for this GC timer:
-//
-//    - Fast: GC runs every 1 second
-//    - Slow: GC runs every 30 seconds
-//
-// When the heap size is increasing, we always switch to fast mode
-// When the heap size has been the same or less for 30 seconds, we switch to slow mode
-pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting: @Type(.enum_literal)) void {
-    // Never switch to slow mode inside containers — we need frequent RSS checks
-    // to prevent OOM kills (Issue #17723).
-    if (this.cgroup_memory_limit != null and setting == .slow) return;
+/// Get the effective heap size by combining JSC's blockBytesAllocated with
+/// mimalloc's committed memory. This is the core fix for Issue #17723:
+/// without this, JSC only sees its own managed heap, so the GC doubling
+/// heuristic never triggers even when native/mimalloc memory is consuming
+/// most of the container's memory budget.
+fn getEffectiveHeapSize(vm: *jsc.VM) usize {
+    var heap_size = vm.blockBytesAllocated();
 
-    if (setting == .fast and !this.gc_repeating_timer_fast) {
-        this.gc_repeating_timer_fast = true;
-        this.gc_repeating_timer.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
-        this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
-    } else if (setting == .slow and this.gc_repeating_timer_fast) {
-        this.gc_repeating_timer_fast = false;
-        this.gc_repeating_timer.set(this, onGCRepeatingTimer, 30_000, 30_000);
-        this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+    if (comptime bun.use_mimalloc) {
+        // mi_process_info gives us committed bytes which reflects the actual
+        // virtual memory mimalloc has committed (backed by physical pages).
+        // This is the most accurate measure of mimalloc's memory footprint.
+        var elapsed_msecs: usize = 0;
+        var user_msecs: usize = 0;
+        var system_msecs: usize = 0;
+        var current_rss: usize = 0;
+        var peak_rss: usize = 0;
+        var current_commit: usize = 0;
+        var peak_commit: usize = 0;
+        var page_faults: usize = 0;
+
+        bun.mimalloc.mi_process_info(
+            &elapsed_msecs,
+            &user_msecs,
+            &system_msecs,
+            &current_rss,
+            &peak_rss,
+            &current_commit,
+            &peak_commit,
+            &page_faults,
+        );
+
+        // Use the larger of JSC's reported heap and mimalloc's committed memory.
+        // This ensures the GC doubling heuristic sees the true memory pressure.
+        if (current_commit > heap_size) {
+            heap_size = current_commit;
+        }
     }
+
+    return heap_size;
 }
 
 pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.c) void {
     var this = timer.as(*GarbageCollectionController);
 
-    // Container-aware RSS pressure check (Issue #17723)
-    // If pressure was detected and GC was already triggered, skip the normal
-    // performGC() to avoid running GC twice on the same tick.
-    const pressure_gc_ran = if (this.cgroup_memory_limit != null)
-        this.checkContainerMemoryPressure()
-    else
-        false;
-
     const prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
-    if (!pressure_gc_ran) {
-        this.performGC();
-    }
+    this.performGC();
     this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
     if (prev_heap_size == this.gc_last_heap_size_on_repeating_timer) {
         this.heap_size_didnt_change_for_repeating_timer_ticks_count +|= 1;
@@ -168,7 +168,7 @@ pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.c) void {
 pub fn processGCTimer(this: *GarbageCollectionController) void {
     if (this.disabled) return;
     var vm = this.bunVM().jsc_vm;
-    this.processGCTimerWithHeapSize(vm, vm.blockBytesAllocated());
+    this.processGCTimerWithHeapSize(vm, getEffectiveHeapSize(vm));
 }
 
 fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *jsc.VM, this_heap_size: usize) void {
@@ -210,53 +210,7 @@ pub fn performGC(this: *GarbageCollectionController) void {
     if (this.disabled) return;
     var vm = this.bunVM().jsc_vm;
     vm.collectAsync();
-    this.gc_last_heap_size = vm.blockBytesAllocated();
-}
-
-/// Check RSS against container memory thresholds and trigger aggressive GC
-/// when approaching the cgroup limit. This is the core fix for Issue #17723.
-///
-/// At 75% of the limit: trigger async GC + partial mimalloc purge
-/// At 85% of the limit: trigger synchronous full GC + forced mimalloc purge
-///
-/// Note: Each Worker has its own VirtualMachine with its own GarbageCollectionController.
-/// RSS is process-wide, so multiple Workers may detect pressure simultaneously.
-/// The 5-second cooldown on the critical path prevents compounding pause time.
-/// Returns true if GC was triggered (so the caller can skip its own performGC).
-fn checkContainerMemoryPressure(this: *GarbageCollectionController) bool {
-    const rss = bun.cgroup.getCurrentRSS();
-    if (rss == 0) return false;
-
-    if (rss > this.cgroup_critical_threshold) {
-        // CRITICAL: RSS is above 85% of the container limit.
-        // Run a synchronous full GC immediately and force mimalloc to
-        // return all freed pages to the OS.
-        // Cooldown: skip if we already ran a critical GC within the last 5 seconds
-        // to avoid compounding event-loop pause time.
-        const now = std.time.milliTimestamp();
-        if (now - this.cgroup_last_critical_gc < 5000) return false;
-        this.cgroup_last_critical_gc = now;
-
-        var vm = this.bunVM().jsc_vm;
-        _ = vm.runGC(true);
-        vm.shrinkFootprint();
-        if (comptime bun.use_mimalloc) {
-            bun.mimalloc.mi_collect(true);
-        }
-        this.gc_last_heap_size = vm.blockBytesAllocated();
-        return true;
-    } else if (rss > this.cgroup_pressure_threshold) {
-        // PRESSURE: RSS is above 75% of the container limit.
-        // Run an async GC and do a partial mimalloc purge.
-        var vm = this.bunVM().jsc_vm;
-        vm.collectAsync();
-        if (comptime bun.use_mimalloc) {
-            bun.mimalloc.mi_collect(false);
-        }
-        this.gc_last_heap_size = vm.blockBytesAllocated();
-        return true;
-    }
-    return false;
+    this.gc_last_heap_size = getEffectiveHeapSize(vm);
 }
 
 var mimalloc_purge_once = std.once(struct {

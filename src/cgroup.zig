@@ -51,37 +51,7 @@ pub fn getMemoryLimit() ?usize {
     return null;
 }
 
-/// Read current process RSS (Resident Set Size) in bytes via /proc/self/statm.
-/// This is faster than parsing /proc/self/stat because statm has a fixed format.
-/// Returns 0 if the read fails.
-pub fn getCurrentRSS() usize {
-    if (comptime !bun.Environment.isLinux) return 0;
 
-    const file = switch (bun.sys.open("/proc/self/statm", bun.O.RDONLY, 0)) {
-        .result => |fd| fd,
-        .err => return 0,
-    };
-    defer _ = bun.sys.close(file);
-
-    var buf: [128]u8 = undefined;
-    const bytes_read = switch (bun.sys.read(file, &buf)) {
-        .result => |n| n,
-        .err => return 0,
-    };
-
-    if (bytes_read == 0) return 0;
-    const content = buf[0..bytes_read];
-
-    // /proc/self/statm format: "total_pages resident_pages ..."
-    // We need the second field (resident pages)
-    const first_space = bun.strings.indexOfChar(content, ' ') orelse return 0;
-    const rest = content[first_space + 1 ..];
-    const second_space = bun.strings.indexOfChar(rest, ' ') orelse rest.len;
-    const resident_str = rest[0..second_space];
-
-    const pages = std.fmt.parseInt(usize, resident_str, 10) catch return 0;
-    return pages * std.heap.pageSize();
-}
 
 /// Read and parse a cgroup memory limit file.
 /// Returns `null` if the file doesn't exist, can't be read, or contains "max".

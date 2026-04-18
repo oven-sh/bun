@@ -242,6 +242,11 @@ pub fn onStart(this: *FileReader) streams.Start {
             this.waiting_for_onReaderDone = true;
             _ = this.parent().incrementCount();
         }
+    } else if (comptime Environment.isWindows) {
+        if (this.reader.source != null and !this.reader.isDone()) {
+            this.waiting_for_onReaderDone = true;
+            _ = this.parent().incrementCount();
+        }
     }
 
     if (comptime Environment.isPosix) {

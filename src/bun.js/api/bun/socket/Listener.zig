@@ -845,7 +845,12 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
             socket.flags.allow_half_open = socket_config.allowHalfOpen;
             var connect_errno: c_int = 0;
             socket.doConnect(connection, &connect_errno) catch {
-                socket.handleConnectError(if (connect_errno > 0)
+                // On Windows the AF_UNIX connect path returns WSA codes that
+                // don't line up with Node's libuv-based errnos (and named
+                // pipes take a separate path above), so keep the old
+                // ENOENT/ECONNREFUSED fallback there. On POSIX connect_errno
+                // is the real kernel errno from connect(2).
+                socket.handleConnectError(if (!Environment.isWindows and connect_errno > 0)
                     connect_errno
                 else
                     @intFromEnum(if (port == null) bun.sys.SystemErrno.ENOENT else bun.sys.SystemErrno.ECONNREFUSED)) catch {};

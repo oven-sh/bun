@@ -300,11 +300,22 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
 
             bun.assert(errno >= 0);
-            // Preserve the real errno/code (Node.js passes through e.g. EAGAIN
-            // for a full unix-socket backlog). Previously this flattened
-            // everything to ENOENT-or-ECONNREFUSED, which made EAGAIN surface
-            // as ENOENT. Fall back to ECONNREFUSED only for unrecognized values.
-            const sys_errno = bun.sys.SystemErrno.init(errno) orelse bun.sys.SystemErrno.ECONNREFUSED;
+            // On POSIX the value is a real kernel errno — either from the
+            // synchronous unix-socket connect (Listener.connectInner →
+            // connect_errno) or from getsockopt(SO_ERROR) for async TCP
+            // (us_internal_socket_after_open). Preserve it so e.g. EAGAIN for
+            // a full unix-socket backlog reaches the caller, matching Node.js.
+            //
+            // On Windows the value that reaches here is typically WSAENOTCONN
+            // from the recv() probe in us_internal_socket_after_open (which is
+            // not the actual connect errno) or a synthetic sentinel; named-pipe
+            // connects take a separate path. Keep the pre-existing
+            // ENOENT-or-ECONNREFUSED mapping there until SO_ERROR is plumbed
+            // through the libuv polling path.
+            const sys_errno: bun.sys.SystemErrno = if (Environment.isWindows)
+                (if (errno == @intFromEnum(bun.sys.SystemErrno.ENOENT)) .ENOENT else .ECONNREFUSED)
+            else
+                bun.sys.SystemErrno.init(errno) orelse .ECONNREFUSED;
             var errno_: c_int = @intFromEnum(sys_errno);
             const code_ = bun.String.static(@tagName(sys_errno));
             if (Environment.isWindows and errno_ == @intFromEnum(bun.sys.SystemErrno.ENOENT)) errno_ = @intFromEnum(bun.sys.SystemErrno.UV_ENOENT);

@@ -54,8 +54,10 @@ test.skipIf(!isLinux)("unix connect to full backlog reports EAGAIN, not ENOENT",
   // the sentinel, fail fast with its diagnostic output instead of a
   // misleading connect error below.
   let ready = false;
+  let stdout = "";
   for await (const chunk of child.stdout) {
-    if (new TextDecoder().decode(chunk).includes("ready")) {
+    stdout += new TextDecoder().decode(chunk);
+    if (stdout.includes("ready")) {
       ready = true;
       break;
     }

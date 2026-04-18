@@ -175,12 +175,6 @@ private:
     std::unique_ptr<PerformanceUserTiming> m_userTiming;
 
     ListHashSet<RefPtr<PerformanceObserver>> m_observers;
-
-    EventTargetData* eventTargetData() final { return &m_eventTargetData; }
-    EventTargetData* eventTargetDataConcurrently() final { return &m_eventTargetData; }
-    EventTargetData& ensureEventTargetData() final { return m_eventTargetData; }
-
-    EventTargetData m_eventTargetData;
 };
 
 }

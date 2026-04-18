@@ -16,7 +16,7 @@ pub const Int = u16;
 pub const oom = fromCode(E.NOMEM, .read);
 
 errno: Int = todo_errno,
-fd: bun.FileDescriptor = bun.invalid_fd,
+fd: bun.FD = bun.invalid_fd,
 from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
 path: []const u8 = "",
 syscall: sys.Tag = sys.Tag.TODO,
@@ -324,6 +324,14 @@ pub inline fn todo() Error {
 
 pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     return this.toSystemError().toErrorInstance(ptr);
+}
+
+/// Like `toJS` but populates the error's stack trace with async frames from the
+/// given promise's await chain. Use when rejecting a promise from native code
+/// at the top of the event loop (threadpool callback) — otherwise the error
+/// will have an empty stack trace.
+pub fn toJSWithAsyncStack(this: Error, ptr: *jsc.JSGlobalObject, promise: *jsc.JSPromise) bun.JSError!jsc.JSValue {
+    return this.toSystemError().toErrorInstanceWithAsyncStack(ptr, promise);
 }
 
 const std = @import("std");

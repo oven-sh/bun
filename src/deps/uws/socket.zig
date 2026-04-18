@@ -275,7 +275,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             } orelse return null);
         }
 
-        pub inline fn fd(this: ThisSocket) bun.FileDescriptor {
+        pub inline fn fd(this: ThisSocket) bun.FD {
             const socket = this.socket.get() orelse return bun.invalid_fd;
             if (comptime is_ssl) {
                 if (socket.getNativeHandle(is_ssl)) |handle| {
@@ -355,7 +355,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             };
         }
 
-        pub fn writeFd(this: ThisSocket, data: []const u8, file_descriptor: bun.FileDescriptor) i32 {
+        pub fn writeFd(this: ThisSocket, data: []const u8, file_descriptor: bun.FD) i32 {
             return switch (this.socket) {
                 .upgradedDuplex, .pipe => this.write(data),
                 .connected => |socket| socket.writeFd(data, file_descriptor),
@@ -558,7 +558,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
         pub fn fromFd(
             ctx: *SocketContext,
-            handle: bun.FileDescriptor,
+            handle: bun.FD,
             comptime This: type,
             this: *This,
             comptime socket_field_name: ?[]const u8,
@@ -1140,7 +1140,7 @@ pub const InternalSocket = union(enum) {
                 .connected, .connecting, .detached, .pipe => false,
             },
             .pipe => switch (other) {
-                .pipe => if (Environment.isWindows) other.pipe == other.pipe else false,
+                .pipe => if (Environment.isWindows) this.pipe == other.pipe else false,
                 .connected, .connecting, .detached, .upgradedDuplex => false,
             },
         };

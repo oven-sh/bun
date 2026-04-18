@@ -93,8 +93,6 @@ private:
     MessageEvent(const AtomString& type, Init&&, IsTrusted);
     MessageEvent(const AtomString& type, DataType&&, const String& origin, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 
-    EventInterface eventInterface() const final;
-
     DataType m_data;
     String m_origin;
     String m_lastEventId;

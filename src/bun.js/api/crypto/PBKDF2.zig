@@ -71,7 +71,7 @@ pub const Job = struct {
         const globalThis = this.vm.global;
         const promise = this.promise.swap();
         if (this.err) |err| {
-            try promise.reject(globalThis, createCryptoError(globalThis, err));
+            try promise.rejectWithAsyncStack(globalThis, createCryptoError(globalThis, err));
             return;
         }
 
@@ -163,7 +163,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, is_asy
 
         invalid: {
             switch (try EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arg4) orelse break :invalid) {
-                .shake128, .shake256, .@"sha3-224", .@"sha3-256", .@"sha3-384", .@"sha3-512" => break :invalid,
+                .shake128, .shake256 => break :invalid,
                 else => |alg| break :brk alg,
             }
         }

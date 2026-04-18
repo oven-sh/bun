@@ -121,6 +121,24 @@ if (!existsSync(path.dirname(tempDirectoryTemplate)))
 const tempDirectory = mkdtempSync(tempDirectoryTemplate);
 const testsRan = new Set();
 
+const originalCwd = process.cwd();
+
+function resolveBackend(opts: BundlerTestInput): "cli" | "api" {
+  if (opts.backend) return opts.backend;
+  const run = opts.run === true ? {} : opts.run;
+  const hasValidate = !Array.isArray(run) && run?.validate;
+  return opts.dotenv ||
+    typeof opts.production !== "undefined" ||
+    opts.bundling === false ||
+    opts.emitDCEAnnotations ||
+    opts.bundleWarnings ||
+    opts.env ||
+    hasValidate ||
+    opts.define
+    ? "cli"
+    : "api";
+}
+
 if (ESBUILD) {
   console.warn("NOTE: using esbuild for bun build tests");
 }
@@ -589,19 +607,7 @@ function expectBundled(
   }
 
   return (async () => {
-    if (!backend) {
-      backend =
-        dotenv ||
-        typeof production !== "undefined" ||
-        bundling === false ||
-        emitDCEAnnotations ||
-        bundleWarnings ||
-        env ||
-        run?.validate ||
-        define
-          ? "cli"
-          : "api";
-    }
+    backend ??= resolveBackend(opts);
 
     let root = path.join(
       tempDirectory,
@@ -664,12 +670,14 @@ function expectBundled(
     }
     mkdirSync(root, { recursive: true });
     if (install) {
-      const installProcess = Bun.spawnSync({
+      const installProcess = Bun.spawn({
         cmd: [bunExe(), "install", ...install, "--linker=hoisted"],
         cwd: root,
+        stdio: ["ignore", "inherit", "inherit"],
       });
-      if (!installProcess.success) {
-        const reason = installProcess.signalCode || `code ${installProcess.exitCode}`;
+      const installExitCode = await installProcess.exited;
+      if (installExitCode !== 0) {
+        const reason = installProcess.signalCode || `code ${installExitCode}`;
         throw new Error(`Failed to install dependencies: ${reason}`);
       }
     }
@@ -907,12 +915,29 @@ function expectBundled(
         }
       }
 
-      const { stdout, stderr, success, exitCode } = Bun.spawnSync({
+      await using buildProc = Bun.spawn({
         cmd,
         cwd: root,
         stdio: ["ignore", "pipe", "pipe"],
         env: bundlerEnv,
+        timeout: 60_000,
       });
+      const [stdoutBytes, stderrBytes, exitCode] = await Promise.all([
+        buildProc.stdout.bytes(),
+        buildProc.stderr.bytes(),
+        buildProc.exited,
+      ]);
+      const stdout = Buffer.from(stdoutBytes);
+      const stderr = Buffer.from(stderrBytes);
+      const success = exitCode === 0;
+      if (buildProc.signalCode) {
+        throw new Error(
+          `[${id}] 'bun build' subprocess killed by ${buildProc.signalCode}\n` +
+            `cmd: ${cmd.join(" ")}\n` +
+            `STDOUT: ${stdout.toUnixString().slice(0, 2000)}\n` +
+            `STDERR: ${stderr.toUnixString().slice(0, 2000)}`,
+        );
+      }
 
       // Check for errors
       if (!success) {
@@ -1181,12 +1206,11 @@ for (const [key, blob] of build.outputs) {
         configRef = buildConfig;
         let build: BuildOutput;
         try {
-          const cwd = process.cwd();
           process.chdir(root);
           try {
             build = await Bun.build(buildConfig);
           } finally {
-            process.chdir(cwd);
+            process.chdir(originalCwd);
           }
         } catch (e) {
           if (e instanceof AggregateError) {
@@ -1647,7 +1671,7 @@ for (const [key, blob] of build.outputs) {
           ...(run.args ?? []),
         ] as [string, ...string[]];
 
-        const { success, stdout, stderr, exitCode, signalCode } = Bun.spawnSync({
+        await using runProc = Bun.spawn({
           cmd: args,
           env: {
             ...bunEnv,
@@ -1655,12 +1679,28 @@ for (const [key, blob] of build.outputs) {
             FORCE_COLOR: "0",
             IS_TEST_RUNNER: "1",
           },
+          timeout: 60_000,
           stdio: ["ignore", "pipe", "pipe"],
-          cwd: run.setCwd ? root : undefined,
+          cwd: run.setCwd ? root : originalCwd,
         });
+        const [runStdout, runStderr, exitCode] = await Promise.all([
+          runProc.stdout.bytes(),
+          runProc.stderr.bytes(),
+          runProc.exited,
+        ]);
+        const stdout = Buffer.from(runStdout);
+        const stderr = Buffer.from(runStderr);
+        const signalCode = runProc.signalCode ?? undefined;
+        const success = exitCode === 0;
 
-        if (signalCode === "SIGTRAP") {
-          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+        if (signalCode) {
+          throw new Error(
+            prefix +
+              `Runtime failed with ${signalCode}\n` +
+              `cmd: ${args.join(" ")}\n` +
+              `STDOUT: ${stdout!.toUnixString().slice(0, 2000)}\n` +
+              `STDERR: ${stderr!.toUnixString().slice(0, 2000)}`,
+          );
         }
 
         if (run.error) {
@@ -1805,20 +1845,19 @@ export function itBundled(
   if (opts.todo && !FILTER) {
     it.todo(id, () => expectBundled(id, opts as any));
   } else {
-    it(
+    // backend=api uses process.chdir and a module-global configRef, so it
+    // cannot run concurrently with other tests. it.serial is a no-op outside
+    // of describe.concurrent / --concurrent.
+    const testFn = resolveBackend(opts) === "api" ? it.serial : it;
+    const baseTimeout = opts.snapshotSourceMap || opts.compile ? 30_000 : 5_000;
+    testFn(
       id,
       () => expectBundled(id, opts as any),
-      // sourcemap code is slow
-      isCI ? undefined : isDebug ? Infinity : (opts.snapshotSourceMap ? 30_000 : 5_000) * (opts.timeoutScale ?? 1),
+      isCI ? undefined : isDebug ? Infinity : baseTimeout * (opts.timeoutScale ?? 1),
     );
   }
   return ref;
 }
-itBundled.concurrent = (id: string, opts: BundlerTestInput) => {
-  const { it } = testForFile(currentFile ?? callerSourceOrigin());
-  it.concurrent(id, () => expectBundled(id, opts as any));
-  return testRef(id, opts);
-};
 
 itBundled.only = (id: string, opts: BundlerTestInput) => {
   const { it } = testForFile(currentFile ?? callerSourceOrigin());

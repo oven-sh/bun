@@ -188,6 +188,82 @@ pub const Integrity = extern struct {
         return .{ .tag = .sha512, .value = value };
     }
 
+    /// Incremental hasher used by the streaming tarball extractor. Bytes are
+    /// fed as they arrive from the network so integrity can be verified
+    /// without ever holding the full tarball in memory.
+    ///
+    /// When `expected.tag` is a supported algorithm we hash with that
+    /// algorithm so `verify()` can compare against the lockfile value. When
+    /// there is no expected value yet (first install of a GitHub/remote
+    /// tarball) we default to SHA-512 to match `forBytes`.
+    pub const Streaming = struct {
+        expected: Integrity,
+        hasher: Hasher,
+
+        const Hasher = union(enum) {
+            none,
+            sha1: Crypto.SHA1,
+            sha256: Crypto.SHA256,
+            sha384: Crypto.SHA384,
+            sha512: Crypto.SHA512,
+        };
+
+        pub fn init(expected: Integrity, compute_if_missing: bool) Streaming {
+            return .{
+                .expected = expected,
+                .hasher = switch (expected.tag) {
+                    .sha1 => .{ .sha1 = Crypto.SHA1.init() },
+                    .sha256 => .{ .sha256 = Crypto.SHA256.init() },
+                    .sha384 => .{ .sha384 = Crypto.SHA384.init() },
+                    .sha512 => .{ .sha512 = Crypto.SHA512.init() },
+                    else => if (compute_if_missing) .{ .sha512 = Crypto.SHA512.init() } else .none,
+                },
+            };
+        }
+
+        pub fn update(this: *Streaming, bytes: []const u8) void {
+            if (bytes.len == 0) return;
+            switch (this.hasher) {
+                .none => {},
+                inline else => |*h| h.update(bytes),
+            }
+        }
+
+        pub fn final(this: *Streaming) Integrity {
+            var out: [digest_buf_len]u8 = empty_digest_buf;
+            return switch (this.hasher) {
+                .none => .{},
+                .sha1 => |*h| blk: {
+                    h.final(out[0..std.crypto.hash.Sha1.digest_length]);
+                    break :blk .{ .tag = .sha1, .value = out };
+                },
+                .sha256 => |*h| blk: {
+                    h.final(out[0..std.crypto.hash.sha2.Sha256.digest_length]);
+                    break :blk .{ .tag = .sha256, .value = out };
+                },
+                .sha384 => |*h| blk: {
+                    h.final(out[0..std.crypto.hash.sha2.Sha384.digest_length]);
+                    break :blk .{ .tag = .sha384, .value = out };
+                },
+                .sha512 => |*h| blk: {
+                    h.final(out[0..std.crypto.hash.sha2.Sha512.digest_length]);
+                    break :blk .{ .tag = .sha512, .value = out };
+                },
+            };
+        }
+
+        /// Returns true if the computed digest matches `expected`, or if no
+        /// expected value was supplied. Callers that need to persist the
+        /// computed value should call `final()` instead.
+        pub fn verify(this: *Streaming) bool {
+            if (!this.expected.tag.isSupported()) return true;
+            const computed = this.final();
+            if (computed.tag != this.expected.tag) return false;
+            const len = this.expected.tag.digestLen();
+            return strings.eqlLong(computed.value[0..len], this.expected.value[0..len], true);
+        }
+    };
+
     pub fn verify(this: *const Integrity, bytes: []const u8) bool {
         return @call(bun.callmod_inline, verifyByTag, .{ this.tag, bytes, &this.value });
     }

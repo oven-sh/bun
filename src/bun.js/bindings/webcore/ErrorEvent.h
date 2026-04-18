@@ -77,16 +77,12 @@ public:
     const JSValueInWrappedObject& originalError() const { return m_error; }
     // SerializedScriptValue* serializedError() const { return m_serializedError.get(); }
 
-    EventInterface eventInterface() const override;
-
     // RefPtr<SerializedScriptValue> trySerializeError(JSC::JSGlobalObject&);
 
 private:
     ErrorEvent(const AtomString& type, const String& message, const String& fileName, unsigned lineNumber, unsigned columnNumber, JSC::Strong<JSC::Unknown> error);
     ErrorEvent(const String& message, const String& fileName, unsigned lineNumber, unsigned columnNumber, JSC::Strong<JSC::Unknown> error);
     ErrorEvent(const AtomString&, const Init&, IsTrusted);
-
-    bool isErrorEvent() const override;
 
     String m_message;
     String m_fileName;

@@ -5,6 +5,9 @@ exclusion_names: []const []const u8 = &.{},
 /// When this list is empty, no filters are applied.
 /// "test" suffixes (e.g. .spec.*) are always applied when traversing directories.
 filter_names: []const []const u8 = &.{},
+/// Glob patterns for paths to ignore. Matched against the path relative to the
+/// project root (top_level_dir). When a file matches any pattern, it is excluded.
+path_ignore_patterns: []const []const u8 = &.{},
 dirs_to_scan: Fifo,
 /// Paths to test files found while scanning.
 test_files: std.ArrayListUnmanaged(bun.PathString),
@@ -18,7 +21,7 @@ search_count: usize = 0,
 const log = bun.Output.scoped(.jest, .hidden);
 const Fifo = bun.LinearFifo(ScanEntry, .Dynamic);
 const ScanEntry = struct {
-    relative_dir: bun.StoredFileDescriptorType,
+    relative_dir: bun.FD,
     dir_path: []const u8,
     name: StringOrTinyString,
 };
@@ -156,11 +159,43 @@ pub fn doesPathMatchFilter(this: *Scanner, name: []const u8) bool {
     return false;
 }
 
-pub fn isTestFile(this: *Scanner, name: []const u8) bool {
-    return this.couldBeTestFile(name, false) and this.doesPathMatchFilter(name);
+/// Returns true if the given path matches any of the path ignore patterns.
+/// The path is matched as a relative path from the project root.
+pub fn matchesPathIgnorePattern(this: *Scanner, abs_path: []const u8) bool {
+    if (this.path_ignore_patterns.len == 0) return false;
+    const rel_path = bun.path.relative(this.fs.top_level_dir, abs_path);
+
+    // Build rel_path + '/' once. rel_path is a relative path from the project
+    // root; 4096 bytes covers any sane test directory depth (POSIX PATH_MAX).
+    var buf: [4096]u8 = undefined;
+    const rel_with_slash: ?[]const u8 = if (rel_path.len > 0 and
+        rel_path.len + 1 <= buf.len and
+        rel_path[rel_path.len - 1] != '/')
+    blk: {
+        @memcpy(buf[0..rel_path.len], rel_path);
+        buf[rel_path.len] = '/';
+        break :blk buf[0 .. rel_path.len + 1];
+    } else null;
+
+    for (this.path_ignore_patterns) |pattern| {
+        if (bun.glob.match(pattern, rel_path).matches()) return true;
+        // Only try trailing separator for ** patterns (e.g. "vendor/**").
+        // Single-star patterns like "vendor/*" must not prune entire
+        // directories because * doesn't cross directory boundaries.
+        if (rel_with_slash) |p| {
+            if (strings.indexOf(pattern, "**") != null) {
+                if (bun.glob.match(pattern, p).matches()) return true;
+            }
+        }
+    }
+    return false;
 }
 
-pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescriptorType) void {
+pub fn isTestFile(this: *Scanner, name: []const u8) bool {
+    return this.couldBeTestFile(name, false) and this.doesPathMatchFilter(name) and !this.matchesPathIgnorePattern(name);
+}
+
+pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.FD) void {
     const name = entry.base_lowercase();
     this.has_iterated = true;
     switch (entry.kind(&this.fs.fs, true)) {
@@ -174,6 +209,13 @@ pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescript
 
             for (this.exclusion_names) |exclude_name| {
                 if (strings.eql(exclude_name, name)) return;
+            }
+
+            // Prune ignored directory trees early so we never traverse them.
+            if (this.path_ignore_patterns.len > 0) {
+                const parts = &[_][]const u8{ entry.dir, entry.base() };
+                const dir_path = this.fs.absBuf(parts, &this.open_dir_buf);
+                if (this.matchesPathIgnorePattern(dir_path)) return;
             }
 
             this.search_count += 1;
@@ -198,6 +240,8 @@ pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescript
                 const rel_path = bun.path.relative(this.fs.top_level_dir, path);
                 if (!this.doesPathMatchFilter(rel_path)) return;
             }
+
+            if (this.matchesPathIgnorePattern(path)) return;
 
             entry.abs_path = bun.PathString.init(this.fs.filename_store.append(@TypeOf(path), path) catch unreachable);
             this.test_files.append(this.allocator(), entry.abs_path) catch unreachable;

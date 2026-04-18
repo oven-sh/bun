@@ -13,6 +13,7 @@ postgresql_context: bun.api.Postgres.PostgresSQLContext = .{},
 entropy_cache: ?*EntropyCache = null,
 
 hot_map: ?HotMap = null,
+cron_jobs: std.ArrayListUnmanaged(*bun.api.cron.CronJob) = .{},
 
 // TODO: make this per JSGlobalObject instead of global
 // This does not handle ShadowRealm correctly!
@@ -24,12 +25,19 @@ global_dns_data: ?*bun.api.dns.GlobalData = null,
 
 spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 
+/// `bun test --parallel` IPC channel (worker ↔ coordinator). Survives the
+/// per-file isolation swap so the worker keeps its link to the coordinator.
+test_parallel_ipc_context: ?*uws.SocketContext = null,
+
 mime_types: ?bun.http.MimeType.Map = null,
 
 node_fs_stat_watcher_scheduler: ?bun.ptr.RefPtr(StatWatcherScheduler) = null,
 
-listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
+listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FD) = .{},
 listening_sockets_for_watch_mode_lock: bun.Mutex = .{},
+
+fs_watchers_for_isolation: std.ArrayListUnmanaged(*FSWatcher) = .{},
+stat_watchers_for_isolation: std.ArrayListUnmanaged(*StatWatcher) = .{},
 
 temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 
@@ -41,6 +49,9 @@ default_csrf_secret: []const u8 = "",
 valkey_context: ValkeyContext = .{},
 
 tls_default_ciphers: ?[:0]const u8 = null,
+
+// proxy_env_storage moved to VirtualMachine — see comment there on why
+// lazy RareData creation raced with worker spawn.
 
 #spawn_sync_event_loop: bun.ptr.Owned(?*SpawnSyncEventLoop) = .initNull(),
 
@@ -98,6 +109,120 @@ pub const PathBuf = struct {
 
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
+
+pub const ProxyEnvStorage = struct {
+    HTTP_PROXY: ?*RefCountedEnvValue = null,
+    http_proxy: ?*RefCountedEnvValue = null,
+    HTTPS_PROXY: ?*RefCountedEnvValue = null,
+    https_proxy: ?*RefCountedEnvValue = null,
+    NO_PROXY: ?*RefCountedEnvValue = null,
+    no_proxy: ?*RefCountedEnvValue = null,
+
+    /// Held by Bun__setEnvValue around the slot swap + env.map.put, and by
+    /// the worker around cloneFrom + env.map.cloneWithAllocator. This closes
+    /// two races: (1) worker's cloneFrom reading a slot pointer concurrently
+    /// with the parent's deref → free on the same pointer; (2) the env.map's
+    /// backing ArrayHashMap being iterated during clone while the parent's
+    /// put() rehashes it.
+    lock: bun.Mutex = .{},
+
+    pub const Slot = struct {
+        /// Static-lifetime field name (e.g. "NO_PROXY") — safe to use as
+        /// the env map key without duping.
+        key: []const u8,
+        ptr: *?*RefCountedEnvValue,
+    };
+
+    pub fn slot(self: *ProxyEnvStorage, name: []const u8) ?Slot {
+        // On Windows the env.map is case-insensitive (CaseInsensitiveASCII-
+        // StringArrayHashMap) — map.put("HTTP_PROXY", ...) and
+        // map.put("http_proxy", ...) write the same entry. If we tracked
+        // refs in separate case-variant slots, one slot's value would leak
+        // and syncInto would replay the stale one into the worker's map.
+        // Canonicalize both cases to the uppercase slot on Windows; the
+        // lowercase slots stay null. Posix keeps both — its map and its
+        // getHttpProxy lookup are case-sensitive.
+        const eql = if (comptime bun.Environment.isWindows)
+            bun.strings.eqlCaseInsensitiveASCIIICheckLength
+        else
+            bun.strings.eql;
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                // Uppercase fields are declared first. On Windows the
+                // case-insensitive eql matches the uppercase field for
+                // either input case and returns before reaching lowercase.
+                if (eql(name, f.name)) {
+                    return .{ .key = f.name, .ptr = &@field(self, f.name) };
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Bump refcounts on all non-null values so a worker can share the
+    /// parent's strings. Caller must hold parent.lock — the pointer load
+    /// and ref() are not atomic with respect to Bun__setEnvValue's deref().
+    pub fn cloneFrom(self: *ProxyEnvStorage, parent: *const ProxyEnvStorage) void {
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                if (@field(parent, f.name)) |val| {
+                    val.ref();
+                    @field(self, f.name) = val;
+                }
+            }
+        }
+    }
+
+    /// Overwrite proxy-var entries in an env map with this storage's reffed
+    /// bytes. Used after map.cloneWithAllocator in the worker so the cloned
+    /// map and the reffed storage agree — defense-in-depth in case the map
+    /// clone captured a snapshot the storage doesn't hold a ref on (e.g. an
+    /// initial-environ value later overwritten by the setter).
+    pub fn syncInto(self: *const ProxyEnvStorage, map: *bun.DotEnv.Map) void {
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                if (@field(self, f.name)) |val| {
+                    bun.handleOom(map.put(f.name, val.bytes));
+                }
+            }
+        }
+    }
+
+    pub fn deinit(self: *ProxyEnvStorage) void {
+        inline for (@typeInfo(ProxyEnvStorage).@"struct".fields) |f| {
+            if (comptime f.type == ?*RefCountedEnvValue) {
+                if (@field(self, f.name)) |val| {
+                    val.deref();
+                    @field(self, f.name) = null;
+                }
+            }
+        }
+    }
+};
+
+/// A ref-counted heap-allocated byte slice. The env map stores borrowed
+/// `.bytes` slices; as long as any VM holds a ref, the bytes stay valid.
+pub const RefCountedEnvValue = struct {
+    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", RefCountedEnvValue.destroy, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
+    ref_count: RefCount,
+    bytes: []const u8,
+
+    pub fn create(value: []const u8) *RefCountedEnvValue {
+        return bun.new(RefCountedEnvValue, .{
+            .ref_count = .init(),
+            .bytes = bun.handleOom(bun.default_allocator.dupe(u8, value)),
+        });
+    }
+
+    fn destroy(this: *RefCountedEnvValue) void {
+        bun.default_allocator.free(this.bytes);
+        bun.destroy(this);
+    }
+};
+
 pub const AWSSignatureCache = struct {
     cache: bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8) = bun.StringArrayHashMap([DIGESTED_HMAC_256_LEN]u8).init(bun.default_allocator),
     date: u64 = 0,
@@ -154,16 +279,16 @@ pub fn pipeReadBuffer(this: *RareData) *PipeReadBuffer {
     };
 }
 
-pub fn addListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
+pub fn addListeningSocketForWatchMode(this: *RareData, socket: bun.FD) void {
     this.listening_sockets_for_watch_mode_lock.lock();
     defer this.listening_sockets_for_watch_mode_lock.unlock();
     this.listening_sockets_for_watch_mode.append(bun.default_allocator, socket) catch {};
 }
 
-pub fn removeListeningSocketForWatchMode(this: *RareData, socket: bun.FileDescriptor) void {
+pub fn removeListeningSocketForWatchMode(this: *RareData, socket: bun.FD) void {
     this.listening_sockets_for_watch_mode_lock.lock();
     defer this.listening_sockets_for_watch_mode_lock.unlock();
-    if (std.mem.indexOfScalar(bun.FileDescriptor, this.listening_sockets_for_watch_mode.items, socket)) |i| {
+    if (std.mem.indexOfScalar(bun.FD, this.listening_sockets_for_watch_mode.items, socket)) |i| {
         _ = this.listening_sockets_for_watch_mode.swapRemove(i);
     }
 }
@@ -177,6 +302,35 @@ pub fn closeAllListenSocketsForWatchMode(this: *RareData) void {
         socket.close();
     }
     this.listening_sockets_for_watch_mode = .{};
+}
+
+pub fn addFSWatcherForIsolation(this: *RareData, watcher: *FSWatcher) void {
+    bun.handleOom(this.fs_watchers_for_isolation.append(bun.default_allocator, watcher));
+}
+
+pub fn removeFSWatcherForIsolation(this: *RareData, watcher: *FSWatcher) void {
+    if (std.mem.indexOfScalar(*FSWatcher, this.fs_watchers_for_isolation.items, watcher)) |i| {
+        _ = this.fs_watchers_for_isolation.swapRemove(i);
+    }
+}
+
+pub fn addStatWatcherForIsolation(this: *RareData, watcher: *StatWatcher) void {
+    bun.handleOom(this.stat_watchers_for_isolation.append(bun.default_allocator, watcher));
+}
+
+pub fn removeStatWatcherForIsolation(this: *RareData, watcher: *StatWatcher) void {
+    if (std.mem.indexOfScalar(*StatWatcher, this.stat_watchers_for_isolation.items, watcher)) |i| {
+        _ = this.stat_watchers_for_isolation.swapRemove(i);
+    }
+}
+
+pub fn closeAllWatchersForIsolation(this: *RareData) void {
+    while (this.fs_watchers_for_isolation.pop()) |watcher| {
+        watcher.detach();
+    }
+    while (this.stat_watchers_for_isolation.pop()) |watcher| {
+        watcher.close();
+    }
 }
 
 pub fn hotMap(this: *RareData, allocator: std.mem.Allocator) *HotMap {
@@ -604,6 +758,8 @@ pub fn deinit(this: *RareData) void {
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);
+    bun.debugAssert(this.cron_jobs.items.len == 0);
+    this.cron_jobs.deinit(bun.default_allocator);
     this.path_buf.deinit();
 
     if (this.websocket_deflate) |deflate| {
@@ -642,8 +798,11 @@ const UUID = @import("./uuid.zig");
 const WebSocketDeflate = @import("../http/websocket_client/WebSocketDeflate.zig");
 const std = @import("std");
 const EditorContext = @import("../open.zig").EditorContext;
-const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
+const FSWatcher = @import("./node/node_fs_watcher.zig").FSWatcher;
 const ValkeyContext = @import("../valkey/valkey.zig").ValkeyContext;
+
+const StatWatcher = @import("./node/node_fs_stat_watcher.zig").StatWatcher;
+const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 
 const bun = @import("bun");
 const Async = bun.Async;

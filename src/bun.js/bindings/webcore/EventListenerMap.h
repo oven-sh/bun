@@ -35,8 +35,10 @@
 #include "RegisteredEventListener.h"
 #include <atomic>
 #include <memory>
+#include <wtf/Assertions.h>
 #include <wtf/Forward.h>
 #include <wtf/Lock.h>
+#include <wtf/Threading.h>
 #include <wtf/text/AtomString.h>
 
 namespace WebCore {
@@ -70,8 +72,21 @@ public:
     Lock& lock() { return m_lock; }
 
 private:
+    void releaseAssertOrSetThreadUID()
+    {
+        if (!m_threadUID) {
+            ASSERT(!Thread::mayBeGCThread());
+            m_threadUID = Thread::currentSingleton().uid();
+            return;
+        }
+        if (m_threadUID == Thread::currentSingleton().uid()) [[likely]]
+            return;
+        RELEASE_ASSERT(Thread::mayBeGCThread());
+    }
+
     Vector<std::pair<AtomString, EventListenerVector>, 0, CrashOnOverflow, 4> m_entries;
     Lock m_lock;
+    uint32_t m_threadUID { 0 };
 };
 
 template<typename Visitor>

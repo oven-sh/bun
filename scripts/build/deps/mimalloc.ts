@@ -59,13 +59,16 @@ export const mimalloc: Dependency = {
 
     // ─── Override behavior (global malloc replacement) ───
     // The decision matrix:
-    //   ASAN:  always OFF — ASAN interceptors must see the real malloc.
-    //   macOS: OFF — macOS's malloc zones are sufficient and overriding
-    //          causes issues with system frameworks (SecureTransport, etc.)
-    //          that have their own allocator expectations.
-    //   Linux: ON — this is the main win. All malloc/free goes through
-    //          mimalloc, including WebKit's bmalloc when it falls back
-    //          to system malloc.
+    //   ASAN:    always OFF — ASAN interceptors must see the real malloc.
+    //   macOS:   OFF — macOS's malloc zones are sufficient and overriding
+    //            causes issues with system frameworks (SecureTransport, etc.)
+    //            that have their own allocator expectations.
+    //   Linux:   ON — this is the main win. All malloc/free goes through
+    //            mimalloc, including WebKit's bmalloc when it falls back
+    //            to system malloc.
+    //   Windows: OFF — Bun links the static CRT and calls mi_* directly;
+    //            dev3's alloc-override.c emits _expand/_msize/free which
+    //            duplicate against libucrt(d) at link time.
     if (cfg.asan) {
       args.MI_TRACK_ASAN = "ON";
       args.MI_OVERRIDE = "OFF";
@@ -84,11 +87,7 @@ export const mimalloc: Dependency = {
       args.MI_OSX_ZONE = "OFF";
       args.MI_OSX_INTERPOSE = "OFF";
     } else if (cfg.windows) {
-      // Bun links the static CRT and calls mi_* directly; nothing routes
-      // through CRT malloc. With override ON, dev3's alloc-override.c
-      // emits _expand/_msize/free into the static lib and lld-link
-      // duplicates against libucrt(d). mimalloc's *default* is ON, so
-      // this must be explicit.
+      // mimalloc's *default* is ON, so this must be explicit.
       args.MI_OVERRIDE = "OFF";
     }
 

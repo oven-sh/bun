@@ -1,10 +1,23 @@
-import { $, semver } from "bun";
+import { $ } from "bun";
 import { expect, test } from "bun:test";
 import { bunExe } from "harness";
 
 const BUN_EXE = bunExe();
 
 if (process.platform === "linux") {
+  const GLIBC_FLOOR = [2, 17, 0] as const;
+
+  // Numeric tuple compare — avoids Bun.semver quirks (e.g. order("2.17","2.17.0")===1).
+  function glibcVersionAboveFloor(v: string): boolean {
+    const parts = v.split(".").map(Number);
+    for (let i = 0; i < GLIBC_FLOOR.length; i++) {
+      const a = parts[i] ?? 0;
+      const b = GLIBC_FLOOR[i];
+      if (a !== b) return a > b;
+    }
+    return false;
+  }
+
   test("objdump -T does not include symbols from glibc > 2.17", async () => {
     const objdump = Bun.which("objdump") || Bun.which("llvm-objdump");
     if (!objdump) {
@@ -15,13 +28,10 @@ if (process.platform === "linux") {
     const lines = output.split("\n");
     const errors = [];
     for (const line of lines) {
-      const match = line.match(/\(GLIBC_(\d+(?:\.\d+){1,2})\)\s/);
+      const match = line.match(/\(GLIBC_(\d+(?:\.\d+)+)\)\s/);
       if (match?.[1]) {
-        // Bun.semver.order("2.17", "2.17.0") === 1, so normalize to 3 parts.
-        const parts = match[1].split(".");
-        while (parts.length < 3) parts.push("0");
-        const version = parts.join(".");
-        if (semver.order(version, "2.17.0") > 0) {
+        const version = match[1];
+        if (glibcVersionAboveFloor(version)) {
           errors.push({
             symbol: line.slice(line.lastIndexOf(")") + 1).trim(),
             "glibc version": version,

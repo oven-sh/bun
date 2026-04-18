@@ -41,16 +41,23 @@ test.skipIf(isASAN)(
     });
 
     // Drain stderr in the background so it never back-pressures the child, and
-    // pull the WebSocket URL from the inspector banner.
+    // pull the WebSocket URL from the inspector banner. Only scan complete
+    // (newline-terminated) lines so a chunk boundary can't yield a truncated
+    // URL.
     let stderrBuf = "";
+    let stderrLineBuf = "";
     const { promise: urlPromise, resolve: urlResolve, reject: urlReject } = Promise.withResolvers<URL>();
     let urlFound = false;
     (async () => {
       const decoder = new TextDecoder();
       for await (const chunk of proc.stderr as ReadableStream<Uint8Array>) {
-        stderrBuf += decoder.decode(chunk);
+        const text = decoder.decode(chunk);
+        stderrBuf += text;
         if (!urlFound) {
-          for (const line of stderrBuf.split("\n")) {
+          stderrLineBuf += text;
+          const lines = stderrLineBuf.split("\n");
+          stderrLineBuf = lines.pop() ?? "";
+          for (const line of lines) {
             const trimmed = line.trim();
             if (!trimmed) continue;
             try {

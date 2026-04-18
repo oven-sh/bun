@@ -342,7 +342,12 @@ pub const RuntimeTranspilerStore = struct {
                 .hot, .watch => {
                     if (vm.bun_watcher.indexOf(hash)) |index| {
                         const watcher_fd = vm.bun_watcher.watchlist().items(.fd)[index];
-                        fd = if (watcher_fd.stdioTag() == null) watcher_fd else null;
+                        // On Linux, `addFileByPathSlow` inserts watchlist
+                        // entries with `fd = invalid_fd` (only kqueue needs
+                        // the descriptor). Treat invalid as "no cached fd"
+                        // so `readFileWithAllocator` opens the file instead
+                        // of calling `seekTo` on a bogus handle.
+                        fd = if (watcher_fd.isValid() and watcher_fd.stdioTag() == null) watcher_fd else null;
                         package_json = vm.bun_watcher.watchlist().items(.package_json)[index];
                     }
                 },
@@ -476,9 +481,11 @@ pub const RuntimeTranspilerStore = struct {
                     dumpSourceString(vm, specifier, entry.output_code.byteSlice());
                 }
 
-                // TODO: module_info is only needed for standalone ESM bytecode.
-                // For now, skip it entirely in the runtime transpiler.
-                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
+                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized =
+                    if (vm.useIsolationSourceProviderCache() and entry.metadata.module_type != .cjs and entry.esm_record.len > 0)
+                        analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(entry.esm_record, bun.default_allocator)
+                    else
+                        null;
 
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
@@ -552,9 +559,11 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
-            // TODO: module_info is only needed for standalone ESM bytecode.
-            // For now, skip it entirely in the runtime transpiler.
-            const module_info: ?*analyze_transpiled_module.ModuleInfo = null;
+            const module_info: ?*analyze_transpiled_module.ModuleInfo =
+                if (vm.useIsolationSourceProviderCache() and !is_commonjs_module and loader.isJavaScriptLike())
+                    analyze_transpiled_module.ModuleInfo.create(bun.default_allocator, loader.isTypeScript()) catch null
+                else
+                    null;
 
             {
                 var mapper = vm.sourceMapHandler(&printer);

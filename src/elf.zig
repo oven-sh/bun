@@ -47,9 +47,19 @@ pub const ElfFile = struct {
     /// standard FHS path so `bun build --compile` output stays portable when
     /// the bun binary itself was patchelf'd (NixOS autoPatchelfHook). See #24742.
     ///
+    /// Skipped when the host system itself uses a Nix/Guix store interpreter
+    /// (i.e. the running bun process has a store-path PT_INTERP): on NixOS
+    /// `/lib64/ld-linux-x86-64.so.2` is a stub that refuses to run generic
+    /// binaries, so normalizing there would break locally-run compiled output
+    /// (#29290). Cross-compile-style portability is preserved on any non-Nix
+    /// Linux host that happens to have a patchelf'd bun installed.
+    ///
     /// Store paths are always longer than the FHS path, so this is an in-place
     /// shrink — no segment moves. No-op for any other interpreter.
     pub fn normalizeInterpreter(self: *ElfFile) void {
+        // Don't rewrite on Nix/Guix hosts — the FHS path is a stub loader there.
+        if (hostUsesNixStoreInterpreter()) return;
+
         const ehdr = readEhdr(self.data.items);
         const phdr_size = @sizeOf(Elf64_Phdr);
 
@@ -336,6 +346,99 @@ fn alignUp(value: u64, alignment: u64) u64 {
     if (alignment == 0) return value;
     const mask = alignment - 1;
     return (value + mask) & ~mask;
+}
+
+/// True iff the host bun is running on is managed by Nix or Guix — in which
+/// case the "generic" FHS linker path `/lib64/ld-linux-x86-64.so.2` is a stub
+/// that rejects generic binaries, and rewriting PT_INTERP to it would break
+/// locally-run `bun build --compile` output. See #29290.
+///
+/// Checks (any one is sufficient):
+///   1. `BUN_DEBUG_FORCE_NIX_HOST` — test-only override used by #29290's
+///      regression test to exercise this branch without writing to `/etc`.
+///   2. The running bun process's own PT_INTERP (via `/proc/self/exe`). NixOS
+///      `autoPatchelfHook` rewrites installed binaries to `/nix/store/...`
+///      loaders; this is the most precise signal.
+///   3. `/etc/NIXOS` — canonical NixOS marker, present on every NixOS system
+///      regardless of how bun itself was installed (e.g. a statically-linked
+///      bun built elsewhere).
+///   4. `/gnu/store` directory — Guix's equivalent of /nix/store.
+///
+/// Result is cached — this is called once per `bun build --compile`.
+///
+/// Always `false` on non-Linux hosts: `bun build --compile` for a Linux target
+/// can run on macOS/Windows, in which case the host's linker layout is
+/// irrelevant and we want to normalize for portability (#24742).
+fn hostUsesNixStoreInterpreter() bool {
+    if (comptime !bun.Environment.isLinux) return false;
+
+    const cache = struct {
+        var computed: std.atomic.Value(u8) = .init(0); // 0 unknown, 1 no, 2 yes
+        fn check() bool {
+            // Test-only override: lets #29290's regression test force the
+            // Nix-host branch without mutating `/etc/NIXOS` on the shared
+            // rootfs (which would poison concurrent test workers).
+            if (bun.env_var.BUN_DEBUG_FORCE_NIX_HOST.get()) return true;
+            if (selfInterpIsNixStore()) return true;
+            // Canonical NixOS marker — present even when bun itself was not
+            // installed via Nix (statically-linked bun, downloaded tarball).
+            if (bun.sys.exists("/etc/NIXOS")) return true;
+            // Guix equivalent.
+            if (bun.sys.directoryExistsAt(bun.FD.cwd(), "/gnu/store").unwrapOr(false)) return true;
+            return false;
+        }
+
+        fn selfInterpIsNixStore() bool {
+            // 4 KiB is enough: PT_INTERP on a glibc-linked binary points into
+            // the first page. Read just the leading bytes to avoid slurping
+            // the whole bun binary.
+            var buf: [4096]u8 = undefined;
+            const fd = switch (bun.sys.open("/proc/self/exe", bun.O.RDONLY, 0)) {
+                .result => |fd| fd,
+                .err => return false,
+            };
+            defer fd.close();
+            const n = switch (bun.sys.read(fd, &buf)) {
+                .result => |n| n,
+                .err => return false,
+            };
+            if (n < @sizeOf(Elf64_Ehdr)) return false;
+            const data = buf[0..n];
+
+            if (!bun.strings.eqlComptime(data[0..4], "\x7fELF")) return false;
+            if (data[elf.EI_CLASS] != elf.ELFCLASS64) return false;
+            if (data[elf.EI_DATA] != elf.ELFDATA2LSB) return false;
+
+            const ehdr = readEhdr(data);
+            const phdr_size = @sizeOf(Elf64_Phdr);
+            const table_end = @as(u64, ehdr.e_phoff) +| @as(u64, ehdr.e_phnum) *| @as(u64, phdr_size);
+            if (table_end > data.len) return false;
+
+            for (0..ehdr.e_phnum) |i| {
+                const off = @as(usize, @intCast(ehdr.e_phoff)) + i * phdr_size;
+                const phdr = std.mem.bytesAsValue(Elf64_Phdr, data[off..][0..phdr_size]).*;
+                if (phdr.p_type != elf.PT_INTERP) continue;
+
+                const interp_off: usize = @intCast(phdr.p_offset);
+                const interp_sz: usize = @intCast(phdr.p_filesz);
+                if (interp_off + interp_sz > data.len) return false;
+
+                const interp = std.mem.sliceTo(data[interp_off..][0..interp_sz], 0);
+                return bun.strings.hasPrefixComptime(interp, "/nix/store/") or
+                    bun.strings.hasPrefixComptime(interp, "/gnu/store/");
+            }
+            return false;
+        }
+    };
+
+    switch (cache.computed.load(.acquire)) {
+        1 => return false,
+        2 => return true,
+        else => {},
+    }
+    const result = cache.check();
+    cache.computed.store(if (result) 2 else 1, .release);
+    return result;
 }
 
 const log = bun.Output.scoped(.elf, .visible);

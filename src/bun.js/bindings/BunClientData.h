@@ -18,7 +18,9 @@ class DOMWrapperWorld;
 // #include "WorkerThreadType.h"
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
+#include <wtf/WeakHashSet.h>
 #include <wtf/RefPtr.h>
+#include "JSVMClientDataClient.h"
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/StdLibExtras.h>
 #include "WebCoreJSBuiltins.h"
@@ -118,6 +120,16 @@ public:
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
+    // All access should go through that class. Stored as the JSC base type to
+    // avoid pulling ZigSourceProvider.h into this header; the cache class
+    // downcasts on lookup. Values hold strong refs by design: this map is the
+    // only owner once the previous global is GC'd, so a weak map would empty
+    // after every swap.
+    WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
+
+    void addClient(JSVMClientDataClient& client) { m_clients.add(client); }
+
 private:
     bool isWebCoreJSClientData() const final { return true; }
 
@@ -135,6 +147,7 @@ private:
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
 
     std::optional<WebCore::HTTPHeaderIdentifiers> m_httpHeaderIdentifiers;
+    WeakHashSet<JSVMClientDataClient> m_clients;
 };
 
 } // namespace WebCore

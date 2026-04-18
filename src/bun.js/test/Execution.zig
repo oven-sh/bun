@@ -636,6 +636,15 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     });
     sequence.flaky_attempt_count = saved_flaky_attempt_count;
     sequence.flaky_attempts_buf = saved_flaky_attempts_buf;
+
+    // Snapshot counters are keyed by full test name and incremented on every
+    // toMatchSnapshot() call. Without this reset, retries / repeats would
+    // increment the counter to N on attempt N and look for a key that does
+    // not exist (https://github.com/oven-sh/bun/issues/23705).
+    // Zeroing all entries matches Jest (SnapshotState.clear() on test_retry,
+    // jestjs/jest#7493). Concurrent tests never touch the counts map — see
+    // SnapshotInConcurrentGroup in expect.zig.
+    if (jsc.Jest.Jest.runner) |runner| runner.snapshots.resetCounts();
     _ = this;
 }
 

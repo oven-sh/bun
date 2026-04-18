@@ -54,6 +54,10 @@ pub const Algorithm = enum {
             .sha512 => BoringSSL.EVP_sha512(),
             .@"sha512-224" => BoringSSL.EVP_sha512_224(),
             .@"sha512-256" => BoringSSL.EVP_sha512_256(),
+            .@"sha3-224" => BoringSSL.EVP_sha3_224(),
+            .@"sha3-256" => BoringSSL.EVP_sha3_256(),
+            .@"sha3-384" => BoringSSL.EVP_sha3_384(),
+            .@"sha3-512" => BoringSSL.EVP_sha3_512(),
             else => null,
         };
     }

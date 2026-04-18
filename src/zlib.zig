@@ -23,9 +23,9 @@ const uInt = u32;
 // LLP64, 8 on LP64 unix. cloudflare/zlib hard-coded uint64_t, which is why
 // this was u64. Must match the C side or compress()/compressBound()/adler32()
 // have an ABI mismatch on Windows.
-const uLong = c_ulong;
+pub const uLong = c_ulong;
 const Bytef = Byte;
-const uLongf = uLong;
+pub const uLongf = uLong;
 const voidpf = ?*anyopaque;
 
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));

@@ -236,15 +236,15 @@ function getImageName(platform, options) {
   return `${name}-v${getBootstrapVersion(os)}`;
 }
 
-/**
- * @param {number} [limit]
- * @link https://buildkite.com/docs/pipelines/command-step#retry-attributes
- */
 const retryOnAgentLost = [
-  { exit_status: -1, limit: 3 },
-  { signal_reason: "agent_stop", limit: 3 },
+  { exit_status: -1, limit: 2 },
+  { signal_reason: "agent_stop", limit: 2 },
 ];
 
+/**
+ * @param {false | typeof retryOnAgentLost} [automatic]
+ * @link https://buildkite.com/docs/pipelines/command-step#retry-attributes
+ */
 function getRetry(automatic = retryOnAgentLost) {
   return {
     manual: {
@@ -776,7 +776,7 @@ function getBuildImageStep(platform, options) {
     env: {
       DEBUG: "1",
     },
-    retry: getRetry(),
+    retry: getRetry(false),
     cancel_on_build_failing: isMergeQueue(),
     command: command.filter(Boolean).join(" "),
     timeout_in_minutes: 3 * 60,

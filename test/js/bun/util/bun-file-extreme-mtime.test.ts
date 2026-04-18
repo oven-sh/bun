@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { isLinux, tmpdirSync } from "harness";
+import { isLinux, tempDir } from "harness";
 import { join } from "path";
 
 // Files can have modification times large enough that converting the
@@ -33,6 +33,8 @@ describe.skipIf(!isLinux)("Bun.file() with extreme mtime", () => {
 
         const file = Bun.file(fd);
         expect(Number.isFinite(file.lastModified)).toBe(true);
+        // Must not collide with the internal "unresolved" sentinel (maxInt(u52)).
+        expect(file.lastModified).not.toBe(2 ** 52 - 1);
         expect(await file.text()).toBe("hello");
       } finally {
         fs.closeSync(fd);
@@ -73,15 +75,14 @@ describe.skipIf(!isLinux)("Bun.file() with extreme mtime", () => {
 // with whatever value the filesystem allows. This won't trigger the
 // original overflow but ensures the read path keeps working everywhere.
 test("Bun.file() handles large mtime without crashing", async () => {
-  const dir = tmpdirSync();
-  const path = join(dir, "file");
-  fs.writeFileSync(path, "world");
+  using dir = tempDir("bun-file-extreme-mtime", { file: "world" });
+  const path = join(String(dir), "file");
   const fd = fs.openSync(path, "r");
   try {
-    fs.futimesSync(fd, 1e16, 1e16);
-  } catch {}
+    try {
+      fs.futimesSync(fd, 1e16, 1e16);
+    } catch {}
 
-  try {
     const file = Bun.file(fd);
     expect(Number.isFinite(file.lastModified)).toBe(true);
     expect(await file.text()).toBe("world");

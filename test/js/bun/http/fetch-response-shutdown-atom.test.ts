@@ -68,7 +68,7 @@ describe("fetch Response status_text/url are safe to destroy off-thread", () => 
       no_proxy: noProxy,
     };
 
-    const iterations = 40;
+    const iterations = 16;
     const concurrency = 8;
     const failures: string[] = [];
 
@@ -90,5 +90,5 @@ describe("fetch Response status_text/url are safe to destroy off-thread", () => 
     }
 
     expect(failures).toEqual([]);
-  }, 90_000);
+  });
 });

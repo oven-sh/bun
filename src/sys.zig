@@ -3120,19 +3120,29 @@ pub const MemfdFlags = enum(u32) {
     const MFD_ALLOW_SEALING: u32 = std.os.linux.MFD.ALLOW_SEALING;
 };
 
-/// Set on first ENOSYS so callers can short-circuit without retrying the
-/// syscall on every Blob/spawn. memfd_create requires kernel ≥ 3.17; all
-/// callers already fall back to a heap buffer / pipe / socketpair when this
-/// returns an error.
-var memfd_unsupported = std.atomic.Value(bool).init(false);
+/// memfd_create requires kernel ≥ 3.17. Tristate: 0 = unknown, 1 = supported,
+/// -1 = unsupported (ENOSYS seen, or disabled). Callers should check
+/// canUseMemfd() first and take their existing fallback (heap buffer / pipe /
+/// socketpair) when it returns false.
+var can_use_memfd = std.atomic.Value(i32).init(0);
+
+pub fn canUseMemfd() bool {
+    if (comptime !Environment.isLinux) return false;
+    const result = can_use_memfd.load(.monotonic);
+    if (result == 0) {
+        if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_MEMFD.get()) {
+            can_use_memfd.store(-1, .monotonic);
+            return false;
+        }
+        // Optimistically allow; first ENOSYS flips to -1.
+        can_use_memfd.store(1, .monotonic);
+        return true;
+    }
+    return result == 1;
+}
 
 pub fn memfd_create(name: [:0]const u8, flags_: MemfdFlags) Maybe(bun.FD) {
     if (comptime !Environment.isLinux) @compileError("linux only!");
-
-    if (memfd_unsupported.load(.monotonic) or bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_MEMFD.get()) {
-        return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NOSYS), .syscall = .memfd_create } };
-    }
-
     var flags: u32 = @intFromEnum(flags_);
     while (true) {
         const rc = std.os.linux.memfd_create(name, flags);
@@ -3149,7 +3159,7 @@ pub fn memfd_create(name: [:0]const u8, flags_: MemfdFlags) Maybe(bun.FD) {
                         continue;
                     }
                 },
-                .NOSYS => memfd_unsupported.store(true, .monotonic),
+                .NOSYS => can_use_memfd.store(-1, .monotonic),
                 else => {},
             }
 

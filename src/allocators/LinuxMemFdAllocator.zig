@@ -114,6 +114,8 @@ pub fn shouldUse(bytes: []const u8) bool {
         return false;
     }
 
+    if (!bun.sys.canUseMemfd()) return false;
+
     if (bun.jsc.VirtualMachine.is_smol_mode) {
         return bytes.len >= 1024 * 1024 * 1;
     }

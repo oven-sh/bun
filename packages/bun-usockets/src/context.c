@@ -767,11 +767,16 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
         if (c) {
             for (struct us_socket_t *next = c->connecting_head; next; next = next->connect_next) {
                 if (next != s) {
+                    // Detach before closing so a stale poll event for this
+                    // sibling cannot re-enter after_open with a dangling c
+                    // and double-release the addrinfo request.
+                    next->connect_state = NULL;
                     us_socket_close(0, next, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
                 }
             }
             // now that the socket is open, we can release the associated us_connecting_socket_t if it exists
             Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
+            c->addrinfo_req = 0;
             us_connecting_socket_free(c->ssl, c);
             s->connect_state = NULL;
         }

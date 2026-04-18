@@ -270,6 +270,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                         for (p3_images.slice_mut(), this.slice_mut()) |*out, *in| {
                             out.* = in.getFallback(allocator, ColorFallbackKind{ .p3 = true });
                         }
+                        bun.handleOom(res.append(allocator, p3_images));
                     }
 
                     // Convert to lab if needed (e.g. if oklab is not supported but lab is).

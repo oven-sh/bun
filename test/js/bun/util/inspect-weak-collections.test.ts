@@ -49,6 +49,13 @@ describe("Bun.inspect WeakMap/WeakSet", () => {
     expect(() => expect(wm).toEqual([1, 2])).toThrow();
   });
 
+  test("toEqual diff with WeakSet that has size does not crash", () => {
+    const ws = new WeakSet();
+    // @ts-expect-error
+    ws.size = 2;
+    expect(() => expect(ws).toEqual([1, 2])).toThrow();
+  });
+
   test("normal Map still shows entries", () => {
     const m = new Map([["a", 1]]);
     expect(Bun.inspect(m)).toContain("Map(1)");

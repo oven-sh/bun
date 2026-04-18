@@ -1413,15 +1413,18 @@ async function getPipeline(options = {}) {
     }
   }
 
-  // Build the macOS .pkg installer on main, or when [build pkg] is in the
-  // commit message (for testing on a branch). Needs both darwin arches to
-  // produce a universal binary, so skip if the platform filter dropped one.
-  // Also skip when buildId is set ([skip builds] reused a prior build's
-  // artifacts) since the darwin-*-build-bun steps we depend on won't exist.
+  // Build the macOS .pkg installer on stable releases (main + !canary), or
+  // when [build pkg] is in the commit message (for testing on a branch).
+  // Needs both darwin arches to produce a universal binary, so skip if the
+  // platform filter dropped one. Also skip when buildId is set
+  // ([skip builds] reused a prior build's artifacts) since the
+  // darwin-*-build-bun steps we depend on won't exist. Canary is excluded
+  // because build.sh reads the version from LATEST, which is the last
+  // stable tag — a canary .pkg would be mislabelled.
   const darwinPlatforms = buildPlatforms.filter(p => p.os === "darwin" && (p.profile ?? "release") === "release");
   const shouldBuildPkg =
     !buildId &&
-    (isMainBranch() || options.buildPkg) &&
+    ((isMainBranch() && !options.canary) || options.buildPkg) &&
     darwinPlatforms.some(p => p.arch === "aarch64") &&
     darwinPlatforms.some(p => p.arch === "x64");
   if (shouldBuildPkg) {

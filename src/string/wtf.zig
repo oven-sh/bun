@@ -38,7 +38,7 @@ pub const WTFStringImplStruct = extern struct {
     }
 
     pub fn isStatic(this: WTFStringImpl) bool {
-        return this.m_refCount & s_refCountIncrement != 0;
+        return this.m_refCount & s_refCountFlagIsStaticString != 0;
     }
 
     pub fn byteLength(this: WTFStringImpl) usize {

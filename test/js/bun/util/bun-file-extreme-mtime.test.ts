@@ -67,6 +67,7 @@ describe.skipIf(!isLinux)("Bun.file() with extreme mtime", () => {
 
       const file = Bun.file(path);
       expect(Number.isFinite(file.lastModified)).toBe(true);
+      expect(file.lastModified).not.toBe(2 ** 52 - 1);
       expect(await file.text()).toBe("hello");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

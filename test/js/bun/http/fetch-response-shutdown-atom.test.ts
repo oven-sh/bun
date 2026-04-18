@@ -1,6 +1,6 @@
+import { fetchTestingInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { fetchTestingInternals } from "bun:internal-for-testing";
 
 // Regression test for a flaky RELEASE_ASSERT observed in proxy.test.js under
 // the x64 ASAN lane:

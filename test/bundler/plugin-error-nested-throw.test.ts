@@ -42,39 +42,43 @@ describe("Bun.build plugin throws value whose toString also throws", () => {
   `;
 
   for (const hook of ["onLoad", "onResolve"] as const) {
-    test.concurrent(`${hook}: build completes instead of hanging`, async () => {
-      using dir = tempDir(`plugin-nested-throw-${hook}`, {
-        "entry.ts": hook === "onLoad" ? `console.log("hi");` : `import "virtual:thing"; console.log("hi");`,
-        "build.ts": fixture(hook),
-      });
+    test.concurrent(
+      `${hook}: build completes instead of hanging`,
+      async () => {
+        using dir = tempDir(`plugin-nested-throw-${hook}`, {
+          "entry.ts": hook === "onLoad" ? `console.log("hi");` : `import "virtual:thing"; console.log("hi");`,
+          "build.ts": fixture(hook),
+        });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", join(String(dir), "build.ts")],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-        // If the build hangs (the bug), kill it so the assertion below can report
-        // a useful diff instead of the test runner just timing out.
-        timeout: 10_000,
-      });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", join(String(dir), "build.ts")],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+          // If the build hangs (the bug), kill it so the assertion below can report
+          // a useful diff instead of the test runner just timing out.
+          timeout: 10_000,
+        });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // If the subprocess was killed by the spawn timeout, the build hung.
-      expect({
-        stdout: stdout.trim(),
-        stderr: stderr.trim(),
-        exitCode,
-        signalCode: proc.signalCode ?? null,
-      }).toMatchObject({
-        exitCode: 0,
-        signalCode: null,
-      });
+        // If the subprocess was killed by the spawn timeout, the build hung.
+        expect({
+          stdout: stdout.trim(),
+          stderr: stderr.trim(),
+          exitCode,
+          signalCode: proc.signalCode ?? null,
+        }).toMatchObject({
+          exitCode: 0,
+          signalCode: null,
+        });
 
-      const parsed = JSON.parse(stdout.trim());
-      expect(parsed.success).toBe(false);
-      expect(parsed.logs.length).toBeGreaterThan(0);
-    }, 15_000);
+        const parsed = JSON.parse(stdout.trim());
+        expect(parsed.success).toBe(false);
+        expect(parsed.logs.length).toBeGreaterThan(0);
+      },
+      15_000,
+    );
   }
 });

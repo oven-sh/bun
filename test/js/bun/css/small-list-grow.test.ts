@@ -58,11 +58,7 @@ test("CSS bundler doesn't over-allocate SmallList when growing past the first he
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   if (exitCode !== 0) {
     // Surface the subprocess error before the assertions below fire.

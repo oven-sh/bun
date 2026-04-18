@@ -36,7 +36,7 @@ test("does not spin at 100% CPU while paused at a breakpoint", async () => {
   // Drain stderr in the background so it never back-pressures the child, and
   // pull the WebSocket URL from the inspector banner.
   let stderrBuf = "";
-  const { promise: urlPromise, resolve: urlResolve } = Promise.withResolvers<URL>();
+  const { promise: urlPromise, resolve: urlResolve, reject: urlReject } = Promise.withResolvers<URL>();
   let urlFound = false;
   (async () => {
     const decoder = new TextDecoder();
@@ -57,7 +57,12 @@ test("does not spin at 100% CPU while paused at a breakpoint", async () => {
         }
       }
     }
-  })().catch(() => {});
+    if (!urlFound) {
+      urlReject(new Error(`Inspector URL not found before child stderr closed: ${JSON.stringify(stderrBuf)}`));
+    }
+  })().catch(err => {
+    if (!urlFound) urlReject(err);
+  });
 
   const url = await urlPromise;
 
@@ -70,36 +75,51 @@ test("does not spin at 100% CPU while paused at a breakpoint", async () => {
     });
 
     let nextId = 1;
-    const pending = new Map<number, (msg: any) => void>();
-    const eventWaiters = new Map<string, (params: any) => void>();
+    type Waiter = { resolve: (value: any) => void; reject: (error: Error) => void };
+    const pending = new Map<number, Waiter>();
+    const eventWaiters = new Map<string, Waiter>();
+    let closeError: Error | undefined;
+
+    const failAll = (error: Error) => {
+      if (closeError) return;
+      closeError = error;
+      for (const w of pending.values()) w.reject(error);
+      pending.clear();
+      for (const w of eventWaiters.values()) w.reject(error);
+      eventWaiters.clear();
+    };
+    ws.addEventListener("error", e => failAll(new Error("WebSocket error", { cause: e })));
+    ws.addEventListener("close", e => failAll(new Error(`WebSocket closed (${e.code})`, { cause: e })));
 
     ws.addEventListener("message", ev => {
       const msg = JSON.parse(String(ev.data));
       if (typeof msg.id === "number") {
-        const cb = pending.get(msg.id);
-        if (cb) {
+        const w = pending.get(msg.id);
+        if (w) {
           pending.delete(msg.id);
-          cb(msg);
+          w.resolve(msg);
         }
       } else if (typeof msg.method === "string") {
-        const cb = eventWaiters.get(msg.method);
-        if (cb) {
+        const w = eventWaiters.get(msg.method);
+        if (w) {
           eventWaiters.delete(msg.method);
-          cb(msg.params);
+          w.resolve(msg.params);
         }
       }
     });
 
     const send = (method: string, params: Record<string, unknown> = {}) =>
-      new Promise<any>(resolve => {
+      new Promise<any>((resolve, reject) => {
+        if (closeError) return reject(closeError);
         const id = nextId++;
-        pending.set(id, resolve);
+        pending.set(id, { resolve, reject });
         ws.send(JSON.stringify({ id, method, params }));
       });
 
     const waitForEvent = (method: string) =>
-      new Promise<any>(resolve => {
-        eventWaiters.set(method, resolve);
+      new Promise<any>((resolve, reject) => {
+        if (closeError) return reject(closeError);
+        eventWaiters.set(method, { resolve, reject });
       });
 
     // Enable the debugger and opt into pausing on `debugger;` statements,

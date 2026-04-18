@@ -33,9 +33,18 @@ static WTF::UncheckedKeyHashMap<ScriptExecutionContextIdentifier, Vector<BunInsp
 // When the inspected JS thread is paused at a breakpoint (inside runWhilePaused),
 // it waits on this condition for the debugger thread to deliver new messages or
 // for a connection status change. This replaces a busy spin loop that would pin
-// one core at 100% CPU while paused.
-static WTF::Lock pausedWaitLock;
-static WTF::Condition pausedWaitCondition;
+// one core at 100% CPU while paused. Wrapped in a function-local static so it
+// doesn't add a static initializer to the binary.
+struct PausedWait {
+    WTF::Lock lock;
+    WTF::Condition condition;
+};
+
+static PausedWait& pausedWait()
+{
+    static PausedWait instance;
+    return instance;
+}
 
 static bool waitingForConnection = false;
 extern "C" void Debugger__didConnect();
@@ -260,34 +269,44 @@ public:
             // messages we'll simply re-check once per second instead of
             // spinning at 100% CPU.
             {
-                Locker<Lock> waitLocker(pausedWaitLock);
-                if (!isDoneProcessingEvents && !anyConnectionHasPendingWork(connections)) {
-                    pausedWaitCondition.waitFor(pausedWaitLock, Seconds(1));
+                auto& wait = pausedWait();
+                Locker<Lock> waitLocker(wait.lock);
+                if (!isDoneProcessingEvents && !anyConnectionHasPendingWork(connections, closedCount)) {
+                    wait.condition.waitFor(wait.lock, Seconds(1));
                 }
             }
         }
     }
 
-    static bool anyConnectionHasPendingWork(const Vector<BunInspectorConnection*, 8>& connections)
+    static bool anyConnectionHasPendingWork(const Vector<BunInspectorConnection*, 8>& connections, size_t previousClosedCount)
     {
+        size_t closedCount = 0;
         for (auto* connection : connections) {
             ConnectionStatus status = connection->status.load();
-            if (status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting)
-                return true;
+            if (status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting) {
+                closedCount++;
+                continue;
+            }
 
             Locker<Lock> locker(connection->jsThreadMessagesLock);
             if (!connection->jsThreadMessages.isEmpty())
                 return true;
         }
-        return false;
+        // A connection that was already counted as closed by the caller is
+        // not new work and must not keep us from sleeping (otherwise one
+        // closed connection among several would cause us to spin). Only
+        // treat a *change* in the closed count as pending work so the outer
+        // loop re-evaluates whether every connection is gone.
+        return closedCount != previousClosedCount;
     }
 
     // Wake the inspected thread if it is blocked inside runWhilePaused.
     // Safe to call from any thread; cheap when nobody is waiting.
     static void notifyPausedThread()
     {
-        Locker<Lock> locker(pausedWaitLock);
-        pausedWaitCondition.notifyAll();
+        auto& wait = pausedWait();
+        Locker<Lock> locker(wait.lock);
+        wait.condition.notifyAll();
     }
 
     void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Zig::GlobalObject* globalObject, bool connectIfNeeded)

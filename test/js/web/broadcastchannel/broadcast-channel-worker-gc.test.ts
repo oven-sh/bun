@@ -165,7 +165,6 @@ test(
       Bun.gc(true);
     }
 
-    await new Promise(resolve => setTimeout(resolve, 50));
     mainChannel.close();
     console.log("OK");
   `;

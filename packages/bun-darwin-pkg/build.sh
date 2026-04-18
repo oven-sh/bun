@@ -23,8 +23,8 @@
 #   BUILDKITE                    - detected to enable artifact download/upload
 #
 # Optional signing environment (all must be set together to sign):
-#   APPLE_DEVELOPER_ID_APPLICATION  - "Developer ID Application: Oven (XXXXXXXXXX)"
-#   APPLE_DEVELOPER_ID_INSTALLER    - "Developer ID Installer: Oven (XXXXXXXXXX)"
+#   APPLE_DEVELOPER_ID_APPLICATION  - "Developer ID Application: Oven (<TeamID>)"
+#   APPLE_DEVELOPER_ID_INSTALLER    - "Developer ID Installer: Oven (<TeamID>)"
 #   APPLE_KEYCHAIN_PROFILE          - notarytool keychain profile name
 #     (created via `xcrun notarytool store-credentials`)
 #

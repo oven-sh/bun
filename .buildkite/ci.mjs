@@ -299,7 +299,7 @@ function getEc2Agent(platform, options, ec2Options) {
     "instance-type": instanceType,
     "cpu-count": cpuCount,
     "threads-per-core": threadsPerCore,
-    "preemptible": false,
+    "preemptible": true,
   };
 }
 

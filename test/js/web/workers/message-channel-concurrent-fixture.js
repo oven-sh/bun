@@ -22,7 +22,9 @@ export function hammer() {
       const inner = new MessageChannel();
       // Transfer a port (hits disentangle/entangle in the registry) and post twice.
       port1.postMessage(inner.port1, [inner.port1]);
-      port1.postMessage(j);
+      // Post a truthy payload — receiveMessageOnPort's wrapper currently treats
+      // falsy message values as "no message", which would short-circuit the loop.
+      port1.postMessage({ j });
       // Synchronous registry access from this thread.
       let msg;
       while ((msg = receiveMessageOnPort(port2))) {

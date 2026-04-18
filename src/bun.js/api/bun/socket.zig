@@ -718,7 +718,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             }
 
             const l: *Listener = @fieldParentPtr("handlers", handlers);
-            return l.strong_self.tryGet() orelse .js_undefined;
+            return l.strong_self.get() orelse .js_undefined;
         }
 
         pub fn getReadyState(this: *This, _: *jsc.JSGlobalObject) JSValue {

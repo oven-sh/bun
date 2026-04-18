@@ -12,10 +12,7 @@ ssl: bool = false,
 protos: ?[]const u8 = null,
 
 strong_data: jsc.Strong.Optional = .empty,
-/// Reference to this listener's JS wrapper. Held strong while listening so the
-/// wrapper cannot be GC'd; downgraded to weak once the listener is stopped and
-/// has no active connections, allowing natural garbage collection.
-strong_self: jsc.JSRef = .empty(),
+strong_self: jsc.Strong.Optional = .empty,
 
 pub const js = jsc.Codegen.JSListener;
 pub const toJS = js.toJS;
@@ -177,7 +174,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
             this.listener = .{ .namedPipe = named_pipe };
 
             const this_value = this.toJS(globalObject);
-            this.strong_self.setStrong(this_value, globalObject);
+            this.strong_self.set(globalObject, this_value);
             this.poll_ref.ref(handlers.vm);
             return this_value;
         }
@@ -326,7 +323,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     this.socket_context.?.ext(ssl_enabled, *Listener).?.* = this;
 
     const this_value = this.toJS(globalObject);
-    this.strong_self.setStrong(this_value, globalObject);
+    this.strong_self.set(globalObject, this_value);
     this.poll_ref.ref(handlers.vm);
 
     return this_value;
@@ -459,7 +456,7 @@ fn doStop(this: *Listener, force_close: bool) void {
             this.socket_context = null;
             ctx.deinit(this.ssl);
         }
-        this.strong_self.downgrade();
+        this.strong_self.clearWithoutDeallocation();
         this.strong_data.clearWithoutDeallocation();
     } else {
         if (force_close) {
@@ -473,7 +470,6 @@ fn doStop(this: *Listener, force_close: bool) void {
 
 pub fn finalize(this: *Listener) callconv(.c) void {
     log("finalize", .{});
-    this.strong_self.finalize();
     const listener = this.listener;
     this.listener = .none;
     switch (listener) {
@@ -566,14 +562,14 @@ pub fn ref(this: *Listener, globalObject: *jsc.JSGlobalObject, callframe: *jsc.C
     const this_value = callframe.this();
     if (this.listener == .none) return .js_undefined;
     this.poll_ref.ref(globalObject.bunVM());
-    this.strong_self.setStrong(this_value, globalObject);
+    this.strong_self.set(globalObject, this_value);
     return .js_undefined;
 }
 
 pub fn unref(this: *Listener, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     this.poll_ref.unref(globalObject.bunVM());
     if (this.handlers.active_connections == 0) {
-        this.strong_self.downgrade();
+        this.strong_self.clearWithoutDeallocation();
     }
     return .js_undefined;
 }

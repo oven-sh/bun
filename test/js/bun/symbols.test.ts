@@ -7,7 +7,8 @@ const BUN_EXE = bunExe();
 if (process.platform === "linux") {
   const GLIBC_FLOOR = [2, 17, 0] as const;
 
-  // Numeric tuple compare — avoids Bun.semver quirks (e.g. order("2.17","2.17.0")===1).
+  // glibc versions are integer tuples (2.2.5, 2.17), not semver — "2.17" is
+  // invalid semver and semver libraries either throw or give undefined results.
   function glibcVersionAboveFloor(v: string): boolean {
     const parts = v.split(".").map(Number);
     for (let i = 0; i < GLIBC_FLOOR.length; i++) {

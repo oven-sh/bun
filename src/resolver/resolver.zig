@@ -4012,8 +4012,12 @@ pub const Resolver = struct {
         while (cur_dir) |dir| : (cur_dir = dir.getParent()) {
             if (!dir.hasNodeModules()) continue;
 
-            var parts = [_]string{ dir.abs_path, "node_modules", extends };
-            const candidate = r.fs.absBuf(&parts, buf);
+            // extends is user-controlled and can be arbitrarily long, so use
+            // the checked variant to avoid overflowing the path buffer.
+            const candidate = r.fs.absBufChecked(
+                &.{ dir.abs_path, "node_modules", extends },
+                buf,
+            ) orelse continue;
             // candidate is a slice of buf starting at offset 0; we can extend
             // it in place for the implicit-suffix probes below.
             const base_len = candidate.len;

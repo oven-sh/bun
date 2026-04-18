@@ -1411,6 +1411,25 @@ pub const Map = struct {
     pub fn cloneWithAllocator(this: *const Map, new_allocator: std.mem.Allocator) OOM!Map {
         return .{ .map = try this.map.cloneWithAllocator(new_allocator) };
     }
+
+    /// Like `cloneWithAllocator`, but also dupes every key and value string
+    /// into `new_allocator`. The returned map owns all of its bytes and shares
+    /// nothing with `this`. Used by workers so the parent's env map can be
+    /// mutated or freed without invalidating the worker's copy.
+    pub fn cloneWithAllocatorDeep(this: *const Map, new_allocator: std.mem.Allocator) OOM!Map {
+        var new_map = HashTable.init(new_allocator);
+        try new_map.ensureTotalCapacity(this.map.count());
+        for (this.map.keys(), this.map.values()) |key, value| {
+            new_map.putAssumeCapacity(
+                try new_allocator.dupe(u8, key),
+                .{
+                    .value = try new_allocator.dupe(u8, value.value),
+                    .conditional = value.conditional,
+                },
+            );
+        }
+        return .{ .map = new_map };
+    }
 };
 
 pub var instance: ?*Loader = null;

@@ -443,7 +443,12 @@ pub fn start(
         defer parent_storage.lock.unlock();
 
         temp_proxy_storage.cloneFrom(parent_storage);
-        map.* = try this.parent.transpiler.env.map.cloneWithAllocator(allocator);
+        // Deep-clone: copy every key/value string into this worker's arena.
+        // A shallow clone would leave the worker's map entries pointing at
+        // the parent's key/value bytes, which can be freed (nested-worker
+        // parent arena teardown) or relocated (concurrent env.map mutation
+        // on the parent) before this worker finishes configureDefines().
+        map.* = try this.parent.transpiler.env.map.cloneWithAllocatorDeep(allocator);
     }
     // Ensure map entries point at the exact bytes we hold refs on — covers
     // the case where a proxy var was in the initial environ (no ref) and

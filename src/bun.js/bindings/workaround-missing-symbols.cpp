@@ -152,13 +152,16 @@ ssize_t __wrap_getrandom(void* buf, size_t buflen, unsigned int flags)
 } // extern "C"
 
 // glibc 2.18 added __cxa_thread_atexit_impl for C++11 thread_local destructors.
-// libstdc++ weak-references it, but lld still emits a non-weak GLIBC_2.18
-// verneed entry that the loader rejects on 2.17. Providing a strong definition
-// here satisfies the static-link reference and removes the dynamic dependency.
+// The libstdc++ we statically link references it directly (it's built with
+// _GLIBCXX_HAVE___CXA_THREAD_ATEXIT_IMPL), pulling in a GLIBC_2.18 verneed
+// entry that the loader rejects on 2.17. Providing a strong definition here
+// satisfies the link-time reference and removes the dynamic dependency.
 //
-// At runtime we forward to glibc's real implementation when present (≥ 2.18);
-// otherwise we maintain our own per-thread destructor list — the same fallback
-// libstdc++ would have used had its weak reference resolved to null.
+// At runtime we forward to glibc's real implementation when present (≥ 2.18,
+// i.e. effectively always). The fallback below only runs on glibc 2.17 and
+// mirrors what libstdc++ itself does when built without the impl available
+// (libsupc++/atexit_thread.cc): a per-thread singly-linked stack stored under
+// a pthread key, drained on thread exit and again at process exit via atexit.
 namespace {
 struct DtorEntry {
     void (*func)(void*);
@@ -171,7 +174,6 @@ pthread_once_t g_dtor_key_once = PTHREAD_ONCE_INIT;
 
 void run_thread_dtors(void* head)
 {
-    // C++ requires reverse-construction order; the list is already a stack.
     auto* entry = static_cast<DtorEntry*>(head);
     while (entry) {
         entry->func(entry->obj);
@@ -181,9 +183,19 @@ void run_thread_dtors(void* head)
     }
 }
 
+void run_current_thread_dtors()
+{
+    void* head = pthread_getspecific(g_dtor_key);
+    pthread_setspecific(g_dtor_key, nullptr);
+    run_thread_dtors(head);
+}
+
 void make_dtor_key()
 {
     pthread_key_create(&g_dtor_key, run_thread_dtors);
+    // pthread_key destructors don't fire on exit(); register an atexit hook so
+    // the calling thread's thread_local dtors still run at process exit.
+    ::atexit(run_current_thread_dtors);
 }
 } // namespace
 

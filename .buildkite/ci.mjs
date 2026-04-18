@@ -811,7 +811,10 @@ function getWindowsSignStep(windowsPlatforms, options) {
     agents: getEc2Agent(signPlatform, options, {
       instanceType: getAzureVmSize("windows", "x64", "test"),
     }),
-    retry: getRetry(),
+    retry: {
+      manual: { permit_on_passed: true },
+      automatic: false,
+    },
     cancel_on_build_failing: isMergeQueue(),
     command: [
       `powershell -NoProfile -ExecutionPolicy Bypass -File .buildkite/scripts/sign-windows-artifacts.ps1 ` +

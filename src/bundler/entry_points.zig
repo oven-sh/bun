@@ -155,6 +155,14 @@ pub const ServerEntryPoint = struct {
     contents: []const u8 = "",
     generated: bool = false,
 
+    pub fn deinit(entry: *ServerEntryPoint) void {
+        if (entry.contents.len > 0) {
+            bun.default_allocator.free(entry.contents);
+        }
+        entry.contents = "";
+        entry.generated = false;
+    }
+
     pub fn generate(
         entry: *ServerEntryPoint,
         is_hot_reload_enabled: bool,

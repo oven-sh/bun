@@ -2021,6 +2021,7 @@ pub fn deinit(this: *VirtualMachine) void {
     }
     this.proxy_env_storage.deinit();
     this.overridden_main.deinit();
+    this.entry_point.deinit();
     this.has_terminated = true;
 }
 

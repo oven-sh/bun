@@ -1095,6 +1095,13 @@ pub const ShellRmTask = struct {
                     bun.sys.E.ISDIR => {
                         return Handler.onIsDir(vtable, parent_dir_task, path, is_absolute, buf);
                     },
+                    // On Windows, trying to delete a directory-like entry (e.g. a
+                    // junction/mount point) with FILE_NON_DIRECTORY_FILE returns
+                    // STATUS_NOT_A_DIRECTORY which maps to ENOTDIR. Treat it the
+                    // same as EISDIR.
+                    bun.sys.E.NOTDIR => {
+                        return Handler.onIsDir(vtable, parent_dir_task, path, is_absolute, buf);
+                    },
                     // This might happen if the file is actually a directory
                     bun.sys.E.PERM => {
                         switch (builtin.os.tag) {

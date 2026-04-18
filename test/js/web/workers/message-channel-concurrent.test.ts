@@ -16,8 +16,12 @@ test("MessageChannel survives concurrent create/post/transfer/close from many wo
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
 
-  expect(stderr).toBe("");
+  expect(filteredStderr).toBe("");
   expect(stdout).toStartWith("PASS ");
   expect(exitCode).toBe(0);
 }, 60_000);

@@ -9,6 +9,7 @@ import { Worker, isMainThread, parentPort, receiveMessageOnPort } from "worker_t
 const WORKERS = 6;
 const ITERATIONS = 400;
 const CHANNELS_PER_ITERATION = 8;
+const EXPECTED_PER_HAMMER = ITERATIONS * CHANNELS_PER_ITERATION * 2;
 
 function hammer() {
   let received = 0;
@@ -43,12 +44,19 @@ if (isMainThread) {
   watchdog.unref();
 
   let exited = 0;
+  let reported = 0;
   let total = 0;
 
   for (let w = 0; w < WORKERS; w++) {
     const worker = new Worker(import.meta.path);
     worker.on("message", n => {
+      if (n !== EXPECTED_PER_HAMMER) {
+        console.error("FAIL: worker received", n, "messages, expected", EXPECTED_PER_HAMMER);
+        process.exit(1);
+      }
+      reported++;
       total += n;
+      maybeFinish();
     });
     worker.on("error", err => {
       console.error("worker error:", err);
@@ -59,16 +67,26 @@ if (isMainThread) {
         console.error("worker exited with code", code);
         process.exit(1);
       }
-      if (++exited === WORKERS) finish();
+      exited++;
+      maybeFinish();
     });
   }
 
-  total += hammer();
+  const mainTotal = hammer();
+  if (mainTotal !== EXPECTED_PER_HAMMER) {
+    console.error("FAIL: main thread received", mainTotal, "messages, expected", EXPECTED_PER_HAMMER);
+    process.exit(1);
+  }
+  total += mainTotal;
+
+  function maybeFinish() {
+    if (exited === WORKERS && reported === WORKERS) finish();
+  }
 
   function finish() {
     clearTimeout(watchdog);
-    if (total === 0) {
-      console.error("FAIL: no messages received");
+    if (total !== EXPECTED_PER_HAMMER * (WORKERS + 1)) {
+      console.error("FAIL: unexpected total", total);
       process.exit(1);
     }
     console.log("PASS", total);

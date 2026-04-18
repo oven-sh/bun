@@ -124,14 +124,17 @@ test("does not spin at 100% CPU while paused at a breakpoint", async () => {
 
     // Enable the debugger and opt into pausing on `debugger;` statements,
     // then signal initialization so --inspect-wait releases and the script
-    // begins executing.
-    send("Inspector.enable");
-    send("Debugger.enable");
-    send("Debugger.setBreakpointsActive", { active: true });
-    send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
+    // begins executing. These sends are fire-and-forget; if the socket drops,
+    // the awaited `pausedPromise` below surfaces the failure, so swallow the
+    // per-request rejections to avoid unhandled-rejection noise.
+    const ignore = () => {};
+    send("Inspector.enable").catch(ignore);
+    send("Debugger.enable").catch(ignore);
+    send("Debugger.setBreakpointsActive", { active: true }).catch(ignore);
+    send("Debugger.setPauseOnDebuggerStatements", { enabled: true }).catch(ignore);
 
     const pausedPromise = waitForEvent("Debugger.paused");
-    send("Inspector.initialized");
+    send("Inspector.initialized").catch(ignore);
 
     const paused = await pausedPromise;
     expect(paused.reason).toBe("DebuggerStatement");

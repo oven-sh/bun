@@ -400,7 +400,8 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         pub fn shallowClone(this: *const @This(), allocator: Allocator) @This() {
             if (!this.spilled()) return this.*;
             var h = HeapData.initCapacity(allocator, this.capacity);
-            @memcpy(h.ptr[0..this.capacity], this.data.heap.ptr[0..this.capacity]);
+            h.len = this.data.heap.len;
+            @memcpy(h.ptr[0..h.len], this.data.heap.ptr[0..h.len]);
             return .{
                 .capacity = this.capacity,
                 .data = .{ .heap = h },

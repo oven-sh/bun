@@ -32,6 +32,9 @@ test("CSS bundler doesn't over-allocate SmallList when growing past the first he
     "wide.css": css,
   });
 
+  const firstSel = ".r0-s0";
+  const lastSel = `.r${numRules - 1}-s${selectorsPerRule - 1}`;
+
   const fixture = /* js */ `
     const baseline = process.memoryUsage.rss();
     const result = await Bun.build({
@@ -46,7 +49,8 @@ test("CSS bundler doesn't over-allocate SmallList when growing past the first he
     const after = process.memoryUsage.rss();
     console.log(JSON.stringify({
       deltaMB: (after - baseline) / 1024 / 1024,
-      outputLen: out.length,
+      hasFirst: out.includes(${JSON.stringify(firstSel)}),
+      hasLast: out.includes(${JSON.stringify(lastSel)}),
     }));
   `;
 
@@ -60,19 +64,16 @@ test("CSS bundler doesn't over-allocate SmallList when growing past the first he
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  if (exitCode !== 0) {
-    // Surface the subprocess error before the assertions below fire.
-    console.error(stderr);
-  }
-  const { deltaMB, outputLen } = JSON.parse(stdout.trim());
+  // Surface subprocess failure before we try to parse anything.
+  expect({ exitCode, stderr, stdout }).toMatchObject({ exitCode: 0 });
 
-  // Every selector should survive the round-trip.
-  expect(outputLen).toBeGreaterThan(css.length);
+  const { deltaMB, hasFirst, hasLast } = JSON.parse(stdout.trim());
+
+  // Selectors from both ends of the last rule's list survive the grow path.
+  expect({ hasFirst, hasLast }).toEqual({ hasFirst: true, hasLast: true });
 
   // Before the fix the RSS delta here was ~570 MB (release) / ~700 MB
   // (debug ASAN). After the fix it's ~115 MB in debug ASAN and well under
   // that in release. 300 MB gives generous headroom on both sides.
   expect(deltaMB).toBeLessThan(300);
-
-  expect(exitCode).toBe(0);
 }, 120_000);

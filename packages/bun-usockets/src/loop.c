@@ -111,6 +111,12 @@ void us_internal_loop_link(struct us_loop_t *loop, struct us_socket_context_t *c
 
 /* Unlink is called before free */
 void us_internal_loop_unlink(struct us_loop_t *loop, struct us_socket_context_t *context) {
+    /* If a timeout callback in us_internal_timer_sweep frees the current context,
+     * advance the sweep iterator before context->next is repointed into the closed
+     * list — otherwise the sweep walks into freed contexts and skips active ones. */
+    if (context == loop->data.iterator) {
+        loop->data.iterator = context->next;
+    }
     if (loop->data.head == context) {
         loop->data.head = context->next;
         if (loop->data.head) {
@@ -128,7 +134,8 @@ void us_internal_loop_unlink(struct us_loop_t *loop, struct us_socket_context_t 
 void us_internal_timer_sweep(struct us_loop_t *loop) {
     struct us_internal_loop_data_t *loop_data = &loop->data;
     /* For all socket contexts in this loop */
-    for (loop_data->iterator = loop_data->head; loop_data->iterator; loop_data->iterator = loop_data->iterator->next) {
+    loop_data->iterator = loop_data->head;
+    while (loop_data->iterator) {
 
         struct us_socket_context_t *context = loop_data->iterator;
 
@@ -177,6 +184,11 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
         /* We always store a 0 to context->iterator here since we are no longer iterating this context */
         next_context:
         context->iterator = 0;
+        /* Advance, accounting for us_internal_loop_unlink having moved the iterator
+         * if a timeout callback freed this context. */
+        if (loop_data->iterator == context) {
+            loop_data->iterator = context->next;
+        }
     }
 }
 

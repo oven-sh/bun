@@ -241,6 +241,30 @@ describe("tls.createServer listen", () => {
     server.listen(0, "0.0.0.0", closeAndFail);
   });
 
+  it("should reject passphrase longer than PEM_BUFSIZE without crashing", done => {
+    // BoringSSL invokes the passphrase callback with a 1024-byte stack buffer.
+    // A longer passphrase must fail key decryption rather than overflow that buffer.
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer({
+      key: passKey,
+      passphrase: Buffer.alloc(2000, "A").toString(),
+      cert: cert,
+    });
+
+    server.on("error", mustCall());
+    let timeout: Timer;
+    function closeAndFail() {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    }
+
+    timeout = setTimeout(closeAndFail, 100);
+
+    server.listen(0, "0.0.0.0", closeAndFail);
+  });
+
   it("should not listen without cert", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 

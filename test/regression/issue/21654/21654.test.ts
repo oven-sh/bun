@@ -6,7 +6,7 @@
 // process paused for a couple of seconds, then resumes and asserts that the
 // child process consumed very little CPU time while paused.
 
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("does not spin at 100% CPU while paused at a breakpoint", async () => {
@@ -136,7 +136,9 @@ test("does not spin at 100% CPU while paused at a breakpoint", async () => {
       .map(l => l.trim())
       .find(l => l.startsWith("{"));
     if (!line) {
-      throw new Error(`No JSON output from child; stdout=${JSON.stringify(stdout)} stderr=${JSON.stringify(stderrBuf)}`);
+      throw new Error(
+        `No JSON output from child; stdout=${JSON.stringify(stdout)} stderr=${JSON.stringify(stderrBuf)}`,
+      );
     }
 
     const { cpuMs, elapsedMs } = JSON.parse(line) as { cpuMs: number; elapsedMs: number };

@@ -36,15 +36,19 @@ inline fn runWithoutRemoving(this: *const WTFTimer) void {
 pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
     // There's only one of these per VM, and each VM has its own imminent_gc_timer
     // Only set imminent if it's not already set to avoid overwriting another timer
-    if (seconds == 0) {
+    if (!(seconds > 0)) {
         _ = this.imminent.cmpxchgStrong(null, this, .seq_cst, .seq_cst);
         return;
-    } else {
-        // Clear imminent if this timer was the one that set it
-        _ = this.imminent.cmpxchgStrong(this, null, .seq_cst, .seq_cst);
     }
+    // Clear imminent if this timer was the one that set it
+    _ = this.imminent.cmpxchgStrong(this, null, .seq_cst, .seq_cst);
 
-    const modf = std.math.modf(seconds);
+    // seconds can be +inf: JSC's GC scheduler divides by gcTimeSlice, which is 0 whenever
+    // bytes*deathRate truncates to 0. Other WTF::RunLoop backends saturate Seconds→int;
+    // do the same so @intFromFloat below can't panic.
+    const clamped = @min(seconds, @as(f64, std.math.maxInt(i32)));
+
+    const modf = std.math.modf(clamped);
     var interval = bun.timespec.now(.force_real_time);
     interval.sec += @intFromFloat(modf.ipart);
     interval.nsec += @intFromFloat(modf.fpart * std.time.ns_per_s);

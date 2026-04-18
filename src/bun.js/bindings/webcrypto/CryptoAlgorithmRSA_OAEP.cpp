@@ -151,6 +151,11 @@ void CryptoAlgorithmRSA_OAEP::importKey(CryptoKeyFormat format, KeyData&& data, 
         case CryptoAlgorithmIdentifier::SHA_512:
             isMatched = key.alg.isNull() || key.alg == ALG512;
             break;
+        case CryptoAlgorithmIdentifier::SHA3_256:
+        case CryptoAlgorithmIdentifier::SHA3_384:
+        case CryptoAlgorithmIdentifier::SHA3_512:
+            isMatched = key.alg.isNull();
+            break;
         default:
             break;
         }
@@ -221,6 +226,10 @@ void CryptoAlgorithmRSA_OAEP::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&&
             break;
         case CryptoAlgorithmIdentifier::SHA_512:
             jwk.alg = String(ALG512);
+            break;
+        case CryptoAlgorithmIdentifier::SHA3_256:
+        case CryptoAlgorithmIdentifier::SHA3_384:
+        case CryptoAlgorithmIdentifier::SHA3_512:
             break;
         default:
             ASSERT_NOT_REACHED();

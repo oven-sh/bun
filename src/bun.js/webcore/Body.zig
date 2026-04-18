@@ -470,9 +470,10 @@ pub const Value = union(Tag) {
                 blob.resolveSize();
                 const value = try jsc.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &blob, blob.size);
 
+                const stream = (try jsc.WebCore.ReadableStream.fromJS(value, globalThis)).?;
                 this.* = .{
                     .Locked = .{
-                        .readable = jsc.WebCore.ReadableStream.Strong.init((try jsc.WebCore.ReadableStream.fromJS(value, globalThis)).?, globalThis),
+                        .readable = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis),
                         .global = globalThis,
                     },
                 };

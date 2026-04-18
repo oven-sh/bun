@@ -340,17 +340,14 @@ pub const ReadFile = struct {
         }
 
         this.could_block = !bun.isRegularFile(stat.mode);
-        this.total_size = @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))));
+        this.total_size = @intCast(@min(@max(stat.size, 0), Blob.max_size));
 
         if (stat.size > 0 and !this.could_block) {
             this.size = @min(this.total_size, this.max_length);
             // read up to 4k at a time if
             // they didn't explicitly set a size and we're reading from something that's not a regular file
         } else if (stat.size == 0 and this.could_block) {
-            this.size = if (this.max_length == Blob.max_size)
-                4096
-            else
-                this.max_length;
+            this.size = @min(this.max_length, 4096);
         }
 
         if (this.offset > 0) {
@@ -384,8 +381,9 @@ pub const ReadFile = struct {
 
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
         if (!this.could_block or (this.size > 0 and this.size != Blob.max_size))
-            this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, this.size + 16) catch |err| {
+            this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, this.size +| 16) catch |err| {
                 this.errno = err;
+                this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
                 this.onFinish();
                 return;
             };
@@ -659,7 +657,7 @@ pub const ReadFileUV = struct {
             this.onFinish();
             return;
         }
-        this.total_size = @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))));
+        this.total_size = @intCast(@min(@max(stat.size, 0), Blob.max_size));
         this.is_regular_file = bun.isRegularFile(stat.mode);
 
         log("is_regular_file: {}", .{this.is_regular_file});
@@ -669,10 +667,7 @@ pub const ReadFileUV = struct {
         } else if (stat.size == 0 and !this.is_regular_file) {
             // read up to 4k at a time if they didn't explicitly set a size and
             // we're reading from something that's not a regular file.
-            this.size = if (this.max_length == Blob.max_size)
-                4096
-            else
-                this.max_length;
+            this.size = @min(this.max_length, 4096);
         }
 
         if (this.offset > 0) {
@@ -698,7 +693,7 @@ pub const ReadFileUV = struct {
             return;
         }
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
-        this.buffer.ensureTotalCapacityPrecise(this.byte_store.allocator, @min(this.size + 16, @as(usize, std.math.maxInt(bun.windows.ULONG)))) catch {
+        this.buffer.ensureTotalCapacityPrecise(this.byte_store.allocator, @min(this.size +| 16, @as(usize, std.math.maxInt(bun.windows.ULONG)))) catch {
             this.errno = error.OutOfMemory;
             this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
             this.onFinish();

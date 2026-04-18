@@ -273,10 +273,6 @@ pub const CryptoHasher = union(enum) {
         return CryptoHasher.new(brk: {
             if (hmac_key) |*key| {
                 const chosen_algorithm = try algorithm_name.toEnumFromMap(globalThis, "algorithm", EVP.Algorithm, EVP.Algorithm.map);
-                if (chosen_algorithm == .ripemd160) {
-                    // crashes at runtime.
-                    return globalThis.throw("ripemd160 is not supported", .{});
-                }
 
                 break :brk .{
                     .hmac = HMAC.init(chosen_algorithm, key.slice()) orelse {

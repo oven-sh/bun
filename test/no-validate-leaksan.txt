@@ -217,6 +217,10 @@ test/js/node/test/parallel/test-http-double-content-length.js
 test/js/node/test/parallel/test-http-blank-header.js
 test/js/node/test/parallel/test-http-server-keepalive-req-gc.js
 
+# Timeouts
+test/js/node/test/parallel/test-cluster-primary-kill.js
+test/cli/test/parallel.test.ts
+
 # bun.assert(!this.hasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
 # @call(bun.callmod_inline, Subprocess.finalize, .{thisValue});
 test/js/node/test/parallel/test-set-http-max-http-headers.js

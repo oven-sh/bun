@@ -8,7 +8,7 @@
 // child Bun process using the syscall ptr from dlopen.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, libcPathForDlopen, tempDir } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -110,7 +110,7 @@ test.skipIf(!isLinux)("unix connect to regular file (no listener) reports ECONNR
 // handleConnectError, which the new errno mapping would have surfaced as
 // EPERM. Connecting to a port with no listener on loopback must yield
 // ECONNREFUSED on POSIX.
-test.skipIf(!isLinux)("tcp connect to closed port reports ECONNREFUSED, not EPERM", async () => {
+test.skipIf(!isPosix)("tcp connect to closed port reports ECONNREFUSED, not EPERM", async () => {
   // Find a port with no listener by briefly binding and then closing.
   const probe = net.createServer();
   const port = await new Promise<number>((resolve, reject) => {

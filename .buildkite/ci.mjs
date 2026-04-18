@@ -286,7 +286,7 @@ function getPriority() {
  */
 function getEc2Agent(platform, options, ec2Options) {
   const { os, arch, abi, distro, release } = platform;
-  const { instanceType, cpuCount, threadsPerCore } = ec2Options;
+  const { instanceType, cpuCount, threadsPerCore, preemptible = false } = ec2Options;
   return {
     os,
     arch,
@@ -299,7 +299,7 @@ function getEc2Agent(platform, options, ec2Options) {
     "instance-type": instanceType,
     "cpu-count": cpuCount,
     "threads-per-core": threadsPerCore,
-    "preemptible": true,
+    "preemptible": preemptible,
   };
 }
 
@@ -407,6 +407,7 @@ function getTestAgent(platform, options) {
       instanceType: getAzureVmSize(os, arch, "test"),
       cpuCount: 2,
       threadsPerCore: 1,
+      preemptible: true,
     });
   }
 
@@ -416,12 +417,14 @@ function getTestAgent(platform, options) {
         instanceType: "c8g.2xlarge",
         cpuCount: 2,
         threadsPerCore: 1,
+        preemptible: true,
       });
     }
     return getEc2Agent(platform, options, {
       instanceType: "c8g.xlarge",
       cpuCount: 2,
       threadsPerCore: 1,
+      preemptible: true,
     });
   }
 
@@ -430,12 +433,14 @@ function getTestAgent(platform, options) {
       instanceType: "c7i.2xlarge",
       cpuCount: 2,
       threadsPerCore: 1,
+      preemptible: true,
     });
   }
   return getEc2Agent(platform, options, {
     instanceType: "c7i.xlarge",
     cpuCount: 2,
     threadsPerCore: 1,
+    preemptible: true,
   });
 }
 

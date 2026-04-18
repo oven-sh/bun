@@ -14,6 +14,7 @@
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
+#include <JavaScriptCore/CyclicModuleRecord.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSModuleRecord.h>
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -630,7 +631,15 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     if (auto* entry = globalObject->moduleLoader()->registryEntry(specifierIdent)) {
         removeFromESM = true;
         if (auto* mod = entry->record()) {
-            {
+            // getModuleNamespace asserts the record has progressed past linking.
+            // A previous import that failed during link (e.g. unresolved binding)
+            // leaves the record at New/Unlinked; in that case there is no
+            // namespace to patch — drop the stale entry so the mock takes over
+            // on the next import.
+            bool linked = true;
+            if (auto* cyclic = jsDynamicCast<JSC::CyclicModuleRecord*>(mod))
+                linked = cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked;
+            if (linked) {
                 {
                     JSC::JSModuleNamespaceObject* moduleNamespaceObject = mod->getModuleNamespace(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});

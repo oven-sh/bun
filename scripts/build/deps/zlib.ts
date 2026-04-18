@@ -58,9 +58,11 @@ export const zlib: Dependency = {
   }),
 
   provides: cfg => {
+    // zlib-ng OUTPUT_NAME on unix → "z"; on MSVC → "zlibstatic" with
+    // CMAKE_DEBUG_POSTFIX "d" (set inside if(MSVC), which clang-cl satisfies).
     let lib: string;
     if (cfg.windows) {
-      lib = "zlibstatic";
+      lib = cfg.debug ? "zlibstaticd" : "zlibstatic";
     } else {
       lib = "z";
     }

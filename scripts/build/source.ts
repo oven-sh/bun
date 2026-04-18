@@ -579,8 +579,8 @@ export function depSourceDir(cfg: Config, name: string): string {
 }
 
 /**
- * Path to a dep's fetch stamp. Used by fetchDeps to add cross-dep
- * ordering (e.g. libarchive's build waits for zlib's .ref).
+ * Path to a dep's fetch stamp. Used by zig-only mode to depend on zstd's
+ * source being on disk without resolving the full dep graph.
  */
 export function depSourceStamp(cfg: Config, name: string): string {
   return resolve(depSourceDir(cfg, name), ".ref");

@@ -425,9 +425,14 @@ pub const RunCommand = struct {
     }
 
     fn runBinaryGenericError(executable: []const u8, silent: bool, err: bun.sys.Error) noreturn {
-        if (!silent) {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to:\n{f}", .{ basenameOrBun(executable), err.withPath(executable) });
-        }
+        // `silent` (set by bunx) suppresses the extra "exited with code N"
+        // chatter when the child process runs and fails on its own - the
+        // child's own stderr already tells the story. But this function is
+        // only reached when the process failed to spawn at all (execve
+        // ENOEXEC, waitpid error, etc.), so there is no child output. Always
+        // surface the error instead of exiting 1 with nothing printed.
+        _ = silent;
+        Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to:\n{f}", .{ basenameOrBun(executable), err.withPath(executable) });
 
         Global.exit(1);
     }

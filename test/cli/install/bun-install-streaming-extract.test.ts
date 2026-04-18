@@ -368,14 +368,7 @@ test("buffered extract: damaged-block retry resets header state (upstream semant
   const pkgJsonEntry = [tarHeader("package/package.json", pkgJson.length, "0"), pkgJson, pad512(pkgJson.length)];
 
   // [g][damaged][g][package.json][index.js][EOF EOF]
-  const tar = Buffer.concat([
-    ...paxEntry(),
-    damaged,
-    ...paxEntry(),
-    ...pkgJsonEntry,
-    ...file,
-    Buffer.alloc(1024, 0),
-  ]);
+  const tar = Buffer.concat([...paxEntry(), damaged, ...paxEntry(), ...pkgJsonEntry, ...file, Buffer.alloc(1024, 0)]);
   const tgz = gzipSync(tar);
 
   using dir = tempDir("damaged-block-retry", {

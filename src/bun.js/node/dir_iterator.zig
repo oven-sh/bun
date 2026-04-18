@@ -306,9 +306,10 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         bun.sys.syslog("NtQueryDirectoryFile({f}) = {d}", .{ self.dir, self.end_index });
                     }
 
-                    const dir_info: FILE_DIRECTORY_INFORMATION_PTR = @ptrCast(@alignCast(&self.buf[self.index]));
+                    const entry_offset = self.index;
+                    const dir_info: FILE_DIRECTORY_INFORMATION_PTR = @ptrCast(@alignCast(&self.buf[entry_offset]));
                     if (dir_info.NextEntryOffset != 0) {
-                        self.index += dir_info.NextEntryOffset;
+                        self.index = entry_offset + dir_info.NextEntryOffset;
                     } else {
                         self.index = self.buf.len;
                     }
@@ -316,13 +317,16 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                     // Some filesystem / filter drivers have been observed returning
                     // FILE_DIRECTORY_INFORMATION entries with an out-of-range
                     // FileNameLength (well beyond the 255-WCHAR NTFS component
-                    // limit). Clamp to what fits in name_data so a misbehaving
-                    // driver cannot walk us past the end of the destination buffer.
+                    // limit). Clamp to what fits in name_data (destination) and to
+                    // what remains in buf (source) so a misbehaving driver cannot
+                    // walk us past the end of either buffer.
                     const max_name_u16: usize = if (use_windows_ospath)
                         self.name_data.len - 1
                     else
                         (self.name_data.len - 1) / 2;
-                    const name_len_u16: usize = @min(dir_info.FileNameLength / 2, max_name_u16);
+                    const name_byte_offset = entry_offset + @offsetOf(FILE_DIRECTORY_INFORMATION, "FileName");
+                    const buf_remaining_u16: usize = (self.buf.len -| name_byte_offset) / @sizeOf(u16);
+                    const name_len_u16: usize = @min(dir_info.FileNameLength / 2, max_name_u16, buf_remaining_u16);
                     const dir_info_name = @as([*]const u16, @ptrCast(&dir_info.FileName))[0..name_len_u16];
 
                     if (mem.eql(u16, dir_info_name, &[_]u16{'.'}) or mem.eql(u16, dir_info_name, &[_]u16{ '.', '.' }))

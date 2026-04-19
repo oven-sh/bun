@@ -90,9 +90,24 @@ case "${BUN_VERSION}" in
     # Download bun-darwin-{aarch64,x64}.zip from a published GitHub release
     # and build the .pkg from those — used by .github/workflows/release.yml
     # so the installer is assembled from the exact bits users download.
+    #
+    # Accepts any of the forms the rest of the release pipeline passes
+    # around (see formatTag() in packages/bun-release/src/github.ts):
+    #   bun-v1.2.3 | 1.2.3 | v1.2.3 | canary
     MODE="release"
-    RELEASE_TAG="${2:?--from-release requires <tag> (e.g. bun-v1.2.3 or canary)}"
-    BUN_VERSION="${RELEASE_TAG#bun-v}"
+    RELEASE_TAG="${2:?--from-release requires <tag> (e.g. bun-v1.2.3, 1.2.3, or canary)}"
+    case "$RELEASE_TAG" in
+      canary|bun-v*) ;;
+      v[0-9]*)       RELEASE_TAG="bun-${RELEASE_TAG}" ;;
+      [0-9]*)        RELEASE_TAG="bun-v${RELEASE_TAG}" ;;
+    esac
+    # pkgbuild/productbuild require a numeric CFBundleVersion; for canary
+    # fall through to LATEST below rather than passing the literal "canary".
+    if [[ "$RELEASE_TAG" != "canary" ]]; then
+      BUN_VERSION="${RELEASE_TAG#bun-v}"
+    else
+      BUN_VERSION=""
+    fi
     ;;
 esac
 

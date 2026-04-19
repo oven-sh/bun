@@ -89,9 +89,16 @@ jobs:
     # Runs before `sign` so the .pkg is included in SHASUMS256.txt.
     name: Build macOS .pkg installer
     runs-on: macos-latest
+    # notarytool --wait blocks on Apple's service; bound it so an outage
+    # can't hold a macOS runner (and the downstream sign job) for 6 h.
+    timeout-minutes: 30
     if: ${{ github.repository_owner == 'oven-sh' && github.event_name != 'schedule' }}
     permissions:
       contents: write
+    env:
+      # Hoisted to job level so the step `if:` below can see it — step-level
+      # env is applied *after* that step's own `if:` is evaluated.
+      APPLE_CERTIFICATES_P12: ${{ secrets.APPLE_CERTIFICATES_P12 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -104,10 +111,9 @@ jobs:
         # Needs both 'Developer ID Application' (binary) and 'Developer ID
         # Installer' (pkg) certificates in a keychain the runner can access,
         # plus a notarytool keychain profile. If the secrets are absent the
-        # step still runs and build.sh produces an unsigned .pkg.
+        # step is skipped and build.sh produces an unsigned .pkg.
         if: ${{ env.APPLE_CERTIFICATES_P12 != '' }}
         env:
-          APPLE_CERTIFICATES_P12: ${{ secrets.APPLE_CERTIFICATES_P12 }}
           APPLE_CERTIFICATES_PASSWORD: ${{ secrets.APPLE_CERTIFICATES_PASSWORD }}
           APPLE_NOTARY_ID: ${{ secrets.APPLE_NOTARY_ID }}
           APPLE_NOTARY_TEAM: ${{ secrets.APPLE_NOTARY_TEAM }}

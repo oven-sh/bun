@@ -144,7 +144,13 @@ describe("packages/bun-msi/bun.wxs", () => {
       BinaryRef: attr(ca, "BinaryRef"),
       DllEntry: attr(ca, "DllEntry"),
       Execute: attr(ca, "Execute"),
-    }).toEqual({ BinaryRef: "DetectCpuDll", DllEntry: "DetectCpu", Execute: "immediate" });
+      // Return="check" is load-bearing: with "ignore" a DLL-load failure
+      // would be swallowed, BUNVARIANT would stay empty, and the Launch
+      // gate below would abort every clean install with a misleading
+      // "BUNVARIANT must be one of…" message instead of surfacing the
+      // actual detection failure.
+      Return: attr(ca, "Return"),
+    }).toEqual({ BinaryRef: "DetectCpuDll", DllEntry: "DetectCpu", Execute: "immediate", Return: "check" });
 
     // Sequenced in both UI and Execute, after AppSearch (so a remembered
     // registry value wins) and guarded on NOT BUNVARIANT so an explicit

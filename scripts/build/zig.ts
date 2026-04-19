@@ -360,11 +360,20 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
 
   // ─── Build ───
   const cacheDirs = zigCacheDirs(cfg);
-  const output = resolve(cfg.buildDir, "bun-zig.o");
+  // With the parallel compiler at >1 codegen threads, build.zig sets
+  // `llvm_no_merge_shards` and installs `bun-zig.{i}.o` per shard instead
+  // of one merged `bun-zig.o` (zig's single-threaded ELF -r merge of the
+  // shards dominated wall time). Declare every shard so ninja tracks them
+  // and the link step gets all of them; lld merges in parallel.
+  const cgThreads = usingParallelCompiler(cfg) ? availableParallelism() : 0;
+  const outputs =
+    cgThreads > 1
+      ? Array.from({ length: cgThreads }, (_, i) => resolve(cfg.buildDir, `bun-zig.${i}.o`))
+      : [resolve(cfg.buildDir, "bun-zig.o")];
   const args = zigBuildArgs(cfg);
 
   n.build({
-    outputs: [output],
+    outputs,
     rule: "zig_build",
     inputs: [],
     implicitInputs: zigBuildImplicitInputs(cfg, inputs),
@@ -377,10 +386,10 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
       zig_global_cache: cacheDirs.global,
     },
   });
-  n.phony("bun-zig", [output]);
+  n.phony("bun-zig", outputs);
   n.blank();
 
-  return [output];
+  return outputs;
 }
 
 // ───────────────────────────────────────────────────────────────────────────

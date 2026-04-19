@@ -754,6 +754,13 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
 
     if (@hasField(std.meta.Child(@TypeOf(obj)), "llvm_codegen_threads"))
         obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;
+    // Skip zig's relocatable -r merge of the codegen shards: it's
+    // single-threaded and dominated wall time at high shard counts
+    // (~9min for 64 × ~8MB shards). With this set, shards are emitted
+    // directly as `{out}.{i}.o`; addInstallObjectFile installs them
+    // all and the bun link step (lld, parallel) consumes them.
+    if (@hasField(std.meta.Child(@TypeOf(obj)), "llvm_no_merge_shards"))
+        obj.llvm_no_merge_shards = (opts.llvm_codegen_threads orelse 0) > 1;
 
     obj.no_link_obj = opts.os != .windows and !opts.no_llvm;
 
@@ -820,6 +827,29 @@ pub fn addInstallObjectFile(
 ) *Step {
     // bin always needed to be computed or else the compilation will do nothing. zig build system bug?
     const bin = compile.getEmittedBin();
+    if (out_mode == .obj and
+        @hasField(Compile, "llvm_no_merge_shards") and
+        compile.llvm_no_merge_shards and
+        compile.llvm_codegen_threads > 1)
+    {
+        // Install every shard as `{name}.{i}.o`; scripts/build/zig.ts
+        // declares the matching outputs and the bun link step (lld)
+        // consumes them all. The merged `{name}.o` does not exist in
+        // this configuration. Shard `i` is at `{out_filename - ".o"}.{i}.o`
+        // in the emitted-bin directory (see Compilation.zig:3475).
+        const dir = compile.getEmittedBinDirectory();
+        const stem = if (std.mem.endsWith(u8, compile.out_filename, ".o"))
+            compile.out_filename[0 .. compile.out_filename.len - 2]
+        else
+            compile.out_filename;
+        const umbrella = b.step("install-shards", "install codegen shard objects");
+        var i: u32 = 0;
+        while (i < compile.llvm_codegen_threads) : (i += 1) {
+            const shard = dir.path(b, b.fmt("{s}.{d}.o", .{ stem, i }));
+            umbrella.dependOn(&b.addInstallFile(shard, b.fmt("{s}.{d}.o", .{ name, i })).step);
+        }
+        return umbrella;
+    }
     return &b.addInstallFile(switch (out_mode) {
         .obj => bin,
         .bc => compile.getEmittedLlvmBc(),

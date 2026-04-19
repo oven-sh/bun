@@ -6,7 +6,7 @@ WiX v5 source and build script for Bun's Windows MSI installer.
 
 - Per-machine install to `%ProgramFiles%\Bun\bin\bun.exe` (+ `bunx.exe`).
 - Appends `%ProgramFiles%\Bun\bin` to the **system** `PATH`.
-- Sets the **system** env var `BUN_INSTALL` to `%ProgramFiles%\Bun` (no trailing backslash), matching the layout `install.ps1` produces under `~\.bun` so `bun upgrade` / `bun completions` behave the same either way.
+- Sets the **system** env var `BUN_INSTALL` to the install root (e.g. `C:\Program Files\Bun\` — the trailing `\` is Windows Installer's directory-property convention; every consumer in the tree path-joins, and avoiding it would require a script CA that enterprise Windows images increasingly disable). Same layout `install.ps1` produces under `~\.bun`, so `bun upgrade` / `bun completions` behave the same either way.
 - Registers an Add/Remove Programs entry with the Bun icon, website, docs, and release-notes links.
 - Blocks install on anything older than Windows 10 1809 / Server 2019 (build 17763) — same floor as `src/cli/install.ps1`.
 - Major-upgrade aware: running a newer MSI replaces an older one in place; running the same version repairs.
@@ -14,7 +14,7 @@ WiX v5 source and build script for Bun's Windows MSI installer.
 
 ## Silent / enterprise deployment
 
-```
+```batch
 msiexec /i bun-windows-x64.msi /qn
 msiexec /i bun-windows-x64.msi /qn INSTALLFOLDER=D:\Tools\Bun ADDTOPATH=0
 msiexec /x bun-windows-x64.msi /qn

@@ -105,7 +105,7 @@ describe("packages/bun-msi/bun.wxs", () => {
     });
   });
 
-  test("sets BUN_INSTALL to the install root without a trailing backslash", () => {
+  test("sets BUN_INSTALL from INSTALLFOLDER without a script CA", () => {
     const env = findBy(wxs, "Environment", "Name", "BUN_INSTALL");
     expect({
       Action: attr(env, "Action"),
@@ -118,17 +118,21 @@ describe("packages/bun-msi/bun.wxs", () => {
       Part: "all",
       System: "yes",
       Permanent: "no",
-      Value: "[BUNINSTALLVALUE]",
+      Value: "[INSTALLFOLDER]",
     });
 
-    const setProp = findBy(wxs, "SetProperty", "Id", "BUNINSTALLVALUE");
-    expect(attr(setProp, "Value")).toBe("[INSTALLFOLDER]");
-
-    const ca = wxs.match(/<CustomAction\b[^>]*Id="StripTrailingSlash"[^>]*>([\s\S]*?)<\/CustomAction>/);
-    expect(ca?.[1]).toContain('Right(p, 1) = "\\"');
-
-    const seq = elements(wxs, "Custom").find(e => attr(e, "Action") === "StripTrailingSlash");
-    expect(attr(seq, "Before")).toBe("WriteEnvironmentStrings");
+    // No script custom actions at all: VBScript/JScript are optional
+    // components on Win11 24H2+ and are routinely GPO-blocked on the
+    // enterprise fleets MSI deployment targets. A script CA here would
+    // turn a cosmetic trailing '\' into a hard 1603/1721 install failure.
+    // (Strip comments first — the .wxs explains this rationale in prose.)
+    const body = wxs.replace(/<!--[\s\S]*?-->/g, "");
+    for (const ca of elements(body, "CustomAction")) {
+      expect(attr(ca, "Script")).toBeUndefined();
+      expect(attr(ca, "VBScriptCall")).toBeUndefined();
+      expect(attr(ca, "JScriptCall")).toBeUndefined();
+    }
+    expect(body).not.toMatch(/\bScript\s*=\s*"(vbscript|jscript)"/i);
   });
 
   test("gates on Windows 10 1809 / build 17763 like install.ps1", () => {
@@ -219,6 +223,17 @@ describe("packages/bun-msi/bun.wxs", () => {
 
 describe("packages/bun-msi/build-msi.ps1", () => {
   const ps1 = readFileSync(join(msiDir, "build-msi.ps1"), "utf8");
+
+  test("escapes non-ASCII license text as RTF \\uN keywords", () => {
+    // LICENSE.md contains smart quotes (U+2019). The naive approach of
+    // dumping it as ASCII would mojibake them in the RichEdit control;
+    // the script must emit \uN? so the stream stays 7-bit.
+    expect(ps1).toMatch(/\\u.*\$cp/);
+    expect(ps1).toContain("if ($cp -gt 32767) { $cp -= 65536 }");
+    expect(ps1).toContain("\\ansicpg1252");
+    // And must not be writing the raw body with an ASCII-lossy Set-Content.
+    expect(ps1).not.toMatch(/Set-Content[^\n]*-Encoding\s+ASCII/);
+  });
 
   test("declares the documented parameters", () => {
     expect(ps1).toMatch(/\[ValidateSet\("x64",\s*"arm64"\)\]\s*\r?\n\s*\[string\]\$Arch/);

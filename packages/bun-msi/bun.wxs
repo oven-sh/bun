@@ -77,8 +77,8 @@
     <Property Id="ARPURLINFOABOUT" Value="https://bun.com" />
     <Property Id="ARPHELPLINK" Value="https://bun.com/docs" />
     <Property Id="ARPURLUPDATEINFO" Value="https://github.com/oven-sh/bun/releases" />
-    <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
-    <Property Id="ARPNOMODIFY" Value="yes" Secure="yes" />
+    <Property Id="ARPNOREPAIR" Value="yes" />
+    <Property Id="ARPNOMODIFY" Value="yes" />
 
     <!--
       Public properties for unattended installs. Secure="yes" lets them
@@ -195,8 +195,19 @@
     <!--
       BUN_INSTALL mirrors what install.ps1 users get so Bun.env.BUN_INSTALL
       and `bun completions` resolve the same root regardless of how Bun was
-      installed. Uses a tiny CA below to strip the trailing backslash
-      Windows Installer appends to directory properties.
+      installed.
+
+      Windows Installer always appends a trailing '\' to directory
+      properties, so this writes e.g. "C:\Program Files\Bun\". We
+      deliberately leave it: every consumer in the tree joins paths
+      properly (Path.joinAbsStringBuf in PackageManagerOptions.zig /
+      PackageManagerDirectories.zig, "${BunRoot}\bin" in install.ps1) and
+      Windows collapses the resulting "\\". Stripping it would need a
+      script CA, and the script hosts Windows Installer exposes (VBScript
+      / JScript) are now optional components on Win11 24H2+ and routinely
+      disabled by GPO in exactly the enterprise environments MSI deploy
+      targets — trading a cosmetic '\' for a 1603/1721 on locked-down
+      fleets is not a good deal.
     -->
     <Component Id="BunInstallEnvVar" Directory="INSTALLFOLDER" Bitness="always64"
         Guid="29d1c4e0-05a6-4b5b-9e28-58d4d0a7a98b">
@@ -206,28 +217,10 @@
           Part="all"
           System="yes"
           Permanent="no"
-          Value="[BUNINSTALLVALUE]" />
+          Value="[INSTALLFOLDER]" />
       <RegistryValue Root="HKLM" Key="Software\Oven\Bun" Name="BunInstallSet"
           Type="integer" Value="1" KeyPath="yes" />
     </Component>
-
-    <!--
-      Directory properties ([INSTALLFOLDER]) always end in a backslash.
-      BUN_INSTALL consumers (bun upgrade, install.sh/ps1 parity checks)
-      expect a bare path. Derive BUNINSTALLVALUE = INSTALLFOLDER minus the
-      trailing '\' via a SetProperty CA scheduled before WriteEnvironmentStrings.
-    -->
-    <SetProperty Id="BUNINSTALLVALUE" Value="[INSTALLFOLDER]"
-        Before="StripTrailingSlash" Sequence="execute" />
-    <CustomAction Id="StripTrailingSlash" Script="vbscript">
-      <![CDATA[
-        Dim p : p = Session.Property("BUNINSTALLVALUE")
-        If Right(p, 1) = "\" Then Session.Property("BUNINSTALLVALUE") = Left(p, Len(p) - 1)
-      ]]>
-    </CustomAction>
-    <InstallExecuteSequence>
-      <Custom Action="StripTrailingSlash" Before="WriteEnvironmentStrings" />
-    </InstallExecuteSequence>
 
     <!--
       UI: WixUI_InstallDir gives Welcome -> License -> Destination -> Install.

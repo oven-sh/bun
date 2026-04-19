@@ -70,8 +70,8 @@ if (-not $Output) {
   $Output = Join-Path $ScriptDir "bun-windows-$Arch.msi"
 }
 
-$BunExe = (Resolve-Path $BunExe).Path
 if (-not (Test-Path $BunExe)) { throw "BunExe not found: $BunExe" }
+$BunExe = (Resolve-Path $BunExe).Path
 
 $WorkDir = Join-Path $ScriptDir ".build-$Arch"
 if (Test-Path $WorkDir) { Remove-Item $WorkDir -Recurse -Force }
@@ -111,16 +111,37 @@ Copy-Item $BunExe $BunxExe -Force
 # ── License RTF ─────────────────────────────────────────────────────────────
 # WixUI requires RTF. Wrap the repo's LICENSE.md verbatim in a minimal RTF
 # envelope so the text is accurate without maintaining a second copy.
+# LICENSE.md contains smart quotes (U+2019 etc.), so we can't get away with
+# a naive ASCII dump: escape RTF specials, turn newlines into \par, and emit
+# every non-ASCII codepoint as an RTF Unicode keyword (\uN?) with '?' as the
+# ANSI fallback. The resulting stream is pure 7-bit so any RichEdit version
+# renders it regardless of the user's system codepage.
 $LicenseSrc = Join-Path $RepoRoot "LICENSE.md"
 $LicenseRtf = Join-Path $WorkDir "license.rtf"
-$licenseBody = (Get-Content $LicenseSrc -Raw) `
-  -replace '\\', '\\\\' `
-  -replace '{', '\{' `
-  -replace '}', '\}' `
-  -replace "`r`n", "`n"
-$rtf = "{\rtf1\ansi\deff0{\fonttbl{\f0 Segoe UI;}}\fs18 " +
-       ($licenseBody -replace "`n", '\par ') + "}"
-Set-Content -Path $LicenseRtf -Value $rtf -Encoding ASCII -NoNewline
+$licenseText = (Get-Content $LicenseSrc -Raw) -replace "`r`n", "`n"
+$sb = [System.Text.StringBuilder]::new($licenseText.Length * 2)
+foreach ($ch in $licenseText.ToCharArray()) {
+  switch ($ch) {
+    '\' { [void]$sb.Append('\\') }
+    '{' { [void]$sb.Append('\{') }
+    '}' { [void]$sb.Append('\}') }
+    "`n" { [void]$sb.Append('\par ') }
+    default {
+      $cp = [int]$ch
+      if ($cp -ge 0x20 -and $cp -lt 0x80) {
+        [void]$sb.Append($ch)
+      } else {
+        # \uN takes a signed 16-bit decimal; .NET chars are UTF-16 code
+        # units so surrogate halves pass through as-is and RichEdit
+        # recombines them. The trailing '?' is the \ansicpg fallback glyph.
+        if ($cp -gt 32767) { $cp -= 65536 }
+        [void]$sb.Append('\u').Append($cp).Append('?')
+      }
+    }
+  }
+}
+$rtf = "{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0 Segoe UI;}}\fs18 " + $sb.ToString() + "}"
+[System.IO.File]::WriteAllText($LicenseRtf, $rtf, [System.Text.Encoding]::ASCII)
 
 # ── Dialog / banner bitmaps ─────────────────────────────────────────────────
 # Generated at build time from src/bun.ico so no binary BMPs live in git.

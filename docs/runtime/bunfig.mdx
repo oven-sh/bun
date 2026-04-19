@@ -430,6 +430,26 @@ By default Bun uses caret ranges; if the `latest` version of a package is `2.4.1
 exact = false
 ```
 
+### `install.ignoreScripts`
+
+Whether to skip lifecycle scripts during install. Default `false`. Equivalent to the `--ignore-scripts` flag.
+
+When `true`, Bun will not run any `preinstall` / `install` / `postinstall` / `prepare` scripts — both for your project and for packages in `trustedDependencies`. See [Lifecycle scripts](/pm/lifecycle) for more details.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+ignoreScripts = false
+```
+
+### `install.concurrentScripts`
+
+The maximum number of concurrent lifecycle scripts to run at once. Defaults to two times the number of CPU cores. Equivalent to the `--concurrent-scripts` flag.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+concurrentScripts = 5
+```
+
 ### `install.saveTextLockfile`
 
 If false, generate a binary `bun.lockb` instead of a text-based `bun.lock` file when running `bun install` and no lockfile is present.

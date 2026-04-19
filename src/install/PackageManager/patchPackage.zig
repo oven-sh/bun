@@ -738,14 +738,23 @@ pub fn preparePatch(manager: *PackageManager) !void {
 }
 
 fn detachModuleFolderFromSharedStore(module_folder: []const u8) void {
-    var path: bun.Path(.{ .sep = .auto }) = .from(module_folder);
+    // `module_folder` reaches here normalised to forward slashes on every
+    // platform (see `pathToPosixBuf` in `preparePatch`). Re-normalise to the
+    // platform separator so `undo()`/`basename()` walk the path correctly on
+    // Windows and the lstat/getFileAttributes calls below see a native path.
+    var native_buf: bun.PathBuffer = undefined;
+    const native = if (comptime Environment.isWindows) native: {
+        @memcpy(native_buf[0..module_folder.len], module_folder);
+        const slice = native_buf[0..module_folder.len];
+        bun.path.posixToPlatformInPlace(u8, slice);
+        break :native slice;
+    } else module_folder;
+
+    var path: bun.Path(.{ .sep = .auto }) = .from(native);
     defer path.deinit();
-    // `module_folder` is normalised to forward slashes on every platform
-    // before reaching here (see `pathToPosixBuf` in `preparePatch`); count
-    // either separator so the walk covers the full depth on Windows too.
     var components: usize = 1;
-    for (module_folder) |c| {
-        if (c == '/' or c == '\\') components += 1;
+    for (native) |c| {
+        if (c == std.fs.path.sep) components += 1;
     }
     var depth: usize = 0;
     while (depth < components) : (depth += 1) {
@@ -767,7 +776,7 @@ fn detachModuleFolderFromSharedStore(module_folder: []const u8) void {
             }
             // Re-create the now-missing path segments below the removed
             // symlink so `module_folder`'s parent exists for the copy.
-            const parent = bun.path.dirname(module_folder, .auto);
+            const parent = bun.path.dirname(native, .auto);
             if (parent.len > 0) {
                 FD.cwd().makePath(u8, parent) catch {};
             }

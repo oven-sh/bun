@@ -97,7 +97,7 @@ append_once() {
   # Skip anything that resolves to a non-regular file (directory, device).
   # -f follows symlinks, so a symlink -> regular file is fine.
   [[ -e "$file" && ! -f "$file" ]] && return 0
-  if [[ -f "$file" ]] && grep -q '# bun (installed via .pkg)' "$file" 2>/dev/null; then
+  if [[ -f "$file" ]] && grep -qF '# bun (installed via .pkg)' "$file" 2>/dev/null; then
     return
   fi
   sudo -u "$CONSOLE_USER" tee -a "$file" >/dev/null 2>&1 <<EOF || true
@@ -112,7 +112,7 @@ append_once_fish() {
   local file="$1"
   sudo -u "$CONSOLE_USER" mkdir -p "$(dirname "$file")" 2>/dev/null || return 0
   [[ -e "$file" && ! -f "$file" ]] && return 0
-  if [[ -f "$file" ]] && grep -q '# bun (installed via .pkg)' "$file" 2>/dev/null; then
+  if [[ -f "$file" ]] && grep -qF '# bun (installed via .pkg)' "$file" 2>/dev/null; then
     return
   fi
   sudo -u "$CONSOLE_USER" tee -a "$file" >/dev/null 2>&1 <<EOF || true
@@ -162,11 +162,18 @@ fi
 
 # ---------------------------------------------------------------------------
 # Shell completions — best-effort, ignore failure.
+#
+# `bun completions` picks the target shell from $SHELL
+# (install_completions_command.zig); without forwarding USER_SHELL it
+# would see root's shell (or nothing) and, with IS_BUN_AUTO_UPDATE=true,
+# exit 0 having written nothing. Default to zsh — macOS default since
+# Catalina — when dscl couldn't resolve one.
 # ---------------------------------------------------------------------------
 
 sudo -u "$CONSOLE_USER" env \
   HOME="$USER_HOME" \
   BUN_INSTALL="$BUN_INSTALL" \
+  SHELL="${USER_SHELL:-/bin/zsh}" \
   IS_BUN_AUTO_UPDATE=true \
   "$BUN_EXE" completions >/dev/null 2>&1 || true
 

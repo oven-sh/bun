@@ -118,7 +118,12 @@ describe.skipIf(isWindows)("packages/bun-darwin-pkg", () => {
     expect(src).toContain('set --export PATH "\\$BUN_INSTALL/bin" \\$PATH');
     expect(src).toContain("# bun (installed via .pkg)");
     expect(src).toContain('ln -sf bun "$BIN_DIR/bunx"');
-    expect(src).toContain("completions");
+    // `bun completions` targets $SHELL; without forwarding the console
+    // user's shell it sees root's and silently writes nothing.
+    expect(src).toMatch(/SHELL="\${USER_SHELL:-[^}]*}"\s.*completions/s);
+    // Idempotency guard uses a fixed-string match so the `.` in `.pkg`
+    // isn't a BRE metachar.
+    expect(src).toContain("grep -qF '# bun (installed via .pkg)'");
 
     // postinstall runs as root but writes into the user's home directory;
     // make sure the drop-privileges write stays in place so a symlinked

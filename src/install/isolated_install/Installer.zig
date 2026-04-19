@@ -28,7 +28,7 @@ pub const Installer = struct {
     /// clonefile work.
     global_store_path: ?[:0]const u8,
 
-    pub fn deinit(this: *const Installer) void {
+    pub fn deinit(this: *Installer) void {
         this.trusted_dependencies_from_update_requests.deinit(this.lockfile.allocator);
     }
 

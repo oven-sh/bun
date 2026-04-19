@@ -294,8 +294,12 @@ pub const Source = union(enum) {
         log("openFile (fd = {f})", .{fd});
         const file = bun.handleOom(bun.default_allocator.create(Source.File));
 
-        file.* = std.mem.zeroes(Source.File);
-        file.file = fd.uv();
+        file.* = .{
+            .fs = std.mem.zeroes(uv.fs_t),
+            .iov = std.mem.zeroes(uv.uv_buf_t),
+            .file = fd.uv(),
+            // state/close_after_operation/close_fd take their declared defaults
+        };
         return file;
     }
 

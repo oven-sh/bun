@@ -1053,12 +1053,13 @@ pub const WindowsBufferedReader = struct {
         // Get parent before completing (fs.data may be null if detached)
         const parent_ptr = fs.data;
 
-        // ALWAYS complete the read first (cleans up fs_t, updates state)
+        // ALWAYS complete the read first (cleans up fs_t, updates state).
+        // NOTE: when detached (parent_ptr == null) and close_fd == false,
+        // complete() -> startClose() destroys `file` synchronously, so it must
+        // not be dereferenced past this point on the detached branch.
         file.complete(was_canceled);
 
-        // If detached, file should be closing itself now
         if (parent_ptr == null) {
-            bun.assert(file.state == .closing); // complete should have started close
             return;
         }
 

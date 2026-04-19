@@ -713,20 +713,21 @@ pub const Installer = struct {
                             // and stamp `.bun-ok`. Otherwise wipe and rebuild
                             // so a half-written tree doesn't survive.
                             if (uses_global_store) {
-                                // `dest_subpath` is `.unit = .os` (u16 on
-                                // Windows); the existence/deleteTree helpers
-                                // want u8, so rebuild the same path via the
-                                // u8 store-path helper for the probe.
+                                // The hardlink/copyfile backends write
+                                // file-by-file straight into the destination
+                                // (no temp+rename), so `package.json` can land
+                                // before the rest of the tree. Probing for it
+                                // would accept a half-written entry forever.
+                                // Until those backends grow `cloneAtomic`-style
+                                // staging, take the conservative path: wipe
+                                // and rebuild every time `needs_install` got us
+                                // here. The `.bun-ok` warm-hit check already
+                                // skipped this entire task on the fast path,
+                                // so this only fires for genuinely-missing or
+                                // unstamped entries.
                                 var probe: bun.AbsPath(.{ .sep = .auto }) = .init();
                                 defer probe.deinit();
                                 installer.appendRealStorePath(&probe, this.entry_id);
-                                const probe_save = probe.save();
-                                probe.append("package.json");
-                                const exists = sys.existsZ(probe.sliceZ());
-                                probe_save.restore();
-                                if (exists) {
-                                    continue :next_step this.nextStep(current_step);
-                                }
                                 FD.cwd().deleteTree(probe.slice()) catch {};
                             }
                             cached_package_dir = switch (bun.openDirForIteration(cache_dir, pkg_cache_dir_subpath.slice())) {
@@ -791,20 +792,21 @@ pub const Installer = struct {
                         else => {
                             // See the matching note in `.hardlink` above.
                             if (uses_global_store) {
-                                // `dest_subpath` is `.unit = .os` (u16 on
-                                // Windows); the existence/deleteTree helpers
-                                // want u8, so rebuild the same path via the
-                                // u8 store-path helper for the probe.
+                                // The hardlink/copyfile backends write
+                                // file-by-file straight into the destination
+                                // (no temp+rename), so `package.json` can land
+                                // before the rest of the tree. Probing for it
+                                // would accept a half-written entry forever.
+                                // Until those backends grow `cloneAtomic`-style
+                                // staging, take the conservative path: wipe
+                                // and rebuild every time `needs_install` got us
+                                // here. The `.bun-ok` warm-hit check already
+                                // skipped this entire task on the fast path,
+                                // so this only fires for genuinely-missing or
+                                // unstamped entries.
                                 var probe: bun.AbsPath(.{ .sep = .auto }) = .init();
                                 defer probe.deinit();
                                 installer.appendRealStorePath(&probe, this.entry_id);
-                                const probe_save = probe.save();
-                                probe.append("package.json");
-                                const exists = sys.existsZ(probe.sliceZ());
-                                probe_save.restore();
-                                if (exists) {
-                                    continue :next_step this.nextStep(current_step);
-                                }
                                 FD.cwd().deleteTree(probe.slice()) catch {};
                             }
                             cached_package_dir = switch (bun.openDirForIteration(cache_dir, pkg_cache_dir_subpath.slice())) {

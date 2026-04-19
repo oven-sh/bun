@@ -115,7 +115,10 @@ pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
                                 }
                                 switch (sys.link(u16, this.src.sliceZ(), destfile_path)) {
                                     .result => {},
-                                    .err => |link_err2| return .initErr(link_err2),
+                                    .err => |link_err2| switch (link_err2.getErrno()) {
+                                        .UV_EEXIST, .EXIST => {},
+                                        else => return .initErr(link_err2),
+                                    },
                                 }
                             },
                             .UV_ENOENT,
@@ -139,7 +142,10 @@ pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
 
                                 switch (sys.link(u16, this.src.sliceZ(), destfile_path)) {
                                     .result => {},
-                                    .err => |link_err2| return .initErr(link_err2),
+                                    .err => |link_err2| switch (link_err2.getErrno()) {
+                                        .UV_EEXIST, .EXIST => {},
+                                        else => return .initErr(link_err2),
+                                    },
                                 }
                             },
                             else => return .initErr(link_err1),

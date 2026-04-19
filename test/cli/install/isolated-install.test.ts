@@ -1620,6 +1620,15 @@ describe("global virtual store", () => {
     // A neighbouring scriptless package is unaffected and stays global.
     const noDepsEntry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
     expect(lstatSync(noDepsEntry).isSymbolicLink()).toBe(true);
+
+    // `meta.hasInstallScript` isn't serialised in `bun.lock`, so a warm
+    // install must reach the same conclusion from the trustedDependencies
+    // list alone — the cold install above isn't sufficient on its own.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(lstatSync(scriptEntry).isSymbolicLink()).toBe(false);
+    expect(lstatSync(scriptEntry).isDirectory()).toBe(true);
+    expect(lstatSync(noDepsEntry).isSymbolicLink()).toBe(true);
   });
 
   test("concurrent installs into a cold global store both succeed", async () => {

@@ -38,7 +38,7 @@ pub fn clone(this: *FileCloner) sys.Maybe(void) {
                 },
 
                 .NOENT => {
-                    const parent_dest_dir = std.fs.path.dirname(this.dest_subpath.slice()) orelse {
+                    const parent_dest_dir = this.dest_subpath.dirname() orelse {
                         return .initErr(err);
                     };
                     FD.cwd().makePath(u8, parent_dest_dir) catch {};

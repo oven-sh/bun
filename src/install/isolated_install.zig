@@ -947,11 +947,6 @@ pub fn installIsolatedPackages(
                                     break :eligible false;
                                 }
                             }
-                            // `Package.scripts` is only populated after reading
-                            // the on-disk package.json (post-install), so it is
-                            // empty here. The lockfile carries the registry's
-                            // `hasInstallScript` flag in `meta` instead.
-                            //
                             // `run_preinstall()` authorizes scripts by the
                             // dependency *alias* name, so an aliased install
                             // like `foo: npm:bar@1` is trusted if `foo` is in
@@ -959,23 +954,26 @@ pub fn installIsolatedPackages(
                             // is `bar`. Mirror that here so the alias case
                             // can't slip past the eligibility check.
                             //
-                            // Intentionally *not* gated on `do.run_scripts`:
-                            // if this install runs with `--ignore-scripts` and
-                            // we put the entry in the global store, a later
-                            // install without that flag would run the
-                            // postinstall through the project symlink and
-                            // mutate the shared directory underneath every
-                            // other consumer.
-                            if (pkg_metas[pkg_id].hasInstallScript()) {
-                                const dep_name, const dep_name_hash = if (dep_id != invalid_dependency_id)
-                                    .{ dependencies[dep_id].name.slice(string_buf), dependencies[dep_id].name_hash }
-                                else
-                                    .{ pkg_names[pkg_id].slice(string_buf), pkg_name_hashes[pkg_id] };
-                                if (lockfile.hasTrustedDependency(dep_name, &pkg_res) or
-                                    trusted_from_update.contains(@truncate(dep_name_hash)))
-                                {
-                                    break :eligible false;
-                                }
+                            // Intentionally *not* gated on `do.run_scripts`
+                            // (a later install without `--ignore-scripts`
+                            // would run the postinstall through the project
+                            // symlink and mutate the shared directory) *or*
+                            // on `meta.hasInstallScript()` (that flag is not
+                            // serialised in `bun.lock`, so it reads `false`
+                            // on every install after the first; a trusted
+                            // scripted package would flip from project-local
+                            // on the cold install to global on the warm one).
+                            // Over-excludes the rare "trusted but actually no
+                            // scripts" case in exchange for not needing a
+                            // lockfile-format change.
+                            const dep_name, const dep_name_hash = if (dep_id != invalid_dependency_id)
+                                .{ dependencies[dep_id].name.slice(string_buf), dependencies[dep_id].name_hash }
+                            else
+                                .{ pkg_names[pkg_id].slice(string_buf), pkg_name_hashes[pkg_id] };
+                            if (lockfile.hasTrustedDependency(dep_name, &pkg_res) or
+                                trusted_from_update.contains(@truncate(dep_name_hash)))
+                            {
+                                break :eligible false;
                             }
                             break :eligible true;
                         },

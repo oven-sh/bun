@@ -90,7 +90,10 @@ pub const Symlinker = struct {
                         },
                         else => {
                             FD.cwd().deleteTree(this.dest.sliceZ()) catch {};
-                            return this.symlink();
+                            return switch (this.symlink()) {
+                                .result => .success,
+                                .err => |e| if (e.getErrno() == .EXIST) .success else .initErr(e),
+                            };
                         },
                     },
                 };
@@ -124,7 +127,12 @@ pub const Symlinker = struct {
                     _ = sys.unlink(this.dest.sliceZ());
                 }
 
-                return this.symlink();
+                return switch (this.symlink()) {
+                    .result => .success,
+                    // Another writer replaced the wrong-target link with the
+                    // right one between our unlink and this retry.
+                    .err => |e| if (e.getErrno() == .EXIST) .success else .initErr(e),
+                };
             },
         };
     }

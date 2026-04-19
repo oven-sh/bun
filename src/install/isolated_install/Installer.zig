@@ -698,6 +698,30 @@ pub const Installer = struct {
                         },
 
                         .hardlink => {
+                            // The hardlink/copyfile backends walk the source
+                            // tree file-by-file straight into `dest_subpath`.
+                            // For a shared global-store entry that's neither
+                            // atomic nor idempotent: an interrupted earlier
+                            // run can leave a partial tree, and two concurrent
+                            // installs would unlink+relink each other's files.
+                            // Until those backends grow the same temp+rename
+                            // treatment as `cloneAtomic`, take the cheap out:
+                            // if the package tree already landed (a previous
+                            // run got as far as `package.json`), skip the file
+                            // walk entirely; the later steps will fill any
+                            // missing dep symlinks/bins via `.expect_existing`
+                            // and stamp `.bun-ok`. Otherwise wipe and rebuild
+                            // so a half-written tree doesn't survive.
+                            if (uses_global_store) {
+                                var sentinel = dest_subpath.save();
+                                dest_subpath.append("package.json");
+                                const exists = sys.existsZ(dest_subpath.sliceZ());
+                                sentinel.restore();
+                                if (exists) {
+                                    continue :next_step this.nextStep(current_step);
+                                }
+                                FD.cwd().deleteTree(dest_subpath.slice()) catch {};
+                            }
                             cached_package_dir = switch (bun.openDirForIteration(cache_dir, pkg_cache_dir_subpath.slice())) {
                                 .result => |fd| fd,
                                 .err => |err| {
@@ -758,6 +782,17 @@ pub const Installer = struct {
 
                         // fallthrough copyfile
                         else => {
+                            // See the matching note in `.hardlink` above.
+                            if (uses_global_store) {
+                                var sentinel = dest_subpath.save();
+                                dest_subpath.append("package.json");
+                                const exists = sys.existsZ(dest_subpath.sliceZ());
+                                sentinel.restore();
+                                if (exists) {
+                                    continue :next_step this.nextStep(current_step);
+                                }
+                                FD.cwd().deleteTree(dest_subpath.slice()) catch {};
+                            }
                             cached_package_dir = switch (bun.openDirForIteration(cache_dir, pkg_cache_dir_subpath.slice())) {
                                 .result => |fd| fd,
                                 .err => |err| {
@@ -854,6 +889,11 @@ pub const Installer = struct {
                         // `.bun/<storepath>` indirection so `node_modules/<pkg>`
                         // remains a relative link into `node_modules/.bun/`.
                         if (installer.entryUsesGlobalStore(this.entry_id)) {
+                            // The eligibility DFS + fixed-point pass guarantee
+                            // every dep of a global entry is itself global; if
+                            // that ever regressed the failure mode is a
+                            // dangling symlink with no install-time error.
+                            bun.debugAssert(installer.entryUsesGlobalStore(dep.entry_id));
                             installer.appendRealStorePath(&dep_store_path, dep.entry_id);
                         } else {
                             installer.appendStorePath(&dep_store_path, dep.entry_id);
@@ -966,6 +1006,18 @@ pub const Installer = struct {
                 },
                 inline .run_preinstall => |current_step| {
                     if (!installer.manager.options.do.run_scripts or this.entry_id == .root) {
+                        continue :next_step this.nextStep(current_step);
+                    }
+
+                    // The eligibility check excludes any package whose
+                    // lifecycle scripts are trusted to run, so a global-store
+                    // entry should never reach script enqueueing. Guard it
+                    // anyway: `meta.hasInstallScript` can be a false negative
+                    // (yarn-migrated lockfiles force it to `.false`), and a
+                    // script running with cwd inside a shared content-
+                    // addressed directory would mutate every other project's
+                    // copy.
+                    if (installer.entryUsesGlobalStore(this.entry_id)) {
                         continue :next_step this.nextStep(current_step);
                     }
 

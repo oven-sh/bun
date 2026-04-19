@@ -858,6 +858,18 @@ pub fn installIsolatedPackages(
     // also eligible. The second condition matters because dep symlinks live
     // inside the global entry; baking a project-local path (workspace, folder)
     // into a shared directory would break for every other consumer.
+    const WyhashWriter = struct {
+        hasher: *std.hash.Wyhash,
+        const E = error{};
+        pub fn writer(self: *@This()) std.io.GenericWriter(*@This(), E, write) {
+            return .{ .context = self };
+        }
+        fn write(self: *@This(), bytes: []const u8) E!usize {
+            self.hasher.update(bytes);
+            return bytes.len;
+        }
+    };
+
     const global_store_path: ?[:0]const u8 = if (manager.options.enable.global_virtual_store) global_store_path: {
         const entries = store.entries.slice();
         const entry_hashes = entries.items(.entry_hash);
@@ -923,7 +935,14 @@ pub fn installIsolatedPackages(
                                 const name_version = std.fmt.bufPrint(&name_version_buf, "{s}@{f}", .{
                                     pkg_names[pkg_id].slice(string_buf),
                                     pkg_res.fmt(string_buf, .posix),
-                                }) catch break :eligible false;
+                                }) catch {
+                                    // Overflow is implausible (PathBuffer ≫
+                                    // any name+version), but if it ever fired
+                                    // the safe answer is "not eligible" rather
+                                    // than letting a possibly-patched package
+                                    // slip into the shared store.
+                                    break :eligible false;
+                                };
                                 if (lockfile.patched_dependencies.contains(bun.Semver.String.Builder.stringHash(name_version))) {
                                     break :eligible false;
                                 }
@@ -939,7 +958,15 @@ pub fn installIsolatedPackages(
                             // trustedDependencies even though the package name
                             // is `bar`. Mirror that here so the alias case
                             // can't slip past the eligibility check.
-                            if (manager.options.do.run_scripts and pkg_metas[pkg_id].hasInstallScript()) {
+                            //
+                            // Intentionally *not* gated on `do.run_scripts`:
+                            // if this install runs with `--ignore-scripts` and
+                            // we put the entry in the global store, a later
+                            // install without that flag would run the
+                            // postinstall through the project symlink and
+                            // mutate the shared directory underneath every
+                            // other consumer.
+                            if (pkg_metas[pkg_id].hasInstallScript()) {
                                 const dep_name, const dep_name_hash = if (dep_id != invalid_dependency_id)
                                     .{ dependencies[dep_id].name.slice(string_buf), dependencies[dep_id].name_hash }
                                 else
@@ -964,17 +991,23 @@ pub fn installIsolatedPackages(
 
                     // Seed the hash with this entry's own store-path string so
                     // entries with identical dep sets but different package
-                    // versions never collide.
+                    // versions never collide. Hashed through a writer so an
+                    // unusually long store path (long scope + git URL + peer
+                    // hash) can't overflow a fixed buffer and feed
+                    // uninitialized stack bytes into the hash.
                     top.hasher = .init(0x9E3779B97F4A7C15);
-                    var path_buf: bun.PathBuffer = undefined;
-                    const path = std.fmt.bufPrint(&path_buf, "{f}", .{
-                        Store.Entry.fmtStorePath(id, &store, lockfile),
-                    }) catch &path_buf;
-                    top.hasher.update(path);
-                    // Include the package's own integrity (name_hash) so cache
-                    // poisoning via a different registry doesn't reuse another
-                    // registry's global entry.
-                    top.hasher.update(std.mem.asBytes(&pkg_name_hashes[pkg_id]));
+                    {
+                        var hw: WyhashWriter = .{ .hasher = &top.hasher };
+                        var w = hw.writer();
+                        w.print("{f}", .{Store.Entry.fmtStorePath(id, &store, lockfile)}) catch unreachable;
+                    }
+                    // The store path for `.npm` is just `name@version`, which
+                    // is *not* unique across registries (an enterprise proxy
+                    // can serve a patched `foo@1.0.0`). Fold in the tarball
+                    // integrity so a cross-registry / cross-tarball collision
+                    // gets a different global directory instead of reusing the
+                    // first project's bytes.
+                    top.hasher.update(std.mem.asBytes(&pkg_metas[pkg_id].integrity));
                 }
 
                 if (states[idx] == .ineligible) {
@@ -1002,10 +1035,10 @@ pub fn installIsolatedPackages(
                         },
                         .in_progress => {
                             // Cycle back-edge: the dep's hash isn't known yet.
-                            // Fold a placeholder so pass 1 stays deterministic;
-                            // the second pass below re-hashes every entry using
-                            // pass-1 results, which gives cycle members their
-                            // partner's transitive-dep contributions.
+                            // Fold a placeholder; the SCC pass below replaces
+                            // every cycle member's hash with one that's
+                            // independent of which edge happened to be the
+                            // back-edge in this DFS.
                             top.hasher.update(std.mem.asBytes(&dep_name_hash));
                         },
                         .unvisited => {
@@ -1031,30 +1064,163 @@ pub fn installIsolatedPackages(
             }
         }
 
-        // Second pass: re-hash every eligible entry using the pass-1 hashes
-        // of *all* its deps. For acyclic entries this is a no-op (their deps'
-        // hashes were already final when folded). For cycle members it pulls
-        // in the partner's transitive deps: in A↔B where A also depends on X,
-        // B's pass-1 hash only saw A's name (back-edge), but B's pass-2 hash
-        // folds A's pass-1 hash, which includes X. Without this, two projects
-        // that resolve X differently would share B's global entry while its
-        // `../../A-<hash>/` dep symlink dangles in one of them.
+        // SCC pass: the DFS hash above is visit-order-dependent for cycle
+        // members (which edge becomes the back-edge depends on which member
+        // the outer loop reached first, which depends on entry IDs, which
+        // depend on the *whole project's* dependency set). That's harmless
+        // for correctness — different orderings just give different keys —
+        // but it means a package that's part of an npm cycle never shares a
+        // global entry across projects, defeating the feature for chunks of
+        // the ecosystem (`es-abstract`↔`object.assign`, the babel core
+        // cycle, etc.).
         //
-        // Computed from a snapshot so iteration order doesn't matter.
-        const pass1 = try manager.allocator.dupe(u64, entry_hashes);
-        defer manager.allocator.free(pass1);
-        for (0..store.entries.len) |idx| {
-            if (pass1[idx] == 0) continue;
-            var hasher: std.hash.Wyhash = .init(0x9E3779B97F4A7C15);
-            hasher.update(std.mem.asBytes(&pass1[idx]));
-            for (entry_dependencies[idx].slice()) |dep| {
-                const dep_name_hash = dependencies[dep.dep_id].name_hash;
-                hasher.update(std.mem.asBytes(&dep_name_hash));
-                hasher.update(std.mem.asBytes(&pass1[dep.entry_id.get()]));
+        // Tarjan's algorithm groups entries into strongly-connected
+        // components. For singleton SCCs the pass-1 hash is already
+        // visit-order-independent and is left alone. For multi-member SCCs
+        // every member gets the same hash, computed from the sorted member
+        // store-paths plus the sorted external-dep hashes — inputs that are
+        // identical regardless of which member the project happened to list
+        // first. The dep symlinks inside the SCC then point at siblings with
+        // the same hash suffix, so they resolve in any project that produces
+        // the same SCC closure.
+        {
+            const n: u32 = @intCast(store.entries.len);
+            const tarjan_index = try manager.allocator.alloc(u32, n);
+            defer manager.allocator.free(tarjan_index);
+            @memset(tarjan_index, std.math.maxInt(u32));
+            const lowlink = try manager.allocator.alloc(u32, n);
+            defer manager.allocator.free(lowlink);
+            const on_stack = try manager.allocator.alloc(bool, n);
+            defer manager.allocator.free(on_stack);
+            @memset(on_stack, false);
+
+            var scc_stack: std.ArrayListUnmanaged(u32) = .empty;
+            defer scc_stack.deinit(manager.allocator);
+            var work: std.ArrayListUnmanaged(struct { v: u32, child: u32 }) = .empty;
+            defer work.deinit(manager.allocator);
+            var scc_ext: std.AutoArrayHashMapUnmanaged(u64, void) = .empty;
+            defer scc_ext.deinit(manager.allocator);
+
+            var index_counter: u32 = 0;
+            for (0..n) |root| {
+                if (tarjan_index[root] != std.math.maxInt(u32)) continue;
+                try work.append(manager.allocator, .{ .v = @intCast(root), .child = 0 });
+                while (work.items.len > 0) {
+                    const frame = &work.items[work.items.len - 1];
+                    const v = frame.v;
+                    if (frame.child == 0) {
+                        tarjan_index[v] = index_counter;
+                        lowlink[v] = index_counter;
+                        index_counter += 1;
+                        try scc_stack.append(manager.allocator, v);
+                        on_stack[v] = true;
+                    }
+                    const deps = entry_dependencies[v].slice();
+                    var recursed = false;
+                    while (frame.child < deps.len) : (frame.child += 1) {
+                        const w = deps[frame.child].entry_id.get();
+                        if (tarjan_index[w] == std.math.maxInt(u32)) {
+                            frame.child += 1;
+                            try work.append(manager.allocator, .{ .v = w, .child = 0 });
+                            recursed = true;
+                            break;
+                        } else if (on_stack[w]) {
+                            lowlink[v] = @min(lowlink[v], tarjan_index[w]);
+                        }
+                    }
+                    if (recursed) continue;
+                    if (lowlink[v] == tarjan_index[v]) {
+                        const start = blk: {
+                            var i = scc_stack.items.len;
+                            while (i > 0) : (i -= 1) {
+                                if (scc_stack.items[i - 1] == v) break :blk i - 1;
+                            }
+                            unreachable;
+                        };
+                        const members = scc_stack.items[start..];
+                        for (members) |m| on_stack[m] = false;
+                        if (members.len == 1) {
+                            // Singleton SCC. Tarjan emits SCCs in reverse
+                            // topological order, so every dep's hash is final
+                            // by now (including any cycle-member deps that
+                            // just got their SCC hash). Recompute this entry's
+                            // hash from those final values so a dependent of
+                            // a cycle picks up the order-independent SCC hash
+                            // rather than the pass-1 placeholder.
+                            const m = members[0];
+                            if (entry_hashes[m] != 0) {
+                                var sub: std.hash.Wyhash = .init(0x9E3779B97F4A7C15);
+                                var hw: WyhashWriter = .{ .hasher = &sub };
+                                var w_ = hw.writer();
+                                w_.print("{f}", .{Store.Entry.fmtStorePath(.from(m), &store, lockfile)}) catch unreachable;
+                                sub.update(std.mem.asBytes(&pkg_metas[node_pkg_ids[entry_node_ids[m].get()]].integrity));
+                                var poisoned = false;
+                                for (entry_dependencies[m].slice()) |dep| {
+                                    const dh = entry_hashes[dep.entry_id.get()];
+                                    if (dh == 0) {
+                                        poisoned = true;
+                                        break;
+                                    }
+                                    const dep_name_hash = dependencies[dep.dep_id].name_hash;
+                                    sub.update(std.mem.asBytes(&dep_name_hash));
+                                    sub.update(std.mem.asBytes(&dh));
+                                }
+                                if (poisoned) {
+                                    entry_hashes[m] = 0;
+                                } else {
+                                    var h = sub.final();
+                                    if (h == 0) h = 1;
+                                    entry_hashes[m] = h;
+                                }
+                            }
+                        } else if (members.len > 1) {
+                            // One order-independent hash for the whole SCC:
+                            // collect a sub-hash per member (store path +
+                            // integrity), collect every external-dep hash,
+                            // sort both lists, then hash the concatenation.
+                            // Sorting by *content* (not entry index) is what
+                            // makes this stable across projects.
+                            scc_ext.clearRetainingCapacity();
+                            var member_sub: std.ArrayListUnmanaged(u64) = .empty;
+                            defer member_sub.deinit(manager.allocator);
+                            var any_ineligible = false;
+                            for (members) |m| {
+                                if (entry_hashes[m] == 0) any_ineligible = true;
+                                var sub: std.hash.Wyhash = .init(0);
+                                var hw: WyhashWriter = .{ .hasher = &sub };
+                                var w_ = hw.writer();
+                                w_.print("{f}", .{Store.Entry.fmtStorePath(.from(m), &store, lockfile)}) catch unreachable;
+                                sub.update(std.mem.asBytes(&pkg_metas[node_pkg_ids[entry_node_ids[m].get()]].integrity));
+                                try member_sub.append(manager.allocator, sub.final());
+                                for (entry_dependencies[m].slice()) |dep| {
+                                    const di = dep.entry_id.get();
+                                    // Skip intra-SCC edges; those are captured
+                                    // by member_sub.
+                                    if (std.mem.indexOfScalar(u32, members, di) != null) continue;
+                                    if (entry_hashes[di] == 0) any_ineligible = true;
+                                    try scc_ext.put(manager.allocator, entry_hashes[di], {});
+                                }
+                            }
+                            std.mem.sort(u64, member_sub.items, {}, std.sort.asc(u64));
+                            const ext_keys = scc_ext.keys();
+                            std.mem.sort(u64, ext_keys, {}, std.sort.asc(u64));
+                            var hasher: std.hash.Wyhash = .init(0x42A7C15F9E3779B9);
+                            for (member_sub.items) |k| hasher.update(std.mem.asBytes(&k));
+                            for (ext_keys) |k| hasher.update(std.mem.asBytes(&k));
+                            var h = hasher.final();
+                            if (h == 0) h = 1;
+                            const final_h: u64 = if (any_ineligible) 0 else h;
+                            for (members) |m| entry_hashes[m] = final_h;
+                        }
+                        scc_stack.items.len = start;
+                    }
+                    _ = work.pop();
+                    if (work.items.len > 0) {
+                        const parent = &work.items[work.items.len - 1];
+                        lowlink[parent.v] = @min(lowlink[parent.v], lowlink[v]);
+                    }
+                }
             }
-            var h = hasher.final();
-            if (h == 0) h = 1;
-            entry_hashes[idx] = h;
         }
 
         // Ineligibility can surface mid-cycle: A→B→A where B turns out to

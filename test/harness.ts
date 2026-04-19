@@ -1771,7 +1771,7 @@ cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
     if (opts.linker) {
       bunfig += `linker = "${opts.linker}"\n`;
     }
-    if ("globalStore" in opts) {
+    if (opts.globalStore !== undefined) {
       bunfig += `globalStore = ${opts.globalStore}\n`;
     }
     if (opts.publicHoistPattern) {

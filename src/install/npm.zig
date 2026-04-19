@@ -2031,6 +2031,23 @@ pub const PackageManifest = struct {
                             }
                         }
                     }
+
+                    // pnpm/yarn synthesise an implicit `"*"` optional peer for
+                    // entries that appear in `peerDependenciesMeta` but not in
+                    // `peerDependencies`. Reserve space for them; the build
+                    // pass below appends them after the declared peer deps.
+                    if (prop.value.?.asProperty("peerDependenciesMeta")) |meta| {
+                        if (meta.expr.data == .e_object) {
+                            for (meta.expr.data.e_object.properties.slice()) |meta_prop| {
+                                const optional = meta_prop.value.?.asProperty("optional") orelse continue;
+                                if (optional.expr.data != .e_boolean or !optional.expr.data.e_boolean.value) continue;
+                                const key = meta_prop.key.?.asString(allocator) orelse continue;
+                                dependency_sum += 1;
+                                string_builder.count(key);
+                                string_builder.count("*");
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2351,9 +2368,21 @@ pub const PackageManifest = struct {
                     var non_optional_peer_dependency_offset: usize = 0;
 
                     inline for (dependency_groups) |pair| {
-                        if (prop.value.?.asProperty(comptime pair.prop)) |versioned_deps| {
-                            if (versioned_deps.expr.data == .e_object) {
-                                const items = versioned_deps.expr.data.e_object.properties.slice();
+                        // For peer deps, fall through with an empty `items`
+                        // slice when `peerDependencies` is absent so that
+                        // `peerDependenciesMeta`-only entries (synthesised
+                        // below) still get a build pass. For other groups the
+                        // empty fallthrough is a cheap no-op.
+                        const items = items: {
+                            if (prop.value.?.asProperty(comptime pair.prop)) |versioned_deps| {
+                                if (versioned_deps.expr.data == .e_object) {
+                                    break :items versioned_deps.expr.data.e_object.properties.slice();
+                                }
+                            }
+                            break :items &.{};
+                        };
+                        if (items.len > 0 or comptime strings.eqlComptime(pair.prop, "peerDependencies")) {
+                            {
                                 var count = items.len;
 
                                 var this_names = dependency_names[0..count];
@@ -2377,9 +2406,18 @@ pub const PackageManifest = struct {
                                                         continue;
                                                     }
 
-                                                    optional_peer_dep_names.appendAssumeCapacity(String.Builder.stringHash(meta_prop.key.?.asString(allocator) orelse unreachable));
+                                                    const meta_key = meta_prop.key.?.asString(allocator) orelse unreachable;
+                                                    optional_peer_dep_names.appendAssumeCapacity(String.Builder.stringHash(meta_key));
+
+                                                    // Reserve a slot for a meta-only synthesised peer.
+                                                    // The slot is unused if `meta_key` also appears in
+                                                    // `peerDependencies` below.
+                                                    count += 1;
                                                 }
                                             }
+                                            // Re-slice now that the count grew.
+                                            this_names = dependency_names[0..count];
+                                            this_versions = dependency_values[0..count];
                                         }
                                     }
                                 }
@@ -2434,7 +2472,46 @@ pub const PackageManifest = struct {
                                     i += 1;
                                 }
 
+                                if (comptime is_peer) {
+                                    // Append meta-only optional peers (declared
+                                    // in `peerDependenciesMeta` but not in
+                                    // `peerDependencies`) as `"*"` versions.
+                                    // pnpm/yarn do this; webpack relies on it
+                                    // to make `webpack-cli` reachable.
+                                    if (prop.value.?.asProperty("peerDependenciesMeta")) |meta| {
+                                        if (meta.expr.data == .e_object) {
+                                            outer: for (meta.expr.data.e_object.properties.slice()) |meta_prop| {
+                                                const optional = meta_prop.value.?.asProperty("optional") orelse continue;
+                                                if (optional.expr.data != .e_boolean or !optional.expr.data.e_boolean.value) continue;
+                                                const meta_key = meta_prop.key.?.asString(allocator) orelse continue;
+                                                const meta_hash = String.Builder.stringHash(meta_key);
+                                                for (this_names[0..i]) |existing| {
+                                                    if (existing.hash == meta_hash) continue :outer;
+                                                }
+                                                this_names[i] = string_builder.append(ExternalString, meta_key);
+                                                this_versions[i] = string_builder.append(ExternalString, "*");
+                                                // Swap to the optional-peer
+                                                // prefix the rest of the loop
+                                                // body would have produced.
+                                                if (non_optional_peer_dependency_offset != i) {
+                                                    std.mem.swap(ExternalString, &this_names[i], &this_names[non_optional_peer_dependency_offset]);
+                                                    std.mem.swap(ExternalString, &this_versions[i], &this_versions[non_optional_peer_dependency_offset]);
+                                                }
+                                                non_optional_peer_dependency_offset += 1;
+                                                i += 1;
+                                            }
+                                        }
+                                    }
+                                }
+
                                 count = i;
+                                // The peer slice was over-reserved by the
+                                // number of `peerDependenciesMeta` entries (so
+                                // meta-only synthesised peers had room); trim
+                                // to what was actually written before the
+                                // ExternalStringList offsets are computed.
+                                this_names = this_names[0..count];
+                                this_versions = this_versions[0..count];
 
                                 if (bundle_all_deps) {
                                     package_version.bundled_dependencies = ExternalPackageNameHashList.invalid;

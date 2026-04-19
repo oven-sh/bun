@@ -875,6 +875,11 @@ pub fn installIsolatedPackages(
         const string_buf = lockfile.buffers.string_bytes.items;
         const dependencies = lockfile.buffers.dependencies.items;
 
+        // Packages newly trusted via `bun add --trust` (not yet written to the
+        // lockfile) will have their lifecycle scripts run this install; treat
+        // them the same as lockfile-trusted packages for eligibility.
+        const trusted_from_update = manager.findTrustedDependenciesFromUpdateRequests();
+
         const State = enum { unvisited, in_progress, ineligible, done };
         const states = try manager.allocator.alloc(State, store.entries.len);
         defer manager.allocator.free(states);
@@ -927,7 +932,8 @@ pub fn installIsolatedPackages(
                             // `hasInstallScript` flag in `meta` instead.
                             if (manager.options.do.run_scripts and
                                 pkg_metas[pkg_id].hasInstallScript() and
-                                lockfile.hasTrustedDependency(pkg_names[pkg_id].slice(string_buf), &pkg_res))
+                                (lockfile.hasTrustedDependency(pkg_names[pkg_id].slice(string_buf), &pkg_res) or
+                                    trusted_from_update.contains(@truncate(pkg_name_hashes[pkg_id]))))
                             {
                                 break :eligible false;
                             }
@@ -1005,6 +1011,27 @@ pub fn installIsolatedPackages(
                     states[idx] = .done;
                 }
                 _ = stack.pop();
+            }
+        }
+
+        // Ineligibility can surface mid-cycle: A→B→A where B turns out to
+        // depend on a workspace package. The DFS above already finalised A's
+        // hash via the `.in_progress` back-edge before B was marked
+        // ineligible, so A would wrongly land in the global store with a
+        // dangling dep symlink. Close the gap with a fixed-point pass: any
+        // entry that still links to an ineligible dep becomes ineligible too.
+        var changed = true;
+        while (changed) {
+            changed = false;
+            for (0..store.entries.len) |idx| {
+                if (entry_hashes[idx] == 0) continue;
+                for (entry_dependencies[idx].slice()) |dep| {
+                    if (entry_hashes[dep.entry_id.get()] == 0) {
+                        entry_hashes[idx] = 0;
+                        changed = true;
+                        break;
+                    }
+                }
             }
         }
 
@@ -1366,8 +1393,9 @@ pub fn installIsolatedPackages(
                             switch (installer.linkProjectToGlobalStore(entry_id)) {
                                 .result => {},
                                 .err => |err| {
-                                    Output.err(err, "failed to symlink store entry to global virtual store", .{});
-                                    if (manager.options.enable.fail_early) Global.exit(1);
+                                    entry_steps[entry_id.get()].store(.done, .monotonic);
+                                    installer.onTaskFail(entry_id, .{ .symlink_dependencies = err });
+                                    continue;
                                 },
                             }
                         }

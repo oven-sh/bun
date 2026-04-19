@@ -1588,7 +1588,6 @@ pub const Installer = struct {
                     if (dest.dirname()) |parent| {
                         FD.cwd().makePath(u8, parent) catch {};
                     }
-                    return do_symlink(dest.sliceZ(), target_abs.sliceZ());
                 },
                 .EXIST => {
                     // Existing entry from a previous install: replace if it's
@@ -1597,11 +1596,17 @@ pub const Installer = struct {
                     if (sys.unlink(dest.sliceZ()).asErr()) |_| {
                         FD.cwd().deleteTree(dest.slice()) catch {};
                     }
-                    return do_symlink(dest.sliceZ(), target_abs.sliceZ());
                 },
                 else => return .initErr(err),
             },
         }
+        return switch (do_symlink(dest.sliceZ(), target_abs.sliceZ())) {
+            .result => .success,
+            // EEXIST after the recovery above means another writer won the
+            // race between our unlink/mkdir and this retry; the symlink it
+            // created points at the same content-addressed target.
+            .err => |e| if (e.getErrno() == .EXIST) .success else .initErr(e),
+        };
     }
 
     pub fn appendStoreNodeModulesPath(this: *const Installer, buf: anytype, entry_id: Store.Entry.Id) void {

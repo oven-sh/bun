@@ -394,6 +394,10 @@ pub fn load(
         this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
     }
 
+    if (env.get("BUN_INSTALL_GLOBAL_STORE")) |val| {
+        this.enable.global_virtual_store = !strings.eqlComptime(val, "0");
+    }
+
     const default_disable_progress_bar: bool = brk: {
         if (env.get("BUN_INSTALL_PROGRESS")) |prog| {
             break :brk strings.eqlComptime(prog, "0");
@@ -733,7 +737,12 @@ pub const Enable = packed struct(u16) {
 
     exact_versions: bool = false,
     only_missing: bool = false,
-    _: u7 = 0,
+    /// Isolated linker only: materialize package entries once into a shared
+    /// `<cache>/links/` directory and symlink `node_modules/.bun/<pkg>` into
+    /// it, instead of clonefiling every package into every project on every
+    /// install. Set BUN_INSTALL_GLOBAL_STORE=0 to disable.
+    global_virtual_store: bool = true,
+    _: u6 = 0,
 };
 
 const string = []const u8;

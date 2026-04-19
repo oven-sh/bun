@@ -846,6 +846,177 @@ pub fn installIsolatedPackages(
         };
     };
 
+    // Compute entry_hash for the global virtual store. The hash makes a
+    // global-store directory name unique to this entry's *resolved* dependency
+    // closure, so two projects that resolve `react@18.3.1` to the same set of
+    // transitive versions share one on-disk entry, while a project that
+    // resolves a transitive dep to a different version gets its own.
+    //
+    // Eligibility propagates: an entry is only global-store-eligible (hash != 0)
+    // when the package itself comes from an immutable cache (npm/git/tarball,
+    // unpatched, no lifecycle scripts) *and* every dependency it links to is
+    // also eligible. The second condition matters because dep symlinks live
+    // inside the global entry; baking a project-local path (workspace, folder)
+    // into a shared directory would break for every other consumer.
+    const global_store_path: ?[:0]const u8 = if (manager.options.enable.global_virtual_store) global_store_path: {
+        const entries = store.entries.slice();
+        const entry_hashes = entries.items(.entry_hash);
+        const entry_node_ids = entries.items(.node_id);
+        const entry_dependencies = entries.items(.dependencies);
+
+        const node_pkg_ids = store.nodes.items(.pkg_id);
+
+        const pkgs = lockfile.packages.slice();
+        const pkg_names = pkgs.items(.name);
+        const pkg_name_hashes = pkgs.items(.name_hash);
+        const pkg_resolutions = pkgs.items(.resolution);
+        const pkg_scripts = pkgs.items(.scripts);
+
+        const string_buf = lockfile.buffers.string_bytes.items;
+        const dependencies = lockfile.buffers.dependencies.items;
+
+        const State = enum { unvisited, in_progress, ineligible, done };
+        const states = try manager.allocator.alloc(State, store.entries.len);
+        defer manager.allocator.free(states);
+        @memset(states, .unvisited);
+
+        // Iterative DFS so dependency cycles (which the isolated graph permits)
+        // can't overflow the stack and are handled deterministically: a back-edge
+        // contributes the dependency *name* to the parent's hash but not the
+        // child's own hash (still being computed). Two entries that only differ
+        // by which side of a cycle they sit on still get distinct hashes via
+        // their own store-path bytes.
+        var stack: std.ArrayListUnmanaged(struct { id: Store.Entry.Id, dep_idx: u32, hasher: std.hash.Wyhash }) = .empty;
+        defer stack.deinit(manager.allocator);
+
+        for (0..store.entries.len) |_root_id| {
+            if (states[_root_id] != .unvisited) continue;
+            try stack.append(manager.allocator, .{ .id = .from(@intCast(_root_id)), .dep_idx = 0, .hasher = undefined });
+
+            while (stack.items.len > 0) {
+                const top = &stack.items[stack.items.len - 1];
+                const id = top.id;
+                const idx = id.get();
+
+                if (states[idx] == .unvisited) {
+                    states[idx] = .in_progress;
+
+                    const node_id = entry_node_ids[idx];
+                    const pkg_id = node_pkg_ids[node_id.get()];
+                    const pkg_res = pkg_resolutions[pkg_id];
+
+                    const eligible = switch (pkg_res.tag) {
+                        .npm, .git, .github, .local_tarball, .remote_tarball => eligible: {
+                            // Patched packages and packages with lifecycle scripts
+                            // mutate (or may mutate) their install directory, so a
+                            // shared global copy would either diverge from the
+                            // patch or be mutated underneath other projects.
+                            if (lockfile.patched_dependencies.count() > 0) {
+                                var name_version_buf: bun.PathBuffer = undefined;
+                                const name_version = std.fmt.bufPrint(&name_version_buf, "{s}@{f}", .{
+                                    pkg_names[pkg_id].slice(string_buf),
+                                    pkg_res.fmt(string_buf, .posix),
+                                }) catch break :eligible false;
+                                if (lockfile.patched_dependencies.contains(bun.Semver.String.Builder.stringHash(name_version))) {
+                                    break :eligible false;
+                                }
+                            }
+                            if (manager.options.do.run_scripts and
+                                pkg_scripts[pkg_id].hasAny() and
+                                lockfile.hasTrustedDependency(pkg_names[pkg_id].slice(string_buf), &pkg_res))
+                            {
+                                break :eligible false;
+                            }
+                            break :eligible true;
+                        },
+                        else => false,
+                    };
+
+                    if (!eligible) {
+                        states[idx] = .ineligible;
+                        entry_hashes[idx] = 0;
+                        _ = stack.pop();
+                        continue;
+                    }
+
+                    // Seed the hash with this entry's own store-path string so
+                    // entries with identical dep sets but different package
+                    // versions never collide.
+                    top.hasher = .init(0x9E3779B97F4A7C15);
+                    var path_buf: bun.PathBuffer = undefined;
+                    const path = std.fmt.bufPrint(&path_buf, "{f}", .{
+                        Store.Entry.fmtStorePath(id, &store, lockfile),
+                    }) catch &path_buf;
+                    top.hasher.update(path);
+                    // Include the package's own integrity (name_hash) so cache
+                    // poisoning via a different registry doesn't reuse another
+                    // registry's global entry.
+                    top.hasher.update(std.mem.asBytes(&pkg_name_hashes[pkg_id]));
+                }
+
+                if (states[idx] == .ineligible) {
+                    _ = stack.pop();
+                    continue;
+                }
+
+                const deps = entry_dependencies[idx].slice();
+                var advanced = false;
+                while (top.dep_idx < deps.len) : (top.dep_idx += 1) {
+                    const dep = deps[top.dep_idx];
+                    const dep_idx = dep.entry_id.get();
+                    const dep_name_hash = dependencies[dep.dep_id].name_hash;
+                    switch (states[dep_idx]) {
+                        .done => {
+                            top.hasher.update(std.mem.asBytes(&dep_name_hash));
+                            top.hasher.update(std.mem.asBytes(&entry_hashes[dep_idx]));
+                        },
+                        .ineligible => {
+                            // A dep that can't live in the global store poisons
+                            // this entry too: its symlink would point at a
+                            // project-local path.
+                            states[idx] = .ineligible;
+                            entry_hashes[idx] = 0;
+                        },
+                        .in_progress => {
+                            // Cycle back-edge: fold in the dep name only.
+                            top.hasher.update(std.mem.asBytes(&dep_name_hash));
+                        },
+                        .unvisited => {
+                            try stack.append(manager.allocator, .{ .id = dep.entry_id, .dep_idx = 0, .hasher = undefined });
+                            advanced = true;
+                            // re-fetch `top` after potential realloc
+                            break;
+                        },
+                    }
+                    if (states[idx] == .ineligible) break;
+                }
+
+                if (advanced) continue;
+
+                if (states[idx] != .ineligible) {
+                    var h = top.hasher.final();
+                    // 0 is the "not eligible" sentinel.
+                    if (h == 0) h = 1;
+                    entry_hashes[idx] = h;
+                    states[idx] = .done;
+                }
+                _ = stack.pop();
+            }
+        }
+
+        // <cache_dir>/links — created lazily by the first task that misses.
+        // getCacheDirectory() populates `cache_directory_path` as a side-effect.
+        _ = manager.getCacheDirectory();
+        const cache_dir_path = manager.cache_directory_path;
+        if (cache_dir_path.len == 0) break :global_store_path null;
+        break :global_store_path try std.fmt.allocPrintSentinel(
+            manager.allocator,
+            "{s}{s}links",
+            .{ cache_dir_path, if (bun.strings.endsWithChar(cache_dir_path, std.fs.path.sep)) "" else std.fs.path.sep_str },
+            0,
+        );
+    } else null;
+
     // setup node_modules/.bun
     const is_new_bun_modules = is_new_bun_modules: {
         const node_modules_path = bun.OSPathLiteral("node_modules");
@@ -1062,6 +1233,7 @@ pub fn installIsolatedPackages(
             .trusted_dependencies_from_update_requests = manager.findTrustedDependenciesFromUpdateRequests(),
             .supported_backend = .init(PackageInstall.supported_method),
             .is_new_bun_modules = is_new_bun_modules,
+            .global_store_path = global_store_path,
         };
 
         for (tasks, 0..) |*task, _entry_id| {
@@ -1146,14 +1318,20 @@ pub fn installIsolatedPackages(
                 => |pkg_res_tag| {
                     const patch_info = try installer.packagePatchInfo(pkg_name, pkg_name_hash, &pkg_res);
 
+                    const uses_global_store = installer.entryUsesGlobalStore(entry_id);
+
                     const needs_install =
                         manager.options.enable.force_install or
-                        is_new_bun_modules or
+                        // A freshly-created `node_modules/.bun` only implies the
+                        // *project-local* entries are missing; global virtual-
+                        // store entries persist across `rm -rf node_modules` and
+                        // should still take the cheap symlink-only path.
+                        (is_new_bun_modules and !uses_global_store) or
                         patch_info == .remove or
                         needs_install: {
                             var store_path: bun.AbsPath(.{}) = .initTopLevelDir();
                             defer store_path.deinit();
-                            installer.appendStorePath(&store_path, entry_id);
+                            installer.appendRealStorePath(&store_path, entry_id);
                             const scope_for_patch_tag_path = store_path.save();
                             if (pkg_res_tag == .npm)
                                 // if it's from npm, it should always have a package.json.
@@ -1176,6 +1354,19 @@ pub fn installIsolatedPackages(
                         };
 
                     if (!needs_install) {
+                        if (uses_global_store) {
+                            // Warm hit: the global virtual store already holds
+                            // this entry's files, dep symlinks, and bin links.
+                            // The only per-install work is the project-level
+                            // `node_modules/.bun/<storepath>` → global symlink.
+                            switch (installer.linkProjectToGlobalStore(entry_id)) {
+                                .result => {},
+                                .err => |err| {
+                                    Output.err(err, "failed to symlink store entry to global virtual store", .{});
+                                    if (manager.options.enable.fail_early) Global.exit(1);
+                                },
+                            }
+                        }
                         if (entry_hoisted[entry_id.get()]) {
                             installer.linkToHiddenNodeModules(entry_id);
                         }

@@ -733,7 +733,7 @@ fn overwritePackageInNodeModulesFolder(
 ) !void {
     FD.cwd().deleteTree(node_modules_folder_path) catch {};
 
-    var dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }) = .from(node_modules_folder_path);
+    var dest_subpath: bun.Path(.{ .sep = .auto, .unit = .os }) = .from(node_modules_folder_path);
     defer dest_subpath.deinit();
 
     const src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = src_path: {

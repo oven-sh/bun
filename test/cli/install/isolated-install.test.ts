@@ -7,6 +7,15 @@ import { join } from "path";
 
 const registry = new VerdaccioRegistry();
 
+// With the global virtual store enabled, dependency symlinks inside a store
+// entry point at sibling global-store directories whose names carry a 16-hex
+// content-hash suffix (`<name>@<ver>-<hash>/...`). The hash is deterministic
+// for a given dependency closure but would make these layout assertions
+// brittle, so strip it before comparing.
+function withoutEntryHash(link: string): string {
+  return link.replace(/(-[0-9a-f]{16})(?=[\\/])/, "");
+}
+
 beforeAll(async () => {
   await registry.start();
 });
@@ -139,12 +148,16 @@ describe("basic", () => {
       await readdirSorted(join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0", "node_modules")),
     ).toEqual(["@types", "no-deps", "two-range-deps"]);
     expect(
-      readlinkSync(
-        join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0", "node_modules", "@types", "is-number"),
+      withoutEntryHash(
+        readlinkSync(
+          join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0", "node_modules", "@types", "is-number"),
+        ),
       ),
     ).toBe(join("..", "..", "..", "@types+is-number@2.0.0", "node_modules", "@types", "is-number"));
     expect(
-      readlinkSync(join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0", "node_modules", "no-deps")),
+      withoutEntryHash(
+        readlinkSync(join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0", "node_modules", "no-deps")),
+      ),
     ).toBe(join("..", "..", "no-deps@1.1.0", "node_modules", "no-deps"));
     expect(
       await file(
@@ -210,9 +223,11 @@ test("handles cyclic dependencies", async () => {
     },
   });
 
-  expect(readlinkSync(join(packageDir, "node_modules", ".bun", "a-dep-b@1.0.0", "node_modules", "b-dep-a"))).toBe(
-    join("..", "..", "b-dep-a@1.0.0", "node_modules", "b-dep-a"),
-  );
+  expect(
+    withoutEntryHash(
+      readlinkSync(join(packageDir, "node_modules", ".bun", "a-dep-b@1.0.0", "node_modules", "b-dep-a")),
+    ),
+  ).toBe(join("..", "..", "b-dep-a@1.0.0", "node_modules", "b-dep-a"));
   expect(
     await file(
       join(packageDir, "node_modules", ".bun", "a-dep-b@1.0.0", "node_modules", "b-dep-a", "package.json"),
@@ -1034,12 +1049,16 @@ test("many transitive dependencies", async () => {
     "alias-loop-2",
     "alias2",
   ]);
-  expect(readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules", "alias1"))).toBe(
-    join("..", "..", "alias-loop-2@1.0.0", "node_modules", "alias-loop-2"),
-  );
-  expect(readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-2@1.0.0", "node_modules", "alias2"))).toBe(
-    join("..", "..", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1"),
-  );
+  expect(
+    withoutEntryHash(
+      readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules", "alias1")),
+    ),
+  ).toBe(join("..", "..", "alias-loop-2@1.0.0", "node_modules", "alias-loop-2"));
+  expect(
+    withoutEntryHash(
+      readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-2@1.0.0", "node_modules", "alias2")),
+    ),
+  ).toBe(join("..", "..", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1"));
 });
 
 test("dependency names are preserved", async () => {
@@ -1069,12 +1088,16 @@ test("dependency names are preserved", async () => {
     "alias-loop-2",
     "alias2",
   ]);
-  expect(readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules", "alias1"))).toBe(
-    join("..", "..", "alias-loop-2@1.0.0", "node_modules", "alias-loop-2"),
-  );
-  expect(readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-2@1.0.0", "node_modules", "alias2"))).toBe(
-    join("..", "..", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1"),
-  );
+  expect(
+    withoutEntryHash(
+      readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules", "alias1")),
+    ),
+  ).toBe(join("..", "..", "alias-loop-2@1.0.0", "node_modules", "alias-loop-2"));
+  expect(
+    withoutEntryHash(
+      readlinkSync(join(packageDir, "node_modules", ".bun", "alias-loop-2@1.0.0", "node_modules", "alias2")),
+    ),
+  ).toBe(join("..", "..", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1"));
   expect(
     await file(
       join(packageDir, "node_modules", ".bun", "alias-loop-1@1.0.0", "node_modules", "alias-loop-1", "package.json"),
@@ -1339,7 +1362,77 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
   expect(existsSync(join(bunDir, strictPeerEntry!, "node_modules", "no-deps"))).toBe(true);
 
   // Verify the chain is intact
-  expect(readlinkSync(join(bunDir, usesStrictEntry!, "node_modules", "strict-peer-dep"))).toBe(
+  expect(withoutEntryHash(readlinkSync(join(bunDir, usesStrictEntry!, "node_modules", "strict-peer-dep")))).toBe(
     join("..", "..", strictPeerEntry!, "node_modules", "strict-peer-dep"),
   );
+});
+
+test("global virtual store survives node_modules wipe", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-global-store",
+      dependencies: { "two-range-deps": "1.0.0" },
+    }),
+  );
+
+  // First install: populates `<cache>/links/` and creates project symlinks.
+  await runBunInstall(bunEnv, packageDir);
+
+  // `node_modules/.bun/<storepath>` is a symlink (to the global virtual store),
+  // not a real directory containing a clonefiled copy of the package.
+  const entry = join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0");
+  expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+  const target = readlinkSync(entry);
+  expect(target).toMatch(/links[\/\\]two-range-deps@1\.0\.0-[0-9a-f]{16}$/);
+  expect(existsSync(join(target, "node_modules", "two-range-deps", "package.json"))).toBe(true);
+  // dep symlink inside the global entry points at a sibling global entry
+  expect(readlinkSync(join(target, "node_modules", "no-deps"))).toMatch(
+    /^\.\.[\/\\]\.\.[\/\\]no-deps@1\.1\.0-[0-9a-f]{16}[\/\\]node_modules[\/\\]no-deps$/,
+  );
+
+  // Second install after wiping node_modules: the global entry persists, so
+  // the project entry is re-created as a symlink to the *same* global path
+  // without re-materialising package files.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+  expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+  expect(readlinkSync(entry)).toBe(target);
+  expect(
+    await file(
+      join(
+        packageDir,
+        "node_modules",
+        ".bun",
+        "two-range-deps@1.0.0",
+        "node_modules",
+        "two-range-deps",
+        "package.json",
+      ),
+    ).json(),
+  ).toMatchObject({ name: "two-range-deps", version: "1.0.0" });
+});
+
+test("global virtual store can be disabled", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-global-store-off",
+      dependencies: { "no-deps": "1.0.0" },
+    }),
+  );
+
+  await runBunInstall({ ...bunEnv, BUN_INSTALL_GLOBAL_STORE: "0" }, packageDir);
+
+  // With the global store disabled the entry is a real directory under
+  // `node_modules/.bun/` (the pre-global-store layout).
+  const entry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
+  expect(lstatSync(entry).isSymbolicLink()).toBe(false);
+  expect(lstatSync(entry).isDirectory()).toBe(true);
+  expect(existsSync(join(entry, "node_modules", "no-deps", "package.json"))).toBe(true);
 });

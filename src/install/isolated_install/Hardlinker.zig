@@ -2,13 +2,13 @@ const Hardlinker = @This();
 
 src_dir: FD,
 src: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
-dest: bun.RelPath(.{ .sep = .auto, .unit = .os }),
+dest: bun.Path(.{ .sep = .auto, .unit = .os }),
 walker: Walker,
 
 pub fn init(
     folder_dir: FD,
     src: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
-    dest: bun.RelPath(.{ .sep = .auto, .unit = .os }),
+    dest: bun.Path(.{ .sep = .auto, .unit = .os }),
     skip_dirnames: []const bun.OSPathSlice,
 ) OOM!Hardlinker {
     return .{

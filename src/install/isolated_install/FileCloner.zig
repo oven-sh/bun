@@ -4,7 +4,12 @@ const FileCloner = @This();
 
 cache_dir: FD,
 cache_dir_subpath: bun.AutoRelPath,
-dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }),
+dest_subpath: bun.Path(.{ .sep = .auto, .unit = .os }),
+/// When true, an existing destination is treated as success rather than wiped
+/// and re-cloned. Set for global virtual-store entries, which are shared
+/// across projects and content-addressed by name (so the existing tree is
+/// already what we'd produce).
+keep_existing_dest: bool = false,
 
 fn clonefileat(this: *FileCloner) sys.Maybe(void) {
     return sys.clonefileat(this.cache_dir, this.cache_dir_subpath.sliceZ(), FD.cwd(), this.dest_subpath.sliceZ());
@@ -16,6 +21,9 @@ pub fn clone(this: *FileCloner) sys.Maybe(void) {
         .err => |err| {
             switch (err.getErrno()) {
                 .EXIST => {
+                    if (this.keep_existing_dest) {
+                        return .success;
+                    }
                     FD.cwd().deleteTree(this.dest_subpath.slice()) catch {};
                     return this.clonefileat();
                 },

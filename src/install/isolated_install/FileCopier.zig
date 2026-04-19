@@ -1,12 +1,12 @@
 pub const FileCopier = struct {
     src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
-    dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }),
+    dest_subpath: bun.Path(.{ .sep = .auto, .unit = .os }),
     walker: Walker,
 
     pub fn init(
         src_dir: FD,
         src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
-        dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }),
+        dest_subpath: bun.Path(.{ .sep = .auto, .unit = .os }),
         skip_dirnames: []const bun.OSPathSlice,
     ) OOM!FileCopier {
         return .{

@@ -30,9 +30,12 @@
 #endif
 
 // IsWow64Process2 landed in Windows 10 1709 (build 16299); our install
-// floor is 1809, so it's always present by the time this runs. Link-time
-// resolved rather than GetProcAddress — the LaunchConditions gate fires
-// before CostInitialize, so on an older OS the user never reaches this CA.
+// floor is 1809, so kernel32 always exports it on any OS the installer
+// is allowed to run on. That ordering (floor > availability) is what
+// makes link-time resolution safe here — not the LaunchConditions gate:
+// this CA is sequenced After=AppSearch, which runs *before*
+// LaunchConditions, so on a hypothetical pre-1709 box the DLL load would
+// fail with 1720/1723 before the friendly min-OS message ever appeared.
 extern BOOL WINAPI IsWow64Process2(HANDLE, USHORT*, USHORT*);
 
 __declspec(dllexport) UINT __stdcall DetectCpu(MSIHANDLE install)

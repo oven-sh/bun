@@ -98,7 +98,13 @@
     <Launch
         Condition="Installed OR (VersionNT &gt;= 603 AND WINDOWSBUILDNUMBER &gt;= 17763)"
         Message="Bun requires Windows 10 version 1809 / Windows Server 2019 (build 17763) or newer." />
-    <Property Id="WINDOWSBUILDNUMBER" Secure="yes">
+    <!--
+      Not Secure: this is read-only OS introspection, not a deployment
+      knob. AppSearch skips a RegistrySearch when the property is already
+      set, so marking it Secure would let `msiexec ... WINDOWSBUILDNUMBER=99999`
+      bypass the gate above on an unsupported build.
+    -->
+    <Property Id="WINDOWSBUILDNUMBER">
       <RegistrySearch Id="WinBuild" Root="HKLM"
           Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
           Name="CurrentBuildNumber" Type="raw" />

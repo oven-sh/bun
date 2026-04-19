@@ -34,7 +34,7 @@ describe("packages/bun-msi/bun.wxs", () => {
     // that at build time on the windows-msi agent — but it stops
     // obviously-broken pushes from every other lane.
     // Comments and CDATA are stripped first so prose like
-    // `bun-windows-<arch>.msi` and the VBScript body don't confuse the scan.
+    // `bun-windows-<arch>.msi` doesn't confuse the scan.
     const body = wxs.replace(/<!--[\s\S]*?-->/g, "").replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, "");
     const opens: string[] = [];
     for (const m of body.matchAll(/<\/?([A-Za-z][\w:.-]*)\b[^>]*?(\/?)>/gs)) {
@@ -258,7 +258,6 @@ describe("packages/bun-msi/build-msi.ps1", () => {
     const referenced = new Set([...wxs.matchAll(/\$\((Bun\w+)\)/g)].map(m => m[1]));
     // Derived preprocessor vars defined inside the .wxs don't come from -d.
     referenced.delete("BunUpgradeCode");
-    referenced.delete("BunPlatform");
     expect([...referenced].sort()).toEqual(
       ["BunArch", "BunBannerBmp", "BunDialogBmp", "BunExe", "BunIcon", "BunLicense", "BunVersion", "BunxExe"].sort(),
     );

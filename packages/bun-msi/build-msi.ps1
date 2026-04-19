@@ -98,8 +98,12 @@ if (-not (Test-Path $WixExe)) {
 if (-not (Test-Path $WixExe)) { throw "wix.exe not found after install: $WixExe" }
 
 # The UI dialog set (WixUI_InstallDir) lives in a separate extension package.
+# `extension add` is idempotent, but a NuGet fetch can still fail on a cold
+# cache — surface that here rather than as an opaque "extension not found"
+# from `wix build` forty lines later.
 Write-Host "-- Ensuring WixToolset.UI.wixext is available"
 & $WixExe extension add -g WixToolset.UI.wixext/$WixVersion 2>&1 | Out-Host
+if ($LASTEXITCODE -ne 0) { throw "wix extension add WixToolset.UI.wixext failed ($LASTEXITCODE)" }
 
 # ── bunx.exe ────────────────────────────────────────────────────────────────
 # bunx dispatch is argv[0]-based (src/cli.zig), so bunx.exe is a literal copy

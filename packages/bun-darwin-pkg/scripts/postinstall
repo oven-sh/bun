@@ -101,18 +101,23 @@ has_marker() {
 }
 
 # Returns 0 when the file was targeted (wrote the block, or it was already
-# present), 1 when it was skipped because the path resolves to something
-# other than a regular file. Callers use the return to decide whether the
-# ~/.zprofile fallback is still needed.
+# present), non-zero when the path is unsuitable or the write failed.
+# Callers use the return to decide whether the ~/.zprofile fallback is
+# still needed. Every call site is in an `&&`/`||` context so a non-zero
+# return doesn't trip `set -e`.
 append_once() {
   local file="$1"
-  # Skip anything that resolves to a non-regular file (directory, device).
-  # -f follows symlinks, so a symlink -> regular file is fine.
-  [[ -e "$file" && ! -f "$file" ]] && return 1
+  # Skip anything that isn't (or doesn't resolve to) a regular file:
+  # directories, devices, and broken symlinks. `-e`/`-f` dereference, so
+  # a broken symlink has -e false — hence the `|| -L` to catch it.
+  [[ ( -e "$file" || -L "$file" ) && ! -f "$file" ]] && return 1
   if [[ -f "$file" ]] && has_marker "$file"; then
     return 0
   fi
-  sudo -u "$CONSOLE_USER" tee -a "$file" >/dev/null 2>&1 <<EOF || true
+  # No `|| true`: propagate tee's exit so a write that fails (EACCES on
+  # a symlink to a root-owned file, ENOSPC, …) is reflected in wrote_any
+  # and the ~/.zprofile fallback still fires.
+  sudo -u "$CONSOLE_USER" tee -a "$file" >/dev/null 2>&1 <<EOF
 
 # bun (installed via .pkg)
 export BUN_INSTALL="\$HOME/.bun"
@@ -123,11 +128,11 @@ EOF
 append_once_fish() {
   local file="$1"
   sudo -u "$CONSOLE_USER" mkdir -p "$(dirname "$file")" 2>/dev/null || return 1
-  [[ -e "$file" && ! -f "$file" ]] && return 1
+  [[ ( -e "$file" || -L "$file" ) && ! -f "$file" ]] && return 1
   if [[ -f "$file" ]] && has_marker "$file"; then
     return 0
   fi
-  sudo -u "$CONSOLE_USER" tee -a "$file" >/dev/null 2>&1 <<EOF || true
+  sudo -u "$CONSOLE_USER" tee -a "$file" >/dev/null 2>&1 <<EOF
 
 # bun (installed via .pkg)
 set --export BUN_INSTALL "\$HOME/.bun"

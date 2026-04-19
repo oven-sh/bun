@@ -485,6 +485,11 @@ extern "C" void Bun__onFulfillAsyncModule(
     // The old #6946/#12910 short-circuit was for the JS loader's *shared*
     // entry.fetch promise; under the new loader returning here would strand
     // the loser's promise pending forever.
+    //
+    // FIXME(module-loader): the loser still re-transpiled the file. The right
+    // fix is for JSModuleLoader::loadModule to ensureRegistered() *before*
+    // calling fetch so concurrent importers share the entry's fetchPromise
+    // instead of each round-tripping through the embedder.
 
     if (res->result.value.isCommonJSModule) {
         auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), specifierValue, res->result.value);

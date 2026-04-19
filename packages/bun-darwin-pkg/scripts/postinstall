@@ -168,8 +168,10 @@ fi
 # If none of the above targeted a file (either the login shell is something
 # else entirely, or the target paths exist but aren't regular files — e.g.
 # a broken dotfile manager left ~/.zshrc as a directory), fall back to
-# ~/.zprofile. zsh is the macOS default since Catalina.
-if [[ "$wrote_any" == "0" ]]; then
+# ~/.zprofile. zsh is the macOS default since Catalina. Skip for fish
+# users — fish never sources ~/.zprofile, so the write would just leave
+# a misleading file behind; they still get /usr/local/bin via paths.d.
+if [[ "$wrote_any" == "0" && "$USER_SHELL" != */fish ]]; then
   append_once "$USER_HOME/.zprofile" || true
 fi
 

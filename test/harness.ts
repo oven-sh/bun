@@ -1771,6 +1771,9 @@ cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
     if (opts.linker) {
       bunfig += `linker = "${opts.linker}"\n`;
     }
+    if ("globalStore" in opts) {
+      bunfig += `globalStore = ${opts.globalStore}\n`;
+    }
     if (opts.publicHoistPattern) {
       if (typeof opts.publicHoistPattern === "string") {
         bunfig += `publicHoistPattern = "${opts.publicHoistPattern}"`;
@@ -1786,6 +1789,7 @@ type BunfigOpts = {
   saveTextLockfile?: boolean;
   npm?: boolean;
   linker?: "isolated" | "hoisted";
+  globalStore?: boolean;
   publicHoistPattern?: string | string[];
 };
 

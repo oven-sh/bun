@@ -16,6 +16,14 @@ function withoutEntryHash(link: string): string {
   return link.replace(/(-[0-9a-f]{16})(?=[\\/])/, "");
 }
 
+// Extract just the `<storepath>-<hash>` segment from a global-store link
+// target. Tests that compare entries across two test dirs need this because
+// each `createTestDir` gets its own `.bun-cache/` (so the absolute targets
+// always differ) but the hash suffix is what proves sharing/isolation.
+function entryStoreName(link: string): string {
+  return link.slice(link.lastIndexOf("links") + "links".length + 1);
+}
+
 beforeAll(async () => {
   await registry.start();
 });
@@ -1367,72 +1375,334 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
   );
 });
 
-test("global virtual store survives node_modules wipe", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+describe("global virtual store", () => {
+  test("survives node_modules wipe", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
-  await write(
-    packageJson,
-    JSON.stringify({
-      name: "test-pkg-global-store",
-      dependencies: { "two-range-deps": "1.0.0" },
-    }),
-  );
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store",
+        dependencies: { "two-range-deps": "1.0.0" },
+      }),
+    );
 
-  // First install: populates `<cache>/links/` and creates project symlinks.
-  await runBunInstall(bunEnv, packageDir);
+    // First install: populates `<cache>/links/` and creates project symlinks.
+    await runBunInstall(bunEnv, packageDir);
 
-  // `node_modules/.bun/<storepath>` is a symlink (to the global virtual store),
-  // not a real directory containing a clonefiled copy of the package.
-  const entry = join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0");
-  expect(lstatSync(entry).isSymbolicLink()).toBe(true);
-  const target = readlinkSync(entry);
-  expect(target).toMatch(/links[\/\\]two-range-deps@1\.0\.0-[0-9a-f]{16}$/);
-  expect(existsSync(join(target, "node_modules", "two-range-deps", "package.json"))).toBe(true);
-  // dep symlink inside the global entry points at a sibling global entry
-  expect(readlinkSync(join(target, "node_modules", "no-deps"))).toMatch(
-    /^\.\.[\/\\]\.\.[\/\\]no-deps@1\.1\.0-[0-9a-f]{16}[\/\\]node_modules[\/\\]no-deps$/,
-  );
+    // `node_modules/.bun/<storepath>` is a symlink (to the global virtual store),
+    // not a real directory containing a clonefiled copy of the package.
+    const entry = join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0");
+    expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+    const target = readlinkSync(entry);
+    expect(target).toMatch(/links[\/\\]two-range-deps@1\.0\.0-[0-9a-f]{16}$/);
+    expect(existsSync(join(target, "node_modules", "two-range-deps", "package.json"))).toBe(true);
+    // dep symlink inside the global entry points at a sibling global entry
+    expect(readlinkSync(join(target, "node_modules", "no-deps"))).toMatch(
+      /^\.\.[\/\\]\.\.[\/\\]no-deps@1\.1\.0-[0-9a-f]{16}[\/\\]node_modules[\/\\]no-deps$/,
+    );
 
-  // Second install after wiping node_modules: the global entry persists, so
-  // the project entry is re-created as a symlink to the *same* global path
-  // without re-materialising package files.
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    // Second install after wiping node_modules: the global entry persists, so
+    // the project entry is re-created as a symlink to the *same* global path
+    // without re-materialising package files.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
 
-  expect(lstatSync(entry).isSymbolicLink()).toBe(true);
-  expect(readlinkSync(entry)).toBe(target);
-  expect(
-    await file(
-      join(
-        packageDir,
-        "node_modules",
-        ".bun",
-        "two-range-deps@1.0.0",
-        "node_modules",
-        "two-range-deps",
-        "package.json",
-      ),
-    ).json(),
-  ).toMatchObject({ name: "two-range-deps", version: "1.0.0" });
-});
+    expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(entry)).toBe(target);
+    expect(
+      await file(
+        join(
+          packageDir,
+          "node_modules",
+          ".bun",
+          "two-range-deps@1.0.0",
+          "node_modules",
+          "two-range-deps",
+          "package.json",
+        ),
+      ).json(),
+    ).toMatchObject({ name: "two-range-deps", version: "1.0.0" });
+  });
 
-test("global virtual store can be disabled", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  test("can be disabled via BUN_INSTALL_GLOBAL_STORE=0", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
-  await write(
-    packageJson,
-    JSON.stringify({
-      name: "test-pkg-global-store-off",
-      dependencies: { "no-deps": "1.0.0" },
-    }),
-  );
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-off-env",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
 
-  await runBunInstall({ ...bunEnv, BUN_INSTALL_GLOBAL_STORE: "0" }, packageDir);
+    await runBunInstall({ ...bunEnv, BUN_INSTALL_GLOBAL_STORE: "0" }, packageDir);
 
-  // With the global store disabled the entry is a real directory under
-  // `node_modules/.bun/` (the pre-global-store layout).
-  const entry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
-  expect(lstatSync(entry).isSymbolicLink()).toBe(false);
-  expect(lstatSync(entry).isDirectory()).toBe(true);
-  expect(existsSync(join(entry, "node_modules", "no-deps", "package.json"))).toBe(true);
+    // With the global store disabled the entry is a real directory under
+    // `node_modules/.bun/` (the pre-global-store layout).
+    const entry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
+    expect(lstatSync(entry).isSymbolicLink()).toBe(false);
+    expect(lstatSync(entry).isDirectory()).toBe(true);
+    expect(existsSync(join(entry, "node_modules", "no-deps", "package.json"))).toBe(true);
+  });
+
+  test("can be disabled via bunfig install.globalStore", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore: false },
+    });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-off-bunfig",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const entry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
+    expect(lstatSync(entry).isSymbolicLink()).toBe(false);
+    expect(lstatSync(entry).isDirectory()).toBe(true);
+  });
+
+  test("entry hash is deterministic across fresh installs", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-determinism",
+        dependencies: { "two-range-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+    const target1 = readlinkSync(join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0"));
+
+    // Full reset (lockfile + node_modules + global links). The hash is derived
+    // from the resolved dependency closure, so a fresh resolve must reproduce
+    // it exactly — otherwise warm-hit reuse across machines/CI is broken.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lock"), { force: true });
+    const linksDir = target1.slice(0, target1.lastIndexOf("links") + "links".length);
+    await rm(linksDir, { recursive: true, force: true });
+
+    await runBunInstall(bunEnv, packageDir);
+    const target2 = readlinkSync(join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0"));
+
+    expect(target2).toBe(target1);
+  });
+
+  test("different resolved transitive dep produces a different entry hash", async () => {
+    // Two projects that depend on the same direct package but force different
+    // versions of one of its transitive deps must NOT share a global entry —
+    // the dep symlink inside the entry would point at the wrong version for
+    // one of them.
+    const a = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const b = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      a.packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-hash-a",
+        dependencies: { "two-range-deps": "1.0.0" },
+        overrides: { "no-deps": "1.0.0" },
+      }),
+    );
+    await write(
+      b.packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-hash-b",
+        dependencies: { "two-range-deps": "1.0.0" },
+        overrides: { "no-deps": "1.1.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, a.packageDir);
+    await runBunInstall(bunEnv, b.packageDir);
+
+    const targetA = entryStoreName(readlinkSync(join(a.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0")));
+    const targetB = entryStoreName(readlinkSync(join(b.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0")));
+    expect(targetA).not.toBe(targetB);
+
+    // Each entry's dep symlink resolves to the version that *its* project
+    // overrode — proving the entries really are independent on disk.
+    expect(
+      await file(
+        join(a.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0", "node_modules", "no-deps", "package.json"),
+      ).json(),
+    ).toMatchObject({ version: "1.0.0" });
+    expect(
+      await file(
+        join(b.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0", "node_modules", "no-deps", "package.json"),
+      ).json(),
+    ).toMatchObject({ version: "1.1.0" });
+  });
+
+  test("two projects with the same closure share one global entry", async () => {
+    const a = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const b = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    for (const { packageJson } of [a, b]) {
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "test-pkg-global-store-share",
+          dependencies: { "two-range-deps": "1.0.0" },
+        }),
+      );
+    }
+
+    await runBunInstall(bunEnv, a.packageDir);
+    await runBunInstall(bunEnv, b.packageDir);
+
+    const targetA = entryStoreName(readlinkSync(join(a.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0")));
+    const targetB = entryStoreName(readlinkSync(join(b.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0")));
+    expect(targetA).toMatch(/^two-range-deps@1\.0\.0-[0-9a-f]{16}$/);
+    expect(targetA).toBe(targetB);
+  });
+
+  test("workspace dependency makes the parent entry project-local", async () => {
+    // Dep symlinks inside a global entry are sibling-relative within
+    // `<cache>/links/`. If one of those siblings were a workspace package
+    // (which lives under the project, not the cache) the link would be
+    // dangling for any other project that shared the entry. The eligibility
+    // check propagates: an entry that links to anything project-local is
+    // itself project-local.
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await mkdir(join(packageDir, "packages", "ws-pkg"), { recursive: true });
+    await write(
+      join(packageDir, "packages", "ws-pkg", "package.json"),
+      JSON.stringify({ name: "ws-pkg", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+    );
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-ws",
+        workspaces: ["packages/*"],
+        dependencies: { "ws-pkg": "workspace:*", "no-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // `no-deps` has no project-local deps so it stays global.
+    const noDepsEntry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
+    expect(lstatSync(noDepsEntry).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(noDepsEntry)).toMatch(/links[\/\\]no-deps@1\.0\.0-[0-9a-f]{16}$/);
+
+    // The workspace itself is always project-local (its source lives in the
+    // project tree).
+    expect(readlinkSync(join(packageDir, "node_modules", "ws-pkg"))).toBe(join("..", "packages", "ws-pkg"));
+  });
+
+  test("packages with trusted lifecycle scripts stay project-local", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-scripts",
+        dependencies: { "lifecycle-postinstall": "1.0.0", "no-deps": "1.0.0" },
+        trustedDependencies: ["lifecycle-postinstall"],
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // The script may mutate the install dir, so the entry must not be shared.
+    const scriptEntry = join(packageDir, "node_modules", ".bun", "lifecycle-postinstall@1.0.0");
+    expect(lstatSync(scriptEntry).isSymbolicLink()).toBe(false);
+    expect(lstatSync(scriptEntry).isDirectory()).toBe(true);
+
+    // A neighbouring scriptless package is unaffected and stays global.
+    const noDepsEntry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
+    expect(lstatSync(noDepsEntry).isSymbolicLink()).toBe(true);
+  });
+
+  test("concurrent installs into a cold global store both succeed", async () => {
+    // Two `bun install` processes may race to create the same content-addressed
+    // global entry; the loser sees EEXIST from clonefile/symlink/bin-link and
+    // must treat it as success rather than failing the install.
+    const a = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const b = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    // Both projects must share one cache for the race to be real; the harness
+    // gives each test dir its own `.bun-cache/` by default.
+    const sharedCache = join(a.packageDir, ".bun-cache");
+    await write(
+      join(b.packageDir, "bunfig.toml"),
+      `[install]\ncache = "${sharedCache.replaceAll("\\", "\\\\")}"\nregistry = "${registry.registryUrl()}"\nlinker = "isolated"\n`,
+    );
+
+    for (const { packageJson } of [a, b]) {
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "test-pkg-global-store-concurrent",
+          // `what-bin` exercises the `.bin/` symlink race; the others give the
+          // clonefile + dep-symlink paths something to fight over.
+          dependencies: { "two-range-deps": "1.0.0", "a-dep-b": "1.0.0", "what-bin": "1.0.0" },
+        }),
+      );
+    }
+
+    // Prime the package cache so the parallel installs only race on
+    // global-store creation, not network downloads.
+    await runBunInstall(bunEnv, a.packageDir);
+    const linksDir = join(sharedCache, "links");
+
+    for (let i = 0; i < 3; i++) {
+      await rm(linksDir, { recursive: true, force: true });
+      await rm(join(a.packageDir, "node_modules"), { recursive: true, force: true });
+      await rm(join(b.packageDir, "node_modules"), { recursive: true, force: true });
+
+      const [ra, rb] = await Promise.all([
+        spawn({ cmd: [bunExe(), "install"], cwd: a.packageDir, env: bunEnv, stderr: "pipe", stdout: "pipe" }).exited,
+        spawn({ cmd: [bunExe(), "install"], cwd: b.packageDir, env: bunEnv, stderr: "pipe", stdout: "pipe" }).exited,
+      ]);
+      expect({ iter: i, a: ra, b: rb }).toEqual({ iter: i, a: 0, b: 0 });
+    }
+
+    // Both projects' `.bun/<X>` symlinks point at the same physical directory
+    // in the shared cache.
+    expect(readlinkSync(join(a.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0"))).toBe(
+      readlinkSync(join(b.packageDir, "node_modules", ".bun", "two-range-deps@1.0.0")),
+    );
+    for (const { packageDir } of [a, b]) {
+      expect(
+        await file(
+          join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0", "node_modules", "no-deps", "package.json"),
+        ).json(),
+      ).toMatchObject({ name: "no-deps" });
+      expect(existsSync(join(packageDir, "node_modules", ".bin", "what-bin"))).toBe(true);
+    }
+  });
+
+  test("upgrades a pre-global-store node_modules in place", async () => {
+    // A project installed before this change has `node_modules/.bun/<X>` as a
+    // real directory. Re-running install with the global store enabled must
+    // replace that directory with a symlink (not fail with EEXIST or leave the
+    // stale tree behind).
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-upgrade",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall({ ...bunEnv, BUN_INSTALL_GLOBAL_STORE: "0" }, packageDir);
+    const entry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
+    expect(lstatSync(entry).isDirectory()).toBe(true);
+    expect(lstatSync(entry).isSymbolicLink()).toBe(false);
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(entry, "node_modules", "no-deps", "package.json"))).toBe(true);
+  });
 });

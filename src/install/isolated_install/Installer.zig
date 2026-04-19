@@ -152,6 +152,12 @@ pub const Installer = struct {
                 });
                 patch_log.print(Output.errorWriter()) catch {};
             },
+            .binaries => |bin_err| {
+                Output.err(bin_err, "failed to link binaries for package: {s}@{f}", .{
+                    pkg_name.slice(string_buf),
+                    pkg_res.fmt(string_buf, .auto),
+                });
+            },
             else => {},
         }
         Output.flush();
@@ -923,6 +929,12 @@ pub const Installer = struct {
                 },
                 inline .symlink_dependency_binaries => |current_step| {
                     installer.linkDependencyBins(this.entry_id) catch |err| {
+                        // The global virtual-store entry's `.bin/` is shared
+                        // across processes; a concurrent install racing to link
+                        // the same binary produced what we were about to.
+                        if (err == error.EEXIST and installer.entryUsesGlobalStore(this.entry_id)) {
+                            continue :next_step this.nextStep(current_step);
+                        }
                         return .failure(.{ .binaries = err });
                     };
 
@@ -1124,6 +1136,11 @@ pub const Installer = struct {
                     }
 
                     if (bin_linker.err) |err| {
+                        // See `.symlink_dependency_binaries` for why EEXIST is
+                        // benign on a shared global-store entry.
+                        if (err == error.EEXIST and installer.entryUsesGlobalStore(this.entry_id)) {
+                            continue :next_step this.nextStep(current_step);
+                        }
                         return .failure(.{ .binaries = err });
                     }
 
@@ -1498,6 +1515,13 @@ pub const Installer = struct {
             }
 
             if (bin_linker.err) |err| {
+                // See `.symlink_dependency_binaries` step for why EEXIST is
+                // benign when this entry's `.bin/` lives in the shared global
+                // virtual store.
+                if (err == error.EEXIST and this.entryUsesGlobalStore(parent_entry_id)) {
+                    bin_linker.err = null;
+                    continue;
+                }
                 return err;
             }
         }

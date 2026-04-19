@@ -291,6 +291,10 @@ pub fn load(
             this.node_linker = node_linker;
         }
 
+        if (config.global_store) |global_store| {
+            this.enable.global_virtual_store = global_store;
+        }
+
         if (config.security_scanner) |security_scanner| {
             this.security_scanner = security_scanner;
             this.do.prefetch_resolved_tarballs = false;

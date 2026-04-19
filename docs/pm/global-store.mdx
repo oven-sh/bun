@@ -1,0 +1,132 @@
+---
+title: "Global virtual store"
+description: "Share isolated installs across projects for fast warm CI installs"
+---
+
+When using the [isolated linker](/pm/isolated-installs), Bun materializes package contents into a **global virtual store** under the package cache and symlinks `node_modules/.bun/<package>@<version>` into it. The virtual store is shared across every project on the machine, so once a package (and its specific resolved dependency set) has been installed anywhere, every subsequent install — including a fresh `rm -rf node_modules && bun install` — only creates one symlink per package instead of copying the package files again.
+
+This is the same approach pnpm and aube take, applied to Bun's isolated linker.
+
+## Enabling
+
+The global virtual store is **on by default** with the isolated linker. It is not used by the hoisted linker.
+
+```bash terminal icon="terminal"
+bun install --linker isolated
+```
+
+To make isolated the default for a project:
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+linker = "isolated"
+```
+
+To disable the global store and fall back to per-project package copies (the previous behavior), set `globalStore = false` or `BUN_INSTALL_GLOBAL_STORE=0`:
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+linker = "isolated"
+globalStore = false
+```
+
+```bash terminal icon="terminal"
+BUN_INSTALL_GLOBAL_STORE=0 bun install --linker isolated
+```
+
+## Why it's fast
+
+The previous isolated linker called `clonefileat()` (macOS) or `link()`/`copyfile()` (other platforms) for every package on every install, even when the cache was warm and `node_modules` was the only thing missing. Profiling a warm install of a 1,400-package fixture on macOS showed the main thread spending **95.4 % of its time inside `clonefileat`**:
+
+```
+Sort by top of stack (bun install --linker isolated, warm cache):
+    clonefileat        891 / 934 samples
+    __openat            15
+    __read_nocancel     10
+```
+
+`clonefileat` on APFS holds a volume-wide kernel lock, so spreading the work across more threads barely helps — eight threads only improved a 2,830-directory clone from 959 ms to 743 ms. The fix is to not call it at all on the warm path.
+
+With the global store, the warm path is one `access()` (does the global entry exist?) plus one `symlink()` (point the project at it) per package.
+
+## Benchmarks
+
+Warm CI install (lockfile present, package cache warm, `node_modules` deleted between runs) of a [~1,400-package fixture](https://github.com/endevco/aube/blob/main/benchmarks/fixture.package.json) on Apple Silicon macOS, measured with `hyperfine`:
+
+|                                        | wall time    | system time | `clonefileat` | total syscalls |
+| -------------------------------------- | ------------ | ----------- | ------------- | -------------- |
+| `--linker hoisted`                     | 823.9 ms     | 477 ms      | 1,387         | 7,857          |
+| `--linker isolated` (no global store)  | 840.9 ms     | 1,256 ms    | 1,387         | —              |
+| **`--linker isolated` (global store)** | **115.7 ms** | **95 ms**   | **0**         | **4,957**      |
+| aube 1.0.0-beta.5                      | 195.8 ms     | 913 ms      | 0             | 31,445         |
+
+The global store is **7.1× faster** than the previous isolated linker on this workload and about **1.7× faster** than aube while issuing roughly **6× fewer syscalls** (Bun's lockfile already carries the package metadata aube has to re-read from disk).
+
+## Directory structure
+
+The on-disk layout adds one level of indirection compared to [isolated installs](/pm/isolated-installs#directory-structure):
+
+```bash tree layout icon="list-tree"
+~/.bun/install/cache/
+├── react@18.3.1@@@1/                     # Package cache (unchanged)
+│   └── ...package files...
+└── links/                                # Global virtual store
+    └── react@18.3.1-5664d3cd670b3205/    # <storepath>-<entry hash>
+        └── node_modules/
+            ├── react/                    # clonefile from cache (created once)
+            ├── loose-envify -> ../../loose-envify@1.4.0-ea24…/node_modules/loose-envify
+            └── .bin/
+                └── ...
+
+project/node_modules/
+├── .bun/
+│   ├── node_modules/                     # Hidden hoisted layer (per project)
+│   │   └── react -> ../react@18.3.1/node_modules/react
+│   └── react@18.3.1 -> ~/.bun/install/cache/links/react@18.3.1-5664d3cd670b3205
+└── react -> .bun/react@18.3.1/node_modules/react
+```
+
+The 16-hex `entry_hash` suffix encodes the entry's **resolved dependency closure**: the package's own store path plus the hash of every dependency it links to. Two projects that resolve `react@18.3.1` to the same set of transitive versions share one global directory; a project that resolves a transitive dependency to a different version gets a separate global entry whose dep symlinks point at the right siblings. The hash is stable across installs and machines for the same lockfile.
+
+## What stays project-local
+
+An entry only lives in the global store when it can be safely shared across projects. Entries fall back to a per-project `node_modules/.bun/<storepath>/` directory (the previous behavior) when:
+
+- the package has a **patch** applied via `bun patch` — the patched contents are project-specific;
+- the package has a **trusted lifecycle script** (`preinstall`/`install`/`postinstall`) and scripts are enabled — the script may mutate the install directory;
+- the package, or **any** dependency it links to, is a `workspace:`, `file:`, or `link:` dependency — those resolve to project-local paths that other projects can't see.
+
+The eligibility check propagates upward: if `your-app` depends on `internal-utils` which is a workspace package, `internal-utils` is project-local, and so is every entry that links to it.
+
+## Tradeoffs
+
+### Phantom-dependency fallback
+
+Declared optional peer dependencies (listed in `peerDependencies` with `"optional": true` in `peerDependenciesMeta`) are resolved into each global entry and included in its hash, so they work the same as before.
+
+What does change: when a package's files live in the project's `node_modules/.bun/`, Node's module resolution walks up through `node_modules/.bun/node_modules/` — the hidden hoisted layer — before reaching the project root. A small number of packages rely on that fallback to load helpers they never declared as a dependency at all (for example, `webpack/bin/webpack.js` opportunistically does `require('webpack-cli')`; `webpack-cli` appears only in `peerDependenciesMeta`, not `peerDependencies`, so there is no dependency edge to follow).
+
+With the global store, packages realpath into `<cache>/links/`, so the project's hidden hoisted layer is no longer on the resolution path. Packages that depended on this fallback will fail to resolve their phantom dependency. This matches pnpm and aube. If you hit this:
+
+- add the helper to your project's `dependencies` so it becomes a declared dependency of the project (most ecosystems already do this);
+- or set `globalStore = false` for the project.
+
+Note that [`publicHoistPattern`](/runtime/bunfig#install-publichoistpattern) and [`hoistPattern`](/runtime/bunfig#install-hoistpattern) hoist into the _project's_ `node_modules`, which packages inside the global store can't reach (Node walks up from the realpath under `<cache>/links/`, not from the project). They still work for resolving hoisted packages from your own source code.
+
+### `node_modules` is now mostly symlinks
+
+Tools that scan `node_modules` without following symlinks, or that compare file paths by string equality, may behave differently. This is the same caveat as any pnpm-style layout.
+
+### Disk usage
+
+Each unique `(package, version, resolved-dependency-set)` triple gets one directory in `<cache>/links/`. For a typical project this is one entry per package; projects that resolve the same package with different peer-dependency combinations create one entry per combination. Run `bun pm cache rm` to clear the cache including the global store.
+
+### Concurrency
+
+Multiple `bun install` processes (parallel CI jobs, concurrent workspace builds) may race to populate the same global entry. Bun treats `EEXIST` from the loser as success because the directory is content-addressed — both writers were producing identical bytes.
+
+## Related documentation
+
+- [Package manager > Isolated installs](/pm/isolated-installs) — The linker the global store builds on
+- [Package manager > Global cache](/pm/global-cache) — Where downloaded packages are stored
+- [Runtime > bunfig](/runtime/bunfig#install-globalstore) — `bunfig.toml` reference

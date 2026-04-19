@@ -870,7 +870,7 @@ pub fn installIsolatedPackages(
         const pkg_names = pkgs.items(.name);
         const pkg_name_hashes = pkgs.items(.name_hash);
         const pkg_resolutions = pkgs.items(.resolution);
-        const pkg_scripts = pkgs.items(.scripts);
+        const pkg_metas = pkgs.items(.meta);
 
         const string_buf = lockfile.buffers.string_bytes.items;
         const dependencies = lockfile.buffers.dependencies.items;
@@ -921,8 +921,12 @@ pub fn installIsolatedPackages(
                                     break :eligible false;
                                 }
                             }
+                            // `Package.scripts` is only populated after reading
+                            // the on-disk package.json (post-install), so it is
+                            // empty here. The lockfile carries the registry's
+                            // `hasInstallScript` flag in `meta` instead.
                             if (manager.options.do.run_scripts and
-                                pkg_scripts[pkg_id].hasAny() and
+                                pkg_metas[pkg_id].hasInstallScript() and
                                 lockfile.hasTrustedDependency(pkg_names[pkg_id].slice(string_buf), &pkg_res))
                             {
                                 break :eligible false;

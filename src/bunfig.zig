@@ -661,6 +661,12 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("globalStore")) |global_store_expr| {
+                        if (global_store_expr.asBool()) |global_store| {
+                            install.global_store = global_store;
+                        }
+                    }
+
                     if (install_obj.get("lockfile")) |lockfile_expr| {
                         if (lockfile_expr.get("print")) |lockfile| {
                             try this.expectString(lockfile);

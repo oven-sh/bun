@@ -240,6 +240,11 @@ pub fn installHoistedPackages(
                 installer.installPackage(dependency_id, log_level);
             }
 
+            // Flush any ParallelHoistedTasks accumulated for this tree so
+            // workers start immediately rather than waiting for the full
+            // tree iteration to finish.
+            installer.scheduleParallelBatch();
+
             try this.runTasks(
                 *PackageInstaller,
                 &installer,
@@ -314,6 +319,50 @@ pub fn installHoistedPackages(
         } else {
             this.tickLifecycleScripts();
             this.reportSlowLifecycleScripts();
+        }
+
+        // Wait for any thread-pool package installs that were kicked off
+        // during the tree iteration above, then run their result handling
+        // (summary, bins, scripts, tree counts) serially. This must run
+        // before the forced pending-install drain below so bin linking and
+        // lifecycle scripts see a fully populated node_modules.
+        //
+        // If any worker discovered a package missing from the cache, the
+        // result handler re-enters installPackageWithNameAndResolution on
+        // the serial path which pushes a download/extract task onto
+        // task_batch; drain those here.
+        if (installer.completeParallelInstalls(log_level)) {
+            const DrainClosure = struct {
+                installer: *PackageInstaller,
+                manager: *PackageManager,
+                err: ?anyerror = null,
+
+                pub fn isDone(closure: *@This()) bool {
+                    closure.manager.runTasks(
+                        *PackageInstaller,
+                        closure.installer,
+                        .{
+                            .onExtract = PackageInstaller.installEnqueuedPackagesAfterExtraction,
+                            .onResolve = {},
+                            .onPackageManifestError = {},
+                            .onPackageDownloadError = {},
+                        },
+                        true,
+                        closure.manager.options.log_level,
+                    ) catch |err| {
+                        closure.err = err;
+                    };
+                    if (closure.err != null) return true;
+                    return closure.manager.pendingTaskCount() == 0;
+                }
+            };
+            var drain_closure: DrainClosure = .{ .installer = &installer, .manager = this };
+            // runTasks pushes task_batch to the thread pool via
+            // drainDependencyList, so call it once before sleeping.
+            if (!drain_closure.isDone()) {
+                this.sleepUntil(&drain_closure, &DrainClosure.isDone);
+            }
+            if (drain_closure.err) |err| return err;
         }
 
         for (installer.trees) |tree| {

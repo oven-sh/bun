@@ -44,7 +44,112 @@ pub const PackageInstaller = struct {
 
     seen_bin_links: bun.StringHashMap(void),
 
+    /// When node_modules is being created fresh (the common CI / fresh-clone
+    /// scenario), packages can be linked from the cache into node_modules in
+    /// parallel on the thread pool since there is no pre-existing node_modules
+    /// state to delete and therefore no parent/child tree ordering constraint.
+    /// Tasks are collected here and drained by completeParallelInstalls() after
+    /// the tree iteration loop so result handling (bins, scripts, summary) still
+    /// runs serially on the main thread.
+    parallel_tasks: std.ArrayListUnmanaged(*ParallelHoistedTask) = .{},
+    parallel_wait_group: bun.threading.WaitGroup = .init(),
+    parallel_batch: bun.ThreadPool.Batch = .{},
+
     const debug = Output.scoped(.PackageInstaller, .hidden);
+
+    /// A single package link from the cache into node_modules, run on the
+    /// thread pool. Only used for cached packages (npm/git/github/tarball) when
+    /// node_modules is new. Owns copies of every path it needs so nothing is
+    /// borrowed from the (single-threaded) PackageInstaller state.
+    pub const ParallelHoistedTask = struct {
+        pub const new = bun.TrivialNew(@This());
+
+        installer: *PackageInstaller,
+        task: bun.jsc.WorkPoolTask = .{ .callback = &runFromThreadPool },
+
+        // owned allocations
+        node_modules_path: []const u8,
+        destination_dir_subpath: [:0]u8,
+        cache_dir_subpath: [:0]const u8,
+
+        cache_dir: std.fs.Dir,
+        resolution_tag: Resolution.Tag,
+
+        dependency_id: DependencyID,
+        package_id: PackageID,
+        tree_id: Lockfile.Tree.Id,
+
+        result: PackageInstall.Result = .success,
+        /// Set when the worker discovers the package is not in the cache
+        /// (openat on the cache subpath fails with ENOENT). Main thread
+        /// then routes this package back through the serial path which
+        /// enqueues the download.
+        missing_from_cache: bool = false,
+
+        pub fn deinit(self: *@This()) void {
+            bun.default_allocator.free(self.node_modules_path);
+            bun.default_allocator.free(self.destination_dir_subpath);
+            bun.default_allocator.free(self.cache_dir_subpath);
+            bun.destroy(self);
+        }
+
+        fn runFromThreadPool(task: *bun.jsc.WorkPoolTask) void {
+            var self: *@This() = @fieldParentPtr("task", task);
+            self.result = self.run();
+            self.installer.parallel_wait_group.finish();
+        }
+
+        fn run(self: *@This()) PackageInstall.Result {
+            // Open (or create) this package's node_modules directory.
+            var destination_dir = bun.openDirA(bun.FD.cwd().stdDir(), self.node_modules_path) catch dir: {
+                bun.makePath(bun.FD.cwd().stdDir(), self.node_modules_path) catch {};
+                break :dir bun.openDirA(bun.FD.cwd().stdDir(), self.node_modules_path) catch |err| {
+                    return .fail(err, .opening_dest_dir, @errorReturnTrace());
+                };
+            };
+            defer destination_dir.close();
+
+            // Per-task NodeModulesFolder; only needed because PackageInstall
+            // holds a pointer to one. With skip_delete=true it is never used
+            // by install() for the resolution tags we allow here.
+            var nm: NodeModulesFolder = .{
+                .tree_id = self.tree_id,
+                .path = std.array_list.Managed(u8).init(bun.default_allocator),
+            };
+            bun.handleOom(nm.path.appendSlice(self.node_modules_path));
+            defer nm.deinit();
+
+            var subpath_buf: bun.PathBuffer = undefined;
+            @memcpy(subpath_buf[0..self.destination_dir_subpath.len], self.destination_dir_subpath);
+            subpath_buf[self.destination_dir_subpath.len] = 0;
+
+            var pi: PackageInstall = .{
+                .progress = null,
+                .cache_dir = self.cache_dir,
+                .cache_dir_subpath = self.cache_dir_subpath,
+                .destination_dir_subpath = subpath_buf[0..self.destination_dir_subpath.len :0],
+                .destination_dir_subpath_buf = &subpath_buf,
+                .allocator = bun.default_allocator,
+                .package_name = self.installer.names[self.package_id],
+                .package_version = "",
+                .patch = null,
+                .node_modules = &nm,
+                .lockfile = self.installer.lockfile,
+            };
+
+            // install() handles the clonefile → hardlink → copyfile
+            // fallback internally and records it in the global atomic, so
+            // subsequent tasks read the updated method directly.
+            const result = pi.install(true, destination_dir, pi.getInstallMethod(), self.resolution_tag);
+            if (result.isFail() and result.failure.step == .opening_cache_dir) {
+                // The serial path normally calls packageMissingFromCache()
+                // before installing; we skip that to avoid a per-package
+                // faccessat on the main thread and discover it here instead.
+                self.missing_from_cache = true;
+            }
+            return result;
+        }
+    };
 
     pub const NodeModulesFolder = struct {
         tree_id: Lockfile.Tree.Id = 0,
@@ -559,6 +664,12 @@ pub const PackageInstaller = struct {
     /// A tree can start installing packages when the parent has installed all its packages. If the parent
     /// isn't finished, we need to wait because it's possible a package installed in this tree will be deleted by the parent.
     pub fn canInstallPackageForTree(this: *const PackageInstaller, trees: []Lockfile.Tree, package_tree_id: Lockfile.Tree.Id) bool {
+        // When skip_delete is set (fresh node_modules or --force with no
+        // existing state), uninstallBeforeInstall() is never called so a
+        // parent tree cannot delete a child tree's directory. In that case
+        // there is no ordering requirement.
+        if (this.skip_delete) return true;
+
         var curr_tree_id = trees[package_tree_id].parent;
         while (curr_tree_id != Lockfile.Tree.invalid_id) {
             if (!this.completed_trees.isSet(curr_tree_id)) return false;
@@ -566,6 +677,18 @@ pub const PackageInstaller = struct {
         }
 
         return true;
+    }
+
+    /// Whether to use the thread pool for linking cached packages into
+    /// node_modules. Disabled on Windows because the hardlink backend there
+    /// already fans out per file. Disabled when there is pre-existing
+    /// node_modules state because parent trees may need to delete child
+    /// trees (see canInstallPackageForTree).
+    pub fn canUseParallelHoistedInstall(this: *const PackageInstaller) bool {
+        if (comptime Environment.isWindows) return false;
+        // Escape hatch for debugging / comparison.
+        if (bun.getenvZ("BUN_INSTALL_SERIAL_HOISTED") != null) return false;
+        return this.skip_delete;
     }
 
     pub fn deinit(this: *PackageInstaller) void {
@@ -579,6 +702,95 @@ pub const PackageInstaller = struct {
         this.tree_ids_to_trees_the_id_depends_on.deinit(allocator);
         this.node_modules.deinit();
         this.trusted_dependencies_from_update_requests.deinit(allocator);
+        for (this.parallel_tasks.items) |t| t.deinit();
+        this.parallel_tasks.deinit(allocator);
+    }
+
+    /// Flush any accumulated ParallelHoistedTasks to the thread pool.
+    /// Called once per tree from the hoisted install loop so workers
+    /// start as soon as the first tree is enumerated instead of waiting
+    /// for the full iteration to finish.
+    pub fn scheduleParallelBatch(this: *PackageInstaller) void {
+        if (this.parallel_batch.len == 0) return;
+        const batch = this.parallel_batch;
+        this.parallel_batch = .{};
+        this.manager.thread_pool.schedule(batch);
+    }
+
+    /// Wait for all ParallelHoistedTask workers to finish, then run the
+    /// serial result handling (summary counters, bin linking, lifecycle
+    /// script scheduling) for each. Must run on the main thread.
+    ///
+    /// Returns true if any worker discovered a package missing from the
+    /// cache and re-routed it to the serial download path — the caller
+    /// must then flush/drain the manager's task batch.
+    pub fn completeParallelInstalls(this: *PackageInstaller, log_level: Options.LogLevel) bool {
+        this.scheduleParallelBatch();
+        if (this.parallel_tasks.items.len == 0) return false;
+
+        this.parallel_wait_group.wait();
+
+        var had_missing = false;
+        const prev_node_modules = this.node_modules;
+        defer this.node_modules = prev_node_modules;
+        const prev_tree_id = this.current_tree_id;
+        defer this.current_tree_id = prev_tree_id;
+
+        for (this.parallel_tasks.items) |t| {
+            defer t.deinit();
+
+            this.node_modules = .{
+                .tree_id = t.tree_id,
+                .path = std.array_list.Managed(u8).init(bun.default_allocator),
+            };
+            bun.handleOom(this.node_modules.path.appendSlice(t.node_modules_path));
+            defer this.node_modules.deinit();
+            this.current_tree_id = t.tree_id;
+
+            @memcpy(this.destination_dir_subpath_buf[0..t.destination_dir_subpath.len], t.destination_dir_subpath);
+            this.destination_dir_subpath_buf[t.destination_dir_subpath.len] = 0;
+            const destination_dir_subpath = this.destination_dir_subpath_buf[0..t.destination_dir_subpath.len :0];
+
+            if (t.missing_from_cache) {
+                // Worker could not open the cache directory for this
+                // package. Re-run the full serial path so the download
+                // enqueue logic (packageMissingFromCache → enqueue*) runs.
+                // needs_verify=false: we already know it needs to install.
+                had_missing = true;
+                this.installPackageWithNameAndResolution(
+                    t.dependency_id,
+                    t.package_id,
+                    log_level,
+                    this.names[t.package_id],
+                    &this.resolutions[t.package_id],
+                    false,
+                    true,
+                );
+                continue;
+            }
+
+            var lazy_package_dir: LazyPackageDestinationDir = .{
+                .node_modules_path = .{
+                    .node_modules = &this.node_modules,
+                    .root_node_modules_dir = this.root_node_modules_folder,
+                },
+            };
+            defer lazy_package_dir.close();
+
+            const is_pending_package_install = false;
+            this.handleInstallResult(
+                t.dependency_id,
+                t.package_id,
+                &this.resolutions[t.package_id],
+                destination_dir_subpath,
+                t.result,
+                &lazy_package_dir,
+                is_pending_package_install,
+                log_level,
+            );
+        }
+        this.parallel_tasks.clearRetainingCapacity();
+        return had_missing;
     }
 
     /// Call when you mutate the length of `lockfile.packages`
@@ -969,6 +1181,43 @@ pub const PackageInstaller = struct {
         this.summary.skipped += @intFromBool(!needs_install);
 
         if (needs_install) {
+            // Fast path: link this package from the cache on the thread pool
+            // instead of blocking here. Restricted to cached resolution tags
+            // that go through install() (not installFromLink), with no patch,
+            // on a fresh node_modules so there is no delete-before-install
+            // ordering. Result handling runs later in completeParallelInstalls.
+            //
+            // Placed before packageMissingFromCache() so the per-package
+            // faccessat runs on a worker (via the cache dir open) instead of
+            // serializing on the main thread.
+            if (comptime Environment.isPosix) {
+                if (needs_verify and
+                    this.canUseParallelHoistedInstall() and
+                    installer.patch == null and
+                    installer.getInstallMethod() != .symlink and
+                    switch (resolution.tag) {
+                        .npm, .git, .github, .local_tarball, .remote_tarball => true,
+                        else => false,
+                    })
+                {
+                    const task = ParallelHoistedTask.new(.{
+                        .installer = this,
+                        .node_modules_path = bun.handleOom(bun.default_allocator.dupe(u8, this.node_modules.path.items)),
+                        .destination_dir_subpath = bun.handleOom(bun.default_allocator.dupeZ(u8, destination_dir_subpath)),
+                        .cache_dir_subpath = bun.handleOom(bun.default_allocator.dupeZ(u8, installer.cache_dir_subpath)),
+                        .cache_dir = installer.cache_dir,
+                        .resolution_tag = resolution.tag,
+                        .dependency_id = dependency_id,
+                        .package_id = package_id,
+                        .tree_id = this.current_tree_id,
+                    });
+                    bun.handleOom(this.parallel_tasks.append(this.manager.allocator, task));
+                    this.parallel_wait_group.addOne();
+                    this.parallel_batch.push(.from(&task.task));
+                    return;
+                }
+            }
+
             if (resolution.tag.canEnqueueInstallTask() and installer.packageMissingFromCache(this.manager, package_id, resolution.tag)) {
                 if (comptime Environment.allow_assert) {
                     bun.assertWithLocation(resolution.canEnqueueInstallTask(), @src());
@@ -1146,191 +1395,16 @@ pub const PackageInstaller = struct {
                 },
             };
 
-            switch (install_result) {
-                .success => {
-                    const is_duplicate = this.successfully_installed.isSet(package_id);
-                    this.summary.success += @as(u32, @intFromBool(!is_duplicate));
-                    this.successfully_installed.set(package_id);
-
-                    if (log_level.showProgress()) {
-                        this.node.completeOne();
-                    }
-
-                    if (this.bins[package_id].tag != .none) {
-                        bun.handleOom(this.trees[this.current_tree_id].binaries.add(dependency_id));
-                    }
-
-                    const dep = this.lockfile.buffers.dependencies.items[dependency_id];
-                    const truncated_dep_name_hash: TruncatedPackageNameHash = @truncate(dep.name_hash);
-                    const is_trusted, const is_trusted_through_update_request = brk: {
-                        if (this.trusted_dependencies_from_update_requests.contains(truncated_dep_name_hash)) break :brk .{ true, true };
-                        if (this.lockfile.hasTrustedDependency(alias.slice(this.lockfile.buffers.string_bytes.items), resolution)) break :brk .{ true, false };
-                        break :brk .{ false, false };
-                    };
-
-                    if (resolution.tag != .root and (resolution.tag == .workspace or is_trusted)) {
-                        var folder_path: bun.AbsPath(.{ .sep = .auto }) = .from(this.node_modules.path.items);
-                        defer folder_path.deinit();
-                        folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
-
-                        enqueueLifecycleScripts: {
-                            if (this.manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(
-                                .{
-                                    .name_hash = pkg_name_hash,
-                                    .version = if (resolution.tag == .npm) resolution.value.npm.version else null,
-                                    .version_buf = this.lockfile.buffers.string_bytes.items,
-                                },
-                                this.lockfile.packages.items(.resolutions)[package_id].get(this.lockfile.buffers.resolutions.items),
-                                this.lockfile.packages.items(.meta),
-                                this.manager.options.cpu,
-                                this.manager.options.os,
-                                this.current_tree_id,
-                            )) {
-                                if (PackageManager.verbose_install) {
-                                    Output.prettyErrorln("<d>[Lifecycle Scripts]<r> ignoring {s} lifecycle scripts", .{
-                                        pkg_name.slice(this.lockfile.buffers.string_bytes.items),
-                                    });
-                                }
-                                break :enqueueLifecycleScripts;
-                            }
-
-                            if (this.enqueueLifecycleScripts(
-                                alias.slice(this.lockfile.buffers.string_bytes.items),
-                                log_level,
-                                &folder_path,
-                                package_id,
-                                dep.behavior.optional,
-                                resolution,
-                            )) {
-                                if (is_trusted_through_update_request) {
-                                    this.manager.trusted_deps_to_add_to_package_json.append(
-                                        this.manager.allocator,
-                                        bun.handleOom(this.manager.allocator.dupe(u8, alias.slice(this.lockfile.buffers.string_bytes.items))),
-                                    ) catch |err| bun.handleOom(err);
-
-                                    if (this.lockfile.trusted_dependencies == null) this.lockfile.trusted_dependencies = .{};
-                                    this.lockfile.trusted_dependencies.?.put(this.manager.allocator, truncated_dep_name_hash, {}) catch |err| bun.handleOom(err);
-                                }
-                            }
-                        }
-                    }
-
-                    switch (resolution.tag) {
-                        .root, .workspace => {
-                            // these will never be blocked
-                        },
-                        else => if (!is_trusted and this.metas[package_id].hasInstallScript()) {
-                            // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
-                            // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
-                            var folder_path: bun.AbsPath(.{ .sep = .auto }) = .from(this.node_modules.path.items);
-                            defer folder_path.deinit();
-                            folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
-
-                            const count = this.getInstalledPackageScriptsCount(
-                                alias.slice(this.lockfile.buffers.string_bytes.items),
-                                package_id,
-                                resolution.tag,
-                                &folder_path,
-                                log_level,
-                            );
-                            if (count > 0) {
-                                if (log_level.isVerbose()) {
-                                    Output.prettyError("Blocked {d} scripts for: {s}@{f}\n", .{
-                                        count,
-                                        alias.slice(this.lockfile.buffers.string_bytes.items),
-                                        resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
-                                    });
-                                }
-                                const entry = bun.handleOom(this.summary.packages_with_blocked_scripts.getOrPut(this.manager.allocator, truncated_dep_name_hash));
-                                if (!entry.found_existing) entry.value_ptr.* = 0;
-                                entry.value_ptr.* += count;
-                            }
-                        },
-                    }
-
-                    this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
-                },
-                .failure => |cause| {
-                    if (comptime Environment.allow_assert) {
-                        bun.assert(!cause.isPackageMissingFromCache() or (resolution.tag != .symlink and resolution.tag != .workspace));
-                    }
-
-                    // even if the package failed to install, we still need to increment the install
-                    // counter for this tree
-                    this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
-
-                    if (cause.err == error.DanglingSymlink) {
-                        Output.prettyErrorln(
-                            "<r><red>error<r>: <b>{s}<r> \"link:{s}\" not found (try running 'bun link' in the intended package's folder)<r>",
-                            .{ @errorName(cause.err), this.names[package_id].slice(this.lockfile.buffers.string_bytes.items) },
-                        );
-                        this.summary.fail += 1;
-                    } else if (cause.err == error.AccessDenied) {
-                        // there are two states this can happen
-                        // - Access Denied because node_modules/ is unwritable
-                        // - Access Denied because this specific package is unwritable
-                        // in the case of the former, the logs are extremely noisy, so we
-                        // will exit early, otherwise set a flag to not re-stat
-                        const Singleton = struct {
-                            var node_modules_is_ok = false;
-                        };
-                        if (!Singleton.node_modules_is_ok) {
-                            if (!Environment.isWindows) {
-                                const stat = bun.sys.fstat(.fromStdDir(lazy_package_dir.getDir() catch |err| {
-                                    Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
-                                        this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
-                                    });
-                                    if (Environment.isDebug) {
-                                        Output.err(err, "Failed to stat node_modules", .{});
-                                    }
-                                    Global.exit(1);
-                                })).unwrap() catch |err| {
-                                    Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
-                                        this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
-                                    });
-                                    if (Environment.isDebug) {
-                                        Output.err(err, "Failed to stat node_modules", .{});
-                                    }
-                                    Global.exit(1);
-                                };
-
-                                const is_writable = if (stat.uid == bun.c.getuid())
-                                    stat.mode & bun.S.IWUSR > 0
-                                else if (stat.gid == bun.c.getgid())
-                                    stat.mode & bun.S.IWGRP > 0
-                                else
-                                    stat.mode & bun.S.IWOTH > 0;
-
-                                if (!is_writable) {
-                                    Output.err("EACCES", "Permission denied while writing packages into node_modules.", .{});
-                                    Global.exit(1);
-                                }
-                            }
-                            Singleton.node_modules_is_ok = true;
-                        }
-
-                        Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
-                            this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
-                        });
-
-                        this.summary.fail += 1;
-                    } else {
-                        Output.err(
-                            cause.err,
-                            "failed {s} for package <b>{s}<r>",
-                            .{
-                                install_result.failure.step.name(),
-                                this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
-                            },
-                        );
-                        if (Environment.isDebug) {
-                            var t = cause.debug_trace;
-                            bun.crash_handler.dumpStackTrace(t.trace(), .{});
-                        }
-                        this.summary.fail += 1;
-                    }
-                },
-            }
+            this.handleInstallResult(
+                dependency_id,
+                package_id,
+                resolution,
+                destination_dir_subpath,
+                install_result,
+                &lazy_package_dir,
+                is_pending_package_install,
+                log_level,
+            );
         } else {
             if (this.bins[package_id].tag != .none) {
                 bun.handleOom(this.trees[this.current_tree_id].binaries.add(dependency_id));
@@ -1420,6 +1494,215 @@ pub const PackageInstaller = struct {
     ) void {
         this.summary.fail += 1;
         this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+    }
+
+    /// Process the result of a single PackageInstall.install() call:
+    /// update summary counters, queue bins, enqueue/block lifecycle
+    /// scripts, and increment the tree's install count. Called both from
+    /// the inline serial path and from completeParallelInstalls() for
+    /// thread-pool tasks. Expects this.current_tree_id / this.node_modules
+    /// to already point at the package's tree.
+    fn handleInstallResult(
+        this: *PackageInstaller,
+        dependency_id: DependencyID,
+        package_id: PackageID,
+        resolution: *const Resolution,
+        destination_dir_subpath: [:0]const u8,
+        install_result: PackageInstall.Result,
+        lazy_package_dir: *LazyPackageDestinationDir,
+        comptime is_pending_package_install: bool,
+        log_level: Options.LogLevel,
+    ) void {
+        _ = destination_dir_subpath;
+        const alias = this.lockfile.buffers.dependencies.items[dependency_id].name;
+        const pkg_name = this.names[package_id];
+        const pkg_name_hash = this.pkg_name_hashes[package_id];
+
+        switch (install_result) {
+            .success => {
+                const is_duplicate = this.successfully_installed.isSet(package_id);
+                this.summary.success += @as(u32, @intFromBool(!is_duplicate));
+                this.successfully_installed.set(package_id);
+
+                if (log_level.showProgress()) {
+                    this.node.completeOne();
+                }
+
+                if (this.bins[package_id].tag != .none) {
+                    bun.handleOom(this.trees[this.current_tree_id].binaries.add(dependency_id));
+                }
+
+                const dep = this.lockfile.buffers.dependencies.items[dependency_id];
+                const truncated_dep_name_hash: TruncatedPackageNameHash = @truncate(dep.name_hash);
+                const is_trusted, const is_trusted_through_update_request = brk: {
+                    if (this.trusted_dependencies_from_update_requests.contains(truncated_dep_name_hash)) break :brk .{ true, true };
+                    if (this.lockfile.hasTrustedDependency(alias.slice(this.lockfile.buffers.string_bytes.items), resolution)) break :brk .{ true, false };
+                    break :brk .{ false, false };
+                };
+
+                if (resolution.tag != .root and (resolution.tag == .workspace or is_trusted)) {
+                    var folder_path: bun.AbsPath(.{ .sep = .auto }) = .from(this.node_modules.path.items);
+                    defer folder_path.deinit();
+                    folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
+
+                    enqueueLifecycleScripts: {
+                        if (this.manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(
+                            .{
+                                .name_hash = pkg_name_hash,
+                                .version = if (resolution.tag == .npm) resolution.value.npm.version else null,
+                                .version_buf = this.lockfile.buffers.string_bytes.items,
+                            },
+                            this.lockfile.packages.items(.resolutions)[package_id].get(this.lockfile.buffers.resolutions.items),
+                            this.lockfile.packages.items(.meta),
+                            this.manager.options.cpu,
+                            this.manager.options.os,
+                            this.current_tree_id,
+                        )) {
+                            if (PackageManager.verbose_install) {
+                                Output.prettyErrorln("<d>[Lifecycle Scripts]<r> ignoring {s} lifecycle scripts", .{
+                                    pkg_name.slice(this.lockfile.buffers.string_bytes.items),
+                                });
+                            }
+                            break :enqueueLifecycleScripts;
+                        }
+
+                        if (this.enqueueLifecycleScripts(
+                            alias.slice(this.lockfile.buffers.string_bytes.items),
+                            log_level,
+                            &folder_path,
+                            package_id,
+                            dep.behavior.optional,
+                            resolution,
+                        )) {
+                            if (is_trusted_through_update_request) {
+                                this.manager.trusted_deps_to_add_to_package_json.append(
+                                    this.manager.allocator,
+                                    bun.handleOom(this.manager.allocator.dupe(u8, alias.slice(this.lockfile.buffers.string_bytes.items))),
+                                ) catch |err| bun.handleOom(err);
+
+                                if (this.lockfile.trusted_dependencies == null) this.lockfile.trusted_dependencies = .{};
+                                this.lockfile.trusted_dependencies.?.put(this.manager.allocator, truncated_dep_name_hash, {}) catch |err| bun.handleOom(err);
+                            }
+                        }
+                    }
+                }
+
+                switch (resolution.tag) {
+                    .root, .workspace => {
+                        // these will never be blocked
+                    },
+                    else => if (!is_trusted and this.metas[package_id].hasInstallScript()) {
+                        // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
+                        // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
+                        var folder_path: bun.AbsPath(.{ .sep = .auto }) = .from(this.node_modules.path.items);
+                        defer folder_path.deinit();
+                        folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
+
+                        const count = this.getInstalledPackageScriptsCount(
+                            alias.slice(this.lockfile.buffers.string_bytes.items),
+                            package_id,
+                            resolution.tag,
+                            &folder_path,
+                            log_level,
+                        );
+                        if (count > 0) {
+                            if (log_level.isVerbose()) {
+                                Output.prettyError("Blocked {d} scripts for: {s}@{f}\n", .{
+                                    count,
+                                    alias.slice(this.lockfile.buffers.string_bytes.items),
+                                    resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
+                                });
+                            }
+                            const entry = bun.handleOom(this.summary.packages_with_blocked_scripts.getOrPut(this.manager.allocator, truncated_dep_name_hash));
+                            if (!entry.found_existing) entry.value_ptr.* = 0;
+                            entry.value_ptr.* += count;
+                        }
+                    },
+                }
+
+                this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+            },
+            .failure => |cause| {
+                if (comptime Environment.allow_assert) {
+                    bun.assert(!cause.isPackageMissingFromCache() or (resolution.tag != .symlink and resolution.tag != .workspace));
+                }
+
+                // even if the package failed to install, we still need to increment the install
+                // counter for this tree
+                this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+
+                if (cause.err == error.DanglingSymlink) {
+                    Output.prettyErrorln(
+                        "<r><red>error<r>: <b>{s}<r> \"link:{s}\" not found (try running 'bun link' in the intended package's folder)<r>",
+                        .{ @errorName(cause.err), this.names[package_id].slice(this.lockfile.buffers.string_bytes.items) },
+                    );
+                    this.summary.fail += 1;
+                } else if (cause.err == error.AccessDenied) {
+                    // there are two states this can happen
+                    // - Access Denied because node_modules/ is unwritable
+                    // - Access Denied because this specific package is unwritable
+                    // in the case of the former, the logs are extremely noisy, so we
+                    // will exit early, otherwise set a flag to not re-stat
+                    const Singleton = struct {
+                        var node_modules_is_ok = false;
+                    };
+                    if (!Singleton.node_modules_is_ok) {
+                        if (!Environment.isWindows) {
+                            const stat = bun.sys.fstat(.fromStdDir(lazy_package_dir.getDir() catch |err| {
+                                Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
+                                    this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
+                                });
+                                if (Environment.isDebug) {
+                                    Output.err(err, "Failed to stat node_modules", .{});
+                                }
+                                Global.exit(1);
+                            })).unwrap() catch |err| {
+                                Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
+                                    this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
+                                });
+                                if (Environment.isDebug) {
+                                    Output.err(err, "Failed to stat node_modules", .{});
+                                }
+                                Global.exit(1);
+                            };
+
+                            const is_writable = if (stat.uid == bun.c.getuid())
+                                stat.mode & bun.S.IWUSR > 0
+                            else if (stat.gid == bun.c.getgid())
+                                stat.mode & bun.S.IWGRP > 0
+                            else
+                                stat.mode & bun.S.IWOTH > 0;
+
+                            if (!is_writable) {
+                                Output.err("EACCES", "Permission denied while writing packages into node_modules.", .{});
+                                Global.exit(1);
+                            }
+                        }
+                        Singleton.node_modules_is_ok = true;
+                    }
+
+                    Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
+                        this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
+                    });
+
+                    this.summary.fail += 1;
+                } else {
+                    Output.err(
+                        cause.err,
+                        "failed {s} for package <b>{s}<r>",
+                        .{
+                            install_result.failure.step.name(),
+                            this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
+                        },
+                    );
+                    if (Environment.isDebug) {
+                        var t = cause.debug_trace;
+                        bun.crash_handler.dumpStackTrace(t.trace(), .{});
+                    }
+                    this.summary.fail += 1;
+                }
+            },
+        }
     }
 
     // returns true if scripts are enqueued

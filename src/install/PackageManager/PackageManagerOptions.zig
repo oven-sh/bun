@@ -595,7 +595,7 @@ pub fn load(
         }
 
         if (cli.backend) |backend| {
-            PackageInstall.supported_method = backend;
+            PackageInstall.setSupportedMethod(backend);
         }
 
         // CPU and OS are now parsed as enums in CommandLineArguments, just copy them

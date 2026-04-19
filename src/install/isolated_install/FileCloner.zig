@@ -33,7 +33,17 @@ pub fn clone(this: *FileCloner) sys.Maybe(void) {
                         return .initErr(err);
                     };
                     FD.cwd().makePath(u8, parent_dest_dir) catch {};
-                    return this.clonefileat();
+                    return switch (this.clonefileat()) {
+                        .result => .success,
+                        .err => |retry_err| switch (retry_err.getErrno()) {
+                            // Another install racing on the same global-store
+                            // entry created it between our NOENT and this retry;
+                            // for content-addressed dests that's a successful
+                            // outcome, not a failure.
+                            .EXIST => if (this.keep_existing_dest) .success else .initErr(retry_err),
+                            else => .initErr(retry_err),
+                        },
+                    };
                 },
                 else => {
                     return .initErr(err);

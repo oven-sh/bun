@@ -73,8 +73,18 @@ pub const Symlinker = struct {
                                     };
 
                                     FD.cwd().makePath(u8, dest_parent) catch {};
-                                    return this.symlink();
+                                    return switch (this.symlink()) {
+                                        .result => .success,
+                                        // EEXIST after NOENT means another writer
+                                        // (concurrent install into the same shared
+                                        // virtual-store entry) created the link in
+                                        // between; the caller asked for "ensure it
+                                        // exists", which it now does.
+                                        .err => |e| if (e.getErrno() == .EXIST) .success else .initErr(e),
+                                    };
                                 },
+                                // Same NOENT→EEXIST race without the makePath hop.
+                                .EXIST => .success,
                                 else => .initErr(symlink_err),
                             },
                         },

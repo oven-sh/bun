@@ -865,6 +865,7 @@ pub fn installIsolatedPackages(
         const entry_dependencies = entries.items(.dependencies);
 
         const node_pkg_ids = store.nodes.items(.pkg_id);
+        const node_dep_ids = store.nodes.items(.dep_id);
 
         const pkgs = lockfile.packages.slice();
         const pkg_names = pkgs.items(.name);
@@ -908,6 +909,7 @@ pub fn installIsolatedPackages(
 
                     const node_id = entry_node_ids[idx];
                     const pkg_id = node_pkg_ids[node_id.get()];
+                    const dep_id = node_dep_ids[node_id.get()];
                     const pkg_res = pkg_resolutions[pkg_id];
 
                     const eligible = switch (pkg_res.tag) {
@@ -930,12 +932,23 @@ pub fn installIsolatedPackages(
                             // the on-disk package.json (post-install), so it is
                             // empty here. The lockfile carries the registry's
                             // `hasInstallScript` flag in `meta` instead.
-                            if (manager.options.do.run_scripts and
-                                pkg_metas[pkg_id].hasInstallScript() and
-                                (lockfile.hasTrustedDependency(pkg_names[pkg_id].slice(string_buf), &pkg_res) or
-                                    trusted_from_update.contains(@truncate(pkg_name_hashes[pkg_id]))))
-                            {
-                                break :eligible false;
+                            //
+                            // `run_preinstall()` authorizes scripts by the
+                            // dependency *alias* name, so an aliased install
+                            // like `foo: npm:bar@1` is trusted if `foo` is in
+                            // trustedDependencies even though the package name
+                            // is `bar`. Mirror that here so the alias case
+                            // can't slip past the eligibility check.
+                            if (manager.options.do.run_scripts and pkg_metas[pkg_id].hasInstallScript()) {
+                                const dep_name, const dep_name_hash = if (dep_id != invalid_dependency_id)
+                                    .{ dependencies[dep_id].name.slice(string_buf), dependencies[dep_id].name_hash }
+                                else
+                                    .{ pkg_names[pkg_id].slice(string_buf), pkg_name_hashes[pkg_id] };
+                                if (lockfile.hasTrustedDependency(dep_name, &pkg_res) or
+                                    trusted_from_update.contains(@truncate(dep_name_hash)))
+                                {
+                                    break :eligible false;
+                                }
                             }
                             break :eligible true;
                         },
@@ -1040,13 +1053,12 @@ pub fn installIsolatedPackages(
         _ = manager.getCacheDirectory();
         const cache_dir_path = manager.cache_directory_path;
         if (cache_dir_path.len == 0) break :global_store_path null;
-        break :global_store_path try std.fmt.allocPrintSentinel(
-            manager.allocator,
-            "{s}{s}links",
-            .{ cache_dir_path, if (bun.strings.endsWithChar(cache_dir_path, std.fs.path.sep)) "" else std.fs.path.sep_str },
-            0,
+        break :global_store_path try manager.allocator.dupeZ(
+            u8,
+            bun.path.joinAbsString(cache_dir_path, &.{"links"}, .auto),
         );
     } else null;
+    defer if (global_store_path) |p| manager.allocator.free(p);
 
     // setup node_modules/.bun
     const is_new_bun_modules = is_new_bun_modules: {

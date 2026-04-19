@@ -1681,6 +1681,38 @@ describe("global virtual store", () => {
     }
   });
 
+  test("recovers from a partially-populated global entry", async () => {
+    // Simulate an interrupted install: the global-store directory exists but
+    // is missing files. Because population is clone-to-temp-then-rename,
+    // a fresh install must not treat the broken directory as a hit.
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-partial",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+    const target = readlinkSync(join(packageDir, "node_modules", ".bun", "no-deps@1.0.0"));
+    const pkgJson = join(target, "node_modules", "no-deps", "package.json");
+
+    // Corrupt the global entry by deleting a file the warm-hit check looks
+    // for, leaving the directory shell behind (what an interrupted clonefile
+    // could produce).
+    await rm(pkgJson);
+    expect(existsSync(target)).toBe(true);
+    expect(existsSync(pkgJson)).toBe(false);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(existsSync(pkgJson)).toBe(true);
+    expect(await file(pkgJson).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
+  });
+
   test("upgrades a pre-global-store node_modules in place", async () => {
     // A project installed before this change has `node_modules/.bun/<X>` as a
     // real directory. Re-running install with the global store enabled must

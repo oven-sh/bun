@@ -37,7 +37,8 @@ pub const RecordKind = enum(u8) {
 pub const Flags = packed struct(u8) {
     contains_import_meta: bool = false,
     is_typescript: bool = false,
-    _padding: u6 = 0,
+    has_tla: bool = false,
+    _padding: u5 = 0,
 };
 
 pub const ModuleInfoDeserialized = struct {
@@ -422,7 +423,7 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         }
     }
 
-    const module_record = JSModuleRecord.create(globalObject, vm, module_key, source_code, declared_variables, lexical_variables, res.flags.contains_import_meta, res.flags.is_typescript);
+    const module_record = JSModuleRecord.create(globalObject, vm, module_key, source_code, declared_variables, lexical_variables, res.flags.contains_import_meta, res.flags.is_typescript, res.flags.has_tla);
 
     for (res.requested_modules_keys, res.requested_modules_values) |reqk, reqv| {
         switch (reqv) {
@@ -483,7 +484,7 @@ const IdentifierArray = opaque {
 };
 const SourceCode = opaque {};
 const JSModuleRecord = opaque {
-    extern fn JSC_JSModuleRecord__create(global_object: *bun.jsc.JSGlobalObject, vm: *bun.jsc.VM, module_key: *const IdentifierArray, source_code: *const SourceCode, declared_variables: *VariableEnvironment, lexical_variables: *VariableEnvironment, has_import_meta: bool, is_typescript: bool) *JSModuleRecord;
+    extern fn JSC_JSModuleRecord__create(global_object: *bun.jsc.JSGlobalObject, vm: *bun.jsc.VM, module_key: *const IdentifierArray, source_code: *const SourceCode, declared_variables: *VariableEnvironment, lexical_variables: *VariableEnvironment, has_import_meta: bool, is_typescript: bool, has_tla: bool) *JSModuleRecord;
     pub const create = JSC_JSModuleRecord__create;
 
     extern fn JSC_JSModuleRecord__declaredVariables(module_record: *JSModuleRecord) *VariableEnvironment;

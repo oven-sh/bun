@@ -69,10 +69,11 @@ extern "C" VariableEnvironment* JSC_JSModuleRecord__lexicalVariables(JSModuleRec
     return const_cast<VariableEnvironment*>(&moduleRecord->lexicalVariables());
 }
 
-extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, const VariableEnvironment& declaredVariables, const VariableEnvironment& lexicalVariables, bool hasImportMeta, bool isTypescript)
+extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, const VariableEnvironment& declaredVariables, const VariableEnvironment& lexicalVariables, bool hasImportMeta, bool isTypescript, bool hasTLA)
 {
     JSModuleRecord* result = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), *moduleKey, sourceCode, declaredVariables, lexicalVariables, hasImportMeta ? ImportMetaFeature : 0);
     result->m_isTypeScript = isTypescript;
+    result->hasTLA(hasTLA);
     return result;
 }
 

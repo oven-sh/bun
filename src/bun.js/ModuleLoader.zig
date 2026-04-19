@@ -520,6 +520,7 @@ pub fn transpileSourceCode(
                 else
                     null;
             errdefer if (module_info) |mi| mi.destroy();
+            if (module_info) |mi| mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.isEmpty();
 
             var printer = source_code_printer.*;
             printer.ctx.reset();

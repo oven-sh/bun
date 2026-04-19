@@ -33,11 +33,13 @@ printf '%s\n' "$BIN_DIR" > /etc/paths.d/200-bun
 
 # ---------------------------------------------------------------------------
 # Ensure the bunx symlink survived (pkgbuild preserves symlinks in the
-# payload, but be defensive in case a previous install left a real file).
+# payload, but be defensive in case a previous install left a real file
+# or directory — `ln -sf` into a directory creates the link *inside* it
+# on BSD, and `rm -f` on a directory exits 1 which would abort under -e).
 # ---------------------------------------------------------------------------
 
 if [[ -e "$BIN_DIR/bunx" && ! -L "$BIN_DIR/bunx" ]]; then
-  rm -f "$BIN_DIR/bunx"
+  rm -rf "$BIN_DIR/bunx"
 fi
 ln -sf bun "$BIN_DIR/bunx"
 

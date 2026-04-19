@@ -79,13 +79,22 @@ describe.skipIf(isWindows)("packages/bun-darwin-pkg", () => {
     // opened exactly once.
     const seen: string[] = [];
     const rewriter = new HTMLRewriter();
-    for (const tag of ["installer-gui-script", "title", "welcome", "license", "conclusion", "background", "pkg-ref"]) {
+    // lol-html lowercases tag names, hence background-darkaqua.
+    const tags = [
+      "installer-gui-script",
+      "title",
+      "welcome",
+      "license",
+      "conclusion",
+      "background",
+      "background-darkaqua",
+      "pkg-ref",
+    ];
+    for (const tag of tags) {
       rewriter.on(tag, { element: () => void seen.push(tag) });
     }
     await rewriter.transform(new Response(rendered)).text();
-    expect(seen.sort()).toEqual(
-      ["background", "conclusion", "installer-gui-script", "license", "pkg-ref", "pkg-ref", "title", "welcome"].sort(),
-    );
+    expect(seen.sort()).toEqual([...tags, "pkg-ref"].sort());
   });
 
   test("postinstall sets BUN_INSTALL, PATH, and /etc/paths.d", () => {
@@ -94,8 +103,13 @@ describe.skipIf(isWindows)("packages/bun-darwin-pkg", () => {
     // These are the user-visible promises the installer makes (see
     // welcome.html + docs/installation.mdx). Keep them honest.
     expect(src).toContain("/etc/paths.d/200-bun");
+    // bash/zsh rc block
     expect(src).toContain('BUN_INSTALL="\\$HOME/.bun"');
     expect(src).toContain('PATH="\\$BUN_INSTALL/bin:\\$PATH"');
+    // fish rc block — `--export` is load-bearing (without it the var is
+    // shell-local and `bun add -g` can't see BUN_INSTALL).
+    expect(src).toContain('set --export BUN_INSTALL "\\$HOME/.bun"');
+    expect(src).toContain('set --export PATH "\\$BUN_INSTALL/bin" \\$PATH');
     expect(src).toContain("# bun (installed via .pkg)");
     expect(src).toContain('ln -sf bun "$BIN_DIR/bunx"');
     expect(src).toContain("completions");

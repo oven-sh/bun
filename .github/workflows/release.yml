@@ -150,7 +150,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: ./packages/bun-darwin-pkg/build.sh --from-release "${{ env.BUN_VERSION }}"
+        # BUN_VERSION is a workflow-level env var and so already in the
+        # process environment — use the shell variable, not the
+        # ${{ env.… }} template expansion, to avoid the script-injection
+        # anti-pattern GitHub's own docs warn against.
+        run: ./packages/bun-darwin-pkg/build.sh --from-release "$BUN_VERSION"
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest

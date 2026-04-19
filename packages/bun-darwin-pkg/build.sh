@@ -277,12 +277,19 @@ fi
 COMPONENT_PKG="$BUILD_DIR/flat/bun-component.pkg"
 
 log "Building component package"
+# --ownership recommended normalises payload ownership to root:wheel.
+# Without it pkgbuild defaults to --ownership preserve and records the
+# builder's UID/GID (501:20 on GitHub Actions runners) into the manifest,
+# so /usr/local/bin/bun on the target Mac ends up owned by whoever has
+# UID 501 there — usually the first local account — and can be replaced
+# without sudo.
 run pkgbuild \
   --root "$PAYLOAD_ROOT" \
   --identifier "$PKG_IDENTIFIER" \
   --version "$BUN_VERSION" \
   --install-location "$INSTALL_LOCATION" \
   --scripts "$SCRIPTS_DIR" \
+  --ownership recommended \
   "$COMPONENT_PKG"
 
 # ---------------------------------------------------------------------------

@@ -34,6 +34,12 @@ describe.skipIf(isWindows)("packages/bun-darwin-pkg", () => {
     expect(isExecutable(buildSh)).toBe(true);
     expect(isExecutable(postinstall)).toBe(true);
 
+    // pkgbuild defaults to --ownership preserve, which would embed the CI
+    // runner's UID/GID (501:20 on GitHub Actions) into the manifest and
+    // land /usr/local/bin/bun owned by whoever holds UID 501 on the
+    // target Mac. --ownership recommended normalises to root:wheel.
+    expect(readFileSync(buildSh, "utf8")).toContain("--ownership recommended");
+
     for (const script of [buildSh, postinstall]) {
       await using proc = Bun.spawn({
         cmd: ["bash", "-n", script],

@@ -539,7 +539,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
         if (!plugin->plugin.tombstoned) {
             plugin->plugin.addError(
                 context,
-                plugin->plugin.config,
+                plugin,
                 JSC::JSValue::encode(exception),
                 JSValue::encode(jsNumber(0)));
         }

@@ -1001,7 +1001,11 @@ pub fn installIsolatedPackages(
                             entry_hashes[idx] = 0;
                         },
                         .in_progress => {
-                            // Cycle back-edge: fold in the dep name only.
+                            // Cycle back-edge: the dep's hash isn't known yet.
+                            // Fold a placeholder so pass 1 stays deterministic;
+                            // the second pass below re-hashes every entry using
+                            // pass-1 results, which gives cycle members their
+                            // partner's transitive-dep contributions.
                             top.hasher.update(std.mem.asBytes(&dep_name_hash));
                         },
                         .unvisited => {
@@ -1025,6 +1029,32 @@ pub fn installIsolatedPackages(
                 }
                 _ = stack.pop();
             }
+        }
+
+        // Second pass: re-hash every eligible entry using the pass-1 hashes
+        // of *all* its deps. For acyclic entries this is a no-op (their deps'
+        // hashes were already final when folded). For cycle members it pulls
+        // in the partner's transitive deps: in A↔B where A also depends on X,
+        // B's pass-1 hash only saw A's name (back-edge), but B's pass-2 hash
+        // folds A's pass-1 hash, which includes X. Without this, two projects
+        // that resolve X differently would share B's global entry while its
+        // `../../A-<hash>/` dep symlink dangles in one of them.
+        //
+        // Computed from a snapshot so iteration order doesn't matter.
+        const pass1 = try manager.allocator.dupe(u64, entry_hashes);
+        defer manager.allocator.free(pass1);
+        for (0..store.entries.len) |idx| {
+            if (pass1[idx] == 0) continue;
+            var hasher: std.hash.Wyhash = .init(0x9E3779B97F4A7C15);
+            hasher.update(std.mem.asBytes(&pass1[idx]));
+            for (entry_dependencies[idx].slice()) |dep| {
+                const dep_name_hash = dependencies[dep.dep_id].name_hash;
+                hasher.update(std.mem.asBytes(&dep_name_hash));
+                hasher.update(std.mem.asBytes(&pass1[dep.entry_id.get()]));
+            }
+            var h = hasher.final();
+            if (h == 0) h = 1;
+            entry_hashes[idx] = h;
         }
 
         // Ineligibility can surface mid-cycle: A→B→A where B turns out to
@@ -1374,6 +1404,17 @@ pub fn installIsolatedPackages(
                         needs_install: {
                             var store_path: bun.AbsPath(.{}) = .initTopLevelDir();
                             defer store_path.deinit();
+                            if (uses_global_store) {
+                                // The global entry is built across several
+                                // task steps (clone → dep symlinks → bin
+                                // links); only the `.bun-ok` stamp written at
+                                // the end of the `binaries` step proves the
+                                // whole sequence finished. `package.json` only
+                                // proves the clone landed.
+                                installer.appendGlobalStoreEntryPath(&store_path, entry_id);
+                                store_path.append(".bun-ok");
+                                break :needs_install !sys.existsZ(store_path.sliceZ());
+                            }
                             installer.appendRealStorePath(&store_path, entry_id);
                             const scope_for_patch_tag_path = store_path.save();
                             if (pkg_res_tag == .npm)

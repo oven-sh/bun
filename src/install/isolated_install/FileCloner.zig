@@ -67,7 +67,7 @@ fn cloneAtomic(this: *FileCloner) sys.Maybe(void) {
             .result => break :cloned,
             .err => |err| switch (err.getErrno()) {
                 .NOENT => {
-                    if (std.fs.path.dirname(this.dest_subpath.slice())) |parent| {
+                    if (this.dest_subpath.dirname()) |parent| {
                         FD.cwd().makePath(u8, parent) catch {};
                     }
                 },
@@ -88,21 +88,22 @@ fn cloneAtomic(this: *FileCloner) sys.Maybe(void) {
         .result => return .success,
         .err => |err| switch (err.getErrno()) {
             .EXIST, .NOTEMPTY => {
-                // Someone got there first. Distinguish "concurrent install
-                // produced a complete entry" from "an interrupted install
-                // left a partial directory" by probing for the package.json
-                // the warm-hit fast path uses as its sentinel.
+                // Someone got there first. `package.json` proves their clone
+                // landed (clonefileat is atomic for the whole tree); the dep
+                // symlinks and bin links are written by later task steps that
+                // *this* task will also run with `.expect_existing`, so any
+                // gaps left by a crashed winner get filled by the loser. The
+                // entry-level `.bun-ok` stamp (written after `binaries`) is
+                // what future installs use to short-circuit the whole task.
                 var sentinel_buf: bun.PathBuffer = undefined;
-                const sentinel = std.fmt.bufPrintZ(&sentinel_buf, "{s}/package.json", .{this.dest_subpath.slice()}) catch {
-                    FD.cwd().deleteTree(tmp_path) catch {};
-                    return .initErr(err);
-                };
-                if (sys.existsZ(sentinel)) {
-                    FD.cwd().deleteTree(tmp_path) catch {};
-                    return .success;
-                }
-                // Partial entry from an interrupted earlier run: replace it
-                // with the complete tree we just produced.
+                if (std.fmt.bufPrintZ(&sentinel_buf, "{s}/package.json", .{this.dest_subpath.slice()})) |sentinel| {
+                    if (sys.existsZ(sentinel)) {
+                        FD.cwd().deleteTree(tmp_path) catch {};
+                        return .success;
+                    }
+                } else |_| {}
+                // No package.json → partial leftover from an interrupted
+                // earlier run; replace with our complete tree.
                 FD.cwd().deleteTree(this.dest_subpath.slice()) catch {};
                 return switch (sys.rename(tmp_path, this.dest_subpath.sliceZ())) {
                     .result => .success,

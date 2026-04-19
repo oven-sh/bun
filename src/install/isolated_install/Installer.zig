@@ -1057,6 +1057,7 @@ pub const Installer = struct {
 
                     const bin = pkg_bins[pkg_id];
                     if (bin.tag == .none) {
+                        installer.stampGlobalStoreEntry(this.entry_id);
                         continue :next_step this.nextStep(current_step);
                     }
 
@@ -1143,6 +1144,8 @@ pub const Installer = struct {
                         }
                         return .failure(.{ .binaries = err });
                     }
+
+                    installer.stampGlobalStoreEntry(this.entry_id);
 
                     continue :next_step this.nextStep(current_step);
                 },
@@ -1546,6 +1549,24 @@ pub const Installer = struct {
         buf.appendFmt("{f}", .{
             Store.Entry.fmtGlobalStorePath(entry_id, this.store, this.lockfile),
         });
+    }
+
+    /// Touch `<global-entry>/.bun-ok` once the package tree, dep symlinks,
+    /// dependency-bin links and own-bin links are all in place. Future
+    /// installs (and concurrent installs whose rename lost) use this to
+    /// distinguish "fully built" from "package tree present but symlinks
+    /// missing because the writer crashed mid-task" — `package.json` only
+    /// proves the clone landed.
+    pub fn stampGlobalStoreEntry(this: *const Installer, entry_id: Store.Entry.Id) void {
+        if (!this.entryUsesGlobalStore(entry_id)) return;
+        var ok: bun.AbsPath(.{ .sep = .auto }) = .init();
+        defer ok.deinit();
+        this.appendGlobalStoreEntryPath(&ok, entry_id);
+        ok.append(".bun-ok");
+        switch (sys.openat(FD.cwd(), ok.sliceZ(), bun.O.CREAT | bun.O.WRONLY, 0o644)) {
+            .result => |fd| fd.close(),
+            .err => {},
+        }
     }
 
     /// Project-local path `node_modules/.bun/<storepath>` (the symlink that

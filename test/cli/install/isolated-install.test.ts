@@ -1698,10 +1698,13 @@ describe("global virtual store", () => {
     await runBunInstall(bunEnv, packageDir);
     const target = readlinkSync(join(packageDir, "node_modules", ".bun", "no-deps@1.0.0"));
     const pkgJson = join(target, "node_modules", "no-deps", "package.json");
+    const okStamp = join(target, ".bun-ok");
 
-    // Corrupt the global entry by deleting a file the warm-hit check looks
-    // for, leaving the directory shell behind (what an interrupted clonefile
-    // could produce).
+    // The completeness sentinel is `.bun-ok`, written only after the entry's
+    // dep symlinks and bin links are in place. Simulate an interrupted
+    // earlier install by removing both the stamp and a content file.
+    expect(existsSync(okStamp)).toBe(true);
+    await rm(okStamp);
     await rm(pkgJson);
     expect(existsSync(target)).toBe(true);
     expect(existsSync(pkgJson)).toBe(false);
@@ -1710,6 +1713,7 @@ describe("global virtual store", () => {
     await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
 
     expect(existsSync(pkgJson)).toBe(true);
+    expect(existsSync(okStamp)).toBe(true);
     expect(await file(pkgJson).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
   });
 

@@ -367,8 +367,7 @@ pub fn installWithManager(
                     // ever reads through a pointer into the old backing storage.
                     if (manager.summary.overrides_changed and all_name_hashes.len > 0) {
                         const dependencies_len = manager.lockfile.buffers.dependencies.items.len;
-                        var dependency_i: usize = 0;
-                        while (dependency_i < dependencies_len) : (dependency_i += 1) {
+                        for (0..dependencies_len) |dependency_i| {
                             const dependency = manager.lockfile.buffers.dependencies.items[dependency_i];
                             if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
                                 manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
@@ -386,8 +385,7 @@ pub fn installWithManager(
 
                     if (manager.summary.catalogs_changed) {
                         const dependencies_len = manager.lockfile.buffers.dependencies.items.len;
-                        var _dep_id: usize = 0;
-                        while (_dep_id < dependencies_len) : (_dep_id += 1) {
+                        for (0..dependencies_len) |_dep_id| {
                             const dep_id: DependencyID = @intCast(_dep_id);
                             const dep = manager.lockfile.buffers.dependencies.items[dep_id];
                             if (dep.version.tag != .catalog) continue;

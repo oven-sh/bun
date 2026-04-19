@@ -541,7 +541,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
                 context,
                 plugin,
                 JSC::JSValue::encode(exception),
-                JSValue::encode(jsNumber(0)));
+                JSValue::encode(jsNumber(1)));
         }
     }
 }
@@ -584,7 +584,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
                 context,
                 plugin,
                 JSC::JSValue::encode(exception),
-                JSValue::encode(jsNumber(1)));
+                JSValue::encode(jsNumber(0)));
         }
         return;
     }

@@ -299,8 +299,9 @@ For distributions without `glibc` (Alpine Linux, Void Linux):
 - [Linux ARM64 musl](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-aarch64-musl.zip)
 
 <Note>
-  If you encounter an error like `bun: /lib/x86_64-linux-gnu/libm.so.6: version GLIBC_2.29 not found`, try using the
-  musl binary. Bun's install script automatically chooses the correct binary for your system.
+  Bun's glibc binaries require glibc 2.17 or newer. If you encounter an error like `bun:
+  /lib/x86_64-linux-gnu/libc.so.6: version GLIBC_... not found`, try using the musl binary. Bun's install script
+  automatically chooses the correct binary for your system.
 </Note>
 
 ---

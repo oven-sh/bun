@@ -820,6 +820,14 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
             "is-even": "1.0.0",
           },
         }),
+        // `bun patch` opens `node_modules/<pkg>` for editing; with the global
+        // virtual store that path is a symlink chain into the shared cache,
+        // and on Windows/Linux the post-reinstall resolution through that
+        // chain currently fails with EISDIR. This test predates the global
+        // store and is exercising patch-survives-reinstall, so keep it on the
+        // per-project layout. Patch×global-store coverage lives in
+        // isolated-install.test.ts.
+        "bunfig.toml": '[install]\nlinker = "isolated"\nglobalStore = false\n',
         "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(6));`,
       });
 

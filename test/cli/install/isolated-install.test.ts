@@ -1686,7 +1686,8 @@ describe("global virtual store", () => {
           join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0", "node_modules", "no-deps", "package.json"),
         ).json(),
       ).toMatchObject({ name: "no-deps" });
-      expect(existsSync(join(packageDir, "node_modules", ".bin", "what-bin"))).toBe(true);
+      const bin = process.platform === "win32" ? "what-bin.bunx" : "what-bin";
+      expect(existsSync(join(packageDir, "node_modules", ".bin", bin))).toBe(true);
     }
   });
 

@@ -294,6 +294,23 @@ describe("invalid matcher implementations errors", () => {
     });
     expect(() => expect(0)._toCustomA()).toThrow("MyError");
   });
+
+  it("throws when invalid matcher is called via asymmetricMatch", () => {
+    expect.extend({
+      // @ts-expect-error
+      _toCustomA: _expected => undefined,
+    });
+    expect(() => expect._toCustomA().asymmetricMatch(0)).toThrow(buildErrorMsg("undefined"));
+  });
+
+  it("throws when matcher that throws is called via asymmetricMatch", () => {
+    expect.extend({
+      _toCustomA: _expected => {
+        throw new Error("MyError");
+      },
+    });
+    expect(() => expect._toCustomA().asymmetricMatch(0)).toThrow("MyError");
+  });
 });
 
 describe("async support", () => {

@@ -295,14 +295,23 @@ describe("packages/bun-msi/build-msi.ps1", () => {
     }
   });
 
-  test("compiles detect-cpu.c with MSVC and checks the exit code", () => {
+  test("compiles detect-cpu.c with MSVC /MT and checks the exit code", () => {
     expect(ps1).toContain("detect-cpu.c");
-    expect(ps1).toMatch(/\bcl\b[^\n]*\/LD\b/);
     expect(ps1).toContain("msi.lib");
     expect(ps1).toMatch(/if\s*\(\s*\$LASTEXITCODE\s*-ne\s*0\s*\)\s*\{\s*throw\s*"cl failed/);
     // vswhere fallback so it works on a bare windows-latest runner.
     expect(ps1).toContain("vswhere.exe");
     expect(ps1).toContain("vcvars64.bat");
+    // /MT (static CRT) is mandatory: /MD would make the CA DLL import
+    // VCRUNTIME140.dll, which is a redistributable (not an OS component)
+    // and absent on Server Core / LTSC — install would abort with 1720.
+    const flags = ps1.match(/\$ClFlags\s*=\s*"([^"]+)"/)?.[1] ?? "";
+    expect(flags).toMatch(/(^|\s)\/MT(\s|$)/);
+    expect(flags).toMatch(/(^|\s)\/LD(\s|$)/);
+    expect(flags).not.toMatch(/\/MD\b/);
+    // Both cl invocations (vcvars fallback + direct) must use $ClFlags.
+    const calls = [...ps1.matchAll(/\bcl\s+\$ClFlags\b/g)];
+    expect(calls.length).toBe(2);
   });
 
   test("escapes non-ASCII license text as RTF \\uN keywords", () => {

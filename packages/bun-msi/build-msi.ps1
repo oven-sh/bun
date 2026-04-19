@@ -119,6 +119,15 @@ if ($LASTEXITCODE -ne 0) { throw "wix extension add WixToolset.UI.wixext failed 
 # IsWow64Process2 reports the native machine from there). Linked against
 # msi.lib for MsiGet/SetProperty and kernel32 for the detection calls.
 #
+# /MT (static CRT) is load-bearing: without it MSVC defaults to /MD and
+# the DLL imports VCRUNTIME140.dll, which is a redistributable and NOT an
+# OS component — absent on clean Server Core / LTSC / stripped enterprise
+# images, which makes LoadLibrary fail and the whole install abort with
+# 1720/1723 on exactly the fleets we're targeting. detect-cpu.c calls zero
+# CRT functions so /MT only pulls in the tiny DllMainCRTStartup stub.
+# /GS- drops the stack-cookie init (no buffers to overrun) which would
+# otherwise be the one remaining CRT reference.
+#
 # The MSVC environment isn't ambient on a GitHub Actions windows-latest
 # runner — cl.exe is laid down by Visual Studio but not on PATH until the
 # developer command prompt is entered. Rather than dot-sourcing the repo's
@@ -127,6 +136,8 @@ if ($LASTEXITCODE -ne 0) { throw "wix extension add WixToolset.UI.wixext failed 
 # keeps this script self-contained and runner-agnostic.
 $DetectSrc = Join-Path $ScriptDir "detect-cpu.c"
 $DetectDll = Join-Path $WorkDir   "detect-cpu.dll"
+$ClFlags   = "/nologo /O1 /W4 /MT /GS- /LD"
+$ClLibs    = "msi.lib kernel32.lib"
 
 if (-not (Get-Command cl -ErrorAction SilentlyContinue)) {
   $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
@@ -136,10 +147,10 @@ if (-not (Get-Command cl -ErrorAction SilentlyContinue)) {
   $vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvars64.bat"
   if (-not (Test-Path $vcvars)) { throw "vcvars64.bat not found under $vs" }
   Write-Host "-- Compiling detect-cpu.dll via $vcvars"
-  & cmd /c "`"$vcvars`" >nul && cl /nologo /O1 /W4 /LD `"$DetectSrc`" msi.lib kernel32.lib /Fe:`"$DetectDll`" /Fo:`"$WorkDir\\`""
+  & cmd /c "`"$vcvars`" >nul && cl $ClFlags `"$DetectSrc`" $ClLibs /Fe:`"$DetectDll`" /Fo:`"$WorkDir\\`""
 } else {
   Write-Host "-- Compiling detect-cpu.dll (cl already on PATH)"
-  & cl /nologo /O1 /W4 /LD $DetectSrc msi.lib kernel32.lib /Fe:$DetectDll /Fo:"$WorkDir\"
+  & cmd /c "cl $ClFlags `"$DetectSrc`" $ClLibs /Fe:`"$DetectDll`" /Fo:`"$WorkDir\\`""
 }
 if ($LASTEXITCODE -ne 0) { throw "cl failed to compile detect-cpu.c ($LASTEXITCODE)" }
 if (-not (Test-Path $DetectDll)) { throw "detect-cpu.dll not produced" }

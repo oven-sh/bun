@@ -29,9 +29,14 @@
       msiexec /i bun-windows-x64.msi /qn ADDTOPATH=0 INSTALLFOLDER=D:\Bun
 
   The UpgradeCode MUST stay constant across releases so MajorUpgrade can
-  replace older installs. A separate UpgradeCode is used per arch because
-  x64 and arm64 are distinct products as far as Windows Installer is
-  concerned (they install to different ProgramFiles roots).
+  replace older installs. A separate UpgradeCode is used per arch so that
+  installing the arm64 MSI on an ARM64 machine does not MajorUpgrade-away
+  a previously installed x64 MSI (and vice versa) — Windows Installer
+  treats different UpgradeCodes as unrelated products. Note both arches
+  resolve ProgramFiles64Folder to the same C:\Program Files on ARM64
+  Windows (there is no separate ARM64 Program Files root), so installing
+  both MSIs on one machine would overwrite the same bin directory; that
+  is a user error we don't try to guard against.
 -->
 
 <?if $(BunArch) = "arm64" ?>

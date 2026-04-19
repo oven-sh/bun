@@ -1443,8 +1443,11 @@ async function getPipeline(options = {}) {
 
   // MSI installers: always built on main (canary gets an unsigned MSI so
   // `msiexec` deployments can track canary too), and on any branch that
-  // opts in with [build msi] for testing the packaging.
-  const shouldBuildMsi = (isMainBranch() || options.buildMsi) && windowsPlatforms.length > 0;
+  // opts in with [build msi] for testing the packaging. Gated on !buildId
+  // like binary-size above: when [skip builds] reuses a prior build, the
+  // *-build-bun steps this depends_on references aren't in the pipeline
+  // and Buildkite would reject the upload with a dangling-key error.
+  const shouldBuildMsi = !buildId && (isMainBranch() || options.buildMsi) && windowsPlatforms.length > 0;
   if (shouldBuildMsi) {
     steps.push(getWindowsMsiStep(windowsPlatforms, options, { signed: shouldSignWindows }));
   }

@@ -1,6 +1,6 @@
-import { $, spawn, write, Glob } from "bun";
+import { $, Glob, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { rm, mkdir } from "fs/promises";
+import { mkdir, rm } from "fs/promises";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { join } from "path";
 

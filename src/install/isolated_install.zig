@@ -1480,6 +1480,7 @@ pub fn installIsolatedPackages(
             .is_new_bun_modules = is_new_bun_modules,
             .global_store_path = global_store_path,
         };
+        defer installer.deinit();
 
         for (tasks, 0..) |*task, _entry_id| {
             const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));

@@ -113,8 +113,13 @@ jobs:
       - name: Resolve release tag
         id: tag
         shell: bash
+        # BUN_VERSION is read from the process env, not ${{ }}-interpolated,
+        # so a tag containing shell metacharacters can't splice into the
+        # script. (BUN_VERSION is maintainer-controlled either way — it
+        # comes from workflow_dispatch inputs or release.tag_name — but
+        # the env pattern is the Actions hardening recommendation.)
         run: |
-          v="${{ env.BUN_VERSION }}"
+          v="$BUN_VERSION"
           if [[ "$v" == "canary" ]]; then
             echo "tag=canary" >> "$GITHUB_OUTPUT"
           elif [[ "$v" == bun-v* ]]; then
@@ -124,22 +129,24 @@ jobs:
           fi
       - name: Download Windows release zips
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          REPO: ${{ github.repository }}
         run: |
           $targets = "bun-windows-x64", "bun-windows-x64-baseline", "bun-windows-aarch64"
           foreach ($t in $targets) {
-            gh release download "${{ steps.tag.outputs.tag }}" --pattern "$t.zip" --repo "${{ github.repository }}"
+            gh release download $env:RELEASE_TAG --pattern "$t.zip" --repo $env:REPO
             Expand-Archive -Path "$t.zip" -DestinationPath . -Force
             if (-not (Test-Path "$t\bun.exe")) { throw "bun.exe not found inside $t.zip" }
           }
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Build MSI
         shell: pwsh
         run: |
           # Package/@Version must be numeric major.minor.build. For canary,
           # fall back to the repo's LATEST so the MSI still carries the
           # upcoming release number rather than 0.0.0.
-          $version = "${{ env.BUN_VERSION }}" -replace '^bun-v', ''
+          $version = $env:BUN_VERSION -replace '^bun-v', ''
           if ($version -notmatch '^\d+\.\d+\.\d+$') {
             $version = (Get-Content LATEST -Raw).Trim()
           }
@@ -151,9 +158,11 @@ jobs:
             -Output "bun-windows.msi"
       - name: Upload MSI to release
         shell: pwsh
-        run: gh release upload "${{ steps.tag.outputs.tag }}" "bun-windows.msi" --clobber --repo "${{ github.repository }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: gh release upload $env:RELEASE_TAG "bun-windows.msi" --clobber --repo $env:REPO
       - name: Upload MSI as workflow artifact
         uses: actions/upload-artifact@v4
         with:

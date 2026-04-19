@@ -148,6 +148,19 @@
     </InstallExecuteSequence>
 
     <!--
+      BUNVARIANT must be one of the three recognised values by the time
+      LaunchConditions fires (it runs after AppSearch + DetectCpu in both
+      sequences). An explicit typo like BUNVARIANT=x64baseline would
+      otherwise skip detection, match no payload component, and still
+      install PATH / BUN_INSTALL / the registry key — a "successful"
+      install with no bun.exe on disk. Abort with a clear message instead.
+      `Installed OR` lets repair/uninstall through regardless.
+    -->
+    <Launch
+        Condition="Installed OR BUNVARIANT = &quot;x64&quot; OR BUNVARIANT = &quot;x64-baseline&quot; OR BUNVARIANT = &quot;arm64&quot;"
+        Message="BUNVARIANT must be one of: x64, x64-baseline, arm64. Leave it unset to auto-detect." />
+
+    <!--
       Single user-visible feature; PATH / BUN_INSTALL live in a child
       feature whose Level is flipped to 0 (disabled) when the corresponding
       public property is "0". Using feature Levels rather than component

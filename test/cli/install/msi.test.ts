@@ -165,6 +165,23 @@ describe("packages/bun-msi/bun.wxs", () => {
     expect(stripXmlTrivia(wxs)).not.toMatch(/\bScript\s*=\s*"(vbscript|jscript)"/i);
   });
 
+  test("rejects an unrecognised BUNVARIANT before touching the machine", () => {
+    // LaunchConditions runs after AppSearch + DetectCpu, so by the time
+    // it fires BUNVARIANT is always one of the three valid strings unless
+    // the user supplied something else on the command line. An invalid
+    // value must abort rather than produce a "successful" install with
+    // PATH/BUN_INSTALL set and no bun.exe on disk.
+    const launches = elements(wxs, "Launch");
+    const guard = launches.find(l => (attr(l, "Condition") ?? "").includes("BUNVARIANT"));
+    expect(guard).toBeDefined();
+    const cond = attr(guard, "Condition")!;
+    expect(cond).toContain("Installed OR"); // let repair/uninstall through
+    for (const v of ["x64", "x64-baseline", "arm64"]) {
+      expect(cond).toContain(`BUNVARIANT = &quot;${v}&quot;`);
+    }
+    expect(attr(guard, "Message")).toContain("x64, x64-baseline, arm64");
+  });
+
   test("installs under ProgramFiles64\\Bun\\bin and appends it to system PATH", () => {
     const pf = elements(wxs, "StandardDirectory")[0];
     expect(attr(pf, "Id")).toBe("ProgramFiles64Folder");
@@ -185,7 +202,7 @@ describe("packages/bun-msi/bun.wxs", () => {
   });
 
   test("gates on Windows 10 1809 / build 17763 like install.ps1", () => {
-    const launch = elements(wxs, "Launch")[0];
+    const launch = elements(wxs, "Launch").find(l => (attr(l, "Condition") ?? "").includes("WINDOWSBUILDNUMBER"));
     expect(attr(launch, "Condition")).toContain("WINDOWSBUILDNUMBER &gt;= 17763");
 
     const installPs1 = readFileSync(join(repoRoot, "src", "cli", "install.ps1"), "utf8");

@@ -1775,6 +1775,50 @@ describe("global virtual store", () => {
     expect(JSON.parse(out.trim())).toEqual({ direct: "two-range-deps", transitive: "no-deps" });
   });
 
+  test("an entry that loses global-store eligibility detaches without mutating the shared entry", async () => {
+    // Regression: a previously-GVS entry that becomes project-local on the
+    // next install (newly patched, newly trusted, …) used to write its new
+    // tree *through* the stale `node_modules/.bun/<storepath>` symlink into
+    // the shared cache. On Windows the `.expect_missing` dep-symlink rewrite
+    // then baked a project-absolute junction target into the shared entry,
+    // which dangled after `rm -rf node_modules`.
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-gvs-to-local",
+        dependencies: { "two-range-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+    const entry = join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0");
+    expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+    const gvsTarget = readlinkSync(entry);
+    const gvsDepLink = readlinkSync(join(gvsTarget, "node_modules", "no-deps"));
+
+    // Flip eligibility: trustedDependencies makes it project-local on the
+    // next install regardless of whether it actually has scripts.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-gvs-to-local",
+        dependencies: { "two-range-deps": "1.0.0" },
+        trustedDependencies: ["two-range-deps"],
+      }),
+    );
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    // The project entry is now a real directory…
+    expect(lstatSync(entry).isSymbolicLink()).toBe(false);
+    expect(lstatSync(entry).isDirectory()).toBe(true);
+    // …and the shared GVS entry's dep symlink is untouched (still the
+    // global-relative target, not a project-absolute path).
+    expect(readlinkSync(join(gvsTarget, "node_modules", "no-deps"))).toBe(gvsDepLink);
+    expect(gvsDepLink).toMatch(/^\.\.[\/\\]\.\.[\/\\]no-deps@/);
+  });
+
   test("upgrades a pre-global-store node_modules in place", async () => {
     // A project installed before this change has `node_modules/.bun/<X>` as a
     // real directory. Re-running install with the global store enabled must

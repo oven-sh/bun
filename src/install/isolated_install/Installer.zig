@@ -639,6 +639,40 @@ pub const Installer = struct {
 
                     const uses_global_store = installer.entryUsesGlobalStore(this.entry_id);
 
+                    if (!uses_global_store) {
+                        // An entry can lose global-store eligibility between
+                        // installs — newly patched, newly trusted, a dep that
+                        // became a workspace package. The previous install
+                        // left `node_modules/.bun/<storepath>` as a symlink
+                        // (or junction) into the shared `<cache>/links/`
+                        // directory. Writing the new project-local tree
+                        // *through* that link would mutate the shared entry
+                        // underneath every other consumer; on Windows the
+                        // `.expect_missing` dep-symlink rewrite then bakes a
+                        // project-absolute junction target into the shared
+                        // directory, which dangles after the next
+                        // `rm -rf node_modules`. Detach first so the build
+                        // lands in a real project-local directory.
+                        var local: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
+                        defer local.deinit();
+                        installer.appendLocalStoreEntryPath(&local, this.entry_id);
+                        const is_stale_link = if (comptime Environment.isWindows)
+                            if (sys.getFileAttributes(local.sliceZ())) |a| a.is_reparse_point else false
+                        else if (sys.lstat(local.sliceZ()).asValue()) |st|
+                            std.posix.S.ISLNK(@intCast(st.mode))
+                        else
+                            false;
+                        if (is_stale_link) {
+                            if (comptime Environment.isWindows) {
+                                if (sys.rmdir(local.sliceZ()).asErr()) |_| {
+                                    _ = sys.unlink(local.sliceZ());
+                                }
+                            } else {
+                                _ = sys.unlink(local.sliceZ());
+                            }
+                        }
+                    }
+
                     // For the file-walking backends (hardlink/copyfile), shared
                     // global-store entries are populated through a temp sibling
                     // and renamed into place — same staging FileCloner does in

@@ -1565,6 +1565,30 @@ pub fn installIsolatedPackages(
 
                     const uses_global_store = installer.entryUsesGlobalStore(entry_id);
 
+                    // An entry that lost global-store eligibility since the
+                    // previous install (newly patched, newly trusted, a dep
+                    // that became a workspace package) still has a stale
+                    // `node_modules/.bun/<storepath>` symlink/junction into
+                    // `<cache>/links/`. The existence check below would pass
+                    // *through* it and skip the task, leaving the project to
+                    // run against the shared entry (and, if the task did run,
+                    // write the new project-local tree through the link into
+                    // the shared cache). Treat the stale link as
+                    // needs-install so `link_package` detaches and rebuilds.
+                    const has_stale_gvs_link = !uses_global_store and stale: {
+                        if (installer.global_store_path == null) break :stale false;
+                        var local: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
+                        defer local.deinit();
+                        installer.appendLocalStoreEntryPath(&local, entry_id);
+                        if (comptime bun.Environment.isWindows) {
+                            break :stale if (sys.getFileAttributes(local.sliceZ())) |a| a.is_reparse_point else false;
+                        }
+                        break :stale if (sys.lstat(local.sliceZ()).asValue()) |st|
+                            std.posix.S.ISLNK(@intCast(st.mode))
+                        else
+                            false;
+                    };
+
                     const needs_install =
                         manager.options.enable.force_install or
                         // A freshly-created `node_modules/.bun` only implies the
@@ -1572,6 +1596,7 @@ pub fn installIsolatedPackages(
                         // store entries persist across `rm -rf node_modules` and
                         // should still take the cheap symlink-only path.
                         (is_new_bun_modules and !uses_global_store) or
+                        has_stale_gvs_link or
                         patch_info == .remove or
                         needs_install: {
                             var store_path: bun.AbsPath(.{}) = .initTopLevelDir();

@@ -72,7 +72,7 @@ Bun ships as a single, dependency-free executable. You can install it via script
       rm -rf ~/.bun  # optional: global packages + completions
       ```
 
-      The installer also appends a block marked `# bun (installed via .pkg)` to your shell configs (`~/.zshrc`, `~/.zprofile`, `~/.bash_profile`, `~/.bashrc`, and/or `~/.config/fish/config.fish`, whichever exist) — delete it from each if you want a fully clean uninstall. Leaving it is harmless.
+      The installer also appends a block marked `# bun (installed via .pkg)` to your shell configs (`~/.zshrc`, `~/.zprofile`, `~/.bash_profile`, `~/.bashrc`, and/or `~/.config/fish/config.fish`) — whichever exist, or it creates the default config for your login shell if none do. Delete that block (and any files it created) for a fully clean uninstall. Leaving it is harmless.
     </Tab>
 
   <Tab title="Docker">

@@ -137,6 +137,7 @@ jobs:
           $targets = "bun-windows-x64", "bun-windows-x64-baseline", "bun-windows-aarch64"
           foreach ($t in $targets) {
             gh release download $env:RELEASE_TAG --pattern "$t.zip" --repo $env:REPO
+            if ($LASTEXITCODE -ne 0) { throw "gh release download failed for $t ($LASTEXITCODE)" }
             Expand-Archive -Path "$t.zip" -DestinationPath . -Force
             if (-not (Test-Path "$t\bun.exe")) { throw "bun.exe not found inside $t.zip" }
           }

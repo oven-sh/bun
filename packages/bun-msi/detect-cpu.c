@@ -59,6 +59,14 @@ __declspec(dllexport) UINT __stdcall DetectCpu(MSIHANDLE install)
         variant = L"x64";
     }
 
-    MsiSetPropertyW(install, L"BUNVARIANT", variant);
+    // Propagate a set failure so Return="check" on the CA surfaces a
+    // clear 1720 instead of falling through to the BUNVARIANT Launch
+    // gate with an empty value and a misleading "must be one of…"
+    // message. In practice MsiSetPropertyW only fails on an invalid
+    // handle, which can't happen via the DLL CA calling convention —
+    // this is defensive rather than an expected path.
+    if (MsiSetPropertyW(install, L"BUNVARIANT", variant) != ERROR_SUCCESS) {
+        return ERROR_INSTALL_FAILURE;
+    }
     return ERROR_SUCCESS;
 }

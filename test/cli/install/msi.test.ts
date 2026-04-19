@@ -155,11 +155,17 @@ describe("packages/bun-msi/bun.wxs", () => {
     // Sequenced in both UI and Execute, after AppSearch (so a remembered
     // registry value wins) and guarded on NOT BUNVARIANT so an explicit
     // `msiexec ... BUNVARIANT=x64-baseline` skips detection entirely.
-    const customs = elements(wxs, "Custom").filter(c => attr(c, "Action") === "DetectCpu");
-    expect(customs).toHaveLength(2);
-    for (const c of customs) {
-      expect(attr(c, "After")).toBe("AppSearch");
-      expect(attr(c, "Condition")).toBe("NOT BUNVARIANT");
+    // Checked per-sequence rather than as a flat count: two <Custom>
+    // elements both inside InstallExecuteSequence would still total 2
+    // but would leave BUNVARIANT empty at UI-sequence LaunchConditions
+    // and abort every interactive install with the validation message.
+    const body = stripXmlTrivia(wxs);
+    for (const seq of ["InstallUISequence", "InstallExecuteSequence"]) {
+      const block = body.match(new RegExp(`<${seq}>([\\s\\S]*?)<\\/${seq}>`))?.[1] ?? "";
+      const custom = elements(block, "Custom").find(c => attr(c, "Action") === "DetectCpu");
+      expect(custom).toBeDefined();
+      expect(attr(custom, "After")).toBe("AppSearch");
+      expect(attr(custom, "Condition")).toBe("NOT BUNVARIANT");
     }
 
     // No script custom actions at all: VBScript/JScript are optional

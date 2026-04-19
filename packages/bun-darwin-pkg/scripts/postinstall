@@ -100,13 +100,17 @@ has_marker() {
   sudo -u "$CONSOLE_USER" grep -qF '# bun (installed via .pkg)' "$1" 2>/dev/null
 }
 
+# Returns 0 when the file was targeted (wrote the block, or it was already
+# present), 1 when it was skipped because the path resolves to something
+# other than a regular file. Callers use the return to decide whether the
+# ~/.zprofile fallback is still needed.
 append_once() {
   local file="$1"
   # Skip anything that resolves to a non-regular file (directory, device).
   # -f follows symlinks, so a symlink -> regular file is fine.
-  [[ -e "$file" && ! -f "$file" ]] && return 0
+  [[ -e "$file" && ! -f "$file" ]] && return 1
   if [[ -f "$file" ]] && has_marker "$file"; then
-    return
+    return 0
   fi
   sudo -u "$CONSOLE_USER" tee -a "$file" >/dev/null 2>&1 <<EOF || true
 
@@ -118,10 +122,10 @@ EOF
 
 append_once_fish() {
   local file="$1"
-  sudo -u "$CONSOLE_USER" mkdir -p "$(dirname "$file")" 2>/dev/null || return 0
-  [[ -e "$file" && ! -f "$file" ]] && return 0
+  sudo -u "$CONSOLE_USER" mkdir -p "$(dirname "$file")" 2>/dev/null || return 1
+  [[ -e "$file" && ! -f "$file" ]] && return 1
   if [[ -f "$file" ]] && has_marker "$file"; then
-    return
+    return 0
   fi
   sudo -u "$CONSOLE_USER" tee -a "$file" >/dev/null 2>&1 <<EOF || true
 
@@ -136,36 +140,32 @@ wrote_any=0
 
 # zsh — macOS default shell.
 if [[ -f "$USER_HOME/.zshrc" || "$USER_SHELL" == */zsh ]]; then
-  append_once "$USER_HOME/.zshrc"
-  wrote_any=1
+  append_once "$USER_HOME/.zshrc" && wrote_any=1
 fi
 
 # bash
 for rc in "$USER_HOME/.bash_profile" "$USER_HOME/.bashrc"; do
   if [[ -f "$rc" ]]; then
-    append_once "$rc"
-    wrote_any=1
+    append_once "$rc" && wrote_any=1
   fi
 done
 if [[ "$USER_SHELL" == */bash && ! -f "$USER_HOME/.bash_profile" && ! -f "$USER_HOME/.bashrc" ]]; then
-  append_once "$USER_HOME/.bash_profile"
-  wrote_any=1
+  append_once "$USER_HOME/.bash_profile" && wrote_any=1
 fi
 
 # fish — only if the user has actually set it up. `command -v fish` would
 # probe root's PATH (where Homebrew often has fish as a transitive dep) and
 # create config for users who've never touched it.
 if [[ -d "$USER_HOME/.config/fish" || "$USER_SHELL" == */fish ]]; then
-  append_once_fish "$USER_HOME/.config/fish/config.fish"
-  wrote_any=1
+  append_once_fish "$USER_HOME/.config/fish/config.fish" && wrote_any=1
 fi
 
-# If none of the above matched (login shell is zsh-but-no-.zshrc was
-# handled above; bash and fish branches each set wrote_any when their
-# UserShell matches), the login shell is something else entirely. zsh is
-# the macOS default since Catalina, so .zprofile is the last-resort.
+# If none of the above targeted a file (either the login shell is something
+# else entirely, or the target paths exist but aren't regular files — e.g.
+# a broken dotfile manager left ~/.zshrc as a directory), fall back to
+# ~/.zprofile. zsh is the macOS default since Catalina.
 if [[ "$wrote_any" == "0" ]]; then
-  append_once "$USER_HOME/.zprofile"
+  append_once "$USER_HOME/.zprofile" || true
 fi
 
 # ---------------------------------------------------------------------------

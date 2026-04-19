@@ -69,7 +69,10 @@ Bun ships as a single, dependency-free executable. You can install it via script
       ```bash terminal icon="terminal"
       sudo rm -f /usr/local/bin/bun /usr/local/bin/bunx /etc/paths.d/200-bun
       sudo pkgutil --forget sh.bun.bun
+      rm -rf ~/.bun  # optional: global packages + completions
       ```
+
+      The installer also appends a block marked `# bun (installed via .pkg)` to your shell config (`~/.zshrc`, `~/.bash_profile`, or `~/.config/fish/config.fish`) — delete it if you want a fully clean uninstall. Leaving it is harmless.
     </Tab>
 
   <Tab title="Docker">

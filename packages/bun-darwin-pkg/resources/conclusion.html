@@ -234,8 +234,10 @@
         binaries in <code class="inline">/usr/local/bin</code> · global packages in <code class="inline">~/.bun</code> ·
         docs at <a href="https://bun.com/docs">bun.com/docs</a><br />
         uninstall:
-        <code class="inline">sudo rm -f /usr/local/bin/bun /usr/local/bin/bunx /etc/paths.d/200-bun</code> then
-        <code class="inline">sudo pkgutil --forget sh.bun.bun</code>
+        <code class="inline">sudo rm -f /usr/local/bin/bun /usr/local/bin/bunx /etc/paths.d/200-bun</code> ·
+        <code class="inline">sudo pkgutil --forget sh.bun.bun</code><br />
+        optionally <code class="inline">rm -rf ~/.bun</code> and delete the
+        <code class="inline"># bun (installed via .pkg)</code> block from your shell config
       </p>
     </div>
   </body>

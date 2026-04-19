@@ -91,3 +91,9 @@ sudo pkgutil --forget sh.bun.bun
 # optional: remove global packages + completions
 rm -rf ~/.bun
 ```
+
+`postinstall` also appends a block marked `# bun (installed via .pkg)` to
+the installing user's shell config (`~/.zshrc`, `~/.zprofile`,
+`~/.bash_profile`, `~/.bashrc`, or `~/.config/fish/config.fish`, whichever
+exists). Delete that block for a fully clean uninstall — leaving it is
+harmless (a missing `~/.bun/bin` on `PATH` is a no-op).

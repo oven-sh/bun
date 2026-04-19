@@ -59,8 +59,10 @@ if [[ -z "$CONSOLE_USER" || "$CONSOLE_USER" == "root" ]]; then
 fi
 
 # NFSHomeDirectory may contain spaces; strip only the leading key, keep the
-# full path.
-USER_HOME=$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | sed 's/^NFSHomeDirectory: //')
+# full path. `|| true` keeps set -e/pipefail from aborting on a dscl failure
+# (AD/LDAP account, offline directory service, recovery mode) — the
+# empty-string check below is the graceful exit.
+USER_HOME=$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | sed 's/^NFSHomeDirectory: //' || true)
 if [[ -z "$USER_HOME" || ! -d "$USER_HOME" ]]; then
   exit 0
 fi
@@ -117,7 +119,7 @@ set --export PATH "\$BUN_INSTALL/bin" \$PATH
 EOF
 }
 
-USER_SHELL="$(dscl . -read "/Users/$CONSOLE_USER" UserShell 2>/dev/null | sed 's/^UserShell: //')"
+USER_SHELL="$(dscl . -read "/Users/$CONSOLE_USER" UserShell 2>/dev/null | sed 's/^UserShell: //' || true)"
 wrote_any=0
 
 # zsh — macOS default shell.

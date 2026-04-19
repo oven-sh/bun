@@ -69,6 +69,7 @@ describe.skipIf(isWindows)("packages/bun-darwin-pkg", () => {
     expect(rendered).toContain('<welcome file="welcome.html"');
     expect(rendered).toContain('<conclusion file="conclusion.html"');
     expect(rendered).toContain('<background file="background.png"');
+    expect(rendered).toContain('<background-darkAqua file="background-dark.png"');
     expect(rendered).toContain('hostArchitectures="arm64,x86_64"');
     expect(rendered).toContain(">bun-component.pkg</pkg-ref>");
 

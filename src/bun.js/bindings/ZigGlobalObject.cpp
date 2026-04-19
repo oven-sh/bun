@@ -3546,6 +3546,8 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     JSValue sentValue, JSValue resumeMode)
 {
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (scriptFetcher && scriptFetcher.isObject()) [[unlikely]] {
         if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
@@ -3556,6 +3558,11 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
 
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         scriptFetcher, sentValue, resumeMode);
+    // The new C++ loader propagates the module body's throw out of
+    // evaluateNonVirtual; the old JS-side ModuleLoader.js swallowed it before
+    // dispatching here. Don't call back into Zig (which opens an
+    // ExceptionValidationScope) with an exception still pending.
+    RETURN_IF_EXCEPTION(scope, result);
 
     if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
         Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(result));

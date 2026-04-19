@@ -706,6 +706,17 @@ pub fn preparePatch(manager: *PackageManager) !void {
     // meaning that changes to the folder will also change the package in the cache.
     //
     // So we will overwrite the folder by directly copying the package in cache into it
+    //
+    // With the isolated linker's global virtual store, `module_folder` is
+    // reached *through* a `node_modules/.bun/<storepath>` symlink that points
+    // into `<cache>/links/`. `deleteTree(module_folder)` would follow that
+    // symlink and wipe the shared global entry (and its dep symlinks)
+    // underneath every other project, then FileCopier would write the user's
+    // edits into the shared cache. Detach first: walk up `module_folder` to
+    // find the first symlink ancestor, replace it with a real directory, and
+    // recreate the path below it so the copy lands in a project-local tree.
+    detachModuleFolderFromSharedStore(module_folder);
+
     overwritePackageInNodeModulesFolder(cache_dir, cache_dir_subpath, module_folder) catch |e| {
         Output.prettyError(
             "<r><red>error<r>: error overwriting folder in node_modules: {s}\n<r>",
@@ -724,6 +735,44 @@ pub fn preparePatch(manager: *PackageManager) !void {
     }
 
     return;
+}
+
+fn detachModuleFolderFromSharedStore(module_folder: []const u8) void {
+    var path: bun.Path(.{ .sep = .auto }) = .from(module_folder);
+    defer path.deinit();
+    var components: usize = 0;
+    {
+        var it = bun.strings.split(module_folder, std.fs.path.sep_str);
+        while (it.next()) |_| components += 1;
+    }
+    var depth: usize = 0;
+    while (depth < components) : (depth += 1) {
+        const is_symlink = if (comptime Environment.isWindows)
+            (bun.sys.getFileAttributes(path.sliceZ()) orelse return).is_reparse_point
+        else if (bun.sys.lstat(path.sliceZ()).asValue()) |st|
+            std.posix.S.ISLNK(@intCast(st.mode))
+        else
+            return;
+        if (is_symlink) {
+            // Windows directory symlinks/junctions are removed with rmdir,
+            // file symlinks with unlink; on POSIX unlink covers both.
+            if (comptime Environment.isWindows) {
+                if (bun.sys.rmdir(path.sliceZ()).asErr()) |_| {
+                    _ = bun.sys.unlink(path.sliceZ());
+                }
+            } else {
+                _ = bun.sys.unlink(path.sliceZ());
+            }
+            // Re-create the now-missing path segments below the removed
+            // symlink so `module_folder`'s parent exists for the copy.
+            const parent = bun.path.dirname(module_folder, .auto);
+            if (parent.len > 0) {
+                FD.cwd().makePath(u8, parent) catch {};
+            }
+            return;
+        }
+        path.undo(1);
+    }
 }
 
 fn overwritePackageInNodeModulesFolder(

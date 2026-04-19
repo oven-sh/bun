@@ -573,13 +573,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
   });
 
   describe("bun patch with --linker=isolated", () => {
-    // `bun patch` opens `node_modules/<pkg>` for editing; with the global
-    // virtual store that path is a symlink chain into the shared cache, and
-    // editing through it (and resolving back through it after reinstall)
-    // currently breaks. These tests predate the global store and exercise
-    // patch×isolated, so pin them to the per-project layout. Patch×global-
-    // store coverage is in isolated-install.test.ts.
-    const patchEnv = { ...bunEnv, BUN_INSTALL_GLOBAL_STORE: "0" };
+    const patchEnv = bunEnv;
 
     test("should create patch for package and commit it", async () => {
       const filedir = tempDirWithFiles("patch-isolated", {

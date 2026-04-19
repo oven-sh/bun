@@ -1727,6 +1727,54 @@ describe("global virtual store", () => {
     expect(await file(pkgJson).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
   });
 
+  test("bun's resolver follows the double-hop chain into the global store", async () => {
+    // Regression test for the Windows EISDIR: `node_modules/.bun/<pkg>` is a
+    // symlink into `<cache>/links/`, and the dep symlinks inside the global
+    // entry are *relative* to the entry's physical location. The Windows
+    // `RealFS.kind()` symlink walk used to join those relative targets
+    // against the *logical* `dirname()` (which still contains the
+    // `node_modules/.bun/<pkg>` segment), miss, fall back to `.file`, and the
+    // resolver would then `ReadFile` a directory. Exercising an actual
+    // `require()` through a transitive dep proves the chain resolves
+    // end-to-end on every platform.
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-resolver",
+        // two-range-deps → no-deps gives a transitive hop inside the GVS.
+        dependencies: { "two-range-deps": "1.0.0" },
+      }),
+    );
+    await write(
+      join(packageDir, "index.js"),
+      `console.log(JSON.stringify({
+        direct: require("two-range-deps/package.json").name,
+        transitive: require(require.resolve("no-deps/package.json", {
+          paths: [require("path").dirname(require.resolve("two-range-deps/package.json"))],
+        })).name,
+      }));`,
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+    // The entry must actually be a global-store symlink for this test to mean
+    // anything (guards against a future default flip silently neutering it).
+    expect(lstatSync(join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0")).isSymbolicLink()).toBe(true);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("EISDIR");
+    expect(code).toBe(0);
+    expect(JSON.parse(out.trim())).toEqual({ direct: "two-range-deps", transitive: "no-deps" });
+  });
+
   test("upgrades a pre-global-store node_modules in place", async () => {
     // A project installed before this change has `node_modules/.bun/<X>` as a
     // real directory. Re-running install with the global store enabled must

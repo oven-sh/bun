@@ -2371,8 +2371,13 @@ pub const PackageManifest = struct {
                         // For peer deps, fall through with an empty `items`
                         // slice when `peerDependencies` is absent so that
                         // `peerDependenciesMeta`-only entries (synthesised
-                        // below) still get a build pass. For other groups the
-                        // empty fallthrough is a cheap no-op.
+                        // below) still get a build pass. The fallthrough must
+                        // stay scoped to packages that actually have a
+                        // `peerDependenciesMeta`: the body sets
+                        // `package_version.bundled_dependencies` from this
+                        // iteration's slice of `bundled_deps_buf`, so an
+                        // unconditional empty pass would clobber the value the
+                        // `dependencies` iteration just produced.
                         const items = items: {
                             if (prop.value.?.asProperty(comptime pair.prop)) |versioned_deps| {
                                 if (versioned_deps.expr.data == .e_object) {
@@ -2381,7 +2386,12 @@ pub const PackageManifest = struct {
                             }
                             break :items &.{};
                         };
-                        if (items.len > 0 or comptime strings.eqlComptime(pair.prop, "peerDependencies")) {
+                        const is_peer_group = comptime strings.eqlComptime(pair.prop, "peerDependencies");
+                        const has_meta_only_peers = is_peer_group and blk: {
+                            const meta = prop.value.?.asProperty("peerDependenciesMeta") orelse break :blk false;
+                            break :blk meta.expr.data == .e_object and meta.expr.data.e_object.properties.len > 0;
+                        };
+                        if (items.len > 0 or has_meta_only_peers) {
                             {
                                 var count = items.len;
 

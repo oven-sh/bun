@@ -478,15 +478,13 @@ extern "C" void Bun__onFulfillAsyncModule(
 
     // The new C++ module loader does not create a registry entry until *after*
     // this fetch promise resolves (provideFetch runs inside the
-    // ModuleLoadTopSettled microtask). So the absence of an entry here is the
-    // normal case and we must resolve unconditionally. We still check for an
-    // already-Fetched entry to keep the race-loss short-circuit from
-    // https://github.com/oven-sh/bun/issues/6946 and #12910.
-    auto specifierIdent = JSC::Identifier::fromString(vm, specifier->toWTFString());
-    if (auto* entry = globalObject->moduleLoader()->registryEntry(specifierIdent)) {
-        if (entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched)
-            return;
-    }
+    // ModuleLoadTopSettled microtask). Two concurrent dynamic imports of the
+    // same key therefore each get their own embedder fetch promise, and the
+    // loser of that race must still resolve so its loadModule chain can reach
+    // the (idempotent) provideFetch and reuse the already-loaded record.
+    // The old #6946/#12910 short-circuit was for the JS loader's *shared*
+    // entry.fetch promise; under the new loader returning here would strand
+    // the loser's promise pending forever.
 
     if (res->result.value.isCommonJSModule) {
         auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), specifierValue, res->result.value);

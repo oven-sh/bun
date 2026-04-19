@@ -2523,13 +2523,23 @@ pub const PackageManifest = struct {
                                 this_names = this_names[0..count];
                                 this_versions = this_versions[0..count];
 
-                                if (bundle_all_deps) {
-                                    package_version.bundled_dependencies = ExternalPackageNameHashList.invalid;
-                                } else {
-                                    package_version.bundled_dependencies = ExternalPackageNameHashList.init(
-                                        bundled_deps_buf,
-                                        bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
-                                    );
+                                // Bundled deps are matched against the
+                                // `dependencies`/`optionalDependencies` groups
+                                // only; the peer pass never adds to
+                                // `bundled_deps_buf`. With the meta-only
+                                // synthesis above the peer body now runs even
+                                // when `peerDependencies` is absent, so writing
+                                // here would clobber the value the dependencies
+                                // pass already produced with an empty slice.
+                                if (comptime !is_peer) {
+                                    if (bundle_all_deps) {
+                                        package_version.bundled_dependencies = ExternalPackageNameHashList.invalid;
+                                    } else {
+                                        package_version.bundled_dependencies = ExternalPackageNameHashList.init(
+                                            bundled_deps_buf,
+                                            bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
+                                        );
+                                    }
                                 }
 
                                 var name_list = ExternalStringList.init(all_extern_strings, this_names);

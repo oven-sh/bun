@@ -1420,7 +1420,7 @@ pub fn Package(comptime SemverIntType: type) type {
             var optional_peer_dependencies = std.ArrayHashMap(PackageNameHash, []const u8, ArrayIdentityContext.U64, false).init(allocator);
             defer optional_peer_dependencies.deinit();
 
-            if (json.asProperty("peerDependenciesMeta")) |peer_dependencies_meta| {
+            if (features.peer_dependencies) if (json.asProperty("peerDependenciesMeta")) |peer_dependencies_meta| {
                 if (peer_dependencies_meta.expr.data == .e_object) {
                     const props = peer_dependencies_meta.expr.data.e_object.properties.slice();
                     try optional_peer_dependencies.ensureUnusedCapacity(props.len);
@@ -1444,7 +1444,7 @@ pub fn Package(comptime SemverIntType: type) type {
                         }
                     }
                 }
-            }
+            };
 
             inline for (dependency_groups) |group| {
                 if (json.asProperty(group.prop)) |dependencies_q| brk: {

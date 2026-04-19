@@ -53,10 +53,11 @@ jobs:
   sign:
     name: Sign Release
     runs-on: ubuntu-latest
-    # Wait for the .pkg so it's included in SHASUMS256.txt. always() lets
-    # sign run even if macos-pkg was skipped (scheduled canary) or failed.
+    # Wait for the .pkg so it's included in SHASUMS256.txt. !cancelled()
+    # lets sign run even if macos-pkg was skipped (scheduled canary) or
+    # failed, while still respecting an explicit workflow cancellation.
     needs: macos-pkg
-    if: ${{ always() && github.repository_owner == 'oven-sh' }}
+    if: ${{ !cancelled() && github.repository_owner == 'oven-sh' }}
     permissions:
       contents: write
     defaults:

@@ -146,15 +146,12 @@ if [[ -d "$USER_HOME/.config/fish" || "$USER_SHELL" == */fish ]]; then
   wrote_any=1
 fi
 
-# If we didn't match any shell at all, fall back based on the login shell so
-# a fresh account still gets configured on next login. zsh is the macOS
-# default since Catalina, so .zprofile is the last-resort.
+# If none of the above matched (login shell is zsh-but-no-.zshrc was
+# handled above; bash and fish branches each set wrote_any when their
+# UserShell matches), the login shell is something else entirely. zsh is
+# the macOS default since Catalina, so .zprofile is the last-resort.
 if [[ "$wrote_any" == "0" ]]; then
-  case "$USER_SHELL" in
-    */bash) append_once "$USER_HOME/.bash_profile" ;;
-    */fish) append_once_fish "$USER_HOME/.config/fish/config.fish" ;;
-    *)      append_once "$USER_HOME/.zprofile" ;;
-  esac
+  append_once "$USER_HOME/.zprofile"
 fi
 
 # ---------------------------------------------------------------------------

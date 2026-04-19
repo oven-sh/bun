@@ -109,11 +109,11 @@ describe.skipIf(isWindows)("packages/bun-darwin-pkg", () => {
     // These are the user-visible promises the installer makes (see
     // welcome.html + docs/installation.mdx). Keep them honest.
     expect(src).toContain("/etc/paths.d/200-bun");
-    // bash/zsh rc block
-    expect(src).toContain('BUN_INSTALL="\\$HOME/.bun"');
-    expect(src).toContain('PATH="\\$BUN_INSTALL/bin:\\$PATH"');
-    // fish rc block — `--export` is load-bearing (without it the var is
-    // shell-local and `bun add -g` can't see BUN_INSTALL).
+    // bash/zsh rc block — `export` is load-bearing (without it the var
+    // is shell-local and `bun add -g` can't see BUN_INSTALL).
+    expect(src).toContain('export BUN_INSTALL="\\$HOME/.bun"');
+    expect(src).toContain('export PATH="\\$BUN_INSTALL/bin:\\$PATH"');
+    // fish rc block — `--export` is load-bearing for the same reason.
     expect(src).toContain('set --export BUN_INSTALL "\\$HOME/.bun"');
     expect(src).toContain('set --export PATH "\\$BUN_INSTALL/bin" \\$PATH');
     expect(src).toContain("# bun (installed via .pkg)");

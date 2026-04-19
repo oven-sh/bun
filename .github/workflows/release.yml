@@ -97,7 +97,17 @@ jobs:
     # notarytool --wait blocks on Apple's service; bound it so an outage
     # can't hold a macOS runner (and the downstream sign job) for 6 h.
     timeout-minutes: 30
-    if: ${{ github.repository_owner == 'oven-sh' && (github.event_name == 'release' || github.event.inputs.use-macos-pkg == 'true') }}
+    # The canary guard mirrors the BUN_VERSION derivation at the top of
+    # this file: build.sh --from-release canary would download canary
+    # binaries but stamp the installer with the LATEST stable version
+    # (pkgbuild needs a numeric CFBundleVersion), producing a mislabeled
+    # package. Skip for schedule/cron and any dispatch with tag=canary.
+    if: >-
+      ${{
+        github.repository_owner == 'oven-sh'
+        && (github.event_name == 'release' || github.event.inputs.use-macos-pkg == 'true')
+        && (github.event.inputs.tag || github.event.release.tag_name || 'canary') != 'canary'
+      }}
     permissions:
       contents: write
     env:

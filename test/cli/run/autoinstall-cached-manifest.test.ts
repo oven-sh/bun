@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 // Regression: when runtime auto-install (`enqueueDependencyToRoot`) finds a
 // cached manifest on disk but not the extracted tarball, it calls

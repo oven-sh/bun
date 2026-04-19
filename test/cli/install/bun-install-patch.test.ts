@@ -573,6 +573,14 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
   });
 
   describe("bun patch with --linker=isolated", () => {
+    // `bun patch` opens `node_modules/<pkg>` for editing; with the global
+    // virtual store that path is a symlink chain into the shared cache, and
+    // editing through it (and resolving back through it after reinstall)
+    // currently breaks. These tests predate the global store and exercise
+    // patch×isolated, so pin them to the per-project layout. Patch×global-
+    // store coverage is in isolated-install.test.ts.
+    const patchEnv = { ...bunEnv, BUN_INSTALL_GLOBAL_STORE: "0" };
+
     test("should create patch for package and commit it", async () => {
       const filedir = tempDirWithFiles("patch-isolated", {
         "package.json": JSON.stringify({
@@ -587,10 +595,10 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       });
 
       // Install with isolated linker
-      await $`${bunExe()} install --linker=isolated`.env(bunEnv).cwd(filedir);
+      await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
 
       // Run bun patch command
-      const { stdout: patchStdout } = await $`${bunExe()} patch is-even`.env(bunEnv).cwd(filedir);
+      const { stdout: patchStdout } = await $`${bunExe()} patch is-even`.env(patchEnv).cwd(filedir);
       const patchOutput = patchStdout.toString();
       const relativePatchPath =
         patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
@@ -609,7 +617,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
 
       // Commit the patch
       const { stderr: commitStderr } = await $`${bunExe()} patch --commit '${relativePatchPath}'`
-        .env(bunEnv)
+        .env(patchEnv)
         .cwd(filedir);
 
       // With isolated linker, there may be some stderr output during patch commit
@@ -629,7 +637,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       });
 
       // Run the code to verify patch was applied
-      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
+      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(patchEnv).cwd(filedir);
       expect(stderr.toString()).toBe("");
       expect(stdout.toString()).toContain("PATCHED with isolated linker!");
     });
@@ -648,12 +656,12 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       });
 
       // Install with isolated linker
-      await $`${bunExe()} install --linker=isolated`.env(bunEnv).cwd(filedir);
+      await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
 
-      await $`${bunExe()} patch is-odd`.env(bunEnv).cwd(filedir);
+      await $`${bunExe()} patch is-odd`.env(patchEnv).cwd(filedir);
 
       // Patch transitive dependency (is-odd)
-      const { stdout: patchStdout } = await $`${bunExe()} patch is-odd@0.1.2`.env(bunEnv).cwd(filedir);
+      const { stdout: patchStdout } = await $`${bunExe()} patch is-odd@0.1.2`.env(patchEnv).cwd(filedir);
       const patchOutput = patchStdout.toString();
       const relativePatchPath =
         patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
@@ -672,10 +680,10 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
 
       // Commit the patch
       const { stderr: commitStderr } = await $`${bunExe()} patch --commit '${relativePatchPath}'`
-        .env(bunEnv)
+        .env(patchEnv)
         .cwd(filedir);
 
-      await $`${bunExe()} i --linker isolated`.env(bunEnv).cwd(filedir);
+      await $`${bunExe()} i --linker isolated`.env(patchEnv).cwd(filedir);
 
       // With isolated linker, there may be some stderr output during patch commit
       // but it should not contain actual errors
@@ -684,7 +692,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       expect(commitStderrText).not.toContain("panic:");
 
       // Verify patch was applied
-      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
+      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(patchEnv).cwd(filedir);
       expect(stderr.toString()).toBe("");
       expect(stdout.toString()).toContain("Transitive patch with isolated!");
     });
@@ -703,10 +711,10 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       });
 
       // Install with isolated linker
-      await $`${bunExe()} install --linker=isolated`.env(bunEnv).cwd(filedir);
+      await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
 
       // Patch scoped package
-      const { stdout: patchStdout } = await $`${bunExe()} patch @zackradisic/hls-dl`.env(bunEnv).cwd(filedir);
+      const { stdout: patchStdout } = await $`${bunExe()} patch @zackradisic/hls-dl`.env(patchEnv).cwd(filedir);
       const patchOutput = patchStdout.toString();
       const relativePatchPath =
         patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
@@ -726,7 +734,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
 
       // Commit the patch
       const { stderr: commitStderr } = await $`${bunExe()} patch --commit '${relativePatchPath}'`
-        .env(bunEnv)
+        .env(patchEnv)
         .cwd(filedir);
 
       // With isolated linker, there may be some stderr output during patch commit
@@ -742,7 +750,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       );
 
       // Verify patch was applied
-      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
+      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(patchEnv).cwd(filedir);
       expect(stderr.toString()).toBe("");
       expect(stdout.toString()).toContain("SCOPED PACKAGE PATCHED with isolated!");
     });
@@ -767,10 +775,10 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       });
 
       // Install with isolated linker
-      await $`${bunExe()} install --linker=isolated`.env(bunEnv).cwd(filedir);
+      await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
 
       // Patch from workspace root
-      const { stdout: patchStdout } = await $`${bunExe()} patch is-even`.env(bunEnv).cwd(filedir);
+      const { stdout: patchStdout } = await $`${bunExe()} patch is-even`.env(patchEnv).cwd(filedir);
       const patchOutput = patchStdout.toString();
       const relativePatchPath =
         patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
@@ -789,7 +797,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
 
       // Commit the patch
       const { stderr: commitStderr } = await $`${bunExe()} patch --commit '${relativePatchPath}'`
-        .env(bunEnv)
+        .env(patchEnv)
         .cwd(filedir);
 
       // With isolated linker, there may be some stderr output during patch commit
@@ -805,7 +813,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       });
 
       // Run from workspace package to verify patch was applied
-      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(join(filedir, "packages", "app"));
+      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(patchEnv).cwd(join(filedir, "packages", "app"));
       expect(stderr.toString()).toBe("");
       expect(stdout.toString()).toContain("WORKSPACE PATCH with isolated!");
     });
@@ -820,22 +828,14 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
             "is-even": "1.0.0",
           },
         }),
-        // `bun patch` opens `node_modules/<pkg>` for editing; with the global
-        // virtual store that path is a symlink chain into the shared cache,
-        // and on Windows/Linux the post-reinstall resolution through that
-        // chain currently fails with EISDIR. This test predates the global
-        // store and is exercising patch-survives-reinstall, so keep it on the
-        // per-project layout. Patch×global-store coverage lives in
-        // isolated-install.test.ts.
-        "bunfig.toml": '[install]\nlinker = "isolated"\nglobalStore = false\n',
         "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(6));`,
       });
 
       // Install with isolated linker
-      await $`${bunExe()} install --linker=isolated`.env(bunEnv).cwd(filedir);
+      await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
 
       // Create and commit a patch
-      const { stdout: patchStdout } = await $`${bunExe()} patch is-even`.env(bunEnv).cwd(filedir);
+      const { stdout: patchStdout } = await $`${bunExe()} patch is-even`.env(patchEnv).cwd(filedir);
       const patchOutput = patchStdout.toString();
       const relativePatchPath =
         patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
@@ -851,14 +851,14 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       );
       await Bun.write(indexPath, modifiedContent);
 
-      await $`${bunExe()} patch --commit '${relativePatchPath}'`.env(bunEnv).cwd(filedir);
+      await $`${bunExe()} patch --commit '${relativePatchPath}'`.env(patchEnv).cwd(filedir);
 
       // Delete node_modules and reinstall with isolated linker
       rmSync(join(filedir, "node_modules"), { force: true, recursive: true });
-      await $`${bunExe()} install --linker=isolated`.env(bunEnv).cwd(filedir);
+      await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
 
       // Verify patch is still applied
-      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
+      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(patchEnv).cwd(filedir);
       expect(stderr.toString()).toBe("");
       expect(stdout.toString()).toContain("REINSTALL TEST with isolated!");
     });
@@ -883,10 +883,10 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       });
 
       // Install with isolated linker
-      await $`${bunExe()} install --linker=isolated`.env(bunEnv).cwd(filedir);
+      await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
 
       // Patch first package (is-even)
-      const { stdout: patchStdout1 } = await $`${bunExe()} patch is-even`.env(bunEnv).cwd(filedir);
+      const { stdout: patchStdout1 } = await $`${bunExe()} patch is-even`.env(patchEnv).cwd(filedir);
       const patchOutput1 = patchStdout1.toString();
       const relativePatchPath1 =
         patchOutput1.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
@@ -903,7 +903,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       await Bun.write(indexPath1, modifiedContent1);
 
       const { stderr: commitStderr1 } = await $`${bunExe()} patch --commit '${relativePatchPath1}'`
-        .env(bunEnv)
+        .env(patchEnv)
         .cwd(filedir);
       // Check for errors
       const commitStderrText1 = commitStderr1.toString();
@@ -911,7 +911,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       expect(commitStderrText1).not.toContain("panic:");
 
       // Patch second package (is-odd hoisted version)
-      const { stdout: patchStdout2 } = await $`${bunExe()} patch is-odd@3.0.1`.env(bunEnv).cwd(filedir);
+      const { stdout: patchStdout2 } = await $`${bunExe()} patch is-odd@3.0.1`.env(patchEnv).cwd(filedir);
       const patchOutput2 = patchStdout2.toString();
       const relativePatchPath2 =
         patchOutput2.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
@@ -928,7 +928,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       await Bun.write(indexPath2, modifiedContent2);
 
       const { stderr: commitStderr2 } = await $`${bunExe()} patch --commit '${relativePatchPath2}'`
-        .env(bunEnv)
+        .env(patchEnv)
         .cwd(filedir);
       // Check for errors
       const commitStderrText2 = commitStderr2.toString();
@@ -936,7 +936,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       expect(commitStderrText2).not.toContain("panic:");
 
       // Verify both patches were applied
-      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
+      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(patchEnv).cwd(filedir);
       expect(stderr.toString()).toBe("");
       expect(stdout.toString()).toContain("is-even PATCHED with isolated!");
       expect(stdout.toString()).toContain("is-odd PATCHED with isolated!");

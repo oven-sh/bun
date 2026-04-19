@@ -698,32 +698,19 @@ pub const Installer = struct {
                         },
 
                         .hardlink => {
-                            // The hardlink/copyfile backends walk the source
-                            // tree file-by-file straight into `dest_subpath`.
-                            // For a shared global-store entry that's neither
-                            // atomic nor idempotent: an interrupted earlier
-                            // run can leave a partial tree, and two concurrent
-                            // installs would unlink+relink each other's files.
-                            // Until those backends grow the same temp+rename
-                            // treatment as `cloneAtomic`, take the cheap out:
-                            // if the package tree already landed (a previous
-                            // run got as far as `package.json`), skip the file
-                            // walk entirely; the later steps will fill any
-                            // missing dep symlinks/bins via `.expect_existing`
-                            // and stamp `.bun-ok`. Otherwise wipe and rebuild
-                            // so a half-written tree doesn't survive.
                             if (uses_global_store) {
                                 // The hardlink/copyfile backends write
                                 // file-by-file straight into the destination
                                 // (no temp+rename), so `package.json` can land
-                                // before the rest of the tree. Probing for it
-                                // would accept a half-written entry forever.
-                                // Until those backends grow `cloneAtomic`-style
-                                // staging, take the conservative path: wipe
-                                // and rebuild every time `needs_install` got us
-                                // here. The `.bun-ok` warm-hit check already
-                                // skipped this entire task on the fast path,
-                                // so this only fires for genuinely-missing or
+                                // before the rest of the tree and probing for
+                                // it would accept a half-written entry
+                                // forever. Until those backends grow
+                                // `cloneAtomic`-style staging, take the
+                                // conservative path: wipe and rebuild every
+                                // time `needs_install` got us here. The
+                                // `.bun-ok` warm-hit check already skipped
+                                // this entire task on the fast path, so this
+                                // only fires for genuinely-missing or
                                 // unstamped entries.
                                 var probe: bun.AbsPath(.{ .sep = .auto }) = .init();
                                 defer probe.deinit();

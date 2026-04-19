@@ -891,7 +891,8 @@ pub fn installIsolatedPackages(
         // Packages newly trusted via `bun add --trust` (not yet written to the
         // lockfile) will have their lifecycle scripts run this install; treat
         // them the same as lockfile-trusted packages for eligibility.
-        const trusted_from_update = manager.findTrustedDependenciesFromUpdateRequests();
+        var trusted_from_update = manager.findTrustedDependenciesFromUpdateRequests();
+        defer trusted_from_update.deinit(manager.allocator);
 
         const State = enum { unvisited, in_progress, ineligible, done };
         const states = try manager.allocator.alloc(State, store.entries.len);

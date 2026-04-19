@@ -70,8 +70,10 @@ fi
 BUN_INSTALL="$USER_HOME/.bun"
 
 # Create ~/.bun/bin so `bun add -g <pkg>` has somewhere to link into, and so
-# the PATH entry we add below points at something that exists.
-sudo -u "$CONSOLE_USER" mkdir -p "$BUN_INSTALL/bin"
+# the PATH entry we add below points at something that exists. Best-effort:
+# an NFS home / quota / permission failure here mustn't make Installer.app
+# report the whole install as failed when bun is already in /usr/local/bin.
+sudo -u "$CONSOLE_USER" mkdir -p "$BUN_INSTALL/bin" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Shell profile: export BUN_INSTALL and put ~/.bun/bin on PATH.

@@ -245,8 +245,16 @@ render_background() {
   # The Installer window is roughly 620x418pt. We emit the logo as the full
   # background and rely on distribution.xml's alignment="bottomleft" +
   # scaling="none" so it sits behind the content without being stretched.
-  run sips -s format png --resampleHeightWidthMax 700 "$tmp" --out "$out" >/dev/null
-  cp "$out" "$out_dark"
+  # Guarded with `|| true` so a sips failure (e.g. corrupt input from a
+  # partially-written tmp file) degrades the same way as the earlier
+  # renderers — the <background> elements are stripped downstream when the
+  # PNGs are absent.
+  if ! run sips -s format png --resampleHeightWidthMax 700 "$tmp" --out "$out" >/dev/null 2>&1; then
+    rm -f "$out"
+    warn "sips failed; continuing without installer background"
+    return
+  fi
+  cp "$out" "$out_dark" || true
 
   ok "Rendered $(basename "$out")"
 }

@@ -7,20 +7,30 @@ import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 
 const env = { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" };
 
+function stripAsanWarning(stderr: string) {
+  return stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+}
+
 test.skipIf(process.platform !== "linux")("Bun.spawn stdin from Blob falls back when memfd is disabled", async () => {
-  const payload = Buffer.alloc(64 * 1024, "x").toString();
+  // Generate the payload inside the child rather than inlining it into argv —
+  // a single argv entry on Linux is capped at MAX_ARG_STRLEN (32 * PAGE_SIZE,
+  // typically 128 KiB), and embedding the 64 KiB payload twice exceeded that.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
+        const payload = Buffer.alloc(64 * 1024, "x").toString();
         const proc = Bun.spawn({
           cmd: [process.execPath, "-e", "process.stdin.pipe(process.stdout)"],
-          stdin: new Blob([${JSON.stringify(payload)}]),
+          stdin: new Blob([payload]),
           stdout: "pipe",
         });
         const out = await proc.stdout.text();
-        console.log(out.length, out === ${JSON.stringify(payload)});
+        console.log(out.length, out === payload);
         process.exit(await proc.exited);
       `,
     ],
@@ -29,8 +39,8 @@ test.skipIf(process.platform !== "linux")("Bun.spawn stdin from Blob falls back 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(normalizeBunSnapshot(stdout)).toBe(`${payload.length} true`);
+  expect(stripAsanWarning(stderr)).toBe("");
+  expect(normalizeBunSnapshot(stdout)).toBe("65536 true");
   expect(exitCode).toBe(0);
 });
 
@@ -57,7 +67,7 @@ test.skipIf(process.platform !== "linux")("large Response body Blob falls back w
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  expect(stripAsanWarning(stderr)).toBe("");
   expect(normalizeBunSnapshot(stdout)).toBe("ok 8388608");
   expect(exitCode).toBe(0);
 });

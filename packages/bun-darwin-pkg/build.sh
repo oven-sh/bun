@@ -65,11 +65,16 @@ if [[ -t 1 ]]; then
   Bold='\033[1m'
 fi
 
+# fd 3 is a dup of the original stderr so run()'s trace line survives
+# callers that redirect the function's stdout/stderr (e.g.
+# `run qlmanage ... >/dev/null 2>&1` in render_background()).
+exec 3>&2
+
 log()    { echo -e "${Dim}[pkg]${Color_Off} $*"; }
 ok()     { echo -e "${Green}[pkg]${Color_Off} $*"; }
 warn()   { echo -e "${Yellow}[pkg]${Color_Off} $*"; }
 fail()   { echo -e "${Red}[pkg] error:${Color_Off} $*" >&2; exit 1; }
-run()    { echo -e "${Dim}\$ $*${Color_Off}"; "$@"; }
+run()    { echo -e "${Dim}\$ $*${Color_Off}" >&3; "$@"; }
 
 # ---------------------------------------------------------------------------
 # Version

@@ -5,9 +5,6 @@
   <license file="license.txt" mime-type="text/plain"/>
   <conclusion file="conclusion.html" mime-type="text/html"/>
 
-  <!-- The huge kawaii Bun logo. Rendered from src/logo.svg at build time,
-       anchored bottom-left so it peeks out from behind the content pane
-       like it's saying hi. -->
   <background file="background.png" alignment="bottomleft" scaling="none" mime-type="image/png"/>
   <background-darkAqua file="background-dark.png" alignment="bottomleft" scaling="none" mime-type="image/png"/>
 

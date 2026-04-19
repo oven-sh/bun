@@ -39,8 +39,12 @@ The `.pkg` is built by the **`macos-pkg`** job in
 on the same triggers as the `.asc` signature:
 
 - automatically when a GitHub release is published
-- manually via **workflow_dispatch** with `use-macos-pkg: true` (for
-  testing against any existing release tag, including `canary`)
+- manually via **workflow_dispatch** with `use-macos-pkg: true` and a
+  stable `tag` (e.g. `1.2.3`)
+
+The job is skipped for `canary` — `pkgbuild` requires a numeric
+CFBundleVersion, so a canary build would fall back to `LATEST` and
+ship a package whose declared version doesn't match its payload.
 
 It runs on `macos-latest`, calls `./build.sh --from-release <tag>`, and:
 

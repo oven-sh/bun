@@ -1,46 +1,51 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-  Builds a Bun MSI installer from a signed bun.exe.
+  Builds the unified Bun MSI installer from the three Windows bun.exe
+  payloads (x64, x64-baseline, arm64).
 
 .DESCRIPTION
-  Installs the WiX v5 dotnet tool if missing, renders the dialog/banner
-  bitmaps from src/bun.ico (big centered logo on Bun-cream #fbf0df), then
-  invokes `wix build` against packages/bun-msi/bun.wxs.
+  Installs the WiX v5 dotnet tool if missing, compiles the DetectCpu
+  custom-action DLL from detect-cpu.c (so nothing binary is checked into
+  git), renders the dialog/banner bitmaps from src/bun.ico, generates the
+  RTF license from LICENSE.md, then invokes `wix build` against
+  packages/bun-msi/bun.wxs.
 
   Intended to be called from the `msi` job in .github/workflows/release.yml
-  on a windows-latest runner, once per target arch, with the already-signed
-  bun.exe extracted from the corresponding bun-windows-<arch>.zip release
-  asset. WiX cross-builds the arm64 package from an x64 host.
+  on a windows-latest runner with the already-signed bun.exe extracted from
+  each bun-windows-<variant>.zip release asset.
 
-.PARAMETER BunExe
-  Path to the bun.exe to package. Will be copied verbatim into the MSI, so
-  pass the *signed* one when building release artifacts.
+.PARAMETER BunExeX64
+  Path to the x64 (AVX2-enabled) bun.exe.
 
-.PARAMETER Arch
-  Target architecture: x64 | arm64. The x64-baseline build also uses "x64"
-  here — the MSI doesn't care about AVX2, only about ProgramFiles64Folder.
+.PARAMETER BunExeX64Baseline
+  Path to the x64-baseline (pre-AVX2) bun.exe.
+
+.PARAMETER BunExeArm64
+  Path to the arm64 bun.exe.
 
 .PARAMETER Version
   Dotted version string for Package/@Version and ARP DisplayVersion, e.g.
   "1.3.12". Defaults to the contents of the repo's LATEST file.
 
 .PARAMETER Output
-  Path to write the resulting .msi. Defaults to
-  ./bun-windows-<Arch>.msi next to this script.
+  Path to write the resulting .msi. Defaults to ./bun-windows.msi next to
+  this script.
 
 .EXAMPLE
-  ./build-msi.ps1 -BunExe ./bun.exe -Arch x64 -Version 1.3.12 -Output ./bun-windows-x64.msi
+  ./build-msi.ps1 -BunExeX64 x64/bun.exe -BunExeX64Baseline baseline/bun.exe -BunExeArm64 arm64/bun.exe
 #>
 
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [string]$BunExe,
+  [string]$BunExeX64,
 
   [Parameter(Mandatory = $true)]
-  [ValidateSet("x64", "arm64")]
-  [string]$Arch,
+  [string]$BunExeX64Baseline,
+
+  [Parameter(Mandatory = $true)]
+  [string]$BunExeArm64,
 
   [string]$Version,
 
@@ -68,21 +73,24 @@ if ($Version -notmatch '^\d+\.\d+\.\d+$') {
 }
 
 if (-not $Output) {
-  $Output = Join-Path $ScriptDir "bun-windows-$Arch.msi"
+  $Output = Join-Path $ScriptDir "bun-windows.msi"
 }
 
-if (-not (Test-Path $BunExe)) { throw "BunExe not found: $BunExe" }
-$BunExe = (Resolve-Path $BunExe).Path
+foreach ($p in @{X64 = $BunExeX64; X64Baseline = $BunExeX64Baseline; Arm64 = $BunExeArm64}.GetEnumerator()) {
+  if (-not (Test-Path $p.Value)) { throw "BunExe$($p.Key) not found: $($p.Value)" }
+}
+$BunExeX64         = (Resolve-Path $BunExeX64).Path
+$BunExeX64Baseline = (Resolve-Path $BunExeX64Baseline).Path
+$BunExeArm64       = (Resolve-Path $BunExeArm64).Path
 
-$WorkDir = Join-Path $ScriptDir ".build-$Arch"
+$WorkDir = Join-Path $ScriptDir ".build"
 if (Test-Path $WorkDir) { Remove-Item $WorkDir -Recurse -Force }
 New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null
 
 # ── WiX toolchain ───────────────────────────────────────────────────────────
-# WiX v5 ships as a dotnet global tool. The Windows build image already has a
-# .NET SDK via Visual Studio (see scripts/bootstrap.ps1), so `dotnet` is on
-# PATH. Install to a local tool dir so we don't dirty the agent's global
-# tool cache and so reruns are idempotent.
+# WiX v5 ships as a dotnet global tool. The Windows runner already has a
+# .NET SDK, so `dotnet` is on PATH. Install to a local tool dir so we don't
+# dirty the runner's global tool cache and so reruns are idempotent.
 $WixVersion = "5.0.2"
 $ToolDir    = Join-Path $ScriptDir ".wix"
 $WixExe     = Join-Path $ToolDir "wix.exe"
@@ -90,8 +98,7 @@ $WixExe     = Join-Path $ToolDir "wix.exe"
 if (-not (Test-Path $WixExe)) {
   Write-Host "-- Installing WiX $WixVersion dotnet tool -> $ToolDir"
   if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
-    throw "dotnet SDK not found on PATH; cannot install the WiX tool. " +
-          "On CI this comes from scripts/bootstrap.ps1 via Visual Studio."
+    throw "dotnet SDK not found on PATH; cannot install the WiX tool."
   }
   & dotnet tool install --tool-path $ToolDir --version $WixVersion wix | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "dotnet tool install wix failed ($LASTEXITCODE)" }
@@ -106,12 +113,37 @@ Write-Host "-- Ensuring WixToolset.UI.wixext is available"
 & $WixExe extension add -g WixToolset.UI.wixext/$WixVersion 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "wix extension add WixToolset.UI.wixext failed ($LASTEXITCODE)" }
 
-# ── bunx.exe ────────────────────────────────────────────────────────────────
-# bunx dispatch is argv[0]-based (src/cli.zig), so bunx.exe is a literal copy
-# of bun.exe. We copy instead of hardlink because Windows Installer tracks
-# components by file identity and a hardlink would alias the KeyPaths.
-$BunxExe = Join-Path $WorkDir "bunx.exe"
-Copy-Item $BunExe $BunxExe -Force
+# ── DetectCpu custom-action DLL ─────────────────────────────────────────────
+# Compile detect-cpu.c with the MSVC toolchain. Built as an x64 DLL because
+# the package platform is x64 (it runs under emulation on ARM64 hosts and
+# IsWow64Process2 reports the native machine from there). Linked against
+# msi.lib for MsiGet/SetProperty and kernel32 for the detection calls.
+#
+# The MSVC environment isn't ambient on a GitHub Actions windows-latest
+# runner — cl.exe is laid down by Visual Studio but not on PATH until the
+# developer command prompt is entered. Rather than dot-sourcing the repo's
+# VS helper (which is tuned for Buildkite agents), locate vcvars64.bat via
+# vswhere and spawn a child cmd.exe that sources it and then runs cl; that
+# keeps this script self-contained and runner-agnostic.
+$DetectSrc = Join-Path $ScriptDir "detect-cpu.c"
+$DetectDll = Join-Path $WorkDir   "detect-cpu.dll"
+
+if (-not (Get-Command cl -ErrorAction SilentlyContinue)) {
+  $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+  if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found; cannot locate MSVC to build detect-cpu.dll" }
+  $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+  if (-not $vs) { throw "Visual Studio with the C++ toolset not found" }
+  $vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvars64.bat"
+  if (-not (Test-Path $vcvars)) { throw "vcvars64.bat not found under $vs" }
+  Write-Host "-- Compiling detect-cpu.dll via $vcvars"
+  & cmd /c "`"$vcvars`" >nul && cl /nologo /O1 /W4 /LD `"$DetectSrc`" msi.lib kernel32.lib /Fe:`"$DetectDll`" /Fo:`"$WorkDir\\`""
+} else {
+  Write-Host "-- Compiling detect-cpu.dll (cl already on PATH)"
+  & cl /nologo /O1 /W4 /LD $DetectSrc msi.lib kernel32.lib /Fe:$DetectDll /Fo:"$WorkDir\"
+}
+if ($LASTEXITCODE -ne 0) { throw "cl failed to compile detect-cpu.c ($LASTEXITCODE)" }
+if (-not (Test-Path $DetectDll)) { throw "detect-cpu.dll not produced" }
+Write-Host "-- Built detect-cpu.dll ($((Get-Item $DetectDll).Length) bytes)"
 
 # ── License RTF ─────────────────────────────────────────────────────────────
 # WixUI requires RTF. Wrap the repo's LICENSE.md verbatim in a minimal RTF
@@ -222,27 +254,32 @@ New-BunBitmap -Width 493 -Height 312 -LogoSize 200 -LogoX 16 -LogoY 56 -OutPath 
 New-BunBitmap -Width 493 -Height 58  -LogoSize 48  -LogoX 440 -LogoY 5  -OutPath $BannerBmp
 
 Write-Host "-- Rendered dialog/banner bitmaps"
-Write-Host "   dialog: $((Get-Item $DialogBmp).Length) bytes"
-Write-Host "   banner: $((Get-Item $BannerBmp).Length) bytes"
 
 # ── Build ───────────────────────────────────────────────────────────────────
 $Wxs = Join-Path $ScriptDir "bun.wxs"
-Write-Host "-- wix build ($Arch, v$Version) -> $Output"
+Write-Host "-- wix build (v$Version) -> $Output"
 
+# Package platform is always x64: ARM64 Windows runs x64 MSIs under
+# emulation, and the DetectCpu CA reads the *native* machine via
+# IsWow64Process2, so ARM64 hosts still get the arm64 payload.
+#
 # -sw1076: AllowSameVersionUpgrades intentionally set; WiX warns that same
 #          version upgrades are detected as major upgrades. That's the point.
+# -sw1151: multiple components install to the same filename (bun.exe) — by
+#          design, their conditions are mutually exclusive via BUNVARIANT.
 & $WixExe build `
-  -arch $Arch `
+  -arch x64 `
   -ext WixToolset.UI.wixext `
   -d "BunVersion=$Version" `
-  -d "BunArch=$Arch" `
-  -d "BunExe=$BunExe" `
-  -d "BunxExe=$BunxExe" `
+  -d "BunExeX64=$BunExeX64" `
+  -d "BunExeX64Baseline=$BunExeX64Baseline" `
+  -d "BunExeArm64=$BunExeArm64" `
+  -d "DetectCpuDll=$DetectDll" `
   -d "BunIcon=$IconPath" `
   -d "BunBannerBmp=$BannerBmp" `
   -d "BunDialogBmp=$DialogBmp" `
   -d "BunLicense=$LicenseRtf" `
-  -sw1076 `
+  -sw1076 -sw1151 `
   -o $Output `
   $Wxs | Out-Host
 

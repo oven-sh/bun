@@ -1,4 +1,8 @@
 .wix/
-.build-*/
+.build/
 *.msi
 *.wixpdb
+*.dll
+*.obj
+*.exp
+*.lib

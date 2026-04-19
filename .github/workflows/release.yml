@@ -49,7 +49,7 @@ on:
         type: boolean
         default: false
       use-msi:
-        description: Should Windows MSI installers be built?
+        description: Should the Windows MSI installer be built?
         type: boolean
         default: false
 
@@ -84,35 +84,29 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
   msi:
-    # Builds bun-windows-{x64,x64-baseline,aarch64}.msi from the release
-    # zips and uploads them back to the same release. Runs after `sign` so
-    # the zips are final and the embedded bun.exe is already Authenticode-
-    # signed. WiX cross-builds the arm64 MSI from an x64 host (it only
-    # packages the binary, it doesn't run it), so a single windows-latest
-    # runner covers all three targets.
+    # Builds a single universal bun-windows.msi containing the x64,
+    # x64-baseline, and arm64 bun.exe payloads. A small native
+    # CustomAction DLL (compiled from packages/bun-msi/detect-cpu.c at
+    # build time, so no binary is checked in) picks the right one at
+    # install time via IsWow64Process2 + IsProcessorFeaturePresent — the
+    # same Win32 calls install.ps1 P/Invokes. Runs after `sign` so the
+    # embedded bun.exe binaries are already Authenticode-signed.
+    #
+    # Package platform is x64; ARM64 Windows 11 runs x64 MSIs under
+    # emulation and IsWow64Process2 reports the native machine from there,
+    # so ARM64 hosts still receive the arm64 payload.
     #
     # The MSI wrapper itself is not code-signed here — the DigiCert smctl
     # secrets live in Buildkite, not GitHub Actions. If SM_API_KEY /
     # SM_CLIENT_CERT_* / SM_KEYPAIR_ALIAS / SM_HOST are ever mirrored into
     # this repo's Actions secrets, drop them into this job's env and add an
-    # `smctl sign` step after the build; build-msi.ps1 already leaves the
-    # output ready to sign.
-    name: Build MSI installers
+    # `smctl sign` step after the build.
+    name: Build MSI installer
     runs-on: windows-latest
     needs: sign
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-msi == 'true' }}
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: bun-windows-x64
-            arch: x64
-          - target: bun-windows-x64-baseline
-            arch: x64
-          - target: bun-windows-aarch64
-            arch: arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -128,18 +122,17 @@ jobs:
           else
             echo "tag=bun-v$v" >> "$GITHUB_OUTPUT"
           fi
-      - name: Download ${{ matrix.target }}.zip
-        shell: pwsh
-        run: gh release download "${{ steps.tag.outputs.tag }}" --pattern "${{ matrix.target }}.zip" --repo "${{ github.repository }}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Extract bun.exe
+      - name: Download Windows release zips
         shell: pwsh
         run: |
-          Expand-Archive -Path "${{ matrix.target }}.zip" -DestinationPath . -Force
-          if (-not (Test-Path "${{ matrix.target }}\bun.exe")) {
-            throw "bun.exe not found inside ${{ matrix.target }}.zip"
+          $targets = "bun-windows-x64", "bun-windows-x64-baseline", "bun-windows-aarch64"
+          foreach ($t in $targets) {
+            gh release download "${{ steps.tag.outputs.tag }}" --pattern "$t.zip" --repo "${{ github.repository }}"
+            Expand-Archive -Path "$t.zip" -DestinationPath . -Force
+            if (-not (Test-Path "$t\bun.exe")) { throw "bun.exe not found inside $t.zip" }
           }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Build MSI
         shell: pwsh
         run: |
@@ -151,20 +144,21 @@ jobs:
             $version = (Get-Content LATEST -Raw).Trim()
           }
           .\packages\bun-msi\build-msi.ps1 `
-            -BunExe "${{ matrix.target }}\bun.exe" `
-            -Arch "${{ matrix.arch }}" `
+            -BunExeX64         "bun-windows-x64\bun.exe" `
+            -BunExeX64Baseline "bun-windows-x64-baseline\bun.exe" `
+            -BunExeArm64       "bun-windows-aarch64\bun.exe" `
             -Version $version `
-            -Output "${{ matrix.target }}.msi"
+            -Output "bun-windows.msi"
       - name: Upload MSI to release
         shell: pwsh
-        run: gh release upload "${{ steps.tag.outputs.tag }}" "${{ matrix.target }}.msi" --clobber --repo "${{ github.repository }}"
+        run: gh release upload "${{ steps.tag.outputs.tag }}" "bun-windows.msi" --clobber --repo "${{ github.repository }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload MSI as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}.msi
-          path: ${{ matrix.target }}.msi
+          name: bun-windows.msi
+          path: bun-windows.msi
           if-no-files-found: error
   npm:
     name: Release to NPM

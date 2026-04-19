@@ -2,49 +2,53 @@
 <!--
   Bun MSI installer (WiX Toolset v5).
 
-  Built per-arch by packages/bun-msi/build-msi.ps1 from the `msi` job in
-  .github/workflows/release.yml. Produces bun-windows-<arch>.msi assets
-  that are uploaded to the same GitHub Release the zips came from.
+  One universal package for all Windows targets: it carries the x64,
+  x64-baseline, and arm64 bun.exe payloads and picks exactly one at
+  install time via the DetectCpu custom action (packages/bun-msi/
+  detect-cpu.c). bunx.exe is produced at install time as a
+  DuplicateFile copy of whichever bun.exe was laid down, so each
+  variant contributes one payload rather than two.
+
+  Built by packages/bun-msi/build-msi.ps1 from the `msi` job in
+  .github/workflows/release.yml. Uploaded to the same GitHub Release
+  the zips came from as bun-windows.msi.
 
   Preprocessor variables (passed via `wix build -d NAME=VALUE`):
-    BunVersion   Dotted version, e.g. "1.3.12". Feeds Package/@Version and
-                 ARP DisplayVersion.
-    BunArch      Target architecture: "x64" or "arm64". Selects the
-                 ProgramFiles64Folder and sets the InstallerPlatform.
-    BunExe       Absolute path to the (signed) bun.exe to embed.
-    BunxExe      Absolute path to bunx.exe (a byte-for-byte copy of bun.exe;
-                 bunx is dispatched by argv[0] — see src/cli.zig is_bunx_exe).
-    BunIcon      Absolute path to bun.ico for the ARP entry.
-    BunBannerBmp Absolute path to the 493x58 top banner bitmap.
-    BunDialogBmp Absolute path to the 493x312 welcome/exit bitmap (huge logo).
-    BunLicense   Absolute path to the RTF license shown in WixUI.
+    BunVersion         Dotted version, e.g. "1.3.12".
+    BunExeX64          Absolute path to the signed x64 bun.exe.
+    BunExeX64Baseline  Absolute path to the signed x64-baseline bun.exe.
+    BunExeArm64        Absolute path to the signed arm64 bun.exe.
+    DetectCpuDll       Absolute path to the compiled detect-cpu.dll.
+    BunIcon            Absolute path to bun.ico for the ARP entry.
+    BunBannerBmp       Absolute path to the 493x58 top banner bitmap.
+    BunDialogBmp       Absolute path to the 493x312 welcome/exit bitmap.
+    BunLicense         Absolute path to the RTF license shown in WixUI.
 
   Public msiexec properties (for unattended / GPO / SCCM deployment):
     INSTALLFOLDER    Override the install root, e.g. D:\Tools\Bun.
+    BUNVARIANT       Force a specific payload: "x64", "x64-baseline",
+                     or "arm64". Skips CPU detection when set.
     ADDTOPATH        1 (default) to append the bin dir to system PATH,
                      0 to skip (when PATH is managed by other tooling).
     SETBUNINSTALL    1 (default) to set the system BUN_INSTALL env var,
                      0 to skip.
     Example:
-      msiexec /i bun-windows-x64.msi /qn ADDTOPATH=0 INSTALLFOLDER=D:\Bun
+      msiexec /i bun-windows.msi /qn BUNVARIANT=x64-baseline INSTALLFOLDER=D:\Bun
 
-  The UpgradeCode MUST stay constant across releases so MajorUpgrade can
-  replace older installs. A separate UpgradeCode is used per arch so that
-  installing the arm64 MSI on an ARM64 machine does not MajorUpgrade-away
-  a previously installed x64 MSI (and vice versa) — Windows Installer
-  treats different UpgradeCodes as unrelated products. Note both arches
-  resolve ProgramFiles64Folder to the same C:\Program Files on ARM64
-  Windows (there is no separate ARM64 Program Files root), so installing
-  both MSIs on one machine would overwrite the same bin directory; that
-  is a user error we don't try to guard against.
+  Product identity: a single UpgradeCode covers every variant. All
+  three payloads land at the same KeyPath (C:\Program Files\Bun\bin\
+  bun.exe) and Windows Installer's component rule requires exactly one
+  component GUID per KeyPath across every product on the machine — so
+  the variants cannot be separate products without either violating
+  that rule or installing to different directories. Treating them as
+  one product means installing the MSI always cleanly MajorUpgrades
+  whatever was there before, which is the same semantics install.ps1
+  already has.
+
+  Package platform is x64: ARM64 Windows runs x64 MSIs under emulation,
+  and the DetectCpu CA reads the *native* machine via IsWow64Process2,
+  so an ARM64 host still gets the arm64 payload.
 -->
-
-<?if $(BunArch) = "arm64" ?>
-  <?define BunUpgradeCode = "b7e3b0e4-9e4b-4b18-9d7c-3d0f55bb5c1a" ?>
-<?else ?>
-  <?define BunUpgradeCode = "5da3c2a1-3a8e-4c67-9e1c-0b6f1e7f9d9f" ?>
-<?endif ?>
-
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
 
@@ -52,7 +56,7 @@
       Name="Bun"
       Manufacturer="Oven"
       Version="$(BunVersion)"
-      UpgradeCode="$(BunUpgradeCode)"
+      UpgradeCode="5da3c2a1-3a8e-4c67-9e1c-0b6f1e7f9d9f"
       Scope="perMachine"
       InstallerVersion="500"
       Compressed="yes">
@@ -98,6 +102,7 @@
       existing property secure without redefining it".
     -->
     <Property Id="INSTALLFOLDER" Secure="yes" />
+    <Property Id="BUNVARIANT" Secure="yes" />
     <Property Id="ADDTOPATH" Value="1" Secure="yes" />
     <Property Id="SETBUNINSTALL" Value="1" Secure="yes" />
 
@@ -121,6 +126,26 @@
           Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
           Name="CurrentBuildNumber" Type="raw" />
     </Property>
+
+    <!--
+      CPU detection. The DLL is compiled at MSI build time from
+      detect-cpu.c (next to this file) so there's no binary checked into
+      git. It sets BUNVARIANT = arm64 | x64 | x64-baseline based on
+      IsWow64Process2 + IsProcessorFeaturePresent(PF_AVX2). Runs in both
+      sequences after AppSearch (so a RegistrySearch-remembered value
+      from a prior install wins) and before CostFinalize (which is when
+      component conditions are evaluated). Skipped entirely when
+      BUNVARIANT was supplied on the command line.
+    -->
+    <Binary Id="DetectCpuDll" SourceFile="$(DetectCpuDll)" />
+    <CustomAction Id="DetectCpu" BinaryRef="DetectCpuDll" DllEntry="DetectCpu"
+        Execute="immediate" Return="check" />
+    <InstallUISequence>
+      <Custom Action="DetectCpu" After="AppSearch" Condition="NOT BUNVARIANT" />
+    </InstallUISequence>
+    <InstallExecuteSequence>
+      <Custom Action="DetectCpu" After="AppSearch" Condition="NOT BUNVARIANT" />
+    </InstallExecuteSequence>
 
     <!--
       Single user-visible feature; PATH / BUN_INSTALL live in a child
@@ -150,7 +175,7 @@
 
     <!--
       INSTALLFOLDER resolves to %ProgramFiles%\Bun (64-bit Program Files on
-      both x64 and arm64 — WiX picks the right one from Package/@Platform).
+      both x64 and arm64 — there is no separate ARM64 Program Files root).
       The `bin` subdirectory keeps parity with the install.ps1 layout
       (${BUN_INSTALL}\bin\bun.exe) so `bun upgrade` and `bun completions`
       find what they expect.
@@ -161,32 +186,57 @@
       </Directory>
     </StandardDirectory>
 
+    <!--
+      One component per variant, mutually exclusive via BUNVARIANT.
+      Component GUIDs are fixed (not auto-generated) because the three
+      variants share the same target filename at the same path; WiX's
+      auto-GUID would derive identical GUIDs from the KeyPath anyway, and
+      pinning them makes the identity explicit for future readers.
+
+      bunx.exe is created at install time by the DuplicateFile action
+      (CopyFile with FileId) from whichever bun.exe component is active,
+      so each variant adds one ~120 MB payload to the CAB rather than two.
+      bunx dispatch is argv[0]-based (src/cli.zig), so a byte-for-byte
+      copy is exactly what's wanted.
+    -->
     <ComponentGroup Id="BunFiles" Directory="BunBinFolder">
-      <Component Id="BunExe" Bitness="always64">
-        <File Id="BunExe" Source="$(BunExe)" Name="bun.exe" KeyPath="yes" />
+      <Component Id="BunExe_x64" Bitness="always64"
+          Guid="1a3f9d5c-7c40-4f5e-9c7b-3a52b1ae9c01"
+          Condition="BUNVARIANT = &quot;x64&quot;">
+        <File Id="BunExe_x64" Source="$(BunExeX64)" Name="bun.exe" KeyPath="yes" />
+        <CopyFile Id="Bunx_x64" FileId="BunExe_x64"
+            DestinationDirectory="BunBinFolder" DestinationName="bunx.exe" />
       </Component>
-      <!--
-        bunx is the same binary dispatched via argv[0]. Shipping a copy
-        rather than a hardlink because Windows Installer has no native
-        hardlink primitive and CopyFile-into-same-component confuses
-        repair/uninstall reference counting.
-      -->
-      <Component Id="BunxExe" Bitness="always64">
-        <File Id="BunxExe" Source="$(BunxExe)" Name="bunx.exe" KeyPath="yes" />
+
+      <Component Id="BunExe_x64_baseline" Bitness="always64"
+          Guid="1a3f9d5c-7c40-4f5e-9c7b-3a52b1ae9c02"
+          Condition="BUNVARIANT = &quot;x64-baseline&quot;">
+        <File Id="BunExe_x64_baseline" Source="$(BunExeX64Baseline)" Name="bun.exe" KeyPath="yes" />
+        <CopyFile Id="Bunx_x64_baseline" FileId="BunExe_x64_baseline"
+            DestinationDirectory="BunBinFolder" DestinationName="bunx.exe" />
+      </Component>
+
+      <Component Id="BunExe_arm64" Bitness="always64"
+          Guid="1a3f9d5c-7c40-4f5e-9c7b-3a52b1ae9c03"
+          Condition="BUNVARIANT = &quot;arm64&quot;">
+        <File Id="BunExe_arm64" Source="$(BunExeArm64)" Name="bun.exe" KeyPath="yes" />
+        <CopyFile Id="Bunx_arm64" FileId="BunExe_arm64"
+            DestinationDirectory="BunBinFolder" DestinationName="bunx.exe" />
       </Component>
     </ComponentGroup>
 
     <!--
       Machine registry marker under HKLM\Software\Oven\Bun. Gives fleet
-      inventory tooling a stable place to read InstallRoot/Version without
-      scraping ARP, and gives the env-var components a KeyPath that isn't a
-      file (Environment elements can't be KeyPaths themselves).
+      inventory tooling a stable place to read InstallRoot/Version/Variant
+      without scraping ARP, and gives the env-var components a KeyPath
+      that isn't a file (Environment elements can't be KeyPaths themselves).
     -->
     <Component Id="BunRegistry" Directory="INSTALLFOLDER" Bitness="always64"
         Guid="4d0f5b5e-6f7a-4df9-9d1e-77b3f2a9a6c3">
       <RegistryKey Root="HKLM" Key="Software\Oven\Bun">
         <RegistryValue Name="InstallRoot" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
         <RegistryValue Name="Version" Type="string" Value="$(BunVersion)" />
+        <RegistryValue Name="Variant" Type="string" Value="[BUNVARIANT]" />
         <RegistryValue Name="BinDir" Type="string" Value="[BunBinFolder]" />
       </RegistryKey>
     </Component>

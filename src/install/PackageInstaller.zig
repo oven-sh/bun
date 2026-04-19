@@ -670,13 +670,15 @@ pub const PackageInstaller = struct {
 
     /// A tree can start installing packages when the parent has installed all its packages. If the parent
     /// isn't finished, we need to wait because it's possible a package installed in this tree will be deleted by the parent.
+    ///
+    /// Parallel hoisted tasks bypass this check (they only create
+    /// files, never delete), but the serial path must still respect
+    /// it: transitive `folder:` dependencies resolve relative to their
+    /// parent package's contents, so they have to wait for the parent
+    /// tree's installs — which may be running on the thread pool — to
+    /// complete before the target directory exists. They go to
+    /// pending_installs and are drained after completeParallelInstalls.
     pub fn canInstallPackageForTree(this: *const PackageInstaller, trees: []Lockfile.Tree, package_tree_id: Lockfile.Tree.Id) bool {
-        // When skip_delete is set (fresh node_modules or --force with no
-        // existing state), uninstallBeforeInstall() is never called so a
-        // parent tree cannot delete a child tree's directory. In that case
-        // there is no ordering requirement.
-        if (this.skip_delete) return true;
-
         var curr_tree_id = trees[package_tree_id].parent;
         while (curr_tree_id != Lockfile.Tree.invalid_id) {
             if (!this.completed_trees.isSet(curr_tree_id)) return false;

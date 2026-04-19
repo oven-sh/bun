@@ -1,0 +1,4 @@
+.wix/
+.build-*/
+*.msi
+*.wixpdb

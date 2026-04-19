@@ -123,9 +123,12 @@ function download_buildkite_artifact() {
   fi
   # When signing ran, Windows zips exist in two steps with the same name
   # (build-bun unsigned, windows-sign signed). Pin to the sign step to
-  # guarantee we get the signed one.
+  # guarantee we get the signed one. MSI artifacts only exist on the
+  # windows-msi step.
   local step_args=()
-  if [[ -n "$WINDOWS_ARTIFACT_STEP" && "$name" == bun-windows-* ]]; then
+  if [[ -n "$WINDOWS_MSI_STEP" && "$name" == bun-windows-*.msi ]]; then
+    step_args=(--step "$WINDOWS_MSI_STEP")
+  elif [[ -n "$WINDOWS_ARTIFACT_STEP" && "$name" == bun-windows-* ]]; then
     step_args=(--step "$WINDOWS_ARTIFACT_STEP")
   fi
   run_command buildkite-agent artifact download "$name" "$dir" "${step_args[@]}"
@@ -229,6 +232,17 @@ function create_release() {
     bun-windows-aarch64.zip
     bun-windows-aarch64-profile.zip
   )
+
+  # MSI installers are produced by the windows-msi step when it ran; on
+  # branches without that step (e.g. [skip builds]) WINDOWS_MSI_STEP is
+  # empty and we skip them rather than fail the release.
+  if [ -n "$WINDOWS_MSI_STEP" ]; then
+    artifacts+=(
+      bun-windows-x64.msi
+      bun-windows-x64-baseline.msi
+      bun-windows-aarch64.msi
+    )
+  fi
 
   function upload_artifact() {
     local artifact="$1"

@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Bun MSI installer (WiX Toolset v5).
+
+  Built per-arch by packages/bun-msi/build-msi.ps1 during the Buildkite
+  `windows-msi` step. Produces bun-windows-<arch>.msi artifacts that are
+  uploaded to GitHub Releases alongside the zips.
+
+  Preprocessor variables (passed via `wix build -d NAME=VALUE`):
+    BunVersion   Dotted version, e.g. "1.3.12". Feeds Package/@Version and
+                 ARP DisplayVersion.
+    BunArch      Target architecture: "x64" or "arm64". Selects the
+                 ProgramFiles64Folder and sets the InstallerPlatform.
+    BunExe       Absolute path to the (signed) bun.exe to embed.
+    BunxExe      Absolute path to bunx.exe (a byte-for-byte copy of bun.exe;
+                 bunx is dispatched by argv[0] — see src/cli.zig is_bunx_exe).
+    BunIcon      Absolute path to bun.ico for the ARP entry.
+    BunBannerBmp Absolute path to the 493x58 top banner bitmap.
+    BunDialogBmp Absolute path to the 493x312 welcome/exit bitmap (huge logo).
+    BunLicense   Absolute path to the RTF license shown in WixUI.
+
+  Public msiexec properties (for unattended / GPO / SCCM deployment):
+    INSTALLFOLDER    Override the install root, e.g. D:\Tools\Bun.
+    ADDTOPATH        1 (default) to append the bin dir to system PATH,
+                     0 to skip (when PATH is managed by other tooling).
+    SETBUNINSTALL    1 (default) to set the system BUN_INSTALL env var,
+                     0 to skip.
+    Example:
+      msiexec /i bun-windows-x64.msi /qn ADDTOPATH=0 INSTALLFOLDER=D:\Bun
+
+  The UpgradeCode MUST stay constant across releases so MajorUpgrade can
+  replace older installs. A separate UpgradeCode is used per arch because
+  x64 and arm64 are distinct products as far as Windows Installer is
+  concerned (they install to different ProgramFiles roots).
+-->
+
+<?if $(BunArch) = "arm64" ?>
+  <?define BunUpgradeCode = "b7e3b0e4-9e4b-4b18-9d7c-3d0f55bb5c1a" ?>
+<?else ?>
+  <?define BunUpgradeCode = "5da3c2a1-3a8e-4c67-9e1c-0b6f1e7f9d9f" ?>
+<?endif ?>
+
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package
+      Name="Bun"
+      Manufacturer="Oven"
+      Version="$(BunVersion)"
+      UpgradeCode="$(BunUpgradeCode)"
+      Scope="perMachine"
+      InstallerVersion="500"
+      Compressed="yes">
+
+    <SummaryInformation
+        Description="Bun $(BunVersion) — the fast, all-in-one JavaScript runtime and toolkit"
+        Manufacturer="Oven" />
+
+    <!--
+      MajorUpgrade with AllowSameVersionUpgrades so re-running the same MSI
+      repairs in place instead of erroring with "another version is already
+      installed". Schedule afterInstallInitialize so the old files are
+      removed before the new ones land (avoids leaving a stale bunx.exe
+      hardlink behind from a prior install.ps1 run living in the same dir).
+    -->
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        Schedule="afterInstallInitialize"
+        DowngradeErrorMessage="A newer version of Bun is already installed. To downgrade, uninstall Bun first via Settings &gt; Apps." />
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="BunIcon" SourceFile="$(BunIcon)" />
+
+    <!-- Add/Remove Programs cosmetics. -->
+    <Property Id="ARPPRODUCTICON" Value="BunIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://bun.com" />
+    <Property Id="ARPHELPLINK" Value="https://bun.com/docs" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/oven-sh/bun/releases" />
+    <Property Id="ARPNOREPAIR" Value="yes" Secure="yes" />
+    <Property Id="ARPNOMODIFY" Value="yes" Secure="yes" />
+
+    <!--
+      Public properties for unattended installs. Secure="yes" lets them
+      cross the UAC boundary from the user's msiexec command line into the
+      elevated execute sequence; without it, ADDTOPATH=0 on the command
+      line would silently revert to the default once the service kicks in.
+    -->
+    <Property Id="ADDTOPATH" Value="1" Secure="yes" />
+    <Property Id="SETBUNINSTALL" Value="1" Secure="yes" />
+
+    <!--
+      Require Windows 10 1809 / Server 2019 (build 17763) or newer.
+      Mirrors the MinBuild check in src/cli/install.ps1 and .win10_rs5 in
+      build.zig. VersionNT alone can't distinguish Win10 builds, so gate on
+      the registry's CurrentBuildNumber instead.
+    -->
+    <Launch
+        Condition="Installed OR (VersionNT &gt;= 603 AND WINDOWSBUILDNUMBER &gt;= 17763)"
+        Message="Bun requires Windows 10 version 1809 / Windows Server 2019 (build 17763) or newer." />
+    <Property Id="WINDOWSBUILDNUMBER" Secure="yes">
+      <RegistrySearch Id="WinBuild" Root="HKLM"
+          Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+          Name="CurrentBuildNumber" Type="raw" />
+    </Property>
+
+    <!--
+      Single user-visible feature; PATH / BUN_INSTALL live in a child
+      feature whose Level is flipped to 0 (disabled) when the corresponding
+      public property is "0". Using feature Levels rather than component
+      Conditions because component conditions are only evaluated on first
+      install, which makes `msiexec /i new.msi ADDTOPATH=0` over an
+      existing install behave surprisingly.
+    -->
+    <Feature Id="Main" Title="Bun" Description="Bun runtime, bunx, and toolkit." Level="1"
+        ConfigurableDirectory="INSTALLFOLDER" AllowAbsent="no" Display="expand">
+      <ComponentGroupRef Id="BunFiles" />
+      <ComponentRef Id="BunRegistry" />
+
+      <Feature Id="PathEnv" Title="Add to PATH"
+          Description="Append the Bun bin directory to the system PATH." Level="1">
+        <ComponentRef Id="BunPath" />
+        <Level Value="0" Condition="ADDTOPATH = &quot;0&quot;" />
+      </Feature>
+
+      <Feature Id="BunInstallEnv" Title="Set BUN_INSTALL"
+          Description="Set the system BUN_INSTALL environment variable." Level="1">
+        <ComponentRef Id="BunInstallEnvVar" />
+        <Level Value="0" Condition="SETBUNINSTALL = &quot;0&quot;" />
+      </Feature>
+    </Feature>
+
+    <!--
+      INSTALLFOLDER resolves to %ProgramFiles%\Bun (64-bit Program Files on
+      both x64 and arm64 — WiX picks the right one from Package/@Platform).
+      The `bin` subdirectory keeps parity with the install.ps1 layout
+      (${BUN_INSTALL}\bin\bun.exe) so `bun upgrade` and `bun completions`
+      find what they expect.
+    -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Bun">
+        <Directory Id="BunBinFolder" Name="bin" />
+      </Directory>
+    </StandardDirectory>
+
+    <ComponentGroup Id="BunFiles" Directory="BunBinFolder">
+      <Component Id="BunExe" Bitness="always64">
+        <File Id="BunExe" Source="$(BunExe)" Name="bun.exe" KeyPath="yes" />
+      </Component>
+      <!--
+        bunx is the same binary dispatched via argv[0]. Shipping a copy
+        rather than a hardlink because Windows Installer has no native
+        hardlink primitive and CopyFile-into-same-component confuses
+        repair/uninstall reference counting.
+      -->
+      <Component Id="BunxExe" Bitness="always64">
+        <File Id="BunxExe" Source="$(BunxExe)" Name="bunx.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!--
+      Machine registry marker under HKLM\Software\Oven\Bun. Gives fleet
+      inventory tooling a stable place to read InstallRoot/Version without
+      scraping ARP, and gives the env-var components a KeyPath that isn't a
+      file (Environment elements can't be KeyPaths themselves).
+    -->
+    <Component Id="BunRegistry" Directory="INSTALLFOLDER" Bitness="always64"
+        Guid="4d0f5b5e-6f7a-4df9-9d1e-77b3f2a9a6c3">
+      <RegistryKey Root="HKLM" Key="Software\Oven\Bun">
+        <RegistryValue Name="InstallRoot" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <RegistryValue Name="Version" Type="string" Value="$(BunVersion)" />
+        <RegistryValue Name="BinDir" Type="string" Value="[BunBinFolder]" />
+      </RegistryKey>
+    </Component>
+
+    <!--
+      System PATH entry for the bin folder. Part="last" appends rather than
+      prepends so an existing per-user install (via install.ps1 / scoop /
+      winget) keeps winning `where bun` lookups — the MSI is the
+      enterprise-deploy fallback, not a hostile takeover.
+    -->
+    <Component Id="BunPath" Directory="BunBinFolder" Bitness="always64"
+        Guid="c5e32e09-2d3e-4670-8e97-2e8b8390b0af">
+      <Environment Id="BunPath"
+          Name="PATH"
+          Action="set"
+          Part="last"
+          System="yes"
+          Permanent="no"
+          Value="[BunBinFolder]" />
+      <RegistryValue Root="HKLM" Key="Software\Oven\Bun" Name="PathInstalled"
+          Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!--
+      BUN_INSTALL mirrors what install.ps1 users get so Bun.env.BUN_INSTALL
+      and `bun completions` resolve the same root regardless of how Bun was
+      installed. Uses a tiny CA below to strip the trailing backslash
+      Windows Installer appends to directory properties.
+    -->
+    <Component Id="BunInstallEnvVar" Directory="INSTALLFOLDER" Bitness="always64"
+        Guid="29d1c4e0-05a6-4b5b-9e28-58d4d0a7a98b">
+      <Environment Id="BunInstallEnv"
+          Name="BUN_INSTALL"
+          Action="set"
+          Part="all"
+          System="yes"
+          Permanent="no"
+          Value="[BUNINSTALLVALUE]" />
+      <RegistryValue Root="HKLM" Key="Software\Oven\Bun" Name="BunInstallSet"
+          Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!--
+      Directory properties ([INSTALLFOLDER]) always end in a backslash.
+      BUN_INSTALL consumers (bun upgrade, install.sh/ps1 parity checks)
+      expect a bare path. Derive BUNINSTALLVALUE = INSTALLFOLDER minus the
+      trailing '\' via a SetProperty CA scheduled before WriteEnvironmentStrings.
+    -->
+    <SetProperty Id="BUNINSTALLVALUE" Value="[INSTALLFOLDER]"
+        Before="StripTrailingSlash" Sequence="execute" />
+    <CustomAction Id="StripTrailingSlash" Script="vbscript">
+      <![CDATA[
+        Dim p : p = Session.Property("BUNINSTALLVALUE")
+        If Right(p, 1) = "\" Then Session.Property("BUNINSTALLVALUE") = Left(p, Len(p) - 1)
+      ]]>
+    </CustomAction>
+    <InstallExecuteSequence>
+      <Custom Action="StripTrailingSlash" Before="WriteEnvironmentStrings" />
+    </InstallExecuteSequence>
+
+    <!--
+      UI: WixUI_InstallDir gives Welcome -> License -> Destination -> Install.
+      The banner/dialog bitmaps are generated at build time by build-msi.ps1
+      from src/bun.ico so we don't check binary assets into git. The dialog
+      bitmap is a 493x312 canvas in Bun's cream -> blush gradient
+      (#fbf0df -> #f6dece, the same ramp bun.com's hero uses) with the Bun
+      face rendered as large as fits in the left visual column.
+    -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUIBannerBmp" Value="$(BunBannerBmp)" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(BunDialogBmp)" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(BunLicense)" />
+
+    <!-- Exit-dialog copy. Kept deliberately cheerful. -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT"
+        Value="Bun is installed!  🐰  Open a new terminal and run `bun --version` to get started. Docs: https://bun.com/docs" />
+
+  </Package>
+</Wix>

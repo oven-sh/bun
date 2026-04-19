@@ -5,7 +5,9 @@
  * @link https://buildkite.com/docs/pipelines/defining-steps
  */
 
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   getBootstrapVersion,
   getBuildkiteEmoji,
@@ -813,6 +815,64 @@ function getWindowsSignStep(windowsPlatforms, options) {
 }
 
 /**
+ * Packages every Windows build into an MSI installer via WiX v5 and uploads
+ * bun-windows-<arch>.msi artifacts. Runs on a Windows x64 agent (WiX is a
+ * dotnet tool, and signing via smctl is x64-only). When the windows-sign
+ * step ran, the MSI embeds the already-signed bun.exe and is itself signed;
+ * on canary / PRs it embeds the unsigned binary so the MSI can still be
+ * smoke-tested without burning DigiCert signatures.
+ * @param {Platform[]} windowsPlatforms
+ * @param {PipelineOptions} options
+ * @param {{ signed: boolean }} [extra]
+ * @returns {Step}
+ */
+function getWindowsMsiStep(windowsPlatforms, options, { signed = false } = {}) {
+  const artifacts = [];
+  const buildSteps = [];
+  const outputs = [];
+  const arches = [];
+  for (const platform of windowsPlatforms) {
+    const triplet = getTargetTriplet(platform);
+    artifacts.push(`${triplet}.zip`);
+    // When signing ran, pull the re-uploaded zip from the sign step so the
+    // MSI embeds the signed exe; otherwise fetch from build-bun directly.
+    buildSteps.push(signed ? "windows-sign" : `${getTargetKey(platform)}-build-bun`);
+    outputs.push(`${triplet}.msi`);
+    // WiX's -arch flag wants "arm64", not "aarch64". The x64-baseline build
+    // is still "x64" here — MSI cares about ProgramFiles64Folder, not AVX2.
+    arches.push(platform.arch === "aarch64" ? "arm64" : "x64");
+  }
+
+  // Package/@Version must be numeric major.minor.build. LATEST holds the
+  // upcoming release number; build-msi.ps1 sanitises any stray suffix.
+  const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const version = readFileSync(join(repoRoot, "LATEST"), "utf8").trim();
+
+  const msiPlatform = windowsPlatforms.find(p => p.arch === "x64" && !p.baseline) ?? windowsPlatforms[0];
+  const depends_on = signed ? ["windows-sign"] : windowsPlatforms.map(p => `${getTargetKey(p)}-build-bun`);
+
+  return {
+    key: "windows-msi",
+    label: `${getBuildkiteEmoji("windows")} msi`,
+    depends_on,
+    agents: getEc2Agent(msiPlatform, options, {
+      instanceType: getAzureVmSize("windows", "x64", "test"),
+    }),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    command: [
+      `powershell -NoProfile -ExecutionPolicy Bypass -File .buildkite/scripts/build-windows-msi.ps1 ` +
+        `-Artifacts ${artifacts.join(",")} ` +
+        `-BuildSteps ${buildSteps.join(",")} ` +
+        `-Outputs ${outputs.join(",")} ` +
+        `-Arches ${arches.join(",")} ` +
+        `-Version ${version} ` +
+        `-Sign ${signed ? "true" : "false"}`,
+    ],
+  };
+}
+
+/**
  * Aggregates stripped-binary sizes from every release build, compares them
  * against the latest main build's binary-sizes.json, and fails if any grew
  * past the threshold. Runs on PR builds (comparison) and main (record-only,
@@ -853,10 +913,10 @@ const BINARY_SIZE_THRESHOLD_MB = 0.5;
 /**
  * @param {Platform[]} buildPlatforms
  * @param {PipelineOptions} options
- * @param {{ signed: boolean }} [extra]
+ * @param {{ signed: boolean, msi: boolean }} [extra]
  * @returns {Step}
  */
-function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
+function getReleaseStep(buildPlatforms, options, { signed = false, msi = false } = {}) {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
 
@@ -865,6 +925,9 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
   const depends_on = signed
     ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
     : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
+  if (msi) {
+    depends_on.push("windows-msi");
+  }
 
   return {
     key: "release",
@@ -878,6 +941,8 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
       // Tells upload-release.sh to fetch Windows zips from the sign step
       // (same filenames, but the signed re-uploads are the ones we want).
       WINDOWS_ARTIFACT_STEP: signed ? "windows-sign" : "",
+      // Tells upload-release.sh to also publish the .msi artifacts.
+      WINDOWS_MSI_STEP: msi ? "windows-msi" : "",
     },
     command: ".buildkite/scripts/upload-release.sh",
   };
@@ -969,6 +1034,7 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
  * @property {string | boolean} [forceTests]
  * @property {string | boolean} [buildImages]
  * @property {string | boolean} [signWindows]
+ * @property {string | boolean} [buildMsi]
  * @property {string | boolean} [publishImages]
  * @property {number} [canary]
  * @property {Platform[]} [buildPlatforms]
@@ -1246,6 +1312,7 @@ async function getPipelineOptions() {
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
+    buildMsi: parseOption(/\[(build msi|msi)\]/i),
     buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
     dryRun: parseOption(/\[(dry run)\]/i),
     publishImages: parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
@@ -1369,15 +1436,21 @@ async function getPipeline(options = {}) {
   // is in the commit message (for testing the sign step on a branch).
   // DigiCert charges per signature, so canary builds are never signed.
   const shouldSignWindows = (isMainBranch() && !options.canary) || options.signWindows;
-  if (shouldSignWindows) {
-    const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
-    if (windowsPlatforms.length > 0) {
-      steps.push(getWindowsSignStep(windowsPlatforms, options));
-    }
+  const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
+  if (shouldSignWindows && windowsPlatforms.length > 0) {
+    steps.push(getWindowsSignStep(windowsPlatforms, options));
+  }
+
+  // MSI installers: always built on main (canary gets an unsigned MSI so
+  // `msiexec` deployments can track canary too), and on any branch that
+  // opts in with [build msi] for testing the packaging.
+  const shouldBuildMsi = (isMainBranch() || options.buildMsi) && windowsPlatforms.length > 0;
+  if (shouldBuildMsi) {
+    steps.push(getWindowsMsiStep(windowsPlatforms, options, { signed: shouldSignWindows }));
   }
 
   if (isMainBranch()) {
-    steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows }));
+    steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows, msi: shouldBuildMsi }));
   }
 
   /** @type {Map<string, GroupStep>} */

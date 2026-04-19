@@ -386,6 +386,15 @@ ipint_simd_v128_xor_validate                       [AVX]
 
 
 # ----------------------------------------------------------------------------
+# JSC IPInt atomics (Windows offlineasm). The cmpxchg loop reloads the SIMD
+# accumulator with vmovdqu after the IPInt metadata removal in upstream
+# ef40cabc28d2; gated behind Options::useWasmSIMD().
+# (1 symbols)
+# ----------------------------------------------------------------------------
+ipint_i64_atomic_rmw32_cmpxchg_u_atomic_validate   [AVX]
+
+
+# ----------------------------------------------------------------------------
 # JSC MacroAssembler probe.
 # (1 symbols)
 # ----------------------------------------------------------------------------

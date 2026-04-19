@@ -12,7 +12,7 @@
 
 # ----------------------------------------------------------------------------
 # simdutf AVX2 (Haswell). Gate: set_best() dispatcher — CPUID at first call, cached in atomic ptr.
-# (89 symbols)
+# (91 symbols)
 # ----------------------------------------------------------------------------
 _ZN7simdutf7haswell12_GLOBAL__N_128convert_masked_utf8_to_utf16ILNS_10endiannessE0EEEmPKcmRPDs                                                                   [AVX, AVX2]
 _ZN7simdutf7haswell12_GLOBAL__N_128convert_masked_utf8_to_utf16ILNS_10endiannessE1EEEmPKcmRPDs                                                                   [AVX, AVX2]
@@ -66,6 +66,8 @@ _ZNK7simdutf7haswell14implementation24convert_utf32_to_utf16beEPKDimPDs         
 _ZNK7simdutf7haswell14implementation24convert_utf32_to_utf16leEPKDimPDs                                                                                          [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation24utf8_length_from_utf16beEPKDsm                                                                                             [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation24utf8_length_from_utf16leEPKDsm                                                                                             [AVX, AVX2]
+_ZNK7simdutf7haswell14implementation25binary_length_from_base64EPKDsm                                                                                            [AVX, AVX2]
+_ZNK7simdutf7haswell14implementation25binary_length_from_base64EPKcm                                                                                             [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation25convert_latin1_to_utf16beEPKcmPDs                                                                                          [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation25convert_latin1_to_utf16leEPKcmPDs                                                                                          [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation25convert_utf16be_to_latin1EPKDsmPc                                                                                          [AVX, AVX2]

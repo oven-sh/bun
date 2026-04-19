@@ -3261,6 +3261,25 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         ASSERT(!globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup);
     }
 
+    // The new C++ loader calls resolve() on keys that moduleLoaderImportModule
+    // already resolved through plugin onResolve. If the key already carries a
+    // plugin namespace that has an onLoad handler, it is a fully-resolved
+    // virtual key — return it unchanged so we don't fall through to the
+    // filesystem resolver and fail with "Cannot find module".
+    if (!globalObject->onLoadPlugins.namespaces.isEmpty()) {
+        auto keyStr = keyZ.toWTFString();
+        if (auto colon = keyStr.find(':'); colon != WTF::notFound) {
+            auto ns = keyStr.left(colon);
+            for (const auto& registered : globalObject->onLoadPlugins.namespaces) {
+                if (registered == ns) {
+                    keyZ.deref();
+                    referrerZ.deref();
+                    return Identifier::fromString(globalObject->vm(), keyStr);
+                }
+            }
+        }
+    }
+
     ZigString queryString = { 0, 0 };
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
     keyZ.deref();

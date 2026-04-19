@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { isArm64, isWindows } from "harness";
 
-const isFFIUnavailable = isWindows && isArm64;
-
-describe.skipIf(isFFIUnavailable)("FFI viewSource", () => {
+describe("FFI viewSource", () => {
   test("rejects non-object symbol descriptor values", () => {
     // These should throw a TypeError because each symbol descriptor
     // must be an object like { args: [...], returns: "void" }.

@@ -793,6 +793,57 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
   });
 });
 
+describe("package name aliases", () => {
+  let port: number;
+
+  beforeAll(() => {
+    dummyBeforeAll();
+    port = getPort()!;
+  });
+
+  afterAll(() => {
+    dummyAfterAll();
+  });
+
+  beforeEach(async () => {
+    await dummyBeforeEach();
+  });
+
+  // `bunx claude` should resolve to `@anthropic-ai/claude-code` (same shape as
+  // the `tsc` -> `typescript` rewrite). The npm package named `claude` is an
+  // unrelated squatter with no bin, so redirecting is strictly more useful.
+  it("`bunx claude` requests @anthropic-ai/claude-code, not the 'claude' squatter", async () => {
+    const urls: string[] = [];
+    setHandler(async request => {
+      urls.push(request.url);
+      return new Response("{}", { status: 404 });
+    });
+
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", "claude", "--version"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "inherit",
+      stderr: "pipe",
+      env: {
+        ...env,
+        npm_config_registry: `http://localhost:${port}/`,
+      },
+    });
+
+    const [, , exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
+
+    const paths = urls.map(u => new URL(u).pathname);
+    // The manifest request must be for the real package, and must never hit
+    // the squatter package name.
+    expect(paths).toContain("/@anthropic-ai%2fclaude-code");
+    expect(paths).not.toContain("/claude");
+    // Install fails because the mock registry 404s; that's fine, we only care
+    // about which manifest was requested.
+    expect(exited).not.toBe(0);
+  });
+});
+
 // Regression test: bunx should not crash on corrupted .bunx files (Windows only)
 // When the .bunx metadata file is corrupted (e.g., missing quote terminator in bin_path),
 // bunx should gracefully fall back to the slow path instead of panicking.

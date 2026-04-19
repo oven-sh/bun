@@ -2484,13 +2484,30 @@ static JSValue constructPid(VM& vm, JSObject* processObject)
     return jsNumber(getpid());
 }
 
-static JSValue constructPpid(VM& vm, JSObject* processObject)
+JSC_DEFINE_CUSTOM_GETTER(processPpid, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
+    // Always call the syscall so the value reflects reparenting
+    // (e.g. after the original parent dies and the child is
+    // reparented to init). Matches Node.js behavior.
 #if OS(WINDOWS)
-    return jsNumber(uv_os_getppid());
+    return JSValue::encode(jsNumber(uv_os_getppid()));
 #else
-    return jsNumber(getppid());
+    return JSValue::encode(jsNumber(getppid()));
 #endif
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessPpid, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
+{
+    // Match Node.js: writing to process.ppid replaces the live
+    // accessor with the written value on this object, so
+    // subsequent reads return what was written.
+    JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(JSValue::decode(thisValue));
+    if (!thisObject) {
+        return false;
+    }
+    auto& vm = JSC::getVM(globalObject);
+    thisObject->putDirect(vm, propertyName, JSValue::decode(encodedValue), 0);
+    return true;
 }
 
 static JSValue constructArgv0(VM& vm, JSObject* processObject)
@@ -2974,6 +2991,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
 
     auto* zigGlobal = defaultGlobalObject(globalObject);
     Bun__Process__exit(zigGlobal, exitCode);
+    // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
+    // Zig WebWorker.exit() it called requests JSC termination (guarded so it's a
+    // no-op when re-entered from a process.on('exit') handler).
+    throwScope.release();
     return JSC::JSValue::encode(jsUndefined());
 }
 
@@ -4020,7 +4041,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   openStdin                        Process_functionOpenStdin                           Function 0
   pid                              constructPid                                        PropertyCallback
   platform                         constructPlatform                                   PropertyCallback
-  ppid                             constructPpid                                       PropertyCallback
+  ppid                             processPpid                                         CustomAccessor
   reallyExit                       Process_functionReallyExit                          Function 1
   ref                              Process_ref                                         Function 1
   release                          constructProcessReleaseObject                       PropertyCallback

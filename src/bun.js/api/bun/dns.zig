@@ -1786,6 +1786,28 @@ pub const internal = struct {
         bun.handleOom(request.notify.append(bun.default_allocator, .{ .socket = socket }));
     }
 
+    fn us_getaddrinfo_cancel(
+        request: *Request,
+        socket: *bun.uws.ConnectingSocket,
+    ) callconv(.c) c_int {
+        global_cache.lock.lock();
+        defer global_cache.lock.unlock();
+        // afterResult sets result and moves the notify list out under this same
+        // lock, so once result is non-null the socket is no longer cancellable
+        // (the callback has fired or is about to fire on the worker thread).
+        if (request.result != null) return 0;
+        for (request.notify.items, 0..) |item, i| {
+            switch (item) {
+                .socket => |s| if (s == socket) {
+                    _ = request.notify.swapRemove(i);
+                    return 1;
+                },
+                .prefetch => {},
+            }
+        }
+        return 0;
+    }
+
     fn freeaddrinfo(req: *Request, err: c_int) callconv(.c) void {
         global_cache.lock.lock();
         defer global_cache.lock.unlock();
@@ -1814,6 +1836,9 @@ pub const InternalDNSRequest = internal.Request;
 comptime {
     @export(&internal.us_getaddrinfo_set, .{
         .name = "Bun__addrinfo_set",
+    });
+    @export(&internal.us_getaddrinfo_cancel, .{
+        .name = "Bun__addrinfo_cancel",
     });
     @export(&internal.us_getaddrinfo, .{
         .name = "Bun__addrinfo_get",
@@ -3289,8 +3314,8 @@ pub const Resolver = struct {
                 return globalThis.throwInvalidArgumentType("setServers", "triple", "array");
             }
 
-            const family = (try triple.getIndex(globalThis, 0)).toInt32();
-            const port = (try triple.getIndex(globalThis, 2)).toInt32();
+            const family = try (try triple.getIndex(globalThis, 0)).coerceToInt32(globalThis);
+            const port = try (try triple.getIndex(globalThis, 2)).coerceToInt32(globalThis);
 
             if (family != 4 and family != 6) {
                 return globalThis.throwInvalidArguments("Invalid address family", .{});

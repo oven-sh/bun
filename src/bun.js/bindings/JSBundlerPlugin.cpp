@@ -673,7 +673,7 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
     auto& vm = pluginObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     for (auto promiseValue : arguments) {
-        JSPromise* promise = jsCast<JSPromise*>(JSValue::decode(promiseValue));
+        JSPromise* promise = jsCast<JSPromise*>(promiseValue);
         if (rejected) {
             promise->reject(vm, globalObject, JSC::jsUndefined());
         } else {

@@ -19,6 +19,8 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
 pub const StaticRoute = @import("./server/StaticRoute.zig");
 pub const FileRoute = @import("./server/FileRoute.zig");
+pub const FileResponseStream = @import("./server/FileResponseStream.zig");
+pub const RangeRequest = @import("./server/RangeRequest.zig");
 
 pub const AnyRoute = union(enum) {
     /// Serve a static file
@@ -2364,6 +2366,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             ctx.request_body = body;
             var signal = jsc.WebCore.AbortSignal.new(this.globalThis);
             ctx.signal = signal;
+            signal.pendingActivityRef();
 
             var request_object = Request.new(Request.init(
                 ctx.method,

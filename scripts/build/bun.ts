@@ -158,9 +158,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.comment("─── Dependencies ───");
   n.blank();
   const deps: ResolvedDep[] = [];
+  const depsByName = new Map<string, ResolvedDep>();
   for (const dep of allDeps) {
-    const resolved = resolveDep(n, cfg, dep);
-    if (resolved !== null) deps.push(resolved);
+    const resolved = resolveDep(n, cfg, dep, depsByName);
+    if (resolved !== null) {
+      deps.push(resolved);
+      depsByName.set(dep.name, resolved);
+    }
   }
 
   // Collect all dep lib paths, include dirs, output stamps, and directly-
@@ -168,11 +172,17 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // instead of a .a — we compile those alongside bun's own sources).
   const depLibs: string[] = [];
   const depIncludes: string[] = [];
-  const depOutputs: string[] = []; // implicit-dep signal for PCH/cc/no-PCH cxx
+  // Outputs of deps that provide headers — used as implicit inputs on PCH/cc/
+  // no-PCH cxx so a dep rebuild invalidates compiles that #include its headers
+  // (the .a is the signal — see comment at the PCH step). Deps with no provided
+  // includes (tinycc, lolhtml) are skipped: nothing to invalidate, and a tinycc
+  // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
+  // rebuild. Link still gets every dep via depLibs.
+  const depHeaderSignal: string[] = [];
   for (const d of deps) {
     depLibs.push(...d.libs);
     depIncludes.push(...d.includes);
-    depOutputs.push(...d.outputs);
+    if (d.includes.length > 0) depHeaderSignal.push(...d.outputs);
   }
 
   // ─── Step 2: codegen ───
@@ -254,7 +264,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // still run. cxx transitively waits: cxx → PCH → deps+cppAll.
     pchOut = pch(n, cfg, "src/bun.js/bindings/root.h", {
       flags: cxxFlagsFull,
-      implicitInputs: depOutputs,
+      implicitInputs: depHeaderSignal,
       orderOnlyInputs: codegen.cppAll,
     });
   }
@@ -284,7 +294,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // All deps must be ready (headers extracted, libs built) before compile.
   //
-  // depOutputs are IMPLICIT inputs, not order-only. A locally-built dep's
+  // depHeaderSignal are IMPLICIT inputs, not order-only. A locally-built dep's
   // sub-build (e.g. WebKit) rewrites forwarding headers as an undeclared side
   // effect of the edge whose declared outputs are only lib*.a. Depfiles record
   // those headers, but ninja stats them BEFORE the sub-build runs — so with
@@ -296,7 +306,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // codegen.cppAll stays order-only: those headers ARE declared ninja outputs
   // with restat, so depfile tracking is exact and doesn't lag.
   //
-  // PCH also has implicit deps on depOutputs (see above). When PCH is enabled,
+  // PCH also has implicit deps on depHeaderSignal (see above). When PCH is enabled,
   // cxx inherits the dep transitively via its implicit dep on the PCH, so we
   // don't add it again.
   const codegenOrderOnly = codegen.cppAll;
@@ -310,13 +320,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       flags: [...cxxFlagsFull, ...extraFlags],
     };
     if (pchOut !== undefined) {
-      // PCH has implicit deps on depOutputs. cxx has implicit dep on PCH.
+      // PCH has implicit deps on depHeaderSignal. cxx has implicit dep on PCH.
       // Transitively: cxx waits for deps. No need to repeat them here.
       opts.pch = pchOut.pch;
       opts.pchHeader = pchOut.wrapperHeader;
     } else {
       // No PCH (windows) — each cxx needs the dep signal directly.
-      opts.implicitInputs = depOutputs;
+      opts.implicitInputs = depHeaderSignal;
       opts.orderOnlyInputs = codegenOrderOnly;
     }
     cxxObjects.push(cxx(n, cfg, src, opts));
@@ -327,7 +337,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const compileC = (src: string): string => {
     const obj = cc(n, cfg, src, {
       flags: cFlagsFull,
-      implicitInputs: depOutputs,
+      implicitInputs: depHeaderSignal,
       orderOnlyInputs: codegenOrderOnly,
     });
     cObjects.push(obj);
@@ -357,7 +367,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     n.blank();
     const archiveName = `${cfg.libPrefix}${exeName}${cfg.libSuffix}`;
     const archive = ar(n, cfg, archiveName, allObjects);
-    n.phony("bun", [archive]);
+    // depLibs explicit in the phony: deps with no provided includes (tinycc,
+    // lolhtml) aren't in depHeaderSignal, so the archive doesn't pull them
+    // transitively — but link-only still needs them uploaded.
+    n.phony("bun", [archive, ...depLibs]);
     n.default(["bun"]);
     return { archive, deps, codegen, zigObjects, objects: allObjects };
   }
@@ -440,7 +453,7 @@ function emitZigOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // Only dep: zstd, for @cImport headers. resolveDep emits its
   // fetch/configure/build; emitZig only depends on the fetch stamp.
-  const zstdDep = resolveDep(n, cfg, zstd);
+  const zstdDep = resolveDep(n, cfg, zstd, new Map());
   assert(zstdDep !== null, "zstd resolveDep returned null — should never be skipped");
 
   // Codegen: emitted fully, but only zigInputs/zigOrderOnly are pulled.

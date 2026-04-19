@@ -42,6 +42,10 @@ pub const BUN_DEBUG = New(kind.string, "BUN_DEBUG", .{});
 pub const BUN_DEBUG_ALL = New(kind.boolean, "BUN_DEBUG_ALL", .{});
 pub const BUN_DEBUG_CSS_ORDER = New(kind.boolean, "BUN_DEBUG_CSS_ORDER", .{ .default = false });
 pub const BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE = New(kind.boolean, "BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE", .{ .default = false });
+/// Testing hook for `bun build --compile`: force `hostUsesNixStoreInterpreter()`
+/// to return true without mutating `/etc/NIXOS` on the shared rootfs. Used by
+/// `test/regression/issue/29290.test.ts` to exercise the Nix-host branch.
+pub const BUN_DEBUG_FORCE_NIX_HOST = New(kind.boolean, "BUN_DEBUG_FORCE_NIX_HOST", .{ .default = false });
 pub const BUN_DEBUG_HASH_RANDOM_SEED = New(kind.unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", .{ .deser = .{ .error_handling = .not_set } });
 pub const BUN_DEBUG_QUIET_LOGS = New(kind.boolean, "BUN_DEBUG_QUIET_LOGS", .{});
 pub const BUN_DEBUG_TEST_TEXT_LOCKFILE = New(kind.boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", .{ .default = false });
@@ -57,6 +61,11 @@ pub const BUN_INSPECT_PRELOAD = New(kind.string, "BUN_INSPECT_PRELOAD", .{});
 pub const BUN_INSTALL = New(kind.string, "BUN_INSTALL", .{});
 pub const BUN_INSTALL_BIN = New(kind.string, "BUN_INSTALL_BIN", .{});
 pub const BUN_INSTALL_GLOBAL_DIR = New(kind.string, "BUN_INSTALL_GLOBAL_DIR", .{});
+/// Minimum response `Content-Length` (in bytes) for `bun install` to
+/// stream a tarball directly into libarchive instead of buffering the
+/// whole body first. Smaller tarballs stay on the buffered path where
+/// the fixed overhead of the resumable state machine isn't worth it.
+pub const BUN_INSTALL_STREAMING_MIN_SIZE = New(kind.unsigned, "BUN_INSTALL_STREAMING_MIN_SIZE", .{ .default = 2 * 1024 * 1024 });
 pub const BUN_NEEDS_PROC_SELF_WORKAROUND = New(kind.boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", .{ .default = false });
 pub const BUN_OPTIONS = New(kind.string, "BUN_OPTIONS", .{});
 pub const BUN_POSTGRES_SOCKET_MONITOR = New(kind.string, "BUN_POSTGRES_SOCKET_MONITOR", .{});
@@ -155,12 +164,18 @@ pub const feature_flag = struct {
 
     pub const BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", .{});
+    pub const BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_DNS_CACHE = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX", .{});
+    /// Disable streaming tarball extraction in `bun install`. When disabled,
+    /// the whole .tgz is buffered in memory before being decompressed and
+    /// extracted. Useful for bisecting streaming-specific bugs.
+    pub const BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_IO_POOL = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IO_POOL", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_IPV4 = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IPV4", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_IPV6 = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IPV6", .{});
+    pub const BUN_FEATURE_FLAG_DISABLE_MEMFD = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_MEMFD", .{});
     /// The RedisClient supports auto-pipelining by default. This flag disables that behavior.
     pub const BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK", .{});

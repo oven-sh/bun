@@ -32,6 +32,16 @@ When exec args are present, build output is suppressed unless the build fails �
 bun run build:release --build-dir=build/baseline
 ```
 
+### Changes that don't require a build
+
+Edits to **TypeScript type declarations** (`packages/bun-types/**/*.d.ts`) do not touch any compiled code, so `bun bd` is unnecessary. The types test just packs the `.d.ts` files and runs `tsc` against fixtures — it never executes your build. Run it directly with the system Bun:
+
+```sh
+bun test test/integration/bun-types/bun-types.test.ts
+```
+
+This is an explicit exception to the "never use `bun test` directly" rule. There are no native changes for a debug build to pick up, so don't wait on one.
+
 ## Testing
 
 ### Running Tests
@@ -198,7 +208,7 @@ Third-party C/C++ libraries are vendored locally and can be read from disk (thes
 - `vendor/tinycc/` - TinyCC (FFI JIT compiler, fork: oven-sh/tinycc)
 - `vendor/WebKit/` - WebKit/JavaScriptCore (JS engine)
 - `vendor/zig/` - Zig compiler/stdlib
-- `vendor/zlib/` - zlib (compression, cloudflare fork)
+- `vendor/zlib/` - zlib-ng (compression, zlib-compat mode)
 - `vendor/zstd/` - Zstandard (compression)
 
 Build configuration for these is in `scripts/build/deps/*.ts`.
@@ -236,6 +246,12 @@ Built-in JavaScript modules use special syntax and are organized as:
 - `thirdparty/` - NPM modules we replace (like `ws`)
 - `internal/` - Internal modules not exposed to users
 - `builtins/` - Core JavaScript builtins (streams, console, etc.)
+
+## Code Review Self-Check
+
+- Before writing code that makes a non-obvious choice, pre-emptively ask "why this and not the alternative?" If you can't answer, research until you can — don't write first and justify later.
+- Don't take a bug report's suggested fix at face value; verify it's the right layer.
+- If neighboring code does something differently than you're about to, find out _why_ before deviating — its choices are often load-bearing, not stylistic.
 
 ## Important Development Notes
 
@@ -281,3 +297,23 @@ bun run ci:watch
 For anything else, use `bk` directly — `bk build list`, `bk api`, `bk artifacts`, etc.
 
 If output from these commands looks wrong — mis-parsed annotation HTML, confusing wording, a field BuildKite changed shape on — fix `scripts/find-build.ts` directly rather than working around it. It's a thin presenter over `bk`; keep it accurate.
+
+## Reading PR Feedback
+
+`gh pr view --comments` is fine for a quick look at the Conversation tab, but it has a footgun worth knowing about: it only returns issue-stream comments and silently omits review summaries and line-level review comments. If a reviewer leaves an inline comment on a specific file line, it will not show up — no error, no hint that anything is missing.
+
+When you want the complete picture — especially when responding to a review or checking whether anyone requested changes — use `bun run pr:comments`. It fetches all three GitHub endpoints (`/issues/N/comments`, `/pulls/N/reviews`, `/pulls/N/comments`) and prints them in one chronological listing, each labelled with its actual type (issue comment, review verdict, line comment, reply, suggestion block).
+
+```bash
+bun run pr:comments                    # current branch's PR — XML, resolved threads hidden
+bun run pr:comments 28838              # by PR number
+bun run pr:comments '#28838'           # also works
+bun run pr:comments https://github.com/oven-sh/bun/pull/28838
+bun run pr:comments --include-resolved # also show threads already marked resolved
+
+# Machine-readable output for jq pipelines — one object per entry with
+# { when, user, tag, state?, suggestion?, location?, body, url?, resolved?, outdated? }.
+# Resolved threads and bot noise (robobun's CI status comment, CodeRabbit
+# body-level summaries) are filtered out; --include-resolved restores the former.
+bun run pr:comments --json | jq '.[] | select(.user == "Jarred-Sumner")'
+```

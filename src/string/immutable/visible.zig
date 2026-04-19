@@ -1275,8 +1275,102 @@ pub const visible = struct {
             pub fn utf16(input: []const u16, ambiguousAsWide: bool) usize {
                 return visibleUTF16WidthFn(input, true, ambiguousAsWide);
             }
+
+            /// Byte index of the longest prefix of `input` whose visible
+            /// width is <= `max_width`. ANSI escapes count as zero-width
+            /// and are always included in the prefix. Never splits a
+            /// multi-byte UTF-8 codepoint.
+            pub fn utf8IndexAtWidth(input: []const u8, max_width: usize) usize {
+                return utf8IndexAtWidthExcludeANSI(input, max_width);
+            }
         };
     };
+
+    fn utf8IndexAtWidthExcludeANSI(input_: []const u8, max_width: usize) usize {
+        var input = input_;
+        var w: usize = 0;
+        while (strings.indexOfCharUsize(input, '\x1b')) |esc| {
+            // Walk the visible run before ESC.
+            const run_start = @intFromPtr(input.ptr) - @intFromPtr(input_.ptr);
+            if (utf8WalkRun(input_, run_start, esc, max_width, &w)) |stop| return stop;
+            input = input[esc..];
+            // Same CSI/OSC skip as visibleLatin1WidthExcludeANSIColors.
+            if (input.len < 2) return input_.len;
+            if (input[1] == '[') {
+                if (input.len < 3) return input_.len;
+                input = input[2..];
+                if (scanLaneInRange(u8, 0x40, 0x7E, input)) |t| {
+                    input = input[t + 1 ..];
+                } else return input_.len;
+            } else if (input[1] == ']') {
+                input = input[2..];
+                while (scanLaneAnyOf(u8, &.{ 0x07, 0x9c, 0x1b }, input)) |t| {
+                    const term = input[t];
+                    if (term == 0x07 or term == 0x9c) {
+                        input = input[t + 1 ..];
+                        break;
+                    }
+                    if (t + 1 < input.len and input[t + 1] == '\\') {
+                        input = input[t + 2 ..];
+                        break;
+                    }
+                    input = input[t + 1 ..];
+                } else input = input[input.len..];
+            } else {
+                input = input[1..];
+            }
+        }
+        const run_start = @intFromPtr(input.ptr) - @intFromPtr(input_.ptr);
+        if (utf8WalkRun(input_, run_start, input.len, max_width, &w)) |stop| return stop;
+        return input_.len;
+    }
+
+    /// Walk `len` bytes of `input` starting at absolute offset `start`,
+    /// accumulating visible width. Returns the absolute byte index at
+    /// which adding the next codepoint would exceed `max_width`, or null
+    /// if the whole run fits. Mirrors visibleUTF8WidthFn's decode loop.
+    fn utf8WalkRun(input: []const u8, start: usize, len: usize, max_width: usize, w: *usize) ?usize {
+        var bytes = input[start .. start + len];
+        while (firstNonASCII(bytes)) |i| {
+            // ASCII run: each printable char is width 1.
+            var k: usize = 0;
+            while (k < i) : (k += 1) {
+                const cw = visibleLatin1WidthScalar(bytes[k]);
+                if (w.* + cw > max_width) {
+                    return (@intFromPtr(bytes.ptr) - @intFromPtr(input.ptr)) + k;
+                }
+                w.* += cw;
+            }
+            const this_chunk = bytes[i..];
+            const byte = this_chunk[0];
+            const skip = bun.strings.wtf8ByteSequenceLengthWithInvalid(byte);
+            const cp_bytes: [4]u8 = switch (@min(@as(usize, skip), this_chunk.len)) {
+                inline 1, 2, 3, 4 => |cp_len| .{
+                    byte,
+                    if (comptime cp_len > 1) this_chunk[1] else 0,
+                    if (comptime cp_len > 2) this_chunk[2] else 0,
+                    if (comptime cp_len > 3) this_chunk[3] else 0,
+                },
+                else => unreachable,
+            };
+            const cp = decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement);
+            const cw = visibleCodepointWidth(cp, false);
+            if (w.* + cw > max_width) {
+                return (@intFromPtr(bytes.ptr) - @intFromPtr(input.ptr)) + i;
+            }
+            w.* += cw;
+            bytes = bytes[@min(i + skip, bytes.len)..];
+        }
+        var k: usize = 0;
+        while (k < bytes.len) : (k += 1) {
+            const cw = visibleLatin1WidthScalar(bytes[k]);
+            if (w.* + cw > max_width) {
+                return (@intFromPtr(bytes.ptr) - @intFromPtr(input.ptr)) + k;
+            }
+            w.* += cw;
+        }
+        return null;
+    }
 };
 
 // extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)

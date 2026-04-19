@@ -151,8 +151,14 @@ pub const VM = opaque {
         return bun.cpp.JSC__VM__isTerminationException(vm, exception);
     }
 
+    extern fn JSC__VM__hasTerminationRequest(vm: *VM) bool;
     pub fn hasTerminationRequest(vm: *VM) bool {
-        return bun.cpp.JSC__VM__hasTerminationRequest(vm);
+        return JSC__VM__hasTerminationRequest(vm);
+    }
+
+    extern fn JSC__VM__clearHasTerminationRequest(vm: *VM) void;
+    pub fn clearHasTerminationRequest(vm: *VM) void {
+        JSC__VM__clearHasTerminationRequest(vm);
     }
 
     extern fn JSC__VM__throwError(*VM, *JSGlobalObject, JSValue) void;

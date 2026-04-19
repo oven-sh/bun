@@ -167,7 +167,7 @@ pub fn transpileSourceCode(
             var arena = arena_.?;
             const allocator = arena.allocator();
 
-            var fd: ?StoredFileDescriptorType = null;
+            var fd: ?FD = null;
             var package_json: ?*PackageJSON = null;
 
             if (jsc_vm.bun_watcher.indexOf(hash)) |index| {
@@ -221,7 +221,7 @@ pub fn transpileSourceCode(
                 else => .unknown,
             };
 
-            var input_file_fd: StoredFileDescriptorType = bun.invalid_fd;
+            var input_file_fd: FD = bun.invalid_fd;
             var parse_options = Transpiler.ParseOptions{
                 .allocator = allocator,
                 .path = path,
@@ -424,9 +424,11 @@ pub fn transpileSourceCode(
                     dumpSourceString(jsc_vm, specifier, entry.output_code.byteSlice());
                 }
 
-                // TODO: module_info is only needed for standalone ESM bytecode.
-                // For now, skip it entirely in the runtime transpiler.
-                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
+                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized =
+                    if (jsc_vm.useIsolationSourceProviderCache() and entry.metadata.module_type != .cjs and entry.esm_record.len > 0)
+                        analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(entry.esm_record, bun.default_allocator)
+                    else
+                        null;
 
                 return ResolvedSource{
                     .allocator = null,
@@ -512,9 +514,12 @@ pub fn transpileSourceCode(
             jsc_vm.transpiler.linker.import_counter = 0;
 
             const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
-            // TODO: module_info is only needed for standalone ESM bytecode.
-            // For now, skip it entirely in the runtime transpiler.
-            const module_info: ?*analyze_transpiled_module.ModuleInfo = null;
+            const module_info: ?*analyze_transpiled_module.ModuleInfo =
+                if (jsc_vm.useIsolationSourceProviderCache() and !is_commonjs_module and loader.isJavaScriptLike())
+                    analyze_transpiled_module.ModuleInfo.create(bun.default_allocator, loader.isTypeScript()) catch null
+                else
+                    null;
+            errdefer if (module_info) |mi| mi.destroy();
 
             var printer = source_code_printer.*;
             printer.ctx.reset();
@@ -589,7 +594,7 @@ pub fn transpileSourceCode(
         .napi => unreachable,
         // .wasm => {
         //     jsc_vm.transpiled_count += 1;
-        //     var fd: ?StoredFileDescriptorType = null;
+        //     var fd: ?FD = null;
 
         //     var allocator = if (jsc_vm.has_loaded) jsc_vm.arena.allocator() else jsc_vm.allocator;
 
@@ -750,7 +755,7 @@ pub fn transpileSourceCode(
             if (virtual_source == null) {
                 if (jsc_vm.isWatcherEnabled()) auto_watch: {
                     if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
-                        const input_fd: bun.StoredFileDescriptorType = brk: {
+                        const input_fd: bun.FD = brk: {
                             // on macOS, we need a file descriptor to receive event notifications on it.
                             // so we use O_EVTONLY to open the file descriptor without asking any additional permissions.
                             if (bun.Watcher.requires_file_descriptors) {
@@ -1142,7 +1147,7 @@ fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded:
     return switch (hardcoded) {
         .@"bun:main" => if (jsc_vm.entry_point.generated) .{
             .allocator = null,
-            .source_code = bun.String.cloneUTF8(jsc_vm.entry_point.source.contents),
+            .source_code = bun.String.cloneUTF8(jsc_vm.entry_point.contents),
             .specifier = specifier,
             .source_url = specifier,
             .tag = .esm,
@@ -1365,9 +1370,9 @@ const setBreakPointOnFirstLine = @import("./RuntimeTranspilerStore.zig").setBrea
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const String = bun.String;
 const Transpiler = bun.Transpiler;
 const analytics = bun.analytics;

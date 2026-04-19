@@ -483,6 +483,35 @@ pub const FetchTasklet = struct {
         }
         // if we already respond the metadata and still need to process the body
         if (this.is_waiting_body) {
+            // `scheduled_response_buffer` has two readers that both drain-and-reset:
+            // this path (onBodyReceived) and `onStartStreamingHTTPResponseBodyCallback`,
+            // which runs once when JS first touches `res.body` and hands any already-
+            // buffered bytes to the new ByteStream synchronously.
+            //
+            // That creates a stale-task race:
+            //   1. HTTP thread `callback()` writes N bytes to the buffer and enqueues
+            //      this onProgressUpdate task (under mutex).
+            //   2. Main thread: JS touches `res.body` -> `onStartStreaming` drains those
+            //      N bytes and resets the buffer (under mutex).
+            //   3. This task runs and finds the buffer empty.
+            //
+            // The task cannot be un-enqueued in step 2, and at schedule time (step 1)
+            // the buffer was non-empty, so the only place the staleness is observable
+            // is here when the task runs.
+            //
+            // Without this guard, `onBodyReceived` would call `ByteStream.onData` with
+            // a zero-length non-terminal chunk. That resolves the reader's pending
+            // pull with `len=0`; `native-readable.ts` `handleNumberResult(0)` does not
+            // `push()`, so node:stream `state.reading` (set before the previous `_read()`
+            // early-returned on `kPendingRead`) is never cleared, `_read()` is never
+            // called again, and `pipeline(Readable.fromWeb(res.body), ...)` stalls
+            // forever — eventually spinning at 100% CPU once `poll_ref` unrefs.
+            if (this.scheduled_response_buffer.list.items.len == 0 and
+                this.result.has_more and
+                this.result.isSuccess())
+            {
+                return;
+            }
             try this.onBodyReceived();
             return;
         }
@@ -522,11 +551,17 @@ pub const FetchTasklet = struct {
                 this.promise.deinit();
                 return;
             }
-            // everything ok
-            if (this.metadata == null) {
-                log("onProgressUpdate: metadata is null", .{});
-                return;
-            }
+            // checkServerIdentity passed. Fall through to resolve/reject below.
+            //
+            // We can reach this point with `metadata == null` when the
+            // connection failed after the TLS handshake but before response
+            // headers arrived (e.g. an mTLS server closing the socket because
+            // the client didn't present a certificate) — the certificate_info
+            // from the first progress update is coalesced into the later
+            // failure result. The `metadata == null && isSuccess()` case is
+            // already handled by the early return above, so the fall-through
+            // here always has either metadata to resolve with or a failure to
+            // reject with.
         }
 
         const tracker = this.tracker;
@@ -1353,7 +1388,11 @@ pub const FetchTasklet = struct {
 
         const prev_metadata = task.result.metadata;
         const prev_cert_info = task.result.certificate_info;
+        const prev_can_stream = task.result.can_stream;
         task.result = result;
+        // can_stream is a one-shot signal to start the request body stream; don't let a
+        // later coalesced result clobber it before the JS thread sees it.
+        task.result.can_stream = task.result.can_stream or prev_can_stream;
 
         // Preserve pending certificate info if it was preovided in the previous update.
         if (task.result.certificate_info == null) {

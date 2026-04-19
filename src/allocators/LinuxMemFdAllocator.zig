@@ -24,7 +24,7 @@ pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
 ref_count: RefCount,
-fd: bun.FileDescriptor = .invalid,
+fd: bun.FD = .invalid,
 size: usize = 0,
 
 var memfd_counter = std.atomic.Value(usize).init(0);
@@ -113,6 +113,8 @@ pub fn shouldUse(bytes: []const u8) bool {
     if (comptime !bun.Environment.isLinux) {
         return false;
     }
+
+    if (!bun.sys.canUseMemfd()) return false;
 
     if (bun.jsc.VirtualMachine.is_smol_mode) {
         return bytes.len >= 1024 * 1024 * 1;

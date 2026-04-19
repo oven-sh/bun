@@ -267,19 +267,19 @@ pub const StandaloneModuleGraph = struct {
                 .none => null,
                 .parsed => |map| map,
                 .serialized => |serialized| {
-                    var stored = switch (SourceMap.Mapping.parse(
-                        bun.default_allocator,
-                        serialized.mappingVLQ(),
-                        null,
-                        std.math.maxInt(i32),
-                        std.math.maxInt(i32),
-                        .{},
-                    )) {
-                        .success => |x| x,
-                        .fail => {
-                            this.* = .none;
-                            return null;
-                        },
+                    const blob = serialized.mappingBlob() orelse {
+                        this.* = .none;
+                        return null;
+                    };
+                    if (!SourceMap.InternalSourceMap.isValidBlob(blob)) {
+                        this.* = .none;
+                        return null;
+                    }
+                    const ism = SourceMap.InternalSourceMap{ .data = blob.ptr };
+                    var stored: SourceMap.ParsedSourceMap = .{
+                        .ref_count = .init(),
+                        .internal = ism,
+                        .input_line_count = ism.inputLineCount(),
                     };
 
                     const source_files = serialized.sourceFileNames();
@@ -668,7 +668,7 @@ pub const StandaloneModuleGraph = struct {
         }
     };
 
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.FileDescriptor {
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.FD {
         var buf: bun.PathBuffer = undefined;
         var zname: [:0]const u8 = bun.fs.FileSystem.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
@@ -676,7 +676,7 @@ pub const StandaloneModuleGraph = struct {
         };
 
         const cleanup = struct {
-            pub fn toClean(name: [:0]const u8, fd: bun.FileDescriptor) void {
+            pub fn toClean(name: [:0]const u8, fd: bun.FD) void {
                 // Ensure we own the file
                 if (Environment.isPosix) {
                     // Make the file writable so we can delete it
@@ -687,7 +687,7 @@ pub const StandaloneModuleGraph = struct {
             }
         }.toClean;
 
-        const cloned_executable_fd: bun.FileDescriptor = brk: {
+        const cloned_executable_fd: bun.FD = brk: {
             if (comptime Environment.isWindows) {
                 // copy self and then open it for writing
 
@@ -776,7 +776,7 @@ pub const StandaloneModuleGraph = struct {
                 }
                 unreachable;
             };
-            const self_fd: bun.FileDescriptor = brk2: {
+            const self_fd: bun.FD = brk2: {
                 for (0..3) |retry| {
                     switch (Syscall.open(self_exe, bun.O.CLOEXEC | bun.O.RDONLY, 0)) {
                         .result => |res| break :brk2 res,
@@ -916,6 +916,8 @@ pub const StandaloneModuleGraph = struct {
                     return bun.invalid_fd;
                 };
                 defer elf_file.deinit();
+
+                elf_file.normalizeInterpreter();
 
                 elf_file.writeBunSection(bytes) catch |err| {
                     Output.prettyErrorln("Error writing .bun section to ELF: {}", .{err});
@@ -1356,14 +1358,15 @@ pub const StandaloneModuleGraph = struct {
 
     /// Source map serialization in the bundler is specially designed to be
     /// loaded in memory as is. Source contents are compressed with ZSTD to
-    /// reduce the file size, and mappings are stored as uncompressed VLQ.
+    /// reduce the file size, and mappings are stored as an InternalSourceMap
+    /// blob (varint deltas + sync points) so lookups need no decode pass.
     pub const SerializedSourceMap = struct {
         bytes: []const u8,
 
         /// Following the header bytes:
         /// - source_files_count number of StringPointer, file names
         /// - source_files_count number of StringPointer, zstd compressed contents
-        /// - the mapping data, `map_vlq_length` bytes
+        /// - the InternalSourceMap blob, `map_bytes_length` bytes
         /// - all the StringPointer contents
         pub const Header = extern struct {
             source_files_count: u32,
@@ -1374,9 +1377,11 @@ pub const StandaloneModuleGraph = struct {
             return @ptrCast(map.bytes.ptr);
         }
 
-        pub fn mappingVLQ(map: SerializedSourceMap) []const u8 {
+        pub fn mappingBlob(map: SerializedSourceMap) ?[]const u8 {
+            if (map.bytes.len < @sizeOf(Header)) return null;
             const head = map.header();
             const start = @sizeOf(Header) + head.source_files_count * @sizeOf(StringPointer) * 2;
+            if (start > map.bytes.len or head.map_bytes_length > map.bytes.len - start) return null;
             return map.bytes[start..][0..head.map_bytes_length];
         }
 
@@ -1464,14 +1469,16 @@ pub const StandaloneModuleGraph = struct {
         }
 
         const map_vlq: []const u8 = mappings_str.data.e_string.slice(arena);
+        const map_blob = SourceMap.InternalSourceMap.fromVLQ(arena, map_vlq, 0) catch
+            return error.InvalidSourceMap;
 
         try out.writeInt(u32, sources_paths.items.len, .little);
-        try out.writeInt(u32, @intCast(map_vlq.len), .little);
+        try out.writeInt(u32, @intCast(map_blob.len), .little);
 
         const string_payload_start_location = @sizeOf(u32) +
             @sizeOf(u32) +
             @sizeOf(bun.StringPointer) * sources_content.items.len * 2 + // path + source
-            map_vlq.len;
+            map_blob.len;
 
         for (sources_paths.items.slice()) |item| {
             if (item.data != .e_string)
@@ -1517,7 +1524,7 @@ pub const StandaloneModuleGraph = struct {
             try out.writeInt(u32, slice.length, .little);
         }
 
-        try out.writeAll(map_vlq);
+        try out.writeAll(map_blob);
 
         bun.assert(header_list.items.len == string_payload_start_location);
     }

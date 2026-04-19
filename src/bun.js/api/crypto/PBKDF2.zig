@@ -163,7 +163,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, is_asy
 
         invalid: {
             switch (try EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arg4) orelse break :invalid) {
-                .shake128, .shake256, .@"sha3-224", .@"sha3-256", .@"sha3-384", .@"sha3-512" => break :invalid,
+                .shake128, .shake256 => break :invalid,
                 else => |alg| break :brk alg,
             }
         }

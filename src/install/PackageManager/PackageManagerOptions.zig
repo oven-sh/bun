@@ -745,7 +745,14 @@ pub const Enable = packed struct(u16) {
     /// `<cache>/links/` directory and symlink `node_modules/.bun/<pkg>` into
     /// it, instead of clonefiling every package into every project on every
     /// install. Set BUN_INSTALL_GLOBAL_STORE=0 to disable.
-    global_virtual_store: bool = true,
+    ///
+    /// Off by default on Windows: bun's resolver intermittently misclassifies
+    /// directory dep symlinks as files when reached through the two-hop
+    /// `node_modules/.bun/<pkg>` → `<cache>/links/<pkg>-<hash>/` chain
+    /// (EISDIR on `ReadFile` of the resolved directory). The symlinks
+    /// themselves are correctly typed; the bug is in the Windows directory-
+    /// enumeration classification, not in install. Tracked separately.
+    global_virtual_store: bool = !bun.Environment.isWindows,
     _: u6 = 0,
 };
 

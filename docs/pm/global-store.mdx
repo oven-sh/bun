@@ -9,7 +9,9 @@ This is the same approach pnpm and aube take, applied to Bun's isolated linker.
 
 ## Enabling
 
-The global virtual store is **on by default** with the isolated linker. It is not used by the hoisted linker.
+The global virtual store is **on by default on macOS and Linux** with the isolated linker. It is not used by the hoisted linker.
+
+On Windows it currently defaults to **off**: Bun's module resolver intermittently misclassifies directory dependency symlinks as files when reached through the two-hop `node_modules/.bun/<pkg>` → `<cache>/links/<pkg>-<hash>/` chain, surfacing as `EISDIR` at require time for some packages. The on-disk symlinks are correctly typed; the bug is in resolver classification and is tracked separately. You can opt in with `globalStore = true` (or `BUN_INSTALL_GLOBAL_STORE=1`) if your project doesn't hit it.
 
 ```bash terminal icon="terminal"
 bun install --linker isolated

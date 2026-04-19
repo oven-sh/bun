@@ -46,11 +46,15 @@ test("auto-install with cached manifest but missing tarball does not read a dang
   }
 
   // Keep the `.npm` manifest files, drop every extracted tarball so the next
-  // run hits the `.extract` path with a warm manifest cache.
+  // run hits the `.extract` path with a warm manifest cache. Assert both
+  // kinds actually exist first so this test doesn't silently become a no-op
+  // if the first run's auto-install didn't reach the registry.
   const entries = readdirSync(cacheDir);
-  expect(entries.some(e => e.endsWith(".npm"))).toBe(true);
-  for (const entry of entries) {
-    if (entry.endsWith(".npm")) continue;
+  const manifests = entries.filter(e => e.endsWith(".npm"));
+  const extracted = entries.filter(e => !e.endsWith(".npm"));
+  expect(manifests.length).toBeGreaterThan(0);
+  expect(extracted.length).toBeGreaterThan(0);
+  for (const entry of extracted) {
     rmSync(join(cacheDir, entry), { recursive: true, force: true });
   }
 

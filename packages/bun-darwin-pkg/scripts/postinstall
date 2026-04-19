@@ -92,12 +92,20 @@ sudo -u "$CONSOLE_USER" mkdir -p "$BUN_INSTALL/bin" 2>/dev/null || true
 # a symlink to a root-owned file just fails with EACCES.
 # ---------------------------------------------------------------------------
 
+# The marker grep runs as $CONSOLE_USER for the same reason the tee does:
+# on NFS-mounted home dirs with root-squash, root is mapped to nobody and
+# can't read the user's rc file, so a root-level grep would fail with
+# EACCES and we'd append a duplicate block on every reinstall.
+has_marker() {
+  sudo -u "$CONSOLE_USER" grep -qF '# bun (installed via .pkg)' "$1" 2>/dev/null
+}
+
 append_once() {
   local file="$1"
   # Skip anything that resolves to a non-regular file (directory, device).
   # -f follows symlinks, so a symlink -> regular file is fine.
   [[ -e "$file" && ! -f "$file" ]] && return 0
-  if [[ -f "$file" ]] && grep -qF '# bun (installed via .pkg)' "$file" 2>/dev/null; then
+  if [[ -f "$file" ]] && has_marker "$file"; then
     return
   fi
   sudo -u "$CONSOLE_USER" tee -a "$file" >/dev/null 2>&1 <<EOF || true
@@ -112,7 +120,7 @@ append_once_fish() {
   local file="$1"
   sudo -u "$CONSOLE_USER" mkdir -p "$(dirname "$file")" 2>/dev/null || return 0
   [[ -e "$file" && ! -f "$file" ]] && return 0
-  if [[ -f "$file" ]] && grep -qF '# bun (installed via .pkg)' "$file" 2>/dev/null; then
+  if [[ -f "$file" ]] && has_marker "$file"; then
     return
   fi
   sudo -u "$CONSOLE_USER" tee -a "$file" >/dev/null 2>&1 <<EOF || true

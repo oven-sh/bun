@@ -121,9 +121,10 @@ describe.skipIf(isWindows)("packages/bun-darwin-pkg", () => {
     // `bun completions` targets $SHELL; without forwarding the console
     // user's shell it sees root's and silently writes nothing.
     expect(src).toMatch(/SHELL="\${USER_SHELL:-[^}]*}"\s.*completions/s);
-    // Idempotency guard uses a fixed-string match so the `.` in `.pkg`
-    // isn't a BRE metachar.
-    expect(src).toContain("grep -qF '# bun (installed via .pkg)'");
+    // Idempotency guard: fixed-string (`.` in `.pkg` isn't a BRE metachar)
+    // and read as the console user — on NFS home dirs with root-squash a
+    // root-level grep would EACCES and we'd duplicate the block.
+    expect(src).toContain('sudo -u "$CONSOLE_USER" grep -qF \'# bun (installed via .pkg)\'');
 
     // postinstall runs as root but writes into the user's home directory;
     // make sure the drop-privileges write stays in place so a symlinked

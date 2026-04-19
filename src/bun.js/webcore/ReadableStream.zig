@@ -418,6 +418,7 @@ pub fn NewSource(
         pending_err: ?Syscall.Error = null,
         close_handler: ?*const fn (?*anyopaque) void = null,
         close_ctx: ?*anyopaque = null,
+        close_jsvalue: jsc.Strong.Optional = .empty,
         cancel_handler: ?*const fn (?*anyopaque) void = null,
         cancel_ctx: ?*anyopaque = null,
         globalThis: *JSGlobalObject = undefined,
@@ -505,6 +506,7 @@ pub fn NewSource(
 
             this.ref_count -= 1;
             if (this.ref_count == 0) {
+                this.close_jsvalue.deinit();
                 deinit_fn(&this.context);
                 return 0;
             }
@@ -681,7 +683,7 @@ pub fn NewSource(
                 this.globalThis = globalObject;
 
                 if (value.isUndefined()) {
-                    if (this.this_jsvalue != .zero) js.onCloseCallbackSetCached(this.this_jsvalue, globalObject, .js_undefined);
+                    this.close_jsvalue.deinit();
                     return;
                 }
 
@@ -689,7 +691,7 @@ pub fn NewSource(
                     return globalObject.throwInvalidArgumentType("ReadableStreamSource", "onclose", "function");
                 }
                 const cb = value.withAsyncContextIfNeeded(globalObject);
-                if (this.this_jsvalue != .zero) js.onCloseCallbackSetCached(this.this_jsvalue, globalObject, cb);
+                this.close_jsvalue.set(globalObject, cb);
             }
 
             pub fn setOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!void {
@@ -713,10 +715,7 @@ pub fn NewSource(
 
                 jsc.markBinding(@src());
 
-                if (this.this_jsvalue != .zero) {
-                    if (js.onCloseCallbackGetCached(this.this_jsvalue)) |val| return val;
-                }
-                return .js_undefined;
+                return this.close_jsvalue.get() orelse .js_undefined;
             }
 
             pub fn getOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
@@ -744,12 +743,11 @@ pub fn NewSource(
             fn onClose(ptr: ?*anyopaque) void {
                 jsc.markBinding(@src());
                 var this = bun.cast(*ReadableStreamSourceType, ptr.?);
-                if (this.this_jsvalue != .zero) {
-                    if (js.onCloseCallbackGetCached(this.this_jsvalue)) |cb| {
-                        if (!cb.isUndefined()) this.globalThis.queueMicrotask(cb, &.{});
-                        js.onCloseCallbackSetCached(this.this_jsvalue, this.globalThis, .js_undefined);
-                    }
+                if (this.close_jsvalue.trySwap()) |cb| {
+                    this.globalThis.queueMicrotask(cb, &.{});
                 }
+
+                this.close_jsvalue.deinit();
             }
 
             pub fn finalize(this: *ReadableStreamSourceType) void {

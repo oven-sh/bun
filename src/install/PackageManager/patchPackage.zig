@@ -740,10 +740,12 @@ pub fn preparePatch(manager: *PackageManager) !void {
 fn detachModuleFolderFromSharedStore(module_folder: []const u8) void {
     var path: bun.Path(.{ .sep = .auto }) = .from(module_folder);
     defer path.deinit();
-    var components: usize = 0;
-    {
-        var it = bun.strings.split(module_folder, std.fs.path.sep_str);
-        while (it.next()) |_| components += 1;
+    // `module_folder` is normalised to forward slashes on every platform
+    // before reaching here (see `pathToPosixBuf` in `preparePatch`); count
+    // either separator so the walk covers the full depth on Windows too.
+    var components: usize = 1;
+    for (module_folder) |c| {
+        if (c == '/' or c == '\\') components += 1;
     }
     var depth: usize = 0;
     while (depth < components) : (depth += 1) {

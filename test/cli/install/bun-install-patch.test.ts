@@ -573,12 +573,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
   });
 
   describe("bun patch with --linker=isolated", () => {
-    // macOS/Linux exercise the global virtual store; Windows opts out for
-    // now — after `patch --commit` + reinstall, the dep junction inside the
-    // GVS entry (`links\is-odd@...\node_modules\is-number`) fails to resolve
-    // on Windows 2019. The detach in `preparePatch` handles the POSIX case;
-    // the Windows interaction needs separate investigation.
-    const patchEnv = process.platform === "win32" ? { ...bunEnv, BUN_INSTALL_GLOBAL_STORE: "0" } : bunEnv;
+    const patchEnv = bunEnv;
 
     test("should create patch for package and commit it", async () => {
       const filedir = tempDirWithFiles("patch-isolated", {

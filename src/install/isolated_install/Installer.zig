@@ -713,14 +713,21 @@ pub const Installer = struct {
                             // and stamp `.bun-ok`. Otherwise wipe and rebuild
                             // so a half-written tree doesn't survive.
                             if (uses_global_store) {
-                                var sentinel = dest_subpath.save();
-                                dest_subpath.append("package.json");
-                                const exists = sys.existsZ(dest_subpath.sliceZ());
-                                sentinel.restore();
+                                // `dest_subpath` is `.unit = .os` (u16 on
+                                // Windows); the existence/deleteTree helpers
+                                // want u8, so rebuild the same path via the
+                                // u8 store-path helper for the probe.
+                                var probe: bun.AbsPath(.{ .sep = .auto }) = .init();
+                                defer probe.deinit();
+                                installer.appendRealStorePath(&probe, this.entry_id);
+                                const probe_save = probe.save();
+                                probe.append("package.json");
+                                const exists = sys.existsZ(probe.sliceZ());
+                                probe_save.restore();
                                 if (exists) {
                                     continue :next_step this.nextStep(current_step);
                                 }
-                                FD.cwd().deleteTree(dest_subpath.slice()) catch {};
+                                FD.cwd().deleteTree(probe.slice()) catch {};
                             }
                             cached_package_dir = switch (bun.openDirForIteration(cache_dir, pkg_cache_dir_subpath.slice())) {
                                 .result => |fd| fd,
@@ -784,14 +791,21 @@ pub const Installer = struct {
                         else => {
                             // See the matching note in `.hardlink` above.
                             if (uses_global_store) {
-                                var sentinel = dest_subpath.save();
-                                dest_subpath.append("package.json");
-                                const exists = sys.existsZ(dest_subpath.sliceZ());
-                                sentinel.restore();
+                                // `dest_subpath` is `.unit = .os` (u16 on
+                                // Windows); the existence/deleteTree helpers
+                                // want u8, so rebuild the same path via the
+                                // u8 store-path helper for the probe.
+                                var probe: bun.AbsPath(.{ .sep = .auto }) = .init();
+                                defer probe.deinit();
+                                installer.appendRealStorePath(&probe, this.entry_id);
+                                const probe_save = probe.save();
+                                probe.append("package.json");
+                                const exists = sys.existsZ(probe.sliceZ());
+                                probe_save.restore();
                                 if (exists) {
                                     continue :next_step this.nextStep(current_step);
                                 }
-                                FD.cwd().deleteTree(dest_subpath.slice()) catch {};
+                                FD.cwd().deleteTree(probe.slice()) catch {};
                             }
                             cached_package_dir = switch (bun.openDirForIteration(cache_dir, pkg_cache_dir_subpath.slice())) {
                                 .result => |fd| fd,
@@ -1190,11 +1204,14 @@ pub const Installer = struct {
 
                     if (bin_linker.err) |err| {
                         // See `.symlink_dependency_binaries` for why EEXIST is
-                        // benign on a shared global-store entry.
-                        if (err == error.EEXIST and installer.entryUsesGlobalStore(this.entry_id)) {
-                            continue :next_step this.nextStep(current_step);
+                        // benign on a shared global-store entry. Fall through
+                        // so the `.bun-ok` stamp still lands; if the writer
+                        // that created the colliding bin link died before
+                        // stamping, this task is now the one responsible for
+                        // marking the entry complete.
+                        if (!(err == error.EEXIST and installer.entryUsesGlobalStore(this.entry_id))) {
+                            return .failure(.{ .binaries = err });
                         }
-                        return .failure(.{ .binaries = err });
                     }
 
                     installer.stampGlobalStoreEntry(this.entry_id);
@@ -1615,8 +1632,8 @@ pub const Installer = struct {
         defer ok.deinit();
         this.appendGlobalStoreEntryPath(&ok, entry_id);
         ok.append(".bun-ok");
-        switch (sys.openat(FD.cwd(), ok.sliceZ(), bun.O.CREAT | bun.O.WRONLY, 0o644)) {
-            .result => |fd| fd.close(),
+        switch (sys.File.openat(FD.cwd(), ok.sliceZ(), bun.O.CREAT | bun.O.WRONLY, 0o644)) {
+            .result => |f| f.close(),
             .err => {},
         }
     }

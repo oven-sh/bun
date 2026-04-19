@@ -134,8 +134,14 @@ function Initialize-Signing {
   }
 
   $smctl = Install-KeyLocker
-  & $smctl credentials save $env:SM_API_KEY $env:SM_CLIENT_CERT_PASSWORD 2>&1 | Out-Null
-  & $smctl windows certsync 2>&1 | Out-Null
+  # These setup calls are occasionally flaky (see the same comment in
+  # sign-windows-artifacts.ps1:Configure-KeyLocker) but signing can still
+  # succeed afterwards, so log rather than throw. Sign-Msi's
+  # Get-AuthenticodeSignature check remains the authoritative pass/fail.
+  $out = & $smctl credentials save $env:SM_API_KEY $env:SM_CLIENT_CERT_PASSWORD 2>&1 | Out-String
+  if ($LASTEXITCODE -ne 0) { Log-Error "smctl credentials save exited $LASTEXITCODE`n$out" }
+  $out = & $smctl windows certsync 2>&1 | Out-String
+  if ($LASTEXITCODE -ne 0) { Log-Error "smctl windows certsync exited $LASTEXITCODE`n$out" }
   Log-Success "Signing initialised"
   return $smctl
 }

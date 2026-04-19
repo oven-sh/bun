@@ -53,6 +53,10 @@ pub const Source = union(enum) {
         /// When true, file will close itself when the current operation completes.
         close_after_operation: bool = false,
 
+        /// When false, detach()/startClose() free this struct without calling
+        /// uv_fs_close — the caller owns the fd. Mirrors BufferedReader.flags.close_handle.
+        close_fd: bool = true,
+
         /// Get the File struct from an fs_t pointer using field offset.
         pub fn fromFS(fs: *uv.fs_t) *File {
             return @fieldParentPtr("fs", fs);
@@ -117,6 +121,11 @@ pub const Source = union(enum) {
 
         fn startClose(this: *File) void {
             bun.assert(this.state == .deinitialized);
+            if (!this.close_fd) {
+                // Caller owns the fd — free this struct without closing.
+                bun.default_allocator.destroy(this);
+                return;
+            }
             this.state = .closing;
             _ = uv.uv_fs_close(uv.Loop.get(), &this.fs, this.file, onCloseComplete);
         }

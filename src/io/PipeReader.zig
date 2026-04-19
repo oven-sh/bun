@@ -1197,6 +1197,8 @@ pub const WindowsBufferedReader = struct {
             switch (source) {
                 .sync_file, .file => |file| {
                     // Detach - file will close itself after operation completes
+                    // (or just free the struct if the caller owns the fd).
+                    file.close_fd = this.flags.close_handle;
                     file.detach();
                 },
                 .pipe => |pipe| {

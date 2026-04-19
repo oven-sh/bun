@@ -10,6 +10,13 @@ dest_subpath: bun.Path(.{ .sep = .auto, .unit = .os }),
 /// across projects and content-addressed by name (so the existing tree is
 /// already what we'd produce).
 keep_existing_dest: bool = false,
+/// Path to the entry-level `.bun-ok` stamp (`<gvs>/<entry>/.bun-ok`), used as
+/// the "this entry was fully built" sentinel when `cloneAtomic`'s rename hits
+/// an existing destination. `package.json` alone is *not* a valid sentinel: a
+/// crashed file-walking install (or intervening cache corruption) could leave
+/// it alongside an arbitrary subset of files. Only set when
+/// `keep_existing_dest` is true.
+entry_ok_path: [:0]const u8 = "",
 
 fn clonefileat(this: *FileCloner) sys.Maybe(void) {
     return sys.clonefileat(this.cache_dir, this.cache_dir_subpath.sliceZ(), FD.cwd(), this.dest_subpath.sliceZ());
@@ -88,22 +95,23 @@ fn cloneAtomic(this: *FileCloner) sys.Maybe(void) {
         .result => return .success,
         .err => |err| switch (err.getErrno()) {
             .EXIST, .NOTEMPTY => {
-                // Someone got there first. `package.json` proves their clone
-                // landed (clonefileat is atomic for the whole tree); the dep
-                // symlinks and bin links are written by later task steps that
-                // *this* task will also run with `.expect_existing`, so any
-                // gaps left by a crashed winner get filled by the loser. The
-                // entry-level `.bun-ok` stamp (written after `binaries`) is
-                // what future installs use to short-circuit the whole task.
-                var sentinel_buf: bun.PathBuffer = undefined;
-                if (std.fmt.bufPrintZ(&sentinel_buf, "{s}/package.json", .{this.dest_subpath.slice()})) |sentinel| {
-                    if (sys.existsZ(sentinel)) {
-                        FD.cwd().deleteTree(tmp_path) catch {};
-                        return .success;
-                    }
-                } else |_| {}
-                // No package.json → partial leftover from an interrupted
-                // earlier run; replace with our complete tree.
+                // Someone got there first. Keep their tree only if the
+                // entry-level `.bun-ok` stamp is present (i.e. some install
+                // fully built it). `package.json` alone is *not* a valid
+                // sentinel: although clonefileat is whole-tree atomic, a
+                // file-walking install or cache corruption could have left it
+                // alongside an arbitrary subset of files, and the warm-hit
+                // check already established `.bun-ok` is absent (that's why
+                // we're here). Replacing dest with our complete temp tree is
+                // safe even if a concurrent install just renamed first — dest
+                // is only the `<pkg>` directory; their dep symlinks, bin
+                // links, and the `.bun-ok` stamp live alongside it under the
+                // entry root, so their later steps proceed unchanged with our
+                // (identical) package files.
+                if (this.entry_ok_path.len > 0 and sys.existsZ(this.entry_ok_path)) {
+                    FD.cwd().deleteTree(tmp_path) catch {};
+                    return .success;
+                }
                 FD.cwd().deleteTree(this.dest_subpath.slice()) catch {};
                 return switch (sys.rename(tmp_path, this.dest_subpath.sliceZ())) {
                     .result => .success,

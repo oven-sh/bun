@@ -639,6 +639,86 @@ pub const Installer = struct {
 
                     const uses_global_store = installer.entryUsesGlobalStore(this.entry_id);
 
+                    // For the file-walking backends (hardlink/copyfile), shared
+                    // global-store entries are populated through a temp sibling
+                    // and renamed into place — same staging FileCloner does in
+                    // `cloneAtomic`. Writing file-by-file straight into the
+                    // shared destination races with other `bun install`
+                    // processes building the same content-addressed entry: the
+                    // EEXIST→deleteTree→relink recovery in those backends
+                    // collides with the other process's `CreateHardLinkW` and
+                    // surfaces as EPERM (sharing violation) and
+                    // `STATUS_FILE_DELETED` (`NTSTATUS=0xc0000123`, file is
+                    // delete-pending). With temp+rename, processes never touch
+                    // the same file; whichever rename lands first wins and the
+                    // loser discards its identical temp tree.
+                    // The OS-unit path for the file-walking backends, plus a
+                    // parallel UTF-8 path for `sys.rename`/`deleteTree` (which
+                    // take `[]const u8` even on Windows).
+                    var staged_dest: ?bun.Path(.{ .sep = .auto, .unit = .os }) = null;
+                    defer if (staged_dest) |*p| p.deinit();
+                    var staged_dest_u8: bun.AbsPath(.{ .sep = .auto }) = .init();
+                    defer staged_dest_u8.deinit();
+                    var real_dest_u8: bun.AbsPath(.{ .sep = .auto }) = .init();
+                    defer real_dest_u8.deinit();
+                    const finishStagedDest = struct {
+                        // On rename EEXIST/NOTEMPTY, keep the existing dest
+                        // only if the entry-level `.bun-ok` stamp is present
+                        // (i.e. some install fully built it). `package.json`
+                        // alone is *not* a valid sentinel here: a hardlink/
+                        // copyfile run from before this commit could have
+                        // crashed mid-walk leaving package.json plus an
+                        // arbitrary subset of files, and the warm-hit check
+                        // already established `.bun-ok` is absent (that's why
+                        // we're here). Replacing dest with our complete temp
+                        // tree is safe even if a concurrent install just
+                        // renamed first — dest is only the `<pkg>` directory;
+                        // their dep symlinks, bin links, and the `.bun-ok`
+                        // stamp live alongside it under the entry root, so
+                        // their later steps proceed unchanged with our
+                        // (identical) package files.
+                        fn call(tmp: *bun.AbsPath(.{ .sep = .auto }), real: *bun.AbsPath(.{ .sep = .auto }), entry_ok: *bun.AbsPath(.{ .sep = .auto })) sys.Maybe(void) {
+                            switch (sys.renameat(FD.cwd(), tmp.sliceZ(), FD.cwd(), real.sliceZ())) {
+                                .result => return .success,
+                                .err => |err| switch (err.getErrno()) {
+                                    .EXIST, .NOTEMPTY, .PERM, .ACCES => {
+                                        if (sys.existsZ(entry_ok.sliceZ())) {
+                                            FD.cwd().deleteTree(tmp.slice()) catch {};
+                                            return .success;
+                                        }
+                                        FD.cwd().deleteTree(real.slice()) catch {};
+                                        return switch (sys.renameat(FD.cwd(), tmp.sliceZ(), FD.cwd(), real.sliceZ())) {
+                                            .result => .success,
+                                            .err => |e| switch (e.getErrno()) {
+                                                // Concurrent install repopulated
+                                                // it between deleteTree and
+                                                // rename — done either way.
+                                                .EXIST, .NOTEMPTY, .PERM, .ACCES => {
+                                                    FD.cwd().deleteTree(tmp.slice()) catch {};
+                                                    return .success;
+                                                },
+                                                else => {
+                                                    FD.cwd().deleteTree(tmp.slice()) catch {};
+                                                    return .initErr(e);
+                                                },
+                                            },
+                                        };
+                                    },
+                                    else => {
+                                        FD.cwd().deleteTree(tmp.slice()) catch {};
+                                        return .initErr(err);
+                                    },
+                                },
+                            }
+                        }
+                    }.call;
+                    var entry_ok_u8: bun.AbsPath(.{ .sep = .auto }) = .init();
+                    defer entry_ok_u8.deinit();
+                    if (uses_global_store) {
+                        installer.appendGlobalStoreEntryPath(&entry_ok_u8, this.entry_id);
+                        entry_ok_u8.append(".bun-ok");
+                    }
+
                     var cached_package_dir: ?FD = null;
                     defer if (cached_package_dir) |dir| dir.close();
 
@@ -673,6 +753,7 @@ pub const Installer = struct {
                                 // re-clone identical bytes (and never race two
                                 // installs into deleting each other's work).
                                 .keep_existing_dest = uses_global_store,
+                                .entry_ok_path = if (uses_global_store) entry_ok_u8.sliceZ() else "",
                             };
 
                             switch (cloner.clone()) {
@@ -698,24 +779,19 @@ pub const Installer = struct {
                         },
 
                         .hardlink => {
-                            if (uses_global_store) {
-                                // The hardlink/copyfile backends write
-                                // file-by-file straight into the destination
-                                // (no temp+rename), so `package.json` can land
-                                // before the rest of the tree and probing for
-                                // it would accept a half-written entry
-                                // forever. Until those backends grow
-                                // `cloneAtomic`-style staging, take the
-                                // conservative path: wipe and rebuild every
-                                // time `needs_install` got us here. The
-                                // `.bun-ok` warm-hit check already skipped
-                                // this entire task on the fast path, so this
-                                // only fires for genuinely-missing or
-                                // unstamped entries.
-                                var probe: bun.AbsPath(.{ .sep = .auto }) = .init();
-                                defer probe.deinit();
-                                installer.appendRealStorePath(&probe, this.entry_id);
-                                FD.cwd().deleteTree(probe.slice()) catch {};
+                            if (uses_global_store and staged_dest == null) {
+                                installer.appendRealStorePath(&real_dest_u8, this.entry_id);
+                                staged_dest_u8.appendFmt("{s}.tmp-{d}-{d}", .{
+                                    real_dest_u8.slice(),
+                                    if (comptime Environment.isWindows) std.os.windows.GetCurrentProcessId() else std.c.getpid(),
+                                    std.crypto.random.int(u32),
+                                });
+                                staged_dest = .init();
+                                staged_dest.?.append(staged_dest_u8.slice());
+                                // Stale temp from a crashed earlier run with
+                                // the same pid is the only thing that can
+                                // already be here.
+                                FD.cwd().deleteTree(staged_dest_u8.slice()) catch {};
                             }
                             cached_package_dir = switch (bun.openDirForIteration(cache_dir, pkg_cache_dir_subpath.slice())) {
                                 .result => |fd| fd,
@@ -740,14 +816,20 @@ pub const Installer = struct {
                             var hardlinker: Hardlinker = try .init(
                                 cached_package_dir.?,
                                 src,
-                                dest_subpath,
+                                if (staged_dest) |*tmp| tmp.* else dest_subpath,
                                 &.{},
                             );
                             defer hardlinker.deinit();
 
                             switch (try hardlinker.link()) {
-                                .result => {},
+                                .result => {
+                                    if (staged_dest != null) switch (finishStagedDest(&staged_dest_u8, &real_dest_u8, &entry_ok_u8)) {
+                                        .result => {},
+                                        .err => |err| return .failure(.{ .link_package = err }),
+                                    };
+                                },
                                 .err => |err| {
+                                    if (staged_dest != null) FD.cwd().deleteTree(staged_dest_u8.slice()) catch {};
                                     if (err.getErrno() == .XDEV) {
                                         installer.supported_backend.store(.copyfile, .monotonic);
                                         continue :backend .copyfile;
@@ -777,24 +859,19 @@ pub const Installer = struct {
 
                         // fallthrough copyfile
                         else => {
-                            // See the matching note in `.hardlink` above.
-                            if (uses_global_store) {
-                                // The hardlink/copyfile backends write
-                                // file-by-file straight into the destination
-                                // (no temp+rename), so `package.json` can land
-                                // before the rest of the tree. Probing for it
-                                // would accept a half-written entry forever.
-                                // Until those backends grow `cloneAtomic`-style
-                                // staging, take the conservative path: wipe
-                                // and rebuild every time `needs_install` got us
-                                // here. The `.bun-ok` warm-hit check already
-                                // skipped this entire task on the fast path,
-                                // so this only fires for genuinely-missing or
-                                // unstamped entries.
-                                var probe: bun.AbsPath(.{ .sep = .auto }) = .init();
-                                defer probe.deinit();
-                                installer.appendRealStorePath(&probe, this.entry_id);
-                                FD.cwd().deleteTree(probe.slice()) catch {};
+                            // See the matching note in `.hardlink` above for
+                            // why shared global-store entries are written via a
+                            // temp sibling and renamed into place.
+                            if (uses_global_store and staged_dest == null) {
+                                installer.appendRealStorePath(&real_dest_u8, this.entry_id);
+                                staged_dest_u8.appendFmt("{s}.tmp-{d}-{d}", .{
+                                    real_dest_u8.slice(),
+                                    if (comptime Environment.isWindows) std.os.windows.GetCurrentProcessId() else std.c.getpid(),
+                                    std.crypto.random.int(u32),
+                                });
+                                staged_dest = .init();
+                                staged_dest.?.append(staged_dest_u8.slice());
+                                FD.cwd().deleteTree(staged_dest_u8.slice()) catch {};
                             }
                             cached_package_dir = switch (bun.openDirForIteration(cache_dir, pkg_cache_dir_subpath.slice())) {
                                 .result => |fd| fd,
@@ -826,14 +903,20 @@ pub const Installer = struct {
                             var file_copier: FileCopier = try .init(
                                 cached_package_dir.?,
                                 src_path,
-                                dest_subpath,
+                                if (staged_dest) |*tmp| tmp.* else dest_subpath,
                                 &.{},
                             );
                             defer file_copier.deinit();
 
                             switch (file_copier.copy()) {
-                                .result => {},
+                                .result => {
+                                    if (staged_dest != null) switch (finishStagedDest(&staged_dest_u8, &real_dest_u8, &entry_ok_u8)) {
+                                        .result => {},
+                                        .err => |err| return .failure(.{ .link_package = err }),
+                                    };
+                                },
                                 .err => |err| {
+                                    if (staged_dest != null) FD.cwd().deleteTree(staged_dest_u8.slice()) catch {};
                                     if (PackageManager.verbose_install) {
                                         Output.prettyErrorln(
                                             \\<red><b>error<r><d>:<r>Failed to copy package

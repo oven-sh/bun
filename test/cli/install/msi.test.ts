@@ -14,8 +14,17 @@ const msiDir = join(repoRoot, "packages", "bun-msi");
 // hand-formatted so a non-greedy attribute scan is sufficient; if the tag
 // or attribute isn't there we return undefined and the calling assertion
 // fails with a readable diff.
+//
+// Comments and CDATA are stripped first — the .wxs has prose like
+// `A valueless <Property Secure="yes"> is WiX's idiom ...` inside <!-- -->
+// blocks, and we don't want assertions to accidentally pass against
+// commented-out markup rather than the live tree.
+function stripXmlTrivia(src: string): string {
+  return src.replace(/<!--[\s\S]*?-->/g, "").replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, "");
+}
 function elements(src: string, tag: string): string[] {
-  return [...src.matchAll(new RegExp(`<${tag}\\b[^>]*?\\/?>`, "gs"))].map(m => m[0]);
+  const body = stripXmlTrivia(src);
+  return [...body.matchAll(new RegExp(`<${tag}\\b[^>]*?\\/?>`, "gs"))].map(m => m[0]);
 }
 function attr(el: string | undefined, name: string): string | undefined {
   if (!el) return undefined;
@@ -33,9 +42,7 @@ describe("packages/bun-msi/bun.wxs", () => {
     // missing close tag. This doesn't validate against the XSD — WiX does
     // that at build time on the windows-msi agent — but it stops
     // obviously-broken pushes from every other lane.
-    // Comments and CDATA are stripped first so prose like
-    // `bun-windows-<arch>.msi` doesn't confuse the scan.
-    const body = wxs.replace(/<!--[\s\S]*?-->/g, "").replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, "");
+    const body = stripXmlTrivia(wxs);
     const opens: string[] = [];
     for (const m of body.matchAll(/<\/?([A-Za-z][\w:.-]*)\b[^>]*?(\/?)>/gs)) {
       const [raw, name, selfClose] = m;
@@ -125,8 +132,7 @@ describe("packages/bun-msi/bun.wxs", () => {
     // components on Win11 24H2+ and are routinely GPO-blocked on the
     // enterprise fleets MSI deployment targets. A script CA here would
     // turn a cosmetic trailing '\' into a hard 1603/1721 install failure.
-    // (Strip comments first — the .wxs explains this rationale in prose.)
-    const body = wxs.replace(/<!--[\s\S]*?-->/g, "");
+    const body = stripXmlTrivia(wxs);
     for (const ca of elements(body, "CustomAction")) {
       expect(attr(ca, "Script")).toBeUndefined();
       expect(attr(ca, "VBScriptCall")).toBeUndefined();
@@ -165,7 +171,14 @@ describe("packages/bun-msi/bun.wxs", () => {
     expect(attr(exitText, "Value")).toContain("bun --version");
   });
 
-  test("exposes ADDTOPATH / SETBUNINSTALL as Secure public properties", () => {
+  test("exposes INSTALLFOLDER / ADDTOPATH / SETBUNINSTALL as Secure public properties", () => {
+    // INSTALLFOLDER comes from the <Directory> element but a command-line
+    // override must still survive the client->elevated-service hop on a
+    // per-machine install, so it needs to be in SecureCustomProperties.
+    const installFolder = findBy(wxs, "Property", "Id", "INSTALLFOLDER");
+    expect(attr(installFolder, "Secure")).toBe("yes");
+    expect(attr(installFolder, "Value")).toBeUndefined(); // defined by Directory, not here
+
     const addToPath = findBy(wxs, "Property", "Id", "ADDTOPATH");
     expect({ Value: attr(addToPath, "Value"), Secure: attr(addToPath, "Secure") }).toEqual({
       Value: "1",

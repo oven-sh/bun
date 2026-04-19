@@ -85,7 +85,14 @@
       cross the UAC boundary from the user's msiexec command line into the
       elevated execute sequence; without it, ADDTOPATH=0 on the command
       line would silently revert to the default once the service kicks in.
+
+      INSTALLFOLDER is defined by the <Directory> below, but a command-line
+      override (msiexec ... INSTALLFOLDER=D:\Bun) still has to survive the
+      same client->service hop, so list it in SecureCustomProperties too.
+      A valueless <Property Secure="yes"> is WiX's idiom for "mark this
+      existing property secure without redefining it".
     -->
+    <Property Id="INSTALLFOLDER" Secure="yes" />
     <Property Id="ADDTOPATH" Value="1" Secure="yes" />
     <Property Id="SETBUNINSTALL" Value="1" Secure="yes" />
 

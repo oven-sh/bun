@@ -1376,14 +1376,8 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
 });
 
 describe("global virtual store", () => {
-  // Explicit opt-in: the global store defaults to off on Windows (resolver
-  // double-hop classification bug), but these tests only assert on the
-  // install-produced filesystem layout, not on `bun run`-time resolution,
-  // so they exercise the install path on every platform.
-  const gvsOpts = { bunfigOpts: { linker: "isolated", globalStore: true } } as const;
-
   test("survives node_modules wipe", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir(gvsOpts);
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -1432,7 +1426,7 @@ describe("global virtual store", () => {
   });
 
   test("can be disabled via BUN_INSTALL_GLOBAL_STORE=0", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir(gvsOpts);
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -1473,7 +1467,7 @@ describe("global virtual store", () => {
   });
 
   test("entry hash is deterministic across fresh installs", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir(gvsOpts);
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -1505,8 +1499,8 @@ describe("global virtual store", () => {
     // versions of one of its transitive deps must NOT share a global entry —
     // the dep symlink inside the entry would point at the wrong version for
     // one of them.
-    const a = await registry.createTestDir(gvsOpts);
-    const b = await registry.createTestDir(gvsOpts);
+    const a = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const b = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       a.packageJson,
@@ -1547,8 +1541,8 @@ describe("global virtual store", () => {
   });
 
   test("two projects with the same closure share one global entry", async () => {
-    const a = await registry.createTestDir(gvsOpts);
-    const b = await registry.createTestDir(gvsOpts);
+    const a = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const b = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     for (const { packageJson } of [a, b]) {
       await write(
@@ -1576,7 +1570,7 @@ describe("global virtual store", () => {
     // dangling for any other project that shared the entry. The eligibility
     // check propagates: an entry that links to anything project-local is
     // itself project-local.
-    const { packageJson, packageDir } = await registry.createTestDir(gvsOpts);
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await mkdir(join(packageDir, "packages", "ws-pkg"), { recursive: true });
     await write(
@@ -1605,7 +1599,7 @@ describe("global virtual store", () => {
   });
 
   test("packages with trusted lifecycle scripts stay project-local", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir(gvsOpts);
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -1641,15 +1635,15 @@ describe("global virtual store", () => {
     // Two `bun install` processes may race to create the same content-addressed
     // global entry; the loser sees EEXIST from clonefile/symlink/bin-link and
     // must treat it as success rather than failing the install.
-    const a = await registry.createTestDir(gvsOpts);
-    const b = await registry.createTestDir(gvsOpts);
+    const a = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const b = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     // Both projects must share one cache for the race to be real; the harness
     // gives each test dir its own `.bun-cache/` by default.
     const sharedCache = join(a.packageDir, ".bun-cache");
     await write(
       join(b.packageDir, "bunfig.toml"),
-      `[install]\ncache = "${sharedCache.replaceAll("\\", "\\\\")}"\nregistry = "${registry.registryUrl()}"\nlinker = "isolated"\nglobalStore = true\n`,
+      `[install]\ncache = "${sharedCache.replaceAll("\\", "\\\\")}"\nregistry = "${registry.registryUrl()}"\nlinker = "isolated"\n`,
     );
 
     for (const { packageJson } of [a, b]) {
@@ -1701,7 +1695,7 @@ describe("global virtual store", () => {
     // Simulate an interrupted install: the global-store directory exists but
     // is missing files. Because population is clone-to-temp-then-rename,
     // a fresh install must not treat the broken directory as a hit.
-    const { packageJson, packageDir } = await registry.createTestDir(gvsOpts);
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -1738,7 +1732,7 @@ describe("global virtual store", () => {
     // real directory. Re-running install with the global store enabled must
     // replace that directory with a symlink (not fail with EEXIST or leave the
     // stale tree behind).
-    const { packageJson, packageDir } = await registry.createTestDir(gvsOpts);
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,

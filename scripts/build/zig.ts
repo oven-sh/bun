@@ -39,7 +39,7 @@ import { streamPath } from "./stream.ts";
  * is trusted, collapse both back to one constant.
  */
 export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
-export const ZIG_COMMIT_PARALLEL = "445fc0cbba4eea579e5c846f2b8be7c9bdc4e1cc";
+export const ZIG_COMMIT_PARALLEL = "65b29282c04e42bea2539e9e31c5a59ac9cbabdb";
 
 /**
  * The one place that picks which compiler to use. Everything coupled to
@@ -47,15 +47,13 @@ export const ZIG_COMMIT_PARALLEL = "445fc0cbba4eea579e5c846f2b8be7c9bdc4e1cc";
  * on the resolved cfg.zigCommit via usingParallelCompiler(), so changing
  * this — or passing --zigCommit=<hash> — is sufficient.
  *
- * Parallel compiler is darwin-local only for now. Linux is gated off
- * because oven-sh/zig's self-hosted ELF `-r` merge (used to combine
- * sharded codegen output when no_link_obj=true) currently emits an
- * incomplete bun-zig.o — link fails with every Zig symbol undefined on
- * a fresh build. macOS's Mach-O merge path works. See #29132. CI and
- * Windows stay on the stable compiler regardless.
+ * Parallel compiler is darwin+linux local only for now. Linux was gated
+ * off until 65b29282 fixed the self-hosted ELF `-r` merge that combines
+ * sharded codegen output (#29132). CI and Windows stay on the stable
+ * compiler.
  */
 export function defaultZigCommit(ci: boolean, hostOs: OS): string {
-  if (ci || hostOs !== "darwin") return ZIG_COMMIT;
+  if (ci || hostOs === "windows") return ZIG_COMMIT;
   return ZIG_COMMIT_PARALLEL;
 }
 

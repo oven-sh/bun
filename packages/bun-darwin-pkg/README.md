@@ -37,9 +37,21 @@ notarized; Gatekeeper will warn on open. That's expected for local builds.
 Buildkite runs this from [`.buildkite/ci.mjs`](../../.buildkite/ci.mjs) as
 the `darwin-pkg` step, after both `darwin-*-build-bun` steps complete on a
 `build-darwin` agent. Artifacts are downloaded via `buildkite-agent`, and
-the finished `bun-darwin-universal.pkg` is uploaded alongside the existing
-`bun-darwin-*.zip` artifacts for `upload-release.sh` to attach to the
-GitHub release / S3.
+the finished `bun-darwin-universal.pkg` is uploaded as a Buildkite
+artifact.
+
+The step only runs for **stable** releases (`isMainBranch() && !canary`)
+or when `[build pkg]` is in the commit message, because the version baked
+into the package is read from `LATEST` — a canary `.pkg` would carry the
+previous stable version string.
+
+> [!NOTE]
+> `.buildkite/scripts/upload-release.sh` currently only uploads **canary**
+> artifacts to GitHub/S3 (it early-exits when `CANARY=0`). Stable-release
+> assets — including this `.pkg` — are attached via the GitHub release
+> workflow, so until that workflow is taught about
+> `bun-darwin-universal.pkg` the file needs to be grabbed from the
+> Buildkite `darwin-pkg` step and attached to the release manually.
 
 ## Signing & notarization
 

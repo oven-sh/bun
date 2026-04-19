@@ -6,7 +6,7 @@
 // silently stopped setting BUN_INSTALL / PATH.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv } from "harness";
+import { bunEnv, isWindows } from "harness";
 import { accessSync, constants, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -21,7 +21,10 @@ function isExecutable(path: string): boolean {
   }
 }
 
-describe("packages/bun-darwin-pkg", () => {
+// Skip on Windows: X_OK maps to F_OK there (so the executable-bit check is a
+// no-op), and bash isn't guaranteed on PATH. The installer itself is
+// macOS-only anyway — we only want one POSIX lane exercising these guards.
+describe.skipIf(isWindows)("packages/bun-darwin-pkg", () => {
   test("build.sh and postinstall are executable and pass bash -n", async () => {
     const buildSh = join(pkgDir, "build.sh");
     const postinstall = join(pkgDir, "scripts", "postinstall");

@@ -813,35 +813,6 @@ function getWindowsSignStep(windowsPlatforms, options) {
 }
 
 /**
- * Builds the universal macOS .pkg installer from the two darwin build-bun
- * artifacts. Runs on a build-darwin agent (needs lipo/pkgbuild/productbuild/
- * codesign/notarytool). Uploads bun-darwin-universal.pkg for the release
- * step to pick up.
- * @param {Platform[]} darwinPlatforms
- * @returns {Step}
- */
-function getMacOSPkgStep(darwinPlatforms) {
-  return {
-    key: "darwin-pkg",
-    label: `${getBuildkiteEmoji("darwin")} pkg`,
-    depends_on: darwinPlatforms.map(p => `${getTargetKey(p)}-build-bun`),
-    agents: {
-      queue: "build-darwin",
-      os: "darwin",
-      // No arch constraint: lipo/pkgbuild/productbuild are universal, so any
-      // build-darwin agent can run this. (Buildkite agent tags are hard
-      // requirements, not preferences — pinning arch would prevent fallback.)
-    },
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    // notarytool --wait blocks on Apple's external service; typical turnaround
-    // is 5-15 minutes, but bound it so an Apple outage can't hold the agent.
-    timeout_in_minutes: 30,
-    command: "./packages/bun-darwin-pkg/build.sh",
-  };
-}
-
-/**
  * Aggregates stripped-binary sizes from every release build, compares them
  * against the latest main build's binary-sizes.json, and fails if any grew
  * past the threshold. Runs on PR builds (comparison) and main (record-only,
@@ -998,7 +969,6 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
  * @property {string | boolean} [forceTests]
  * @property {string | boolean} [buildImages]
  * @property {string | boolean} [signWindows]
- * @property {string | boolean} [buildPkg]
  * @property {string | boolean} [publishImages]
  * @property {number} [canary]
  * @property {Platform[]} [buildPlatforms]
@@ -1276,7 +1246,6 @@ async function getPipelineOptions() {
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
-    buildPkg: parseOption(/\[(build pkg|build macos pkg)\]/i),
     buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
     dryRun: parseOption(/\[(dry run)\]/i),
     publishImages: parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
@@ -1405,23 +1374,6 @@ async function getPipeline(options = {}) {
     if (windowsPlatforms.length > 0) {
       steps.push(getWindowsSignStep(windowsPlatforms, options));
     }
-  }
-
-  // Build the macOS .pkg installer when [build pkg] is in the commit
-  // message. This exists purely to exercise packages/bun-darwin-pkg/build.sh
-  // end-to-end on a PR before touching the release workflow; the production
-  // .pkg is assembled and attached to the GitHub release by the macos-pkg
-  // job in .github/workflows/release.yml, not here. Needs both darwin
-  // arches to produce a universal binary, and the darwin-*-build-bun steps
-  // to depend on, so skip if either is missing.
-  const darwinPlatforms = buildPlatforms.filter(p => p.os === "darwin" && (p.profile ?? "release") === "release");
-  const shouldBuildPkg =
-    !buildId &&
-    !!options.buildPkg &&
-    darwinPlatforms.some(p => p.arch === "aarch64") &&
-    darwinPlatforms.some(p => p.arch === "x64");
-  if (shouldBuildPkg) {
-    steps.push(getMacOSPkgStep(darwinPlatforms));
   }
 
   if (isMainBranch()) {

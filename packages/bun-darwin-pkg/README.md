@@ -34,13 +34,15 @@ notarized; Gatekeeper will warn on open. That's expected for local builds.
 
 ## Building in CI
 
-### Releases (GitHub Actions)
-
-The production `.pkg` is built by the **`macos-pkg`** job in
+The `.pkg` is built by the **`macos-pkg`** job in
 [`.github/workflows/release.yml`](../../.github/workflows/release.yml),
-which fires when a GitHub release is published (the same trigger that
-generates `SHASUMS256.txt.asc`). It runs on `macos-latest`, calls
-`./build.sh --from-release <tag>`, and:
+on the same triggers as the `.asc` signature:
+
+- automatically when a GitHub release is published
+- manually via **workflow_dispatch** with `use-macos-pkg: true` (for
+  testing against any existing release tag, including `canary`)
+
+It runs on `macos-latest`, calls `./build.sh --from-release <tag>`, and:
 
 1. downloads `bun-darwin-{aarch64,x64}.zip` from the release via `gh`
 2. builds / codesigns / notarizes the universal `.pkg`
@@ -52,18 +54,10 @@ If Apple signing secrets (`APPLE_CERTIFICATES_P12`, `APPLE_NOTARY_*`)
 aren't configured the job still produces and attaches an unsigned
 package.
 
-### Buildkite (testing only)
-
-A `darwin-pkg` step in [`.buildkite/ci.mjs`](../../.buildkite/ci.mjs) can
-be triggered with `[build pkg]` in the commit message to exercise
-`build.sh` end-to-end against the freshly-built darwin artifacts on a PR
-branch. It uploads the result as a Buildkite artifact for inspection but
-does **not** attach it to any release.
-
 ## Signing & notarization
 
-Set these on the CI agent (or export locally) to produce a notarized
-installer that passes Gatekeeper:
+Set these (or export locally) to produce a notarized installer that
+passes Gatekeeper:
 
 | Variable                         | Value                                               |
 | -------------------------------- | --------------------------------------------------- |

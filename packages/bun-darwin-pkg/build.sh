@@ -2,10 +2,11 @@
 #
 # Build a universal macOS .pkg installer for Bun.
 #
-# This script is intended to run on a macOS CI agent after the
-# darwin-aarch64 and darwin-x64 build-bun steps have completed. It:
+# Run by the `macos-pkg` job in .github/workflows/release.yml when a
+# GitHub release is published (or via workflow_dispatch with
+# use-macos-pkg=true). It:
 #
-#   1. Downloads bun-darwin-{aarch64,x64}.zip from the sibling build-bun steps
+#   1. Downloads bun-darwin-{aarch64,x64}.zip from the GitHub release
 #   2. Lipo's the two binaries into a single universal binary
 #   3. Codesigns the binary with Hardened Runtime + entitlements (if creds
 #      are present)
@@ -14,13 +15,10 @@
 #   6. Runs pkgbuild + productbuild to produce Bun.pkg
 #   7. Signs the installer with a Developer ID Installer identity and
 #      submits it for notarization (if creds are present)
+#   8. Uploads bun-darwin-universal.pkg back to the same release
 #
-# When signing credentials are not available (e.g. local dry-run) the
-# script still produces an unsigned .pkg so the pipeline can be tested
-# end-to-end on a branch.
-#
-# Required environment when running in CI:
-#   BUILDKITE                    - detected to enable artifact download/upload
+# When signing credentials are not available the script still produces an
+# unsigned .pkg so the workflow can be exercised before secrets are set up.
 #
 # Optional signing environment (all must be set together to sign):
 #   APPLE_DEVELOPER_ID_APPLICATION  - "Developer ID Application: Oven (<TeamID>)"
@@ -29,12 +27,13 @@
 #     (created via `xcrun notarytool store-credentials`)
 #
 # Usage:
-#   ./build.sh [version]                         # Buildkite (downloads from sibling steps)
-#   ./build.sh --from-release <tag>              # GitHub Actions release.yml
+#   ./build.sh --from-release <tag>
 #     Downloads bun-darwin-{aarch64,x64}.zip from the given GitHub release
-#     (e.g. bun-v1.2.3 or canary) via `gh`, builds the .pkg, and uploads it
-#     back to the same release with `gh release upload`.
-#   ./build.sh --local <arm64-bun> <x64-bun>     # local testing
+#     (bun-v1.2.3 | 1.2.3 | v1.2.3 | canary) via `gh`, builds the .pkg, and
+#     uploads it back to the same release with `gh release upload`.
+#
+#   ./build.sh --local <arm64-bun> <x64-bun>
+#     Build from two local binaries — for testing on a dev machine.
 #
 set -euo pipefail
 
@@ -76,21 +75,16 @@ run()    { echo -e "${Dim}\$ $*${Color_Off}"; "$@"; }
 # Version
 # ---------------------------------------------------------------------------
 
-MODE="buildkite"
-BUN_VERSION="${1:-}"
+MODE=""
+BUN_VERSION=""
 RELEASE_TAG=""
-case "${BUN_VERSION}" in
+case "${1:-}" in
   --local)
     MODE="local"
     LOCAL_ARM64="${2:?--local requires <arm64-bun> <x64-bun>}"
     LOCAL_X64="${3:?--local requires <arm64-bun> <x64-bun>}"
-    BUN_VERSION=""
     ;;
   --from-release)
-    # Download bun-darwin-{aarch64,x64}.zip from a published GitHub release
-    # and build the .pkg from those — used by .github/workflows/release.yml
-    # so the installer is assembled from the exact bits users download.
-    #
     # Accepts any of the forms the rest of the release pipeline passes
     # around (see formatTag() in packages/bun-release/src/github.ts):
     #   bun-v1.2.3 | 1.2.3 | v1.2.3 | canary
@@ -105,16 +99,17 @@ case "${BUN_VERSION}" in
     # fall through to LATEST below rather than passing the literal "canary".
     if [[ "$RELEASE_TAG" != "canary" ]]; then
       BUN_VERSION="${RELEASE_TAG#bun-v}"
-    else
-      BUN_VERSION=""
     fi
+    ;;
+  *)
+    fail "Usage: $0 --from-release <tag> | --local <arm64-bun> <x64-bun>"
     ;;
 esac
 
 if [[ -z "$BUN_VERSION" ]]; then
   BUN_VERSION="$(cat "$REPO_ROOT/LATEST" 2>/dev/null || true)"
 fi
-[[ -n "$BUN_VERSION" ]] || fail "Could not determine Bun version (pass as \$1 or ensure LATEST exists)"
+[[ -n "$BUN_VERSION" ]] || fail "Could not determine Bun version (ensure LATEST exists)"
 
 PKG_NAME="Bun-v${BUN_VERSION}.pkg"
 
@@ -139,27 +134,15 @@ done
 # Fetch per-arch binaries
 # ---------------------------------------------------------------------------
 
-download_artifact() {
-  local name="$1" step="$2"
-  case "$MODE" in
-    release)
-      log "Downloading $name from GitHub release $RELEASE_TAG"
-      run gh release download "$RELEASE_TAG" \
-        --repo "${GITHUB_REPOSITORY:-oven-sh/bun}" \
-        --pattern "$name" \
-        --dir "$BUILD_DIR" \
-        --clobber
-      ;;
-    buildkite)
-      if [[ "${BUILDKITE:-}" == "true" ]]; then
-        log "Downloading $name from step $step"
-        run buildkite-agent artifact download "$name" "$BUILD_DIR/" --step "$step"
-      else
-        fail "Not running in Buildkite. Use --local <arm64> <x64> or --from-release <tag>."
-      fi
-      ;;
-  esac
-  [[ -f "$BUILD_DIR/$name" ]] || fail "artifact download produced no file: $name"
+download_release_asset() {
+  local name="$1"
+  log "Downloading $name from GitHub release $RELEASE_TAG"
+  run gh release download "$RELEASE_TAG" \
+    --repo "${GITHUB_REPOSITORY:-oven-sh/bun}" \
+    --pattern "$name" \
+    --dir "$BUILD_DIR" \
+    --clobber
+  [[ -f "$BUILD_DIR/$name" ]] || fail "release asset download produced no file: $name"
 }
 
 extract_bin() {
@@ -179,8 +162,8 @@ if [[ "$MODE" == "local" ]]; then
   cp "$LOCAL_X64" "$X64_BIN"
   chmod +x "$ARM64_BIN" "$X64_BIN"
 else
-  download_artifact "bun-darwin-aarch64.zip" "darwin-aarch64-build-bun"
-  download_artifact "bun-darwin-x64.zip"     "darwin-x64-build-bun"
+  download_release_asset "bun-darwin-aarch64.zip"
+  download_release_asset "bun-darwin-x64.zip"
   extract_bin "bun-darwin-aarch64.zip" "bun-darwin-aarch64" "$ARM64_BIN"
   extract_bin "bun-darwin-x64.zip"     "bun-darwin-x64"     "$X64_BIN"
 fi
@@ -367,21 +350,12 @@ ls -lh "$BUILD_DIR/$PKG_NAME"
 # Upload
 # ---------------------------------------------------------------------------
 
-case "$MODE" in
-  release)
-    log "Uploading to GitHub release $RELEASE_TAG"
-    run gh release upload "$RELEASE_TAG" \
-      --repo "${GITHUB_REPOSITORY:-oven-sh/bun}" \
-      --clobber \
-      "$BUILD_DIR/bun-darwin-universal.pkg"
-    ;;
-  buildkite)
-    if [[ "${BUILDKITE:-}" == "true" ]]; then
-      log "Uploading Buildkite artifacts"
-      (cd "$BUILD_DIR" && run buildkite-agent artifact upload "$PKG_NAME")
-      (cd "$BUILD_DIR" && run buildkite-agent artifact upload "bun-darwin-universal.pkg")
-    fi
-    ;;
-esac
+if [[ "$MODE" == "release" ]]; then
+  log "Uploading to GitHub release $RELEASE_TAG"
+  run gh release upload "$RELEASE_TAG" \
+    --repo "${GITHUB_REPOSITORY:-oven-sh/bun}" \
+    --clobber \
+    "$BUILD_DIR/bun-darwin-universal.pkg"
+fi
 
 ok "Done ✨"

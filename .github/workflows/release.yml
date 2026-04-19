@@ -48,6 +48,10 @@ on:
         description: "Should types be PR'd to DefinitelyTyped?"
         type: boolean
         default: false
+      use-macos-pkg:
+        description: Should the macOS .pkg installer be built and attached?
+        type: boolean
+        default: false
 
 jobs:
   sign:
@@ -93,7 +97,7 @@ jobs:
     # notarytool --wait blocks on Apple's service; bound it so an outage
     # can't hold a macOS runner (and the downstream sign job) for 6 h.
     timeout-minutes: 30
-    if: ${{ github.repository_owner == 'oven-sh' && github.event_name != 'schedule' }}
+    if: ${{ github.repository_owner == 'oven-sh' && (github.event_name == 'release' || github.event.inputs.use-macos-pkg == 'true') }}
     permissions:
       contents: write
     env:

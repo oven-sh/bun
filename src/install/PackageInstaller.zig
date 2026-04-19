@@ -78,6 +78,11 @@ pub const PackageInstaller = struct {
         dependency_id: DependencyID,
         package_id: PackageID,
         tree_id: Lockfile.Tree.Id,
+        /// Captured at task creation so the worker never reads through
+        /// installer.names — that slice can be rewritten by
+        /// fixCachedLockfilePackageSlices() on the main thread if the
+        /// lockfile package list grows during a concurrent extraction.
+        package_name: String,
 
         result: PackageInstall.Result = .success,
         /// Set when the worker discovers the package is not in the cache
@@ -130,7 +135,7 @@ pub const PackageInstaller = struct {
                 .destination_dir_subpath = subpath_buf[0..self.destination_dir_subpath.len :0],
                 .destination_dir_subpath_buf = &subpath_buf,
                 .allocator = bun.default_allocator,
-                .package_name = self.installer.names[self.package_id],
+                .package_name = self.package_name,
                 .package_version = "",
                 .patch = null,
                 .node_modules = &nm,
@@ -141,10 +146,12 @@ pub const PackageInstaller = struct {
             // fallback internally and records it in the global atomic, so
             // subsequent tasks read the updated method directly.
             const result = pi.install(true, destination_dir, pi.getInstallMethod(), self.resolution_tag);
-            if (result.isFail() and result.failure.step == .opening_cache_dir) {
+            if (result.isFail() and result.failure.isPackageMissingFromCache()) {
                 // The serial path normally calls packageMissingFromCache()
                 // before installing; we skip that to avoid a per-package
-                // faccessat on the main thread and discover it here instead.
+                // faccessat on the main thread and discover it here
+                // instead. Other opening_cache_dir errors (EACCES, etc.)
+                // fall through to handleInstallResult as failures.
                 self.missing_from_cache = true;
             }
             return result;
@@ -687,12 +694,26 @@ pub const PackageInstaller = struct {
     pub fn canUseParallelHoistedInstall(this: *const PackageInstaller) bool {
         if (comptime Environment.isWindows) return false;
         // Escape hatch for debugging / comparison.
-        if (bun.getenvZ("BUN_INSTALL_SERIAL_HOISTED") != null) return false;
+        if (bun.env_var.BUN_INSTALL_SERIAL_HOISTED.get()) return false;
         return this.skip_delete;
     }
 
     pub fn deinit(this: *PackageInstaller) void {
         const allocator = this.manager.allocator;
+
+        // On error paths, installHoistedPackages can return before
+        // completeParallelInstalls() runs. Flush any un-dispatched batch
+        // (so the wait-group count matches what will actually run) and
+        // wait for in-flight workers before freeing their task structs.
+        // On the happy path parallel_tasks was cleared by
+        // completeParallelInstalls() so this is a no-op.
+        this.scheduleParallelBatch();
+        if (this.parallel_tasks.items.len > 0) {
+            this.parallel_wait_group.wait();
+        }
+        for (this.parallel_tasks.items) |t| t.deinit();
+        this.parallel_tasks.deinit(allocator);
+
         this.pending_lifecycle_scripts.deinit(this.manager.allocator);
         this.completed_trees.deinit(allocator);
         for (this.trees) |*node| {
@@ -702,8 +723,6 @@ pub const PackageInstaller = struct {
         this.tree_ids_to_trees_the_id_depends_on.deinit(allocator);
         this.node_modules.deinit();
         this.trusted_dependencies_from_update_requests.deinit(allocator);
-        for (this.parallel_tasks.items) |t| t.deinit();
-        this.parallel_tasks.deinit(allocator);
     }
 
     /// Flush any accumulated ParallelHoistedTasks to the thread pool.
@@ -1210,6 +1229,7 @@ pub const PackageInstaller = struct {
                         .dependency_id = dependency_id,
                         .package_id = package_id,
                         .tree_id = this.current_tree_id,
+                        .package_name = pkg_name,
                     });
                     bun.handleOom(this.parallel_tasks.append(this.manager.allocator, task));
                     this.parallel_wait_group.addOne();

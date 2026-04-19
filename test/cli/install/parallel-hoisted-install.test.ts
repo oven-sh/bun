@@ -1,11 +1,15 @@
 import { $, Glob, spawn, write } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, rm } from "fs/promises";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { lstat, mkdir, readlink, rm } from "fs/promises";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { join } from "path";
 
 // Parallel hoisted install is POSIX-only (Windows already fans out
 // per-file via HardLinkWindowsInstallTask).
+
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
 
 /**
  * Build a set of local tarball packages to exercise the hoisted
@@ -22,7 +26,10 @@ async function makeTarballFixture(): Promise<{ dir: string; deps: Record<string,
 
   for (let i = 0; i < count; i++) {
     const name = i % 3 === 0 ? `@scope/pkg-${i}` : `pkg-${i}`;
-    const pkgSrc = join(dir, "src", name.replace("/", "+"));
+    // Lay files out under src/<i>/package/... so `tar -C src/<i> package`
+    // works with both GNU and BSD tar (no --transform needed).
+    const pkgRoot = join(dir, "src", String(i));
+    const pkgSrc = join(pkgRoot, "package");
     await mkdir(join(pkgSrc, "lib", "nested"), { recursive: true });
     await write(
       join(pkgSrc, "package.json"),
@@ -35,7 +42,7 @@ async function makeTarballFixture(): Promise<{ dir: string; deps: Record<string,
     await write(join(pkgSrc, "README.md"), `# ${name}\n`);
 
     const tarball = join(dir, "tarballs", `pkg-${i}.tgz`);
-    await $`tar -czf ${tarball} -C ${pkgSrc} --transform 's,^,package/,' .`.quiet();
+    await $`tar -czf ${tarball} -C ${pkgRoot} package`.quiet();
     deps[name] = `file:./tarballs/pkg-${i}.tgz`;
   }
 
@@ -44,14 +51,24 @@ async function makeTarballFixture(): Promise<{ dir: string; deps: Record<string,
 
 /**
  * Deterministic fingerprint of node_modules: every regular file, dir
- * and symlink, sorted. Used to prove the parallel and serial installers
- * produce byte-identical layouts.
+ * and symlink (with its target), sorted. Both paths call the same
+ * PackageInstall.install() which hardlinks from the same cache
+ * inodes, so file contents are identical by construction; symlink
+ * targets (.bin entries) are compared explicitly.
  */
 async function fingerprintNodeModules(dir: string): Promise<string[]> {
   const entries: string[] = [];
   const glob = new Glob("node_modules/**/*");
   for await (const entry of glob.scan({ cwd: dir, onlyFiles: false, dot: true, followSymlinks: false })) {
-    entries.push(entry);
+    const abs = join(dir, entry);
+    const st = await lstat(abs);
+    if (st.isSymbolicLink()) {
+      entries.push(`${entry} -> ${await readlink(abs)}`);
+    } else if (st.isDirectory()) {
+      entries.push(`${entry}/`);
+    } else {
+      entries.push(`${entry} [${st.size}]`);
+    }
   }
   entries.sort();
   return entries;
@@ -154,10 +171,11 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
     // Every package, including the ones whose cache entries were
     // deleted, must still end up fully installed.
     const layout = await fingerprintNodeModules(fixture.dir);
+    const paths = new Set(layout.map(e => e.split(" ")[0].replace(/\/$/, "")));
     for (let i = 0; i < fixture.count; i++) {
       const name = i % 3 === 0 ? `@scope/pkg-${i}` : `pkg-${i}`;
-      expect(layout).toContain(join("node_modules", name, "package.json"));
-      expect(layout).toContain(join("node_modules", name, "lib", "nested", "a.js"));
+      expect(paths.has(join("node_modules", name, "package.json"))).toBe(true);
+      expect(paths.has(join("node_modules", name, "lib", "nested", "a.js"))).toBe(true);
     }
     expect(layout.filter(p => p.startsWith("node_modules/.bin/")).length).toBeGreaterThan(0);
   });

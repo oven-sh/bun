@@ -66,6 +66,10 @@ pub const BUN_INSPECT_PRELOAD = New(kind.string, "BUN_INSPECT_PRELOAD", .{});
 pub const BUN_INSTALL = New(kind.string, "BUN_INSTALL", .{});
 pub const BUN_INSTALL_BIN = New(kind.string, "BUN_INSTALL_BIN", .{});
 pub const BUN_INSTALL_GLOBAL_DIR = New(kind.string, "BUN_INSTALL_GLOBAL_DIR", .{});
+/// Forces the hoisted installer to link packages serially on the main
+/// thread instead of fanning out to the thread pool. Escape hatch for
+/// debugging / benchmarking the parallel path.
+pub const BUN_INSTALL_SERIAL_HOISTED = New(kind.boolean, "BUN_INSTALL_SERIAL_HOISTED", .{ .default = false });
 /// Minimum response `Content-Length` (in bytes) for `bun install` to
 /// stream a tarball directly into libarchive instead of buffering the
 /// whole body first. Smaller tarballs stay on the buffered path where

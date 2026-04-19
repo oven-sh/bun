@@ -1197,7 +1197,14 @@ pub fn installIsolatedPackages(
                                     // by member_sub.
                                     if (std.mem.indexOfScalar(u32, members, di) != null) continue;
                                     if (entry_hashes[di] == 0) any_ineligible = true;
-                                    try scc_ext.put(manager.allocator, entry_hashes[di], {});
+                                    // Dep symlinks inside the entry are named
+                                    // by the dependency *alias*, so two SCCs
+                                    // that reach the same external entry under
+                                    // different aliases must hash differently.
+                                    var ext: std.hash.Wyhash = .init(0);
+                                    ext.update(std.mem.asBytes(&dependencies[dep.dep_id].name_hash));
+                                    ext.update(std.mem.asBytes(&entry_hashes[di]));
+                                    try scc_ext.put(manager.allocator, ext.final(), {});
                                 }
                             }
                             std.mem.sort(u64, member_sub.items, {}, std.sort.asc(u64));

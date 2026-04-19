@@ -2,9 +2,9 @@
 <!--
   Bun MSI installer (WiX Toolset v5).
 
-  Built per-arch by packages/bun-msi/build-msi.ps1 during the Buildkite
-  `windows-msi` step. Produces bun-windows-<arch>.msi artifacts that are
-  uploaded to GitHub Releases alongside the zips.
+  Built per-arch by packages/bun-msi/build-msi.ps1 from the `msi` job in
+  .github/workflows/release.yml. Produces bun-windows-<arch>.msi assets
+  that are uploaded to the same GitHub Release the zips came from.
 
   Preprocessor variables (passed via `wix build -d NAME=VALUE`):
     BunVersion   Dotted version, e.g. "1.3.12". Feeds Package/@Version and

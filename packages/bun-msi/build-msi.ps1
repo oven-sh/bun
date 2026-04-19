@@ -8,9 +8,10 @@
   bitmaps from src/bun.ico (big centered logo on Bun-cream #fbf0df), then
   invokes `wix build` against packages/bun-msi/bun.wxs.
 
-  Intended to be called from .buildkite/scripts/build-windows-msi.ps1 on a
-  Windows x64 agent, once per target arch, with the already-signed bun.exe
-  extracted from the corresponding bun-windows-<arch>.zip artifact.
+  Intended to be called from the `msi` job in .github/workflows/release.yml
+  on a windows-latest runner, once per target arch, with the already-signed
+  bun.exe extracted from the corresponding bun-windows-<arch>.zip release
+  asset. WiX cross-builds the arm64 package from an x64 host.
 
 .PARAMETER BunExe
   Path to the bun.exe to package. Will be copied verbatim into the MSI, so

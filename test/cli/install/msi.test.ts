@@ -282,38 +282,46 @@ describe("packages/bun-msi/build-msi.ps1", () => {
   });
 });
 
-describe(".buildkite windows-msi wiring", () => {
-  const sh = readFileSync(join(repoRoot, ".buildkite", "scripts", "upload-release.sh"), "utf8");
-  const ci = readFileSync(join(repoRoot, ".buildkite", "ci.mjs"), "utf8");
-  const driver = readFileSync(join(repoRoot, ".buildkite", "scripts", "build-windows-msi.ps1"), "utf8");
+describe(".github/workflows/release.yml msi job", () => {
+  const yml = readFileSync(join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
+  // Pull just the `msi:` job block so assertions don't accidentally match
+  // other jobs in the file. Jobs are 2-space-indented keys; the block ends
+  // at the next 2-space key or EOF.
+  const m = yml.match(/\n {2}msi:\n([\s\S]*?)(?=\n {2}\S|\s*$)/);
+  const job = m ? m[0] : "";
 
-  test("upload-release.sh publishes .msi artifacts when the step ran", () => {
-    expect(sh).toContain("WINDOWS_MSI_STEP");
-    expect(sh).toContain("bun-windows-x64.msi");
-    expect(sh).toContain("bun-windows-x64-baseline.msi");
-    expect(sh).toContain("bun-windows-aarch64.msi");
-    // .msi routing must be checked before the generic bun-windows-* case
-    // so MSIs aren't fetched from the sign step (which doesn't have them).
-    expect(sh.indexOf("bun-windows-*.msi")).toBeGreaterThan(0);
-    expect(sh.indexOf("bun-windows-*.msi")).toBeLessThan(
-      sh.indexOf('"$WINDOWS_ARTIFACT_STEP" && "$name" == bun-windows-*'),
-    );
+  test("job exists, runs on windows-latest after sign, and is dispatch-gated", () => {
+    expect(job).not.toBe("");
+    expect(job).toMatch(/\bruns-on:\s*windows-latest\b/);
+    expect(job).toMatch(/\bneeds:\s*sign\b/);
+    // Same gate shape as npm/docker/etc.: automatic on release/schedule,
+    // opt-in on workflow_dispatch via the use-msi input.
+    expect(job).toContain("github.event_name != 'workflow_dispatch' || github.event.inputs.use-msi == 'true'");
+    expect(yml).toMatch(/\n {6}use-msi:\n/);
   });
 
-  test("ci.mjs defines the windows-msi step and threads it into release", () => {
-    expect(ci).toContain("function getWindowsMsiStep(");
-    expect(ci).toContain('key: "windows-msi"');
-    expect(ci).toContain("build-windows-msi.ps1");
-    expect(ci).toContain('platform.arch === "aarch64" ? "arm64" : "x64"');
-    expect(ci).toContain('WINDOWS_MSI_STEP: msi ? "windows-msi" : ""');
-    expect(ci).toMatch(/buildMsi:\s*parseOption\(\/\\\[\(build msi\|msi\)\\\]\/i\)/);
+  test("matrix covers every Windows release target with the right WiX arch", () => {
+    const rows = [...job.matchAll(/-\s*target:\s*(\S+)\s*\n\s*arch:\s*(\S+)/g)].map(m => ({
+      target: m[1],
+      arch: m[2],
+    }));
+    expect(rows).toEqual([
+      { target: "bun-windows-x64", arch: "x64" },
+      { target: "bun-windows-x64-baseline", arch: "x64" },
+      { target: "bun-windows-aarch64", arch: "arm64" },
+    ]);
   });
 
-  test("CI driver forwards the expected knobs to build-msi.ps1", () => {
+  test("downloads the release zip, builds with build-msi.ps1, and uploads the MSI", () => {
+    expect(job).toContain("gh release download");
+    expect(job).toContain('"${{ matrix.target }}.zip"');
+    expect(job).toContain("packages\\bun-msi\\build-msi.ps1");
     for (const p of ["-BunExe", "-Arch", "-Version", "-Output"]) {
-      expect(driver).toContain(p);
+      expect(job).toContain(p);
     }
-    expect(driver).toContain("packages\\bun-msi\\build-msi.ps1");
-    expect(driver).toContain("buildkite-agent artifact upload");
+    expect(job).toContain("gh release upload");
+    expect(job).toContain('"${{ matrix.target }}.msi"');
+    // contents: write is required for gh release upload.
+    expect(job).toMatch(/permissions:\s*\n\s*contents:\s*write/);
   });
 });

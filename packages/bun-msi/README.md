@@ -44,4 +44,8 @@ Pass `-Arch arm64` for ARM64. `-Version` defaults to the contents of `LATEST`.
 
 ## CI
 
-Built by the `windows-msi` Buildkite step defined in `.buildkite/ci.mjs` (`getWindowsMsiStep`). It runs on a Windows x64 agent after either `windows-sign` (release, so the embedded `bun.exe` is already code-signed) or the raw `*-build-bun` steps (canary / PRs), then uploads `bun-windows-{x64,x64-baseline,aarch64}.msi` for `.buildkite/scripts/upload-release.sh` to publish alongside the zips.
+Built by the `msi` job in `.github/workflows/release.yml`. It runs on a `windows-latest` runner after the `sign` job, once per matrix entry (`bun-windows-x64`, `bun-windows-x64-baseline`, `bun-windows-aarch64`), downloads the corresponding zip from the GitHub release, runs `build-msi.ps1`, and uploads the `.msi` back to the same release (plus as a workflow artifact for inspection). WiX cross-builds the arm64 package from the x64 host — it only embeds the binary, it doesn't run it.
+
+The job fires automatically on `release: published` and the daily canary schedule; for ad-hoc testing, dispatch the `Release` workflow manually with the **Should Windows MSI installers be built?** input checked.
+
+The embedded `bun.exe` is already Authenticode-signed (it comes from the release zip, which was signed on Buildkite). The MSI wrapper itself is not signed here because the DigiCert `smctl` secrets live in Buildkite; if they are ever mirrored into GitHub Actions secrets, add an `smctl sign` step after the build.

@@ -48,6 +48,10 @@ on:
         description: "Should types be PR'd to DefinitelyTyped?"
         type: boolean
         default: false
+      use-msi:
+        description: Should Windows MSI installers be built?
+        type: boolean
+        default: false
 
 jobs:
   sign:
@@ -79,6 +83,89 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+  msi:
+    # Builds bun-windows-{x64,x64-baseline,aarch64}.msi from the release
+    # zips and uploads them back to the same release. Runs after `sign` so
+    # the zips are final and the embedded bun.exe is already Authenticode-
+    # signed. WiX cross-builds the arm64 MSI from an x64 host (it only
+    # packages the binary, it doesn't run it), so a single windows-latest
+    # runner covers all three targets.
+    #
+    # The MSI wrapper itself is not code-signed here — the DigiCert smctl
+    # secrets live in Buildkite, not GitHub Actions. If SM_API_KEY /
+    # SM_CLIENT_CERT_* / SM_KEYPAIR_ALIAS / SM_HOST are ever mirrored into
+    # this repo's Actions secrets, drop them into this job's env and add an
+    # `smctl sign` step after the build; build-msi.ps1 already leaves the
+    # output ready to sign.
+    name: Build MSI installers
+    runs-on: windows-latest
+    needs: sign
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-msi == 'true' }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: bun-windows-x64
+            arch: x64
+          - target: bun-windows-x64-baseline
+            arch: x64
+          - target: bun-windows-aarch64
+            arch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        run: |
+          v="${{ env.BUN_VERSION }}"
+          if [[ "$v" == "canary" ]]; then
+            echo "tag=canary" >> "$GITHUB_OUTPUT"
+          elif [[ "$v" == bun-v* ]]; then
+            echo "tag=$v" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=bun-v$v" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Download ${{ matrix.target }}.zip
+        shell: pwsh
+        run: gh release download "${{ steps.tag.outputs.tag }}" --pattern "${{ matrix.target }}.zip" --repo "${{ github.repository }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract bun.exe
+        shell: pwsh
+        run: |
+          Expand-Archive -Path "${{ matrix.target }}.zip" -DestinationPath . -Force
+          if (-not (Test-Path "${{ matrix.target }}\bun.exe")) {
+            throw "bun.exe not found inside ${{ matrix.target }}.zip"
+          }
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          # Package/@Version must be numeric major.minor.build. For canary,
+          # fall back to the repo's LATEST so the MSI still carries the
+          # upcoming release number rather than 0.0.0.
+          $version = "${{ env.BUN_VERSION }}" -replace '^bun-v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            $version = (Get-Content LATEST -Raw).Trim()
+          }
+          .\packages\bun-msi\build-msi.ps1 `
+            -BunExe "${{ matrix.target }}\bun.exe" `
+            -Arch "${{ matrix.arch }}" `
+            -Version $version `
+            -Output "${{ matrix.target }}.msi"
+      - name: Upload MSI to release
+        shell: pwsh
+        run: gh release upload "${{ steps.tag.outputs.tag }}" "${{ matrix.target }}.msi" --clobber --repo "${{ github.repository }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload MSI as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}.msi
+          path: ${{ matrix.target }}.msi
+          if-no-files-found: error
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest

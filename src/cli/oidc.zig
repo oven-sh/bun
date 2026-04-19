@@ -87,6 +87,12 @@ fn fetchGitHubActionsToken(allocator: std.mem.Allocator, registry: *const Npm.Re
     var response_buf = MutableString.init(allocator, 1024) catch return null;
     defer response_buf.deinit();
 
+    // AsyncHTTP.initSync has no connection-phase timeout parameter. Once the socket
+    // is open the HTTP client sets a 5-minute post-connection timeout (see
+    // onWritable in src/http.zig), but the initial TCP handshake falls through to
+    // the kernel default (~2 min on Linux). For a best-effort OIDC lookup that's
+    // acceptable — an unreachable endpoint will eventually time out and we return
+    // null, letting publish fall through to the existing NeedAuth error path.
     var req = http.AsyncHTTP.initSync(
         allocator,
         .GET,
@@ -155,6 +161,9 @@ fn exchangeToken(
     var response_buf = MutableString.init(allocator, 1024) catch return null;
     defer response_buf.deinit();
 
+    // Same timeout caveat as fetchGitHubActionsToken — no connect-phase timeout,
+    // 5-minute post-connection timeout applies. Best-effort: a hung exchange falls
+    // through to NeedAuth.
     var req = http.AsyncHTTP.initSync(
         allocator,
         .POST,

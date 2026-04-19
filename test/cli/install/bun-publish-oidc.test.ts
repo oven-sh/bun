@@ -12,7 +12,7 @@ async function publish(
   ...args: string[]
 ): Promise<{ out: string; err: string; exitCode: number }> {
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "publish", "--dry-run", ...args],
+    cmd: [bunExe(), "publish", ...args],
     cwd,
     stdout: "pipe",
     stderr: "pipe",
@@ -70,23 +70,18 @@ describe("oidc trusted publishing", () => {
       },
     });
 
-    // Mock npm registry that handles both token exchange and publish
+    // Mock npm registry that handles the OIDC token exchange. Under --dry-run,
+    // publish never issues the PUT, so we only need the exchange endpoint here.
+    // PUT-path coverage is in the non-dry-run test below.
     using registryServer = Bun.serve({
       port: 0,
       async fetch(req) {
         const url = new URL(req.url);
 
-        // OIDC token exchange endpoint
         if (url.pathname.includes("/-/npm/v1/oidc/token/exchange/package/")) {
           expect(req.method).toBe("POST");
           expect(req.headers.get("authorization")).toBe(`Bearer ${oidcToken}`);
           return Response.json({ token: npmToken });
-        }
-
-        // Publish endpoint (PUT /{package})
-        if (req.method === "PUT") {
-          expect(req.headers.get("authorization")).toBe(`Bearer ${npmToken}`);
-          return new Response("OK", { status: 200 });
         }
 
         return new Response("Not Found", { status: 404 });
@@ -109,6 +104,7 @@ describe("oidc trusted publishing", () => {
         ACTIONS_ID_TOKEN_REQUEST_TOKEN: "mock-request-token",
       }),
       String(dir),
+      "--dry-run",
     );
 
     // dry-run succeeds (exits 0) which means auth passed
@@ -136,6 +132,7 @@ describe("oidc trusted publishing", () => {
     const { err, exitCode } = await publish(
       buildEnv({ CI: "false", GITHUB_ACTIONS: "false" }),
       String(dir),
+      "--dry-run",
     );
 
     expect(err).toContain("missing authentication");
@@ -180,6 +177,7 @@ describe("oidc trusted publishing", () => {
         ACTIONS_ID_TOKEN_REQUEST_TOKEN: "mock-request-token",
       }),
       String(dir),
+      "--dry-run",
     );
 
     expect(err).toContain("missing authentication");
@@ -190,7 +188,7 @@ describe("oidc trusted publishing", () => {
     const oidcToken = "npm-id-token-direct";
     const npmToken = "mock-npm-token-from-id";
 
-    // Mock registry for token exchange and publish
+    // Mock registry for token exchange only; dry-run never reaches PUT.
     using registryServer = Bun.serve({
       port: 0,
       async fetch(req) {
@@ -200,11 +198,6 @@ describe("oidc trusted publishing", () => {
           expect(req.method).toBe("POST");
           expect(req.headers.get("authorization")).toBe(`Bearer ${oidcToken}`);
           return Response.json({ token: npmToken });
-        }
-
-        if (req.method === "PUT") {
-          expect(req.headers.get("authorization")).toBe(`Bearer ${npmToken}`);
-          return new Response("OK", { status: 200 });
         }
 
         return new Response("Not Found", { status: 404 });
@@ -227,6 +220,7 @@ describe("oidc trusted publishing", () => {
         NPM_ID_TOKEN: oidcToken,
       }),
       String(dir),
+      "--dry-run",
     );
 
     expect(err).not.toContain("missing authentication");
@@ -247,7 +241,8 @@ describe("oidc trusted publishing", () => {
       },
     });
 
-    // Mock registry
+    // Mock registry. OIDC exchange must not be called when an explicit token
+    // is set. Dry-run never reaches PUT, so no PUT handler is needed.
     using registryServer = Bun.serve({
       port: 0,
       async fetch(req) {
@@ -256,12 +251,6 @@ describe("oidc trusted publishing", () => {
         if (url.pathname.includes("/-/npm/v1/oidc/token/exchange/package/")) {
           oidcExchangeCalled = true;
           return Response.json({ token: "should-not-be-used" });
-        }
-
-        if (req.method === "PUT") {
-          // Should use the explicit token, not OIDC
-          expect(req.headers.get("authorization")).toBe(`Bearer ${explicitToken}`);
-          return new Response("OK", { status: 200 });
         }
 
         return new Response("Not Found", { status: 404 });
@@ -285,10 +274,73 @@ describe("oidc trusted publishing", () => {
         ACTIONS_ID_TOKEN_REQUEST_TOKEN: "mock-request-token",
       }),
       String(dir),
+      "--dry-run",
     );
 
     expect(err).not.toContain("missing authentication");
     expect(oidcExchangeCalled).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
+  test("OIDC token is injected into publish PUT request (non-dry-run)", async () => {
+    // End-to-end: runs the real publish PUT so we can assert the OIDC-exchanged
+    // token actually flows through constructPublishHeaders into the PUT's
+    // Authorization header. The dry-run tests above only exercise the OIDC
+    // POST exchange — they return before any PUT is made.
+    const oidcToken = "e2e-oidc-identity-token";
+    const npmToken = "e2e-exchanged-npm-token";
+
+    using oidcServer = Bun.serve({
+      port: 0,
+      async fetch() {
+        return Response.json({ value: oidcToken });
+      },
+    });
+
+    const { promise: putReceived, resolve: resolvePut } =
+      Promise.withResolvers<{ authorization: string | null }>();
+
+    using registryServer = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+
+        if (url.pathname.includes("/-/npm/v1/oidc/token/exchange/package/")) {
+          expect(req.method).toBe("POST");
+          expect(req.headers.get("authorization")).toBe(`Bearer ${oidcToken}`);
+          return Response.json({ token: npmToken });
+        }
+
+        if (req.method === "PUT") {
+          resolvePut({ authorization: req.headers.get("authorization") });
+          return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+        }
+
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("oidc-publish-e2e", {
+      "package.json": JSON.stringify({
+        name: "oidc-e2e-pkg",
+        version: "1.0.0",
+      }),
+      "bunfig.toml": `[install]\ncache = false\nregistry = { url = "http://localhost:${registryServer.port}/" }`,
+    });
+
+    const { err, exitCode } = await publish(
+      buildEnv({
+        CI: "true",
+        GITHUB_ACTIONS: "true",
+        ACTIONS_ID_TOKEN_REQUEST_URL: `http://localhost:${oidcServer.port}/token?`,
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN: "mock-request-token",
+      }),
+      String(dir),
+    );
+
+    const put = await putReceived;
+    expect(put.authorization).toBe(`Bearer ${npmToken}`);
+    expect(err).not.toContain("missing authentication");
     expect(exitCode).toBe(0);
   });
 });

@@ -14,7 +14,7 @@
 //   bun scripts/binary-size.ts \
 //     --targets '[{"triplet":"bun-darwin-aarch64"},...]' \
 //     --threshold-mb 0.5 \
-//     [--no-fail]
+//     [--no-fail] [--release]
 
 import { mkdirSync, rmSync } from "node:fs";
 import { parseArgs } from "node:util";
@@ -27,12 +27,14 @@ const { values } = parseArgs({
     targets: { type: "string" },
     "threshold-mb": { type: "string", default: "0.5" },
     "no-fail": { type: "boolean", default: false },
+    release: { type: "boolean", default: false },
   },
 });
 
 const targets: Target[] = JSON.parse(values.targets!);
 const thresholdBytes = parseFloat(values["threshold-mb"]!) * 1024 * 1024;
 const noFail = values["no-fail"];
+const isRelease = values.release;
 
 const org = process.env.BUILDKITE_ORGANIZATION_SLUG || "bun";
 const pipeline = process.env.BUILDKITE_PIPELINE_SLUG || "bun";
@@ -68,7 +70,10 @@ for (const { triplet } of targets) {
   console.log(`  ${triplet.padEnd(30)} ${fmtBytes(sizes[triplet]).padStart(10)}`);
 }
 
-await Bun.write("binary-sizes.json", JSON.stringify({ build: buildNumber, branch, sizes }, null, 2));
+await Bun.write(
+  "binary-sizes.json",
+  JSON.stringify({ build: buildNumber, branch, release: isRelease, sizes }, null, 2),
+);
 agent(["artifact", "upload", "binary-sizes.json"]);
 
 // ─── Baselines ───
@@ -93,7 +98,7 @@ async function buildNumberForCommit(sha: string): Promise<number | undefined> {
   return m ? parseInt(m[1], 10) : undefined;
 }
 
-async function sizesFromBuild(n: number): Promise<Sizes | undefined> {
+async function sizesFromBuild(n: number): Promise<{ sizes: Sizes; release?: boolean } | undefined> {
   const res = await fetch(`https://buildkite.com/${org}/${pipeline}/builds/${n}.json`);
   if (!res.ok) return;
   const { id } = (await res.json()) as { id: string };
@@ -102,18 +107,23 @@ async function sizesFromBuild(n: number): Promise<Sizes | undefined> {
   mkdirSync(dir, { recursive: true });
   const ok = agent(["artifact", "download", "binary-sizes.json", dir, "--build", id], { quiet: true });
   if (ok === undefined) return;
-  return ((await Bun.file(`${dir}/binary-sizes.json`).json()) as { sizes: Sizes }).sizes;
+  return (await Bun.file(`${dir}/binary-sizes.json`).json()) as { sizes: Sizes; release?: boolean };
 }
 
 async function baselineFromCommit(sha: string, label: (n: number) => string): Promise<Baseline | undefined> {
   const n = await buildNumberForCommit(sha);
   if (!n || String(n) === String(buildNumber)) return;
-  const sizes = await sizesFromBuild(n);
-  if (!sizes) return;
-  return { label: label(n), href: `https://buildkite.com/${org}/${pipeline}/builds/${n}`, sizes };
+  const record = await sizesFromBuild(n);
+  if (!record) return;
+  // Only compare like-for-like: canary builds against canary baselines, release
+  // against release. Windows binaries differ by several MB between the two, so
+  // a release build on main would otherwise trip every PR's threshold.
+  if ((record.release ?? false) !== isRelease) return;
+  return { label: label(n), href: `https://buildkite.com/${org}/${pipeline}/builds/${n}`, sizes: record.sizes };
 }
 
-// Canary: walk recent main commits until one whose build has binary-sizes.json.
+// Canary: walk recent main commits until one whose build has a matching
+// (canary vs release) binary-sizes.json.
 console.log("--- Fetching canary baseline");
 let canaryNote = "";
 const canary: Baseline | undefined = await (async () => {
@@ -122,7 +132,7 @@ const canary: Baseline | undefined = await (async () => {
     const b = await baselineFromCommit(sha, n => `main #${n}`);
     if (b) return b;
   }
-  canaryNote = "no recent main build has binary-sizes.json yet";
+  canaryNote = `no recent main ${isRelease ? "release" : "canary"} build has binary-sizes.json yet`;
 })().catch(e => ((canaryNote = String(e?.message || e)), undefined));
 console.log(canary ? `  ${canary.label}` : `  unavailable: ${canaryNote}`);
 

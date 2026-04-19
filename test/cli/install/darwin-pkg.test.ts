@@ -117,6 +117,9 @@ describe.skipIf(isWindows)("packages/bun-darwin-pkg", () => {
     expect(src).toContain('set --export BUN_INSTALL "\\$HOME/.bun"');
     expect(src).toContain('set --export PATH "\\$BUN_INSTALL/bin" \\$PATH');
     expect(src).toContain("# bun (installed via .pkg)");
+    // BSD `ln -sf` into an existing directory creates the link *inside*
+    // it rather than replacing it, so the `rm -rf` guard is load-bearing.
+    expect(src).toContain('rm -rf "$BIN_DIR/bunx"');
     expect(src).toContain('ln -sf bun "$BIN_DIR/bunx"');
     // `bun completions` targets $SHELL; without forwarding the console
     // user's shell it sees root's and silently writes nothing.

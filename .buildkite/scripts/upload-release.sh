@@ -128,10 +128,6 @@ function download_buildkite_artifact() {
   if [[ -n "$WINDOWS_ARTIFACT_STEP" && "$name" == bun-windows-* ]]; then
     step_args=(--step "$WINDOWS_ARTIFACT_STEP")
   fi
-  # The macOS .pkg is produced by a dedicated darwin-pkg step.
-  if [[ -n "$DARWIN_PKG_STEP" && "$name" == *.pkg ]]; then
-    step_args=(--step "$DARWIN_PKG_STEP")
-  fi
   run_command buildkite-agent artifact download "$name" "$dir" "${step_args[@]}"
   if [ ! -f "$dir/$name" ]; then
     echo "error: Cannot find Buildkite artifact: $name"
@@ -233,12 +229,6 @@ function create_release() {
     bun-windows-aarch64.zip
     bun-windows-aarch64-profile.zip
   )
-
-  # The .pkg step only runs when both darwin arches built; the pipeline
-  # tells us via DARWIN_PKG_STEP whether to expect the artifact.
-  if [ -n "$DARWIN_PKG_STEP" ]; then
-    artifacts+=(bun-darwin-universal.pkg)
-  fi
 
   function upload_artifact() {
     local artifact="$1"

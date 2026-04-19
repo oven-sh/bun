@@ -53,7 +53,10 @@ jobs:
   sign:
     name: Sign Release
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'oven-sh' }}
+    # Wait for the .pkg so it's included in SHASUMS256.txt. always() lets
+    # sign run even if macos-pkg was skipped (scheduled canary) or failed.
+    needs: macos-pkg
+    if: ${{ always() && github.repository_owner == 'oven-sh' }}
     permissions:
       contents: write
     defaults:
@@ -79,6 +82,64 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+  macos-pkg:
+    # Assembles the universal macOS .pkg installer from the release's
+    # bun-darwin-{aarch64,x64}.zip assets and attaches it back to the same
+    # release — analogous to how the sign job attaches SHASUMS256.txt.asc.
+    # Runs before `sign` so the .pkg is included in SHASUMS256.txt.
+    name: Build macOS .pkg installer
+    runs-on: macos-latest
+    if: ${{ github.repository_owner == 'oven-sh' && github.event_name != 'schedule' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install librsvg
+        # rsvg-convert renders the installer background from src/logo.svg.
+        # Without it build.sh falls back to qlmanage (needs WindowServer) or
+        # drops the background entirely — still functional but less pretty.
+        run: brew install librsvg || true
+      - name: Import codesigning identities
+        # Needs both 'Developer ID Application' (binary) and 'Developer ID
+        # Installer' (pkg) certificates in a keychain the runner can access,
+        # plus a notarytool keychain profile. If the secrets are absent the
+        # step still runs and build.sh produces an unsigned .pkg.
+        if: ${{ env.APPLE_CERTIFICATES_P12 != '' }}
+        env:
+          APPLE_CERTIFICATES_P12: ${{ secrets.APPLE_CERTIFICATES_P12 }}
+          APPLE_CERTIFICATES_PASSWORD: ${{ secrets.APPLE_CERTIFICATES_PASSWORD }}
+          APPLE_NOTARY_ID: ${{ secrets.APPLE_NOTARY_ID }}
+          APPLE_NOTARY_TEAM: ${{ secrets.APPLE_NOTARY_TEAM }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/bun-signing.keychain-db"
+          security create-keychain -p "" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "" "$KEYCHAIN"
+          echo "$APPLE_CERTIFICATES_P12" | base64 --decode > "$RUNNER_TEMP/certs.p12"
+          security import "$RUNNER_TEMP/certs.p12" -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATES_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/productsign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+          rm -f "$RUNNER_TEMP/certs.p12"
+          if [[ -n "${APPLE_NOTARY_ID:-}" ]]; then
+            xcrun notarytool store-credentials bun-notary \
+              --apple-id "$APPLE_NOTARY_ID" \
+              --team-id "$APPLE_NOTARY_TEAM" \
+              --password "$APPLE_NOTARY_PASSWORD" \
+              --keychain "$KEYCHAIN"
+            echo "APPLE_KEYCHAIN_PROFILE=bun-notary" >> "$GITHUB_ENV"
+          fi
+          echo "APPLE_DEVELOPER_ID_APPLICATION=$(security find-identity -v -p codesigning "$KEYCHAIN" | grep 'Developer ID Application' | head -1 | sed -E 's/.*"(.+)".*/\1/')" >> "$GITHUB_ENV"
+          echo "APPLE_DEVELOPER_ID_INSTALLER=$(security find-identity -v "$KEYCHAIN" | grep 'Developer ID Installer' | head -1 | sed -E 's/.*"(.+)".*/\1/')" >> "$GITHUB_ENV"
+      - name: Build and upload .pkg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: ./packages/bun-darwin-pkg/build.sh --from-release "${{ env.BUN_VERSION }}"
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest

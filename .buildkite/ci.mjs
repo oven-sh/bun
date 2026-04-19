@@ -885,7 +885,7 @@ const BINARY_SIZE_THRESHOLD_MB = 0.5;
  * @param {{ signed: boolean }} [extra]
  * @returns {Step}
  */
-function getReleaseStep(buildPlatforms, options, { signed = false, darwinPkg = false } = {}) {
+function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
 
@@ -894,10 +894,6 @@ function getReleaseStep(buildPlatforms, options, { signed = false, darwinPkg = f
   const depends_on = signed
     ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
     : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
-
-  if (darwinPkg) {
-    depends_on.push("darwin-pkg");
-  }
 
   return {
     key: "release",
@@ -911,8 +907,6 @@ function getReleaseStep(buildPlatforms, options, { signed = false, darwinPkg = f
       // Tells upload-release.sh to fetch Windows zips from the sign step
       // (same filenames, but the signed re-uploads are the ones we want).
       WINDOWS_ARTIFACT_STEP: signed ? "windows-sign" : "",
-      // Tells upload-release.sh the macOS .pkg is available to upload.
-      DARWIN_PKG_STEP: darwinPkg ? "darwin-pkg" : "",
     },
     command: ".buildkite/scripts/upload-release.sh",
   };
@@ -1413,18 +1407,17 @@ async function getPipeline(options = {}) {
     }
   }
 
-  // Build the macOS .pkg installer on stable releases (main + !canary), or
-  // when [build pkg] is in the commit message (for testing on a branch).
-  // Needs both darwin arches to produce a universal binary, so skip if the
-  // platform filter dropped one. Also skip when buildId is set
-  // ([skip builds] reused a prior build's artifacts) since the
-  // darwin-*-build-bun steps we depend on won't exist. Canary is excluded
-  // because build.sh reads the version from LATEST, which is the last
-  // stable tag — a canary .pkg would be mislabelled.
+  // Build the macOS .pkg installer when [build pkg] is in the commit
+  // message. This exists purely to exercise packages/bun-darwin-pkg/build.sh
+  // end-to-end on a PR before touching the release workflow; the production
+  // .pkg is assembled and attached to the GitHub release by the macos-pkg
+  // job in .github/workflows/release.yml, not here. Needs both darwin
+  // arches to produce a universal binary, and the darwin-*-build-bun steps
+  // to depend on, so skip if either is missing.
   const darwinPlatforms = buildPlatforms.filter(p => p.os === "darwin" && (p.profile ?? "release") === "release");
   const shouldBuildPkg =
     !buildId &&
-    ((isMainBranch() && !options.canary) || options.buildPkg) &&
+    !!options.buildPkg &&
     darwinPlatforms.some(p => p.arch === "aarch64") &&
     darwinPlatforms.some(p => p.arch === "x64");
   if (shouldBuildPkg) {
@@ -1432,7 +1425,7 @@ async function getPipeline(options = {}) {
   }
 
   if (isMainBranch()) {
-    steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows, darwinPkg: shouldBuildPkg }));
+    steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows }));
   }
 
   /** @type {Map<string, GroupStep>} */

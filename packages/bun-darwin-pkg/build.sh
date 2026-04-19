@@ -29,8 +29,12 @@
 #     (created via `xcrun notarytool store-credentials`)
 #
 # Usage:
-#   ./build.sh [version]
-#   ./build.sh --local <path/to/bun-aarch64> <path/to/bun-x64>   # local testing
+#   ./build.sh [version]                         # Buildkite (downloads from sibling steps)
+#   ./build.sh --from-release <tag>              # GitHub Actions release.yml
+#     Downloads bun-darwin-{aarch64,x64}.zip from the given GitHub release
+#     (e.g. bun-v1.2.3 or canary) via `gh`, builds the .pkg, and uploads it
+#     back to the same release with `gh release upload`.
+#   ./build.sh --local <arm64-bun> <x64-bun>     # local testing
 #
 set -euo pipefail
 
@@ -72,15 +76,25 @@ run()    { echo -e "${Dim}\$ $*${Color_Off}"; "$@"; }
 # Version
 # ---------------------------------------------------------------------------
 
+MODE="buildkite"
 BUN_VERSION="${1:-}"
-if [[ "${BUN_VERSION}" == "--local" ]]; then
-  LOCAL_MODE=1
-  LOCAL_ARM64="${2:?--local requires <arm64-bun> <x64-bun>}"
-  LOCAL_X64="${3:?--local requires <arm64-bun> <x64-bun>}"
-  BUN_VERSION=""
-else
-  LOCAL_MODE=0
-fi
+RELEASE_TAG=""
+case "${BUN_VERSION}" in
+  --local)
+    MODE="local"
+    LOCAL_ARM64="${2:?--local requires <arm64-bun> <x64-bun>}"
+    LOCAL_X64="${3:?--local requires <arm64-bun> <x64-bun>}"
+    BUN_VERSION=""
+    ;;
+  --from-release)
+    # Download bun-darwin-{aarch64,x64}.zip from a published GitHub release
+    # and build the .pkg from those — used by .github/workflows/release.yml
+    # so the installer is assembled from the exact bits users download.
+    MODE="release"
+    RELEASE_TAG="${2:?--from-release requires <tag> (e.g. bun-v1.2.3 or canary)}"
+    BUN_VERSION="${RELEASE_TAG#bun-v}"
+    ;;
+esac
 
 if [[ -z "$BUN_VERSION" ]]; then
   BUN_VERSION="$(cat "$REPO_ROOT/LATEST" 2>/dev/null || true)"
@@ -112,13 +126,25 @@ done
 
 download_artifact() {
   local name="$1" step="$2"
-  if [[ "${BUILDKITE:-}" == "true" ]]; then
-    log "Downloading $name from step $step"
-    run buildkite-agent artifact download "$name" "$BUILD_DIR/" --step "$step"
-    [[ -f "$BUILD_DIR/$name" ]] || fail "artifact download produced no file: $name"
-  else
-    fail "Not running in Buildkite. For local builds use: ./build.sh --local <arm64-bun> <x64-bun>"
-  fi
+  case "$MODE" in
+    release)
+      log "Downloading $name from GitHub release $RELEASE_TAG"
+      run gh release download "$RELEASE_TAG" \
+        --repo "${GITHUB_REPOSITORY:-oven-sh/bun}" \
+        --pattern "$name" \
+        --dir "$BUILD_DIR" \
+        --clobber
+      ;;
+    buildkite)
+      if [[ "${BUILDKITE:-}" == "true" ]]; then
+        log "Downloading $name from step $step"
+        run buildkite-agent artifact download "$name" "$BUILD_DIR/" --step "$step"
+      else
+        fail "Not running in Buildkite. Use --local <arm64> <x64> or --from-release <tag>."
+      fi
+      ;;
+  esac
+  [[ -f "$BUILD_DIR/$name" ]] || fail "artifact download produced no file: $name"
 }
 
 extract_bin() {
@@ -133,7 +159,7 @@ extract_bin() {
 ARM64_BIN="$BUILD_DIR/bun-arm64"
 X64_BIN="$BUILD_DIR/bun-x64"
 
-if [[ "$LOCAL_MODE" == "1" ]]; then
+if [[ "$MODE" == "local" ]]; then
   cp "$LOCAL_ARM64" "$ARM64_BIN"
   cp "$LOCAL_X64" "$X64_BIN"
   chmod +x "$ARM64_BIN" "$X64_BIN"
@@ -326,10 +352,21 @@ ls -lh "$BUILD_DIR/$PKG_NAME"
 # Upload
 # ---------------------------------------------------------------------------
 
-if [[ "${BUILDKITE:-}" == "true" ]]; then
-  log "Uploading artifacts"
-  (cd "$BUILD_DIR" && run buildkite-agent artifact upload "$PKG_NAME")
-  (cd "$BUILD_DIR" && run buildkite-agent artifact upload "bun-darwin-universal.pkg")
-fi
+case "$MODE" in
+  release)
+    log "Uploading to GitHub release $RELEASE_TAG"
+    run gh release upload "$RELEASE_TAG" \
+      --repo "${GITHUB_REPOSITORY:-oven-sh/bun}" \
+      --clobber \
+      "$BUILD_DIR/bun-darwin-universal.pkg"
+    ;;
+  buildkite)
+    if [[ "${BUILDKITE:-}" == "true" ]]; then
+      log "Uploading Buildkite artifacts"
+      (cd "$BUILD_DIR" && run buildkite-agent artifact upload "$PKG_NAME")
+      (cd "$BUILD_DIR" && run buildkite-agent artifact upload "bun-darwin-universal.pkg")
+    fi
+    ;;
+esac
 
 ok "Done ✨"

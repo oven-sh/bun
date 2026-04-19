@@ -34,24 +34,31 @@ notarized; Gatekeeper will warn on open. That's expected for local builds.
 
 ## Building in CI
 
-Buildkite runs this from [`.buildkite/ci.mjs`](../../.buildkite/ci.mjs) as
-the `darwin-pkg` step, after both `darwin-*-build-bun` steps complete on a
-`build-darwin` agent. Artifacts are downloaded via `buildkite-agent`, and
-the finished `bun-darwin-universal.pkg` is uploaded as a Buildkite
-artifact.
+### Releases (GitHub Actions)
 
-The step only runs for **stable** releases (`isMainBranch() && !canary`)
-or when `[build pkg]` is in the commit message, because the version baked
-into the package is read from `LATEST` — a canary `.pkg` would carry the
-previous stable version string.
+The production `.pkg` is built by the **`macos-pkg`** job in
+[`.github/workflows/release.yml`](../../.github/workflows/release.yml),
+which fires when a GitHub release is published (the same trigger that
+generates `SHASUMS256.txt.asc`). It runs on `macos-latest`, calls
+`./build.sh --from-release <tag>`, and:
 
-> [!NOTE]
-> `.buildkite/scripts/upload-release.sh` currently only uploads **canary**
-> artifacts to GitHub/S3 (it early-exits when `CANARY=0`). Stable-release
-> assets — including this `.pkg` — are attached via the GitHub release
-> workflow, so until that workflow is taught about
-> `bun-darwin-universal.pkg` the file needs to be grabbed from the
-> Buildkite `darwin-pkg` step and attached to the release manually.
+1. downloads `bun-darwin-{aarch64,x64}.zip` from the release via `gh`
+2. builds / codesigns / notarizes the universal `.pkg`
+3. uploads `bun-darwin-universal.pkg` back to the same release
+
+The `sign` job `needs: macos-pkg`, so the `.pkg` is present before
+`SHASUMS256.txt` is generated and therefore included in the signature.
+If Apple signing secrets (`APPLE_CERTIFICATES_P12`, `APPLE_NOTARY_*`)
+aren't configured the job still produces and attaches an unsigned
+package.
+
+### Buildkite (testing only)
+
+A `darwin-pkg` step in [`.buildkite/ci.mjs`](../../.buildkite/ci.mjs) can
+be triggered with `[build pkg]` in the commit message to exercise
+`build.sh` end-to-end against the freshly-built darwin artifacts on a PR
+branch. It uploads the result as a Buildkite artifact for inspection but
+does **not** attach it to any release.
 
 ## Signing & notarization
 

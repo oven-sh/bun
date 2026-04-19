@@ -83,6 +83,11 @@ minimum_release_age_ms: ?f64 = null,
 // Packages to exclude from minimum release age checking
 minimum_release_age_excludes: ?[]const []const u8 = null,
 
+// Block installing npm versions whose manifest has a non-empty `deprecated` field
+block_deprecated_dependencies: bool = false,
+// Packages to exclude from the deprecated-version filter
+block_deprecated_dependencies_excludes: ?[]const []const u8 = null,
+
 /// Override CPU architecture for optional dependencies filtering
 cpu: Npm.Architecture = Npm.Architecture.current,
 /// Override OS for optional dependencies filtering
@@ -122,6 +127,20 @@ pub const AuthType = enum {
 
 pub fn shouldPrintCommandName(this: *const Options) bool {
     return this.log_level != .silent and this.do.summary;
+}
+
+pub fn manifestFilterOptions(this: *const Options) Npm.PackageManifest.FilterOptions {
+    return .{
+        .minimum_release_age_ms = this.minimum_release_age_ms,
+        .minimum_release_age_excludes = this.minimum_release_age_excludes,
+        .block_deprecated = this.block_deprecated_dependencies,
+        .block_deprecated_excludes = this.block_deprecated_dependencies_excludes,
+    };
+}
+
+pub fn needsExtendedManifest(this: *const Options) bool {
+    // Age filtering needs publish times, which are only in the extended manifest.
+    return this.minimum_release_age_ms != null;
 }
 
 pub const LogLevel = enum {
@@ -381,6 +400,14 @@ pub fn load(
 
         if (config.minimum_release_age_excludes) |exclusions| {
             this.minimum_release_age_excludes = exclusions;
+        }
+
+        if (config.block_deprecated_dependencies) |block_deprecated| {
+            this.block_deprecated_dependencies = block_deprecated;
+        }
+
+        if (config.block_deprecated_dependencies_excludes) |exclusions| {
+            this.block_deprecated_dependencies_excludes = exclusions;
         }
 
         if (config.public_hoist_pattern) |public_hoist_pattern| {

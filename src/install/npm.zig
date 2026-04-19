@@ -872,13 +872,21 @@ pub const PackageVersion = extern struct {
     /// Unix timestamp when this version was published (0 if unknown)
     publish_timestamp_ms: f64 = 0,
 
+    /// `"deprecated"` field in the npm manifest (empty if not deprecated).
+    /// This is included in the abbreviated manifest, so no extended fetch is required.
+    deprecated: ExternalString = ExternalString{},
+
     pub fn allDependenciesBundled(this: *const PackageVersion) bool {
         return this.bundled_dependencies.isInvalid();
+    }
+
+    pub fn isDeprecated(this: *const PackageVersion) bool {
+        return !this.deprecated.isEmpty();
     }
 };
 
 comptime {
-    if (@sizeOf(Npm.PackageVersion) != 240) {
+    if (@sizeOf(Npm.PackageVersion) != 256) {
         @compileError(std.fmt.comptimePrint("Npm.PackageVersion has unexpected size {d}", .{@sizeOf(Npm.PackageVersion)}));
     }
 }
@@ -935,7 +943,8 @@ pub const PackageManifest = struct {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
-        pub const version = "bun-npm-manifest-cache-v0.0.7\n";
+        // - v0.0.8: added per-version `deprecated` message for blockDeprecatedDependencies
+        pub const version = "bun-npm-manifest-cache-v0.0.8\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
         pub const sizes = blk: {
@@ -1479,6 +1488,18 @@ pub const PackageManifest = struct {
         return false;
     }
 
+    pub fn shouldExcludeFromDeprecatedFilter(this: *const PackageManifest, exclusions: ?[]const []const u8) bool {
+        if (exclusions) |excl| {
+            const pkg_name = this.name();
+            for (excl) |excluded| {
+                if (strings.eql(pkg_name, excluded)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     pub inline fn isPackageVersionTooRecent(
         package_version: *const PackageVersion,
         minimum_release_age_ms: f64,
@@ -1487,78 +1508,130 @@ pub const PackageManifest = struct {
         return package_version.publish_timestamp_ms > current_timestamp_ms - minimum_release_age_ms;
     }
 
+    pub inline fn isPackageVersionDeprecated(package_version: *const PackageVersion) bool {
+        return package_version.isDeprecated();
+    }
+
+    /// Combined filter options passed through package resolution.
+    /// Each sub-filter is independent — age blocks versions that are too
+    /// young, deprecation blocks versions with a non-empty `deprecated`
+    /// message in the npm manifest.
+    pub const FilterOptions = struct {
+        minimum_release_age_ms: ?f64 = null,
+        minimum_release_age_excludes: ?[]const []const u8 = null,
+        block_deprecated: bool = false,
+        block_deprecated_excludes: ?[]const []const u8 = null,
+
+        /// Returns the minimum age to apply for this manifest, or null when
+        /// age filtering is inactive (disabled or excluded by name).
+        pub fn effectiveAgeMs(self: FilterOptions, manifest: *const PackageManifest) ?f64 {
+            const ms = self.minimum_release_age_ms orelse return null;
+            if (manifest.shouldExcludeFromAgeFilter(self.minimum_release_age_excludes)) return null;
+            return ms;
+        }
+
+        /// Whether the deprecation filter applies to this manifest.
+        pub fn deprecationActive(self: FilterOptions, manifest: *const PackageManifest) bool {
+            if (!self.block_deprecated) return false;
+            if (manifest.shouldExcludeFromDeprecatedFilter(self.block_deprecated_excludes)) return false;
+            return true;
+        }
+    };
+
     fn searchVersionList(
         this: *const PackageManifest,
         versions: []const Semver.Version,
         packages: []const PackageVersion,
         group: Semver.Query.Group,
         group_buf: string,
-        minimum_release_age_ms: f64,
+        minimum_release_age_ms: ?f64,
+        block_deprecated: bool,
         newest_filtered: *?Semver.Version,
+        newest_deprecated: *?Semver.Version,
     ) ?FindVersionResult {
         var prev_package_blocked_from_age: ?*const PackageVersion = null;
         var best_version: ?FindResult = null;
 
         const current_timestamp_ms: f64 = @floatFromInt(@divTrunc(bun.start_time, std.time.ns_per_ms));
         const seven_days_ms: f64 = 7 * std.time.ms_per_day;
-        const stability_window_ms: f64 = @min(minimum_release_age_ms, seven_days_ms);
+        const age_ms_for_window: f64 = minimum_release_age_ms orelse 0;
+        const stability_window_ms: f64 = @min(age_ms_for_window, seven_days_ms);
 
         var i = versions.len;
         while (i > 0) {
             i -= 1;
             const version = versions[i];
-            if (group.satisfies(version, group_buf, this.string_buf)) {
-                const package = &packages[i];
-                if (isPackageVersionTooRecent(package, minimum_release_age_ms)) {
+            if (!group.satisfies(version, group_buf, this.string_buf)) continue;
+            const package = &packages[i];
+
+            if (block_deprecated and isPackageVersionDeprecated(package)) {
+                if (newest_deprecated.* == null) newest_deprecated.* = version;
+                // Deprecation is permanent — no stability window. Skip without
+                // affecting the age-based stability state.
+                continue;
+            }
+
+            if (minimum_release_age_ms) |age_ms| {
+                if (isPackageVersionTooRecent(package, age_ms)) {
                     if (newest_filtered.* == null) newest_filtered.* = version;
                     prev_package_blocked_from_age = package;
+                    continue;
                 }
-                // stability check - if the previous package is blocked from age, we need to check if the current package wasn't the cause
-                else if (prev_package_blocked_from_age) |prev_package| {
-                    // only try to go backwards for a max of 7 days on top of existing minimum age
-                    if (package.publish_timestamp_ms < current_timestamp_ms - (minimum_release_age_ms + seven_days_ms)) {
-                        if (best_version == null) {
-                            best_version = .{
-                                .version = version,
-                                .package = package,
-                            };
-                        }
-                        break;
-                    }
+            }
 
-                    const is_stable = prev_package.publish_timestamp_ms - package.publish_timestamp_ms >= stability_window_ms;
-                    if (is_stable) {
+            // stability check - if the previous package is blocked from age, we need to check if the current package wasn't the cause
+            if (prev_package_blocked_from_age) |prev_package| {
+                // only try to go backwards for a max of 7 days on top of existing minimum age
+                if (package.publish_timestamp_ms < current_timestamp_ms - (age_ms_for_window + seven_days_ms)) {
+                    if (best_version == null) {
                         best_version = .{
                             .version = version,
                             .package = package,
                         };
-                        break;
-                    } else {
-                        if (best_version == null) {
-                            best_version = .{
-                                .version = version,
-                                .package = package,
-                            };
-                        }
-                        prev_package_blocked_from_age = package;
-                        continue;
                     }
+                    break;
+                }
+
+                const is_stable = prev_package.publish_timestamp_ms - package.publish_timestamp_ms >= stability_window_ms;
+                if (is_stable) {
+                    best_version = .{
+                        .version = version,
+                        .package = package,
+                    };
+                    break;
                 } else {
-                    return .{
-                        .found = .{
+                    if (best_version == null) {
+                        best_version = .{
                             .version = version,
                             .package = package,
-                        },
-                    };
+                        };
+                    }
+                    prev_package_blocked_from_age = package;
+                    continue;
                 }
             }
+
+            if (newest_filtered.* != null or newest_deprecated.* != null) {
+                return .{ .found_with_filter = .{
+                    .result = .{ .version = version, .package = package },
+                    .newest_filtered = newest_filtered.*,
+                    .newest_deprecated = newest_deprecated.*,
+                } };
+            }
+            return .{
+                .found = .{
+                    .version = version,
+                    .package = package,
+                },
+            };
         }
 
         if (best_version) |result| {
-            if (newest_filtered.*) |nf| {
+            if (newest_filtered.* != null or newest_deprecated.* != null) {
                 return .{ .found_with_filter = .{
                     .result = result,
-                    .newest_filtered = nf,
+                    .newest_filtered = newest_filtered.*,
+                    .newest_deprecated = newest_deprecated.*,
                 } };
             } else {
                 return .{ .found = result };
@@ -1572,11 +1645,14 @@ pub const PackageManifest = struct {
         found_with_filter: struct {
             result: FindResult,
             newest_filtered: ?Semver.Version = null,
+            newest_deprecated: ?Semver.Version = null,
         },
         err: enum {
             not_found,
             too_recent,
             all_versions_too_recent,
+            deprecated,
+            all_versions_deprecated,
         },
 
         pub fn unwrap(self: FindVersionResult) ?FindResult {
@@ -1589,9 +1665,9 @@ pub const PackageManifest = struct {
 
         pub fn latestIsFiltered(self: FindVersionResult) bool {
             return switch (self) {
-                .found_with_filter => |filtered| filtered.newest_filtered != null,
-                .err => |err| err == .all_versions_too_recent,
-                // .err.too_recent is only for direct version checks which doesn't prove there was a later version that could have been chosen
+                .found_with_filter => |filtered| filtered.newest_filtered != null or filtered.newest_deprecated != null,
+                .err => |err| err == .all_versions_too_recent or err == .all_versions_deprecated,
+                // .err.too_recent / .err.deprecated are only for direct version checks which doesn't prove there was a later version that could have been chosen
                 else => false,
             };
         }
@@ -1600,20 +1676,22 @@ pub const PackageManifest = struct {
     pub fn findByDistTagWithFilter(
         this: *const PackageManifest,
         tag: string,
-        minimum_release_age_ms: ?f64,
-        exclusions: ?[]const []const u8,
+        filter: FilterOptions,
     ) FindVersionResult {
         const dist_result = this.findByDistTag(tag) orelse return .{ .err = .not_found };
-        const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.shouldExcludeFromAgeFilter(exclusions)) min_age_ms else null else null;
-        const min_age_ms = min_age_gate_ms orelse {
+        const min_age_ms = filter.effectiveAgeMs(this);
+        const block_deprecated = filter.deprecationActive(this);
+        if (min_age_ms == null and !block_deprecated) {
             return .{ .found = dist_result };
-        };
+        }
         const current_timestamp_ms: f64 = @floatFromInt(@divTrunc(bun.start_time, std.time.ns_per_ms));
         const seven_days_ms: f64 = 7 * std.time.ms_per_day;
-        const stability_window_ms = @min(min_age_ms, seven_days_ms);
+        const age_ms_for_window = min_age_ms orelse 0;
+        const stability_window_ms = @min(age_ms_for_window, seven_days_ms);
 
-        const dist_too_recent = isPackageVersionTooRecent(dist_result.package, min_age_ms);
-        if (!dist_too_recent) {
+        const dist_too_recent = if (min_age_ms) |age| isPackageVersionTooRecent(dist_result.package, age) else false;
+        const dist_deprecated = block_deprecated and isPackageVersionDeprecated(dist_result.package);
+        if (!dist_too_recent and !dist_deprecated) {
             return .{ .found = dist_result };
         }
 
@@ -1630,7 +1708,12 @@ pub const PackageManifest = struct {
         const packages = list.values.get(this.package_versions);
 
         var best_version: ?FindResult = null;
-        var prev_package_blocked_from_age: ?*const PackageVersion = dist_result.package;
+        // If the dist-tag was too-recent, seed the stability tracker with it.
+        // If it was only deprecated, we don't affect age stability — but we
+        // still need to surface it as "the thing we skipped".
+        var prev_package_blocked_from_age: ?*const PackageVersion = if (dist_too_recent) dist_result.package else null;
+        var newest_filtered: ?Semver.Version = if (dist_too_recent) dist_result.version else null;
+        var newest_deprecated: ?Semver.Version = if (dist_deprecated) dist_result.version else null;
 
         var i: usize = versions.len;
         while (i > 0) : (i -= 1) {
@@ -1647,18 +1730,27 @@ pub const PackageManifest = struct {
                 if (!strings.eql(actual_tag, expected_tag)) continue;
             }
 
-            if (isPackageVersionTooRecent(package, min_age_ms)) {
-                prev_package_blocked_from_age = package;
+            if (block_deprecated and isPackageVersionDeprecated(package)) {
+                if (newest_deprecated == null) newest_deprecated = version;
                 continue;
+            }
+
+            if (min_age_ms) |age| {
+                if (isPackageVersionTooRecent(package, age)) {
+                    if (newest_filtered == null) newest_filtered = version;
+                    prev_package_blocked_from_age = package;
+                    continue;
+                }
             }
 
             // stability check - if the previous package is blocked from age, we need to check if the current package wasn't the cause
             if (prev_package_blocked_from_age) |prev_package| {
                 // only try to go backwards for a max of 7 days on top of existing minimum age
-                if (package.publish_timestamp_ms < current_timestamp_ms - (min_age_ms + seven_days_ms)) {
+                if (package.publish_timestamp_ms < current_timestamp_ms - (age_ms_for_window + seven_days_ms)) {
                     return .{ .found_with_filter = .{
                         .result = best_version orelse .{ .version = version, .package = package },
-                        .newest_filtered = dist_result.version,
+                        .newest_filtered = newest_filtered,
+                        .newest_deprecated = newest_deprecated,
                     } };
                 }
 
@@ -1666,7 +1758,8 @@ pub const PackageManifest = struct {
                 if (is_stable) {
                     return .{ .found_with_filter = .{
                         .result = .{ .version = version, .package = package },
-                        .newest_filtered = dist_result.version,
+                        .newest_filtered = newest_filtered,
+                        .newest_deprecated = newest_deprecated,
                     } };
                 } else {
                     if (best_version == null) {
@@ -1687,36 +1780,52 @@ pub const PackageManifest = struct {
         if (best_version) |result| {
             return .{ .found_with_filter = .{
                 .result = result,
-                .newest_filtered = dist_result.version,
+                .newest_filtered = newest_filtered,
+                .newest_deprecated = newest_deprecated,
             } };
         }
 
-        return .{ .err = .all_versions_too_recent };
+        // Report the filter that actually blocked the last hope of a fallback:
+        // if any non-deprecated candidate was rejected by age, attribute the
+        // failure to age; otherwise it was all deprecation.
+        if (newest_filtered != null) {
+            return .{ .err = .all_versions_too_recent };
+        }
+        return .{ .err = .all_versions_deprecated };
     }
 
     pub fn findBestVersionWithFilter(
         this: *const PackageManifest,
         group: Semver.Query.Group,
         group_buf: string,
-        minimum_release_age_ms: ?f64,
-        exclusions: ?[]const []const u8,
+        filter: FilterOptions,
     ) FindVersionResult {
-        const min_age_gate_ms = if (minimum_release_age_ms) |min_age_ms| if (!this.shouldExcludeFromAgeFilter(exclusions)) min_age_ms else null else null;
-        const min_age_ms = min_age_gate_ms orelse {
+        const min_age_ms = filter.effectiveAgeMs(this);
+        const block_deprecated = filter.deprecationActive(this);
+        if (min_age_ms == null and !block_deprecated) {
             const result = this.findBestVersion(group, group_buf);
             if (result) |r| return .{ .found = r };
             return .{ .err = .not_found };
-        };
-        bun.debugAssert(this.pkg.has_extended_manifest);
+        }
+        // The extended manifest is required for age filtering (publish times).
+        // Deprecation is in the abbreviated manifest, so no assert here when
+        // only block_deprecated is active.
+        if (min_age_ms != null) bun.debugAssert(this.pkg.has_extended_manifest);
 
         const left = group.head.head.range.left;
         var newest_filtered: ?Semver.Version = null;
+        var newest_deprecated: ?Semver.Version = null;
 
         if (left.op == .eql) {
             const result = this.findByVersion(left.version);
             if (result) |r| {
-                if (isPackageVersionTooRecent(r.package, min_age_ms)) {
-                    return .{ .err = .too_recent };
+                if (block_deprecated and isPackageVersionDeprecated(r.package)) {
+                    return .{ .err = .deprecated };
+                }
+                if (min_age_ms) |age| {
+                    if (isPackageVersionTooRecent(r.package, age)) {
+                        return .{ .err = .too_recent };
+                    }
                 }
                 return .{ .found = r };
             }
@@ -1725,10 +1834,14 @@ pub const PackageManifest = struct {
 
         if (this.findByDistTag("latest")) |result| {
             if (group.satisfies(result.version, group_buf, this.string_buf)) {
-                if (isPackageVersionTooRecent(result.package, min_age_ms)) {
-                    newest_filtered = result.version;
-                }
-                if (newest_filtered == null) {
+                // Check whether latest is currently blocked so we can decide
+                // whether to short-circuit, but don't seed newest_filtered /
+                // newest_deprecated — `searchVersionList` walks newest-first
+                // and will record the true newest blocked version naturally.
+                // (The `latest` dist-tag isn't always the highest semver.)
+                const latest_too_recent = if (min_age_ms) |age| isPackageVersionTooRecent(result.package, age) else false;
+                const latest_deprecated_now = block_deprecated and isPackageVersionDeprecated(result.package);
+                if (!latest_too_recent and !latest_deprecated_now) {
                     if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
                         if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
                             return .{ .found = result };
@@ -1746,7 +1859,9 @@ pub const PackageManifest = struct {
             group,
             group_buf,
             min_age_ms,
+            block_deprecated,
             &newest_filtered,
+            &newest_deprecated,
         )) |result| {
             return result;
         }
@@ -1758,7 +1873,9 @@ pub const PackageManifest = struct {
                 group,
                 group_buf,
                 min_age_ms,
+                block_deprecated,
                 &newest_filtered,
+                &newest_deprecated,
             )) |result| {
                 return result;
             }
@@ -1766,6 +1883,9 @@ pub const PackageManifest = struct {
 
         if (newest_filtered != null) {
             return .{ .err = .all_versions_too_recent };
+        }
+        if (newest_deprecated != null) {
+            return .{ .err = .all_versions_deprecated };
         }
 
         return .{ .err = .not_found };
@@ -1953,6 +2073,14 @@ pub const PackageManifest = struct {
                                 const tarball = tarball_prop.data.e_string.slice(allocator);
                                 string_builder.count(tarball);
                                 tarball_urls_count += @as(usize, @intFromBool(tarball.len > 0));
+                            }
+                        }
+                    }
+
+                    if (prop.value.?.asProperty("deprecated")) |deprecated_q| {
+                        if (deprecated_q.expr.asString(allocator)) |deprecated_str| {
+                            if (deprecated_str.len > 0) {
+                                string_builder.count(deprecated_str);
                             }
                         }
                     }
@@ -2344,6 +2472,14 @@ pub const PackageManifest = struct {
                                         package_version.integrity = Integrity.parseSHASum(shasum_str) catch Integrity{};
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    if (prop.value.?.asProperty("deprecated")) |deprecated_q| {
+                        if (deprecated_q.expr.asString(allocator)) |deprecated_str| {
+                            if (deprecated_str.len > 0) {
+                                package_version.deprecated = string_builder.append(ExternalString, deprecated_str);
                             }
                         }
                     }

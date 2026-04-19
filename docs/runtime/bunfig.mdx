@@ -669,6 +669,20 @@ minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
 
 For more details see [Minimum release age](/pm/cli/install#minimum-release-age) in the install documentation.
 
+### `install.blockDeprecatedDependencies`
+
+When `true`, skip any npm package version whose manifest has a non-empty `deprecated` field. During resolution, the highest-numbered non-deprecated version matching the requested range is picked instead. If every matching version is deprecated (or a pinned exact version is deprecated), installation fails with an error. Default is `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+# Never install a version whose manifest is marked deprecated
+blockDeprecatedDependencies = true
+# ...unless the package is on this exempt list
+blockDeprecatedDependenciesExcludes = ["request", "left-pad"]
+```
+
+This pairs well with `minimumReleaseAge`: when a just-patched replacement is too young to be picked, the filter falls back to the previous non-deprecated release instead of the broken one the maintainer pulled.
+
 ## `bun run`
 
 The `bun run` command can be configured under the `[run]` section. These apply to the `bun run` command and the `bun` command when running a file or executable or script.

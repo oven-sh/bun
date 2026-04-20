@@ -30,8 +30,8 @@ test("tls.getCACertificates('system') returns system certs without --use-system-
   }
 });
 
-test("tls.getCACertificates('system') is stable across calls", { skip }, () => {
+test("tls.getCACertificates('system') is cached across calls", { skip }, () => {
   const a = tls.getCACertificates("system");
   const b = tls.getCACertificates("system");
-  assert.strictEqual(a.length, b.length);
+  assert.strictEqual(a, b);
 });

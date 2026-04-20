@@ -276,14 +276,14 @@ function parseTestOptions(arg0: unknown, arg1: unknown, arg2: unknown) {
   if (typeof arg0 === "function") {
     name = arg0.name || kDefaultName;
     fn = arg0 as TestFn;
-    if (typeof arg1 === "object") {
+    if (arg1 !== null && typeof arg1 === "object") {
       options = arg1 as TestOptions;
     } else {
       options = kDefaultOptions;
     }
   } else if (typeof arg0 === "string") {
     name = arg0;
-    if (typeof arg1 === "object") {
+    if (arg1 !== null && typeof arg1 === "object") {
       options = arg1 as TestOptions;
       if (typeof arg2 === "function") {
         fn = arg2 as TestFn;

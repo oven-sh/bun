@@ -315,12 +315,15 @@ const Generator = struct {
                 },
                 .workspace => {
                     const ws_path = res.value.workspace.slice(string_bytes);
+                    ref = try std.fmt.allocPrint(allocator, "{s}@workspace:{s}", .{ name, ws_path });
                     if (lockfile.workspace_versions.get(pkg_name_hashes[idx])) |ws_version| {
                         version = try std.fmt.allocPrint(allocator, "{f}", .{ws_version.fmt(string_bytes)});
-                        ref = try std.fmt.allocPrint(allocator, "{s}@workspace:{s}", .{ name, ws_path });
-                        purl = try makePurl(allocator, name, version);
-                    } else {
-                        ref = try std.fmt.allocPrint(allocator, "{s}@workspace:{s}", .{ name, ws_path });
+                        // Workspace names aren't validated against npm naming
+                        // rules, so only emit a `pkg:npm/...` purl when the
+                        // name would be valid as one.
+                        if (strings.isNPMPackageName(name)) {
+                            purl = try makePurl(allocator, name, version);
+                        }
                     }
                 },
                 .folder, .symlink, .single_file_module, .local_tarball, .remote_tarball, .git, .github => {
@@ -341,8 +344,8 @@ const Generator = struct {
             // bom-refs must be unique within the document. Lockfiles can
             // contain duplicate name@version entries in edge cases (e.g. npm
             // aliases resolving to the same underlying package from different
-            // dependency paths), so append the package index when needed.
-            if (seen_refs.contains(ref)) {
+            // dependency paths), so append the package index until unique.
+            while (seen_refs.contains(ref)) {
                 const unique = try std.fmt.allocPrint(allocator, "{s}~{d}", .{ ref, idx });
                 allocator.free(ref);
                 ref = unique;
@@ -354,7 +357,7 @@ const Generator = struct {
             // refs (e.g. `foo_bar@1.0.0` and `foo-bar@1.0.0`) can collide.
             // Deduplicate on the sanitized form separately.
             var spdx_id = try sanitizeSpdxId(allocator, ref);
-            if (seen_spdx_ids.contains(spdx_id)) {
+            while (seen_spdx_ids.contains(spdx_id)) {
                 const unique = try std.fmt.allocPrint(allocator, "{s}.{d}", .{ spdx_id, idx });
                 allocator.free(spdx_id);
                 spdx_id = unique;
@@ -666,32 +669,47 @@ const Generator = struct {
     fn writeSPDXRelationships(this: *const Generator, w: *std.Io.Writer, comp: *const Component) !void {
         for (comp.deps.items) |dep_id| {
             const dep_comp = this.componentFor(dep_id) orelse continue;
-            const rel_type = relationshipType: {
-                // Use the behavior of the dependency edge from this package.
+            // A parent can list the same resolved package under more than
+            // one dependency group (e.g. both `dependencies` and
+            // `peerDependencies`). Scan every matching edge and pick the
+            // strongest relationship (required > optional > dev), matching
+            // the precedence used for CycloneDX scope.
+            const rel_type: enum { depends_on, optional_of, dev_of } = relationshipType: {
                 const pkg_dep_resolutions = this.lockfile.packages.items(.resolutions)[comp.package_id];
                 const pkg_deps = this.lockfile.packages.items(.dependencies)[comp.package_id];
                 const deps = pkg_deps.get(this.lockfile.buffers.dependencies.items);
                 const resolved = pkg_dep_resolutions.get(this.lockfile.buffers.resolutions.items);
+                var has_dev = false;
+                var has_optional = false;
                 for (deps, resolved) |dep, r| {
                     if (r != dep_id) continue;
-                    if (dep.behavior.isDev()) break :relationshipType "DEV_DEPENDENCY_OF";
-                    if (dep.behavior.isOptional()) break :relationshipType "OPTIONAL_DEPENDENCY_OF";
-                    break :relationshipType "DEPENDS_ON";
+                    if (dep.behavior.isDev()) {
+                        has_dev = true;
+                    } else if (dep.behavior.isOptional()) {
+                        has_optional = true;
+                    } else {
+                        break :relationshipType .depends_on;
+                    }
                 }
-                break :relationshipType "DEPENDS_ON";
+                if (has_optional) break :relationshipType .optional_of;
+                if (has_dev) break :relationshipType .dev_of;
+                break :relationshipType .depends_on;
             };
-            // For `*_OF` relationships, the subject is the dependency and the
-            // object is the dependent. For `DEPENDS_ON` it's the other way.
-            if (strings.eqlComptime(rel_type, "DEPENDS_ON")) {
-                try w.print(
-                    ",\n    {{ \"spdxElementId\": \"SPDXRef-Package-{s}\", \"relatedSpdxElement\": \"SPDXRef-Package-{s}\", \"relationshipType\": \"{s}\" }}",
-                    .{ comp.spdx_id, dep_comp.spdx_id, rel_type },
-                );
-            } else {
-                try w.print(
-                    ",\n    {{ \"spdxElementId\": \"SPDXRef-Package-{s}\", \"relatedSpdxElement\": \"SPDXRef-Package-{s}\", \"relationshipType\": \"{s}\" }}",
-                    .{ dep_comp.spdx_id, comp.spdx_id, rel_type },
-                );
+            switch (rel_type) {
+                .depends_on => try w.print(
+                    ",\n    {{ \"spdxElementId\": \"SPDXRef-Package-{s}\", \"relatedSpdxElement\": \"SPDXRef-Package-{s}\", \"relationshipType\": \"DEPENDS_ON\" }}",
+                    .{ comp.spdx_id, dep_comp.spdx_id },
+                ),
+                // For `*_OF` relationships, the subject is the dependency and
+                // the object is the dependent.
+                .optional_of => try w.print(
+                    ",\n    {{ \"spdxElementId\": \"SPDXRef-Package-{s}\", \"relatedSpdxElement\": \"SPDXRef-Package-{s}\", \"relationshipType\": \"OPTIONAL_DEPENDENCY_OF\" }}",
+                    .{ dep_comp.spdx_id, comp.spdx_id },
+                ),
+                .dev_of => try w.print(
+                    ",\n    {{ \"spdxElementId\": \"SPDXRef-Package-{s}\", \"relatedSpdxElement\": \"SPDXRef-Package-{s}\", \"relationshipType\": \"DEV_DEPENDENCY_OF\" }}",
+                    .{ dep_comp.spdx_id, comp.spdx_id },
+                ),
             }
         }
     }

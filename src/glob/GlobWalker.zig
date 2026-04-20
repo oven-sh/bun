@@ -489,8 +489,7 @@ pub fn GlobWalker_(
                                         this.iter_state = .get_next;
                                         return .success;
                                     }
-                                    const errpath = try this.walker.arena.allocator().dupeZ(u8, path);
-                                    return .{ .err = e.withPath(errpath) };
+                                    return .{ .err = e.withPath(path) };
                                 },
                                 .result => |fd| fd,
                             };
@@ -616,6 +615,7 @@ pub fn GlobWalker_(
                     }
                     // TODO Optimization: On posix systems filepaths are already null byte terminated so we can skip this if thats the case
                     if (work_item.path.len >= this.iter_state.directory.path.len) {
+                        if (work_item.fd) |fd| this.closeDisallowingCwd(fd);
                         return .{ .err = Syscall.Error.fromCode(.NAMETOOLONG, .open).withPath(work_item.path) };
                     }
                     @memcpy(this.iter_state.directory.path[0..work_item.path.len], work_item.path);
@@ -1514,7 +1514,6 @@ pub fn GlobWalker_(
             const result = try this.matchedPaths.getOrPutValue(this.arena.allocator(), name, {});
             if (result.found_existing) {
                 log("(dupe) prepared match: {s}", .{name_matched_path});
-                this.arena.allocator().free(name_matched_path);
                 return null;
             }
             result.key_ptr.* = name;
@@ -1536,7 +1535,6 @@ pub fn GlobWalker_(
             const name = matchedPathToBunString(name_matched_path);
             const result = try this.matchedPaths.getOrPut(this.arena.allocator(), name);
             if (result.found_existing) {
-                this.arena.allocator().free(name_matched_path);
                 log("(dupe) prepared match: {s}", .{name_matched_path});
                 return;
             }

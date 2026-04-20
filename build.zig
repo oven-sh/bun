@@ -831,6 +831,7 @@ pub fn addInstallObjectFile(
     const bin = compile.getEmittedBin();
     if (out_mode == .obj and
         @hasField(Compile, "llvm_no_merge_shards") and
+        @hasField(Compile, "llvm_codegen_threads") and
         compile.llvm_no_merge_shards and
         compile.llvm_codegen_threads > 1)
     {

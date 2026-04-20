@@ -485,8 +485,13 @@ pub const Flags = packed struct(u16) {
     is_preconnect_only: bool = false,
     is_streaming_request_body: bool = false,
     defer_fail_until_connecting_is_complete: bool = false,
+    /// We called `socket.pauseStream()` because the JS-side response body
+    /// buffer crossed its high-water mark (see Signals.body_backpressure).
+    /// `drainResponseBody` resumes once the consumer drains below the
+    /// low-water mark and clears the signal.
+    body_read_paused: bool = false,
     upgrade_state: HTTPUpgradeState = .none,
-    _padding: u3 = 0,
+    _padding: u2 = 0,
 };
 
 // TODO: reduce the size of this struct
@@ -1921,6 +1926,20 @@ pub fn drainResponseBody(this: *HTTPClient, comptime is_ssl: bool, socket: NewHT
         else => {},
     }
 
+    // Resume reads if we previously paused for body backpressure and the
+    // consumer has since drained below its low-water mark. This is the
+    // HTTP-thread half of the handshake; the JS thread clears the signal and
+    // enqueues us via `scheduleResponseBodyDrain` after a pull. Do this before
+    // the empty-buffer early-return below — when paused, `body_out_str` is
+    // typically empty (we stopped reading), so the resume must not be gated
+    // on having bytes to flush.
+    if (this.flags.body_read_paused and !this.signals.get(.body_backpressure)) {
+        log("body backpressure: resuming socket reads", .{});
+        this.flags.body_read_paused = false;
+        _ = socket.resumeStream();
+        this.setTimeout(socket, 5);
+    }
+
     if (this.state.fail != null) {
         // If there's any error at all, do not drain.
         return;
@@ -2013,6 +2032,22 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
 
     result.body.?.* = body;
     callback.run(@fieldParentPtr("client", this), result);
+
+    // Response-body backpressure: the callback above runs synchronously on this
+    // (HTTP) thread and appends the chunk to the consumer's buffer. If that
+    // pushed the buffer past its high-water mark the consumer flips
+    // `signals.body_backpressure`; observe it here while we still hold the
+    // socket and pause reads so the kernel's receive window closes instead of
+    // our heap growing without bound. `is_done` already released/closed the
+    // socket above, so only the streaming-more-to-come path is eligible.
+    if (!is_done and !this.flags.body_read_paused and this.signals.get(.body_backpressure)) {
+        log("body backpressure: pausing socket reads", .{});
+        this.flags.body_read_paused = true;
+        _ = socket.pauseStream();
+        // The idle timeout measures "no bytes from the peer". While paused that
+        // is by construction true, so disarm it; `drainResponseBody` re-arms.
+        this.setTimeout(socket, 0);
+    }
 
     if (comptime print_every > 0) {
         print_every_i += 1;

@@ -332,6 +332,19 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
     this.pending_buffer = buffer;
     this.setValue(view);
 
+    // Tell the producer that JS is now blocked waiting for more bytes. This is
+    // the only point at which "the consumer wants data" is unambiguous —
+    // earlier in this function we may be servicing the controller's automatic
+    // pre-fetch pull, which drains `buffer` into the controller's queue
+    // without the user having read anything. Releasing backpressure on that
+    // auto-pull would let the queue grow unbounded; releasing here cannot,
+    // because we only reach this branch when both `buffer` and the
+    // controller's queue are empty (otherwise the controller would not have
+    // pulled).
+    if (this.parent().drain_handler) |handler| {
+        handler(this.parent().drain_ctx, 0);
+    }
+
     return .{
         .pending = &this.pending,
     };

@@ -547,7 +547,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         if (
                             s && length >= (LIBUS_RECV_BUFFER_LENGTH - 24 * 1024) && length <= LIBUS_RECV_BUFFER_LENGTH &&
                             (error || loop->num_ready_polls < LOOP_ISNT_VERY_BUSY_THRESHOLD) &&
-                            !us_socket_is_closed(0, s)
+                            !us_socket_is_closed(0, s) &&
+                            // on_data may have paused the socket (e.g. fetch
+                            // response-body backpressure). Pausing only
+                            // changes the poll mask, so without this check we
+                            // would keep draining the kernel recv buffer for
+                            // up to 10 more iterations and defeat the pause.
+                            !s->flags.is_paused
                         ) {
                             repeat_recv_count += error == 0;
 

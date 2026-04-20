@@ -76,6 +76,10 @@ pub const PendingValue = struct {
     onStartStreaming: ?*const fn (ctx: *anyopaque) jsc.WebCore.DrainResult = null,
     onReadableStreamAvailable: ?*const fn (ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void = null,
     onStreamCancelled: ?*const fn (ctx: ?*anyopaque) void = null,
+    /// Runs whenever JS pulls bytes from the ByteStream's internal buffer.
+    /// `buffered` is the number of bytes still queued after the pull.
+    /// FetchTasklet uses this to release response-body backpressure.
+    onStreamDrained: ?*const fn (ctx: ?*anyopaque, buffered: usize) void = null,
     size_hint: Blob.SizeType = 0,
 
     deinit: bool = false,
@@ -510,6 +514,13 @@ pub const Value = union(Tag) {
                     if (locked.task) |task| {
                         reader.cancel_handler = onCancelled;
                         reader.cancel_ctx = task;
+                    }
+                }
+
+                if (locked.onStreamDrained) |onDrained| {
+                    if (locked.task) |task| {
+                        reader.drain_handler = onDrained;
+                        reader.drain_ctx = task;
                     }
                 }
 

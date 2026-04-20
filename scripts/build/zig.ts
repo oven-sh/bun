@@ -32,11 +32,13 @@ import { streamPath } from "./stream.ts";
  * Override via `--zig-commit=<hash>` to test a new compiler.
  * From https://github.com/oven-sh/zig releases.
  *
- * TEMPORARY SPLIT: local dev uses a newer compiler with parallel sema +
- * sharded LLVM codegen (big speedup, still being proven correct). CI
- * stays on the last known-good commit so release builds aren't affected
- * by compiler bugs we haven't shaken out yet. Once the parallel compiler
- * is trusted, collapse both back to one constant.
+ * TEMPORARY SPLIT: ZIG_COMMIT is the pre-parallel-sema compiler, kept
+ * for Windows hosts only (COFF shard emission isn't implemented and
+ * the build path needs a single object). Everything else — local and
+ * CI, all targets — uses ZIG_COMMIT_PARALLEL (parallel sema is
+ * deterministic; codegen-unit count is decided separately by
+ * codegenThreads()). Once Windows is supported, collapse both back to
+ * one constant.
  */
 export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
 export const ZIG_COMMIT_PARALLEL = "65b29282c04e42bea2539e9e31c5a59ac9cbabdb";

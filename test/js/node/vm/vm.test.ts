@@ -1,3 +1,5 @@
+import { bunExe } from "harness";
+import { join } from "path";
 import { describe, expect, test } from "bun:test";
 import { compileFunction, createContext, runInContext, runInNewContext, runInThisContext, Script } from "node:vm";
 
@@ -172,9 +174,7 @@ describe("vm", () => {
         compileFunction(
           "with(Object.prototype) { toString = function() { globalThis.withHacked = true; }; } return 'test';",
           [],
-          {
-            parsingContext,
-          },
+          { parsingContext },
         )();
 
         // Check that Object.prototype.toString wasn't modified
@@ -505,6 +505,36 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
       });
       expect(result).toContain("foo.js");
     });
+    test.each([
+      { mode: "afterEvaluate", shouldFail: false },
+      { mode: "undefined", shouldFail: false },
+      { mode: "invalid", shouldFail: true },
+    ])("microtaskMode: %o", async ({ mode, shouldFail }) => {
+      const runTest = async (runtime: string) => {
+        const args = [runtime, join(__dirname, "vm-microtask-order.test.js")];
+        args.push(mode);
+        const proc = Bun.spawn(args, {
+          env: {
+            ...process.env,
+            NO_COLOR: "1",
+          },
+        });
+        const output = await new Response(proc.stdout).text();
+        const exitCode = await proc.exited;
+        return { exitCode, output };
+      };
+
+      const { exitCode: bunExitCode, output: bunOutput } = await runTest(bunExe());
+      const cleanedBunOutput = bunOutput.replaceAll(/^\[\w+\].+$/gm, "").trim();
+
+      const { exitCode: nodeExitCode, output: nodeOutput } = await runTest("node");
+      const cleanedNodeOutput = nodeOutput.trim();
+
+      expect(bunExitCode).toBe(nodeExitCode);
+      if (!shouldFail) {
+        expect(cleanedBunOutput).toEqual(cleanedNodeOutput);
+      }
+    });
   }
   test.todo("can specify filename", () => {
     //
@@ -537,10 +567,6 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
   });
   // https://github.com/oven-sh/bun/issues/10885 .if(isNew == true)
   test.todo("can specify contextOrigin", () => {
-    //
-  });
-  // https://github.com/oven-sh/bun/issues/10885 .if(isNew == true)
-  test.todo("can specify microtaskMode", () => {
     //
   });
 }

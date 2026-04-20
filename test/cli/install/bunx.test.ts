@@ -988,6 +988,95 @@ describe("scoped packages should not match unrelated system binaries", () => {
     expect(err).not.toContain("error:");
     expect(exited).toBe(0);
   });
+
+  // When a scoped package lives only in the bunx cache (not locally
+  // installed) and its real bin name — discovered by reading its
+  // package.json — collides with a system binary, bunx must run the
+  // cached bin via the absolute-path probe, not the system binary.
+  it("bunx-cache-only `@scope/name` whose real bin collides with a system binary runs the cached bin", async () => {
+    // Create a scoped package with a bin name that differs from the
+    // unscoped portion AND collides with a system binary we control.
+    const pkgRoot = tmpdirSync();
+    const packageDir = join(pkgRoot, "package");
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "@cacheonly/pkg",
+        version: "1.0.0",
+        bin: { "colliding-tool": "cli.js" },
+      }),
+    );
+    await writeFile(
+      join(packageDir, "cli.js"),
+      `#!/usr/bin/env node\nconsole.log("CORRECT: ran the cached package's bin");\n`,
+    );
+    const tgzDir = tmpdirSync();
+    await Bun.$`tar -czf ${join(tgzDir, "pkg-1.0.0.tgz")} -C ${pkgRoot} package`;
+
+    // Put a decoy "colliding-tool" (the REAL bin name) in $PATH.
+    const fakeBinDir = tmpdirSync();
+    if (isWindows) {
+      await writeFile(join(fakeBinDir, "colliding-tool.cmd"), `@echo WRONG: ran a system binary from PATH\r\n`);
+    } else {
+      const fakeBin = join(fakeBinDir, "colliding-tool");
+      await writeFile(fakeBin, `#!/bin/sh\necho "WRONG: ran a system binary from PATH"\n`);
+      chmodSync(fakeBin, 0o755);
+    }
+
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls, { "1.0.0": { bin: { "colliding-tool": "cli.js" }, as: "1.0.0" } }, 0, tgzDir));
+
+    const runEnv = {
+      ...env,
+      npm_config_registry: `http://localhost:${port}/`,
+      PATH: `${fakeBinDir}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
+    };
+
+    // First run: installs into the bunx cache (no local node_modules).
+    {
+      const subprocess = spawn({
+        cmd: [bunExe(), "x", "@cacheonly/pkg"],
+        cwd: x_dir,
+        stdout: "pipe",
+        stdin: "inherit",
+        stderr: "pipe",
+        env: runEnv,
+      });
+      const [err, out, exited] = await Promise.all([
+        subprocess.stderr.text(),
+        subprocess.stdout.text(),
+        subprocess.exited,
+      ]);
+      expect(out).not.toContain("WRONG");
+      expect(err).not.toContain("WRONG");
+      expect(out).toContain("CORRECT: ran the cached package's bin");
+      expect(exited).toBe(0);
+    }
+
+    // Second run with --no-install: must resolve the real bin name from
+    // the cached package.json and run the cached bin, NOT the colliding
+    // system binary.
+    {
+      const subprocess = spawn({
+        cmd: [bunExe(), "x", "--no-install", "@cacheonly/pkg"],
+        cwd: x_dir,
+        stdout: "pipe",
+        stdin: "inherit",
+        stderr: "pipe",
+        env: runEnv,
+      });
+      const [err, out, exited] = await Promise.all([
+        subprocess.stderr.text(),
+        subprocess.stdout.text(),
+        subprocess.exited,
+      ]);
+      expect(out).not.toContain("WRONG");
+      expect(err).not.toContain("WRONG");
+      expect(out).toContain("CORRECT: ran the cached package's bin");
+      expect(exited).toBe(0);
+    }
+  });
 });
 
 describe("package name aliases", () => {

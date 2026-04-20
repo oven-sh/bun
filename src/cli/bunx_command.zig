@@ -433,6 +433,19 @@ pub const BunxCommand = struct {
         }
 
         var PATH = this_transpiler.env.get("PATH").?;
+
+        // `configurePathForRun` builds PATH by appending ORIGINAL_PATH to a set of
+        // `*/node_modules/.bin` directories (plus the bun-node shim dir). Capture just
+        // that prepended portion here — it is used below to search for guessed bin
+        // names without risking a collision with an unrelated binary in the user's
+        // system $PATH. A trailing delimiter may remain; `bun.which` tokenizes on the
+        // delimiter so empty segments are ignored.
+        const local_bin_dirs: []const u8 = if (ORIGINAL_PATH.len > 0 and
+            strings.endsWith(PATH, ORIGINAL_PATH))
+            PATH[0 .. PATH.len - ORIGINAL_PATH.len]
+        else
+            PATH;
+
         const display_version = if (update_request.version.literal.isEmpty())
             "latest"
         else
@@ -575,17 +588,10 @@ pub const BunxCommand = struct {
             if (update_request.version.literal.isEmpty()) {
                 // If the bin name is a guess derived from a scoped package name,
                 // exclude the original system $PATH so we don't match unrelated
-                // system binaries. Only search node_modules/.bin directories.
-                const search_path = if (initial_bin_name_is_a_guess and
-                    ORIGINAL_PATH.len > 0 and
-                    strings.endsWith(PATH_FOR_BIN_DIRS, ORIGINAL_PATH))
-                    PATH_FOR_BIN_DIRS[0 .. PATH_FOR_BIN_DIRS.len - ORIGINAL_PATH.len]
-                else
-                    PATH_FOR_BIN_DIRS;
-
+                // system binaries. Only search local node_modules/.bin directories.
                 destination_ = bun.which(
                     &path_buf,
-                    search_path,
+                    if (initial_bin_name_is_a_guess) local_bin_dirs else PATH_FOR_BIN_DIRS,
                     if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
                     initial_bin_name,
                 );
@@ -673,14 +679,15 @@ pub const BunxCommand = struct {
 
                         // Only use the system-installed version if there is no version specified.
                         // `package_name_for_bin` is the real bin name from the target package's
-                        // own package.json (not a guess), so it is safe to search the full
-                        // configured $PATH for it. The local node_modules/.bin directories are
-                        // at the front of PATH_FOR_BIN_DIRS, so a locally-installed package wins
-                        // over any same-named system binary.
+                        // own package.json. Search only local node_modules/.bin directories for
+                        // it — not the system $PATH, because the real bin name may itself collide
+                        // with an unrelated system binary when the package lives only in the bunx
+                        // cache (handled by the `orelse` absolute-path probe below) and not in a
+                        // local node_modules.
                         if (update_request.version.literal.isEmpty()) {
                             destination_ = bun.which(
                                 &path_buf,
-                                PATH_FOR_BIN_DIRS,
+                                local_bin_dirs,
                                 if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
                                 package_name_for_bin,
                             );

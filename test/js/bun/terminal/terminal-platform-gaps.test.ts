@@ -173,9 +173,7 @@ describe("Bun.Terminal platform behaviour", () => {
     }
   });
 
-  // ConPTY consumes \x03 from the input pipe but the resulting CTRL_C_EVENT
-  // does not reach the child's SetConsoleCtrlHandler chain (reproduces with a
-  // Node.js child too — known ConPTY limitation, see vscode#71793).
+  // System conhost's ConPTY does not translate \x03 input to CTRL_C_EVENT.
   test.todoIf(isWindows)("SAME: Ctrl+C input interrupts the child", async () => {
     const { output } = await runInTerminal(
       `process.on('SIGINT', () => { process.stdout.write('SIGINT'); process.exit(0); });
@@ -240,11 +238,7 @@ describe("Bun.Terminal platform behaviour", () => {
   // resize
   // ──────────────────────────────────────────────────────────────────────────
 
-  // libuv's SIGWINCH emulation on Windows uses SetWinEventHook(EVENT_CONSOLE_LAYOUT)
-  // from conhost's window; ConPTY's conhost is headless so that never fires, and
-  // ConPTY does not generate WINDOW_BUFFER_SIZE_EVENT on the input stream either.
-  // process.stdout.columns DOES update (GetConsoleScreenBufferInfo), only the
-  // event notification is missing. Affects Node.js under node-pty equally.
+  // libuv's SIGWINCH detection on Windows requires a conhost window; ConPTY has none.
   test.todoIf(isWindows)("SAME: resize while child is running fires SIGWINCH in child", async () => {
     const { output } = await runInTerminal(
       `process.on('SIGWINCH', () => setImmediate(() => {

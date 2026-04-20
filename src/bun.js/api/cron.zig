@@ -926,7 +926,14 @@ pub const CronJob = struct {
     }
 
     fn scheduleNext(this: *CronJob, vm: *jsc.VirtualMachine) void {
-        if (this.stopped) return this.finishDeferredStop(vm);
+        // Every path into here has just returned from user JS (the callback,
+        // an uncaughtException handler, or an unhandledRejection handler). If
+        // that JS called process.exit() / worker.terminate(), don't re-arm
+        // the timer into a VM whose teardown now owns it.
+        if (this.stopped or vm.scriptExecutionStatus() != .running) {
+            this.stopped = true;
+            return this.finishDeferredStop(vm);
+        }
         const next_time = this.computeNextTimespec() orelse
             return this.finishDeferredStop(vm);
         vm.timer.update(&this.event_loop_timer, &next_time);
@@ -964,12 +971,29 @@ pub const CronJob = struct {
         this.in_fire = true;
         const result = cb.call(this.global, js_this, &.{}) catch {
             this.in_fire = false;
-            if (this.global.tryTakeException()) |err|
+            if (this.global.tryTakeException()) |err| {
+                // terminate() arriving mid-callback leaves the TerminationException
+                // pending (tryClearException refuses to clear it) while JSC clears
+                // hasTerminationRequest on VMEntryScope exit. Reporting it would
+                // enter a DeferTermination scope and assert; match setTimeout's
+                // Bun__reportUnhandledError and drop it.
+                if (err.isTerminationException()) {
+                    this.selfStop(vm);
+                    return;
+                }
                 _ = vm.uncaughtException(vm.global, err, false);
+            }
             this.scheduleNext(vm);
             return;
         };
         this.in_fire = false;
+
+        // terminate() may have arrived while the callback was running; bail out
+        // without touching the timer heap or JS state the teardown path owns.
+        if (vm.scriptExecutionStatus() != .running) {
+            this.selfStop(vm);
+            return;
+        }
 
         if (result.asAnyPromise()) |promise| {
             switch (promise.status()) {

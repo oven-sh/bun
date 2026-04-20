@@ -31,7 +31,28 @@ pub const PmFetchCommand = struct {
         const packages = lockfile.packages.slice();
         const names = packages.items(.name);
         const resolutions = packages.items(.resolution);
-        const dep_resolutions = lockfile.buffers.resolutions.items;
+
+        // Build a reverse index from package id to a dependency id that
+        // resolves to it, preferring required edges over optional ones so
+        // download failures on transitively-required packages are errors.
+        const dep_ids = dep_ids: {
+            const deps = lockfile.buffers.dependencies.items;
+            const dep_resolutions = lockfile.buffers.resolutions.items;
+            const index = bun.handleOom(pm.allocator.alloc(DependencyID, lockfile.packages.len));
+            @memset(index, invalid_dependency_id);
+            for (dep_resolutions, 0..) |res_pkg_id, dep_idx| {
+                if (res_pkg_id >= lockfile.packages.len) continue;
+                const id: DependencyID = @intCast(dep_idx);
+                const existing = index[res_pkg_id];
+                if (existing == invalid_dependency_id or
+                    (!deps[existing].behavior.isRequired() and deps[id].behavior.isRequired()))
+                {
+                    index[res_pkg_id] = id;
+                }
+            }
+            break :dep_ids index;
+        };
+        defer pm.allocator.free(dep_ids);
 
         var already_cached: u32 = 0;
 
@@ -57,33 +78,29 @@ pub const PmFetchCommand = struct {
                     continue;
                 },
                 .extract => {},
-                .apply_patch, .calc_patch_hash => {
+                .apply_patch => {
                     // The unpatched tarball is already in the cache. `bun pm fetch`
                     // only guarantees tarballs are cached; patches are applied
                     // during `bun install`.
                     already_cached += 1;
                     continue;
                 },
-                .unknown, .extracting, .calcing_patch_hash, .applying_patch => continue,
+                // `.calc_patch_hash` is returned before the cache is checked;
+                // in practice pass 1 computes all patch hashes so this should
+                // not occur here, but if it does the cache state is unknown.
+                .calc_patch_hash,
+                .unknown,
+                .extracting,
+                .calcing_patch_hash,
+                .applying_patch,
+                => continue,
             }
 
-            // Find a dependency that resolves to this package. A package may
-            // be reachable via multiple dependency edges; prefer a required
-            // one so download failures are reported as errors, not warnings.
-            const dep_id: DependencyID = dep_id: {
-                const deps = lockfile.buffers.dependencies.items;
-                var first: ?DependencyID = null;
-                for (dep_resolutions, 0..) |res_pkg_id, dep_idx| {
-                    if (res_pkg_id != pkg_id) continue;
-                    const id: DependencyID = @intCast(dep_idx);
-                    if (deps[id].behavior.isRequired()) break :dep_id id;
-                    if (first == null) first = id;
-                }
-                if (first) |id| break :dep_id id;
-                // Orphaned package, skip it.
-                continue;
-            };
+            const dep_id = dep_ids[pkg_id];
+            // Orphaned package, skip it.
+            if (dep_id == invalid_dependency_id) continue;
 
+            const dep = lockfile.buffers.dependencies.items[dep_id];
             const task_ctx: TaskCallbackContext = .{ .dependency = dep_id };
             const pkg_name = names[pkg_id].slice(string_buf);
 
@@ -100,13 +117,12 @@ pub const PmFetchCommand = struct {
                     ) catch |err| switch (err) {
                         error.OutOfMemory => bun.outOfMemory(),
                         error.InvalidURL => {
-                            Output.warn("invalid tarball url for <b>{s}<r>", .{pkg_name});
+                            reportInvalidURL(pm, dep, pkg_name);
                             continue;
                         },
                     };
                 },
                 .git => {
-                    const dep = lockfile.buffers.dependencies.items[dep_id];
                     pm.enqueueGitForCheckout(
                         dep_id,
                         dep.name.slice(string_buf),
@@ -127,13 +143,12 @@ pub const PmFetchCommand = struct {
                     ) catch |err| switch (err) {
                         error.OutOfMemory => bun.outOfMemory(),
                         error.InvalidURL => {
-                            Output.warn("invalid github url for <b>{s}<r>", .{pkg_name});
+                            reportInvalidURL(pm, dep, pkg_name);
                             continue;
                         },
                     };
                 },
                 .local_tarball => {
-                    const dep = lockfile.buffers.dependencies.items[dep_id];
                     pm.enqueueTarballForReading(
                         dep_id,
                         pkg_id,
@@ -152,7 +167,7 @@ pub const PmFetchCommand = struct {
                     ) catch |err| switch (err) {
                         error.OutOfMemory => bun.outOfMemory(),
                         error.InvalidURL => {
-                            Output.warn("invalid tarball url for <b>{s}<r>", .{pkg_name});
+                            reportInvalidURL(pm, dep, pkg_name);
                             continue;
                         },
                     };
@@ -246,6 +261,26 @@ pub const PmFetchCommand = struct {
             return this.pendingTaskCount() == 0;
         }
     };
+
+    fn reportInvalidURL(pm: *PackageManager, dep: Dependency, pkg_name: []const u8) void {
+        if (dep.behavior.isRequired()) {
+            pm.log.addErrorFmt(
+                null,
+                bun.logger.Loc.Empty,
+                pm.allocator,
+                "invalid tarball url for <b>{s}<r>",
+                .{pkg_name},
+            ) catch bun.outOfMemory();
+        } else {
+            pm.log.addWarningFmt(
+                null,
+                bun.logger.Loc.Empty,
+                pm.allocator,
+                "invalid tarball url for <b>{s}<r>",
+                .{pkg_name},
+            ) catch bun.outOfMemory();
+        }
+    }
 };
 
 const std = @import("std");
@@ -256,7 +291,9 @@ const Output = bun.Output;
 const Command = bun.cli.Command;
 
 const install = bun.install;
+const Dependency = install.Dependency;
 const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
 const PackageManager = install.PackageManager;
 const TaskCallbackContext = install.TaskCallbackContext;
+const invalid_dependency_id = install.invalid_dependency_id;

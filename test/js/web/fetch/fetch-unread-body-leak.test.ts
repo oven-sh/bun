@@ -198,9 +198,22 @@ test("fetch response body backpressure resumes after clone()-before-body-access"
         // clone() first — this is the tee() fallback that allocates a fresh
         // ByteStream.Source.
         const clone = res.clone();
-        const [a, b] = await Promise.all([res.bytes(), clone.bytes()]);
-        if (a.byteLength !== ${SIZE} || b.byteLength !== ${SIZE}) {
-          throw new Error("size mismatch: " + a.byteLength + " / " + b.byteLength);
+        // Stall one branch so the underlying ByteStream's buffer crosses the
+        // HWM and the socket pauses. Without drain_handler wired on the tee()
+        // path, nothing would resume it.
+        const reader = clone.body.getReader();
+        await reader.read();
+        for (let i = 0; i < 50; i++) await Bun.sleep(2);
+        // Now drain both branches; this requires the socket to resume.
+        const a = await res.bytes();
+        let b = 0;
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          b += value.length;
+        }
+        if (a.byteLength !== ${SIZE} || b >= ${SIZE} || b === 0) {
+          throw new Error("size mismatch: " + a.byteLength + " / " + b);
         }
         console.log("ok");
       `,

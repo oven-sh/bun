@@ -16,7 +16,15 @@ import tls from "node:tls";
 // Macs). Node v25's loader has the same property on this platform, and Node's
 // own test-tls-get-ca-certificates-system.js only asserts non-empty on
 // Windows. The issue this regresses was reported on Linux.
-const skip = process.platform === "darwin" ? "system cert count is environment-dependent on macOS" : false;
+//
+// On Linux, SSL_CERT_FILE / SSL_CERT_DIR override the default search and may
+// legitimately yield zero certs; this test targets default discovery.
+const skip =
+  process.platform === "darwin"
+    ? "system cert count is environment-dependent on macOS"
+    : process.env.SSL_CERT_FILE || process.env.SSL_CERT_DIR
+      ? "SSL_CERT_FILE/SSL_CERT_DIR override default system store discovery"
+      : false;
 
 test("tls.getCACertificates('system') returns system certs without --use-system-ca", { skip }, () => {
   assert.notStrictEqual(process.env.NODE_USE_SYSTEM_CA, "1");

@@ -152,6 +152,14 @@ pending_internal_promise_is_protected: bool = false,
 /// counter (rather than the promise pointer) avoids false negatives when
 /// GC reuses the previous promise's allocation for the next reload's.
 pending_internal_promise_reported_at: u32 = std.math.maxInt(u32),
+/// A watcher event arrived while pending_internal_promise was still pending
+/// — i.e. while a previous hot-reload's loadAndEvaluateModule chain was
+/// still in flight on the microtask queue. Starting a second clearAll +
+/// load now would let the two chains interleave through one registry and
+/// produce duplicate or partial-graph evaluations, so defer the new reload
+/// until the in-flight promise settles. The main loop's per-tick
+/// reportExceptionInHotReloadedModuleIfNeeded picks this up.
+hot_reload_deferred: bool = false,
 entry_point_result: struct {
     value: jsc.Strong.Optional = .empty,
     cjs_set_value: bool = false,
@@ -711,10 +719,18 @@ pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) voi
     defer this.addMainToWatcherIfNeeded();
     var promise = this.pending_internal_promise orelse return;
 
-    if (promise.status() == .rejected and this.pending_internal_promise_reported_at != this.hot_reload_counter) {
-        this.pending_internal_promise_reported_at = this.hot_reload_counter;
-        this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.toJS());
-        promise.setHandled();
+    switch (promise.status()) {
+        .pending => return,
+        .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {
+            this.pending_internal_promise_reported_at = this.hot_reload_counter;
+            this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.toJS());
+            promise.setHandled();
+        },
+        .fulfilled => {},
+    }
+
+    if (this.hot_reload_deferred) {
+        this.reload(null);
     }
 }
 
@@ -750,7 +766,21 @@ pub inline fn autoGarbageCollect(this: *const VirtualMachine) void {
     }
 }
 
-pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
+pub fn reload(this: *VirtualMachine, _: ?*HotReloader.Task) void {
+    // The C++ module loader is async: reloadEntryPoint() returns while the
+    // fetch/link/evaluate chain is still draining via microtasks. Kicking
+    // off another clearAll() before that chain settles lets the two loads
+    // race through one registry. Defer instead; the main loop reschedules
+    // via reportExceptionInHotReloadedModuleIfNeeded once the in-flight
+    // promise resolves or rejects.
+    if (this.pending_internal_promise) |p| {
+        if (p.status() == .pending) {
+            this.hot_reload_deferred = true;
+            return;
+        }
+    }
+    this.hot_reload_deferred = false;
+
     Output.debug("Reloading...", .{});
     const should_clear_terminal = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors_stdout);
     if (this.hot_reload == .watch) {

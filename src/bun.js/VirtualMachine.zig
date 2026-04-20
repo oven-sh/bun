@@ -145,6 +145,13 @@ proxy_env_storage: jsc.RareData.ProxyEnvStorage = .{},
 is_us_loop_entered: bool = false,
 pending_internal_promise: ?*JSInternalPromise = null,
 pending_internal_promise_is_protected: bool = false,
+/// hot_reload_counter value at which we last surfaced a rejected
+/// pending_internal_promise. We can't use JSPromise.isHandled() as the
+/// "already reported" sentinel any more: the C++ module loader marks every
+/// pipeline promise handled before it ever reaches us. Using a generation
+/// counter (rather than the promise pointer) avoids false negatives when
+/// GC reuses the previous promise's allocation for the next reload's.
+pending_internal_promise_reported_at: u32 = std.math.maxInt(u32),
 entry_point_result: struct {
     value: jsc.Strong.Optional = .empty,
     cjs_set_value: bool = false,
@@ -704,7 +711,8 @@ pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) voi
     defer this.addMainToWatcherIfNeeded();
     var promise = this.pending_internal_promise orelse return;
 
-    if (promise.status() == .rejected and !promise.isHandled()) {
+    if (promise.status() == .rejected and this.pending_internal_promise_reported_at != this.hot_reload_counter) {
+        this.pending_internal_promise_reported_at = this.hot_reload_counter;
         this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.toJS());
         promise.setHandled();
     }

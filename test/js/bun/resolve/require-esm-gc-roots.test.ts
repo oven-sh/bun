@@ -40,12 +40,18 @@ test("require(esm) sync queue is a GC root", async () => {
   });
 
   // collectContinuously is brutally slow on Windows (every allocation triggers
-  // a full GC), so we trade fewer iterations for the same coverage there.
+  // a full GC; >60s for a single subprocess on x64-baseline). The original CI
+  // failure surfaced on Linux aarch64 under --smol + forceRAMSize alone, so
+  // use that combination on Windows instead — it still pressures GC enough to
+  // catch the missing-root bug without the per-allocation collector.
+  const gcEnv = isWindows
+    ? { ...bunEnv, BUN_JSC_forceRAMSize: String(64 * 1024 * 1024) }
+    : { ...bunEnv, BUN_JSC_collectContinuously: "1" };
   const N = isWindows ? 8 : 30;
   const runs = Array.from({ length: N }, async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "entry.cjs"],
-      env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+      env: gcEnv,
       cwd: String(dir),
       stderr: "pipe",
     });

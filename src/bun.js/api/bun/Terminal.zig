@@ -249,10 +249,9 @@ fn initTerminal(
     // Get or create the JS wrapper
     const this_value = existing_js_value orelse terminal.toJS(globalObject);
 
-    // Store the this_value (JSValue wrapper) - start with strong ref since we're actively reading
-    // This is the JS side ref (released in finalize)
+    // Store the this_value (JSValue wrapper) - start with strong ref since we're actively reading.
+    // The JS-side ref is the one taken by RefCount.init() above; released in finalize().
     terminal.this_value = jsc.JSRef.initStrong(this_value, globalObject);
-    terminal.ref();
 
     // Store callbacks via generated gc setters (prevents GC of callbacks while terminal is alive)
     // Note: callbacks were already validated in parseFromJS() and may be wrapped in AsyncContextFrame

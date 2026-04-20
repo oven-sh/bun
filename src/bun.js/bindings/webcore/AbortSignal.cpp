@@ -46,7 +46,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(AbortSignal);
 
 extern "C" AbortSignalTimeout AbortSignal__Timeout__create(void* vm, AbortSignal* signal, uint64_t milliseconds);
 extern "C" void AbortSignal__Timeout__run(AbortSignalTimeout timeout, void* vm);
-extern "C" void AbortSignal__Timeout__deinit(AbortSignalTimeout timeout, void*);
+extern "C" void AbortSignal__Timeout__deinit(AbortSignalTimeout timeout);
 
 Ref<AbortSignal> AbortSignal::create(ScriptExecutionContext* context)
 {
@@ -137,7 +137,7 @@ void AbortSignal::addDependentSignal(AbortSignal& signal)
 void AbortSignal::cancelTimer()
 {
     if (auto timeout = std::exchange(m_timeout, nullptr)) {
-        AbortSignal__Timeout__deinit(timeout, bunVM(scriptExecutionContext()->vm()));
+        AbortSignal__Timeout__deinit(timeout);
     }
 }
 
@@ -170,6 +170,14 @@ void AbortSignal::runAbortSteps()
     for (auto& algorithm : std::exchange(m_algorithms, {}))
         algorithm.second(reason);
 
+    Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> abortAlgorithms;
+    {
+        Locker locker { m_abortAlgorithmsLock };
+        abortAlgorithms = std::exchange(m_abortAlgorithms, {});
+    }
+    for (auto& pair : abortAlgorithms)
+        pair.second->handleEvent(reason);
+
     // 3. Fire an event named abort at signal.
     if (hasEventListeners(eventNames().abortEvent))
         dispatchEvent(Event::create(eventNames().abortEvent, Event::CanBubble::No, Event::IsCancelable::No));
@@ -179,9 +187,17 @@ void AbortSignal::runAbortSteps()
 // https://dom.spec.whatwg.org/#abortsignal-signal-abort
 void AbortSignal::signalAbort(JSC::JSValue reason)
 {
-    // 1. If signal's aborted flag is set, then return.
+    // 1. If signal’s aborted flag is set, then return.
     if (aborted())
         return;
+
+    // signalAbort() is the sole path for releasing the extra ref that
+    // timeout() took — for ALL abort paths, including when the timer fires
+    // naturally (dispatch -> signal -> signalAbort -> deref).
+    // Timeout::dispatch() intentionally does NOT call unref().
+    // Defer the deref until after all abort work is done so `this` stays
+    // alive throughout.
+    bool hadTimeout = m_timeout != nullptr;
 
     // 2. Set signal’s abort reason to reason if it is given; otherwise to a new "AbortError" DOMException.
     markAborted(reason);
@@ -201,6 +217,10 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
     // 6. For each dependentSignal of dependentSignalsToAbort, run the abort steps for dependentSignal.
     for (auto& dependentSignal : dependentSignalsToAbort)
         dependentSignal->runAbortSteps();
+
+    // Release the extra ref from timeout() now that all abort work is done.
+    if (hadTimeout)
+        deref();
 }
 
 void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason)
@@ -247,7 +267,30 @@ void AbortSignal::signalFollow(AbortSignal& signal)
 
 void AbortSignal::eventListenersDidChange()
 {
-    setHasAbortEventListener(hasEventListeners(eventNames().abortEvent) or !m_native_callbacks.isEmpty());
+    bool hasListeners = hasEventListeners(eventNames().abortEvent) or !m_native_callbacks.isEmpty();
+    setHasAbortEventListener(hasListeners);
+
+    // When a timeout signal loses all observers (no JS listeners, no native
+    // callbacks, no algorithms, no dependent signals), there is nothing left
+    // to notify when the timer fires.  Cancel the timer and release the extra
+    // ref that timeout() took to keep the signal alive, so the C++ object can
+    // be destroyed normally.
+    if (!hasListeners && m_timeout && !aborted()
+        && m_algorithms.isEmpty() && !hasPendingActivity()
+        && m_dependentSignals.isEmptyIgnoringNullReferences()) {
+        bool shouldDeref = false;
+        {
+            Locker locker { m_abortAlgorithmsLock };
+            if (m_abortAlgorithms.isEmpty()) {
+                cancelTimer();
+                shouldDeref = true;
+            }
+        }
+        // Release the extra ref after the lock is released, since deref()
+        // may destroy `this` (and m_abortAlgorithmsLock with it).
+        if (shouldDeref)
+            deref(); // balances the ref() in AbortSignal::timeout()
+    }
 }
 
 uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)
@@ -257,14 +300,18 @@ uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAl
         algorithm->handleEvent(signal.jsReason(*signal.scriptExecutionContext()->jsGlobalObject()));
         return 0;
     }
-    return signal.addAlgorithm([algorithm = WTF::move(algorithm)](JSC::JSValue value) mutable {
-        algorithm->handleEvent(value);
-    });
+    auto identifier = ++signal.m_algorithmIdentifier;
+    Locker locker { signal.m_abortAlgorithmsLock };
+    signal.m_abortAlgorithms.append(std::make_pair(identifier, WTF::move(algorithm)));
+    return identifier;
 }
 
 void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t algorithmIdentifier)
 {
-    signal.removeAlgorithm(algorithmIdentifier);
+    Locker locker { signal.m_abortAlgorithmsLock };
+    signal.m_abortAlgorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
+        return pair.first == algorithmIdentifier;
+    });
 }
 
 uint32_t AbortSignal::addAlgorithm(Algorithm&& algorithm)
@@ -297,7 +344,18 @@ WebCoreOpaqueRoot root(AbortSignal* signal)
 
 size_t AbortSignal::memoryCost() const
 {
-    return sizeof(AbortSignal) + m_native_callbacks.sizeInBytes() + m_algorithms.sizeInBytes() + m_sourceSignals.capacity() + m_dependentSignals.capacity();
+    return sizeof(AbortSignal) + m_native_callbacks.sizeInBytes() + m_algorithms.sizeInBytes() + m_abortAlgorithms.sizeInBytes() + m_sourceSignals.capacity() + m_dependentSignals.capacity();
 }
+
+template<typename Visitor>
+void AbortSignal::visitAbortAlgorithms(Visitor& visitor)
+{
+    Locker locker { m_abortAlgorithmsLock };
+    for (auto& pair : m_abortAlgorithms)
+        pair.second->visitJSFunction(visitor);
+}
+
+template void AbortSignal::visitAbortAlgorithms(JSC::AbstractSlotVisitor&);
+template void AbortSignal::visitAbortAlgorithms(JSC::SlotVisitor&);
 
 } // namespace WebCore

@@ -784,15 +784,20 @@ pub fn Parser(comptime enc: Encoding) type {
 
             {
                 try self.context.set(.flow_in);
+                defer self.context.unset(.flow_in);
 
-                try self.context.set(.flow_key);
-                try self.scan(.{});
-                self.context.unset(.flow_key);
+                {
+                    try self.context.set(.flow_key);
+                    defer self.context.unset(.flow_key);
+                    try self.scan(.{});
+                }
 
                 while (self.token.data != .mapping_end) {
-                    try self.context.set(.flow_key);
-                    const key = try self.parseNode(.{});
-                    self.context.unset(.flow_key);
+                    const key = key: {
+                        try self.context.set(.flow_key);
+                        defer self.context.unset(.flow_key);
+                        break :key try self.parseNode(.{});
+                    };
 
                     switch (self.token.data) {
                         .collect_entry => {
@@ -803,8 +808,8 @@ pub fn Parser(comptime enc: Encoding) type {
                             });
 
                             try self.context.set(.flow_key);
+                            defer self.context.unset(.flow_key);
                             try self.scan(.{});
-                            self.context.unset(.flow_key);
                             continue;
                         },
                         .mapping_end => {
@@ -838,12 +843,10 @@ pub fn Parser(comptime enc: Encoding) type {
 
                     if (self.token.data == .collect_entry) {
                         try self.context.set(.flow_key);
+                        defer self.context.unset(.flow_key);
                         try self.scan(.{});
-                        self.context.unset(.flow_key);
                     }
                 }
-
-                self.context.unset(.flow_in);
             }
 
             try self.scan(.{});

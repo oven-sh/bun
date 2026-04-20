@@ -40,8 +40,6 @@ class EventTargetConcrete final : public RefCounted<EventTargetConcrete>, public
 public:
     static Ref<EventTargetConcrete> create(ScriptExecutionContext&);
 
-    bool hasEventTargetData() const { return true; }
-
     using RefCounted::deref;
     using RefCounted::ref;
 

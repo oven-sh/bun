@@ -158,7 +158,7 @@ public:
     DECLARE_VISIT_CHILDREN;
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
 
     Bun::BundlerPlugin plugin;
     /// These are defined in BundlerPlugin.ts
@@ -188,7 +188,7 @@ private:
 };
 
 template<typename Visitor>
-void JSBundlerPlugin::visitAdditionalChildren(Visitor& visitor)
+void JSBundlerPlugin::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     this->onLoadFunction.visit(visitor);
     this->onResolveFunction.visit(visitor);
@@ -202,16 +202,17 @@ void JSBundlerPlugin::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 DEFINE_VISIT_CHILDREN(JSBundlerPlugin);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSBundlerPlugin);
 
 template<typename Visitor>
 void JSBundlerPlugin::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 {
     JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSBundlerPlugin);
 
@@ -672,11 +673,11 @@ extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObjec
     auto& vm = pluginObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     for (auto promiseValue : arguments) {
-        JSPromise* promise = jsCast<JSPromise*>(JSValue::decode(promiseValue));
+        JSPromise* promise = jsCast<JSPromise*>(promiseValue);
         if (rejected) {
             promise->reject(vm, globalObject, JSC::jsUndefined());
         } else {
-            promise->resolve(globalObject, JSC::jsUndefined());
+            promise->resolve(globalObject, vm, JSC::jsUndefined());
         }
         RETURN_IF_EXCEPTION(scope, );
     }

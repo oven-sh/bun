@@ -29,6 +29,9 @@
 #include <wtf/text/StringConcatenateNumbers.h>
 #include <wtf/text/WTFString.h>
 
+// WebIDL §3.2.4.9 requires round-half-to-even for [Clamp].
+static ALWAYS_INLINE double clampRoundEven(double x) { return __builtin_roundeven(x); }
+
 namespace WebCore {
 using namespace JSC;
 
@@ -133,7 +136,7 @@ static inline T toSmallerInt(JSGlobalObject& lexicalGlobalObject, JSValue value)
     case IntegerConversionConfiguration::EnforceRange:
         return enforceRange(lexicalGlobalObject, x, LimitsTrait::minValue, LimitsTrait::maxValue);
     case IntegerConversionConfiguration::Clamp:
-        return std::isnan(x) ? 0 : clampTo<T>(x);
+        return std::isnan(x) ? 0 : clampTo<T>(clampRoundEven(x));
     }
 
     if (std::isnan(x) || std::isinf(x) || !x)
@@ -179,7 +182,7 @@ static inline T toSmallerUInt(JSGlobalObject& lexicalGlobalObject, JSValue value
     case IntegerConversionConfiguration::EnforceRange:
         return enforceRange(lexicalGlobalObject, x, 0, LimitsTrait::maxValue);
     case IntegerConversionConfiguration::Clamp:
-        return std::isnan(x) ? 0 : clampTo<T>(x);
+        return std::isnan(x) ? 0 : clampTo<T>(clampRoundEven(x));
     }
 
     if (std::isnan(x) || std::isinf(x) || !x)
@@ -284,7 +287,7 @@ template<> int32_t convertToIntegerClamp<int32_t>(JSC::JSGlobalObject& lexicalGl
         return value.asInt32();
 
     double x = value.toNumber(&lexicalGlobalObject);
-    return std::isnan(x) ? 0 : clampTo<int32_t>(x);
+    return std::isnan(x) ? 0 : clampTo<int32_t>(clampRoundEven(x));
 }
 
 template<> uint32_t convertToIntegerClamp<uint32_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
@@ -293,7 +296,7 @@ template<> uint32_t convertToIntegerClamp<uint32_t>(JSC::JSGlobalObject& lexical
         return value.asUInt32();
 
     double x = value.toNumber(&lexicalGlobalObject);
-    return std::isnan(x) ? 0 : clampTo<uint32_t>(x);
+    return std::isnan(x) ? 0 : clampTo<uint32_t>(clampRoundEven(x));
 }
 
 template<> int32_t convertToInteger<int32_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
@@ -338,7 +341,7 @@ template<> int64_t convertToIntegerClamp<int64_t>(JSC::JSGlobalObject& lexicalGl
         return value.asInt32();
 
     double x = value.toNumber(&lexicalGlobalObject);
-    return std::isnan(x) ? 0 : static_cast<int64_t>(std::min<double>(std::max<double>(x, -kJSMaxInteger), kJSMaxInteger));
+    return std::isnan(x) ? 0 : static_cast<int64_t>(clampRoundEven(std::min<double>(std::max<double>(x, -kJSMaxInteger), kJSMaxInteger)));
 }
 
 template<> uint64_t convertToIntegerClamp<uint64_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
@@ -347,7 +350,7 @@ template<> uint64_t convertToIntegerClamp<uint64_t>(JSC::JSGlobalObject& lexical
         return value.asUInt32();
 
     double x = value.toNumber(&lexicalGlobalObject);
-    return std::isnan(x) ? 0 : static_cast<uint64_t>(std::min<double>(std::max<double>(x, 0), kJSMaxInteger));
+    return std::isnan(x) ? 0 : static_cast<uint64_t>(clampRoundEven(std::min<double>(std::max<double>(x, 0), kJSMaxInteger)));
 }
 
 template<> int64_t convertToInteger<int64_t>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)

@@ -782,3 +782,33 @@ it("should not leak memory", async () => {
 it("should not leak memory when connect() fails again", async () => {
   await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
 });
+
+it("should throw on empty hostname from truthy non-string value", () => {
+  const socket = { data() {}, open() {}, close() {} };
+  // A truthy value whose toString() returns "" should throw, not crash
+  for (const hostname of [[], new String("")]) {
+    expect(() => Bun.listen({ hostname: hostname as any, port: 0, socket })).toThrow('Expected a non-empty "hostname"');
+    expect(() => Bun.connect({ hostname: hostname as any, port: 0, socket })).toThrow(
+      'Expected a non-empty "hostname"',
+    );
+  }
+});
+
+it("should throw on empty unix path from truthy non-string value", () => {
+  const socket = { data() {}, open() {}, close() {} };
+  // unix uses a strict string type in bindgen, so non-string values are rejected before
+  // reaching the empty-string check — the error message differs from hostname
+  expect(() => Bun.listen({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
+  expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
+});
+
+it("reading fd of a TLS listener should not crash", () => {
+  using listener = Bun.listen({
+    hostname: "localhost",
+    port: 0,
+    socket: { data() {}, open() {}, close() {} },
+    tls: { passphrase: "abc" },
+  });
+  expect(typeof listener.fd).toBe("number");
+  expect(listener.fd).toBeGreaterThanOrEqual(0);
+});

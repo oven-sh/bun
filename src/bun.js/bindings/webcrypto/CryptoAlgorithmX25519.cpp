@@ -26,6 +26,7 @@
 #include "CryptoKeyOKP.h"
 #include "ScriptExecutionContext.h"
 #include "CryptoDigest.h"
+#include <openssl/curve25519.h>
 #include <wtf/CryptographicUtilities.h>
 
 namespace WebCore {
@@ -60,13 +61,16 @@ void CryptoAlgorithmX25519::generateKey(const CryptoAlgorithmParameters&, bool e
 }
 
 #if !PLATFORM(COCOA) && !USE(GCRYPT)
-std::optional<Vector<uint8_t>> CryptoAlgorithmX25519::platformDeriveBits(const CryptoKeyOKP&, const CryptoKeyOKP&)
+std::optional<Vector<uint8_t>> CryptoAlgorithmX25519::platformDeriveBits(const CryptoKeyOKP& baseKey, const CryptoKeyOKP& publicKey)
 {
-    return std::nullopt;
+    Vector<uint8_t> result(X25519_SHARED_KEY_LEN);
+    if (!X25519(result.begin(), baseKey.platformKey().begin(), publicKey.platformKey().begin()))
+        return std::nullopt;
+    return result;
 }
 #endif
 
-void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, std::optional<size_t> length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
+void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, size_t length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
     if (baseKey->type() != CryptoKey::Type::Private) {
         exceptionCallback(ExceptionCode::InvalidAccessError, ""_s);
@@ -89,21 +93,9 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
         return;
     }
 
-    // Return an empty string doesn't make much sense, but truncating either at all.
-    // https://github.com/WICG/webcrypto-secure-curves/pull/29
-    if (length && !(*length)) {
-        // Avoid executing the key-derivation, since we are going to return an empty string.
-        callback({});
-        return;
-    }
-
-    auto unifiedCallback = [callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)](std::optional<Vector<uint8_t>>&& derivedKey, std::optional<size_t> length) mutable {
+    auto unifiedCallback = [length, callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)](std::optional<Vector<uint8_t>>&& derivedKey) mutable {
         if (!derivedKey) {
             exceptionCallback(ExceptionCode::OperationError, ""_s);
-            return;
-        }
-        if (!length) {
-            callback(WTF::move(*derivedKey));
             return;
         }
 #if !HAVE(X25519_ZERO_CHECKS)
@@ -115,7 +107,11 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
             return;
         }
 #endif
-        auto lengthInBytes = std::ceil(*length / 8.);
+        if (!length) {
+            callback(WTF::move(*derivedKey));
+            return;
+        }
+        auto lengthInBytes = static_cast<size_t>(std::ceil(length / 8.));
         if (lengthInBytes > (*derivedKey).size()) {
             exceptionCallback(ExceptionCode::OperationError, ""_s);
             return;
@@ -127,10 +123,10 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
     // the result validation and callback dispatch into unifiedCallback.
     workQueue.dispatch(
         context.globalObject(),
-        [baseKey = WTF::move(baseKey), publicKey = ecParameters.publicKey, length, unifiedCallback = WTF::move(unifiedCallback), contextIdentifier = context.identifier()]() mutable {
+        [baseKey = WTF::move(baseKey), publicKey = ecParameters.publicKey, unifiedCallback = WTF::move(unifiedCallback), contextIdentifier = context.identifier()]() mutable {
             auto derivedKey = platformDeriveBits(downcast<CryptoKeyOKP>(baseKey.get()), downcast<CryptoKeyOKP>(*publicKey));
-            ScriptExecutionContext::postTaskTo(contextIdentifier, [derivedKey = WTF::move(derivedKey), length, unifiedCallback = WTF::move(unifiedCallback)](auto&) mutable {
-                unifiedCallback(WTF::move(derivedKey), length);
+            ScriptExecutionContext::postTaskTo(contextIdentifier, [derivedKey = WTF::move(derivedKey), unifiedCallback = WTF::move(unifiedCallback)](auto&) mutable {
+                unifiedCallback(WTF::move(derivedKey));
             });
         });
 }

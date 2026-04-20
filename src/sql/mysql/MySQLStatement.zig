@@ -21,7 +21,12 @@ pub const ExecutionFlags = packed struct(u8) {
     header_received: bool = false,
     needs_duplicate_check: bool = true,
     need_to_send_params: bool = true,
-    _: u5 = 0,
+    /// In legacy protocol (CLIENT_DEPRECATE_EOF not negotiated), tracks whether
+    /// the intermediate EOF packet between column definitions and row data has
+    /// been consumed. This prevents the intermediate EOF from being mistakenly
+    /// treated as end-of-result-set.
+    columns_eof_received: bool = false,
+    _: u4 = 0,
 };
 
 pub const Status = enum {
@@ -78,6 +83,7 @@ pub fn checkForDuplicateFields(this: *@This()) void {
             .name => |*name| {
                 const seen = seen_fields.getOrPut(name.slice()) catch unreachable;
                 if (seen.found_existing) {
+                    field.name_or_index.deinit();
                     field.name_or_index = .duplicate;
                     flags.has_duplicate_columns = true;
                 }

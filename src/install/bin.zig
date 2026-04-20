@@ -569,11 +569,9 @@ pub const Bin = extern struct {
             if (this.seen) |seen| {
                 // Skip seen destinations for this tree
                 // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
-                const entry = bun.handleOom(seen.getOrPut(abs_dest));
-                if (entry.found_existing) {
+                if (seen.contains(abs_dest)) {
                     return;
                 }
-                entry.key_ptr.* = bun.handleOom(seen.allocator.dupe(u8, abs_dest));
             }
 
             // Skip if the target does not exist. This is important because placing a dangling
@@ -581,6 +579,13 @@ pub const Bin = extern struct {
             if (!bun.sys.exists(abs_target)) {
                 this.skipped_due_to_missing_bin = true;
                 return;
+            }
+
+            if (this.seen) |seen| {
+                const entry = bun.handleOom(seen.getOrPut(abs_dest));
+                if (!entry.found_existing) {
+                    entry.key_ptr.* = bun.handleOom(seen.allocator.dupe(u8, abs_dest));
+                }
             }
 
             bun.analytics.Features.binlinks += 1;
@@ -698,7 +703,7 @@ pub const Bin = extern struct {
             }
         }
 
-        fn createWindowsShim(this: *Linker, target: bun.FileDescriptor, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
+        fn createWindowsShim(this: *Linker, target: bun.FD, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
             const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
 
             var shim_buf: [65536]u8 = undefined;
@@ -847,6 +852,55 @@ pub const Bin = extern struct {
             };
         }
 
+        /// True when the native binlink optimization has redirected the link
+        /// target into a different package than the one that declared the
+        /// `bin` field (e.g. `@anthropic-ai/claude-code` -> `@anthropic-ai/claude-code-linux-x64`).
+        fn isNativeBinlinkRedirect(this: *const Linker) bool {
+            return !strings.eql(this.target_package_name.slice(), this.package_name.slice());
+        }
+
+        /// Resolve the absolute target for a bin entry inside `package_dir`.
+        ///
+        /// When redirected into a platform-specific optional dependency (native
+        /// binlink optimization), the platform package may lay the binary out
+        /// differently than the root package's `bin` field expects. esbuild
+        /// mirrors the path exactly (`bin/esbuild` in both) but other packages
+        /// ship the binary at the package root under the bin name (e.g.
+        /// `@anthropic-ai/claude-code` has `bin/claude.exe` in the root package
+        /// but `claude` at the root of `@anthropic-ai/claude-code-linux-x64`,
+        /// which has no `bin` field of its own).
+        ///
+        /// Both candidates come from the root package's `bin` entry - its
+        /// value (`target`) and its key (`bin_name`):
+        ///   1. `<package_dir>/<target>` - the path from the root `bin` field
+        ///   2. `<package_dir>/<bin_name>` - the bin name at package root
+        ///
+        /// Falls through to (1) when nothing exists so the existing
+        /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
+        fn resolveBinTarget(this: *const Linker, package_dir: []const u8, target: []const u8, bin_name: []const u8) [:0]const u8 {
+            const primary = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+
+            if (!this.isNativeBinlinkRedirect()) {
+                return primary;
+            }
+
+            if (bun.sys.exists(primary)) {
+                return primary;
+            }
+
+            if (bin_name.len > 0) {
+                const at_root = path.joinAbsStringZ(package_dir, &.{bin_name}, .auto);
+                if (bun.sys.exists(at_root)) {
+                    return at_root;
+                }
+            }
+
+            // Nothing found; return the primary so `linkBinOrCreateShim` sets
+            // `skipped_due_to_missing_bin` and the caller retries without the
+            // redirect.
+            return path.joinAbsStringZ(package_dir, &.{target}, .auto);
+        }
+
         /// uses `this.abs_target_buf`
         pub fn buildTargetPackageDir(this: *const Linker) []const u8 {
             const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.target_node_modules_path.slice());
@@ -901,10 +955,11 @@ pub const Bin = extern struct {
                     const target = this.bin.value.file.slice(this.string_buf);
                     if (target.len == 0) return;
 
-                    // for normalizing `target`
-                    const abs_target = path.joinAbsStringZ(package_dir, &.{target}, .auto);
-
                     const unscoped_package_name = Dependency.unscopedPackageName(this.package_name.slice());
+
+                    // for normalizing `target`
+                    const abs_target = this.resolveBinTarget(package_dir, target, unscoped_package_name);
+
                     @memcpy(abs_dest_buf_remain[0..unscoped_package_name.len], unscoped_package_name);
                     abs_dest_buf_remain = abs_dest_buf_remain[unscoped_package_name.len..];
                     abs_dest_buf_remain[0] = 0;
@@ -920,7 +975,7 @@ pub const Bin = extern struct {
                     if (normalized_name.len == 0 or target.len == 0) return;
 
                     // for normalizing `target`
-                    const abs_target = path.joinAbsStringZ(package_dir, &.{target}, .auto);
+                    const abs_target = this.resolveBinTarget(package_dir, target, normalized_name);
 
                     @memcpy(abs_dest_buf_remain[0..normalized_name.len], normalized_name);
                     abs_dest_buf_remain = abs_dest_buf_remain[normalized_name.len..];
@@ -942,7 +997,7 @@ pub const Bin = extern struct {
                         const bin_target = this.extern_string_buf[i + 1].slice(this.string_buf);
                         if (bin_target.len == 0 or normalized_bin_dest.len == 0) continue;
 
-                        const abs_target = path.joinAbsStringZ(package_dir, &.{bin_target}, .auto);
+                        const abs_target = this.resolveBinTarget(package_dir, bin_target, normalized_bin_dest);
 
                         abs_dest_buf_remain = abs_dest_dir_end;
                         @memcpy(abs_dest_buf_remain[0..normalized_bin_dest.len], normalized_bin_dest);

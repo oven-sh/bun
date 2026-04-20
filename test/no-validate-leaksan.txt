@@ -62,6 +62,7 @@ test/js/node/test/parallel/test-worker.js
 test/js/node/test/parallel/test-worker.mjs
 test/js/node/worker_threads/worker_destruction.test.ts
 test/js/web/broadcastchannel/broadcast-channel.test.ts
+test/js/web/broadcastchannel/broadcast-channel-worker-gc.test.ts
 
 
 # error exit root cause unclear
@@ -215,6 +216,10 @@ test/js/node/test/parallel/test-http-chunked-smuggling.js
 test/js/node/test/parallel/test-http-double-content-length.js
 test/js/node/test/parallel/test-http-blank-header.js
 test/js/node/test/parallel/test-http-server-keepalive-req-gc.js
+
+# Timeouts
+test/js/node/test/parallel/test-cluster-primary-kill.js
+test/cli/test/parallel.test.ts
 
 # bun.assert(!this.hasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
 # @call(bun.callmod_inline, Subprocess.finalize, .{thisValue});

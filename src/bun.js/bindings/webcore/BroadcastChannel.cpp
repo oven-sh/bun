@@ -54,14 +54,14 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BroadcastChannel);
 
 static Lock allBroadcastChannelsLock;
-static UncheckedKeyHashMap<BroadcastChannelIdentifier, BroadcastChannel*>& allBroadcastChannels() WTF_REQUIRES_LOCK(allBroadcastChannelsLock)
+static UncheckedKeyHashMap<BroadcastChannelIdentifier, ThreadSafeWeakPtr<BroadcastChannel>>& allBroadcastChannels() WTF_REQUIRES_LOCK(allBroadcastChannelsLock)
 {
-    static NeverDestroyed<UncheckedKeyHashMap<BroadcastChannelIdentifier, BroadcastChannel*>> map;
+    static NeverDestroyed<UncheckedKeyHashMap<BroadcastChannelIdentifier, ThreadSafeWeakPtr<BroadcastChannel>>> map;
     return map;
 }
 
 static Lock channelToContextIdentifierLock;
-static UncheckedKeyHashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>& channelToContextIdentifier()
+static UncheckedKeyHashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>& channelToContextIdentifier() WTF_REQUIRES_LOCK(channelToContextIdentifierLock)
 {
     static NeverDestroyed<UncheckedKeyHashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>> map;
     return map;
@@ -134,6 +134,7 @@ void BroadcastChannel::MainThreadBridge::registerChannel(ScriptExecutionContext&
 
     ScriptExecutionContext::ensureOnMainThread([protectedThis = WTF::move(protectedThis), contextId = context.identifier()](auto& context) mutable {
         context.broadcastChannelRegistry().registerChannel(protectedThis->m_name, protectedThis->identifier());
+        Locker locker { channelToContextIdentifierLock };
         channelToContextIdentifier().add(protectedThis->identifier(), contextId);
     });
 }
@@ -144,6 +145,7 @@ void BroadcastChannel::MainThreadBridge::unregisterChannel()
 
     ScriptExecutionContext::ensureOnMainThread([protectedThis = WTF::move(protectedThis)](auto& context) {
         context.broadcastChannelRegistry().unregisterChannel(protectedThis->m_name, protectedThis->identifier());
+        Locker locker { channelToContextIdentifierLock };
         channelToContextIdentifier().remove(protectedThis->identifier());
     });
 }
@@ -165,7 +167,7 @@ BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String
 {
     {
         Locker locker { allBroadcastChannelsLock };
-        allBroadcastChannels().add(m_mainThreadBridge->identifier(), this);
+        allBroadcastChannels().add(m_mainThreadBridge->identifier(), *this);
     }
     m_mainThreadBridge->registerChannel(context);
     jsRef(context.jsGlobalObject());
@@ -233,7 +235,11 @@ void BroadcastChannel::dispatchMessageTo(BroadcastChannelIdentifier channelIdent
 {
     ASSERT(isMainThread());
 
-    auto contextIdentifier = channelToContextIdentifier().get(channelIdentifier);
+    ScriptExecutionContextIdentifier contextIdentifier;
+    {
+        Locker locker { channelToContextIdentifierLock };
+        contextIdentifier = channelToContextIdentifier().get(channelIdentifier);
+    }
     if (!contextIdentifier)
         return;
 
@@ -241,7 +247,7 @@ void BroadcastChannel::dispatchMessageTo(BroadcastChannelIdentifier channelIdent
         RefPtr<BroadcastChannel> channel;
         {
             Locker locker { allBroadcastChannelsLock };
-            channel = allBroadcastChannels().get(channelIdentifier);
+            channel = allBroadcastChannels().get(channelIdentifier).get();
         }
         if (channel)
             channel->dispatchMessage(WTF::move(message));
@@ -256,7 +262,7 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
     if (m_isClosed)
         return;
 
-    ScriptExecutionContext::postTaskTo(contextIdForBroadcastChannelId(m_mainThreadBridge->identifier()), [this, message = WTF::move(message)](ScriptExecutionContext& context) mutable {
+    ScriptExecutionContext::postTaskTo(contextIdForBroadcastChannelId(m_mainThreadBridge->identifier()), [this, protectedThis = Ref { *this }, message = WTF::move(message)](ScriptExecutionContext& context) mutable {
         if (m_isClosed)
             return;
 

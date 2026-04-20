@@ -3,6 +3,7 @@
 //  if (comptime (Big and @typeInfo(@TypeOf(value)) == .Int)) {
 //    return JSC.JSValue.fromInt64NoTruncate(globalObject, @intCast(value));
 //  }
+import { createStatsForIno } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { Stats, statSync } from "node:fs";
 
@@ -40,4 +41,16 @@ test("fs.stats truncate (bigint)", async () => {
   expect(stats.mtimeMs).toBeTypeOf("bigint");
   expect(stats.ctimeMs).toBeTypeOf("bigint");
   expect(stats.birthtimeMs).toBeTypeOf("bigint");
+});
+
+// Regression: u64 inodes above INT64_MAX (common on NFS) were clamped to
+// INT64_MAX. Node.js goes uv_stat_t (u64) -> Float64Array / BigInt64Array.
+test("fs.Stats does not clamp u64 ino to INT64_MAX", () => {
+  const cases = [0n, 1n, (1n << 53n) - 1n, (1n << 63n) - 1n, 1n << 63n, 9225185599684229422n, (1n << 64n) - 1n];
+
+  // Number path: static_cast<double>(uint64_t)
+  expect(cases.map(ino => createStatsForIno(ino, false).ino)).toEqual(cases.map(Number));
+
+  // BigInt path: static_cast<int64_t>(uint64_t)
+  expect(cases.map(ino => createStatsForIno(ino, true).ino)).toEqual(cases.map(ino => BigInt.asIntN(64, ino)));
 });

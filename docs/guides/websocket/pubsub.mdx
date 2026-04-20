@@ -6,7 +6,7 @@ mode: center
 
 Bun's server-side `WebSocket` API provides a native pub-sub API. Sockets can be subscribed to a set of named channels using `socket.subscribe(<name>)`; messages can be published to a channel using `socket.publish(<name>, <message>)`.
 
-This code snippet implements a simple single-channel chat server.
+This code snippet implements a single-channel chat server.
 
 ```ts server.ts icon="/icons/typescript.svg"
 const server = Bun.serve({

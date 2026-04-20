@@ -84,7 +84,14 @@ pub const TopExceptionScope = struct {
     /// Asserts there has not been any exception thrown.
     pub fn assertNoException(self: *TopExceptionScope) void {
         if (comptime Environment.ci_assert) {
-            if (self.exception()) |e| self.assertionFailure(e);
+            if (self.exception()) |e| {
+                // TerminationException can be raised at any safepoint (worker
+                // terminate(), worker process.exit()) regardless of what the host
+                // function returned, so it's never a return-value/exception
+                // mismatch — let the caller's safepoint observe it.
+                if (jsc.JSValue.fromCell(e).isTerminationException()) return;
+                self.assertionFailure(e);
+            }
         }
     }
 

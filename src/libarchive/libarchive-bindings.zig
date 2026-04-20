@@ -465,7 +465,7 @@ pub const Archive = opaque {
     }
 
     extern fn archive_write_open_fd(*Archive, _fd: c_int) Result;
-    pub fn writeOpenFd(archive: *Archive, fd: bun.FileDescriptor) Result {
+    pub fn writeOpenFd(archive: *Archive, fd: bun.FD) Result {
         return archive_write_open_fd(archive, fd.cast());
     }
 
@@ -678,7 +678,7 @@ pub const Archive = opaque {
         return archive_read_data(archive, buf.ptr, buf.len);
     }
     extern fn archive_read_data_into_fd(*Archive, fd: c_int) Result;
-    fn writeZerosToFile(file: bun.sys.File, count: usize) Result {
+    pub fn writeZerosToFile(file: bun.sys.File, count: usize) Result {
         // Use undefined + memset instead of comptime zero-init to reduce binary size
         var zero_buf: [16 * 1024]u8 = undefined;
         @memset(&zero_buf, 0);
@@ -700,7 +700,7 @@ pub const Archive = opaque {
     /// - Falls back to lseek + write if pwrite is not available
     /// - Falls back to writing zeros if lseek is not available
     /// - Truncates the file to the final size to handle trailing sparse holes
-    pub fn readDataIntoFd(archive: *Archive, fd: bun.FileDescriptor, can_use_pwrite: *bool, can_use_lseek: *bool) Result {
+    pub fn readDataIntoFd(archive: *Archive, fd: bun.FD, can_use_pwrite: *bool, can_use_lseek: *bool) Result {
         var target_offset: i64 = 0; // Updated by archive.next() - where this block should be written
         var actual_offset: i64 = 0; // Where we've actually written to (for write() path)
         var final_offset: i64 = 0; // Track the furthest point we need the file to extend to

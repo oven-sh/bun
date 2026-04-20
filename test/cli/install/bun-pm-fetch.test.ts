@@ -218,10 +218,7 @@ it("should report when all packages are already cached", async () => {
 });
 
 it("should appear in bun pm help", async () => {
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({ name: "foo", version: "0.0.1" }),
-  );
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
   const { stdout, exited } = spawn({
     cmd: [bunExe(), "pm"],
     cwd: package_dir,

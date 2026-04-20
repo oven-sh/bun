@@ -9,10 +9,9 @@
 
 import type { Dependency, NestedCmakeBuild } from "../source.ts";
 
-// Tip of oven-sh/libuv's `bun` branch — upstream f3ce527e (includes recursion
-// bug fix #4784) + the win-pipe CancelIoEx race fix + ConPTY support in
-// uv_spawn. To bump upstream, rebase the `bun` branch onto the new pin and
-// update this SHA.
+// Tip of oven-sh/libuv's `bun` branch — upstream f3ce527e + the win-pipe
+// CancelIoEx race fix + ConPTY support in uv_spawn. To bump upstream, rebase
+// the `bun` branch and update this SHA.
 const LIBUV_COMMIT = "e85372dab4ccbf855a95b4579df98360748ce231";
 
 export const libuv: Dependency = {

@@ -41,7 +41,7 @@ import { streamPath } from "./stream.ts";
  * one constant.
  */
 export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
-export const ZIG_COMMIT_PARALLEL = "faa680d0e3df6e8ab7607e6037d6d79e90f9eb27";
+export const ZIG_COMMIT_PARALLEL = "0bcf4c3d998133e724d27e9fd783172ffed4c943";
 
 /**
  * The one place that picks which compiler to use. The parallel compiler
@@ -82,8 +82,30 @@ function usingParallelCompiler(cfg: Config): boolean {
  */
 function codegenThreads(cfg: Config): number {
   if (!usingParallelCompiler(cfg)) return 0;
-  if (cfg.ci || cfg.windows) return 1;
+  if (cfg.windows) return 1;
+  if (cfg.ci) {
+    // ASAN is a test-only build (not shipped), so cross-shard IPO loss is
+    // fine and the speedup is worth it. The count is FIXED so zig-only and
+    // link-only — which run on different machines — agree on the artifact
+    // names. Non-asan CI stays at 1: shipped releases want full IPO.
+    return cfg.asan ? CI_ASAN_CODEGEN_THREADS : 1;
+  }
   return availableParallelism();
+}
+
+/** Fixed shard count for CI ASAN builds. Matches getZigAgent's instance size. */
+export const CI_ASAN_CODEGEN_THREADS = 8;
+
+/**
+ * Output object file names for the zig step, matching what build.zig emits.
+ * Shared between emitZig (zig-only/full) and emitLinkOnly so both sides of
+ * the CI artifact split agree on filenames.
+ */
+export function zigObjectPaths(cfg: Config): string[] {
+  const cg = codegenThreads(cfg);
+  return cg > 1
+    ? Array.from({ length: cg }, (_, i) => resolve(cfg.buildDir, `bun-zig.${i}.o`))
+    : [resolve(cfg.buildDir, "bun-zig.o")];
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -385,11 +407,7 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
   // of one merged `bun-zig.o` (zig's single-threaded ELF -r merge of the
   // shards dominated wall time). Declare every shard so ninja tracks them
   // and the link step gets all of them; lld merges in parallel.
-  const cgThreads = codegenThreads(cfg);
-  const outputs =
-    cgThreads > 1
-      ? Array.from({ length: cgThreads }, (_, i) => resolve(cfg.buildDir, `bun-zig.${i}.o`))
-      : [resolve(cfg.buildDir, "bun-zig.o")];
+  const outputs = zigObjectPaths(cfg);
   const args = zigBuildArgs(cfg);
 
   n.build({

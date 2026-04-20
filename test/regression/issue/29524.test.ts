@@ -20,9 +20,9 @@
 // is macOS-specific. Windows uses a different watcher entirely. Skipping
 // off macOS keeps this focused on the platform where the bug lives.
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 import { renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, isMacOS, tempDir } from "harness";
 
 test.skipIf(!isMacOS)("atomic writes to multiple imported files keep propagating under --hot (#29524)", async () => {
   using dir = tempDir("issue-29524", {

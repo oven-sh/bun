@@ -933,13 +933,12 @@ fn updatePackageJSONAndInstallWithFilter(
         const file = try bun.sys.File.openat(
             .cwd(),
             workspace.package_json_path,
-            bun.O.RDWR,
+            bun.O.WRONLY | bun.O.TRUNC,
             0,
         ).unwrap();
         defer file.close();
 
-        try file.pwriteAll(final_source, 0).unwrap();
-        _ = bun.sys.ftruncate(file.handle, @intCast(final_source.len));
+        try file.writeAll(final_source).unwrap();
     }
 
     if (subcommand == .remove) {

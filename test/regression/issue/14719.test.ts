@@ -300,7 +300,7 @@ it("bun remove --filter removes from the matching workspace only", async () => {
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "remove", "baz", "--filter=api"],
     cwd: package_dir,
-    stdout: "pipe",
+    stdout: "ignore",
     stdin: "ignore",
     stderr: "pipe",
     env,
@@ -352,7 +352,7 @@ it("bun remove --filter with a glob removes from every matching workspace", asyn
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "remove", "baz", "--filter", "pkg-*"],
     cwd: package_dir,
-    stdout: "pipe",
+    stdout: "ignore",
     stdin: "ignore",
     stderr: "pipe",
     env,
@@ -385,7 +385,7 @@ it("bun add --filter errors when no workspace matches", async () => {
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "add", "baz", "--filter=does-not-exist"],
     cwd: package_dir,
-    stdout: "pipe",
+    stdout: "ignore",
     stdin: "ignore",
     stderr: "pipe",
     env,
@@ -420,7 +420,7 @@ it("bun add --filter errors when there is no workspaces field", async () => {
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "add", "baz", "--filter=api"],
     cwd: package_dir,
-    stdout: "pipe",
+    stdout: "ignore",
     stdin: "ignore",
     stderr: "pipe",
     env,

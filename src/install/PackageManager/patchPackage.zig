@@ -766,13 +766,23 @@ fn detachModuleFolderFromSharedStore(module_folder: []const u8) void {
             return;
         if (is_symlink) {
             // Windows directory symlinks/junctions are removed with rmdir,
-            // file symlinks with unlink; on POSIX unlink covers both.
-            if (comptime Environment.isWindows) {
+            // file symlinks with unlink; on POSIX unlink covers both. If
+            // removal fails the symlink is still live, and the caller's
+            // `deleteTree` + `FileCopier` would follow it into the shared
+            // global-store entry — so fail loudly here rather than silently
+            // corrupting the cache.
+            const remove_err: ?bun.sys.Error = if (comptime Environment.isWindows) remove: {
                 if (bun.sys.rmdir(path.sliceZ()).asErr()) |_| {
-                    _ = bun.sys.unlink(path.sliceZ());
+                    if (bun.sys.unlink(path.sliceZ()).asErr()) |e| break :remove if (e.getErrno() == .NOENT) null else e;
                 }
-            } else {
-                _ = bun.sys.unlink(path.sliceZ());
+                break :remove null;
+            } else if (bun.sys.unlink(path.sliceZ()).asErr()) |e|
+                if (e.getErrno() == .NOENT) null else e
+            else
+                null;
+            if (remove_err) |e| {
+                Output.err(e, "failed to detach <b>{s}<r> from the shared package store; refusing to patch through it", .{path.slice()});
+                Global.crash();
             }
             // Re-create the now-missing path segments below the removed
             // symlink so `module_folder`'s parent exists for the copy.

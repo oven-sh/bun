@@ -108,6 +108,12 @@ function injectFakeEmitter(Class) {
 
   Class.prototype.prependListener = Class.prototype.on;
   Class.prototype.prependOnceListener = Class.prototype.once;
+
+  // Node.js EventEmitter exposes `addListener`/`removeListener` as aliases of
+  // `on`/`off`. MessagePort in node:worker_threads is expected to implement
+  // the same surface, so code that checks `"removeListener" in port` works.
+  Class.prototype.addListener = Class.prototype.on;
+  Class.prototype.removeListener = Class.prototype.off;
 }
 
 const _MessagePort = globalThis.MessagePort;

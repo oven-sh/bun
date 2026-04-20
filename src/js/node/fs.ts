@@ -372,6 +372,12 @@ var access = function access(path, mode, callback) {
     if (!callback) {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    // Validate `position`: must be null/undefined, a number, or a bigint.
+    // Mirrors Node.js `validatePosition` (lib/internal/fs/utils.js), which
+    // rejects objects, strings, booleans, etc. with TypeError.
+    if (position != null && typeof position !== "number" && typeof position !== "bigint") {
+      throw $ERR_INVALID_ARG_TYPE("position", ["integer", "bigint"], position);
+    }
     fs.read(fd, buffer, offset, length, position).then(
       bytesRead => void callback(null, bytesRead, buffer),
       err => callback(err),
@@ -572,6 +578,13 @@ var access = function access(path, mode, callback) {
       }
 
       ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? {});
+    }
+
+    // Validate `position`: must be null/undefined, a number, or a bigint.
+    // Mirrors Node.js `validatePosition` (lib/internal/fs/utils.js), which
+    // rejects objects, strings, booleans, etc. with TypeError.
+    if (position != null && typeof position !== "number" && typeof position !== "bigint") {
+      throw $ERR_INVALID_ARG_TYPE("position", ["integer", "bigint"], position);
     }
 
     return fs.readSync(fd, buffer, offset, length, position);

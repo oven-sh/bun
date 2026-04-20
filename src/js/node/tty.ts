@@ -27,6 +27,11 @@ Object.defineProperty(ReadStream, "prototype", {
   get() {
     const Prototype = Object.create(fs.ReadStream.prototype);
 
+    // tty.ReadStream.prototype.isTTY must be `true` by convention, matching
+    // Node.js (lib/tty.js). Instance values set by the constructor still
+    // override this for fds that are not actually a TTY.
+    Prototype.isTTY = true;
+
     // Add ref/unref methods to make tty.ReadStream behave like Node.js
     // where TTY streams have socket-like behavior
     Prototype.ref = function () {
@@ -124,10 +129,18 @@ function WriteStream(fd): void {
 
 Object.defineProperty(WriteStream, "prototype", {
   get() {
-    const Real = fs.WriteStream.prototype;
-    Object.defineProperty(WriteStream, "prototype", { value: Real });
+    // Use Object.create so the tty.WriteStream methods below do not leak onto
+    // `fs.WriteStream.prototype`. This also gives tty.WriteStream a distinct
+    // prototype that can own its own `isTTY` default without polluting fs.
+    const Prototype = Object.create(fs.WriteStream.prototype);
+    Object.defineProperty(WriteStream, "prototype", { value: Prototype });
 
-    WriteStream.prototype._refreshSize = function () {
+    // tty.WriteStream.prototype.isTTY must be `true` by convention, matching
+    // Node.js (lib/tty.js). Instance values set by the constructor still
+    // override this for fds that are not actually a TTY.
+    Prototype.isTTY = true;
+
+    Prototype._refreshSize = function () {
       const oldCols = this.columns;
       const oldRows = this.rows;
       const windowSizeArray = [0, 0];
@@ -140,30 +153,30 @@ Object.defineProperty(WriteStream, "prototype", {
       }
     };
 
-    WriteStream.prototype.clearLine = function (dir, cb) {
+    Prototype.clearLine = function (dir, cb) {
       return require("node:readline").clearLine(this, dir, cb);
     };
 
-    WriteStream.prototype.clearScreenDown = function (cb) {
+    Prototype.clearScreenDown = function (cb) {
       return require("node:readline").clearScreenDown(this, cb);
     };
 
-    WriteStream.prototype.cursorTo = function (x, y, cb) {
+    Prototype.cursorTo = function (x, y, cb) {
       return require("node:readline").cursorTo(this, x, y, cb);
     };
 
     // The `getColorDepth` API got inspired by multiple sources such as
     // https://github.com/chalk/supports-color,
     // https://github.com/isaacs/color-support.
-    WriteStream.prototype.getColorDepth = function (env = process.env) {
+    Prototype.getColorDepth = function (env = process.env) {
       return require("internal/tty").getColorDepth(env);
     };
 
-    WriteStream.prototype.getWindowSize = function () {
+    Prototype.getWindowSize = function () {
       return [this.columns, this.rows];
     };
 
-    WriteStream.prototype.hasColors = function (count, env) {
+    Prototype.hasColors = function (count, env) {
       if (env === undefined && (count === undefined || (typeof count === "object" && count !== null))) {
         env = count;
         count = 16;
@@ -174,13 +187,13 @@ Object.defineProperty(WriteStream, "prototype", {
       return count <= 2 ** this.getColorDepth(env);
     };
 
-    WriteStream.prototype.moveCursor = function (dx, dy, cb) {
+    Prototype.moveCursor = function (dx, dy, cb) {
       return require("node:readline").moveCursor(this, dx, dy, cb);
     };
 
     // Add Symbol.asyncIterator to make tty.WriteStream compatible with code
     // that expects stdout/stderr to be async iterable (like in Node.js where they're Duplex)
-    WriteStream.prototype[Symbol.asyncIterator] = function () {
+    Prototype[Symbol.asyncIterator] = function () {
       // Since WriteStream is write-only, we return an empty async iterator
       // This matches the behavior of Node.js Duplex streams used for stdout/stderr
       return (async function* () {
@@ -188,7 +201,7 @@ Object.defineProperty(WriteStream, "prototype", {
       })();
     };
 
-    return Real;
+    return Prototype;
   },
   enumerable: true,
   configurable: true,

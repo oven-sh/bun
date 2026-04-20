@@ -65,6 +65,7 @@ it("should fetch dependencies into the cache without installing", async () => {
   const err = await stderr.text();
 
   expect(err).not.toContain("error:");
+  expect(out).toContain("bun pm fetch");
   expect(out).toContain("Fetched 1 package");
   expect(out).toContain("Cache:");
   expect(await exited).toBe(0);
@@ -142,9 +143,8 @@ it("should fetch packages missing from cache when lockfile exists", async () => 
     expect(await exited).toBe(0);
   }
 
-  // The tarball was downloaded directly (no manifest fetch needed; the lockfile
-  // already has the resolved version + URL).
-  expect(urls.some(u => u.endsWith("bar-0.0.2.tgz"))).toBe(true);
+  // The tarball was downloaded directly from the URL stored in the lockfile.
+  expect(urls).toEqual([`${root_url}/bar-0.0.2.tgz`]);
 
   // The package was extracted into the cache.
   const cache_contents = await readdir(cache_dir);

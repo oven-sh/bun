@@ -2,16 +2,16 @@ pub const PmFetchCommand = struct {
     pub fn exec(ctx: Command.Context, pm: *PackageManager, original_cwd: []const u8) !void {
         const log_level = pm.options.log_level;
 
+        if (pm.options.shouldPrintCommandName()) {
+            Output.prettyln("<r><b>bun pm fetch <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+            Output.flush();
+        }
+
         // Resolve and download, but never touch node_modules or run scripts.
         pm.options.do.install_packages = false;
         pm.options.do.run_scripts = false;
         pm.options.do.write_package_json = false;
         pm.options.do.summary = false;
-
-        if (pm.options.shouldPrintCommandName()) {
-            Output.prettyln("<r><b>bun pm fetch <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
-            Output.flush();
-        }
 
         // Resolve dependencies and download any newly-resolved tarballs into the
         // cache. This reuses the standard install pipeline with node_modules
@@ -33,7 +33,6 @@ pub const PmFetchCommand = struct {
         const resolutions = packages.items(.resolution);
         const dep_resolutions = lockfile.buffers.resolutions.items;
 
-        var fetchable: u32 = 0;
         var already_cached: u32 = 0;
 
         _ = pm.getCacheDirectory();
@@ -48,8 +47,6 @@ pub const PmFetchCommand = struct {
             const pkg = lockfile.packages.get(pkg_id);
 
             if (pkg.isDisabled(pm.options.cpu, pm.options.os)) continue;
-
-            fetchable += 1;
 
             var name_and_version_hash: ?u64 = null;
             var patchfile_hash: ?u64 = null;
@@ -197,11 +194,7 @@ pub const PmFetchCommand = struct {
             var cache_dir_buf: bun.PathBuffer = undefined;
             const cache_dir = bun.getFdPath(.fromStdDir(pm.getCacheDirectory()), &cache_dir_buf) catch "";
 
-            // `extracted_count` only tracks tarball extractions; git checkouts
-            // do not increment it. Use the number of packages that were not
-            // cached before this run as the authoritative fetch count so git
-            // dependencies are reflected in the summary.
-            const total_fetched = @max(pm.extracted_count, fetchable -| already_cached);
+            const total_fetched = pm.extracted_count;
 
             if (total_fetched > 0) {
                 Output.pretty("<green>Fetched {d} package{s}<r> into cache ", .{

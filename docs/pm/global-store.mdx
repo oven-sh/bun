@@ -1,15 +1,13 @@
 ---
 title: "Global virtual store"
-description: "Share isolated installs across projects for fast warm CI installs"
+description: "Share isolated package installs across every project on the machine"
 ---
 
-When using the [isolated linker](/pm/isolated-installs), Bun materializes package contents into a **global virtual store** under the package cache and symlinks `node_modules/.bun/<package>@<version>` into it. The virtual store is shared across every project on the machine, so once a package (and its specific resolved dependency set) has been installed anywhere, every subsequent install — including a fresh `rm -rf node_modules && bun install` — only creates one symlink per package instead of copying the package files again.
-
-This is the same approach pnpm and aube take, applied to Bun's isolated linker.
+When using the [isolated linker](/pm/isolated-installs), Bun materializes each package's files **once** into a global virtual store under the package cache and symlinks `node_modules/.bun/<package>@<version>` into it. The store is shared across every project on the machine, so once a `(package, version, resolved-dependency-set)` triple has been installed anywhere, every subsequent install — including a fresh `rm -rf node_modules && bun install` — only creates one symlink per package.
 
 ## Enabling
 
-The global virtual store is **on by default** with the isolated linker. It is not used by the hoisted linker.
+The global virtual store is **on by default** with the isolated linker on every platform. It is not used by the hoisted linker.
 
 ```bash terminal icon="terminal"
 bun install --linker isolated
@@ -22,7 +20,7 @@ To make isolated the default for a project:
 linker = "isolated"
 ```
 
-To disable the global store and fall back to per-project package copies (the previous behavior), set `globalStore = false` or `BUN_INSTALL_GLOBAL_STORE=0`:
+To opt out and fall back to per-project package copies:
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -36,7 +34,7 @@ BUN_INSTALL_GLOBAL_STORE=0 bun install --linker isolated
 
 ## Why it's fast
 
-The previous isolated linker called `clonefileat()` (macOS) or `link()`/`copyfile()` (other platforms) for every package on every install, even when the cache was warm and `node_modules` was the only thing missing. Profiling a warm install of a 1,400-package fixture on macOS showed the main thread spending **95.4 % of its time inside `clonefileat`**:
+The previous isolated linker called `clonefileat()` (macOS) or `link()`/`copyfile()` (other platforms) for every package on every install, even when the package cache was warm and `node_modules` was the only thing missing. Profiling a warm install of a 1,400-package fixture on macOS showed the main thread spending **95.4 % of its time inside `clonefileat`**:
 
 ```
 Sort by top of stack (bun install --linker isolated, warm cache):
@@ -51,16 +49,25 @@ With the global store, the warm path is one `access()` (does the global entry ex
 
 ## Benchmarks
 
-Warm CI install (lockfile present, package cache warm, `node_modules` deleted between runs) of a [~1,400-package fixture](https://github.com/endevco/aube/blob/main/benchmarks/fixture.package.json) on Apple Silicon macOS, measured with `hyperfine`:
+Warm CI install — lockfile present, package cache warm, `node_modules` deleted between runs — on a 1,400-package React/webpack/Babel/jest fixture, Apple Silicon macOS, `hyperfine --warmup 3 --runs 10`:
 
-|                                        | wall time    | system time | `clonefileat` | total syscalls |
-| -------------------------------------- | ------------ | ----------- | ------------- | -------------- |
-| `--linker hoisted`                     | 823.9 ms     | 477 ms      | 1,387         | 7,857          |
-| `--linker isolated` (no global store)  | 840.9 ms     | 1,256 ms    | 1,387         | —              |
-| **`--linker isolated` (global store)** | **115.7 ms** | **95 ms**   | **0**         | **4,957**      |
-| aube 1.0.0-beta.5                      | 195.8 ms     | 913 ms      | 0             | 31,445         |
+|                                          | wall time    | system time | `clonefileat` | total syscalls |
+| ---------------------------------------- | ------------ | ----------- | ------------- | -------------- |
+| `--linker hoisted`                       | 823.9 ms     | 477 ms      | 1,387         | 7,857          |
+| `--linker isolated`, `globalStore=false` | 840.9 ms     | 1,256 ms    | 1,387         | —              |
+| **`--linker isolated`, global store**    | **124.8 ms** | **94 ms**   | **0**         | **4,957**      |
 
-The global store is **7.1× faster** than the previous isolated linker on this workload and about **1.7× faster** than aube while issuing roughly **6× fewer syscalls** (Bun's lockfile already carries the package metadata aube has to re-read from disk).
+**6.6× faster** than the same linker without the global store, **6.6× faster** than hoisted.
+
+Cold-to-warm timings on cloned real-world repositories (macOS arm64):
+
+| project                        | packages | cold   | warm       |
+| ------------------------------ | -------- | ------ | ---------- |
+| cal.com                        | ~3,580   | 37.4 s | **4.7 s**  |
+| remix                          | ~1,750   | 23.1 s | **2.0 s**  |
+| excalidraw                     | ~1,332   | 5.9 s  | **1.1 s**  |
+| hono                           | ~790     | 4.5 s  | **1.3 s**  |
+| `next build` (create-next-app) | ~382     | 1.0 s  | **0.35 s** |
 
 ## Directory structure
 
@@ -72,8 +79,9 @@ The on-disk layout adds one level of indirection compared to [isolated installs]
 │   └── ...package files...
 └── links/                                # Global virtual store
     └── react@18.3.1-5664d3cd670b3205/    # <storepath>-<entry hash>
+        ├── .bun-ok                       # Completeness stamp
         └── node_modules/
-            ├── react/                    # clonefile from cache (created once)
+            ├── react/                    # Package files (created once)
             ├── loose-envify -> ../../loose-envify@1.4.0-ea24…/node_modules/loose-envify
             └── .bin/
                 └── ...
@@ -86,34 +94,33 @@ project/node_modules/
 └── react -> .bun/react@18.3.1/node_modules/react
 ```
 
-The 16-hex `entry_hash` suffix encodes the entry's **resolved dependency closure**: the package's own store path plus the hash of every dependency it links to. Two projects that resolve `react@18.3.1` to the same set of transitive versions share one global directory; a project that resolves a transitive dependency to a different version gets a separate global entry whose dep symlinks point at the right siblings. The hash is stable across installs and machines for the same lockfile.
+The 16-hex `entry_hash` suffix encodes the entry's **resolved dependency closure**: the package's own store path and tarball integrity, plus the hash of every dependency it links to. Two projects that resolve `react@18.3.1` to the same set of transitive versions share one global directory; a project that resolves a transitive dependency to a different version gets a separate global entry whose dep symlinks point at the right siblings. Packages that participate in a dependency cycle share one hash computed over the whole strongly-connected component, so the key is independent of which member a given project's dependency graph happened to reach first.
 
 ## What stays project-local
 
-An entry only lives in the global store when it can be safely shared across projects. Entries fall back to a per-project `node_modules/.bun/<storepath>/` directory (the previous behavior) when:
+An entry only lives in the global store when it can be safely shared. Entries fall back to a per-project `node_modules/.bun/<storepath>/` directory when:
 
 - the package has a **patch** applied via `bun patch` — the patched contents are project-specific;
-- the package has a **trusted lifecycle script** (`preinstall`/`install`/`postinstall`) and scripts are enabled — the script may mutate the install directory;
+- the package is listed in **`trustedDependencies`** (or trusted via `bun add --trust`) — its lifecycle script may mutate the install directory, and a script running through the project symlink would mutate the shared copy;
 - the package, or **any** dependency it links to, is a `workspace:`, `file:`, or `link:` dependency — those resolve to project-local paths that other projects can't see.
 
-The eligibility check propagates upward: if `your-app` depends on `internal-utils` which is a workspace package, `internal-utils` is project-local, and so is every entry that links to it.
+Ineligibility propagates: if `your-app` depends on `internal-utils` which is a workspace package, `internal-utils` is project-local, and so is every entry that links to it. An entry that loses eligibility between installs (newly patched, newly trusted) is detached from the global store and rebuilt project-locally on the next install; the shared entry is left untouched.
+
+## Peer dependencies
+
+Resolved peer dependencies — required and optional — are folded into each global entry as dep symlinks and contribute to its hash. Bun synthesizes an implicit `"*"` optional peer for packages that list a name only in `peerDependenciesMeta` without a matching `peerDependencies` entry (matching pnpm and yarn), so a package like `webpack` that declares `webpack-cli` only in `peerDependenciesMeta` still gets a `webpack-cli` symlink in its global entry when one is installed in the project.
 
 ## Tradeoffs
 
 ### Phantom-dependency fallback
 
-Declared optional peer dependencies (listed in `peerDependencies` with `"optional": true` in `peerDependenciesMeta`) are resolved into each global entry and included in its hash, so they work the same as before.
+When packages live under the project's `node_modules/.bun/`, Node's module resolution walks up through `node_modules/.bun/node_modules/` — the hidden hoisted layer — before reaching the project root. With the global store, packages realpath into `<cache>/links/`, so that layer is no longer on the resolution path from inside a package.
 
-What does change: when a package's files live in the project's `node_modules/.bun/`, Node's module resolution walks up through `node_modules/.bun/node_modules/` — the hidden hoisted layer — before reaching the project root. A small number of packages rely on that fallback to load helpers they never declared as a dependency at all (for example, `webpack/bin/webpack.js` opportunistically does `require('webpack-cli')`; `webpack-cli` appears only in `peerDependenciesMeta`, not `peerDependencies`, so there is no dependency edge to follow).
+In practice this only affects **true phantom dependencies**: a package doing `require('helper')` for something it never declared in `dependencies`, `peerDependencies`, or `peerDependenciesMeta`. If you hit this, add the helper to the consuming package's dependencies (the right fix) or set `globalStore = false`.
 
-With the global store, packages realpath into `<cache>/links/`, so the project's hidden hoisted layer is no longer on the resolution path. Packages that depended on this fallback will fail to resolve their phantom dependency. This matches pnpm and aube. If you hit this:
+Note that [`publicHoistPattern`](/runtime/bunfig#install-publichoistpattern) and [`hoistPattern`](/runtime/bunfig#install-hoistpattern) hoist into the project's `node_modules`, which packages inside the global store can't reach. They still work for resolving hoisted packages from your own source code.
 
-- add the helper to your project's `dependencies` so it becomes a declared dependency of the project (most ecosystems already do this);
-- or set `globalStore = false` for the project.
-
-Note that [`publicHoistPattern`](/runtime/bunfig#install-publichoistpattern) and [`hoistPattern`](/runtime/bunfig#install-hoistpattern) hoist into the _project's_ `node_modules`, which packages inside the global store can't reach (Node walks up from the realpath under `<cache>/links/`, not from the project). They still work for resolving hoisted packages from your own source code.
-
-### `node_modules` is now mostly symlinks
+### `node_modules` is mostly symlinks
 
 Tools that scan `node_modules` without following symlinks, or that compare file paths by string equality, may behave differently. This is the same caveat as any pnpm-style layout.
 
@@ -123,7 +130,7 @@ Each unique `(package, version, resolved-dependency-set)` triple gets one direct
 
 ### Concurrency
 
-Multiple `bun install` processes (parallel CI jobs, concurrent workspace builds) may race to populate the same global entry. Bun treats `EEXIST` from the loser as success because the directory is content-addressed — both writers were producing identical bytes.
+Multiple `bun install` processes (parallel CI jobs, concurrent workspace builds) may race to populate the same global entry. Population is atomic — clone (or hardlink/copy) into a temp sibling, then `rename` into place — and the loser of the rename treats `EEXIST` as success because both writers were producing identical content-addressed bytes. The `.bun-ok` stamp written after dep symlinks and bin links are in place is what future installs check; an entry whose writer crashed mid-build is rebuilt on the next install.
 
 ## Related documentation
 

@@ -8,6 +8,11 @@ const server = process.argv[2];
 const batch = 10;
 const iterations = 50;
 const threshold = batch * 2 + batch / 2;
+// JSC's C++ module loader keeps a handful of pipeline JSPromises live in the
+// module map (fetch/module/load per registry entry) for the life of the
+// process. These are constant across iterations, so account for them
+// separately from the per-batch leak threshold.
+const promiseThreshold = threshold + 10;
 const BODY_SIZE = parseInt(process.argv[3], 10);
 if (!Number.isSafeInteger(BODY_SIZE)) {
   console.error("BODY_SIZE must be a safe integer", BODY_SIZE, process.argv);
@@ -105,7 +110,7 @@ try {
       Bun.gc(true);
       const stats = getHeapStats();
       expect(stats.Response || 0).toBeLessThanOrEqual(threshold);
-      expect(stats.Promise || 0).toBeLessThanOrEqual(threshold);
+      expect(stats.Promise || 0).toBeLessThanOrEqual(promiseThreshold);
       process.send({
         rss: process.memoryUsage.rss(),
       });

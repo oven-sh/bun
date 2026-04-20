@@ -2438,6 +2438,13 @@ pub const H2FrameParser = struct {
                 if (this.outstandingSettings > 0) {
                     this.outstandingSettings -= 1;
 
+                    // RFC 7541 §4.2: now that the peer has ACKed our SETTINGS_HEADER_TABLE_SIZE,
+                    // raise/lower the decoder's max capacity so we accept Dynamic Table Size
+                    // Update instructions up to the value we advertised.
+                    if (this.hpack) |hpack| {
+                        hpack.setDecoderMaxCapacity(this.localSettings.headerTableSize);
+                    }
+
                     // Per RFC 7540 Section 6.9.2: When INITIAL_WINDOW_SIZE changes, adjust
                     // all existing stream windows by the difference. Now that our SETTINGS
                     // is ACKed, the peer knows about our window size, so we can enforce it.
@@ -2500,6 +2507,12 @@ pub const H2FrameParser = struct {
             }
             this.readBuffer.reset();
             this.remoteSettings = remoteSettings;
+            // RFC 9113 §6.5.2 / RFC 7541 §4.2: the peer's SETTINGS_HEADER_TABLE_SIZE bounds
+            // OUR encoder's dynamic table. NOTE: lshpack_enc_set_max_capacity does NOT
+            // auto-emit the RFC 7541 §6.3 Dynamic Table Size Update; that is tracked separately.
+            if (this.hpack) |hpack| {
+                hpack.setEncoderMaxCapacity(remoteSettings.headerTableSize);
+            }
             log("remoteSettings.initialWindowSize: {} {} {}", .{ remoteSettings.initialWindowSize, this.remoteUsedWindowSize, this.remoteWindowSize });
             if (remoteSettings.initialWindowSize >= this.remoteWindowSize) {
                 var it = this.streams.valueIterator();

@@ -248,6 +248,95 @@ test("successfully installs workspace when path already exists in node_modules",
   });
 });
 
+describe("root dependencies in workspace", () => {
+  const basicTests = ["workspace:*", "workspace:1.0.0", "workspace:../../"];
+
+  for (const basicTest of basicTests) {
+    test(`works with "${basicTest}"`, async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { isolated: true },
+        files: {
+          "package.json": JSON.stringify({
+            name: "root",
+            version: "1.0.0",
+            workspaces: ["packages/*"],
+          }),
+          "packages/pkg1/package.json": JSON.stringify({
+            name: "pkg1",
+            dependencies: {
+              root: basicTest,
+            },
+          }),
+        },
+      });
+
+      await runBunInstall(env, packageDir);
+
+      expect(await file(join(packageDir, "packages", "pkg1", "node_modules", "root", "package.json")).json()).toEqual({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      });
+
+      // another install succeeds
+      await rm(join(packageDir, "packages", "pkg1", "node_modules", "root"));
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+      expect(await file(join(packageDir, "packages", "pkg1", "node_modules", "root", "package.json")).json()).toEqual({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      });
+    });
+  }
+
+  test("multiple dependencies on root package", async () => {
+    const { packageDir } = await verdaccio.createTestDir({
+      bunfigOpts: { isolated: true },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: {
+            root: "workspace:1.0.0",
+          },
+        }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            root: "workspace:*",
+          },
+        }),
+        "packages/pkg2/package.json": JSON.stringify({
+          name: "pkg2",
+          dependencies: {
+            root: "workspace:../../",
+          },
+        }),
+      },
+    });
+
+    await runBunInstall(env, packageDir);
+
+    (
+      await Promise.all([
+        file(join(packageDir, "packages/pkg1/node_modules/root/package.json")).json(),
+        file(join(packageDir, "packages/pkg2/node_modules/root/package.json")).json(),
+        file(join(packageDir, "node_modules/root/package.json")).json(),
+      ])
+    ).map(rootJson => {
+      expect(rootJson).toEqual({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: {
+          root: "workspace:1.0.0",
+        },
+      });
+    });
+  });
+});
+
 test("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {
   await Promise.all([
     write(

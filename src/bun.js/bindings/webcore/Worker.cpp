@@ -64,6 +64,9 @@
 #include "CloseEvent.h"
 #include "JSMessagePort.h"
 #include "JSBroadcastChannel.h"
+#include "BunBuiltinNames.h"
+#include <JavaScriptCore/JSArrayBufferView.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
 
 namespace WebCore {
 
@@ -696,6 +699,51 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     });
 
     return JSValue::encode(jsUndefined());
+}
+
+// node:worker_threads.markAsUncloneable(obj)
+//
+// Marks `obj` so that any subsequent structured-clone attempt (structuredClone,
+// MessagePort.postMessage, Worker workerData, BroadcastChannel.postMessage)
+// throws a DOMException with name "DataCloneError" when `obj` appears as a
+// value.
+//
+// Per the Node.js spec (https://nodejs.org/api/worker_threads.html#workermarkasuncloneableobject):
+//   - No-op for primitives (non-object / non-function) and null.
+//   - No effect on ArrayBuffer, SharedArrayBuffer, or any Buffer/TypedArray/DataView.
+//   - Cannot be undone.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUncloneable,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    JSC::JSValue value = callFrame->argument(0);
+
+    // Primitives (including null/undefined) are a no-op per the Node spec.
+    // Node's JS implementation checks `typeof obj === "object" || typeof obj === "function"`
+    // and that obj !== null. isObject() covers both cases in JSC.
+    if (!value.isObject())
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    JSC::JSObject* object = JSC::asObject(value);
+
+    // "This has no effect on ArrayBuffer, or any Buffer like objects." — Node docs.
+    // We implement that by refusing to tag these types, so the serializer's
+    // existing special-case clone paths for them remain intact.
+    if (object->inherits<JSC::JSArrayBuffer>() || object->inherits<JSC::JSArrayBufferView>())
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    // putDirect with a private-name identifier: invisible to Object.keys, JSON,
+    // for-in, Reflect.ownKeys — but cheap to read from native code.
+    object->putDirect(vm, WebCore::builtinNames(vm).isUncloneablePrivateName(), JSC::jsBoolean(true),
+        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 } // namespace WebCore

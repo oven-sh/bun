@@ -26,6 +26,7 @@
 
 #include "config.h"
 #include "SerializedScriptValue.h"
+#include "BunBuiltinNames.h"
 #include "BunString.h"
 // #include "BlobRegistry.h"
 // #include "ByteArrayPixelBuffer.h"
@@ -1585,6 +1586,16 @@ private:
 
         VM& vm = m_lexicalGlobalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
+
+        // node:worker_threads.markAsUncloneable: if the object was tagged with
+        // our private-name marker, refuse to clone it. Checked before the
+        // isArray/object-type dispatch below so marked arrays are caught too.
+        if (value.isObject()) {
+            if (JSC::asObject(value)->getDirect(vm, WebCore::builtinNames(vm).isUncloneablePrivateName())) {
+                code = SerializationReturnCode::DataCloneError;
+                return true;
+            }
+        }
 
         if (isArray(value))
             return false;

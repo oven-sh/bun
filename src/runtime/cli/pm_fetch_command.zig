@@ -201,9 +201,7 @@ pub const PmFetchCommand = struct {
             }
         }
 
-        if (log_level != .silent) {
-            try pm.log.print(Output.errorWriter());
-        }
+        try pm.log.print(Output.errorWriter());
         if (pm.log.hasErrors() or pm.any_failed_to_install) {
             Global.exit(1);
         }

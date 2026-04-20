@@ -243,11 +243,17 @@ const Generator = struct {
                 var log = logger.Log.init(allocator);
                 defer log.deinit();
                 const json = bun.json.parse(source, &log, allocator, false) catch break :root_package_json;
-                if (json.getStringCloned(allocator, "version") catch null) |v| root_version = v;
+                if (json.getStringCloned(allocator, "version") catch null) |v| {
+                    if (v.len > 0) root_version = v else allocator.free(v);
+                }
                 if (root_name.len == 0) {
                     if (json.getStringCloned(allocator, "name") catch null) |n| {
-                        root_name = n;
-                        root_name_owned = true;
+                        if (n.len > 0) {
+                            root_name = n;
+                            root_name_owned = true;
+                        } else {
+                            allocator.free(n);
+                        }
                     }
                 }
             }
@@ -367,10 +373,15 @@ const Generator = struct {
             try seen_spdx_ids.put(spdx_id, {});
 
             const flags = pkg_flags[idx];
-            // `required` if any required edge reaches it (or it's a workspace/root).
+            // `required` if any required (prod/peer/workspace) edge reaches it.
             // `excluded` only when every edge is a dev dependency.
             // `optional` when there's at least one optional edge and no required edge.
-            const scope: Scope = if (flags.required or (res.tag == .root or res.tag == .workspace))
+            // Workspace members are reached via the root's `workspaces`
+            // declaration, which is a non-dev/non-optional edge, so they
+            // naturally end up `.required` via the flag accumulation above —
+            // no special-casing on `res.tag` is needed (and doing so would
+            // contradict the per-edge SPDX relationship types).
+            const scope: Scope = if (flags.required or res.tag == .root)
                 .required
             else if (flags.dev and !flags.optional)
                 .excluded

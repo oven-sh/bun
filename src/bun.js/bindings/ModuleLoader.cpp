@@ -691,12 +691,12 @@ JSValue fetchCommonJSModule(
                 }
                 if (!wasModuleMock) {
                     auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result());
-                    Vector<JSC::VM::SynchronousModuleTask> queue;
-                    auto* prev = vm.m_synchronousModuleQueue;
+                    JSC::VM::SynchronousModuleQueue queue;
+                    queue.prev = vm.m_synchronousModuleQueue;
                     vm.m_synchronousModuleQueue = &queue;
                     globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
                     if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
-                    vm.m_synchronousModuleQueue = prev;
+                    vm.m_synchronousModuleQueue = queue.prev;
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 RELEASE_AND_RETURN(scope, jsNumber(-1));
@@ -746,12 +746,12 @@ JSValue fetchCommonJSModule(
                 }
                 if (!wasModuleMock) {
                     auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result());
-                    Vector<JSC::VM::SynchronousModuleTask> queue;
-                    auto* prev = vm.m_synchronousModuleQueue;
+                    JSC::VM::SynchronousModuleQueue queue;
+                    queue.prev = vm.m_synchronousModuleQueue;
                     vm.m_synchronousModuleQueue = &queue;
                     globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
                     if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
-                    vm.m_synchronousModuleQueue = prev;
+                    vm.m_synchronousModuleQueue = queue.prev;
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 RELEASE_AND_RETURN(scope, jsNumber(-1));
@@ -780,7 +780,12 @@ JSValue fetchCommonJSModule(
                     RELEASE_AND_RETURN(scope, target);
                 }
             } else {
-                globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(Ref(*cached)));
+                JSC::VM::SynchronousModuleQueue queue;
+                queue.prev = vm.m_synchronousModuleQueue;
+                vm.m_synchronousModuleQueue = &queue;
+                globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(Ref(*cached)));
+                if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+                vm.m_synchronousModuleQueue = queue.prev;
                 RETURN_IF_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, jsNumber(-1));
             }
@@ -873,12 +878,12 @@ JSValue fetchCommonJSModuleNonBuiltin(
     // private queue instead of leaving them on the user microtask queue we're
     // currently inside of.
     {
-        Vector<JSC::VM::SynchronousModuleTask> queue;
-        auto* prev = vm.m_synchronousModuleQueue;
+        JSC::VM::SynchronousModuleQueue queue;
+        queue.prev = vm.m_synchronousModuleQueue;
         vm.m_synchronousModuleQueue = &queue;
         globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(provider));
         if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
-        vm.m_synchronousModuleQueue = prev;
+        vm.m_synchronousModuleQueue = queue.prev;
     }
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, jsNumber(-1));

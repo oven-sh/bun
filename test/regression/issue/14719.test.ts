@@ -191,6 +191,84 @@ it("bun add --filter with a path pattern matches by workspace directory", async 
   });
 });
 
+it("bun add -F '*' --filter '!api' combines the short alias with negation", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {} }));
+  await setupMonorepo();
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "baz", "-F", "*", "--filter", "!api"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  const out = await stdout.text();
+  expect(out).toContain("installed baz@0.0.3");
+  expect(await exited).toBe(0);
+
+  // Root untouched.
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "monorepo",
+    version: "0.0.0",
+    workspaces: ["packages/*"],
+  });
+
+  // api was negated, so unchanged.
+  expect(await file(join(package_dir, "packages", "api", "package.json")).json()).toEqual({
+    name: "api",
+    version: "1.0.0",
+  });
+
+  // web matched '*' and wasn't negated.
+  expect(await file(join(package_dir, "packages", "web", "package.json")).json()).toEqual({
+    name: "web",
+    version: "1.0.0",
+    dependencies: { baz: "^0.0.3" },
+  });
+});
+
+it("bun add --filter works when run from inside a workspace directory", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {} }));
+  await setupMonorepo();
+  await writeFile(
+    join(package_dir, "packages", "api", "bunfig.toml"),
+    await file(join(package_dir, "bunfig.toml")).text(),
+  );
+
+  // Run from packages/api, but target web via --filter.
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "baz", "--filter=web"],
+    cwd: join(package_dir, "packages", "api"),
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  const out = await stdout.text();
+  expect(out).toContain("installed baz@0.0.3");
+  expect(await exited).toBe(0);
+
+  // api (where we ran from) should be untouched.
+  expect(await file(join(package_dir, "packages", "api", "package.json")).json()).toEqual({
+    name: "api",
+    version: "1.0.0",
+  });
+
+  // web got the dependency.
+  expect(await file(join(package_dir, "packages", "web", "package.json")).json()).toEqual({
+    name: "web",
+    version: "1.0.0",
+    dependencies: { baz: "^0.0.3" },
+  });
+});
+
 it("bun remove --filter removes from the matching workspace only", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.3": {} }));

@@ -144,51 +144,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
     var not_in_workspace_root: ?PatchCommitResult = null;
     switch (subcommand) {
         .remove => {
-            // if we're removing, they don't have to specify where it is installed in the dependencies list
-            // they can even put it multiple times and we will just remove all of them
-            for (updates.*) |request| {
-                inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
-                    if (current_package_json.root.asProperty(list)) |query| {
-                        if (query.expr.data == .e_object) {
-                            var dependencies = query.expr.data.e_object.properties.slice();
-                            var i: usize = 0;
-                            var new_len = dependencies.len;
-                            while (i < dependencies.len) : (i += 1) {
-                                if (dependencies[i].key.?.data == .e_string) {
-                                    if (dependencies[i].key.?.data.e_string.eql(string, request.name)) {
-                                        if (new_len > 1) {
-                                            dependencies[i] = dependencies[new_len - 1];
-                                            new_len -= 1;
-                                        } else {
-                                            new_len = 0;
-                                        }
-
-                                        any_changes = true;
-                                    }
-                                }
-                            }
-
-                            const changed = new_len != dependencies.len;
-                            if (changed) {
-                                query.expr.data.e_object.properties.len = @as(u32, @truncate(new_len));
-
-                                // If the dependencies list is now empty, remove it from the package.json
-                                // since we're swapRemove, we have to re-sort it
-                                if (query.expr.data.e_object.properties.len == 0) {
-                                    // TODO: Theoretically we could change these two lines to
-                                    // `.orderedRemove(query.i)`, but would that change user-facing
-                                    // behavior?
-                                    _ = current_package_json.root.data.e_object.properties.swapRemove(query.i);
-                                    current_package_json.root.data.e_object.packageJSONSort();
-                                } else {
-                                    var obj = query.expr.data.e_object;
-                                    obj.alphabetizeProperties();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            any_changes = editPackageJSONForRemove(&current_package_json.root, updates.*, subcommand);
         },
 
         .link, .add, .update => {
@@ -443,55 +399,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 return;
             }
 
-            var cwd = std.fs.cwd();
-            // This is not exactly correct
-            var node_modules_buf: bun.PathBuffer = undefined;
-            bun.copy(u8, &node_modules_buf, "node_modules" ++ std.fs.path.sep_str);
-            const offset_buf = node_modules_buf["node_modules/".len..];
-            const name_hashes = manager.lockfile.packages.items(.name_hash);
-            for (updates.*) |request| {
-                // If the package no longer exists in the updated lockfile, delete the directory
-                // This is not thorough.
-                // It does not handle nested dependencies
-                // This is a quick & dirty cleanup intended for when deleting top-level dependencies
-                if (std.mem.indexOfScalar(PackageNameHash, name_hashes, String.Builder.stringHash(request.name)) == null) {
-                    bun.copy(u8, offset_buf, request.name);
-                    cwd.deleteTree(node_modules_buf[0 .. "node_modules/".len + request.name.len]) catch {};
-                }
-            }
-
-            // This is where we clean dangling symlinks
-            // This could be slow if there are a lot of symlinks
-            if (bun.openDir(cwd, manager.options.bin_path)) |node_modules_bin_handle| {
-                var node_modules_bin: std.fs.Dir = node_modules_bin_handle;
-                defer node_modules_bin.close();
-                var iter: std.fs.Dir.Iterator = node_modules_bin.iterate();
-                iterator: while (iter.next() catch null) |entry| {
-                    switch (entry.kind) {
-                        std.fs.Dir.Entry.Kind.sym_link => {
-
-                            // any symlinks which we are unable to open are assumed to be dangling
-                            // note that using access won't work here, because access doesn't resolve symlinks
-                            bun.copy(u8, &node_modules_buf, entry.name);
-                            node_modules_buf[entry.name.len] = 0;
-                            const buf: [:0]u8 = node_modules_buf[0..entry.name.len :0];
-
-                            var file = node_modules_bin.openFileZ(buf, .{ .mode = .read_only }) catch {
-                                node_modules_bin.deleteFileZ(buf) catch {};
-                                continue :iterator;
-                            };
-
-                            file.close();
-                        },
-                        else => {},
-                    }
-                }
-            } else |err| {
-                if (err != error.ENOENT) {
-                    Output.err(err, "while reading node_modules/.bin", .{});
-                    Global.crash();
-                }
-            }
+            cleanupNodeModulesAfterRemove(manager, updates.*);
         }
     }
 }
@@ -585,7 +493,18 @@ fn findFilteredWorkspaces(
         &root_entry.source,
         logger.Loc.Empty,
         null,
-    ) catch {};
+    ) catch |err| {
+        log.print(Output.errorWriter()) catch {};
+        Output.errGeneric("failed to enumerate workspaces: {s}", .{@errorName(err)});
+        Global.crash();
+    };
+
+    // Surface per-workspace discovery errors (missing package.json, missing name, ...).
+    // Don't hard-fail: the install step will re-enumerate and report these with full
+    // context, but we want them visible before the "no match" message if nothing matched.
+    if (log.errors > 0) {
+        log.print(Output.errorWriter()) catch {};
+    }
 
     // Match workspaces against filters.
     const top_level_dir = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
@@ -661,6 +580,11 @@ fn findFilteredWorkspaces(
     return matched.toOwnedSlice(allocator);
 }
 
+/// Remove each requested package from every dependency group in `current_package_json`.
+/// Returns true if anything was removed.
+///
+/// If we're removing, the user doesn't have to specify where it is installed in the
+/// dependencies list — they can even put it multiple times and we remove all of them.
 fn editPackageJSONForRemove(
     current_package_json: *JSAst.Expr,
     updates: []const UpdateRequest,
@@ -695,6 +619,8 @@ fn editPackageJSONForRemove(
 
                     if (new_len != dependencies.len) {
                         query.expr.data.e_object.properties.len = @as(u32, @truncate(new_len));
+                        // If the dependencies list is now empty, remove it from the package.json.
+                        // Since we swapRemove, we have to re-sort it.
                         if (query.expr.data.e_object.properties.len == 0) {
                             _ = current_package_json.data.e_object.properties.swapRemove(query.i);
                             current_package_json.data.e_object.packageJSONSort();
@@ -709,6 +635,61 @@ fn editPackageJSONForRemove(
     }
 
     return any_changes;
+}
+
+/// Best-effort cleanup after `bun remove`: delete `node_modules/<pkg>` for packages
+/// that no longer appear in the lockfile, and prune dangling symlinks from
+/// `node_modules/.bin`. Runs relative to cwd (which is the workspace root).
+fn cleanupNodeModulesAfterRemove(manager: *PackageManager, updates: []const UpdateRequest) void {
+    var cwd = std.fs.cwd();
+    // This is not exactly correct
+    var node_modules_buf: bun.PathBuffer = undefined;
+    bun.copy(u8, &node_modules_buf, "node_modules" ++ std.fs.path.sep_str);
+    const offset_buf = node_modules_buf["node_modules/".len..];
+    const name_hashes = manager.lockfile.packages.items(.name_hash);
+    for (updates) |request| {
+        // If the package no longer exists in the updated lockfile, delete the directory
+        // This is not thorough.
+        // It does not handle nested dependencies
+        // This is a quick & dirty cleanup intended for when deleting top-level dependencies
+        if (std.mem.indexOfScalar(PackageNameHash, name_hashes, String.Builder.stringHash(request.name)) == null) {
+            bun.copy(u8, offset_buf, request.name);
+            cwd.deleteTree(node_modules_buf[0 .. "node_modules/".len + request.name.len]) catch {};
+        }
+    }
+
+    // This is where we clean dangling symlinks
+    // This could be slow if there are a lot of symlinks
+    if (bun.openDir(cwd, manager.options.bin_path)) |node_modules_bin_handle| {
+        var node_modules_bin: std.fs.Dir = node_modules_bin_handle;
+        defer node_modules_bin.close();
+        var iter: std.fs.Dir.Iterator = node_modules_bin.iterate();
+        iterator: while (iter.next() catch null) |entry| {
+            switch (entry.kind) {
+                std.fs.Dir.Entry.Kind.sym_link => {
+
+                    // any symlinks which we are unable to open are assumed to be dangling
+                    // note that using access won't work here, because access doesn't resolve symlinks
+                    bun.copy(u8, &node_modules_buf, entry.name);
+                    node_modules_buf[entry.name.len] = 0;
+                    const buf: [:0]u8 = node_modules_buf[0..entry.name.len :0];
+
+                    var file = node_modules_bin.openFileZ(buf, .{ .mode = .read_only }) catch {
+                        node_modules_bin.deleteFileZ(buf) catch {};
+                        continue :iterator;
+                    };
+
+                    file.close();
+                },
+                else => {},
+            }
+        }
+    } else |err| {
+        if (err != error.ENOENT) {
+            Output.err(err, "while reading node_modules/.bin", .{});
+            Global.crash();
+        }
+    }
 }
 
 fn updatePackageJSONAndInstallWithFilter(
@@ -755,11 +736,17 @@ fn updatePackageJSONAndInstallWithFilter(
 
     var any_remove_changes = false;
 
+    // `PackageJSONEditor.edit` can shrink `updates` in place (e.g. with
+    // `--only-missing` when the dependency already exists). Remember the
+    // original slice so each workspace sees the full set of requests.
+    const original_updates = updates.*;
+
     // Pre-install: edit each matching workspace's package.json in memory.
     for (workspaces) |*workspace| {
         // `PackageJSONEditor.edit` uses `request.e_string` as a sentinel for
         // "already handled"; reset it between workspaces so every workspace
         // actually gets the dependency added.
+        updates.* = original_updates;
         for (updates.*) |*request| request.e_string = null;
 
         var entry = switch (manager.workspace_package_json_cache.getWithPath(
@@ -830,8 +817,9 @@ fn updatePackageJSONAndInstallWithFilter(
     }
 
     // The install step resolves update requests by looking at the dependency list of
-    // `manager.workspace_name_hash`'s package. Point it at one of the workspaces we
-    // edited so the resolved version gets populated on the UpdateRequests.
+    // `manager.workspace_name_hash`'s package. After the pre-install edit above, every
+    // matched workspace has every requested dependency (either newly added or already
+    // present), so any one of them is a valid lookup target. Use the first.
     manager.workspace_name_hash = workspaces[0].name_hash;
     manager.root_package_id.id = null;
     manager.original_package_json_path = workspaces[0].package_json_path;
@@ -870,6 +858,7 @@ fn updatePackageJSONAndInstallWithFilter(
     for (workspaces) |*workspace| {
         const final_source = switch (subcommand) {
             .add => blk: {
+                updates.* = original_updates;
                 for (updates.*) |*request| request.e_string = null;
 
                 const source = &logger.Source.initPathString("package.json", workspace.before_install_source);
@@ -920,14 +909,19 @@ fn updatePackageJSONAndInstallWithFilter(
             bun.O.RDWR,
             0,
         ).unwrap()).handle.stdFile();
+        defer file.close();
 
         try file.pwriteAll(final_source, 0);
         std.posix.ftruncate(file.handle, final_source.len) catch {};
-        file.close();
     }
 
-    if (subcommand == .remove and !any_remove_changes) {
-        Global.exit(0);
+    if (subcommand == .remove) {
+        if (!any_remove_changes) {
+            Global.exit(0);
+            return;
+        }
+
+        cleanupNodeModulesAfterRemove(manager, updates.*);
     }
 }
 

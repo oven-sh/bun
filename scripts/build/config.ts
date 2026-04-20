@@ -51,7 +51,7 @@ export interface Host {
 const versionDefaults = {
   nodejsVersion: NODEJS_VERSION,
   nodejsAbiVersion: NODEJS_ABI_VERSION,
-  // zigCommit's default varies by ci — see defaultZigCommit() in zig.ts.
+  // zigCommit's default varies by host OS — see defaultZigCommit() in zig.ts.
   webkitVersion: WEBKIT_VERSION,
 };
 

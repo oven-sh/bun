@@ -70,15 +70,14 @@ function usingParallelCompiler(cfg: Config): boolean {
  * `linkonce_odr` externs so LLVM can't inline or IPO across them.
  *
  * Sharding is gated off for:
- *   - CI: zig-only/link-only run on different machines, so the link step
- *     can't know how many shards were produced. Single artifact keeps the
- *     upload/download contract simple. (Shipped releases are always CI,
- *     so they get cg=1 and full IPO.)
+ *   - Non-ASAN CI: shipped releases want full IPO; cg=1 keeps that and
+ *     keeps the upload/download contract a single file.
  *   - Windows targets: COFF shard emission is unimplemented in oven-sh/zig.
  *
- * Local builds — Debug or Release — shard for build speed. A local
- * `--profile=release` is for dev iteration; benchmark against a CI
- * artifact (always cg=1) if cross-unit inlining matters.
+ * ASAN CI uses a FIXED count (CI_ASAN_CODEGEN_THREADS) so zig-only and
+ * link-only — which run on different machines — agree on the artifact
+ * names. Local builds shard at availableParallelism(); benchmark against
+ * a non-ASAN CI artifact if cross-unit inlining matters.
  */
 function codegenThreads(cfg: Config): number {
   if (!usingParallelCompiler(cfg)) return 0;
@@ -351,9 +350,9 @@ export interface ZigBuildInputs {
 /**
  * Emit the zig download + zig build steps. Returns the output object file(s).
  *
- * Single `bun-zig.o` when codegenThreads()<=1 (CI, Windows targets);
- * `bun-zig.{0..N-1}.o` shards otherwise (local dev). The link step
- * spreads the returned array into its inputs either way.
+ * Single `bun-zig.o` when codegenThreads()<=1 (non-ASAN CI, Windows
+ * targets); `bun-zig.{0..N-1}.o` shards otherwise (ASAN CI, local dev).
+ * The link step spreads the returned array into its inputs either way.
  */
 export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[] {
   n.comment("─── Zig ───");

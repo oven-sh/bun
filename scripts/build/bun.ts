@@ -484,7 +484,7 @@ function emitZigOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  *
  * Expected artifacts (same paths cpp-only/zig-only produced):
  *   - libbun-profile.a            — from cpp-only's ar()
- *   - bun-zig.o                   — from zig-only
+ *   - bun-zig.o (or bun-zig.{i}.o for ASAN — see zigObjectPaths)
  *   - deps/<name>/lib<name>.a     — from cpp-only's dep builds
  *   - cache/webkit-<hash>/lib/... — WebKit prebuilt (same cache path)
  */

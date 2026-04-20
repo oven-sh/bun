@@ -1181,6 +1181,7 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
+const JSAst = bun.ast;
 const JSON = bun.json;
 const JSPrinter = bun.js_printer;
 const Output = bun.Output;
@@ -1197,6 +1198,9 @@ const String = Semver.String;
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;
 
+const Lockfile = bun.install.Lockfile;
+const Package = Lockfile.Package;
+
 const PackageManager = bun.install.PackageManager;
 const CommandLineArguments = PackageManager.CommandLineArguments;
 const PackageJSONEditor = PackageManager.PackageJSONEditor;
@@ -1205,7 +1209,3 @@ const Subcommand = PackageManager.Subcommand;
 const UpdateRequest = PackageManager.UpdateRequest;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const attemptToCreatePackageJSON = PackageManager.attemptToCreatePackageJSON;
-
-const Lockfile = bun.install.Lockfile;
-const Package = Lockfile.Package;
-const JSAst = bun.ast;

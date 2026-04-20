@@ -120,6 +120,7 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>hash-print<r>           print the hash stored in the current lockfile
             \\  <b><green>bun pm<r> <blue>cache<r>                print the path to the cache folder
             \\  <b><green>bun pm<r> <blue>cache rm<r>             clear the cache
+            \\  <b><green>bun pm<r> <blue>fetch<r>                fetch all dependencies into the cache without installing
             \\  <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything
             \\  <b><green>bun pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts
             \\  <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`
@@ -442,6 +443,9 @@ pub const PackageManagerCommand = struct {
         } else if (strings.eqlComptime(subcommand, "pkg")) {
             try PmPkgCommand.exec(ctx, pm, pm.options.positionals, cwd);
             Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "fetch")) {
+            try PmFetchCommand.exec(ctx, pm, cwd);
+            Global.exit(0);
         }
 
         printHelp();
@@ -595,6 +599,7 @@ const Path = @import("../paths/resolve_path.zig");
 const PmViewCommand = @import("./pm_view_command.zig");
 const std = @import("std");
 const Command = @import("./cli.zig").Command;
+const PmFetchCommand = @import("./pm_fetch_command.zig").PmFetchCommand;
 const PmPkgCommand = @import("./pm_pkg_command.zig").PmPkgCommand;
 const PmVersionCommand = @import("./pm_version_command.zig").PmVersionCommand;
 const PmWhyCommand = @import("./pm_why_command.zig").PmWhyCommand;

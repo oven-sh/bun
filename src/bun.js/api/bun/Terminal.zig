@@ -204,15 +204,28 @@ fn initTerminal(
     // Start writer with the write fd - adds a ref
     switch (terminal.writer.start(pty_result.write_fd, true)) {
         .result => terminal.ref(),
-        .err => return error.WriterStartFailed,
+        .err => {
+            // Writer never took ownership of write_fd; reader never started.
+            // Close all PTY resources directly and drop the initial ref.
+            terminal.read_fd.close();
+            terminal.read_fd = bun.invalid_fd;
+            terminal.write_fd.close();
+            terminal.write_fd = bun.invalid_fd;
+            terminal.closeInternal();
+            terminal.deref();
+            return error.WriterStartFailed;
+        },
     }
 
     // Start reader with the read fd - adds a ref
     switch (terminal.reader.start(pty_result.read_fd, true)) {
         .err => {
-            // Reader never started but writer was started
-            // Close writer (will trigger onWriterDone -> deref for writer's ref)
-            terminal.writer.close();
+            // Reader never started; close read_fd directly. Writer was started:
+            // closeInternal -> writer.close() will deref the writer's ref.
+            terminal.read_fd.close();
+            terminal.read_fd = bun.invalid_fd;
+            terminal.closeInternal();
+            terminal.deref();
             return error.ReaderStartFailed;
         },
         .result => {
@@ -581,7 +594,7 @@ fn createOverlappedPipePair(
         .{ pid, counter },
     ) catch return error.OpenPtyFailed;
     var name_w_buf: [96:0]u16 = undefined;
-    const name_w_len = std.unicode.wtf8ToWtf16Le(&name_w_buf, name) catch return error.OpenPtyFailed;
+    const name_w_len = bun.strings.convertUTF8toUTF16InBuffer(&name_w_buf, name).len;
     name_w_buf[name_w_len] = 0;
     const name_w = name_w_buf[0..name_w_len :0];
 

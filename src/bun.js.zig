@@ -398,6 +398,7 @@ pub const Run = struct {
             if (promise.status() == .rejected) {
                 const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
                 promise.setHandled();
+                vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
                 if (vm.hot_reload != .none or handled) {
                     vm.addMainToWatcherIfNeeded();

@@ -205,6 +205,40 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
 STACK_OF(X509) *us_get_root_system_cert_instances() {
   // Ensure single-path initialization via us_internal_init_root_certs
   auto certs = us_get_default_ca_certificates();
+
+  // Fast path: system certs were loaded eagerly because NODE_USE_SYSTEM_CA /
+  // --use-system-ca was set, or a prior call already populated the cache.
+  if (certs->root_system_cert_instances != NULL) {
+    return certs->root_system_cert_instances;
+  }
+
+  // Slow path: lazy-load system certs on first call to
+  // tls.getCACertificates('system'). Node returns system certs here
+  // regardless of --use-system-ca; we match that while deferring the scan
+  // cost until the API is actually called.
+  static std::atomic_flag lazy_lock = ATOMIC_FLAG_INIT;
+  static std::atomic_bool lazy_loaded = false;
+
+  if (std::atomic_load(&lazy_loaded)) {
+    return certs->root_system_cert_instances;
+  }
+
+  while (atomic_flag_test_and_set_explicit(&lazy_lock,
+                                           std::memory_order_acquire))
+    ;
+
+  if (!atomic_exchange(&lazy_loaded, true)) {
+#ifdef __APPLE__
+    us_load_system_certificates_macos(&certs->root_system_cert_instances);
+#elif defined(_WIN32)
+    us_load_system_certificates_windows(&certs->root_system_cert_instances);
+#else
+    us_load_system_certificates_linux(&certs->root_system_cert_instances);
+#endif
+  }
+
+  atomic_flag_clear_explicit(&lazy_lock, std::memory_order_release);
+
   return certs->root_system_cert_instances;
 }
 

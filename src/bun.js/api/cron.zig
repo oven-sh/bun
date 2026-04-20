@@ -420,11 +420,33 @@ pub const CronRegisterJob = struct {
         if (args[0].isString() and args[2].isUndefined())
             return globalObject.throwInvalidArguments("Bun.cron(schedule, handler) expects a function handler as the second argument", .{});
 
-        if (!args[0].isString()) return globalObject.throwInvalidArguments("Bun.cron() expects a string path as the first argument", .{});
         if (!args[1].isString()) return globalObject.throwInvalidArguments("Bun.cron() expects a string schedule as the second argument", .{});
         if (!args[2].isString()) return globalObject.throwInvalidArguments("Bun.cron() expects a string title as the third argument", .{});
 
-        const path_str = try args[0].toBunString(globalObject);
+        const path_str: bun.String = blk: {
+            const result: jsc.DOMURL.FromURLStringError!bun.String = path: {
+                if (args[0].as(jsc.DOMURL)) |domurl|
+                    break :path domurl.fileSystemPath();
+                if (!args[0].isString())
+                    return globalObject.throwInvalidArguments("Bun.cron() expects a string or file URL path as the first argument", .{});
+                const raw = try args[0].toBunString(globalObject);
+                if (!raw.hasPrefixComptime("file://"))
+                    break :blk raw;
+                defer raw.deref();
+                break :path jsc.DOMURL.fileSystemPathFromURLString(raw);
+            };
+            const str = result catch |err| switch (err) {
+                error.NotFileUrl => return globalObject.ERR(.INVALID_URL_SCHEME, "Bun.cron() path URL must use the file: scheme", .{}).throw(),
+                error.InvalidPath => return globalObject.ERR(.INVALID_FILE_URL_PATH, "Bun.cron() path URL must be a valid file: path", .{}).throw(),
+                error.InvalidHost => return globalObject.ERR(.INVALID_FILE_URL_HOST, "Bun.cron() path URL host must be \"localhost\" or empty", .{}).throw(),
+                error.InvalidUrl => return globalObject.ERR(.INVALID_URL, "Bun.cron() received an invalid file: URL", .{}).throw(),
+            };
+            if (str.isEmpty()) {
+                str.deref();
+                return globalObject.ERR(.INVALID_ARG_VALUE, "Bun.cron() path URL must not be empty", .{}).throw();
+            }
+            break :blk str;
+        };
         defer path_str.deref();
         const schedule_str = try args[1].toBunString(globalObject);
         defer schedule_str.deref();

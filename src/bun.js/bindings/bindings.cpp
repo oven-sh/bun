@@ -2119,9 +2119,8 @@ WebCore::DOMURL* WebCore__DOMURL__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* v
     *arg1 = Zig::toZigString(pathname);
 }
 
-BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* errorCode)
+static BunString fileURLToSystemPath(const WTF::URL& url, int* errorCode)
 {
-    const WTF::URL& url = arg0->href();
     if (url.protocolIsFile()) {
 #if !OS(WINDOWS)
         if (!url.host().isEmpty()) {
@@ -2143,6 +2142,26 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* errorCode)
     }
     *errorCode = 3;
     return BunString { BunStringTag::Dead, nullptr };
+}
+
+BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* errorCode)
+{
+    return fileURLToSystemPath(arg0->href(), errorCode);
+}
+
+// Same validation as WebCore__DOMURL__fileSystemPath, but starting from a URL
+// string instead of a DOMURL object. Used by callers that receive a "file://"
+// string directly (e.g. Bun.cron path argument) so that the string form and
+// the URL-object form behave identically.
+extern "C" BunString URL__fileSystemPathFromURLString(BunString* input, int* errorCode)
+{
+    auto&& str = input->toWTFString();
+    auto url = WTF::URL(str);
+    if (!url.isValid()) {
+        *errorCode = 4;
+        return BunString { BunStringTag::Dead, nullptr };
+    }
+    return fileURLToSystemPath(url, errorCode);
 }
 
 // Taken from unwrapBoxedPrimitive in JSONObject.cpp in WebKit

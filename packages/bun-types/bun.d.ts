@@ -7669,7 +7669,7 @@ declare module "bun" {
      * @see {@link Bun.cron.remove} to unregister.
      * @see {@link Bun.cron.parse} to preview the next fire time.
      */
-    (path: string, schedule: CronWithAutocomplete, title: string): Promise<void>;
+    (path: string | URL, schedule: CronWithAutocomplete, title: string): Promise<void>;
     /**
      * Remove a previously registered cron job by its title.
      *

@@ -312,6 +312,7 @@ function getUnpackedSettings(buf?: any, options?: any): any {
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
 
+const bunHTTP2SessionDestroyError = Symbol("bunHTTP2SessionDestroyError");
 const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
 const bunHTTP2OriginSet = Symbol("::bunhttp2originset::");
 const bunHTTP2StreamFinal = Symbol.for("::bunHTTP2StreamFinal::");
@@ -2728,7 +2729,11 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
     let error_instance: Error | number | undefined = undefined;
     if (stream.listenerCount("error") > 0) {
-      if (typeof error === "number") {
+      const sessionErr = self?.[bunHTTP2SessionDestroyError];
+      if (sessionErr !== undefined) {
+        error_instance = sessionErr;
+        if (typeof error === "number") stream.rstCode = error;
+      } else if (typeof error === "number") {
         stream.rstCode = error;
         if (error != 0) {
           error_instance = streamErrorFromCode(error);
@@ -3319,9 +3324,15 @@ class ServerHttp2Session extends Http2Session {
     if (server) {
       server[kSessions].delete(this);
     }
+    let streamDestroyError: Error | undefined;
     if (typeof error === "number") {
       code = error;
       error = code !== NGHTTP2_NO_ERROR ? $ERR_HTTP2_SESSION_ERROR(code) : undefined;
+    } else {
+      // Only forward caller-supplied Error objects to streams. When destroy() is invoked with
+      // a numeric code (protocol error), streams should keep receiving ERR_HTTP2_STREAM_ERROR
+      // derived from that code via emitErrorToAllStreams -> emitStreamErrorNT.
+      streamDestroyError = error;
     }
 
     const socket = this[bunHTTP2Socket];
@@ -3334,6 +3345,7 @@ class ServerHttp2Session extends Http2Session {
     }
     const parser = this.#parser;
     if (parser) {
+      if (streamDestroyError !== undefined) this[bunHTTP2SessionDestroyError] = streamDestroyError;
       parser.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
       parser.detach();
       this.#parser = null;
@@ -3884,6 +3896,7 @@ class ClientHttp2Session extends Http2Session {
     }
     const parser = this.#parser;
     if (parser) {
+      if (error !== undefined) this[bunHTTP2SessionDestroyError] = error;
       parser.emitErrorToAllStreams(code || constants.NGHTTP2_NO_ERROR);
       parser.detach();
     }

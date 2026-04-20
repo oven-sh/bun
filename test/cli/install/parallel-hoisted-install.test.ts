@@ -1,5 +1,5 @@
 import { $, Glob, spawn, write } from "bun";
-import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test, setDefaultTimeout } from "bun:test";
 import { lstat, mkdir, readlink, rm } from "fs/promises";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { join } from "path";
@@ -7,9 +7,7 @@ import { join } from "path";
 // Parallel hoisted install is POSIX-only (Windows already fans out
 // per-file via HardLinkWindowsInstallTask).
 
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
-});
+setDefaultTimeout(1000 * 60 * 5);
 
 /**
  * Build a set of local tarball packages to exercise the hoisted
@@ -18,7 +16,7 @@ beforeAll(() => {
  * through the parallel path (see canUseParallelHoistedInstall).
  */
 async function makeTarballFixture(): Promise<{ dir: string; deps: Record<string, string>; count: number }> {
-  const count = 30;
+  const count = 60;
   const deps: Record<string, string> = {};
   const root = tempDir("parallel-hoisted", {});
   const dir = String(root);
@@ -40,6 +38,12 @@ async function makeTarballFixture(): Promise<{ dir: string; deps: Record<string,
     await write(join(pkgSrc, "lib", "nested", "a.js"), `// ${i}\n`);
     await write(join(pkgSrc, "lib", "nested", "b.js"), `// ${i}\n`);
     await write(join(pkgSrc, "README.md"), `# ${name}\n`);
+    // Pad with extra files so the per-package hardlink work
+    // dominates process-startup overhead in the parallelism test.
+    // 60 packages × 26 files ≈ 1.5k linkat calls.
+    for (let f = 0; f < 20; f++) {
+      await write(join(pkgSrc, "lib", "nested", `f${f}.js`), `// ${i}.${f}\n`);
+    }
 
     const tarball = join(dir, "tarballs", `pkg-${i}.tgz`);
     await $`tar -czf ${tarball} -C ${pkgRoot} package`.quiet();
@@ -75,6 +79,7 @@ async function fingerprintNodeModules(dir: string): Promise<string[]> {
 }
 
 async function install(dir: string, env: NodeJS.Dict<string>, extraArgs: string[] = []) {
+  const start = Bun.nanoseconds();
   await using proc = spawn({
     cmd: [bunExe(), "install", "--ignore-scripts", ...extraArgs],
     cwd: dir,
@@ -83,7 +88,9 @@ async function install(dir: string, env: NodeJS.Dict<string>, extraArgs: string[
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
+  const wallMicros = (Bun.nanoseconds() - start) / 1000;
+  const usage = proc.resourceUsage();
+  return { stdout, stderr, exitCode, wallMicros, usage };
 }
 
 describe.skipIf(!isPosix)("parallel hoisted install", () => {
@@ -179,4 +186,53 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
     }
     expect(layout.filter(p => p.startsWith("node_modules/.bin/")).length).toBeGreaterThan(0);
   });
+
+  // Observable difference between serial (pre-change) and parallel
+  // linking: parallel linking spreads ~1.5k linkat/mkdirat syscalls
+  // across the thread pool, so CPU time exceeds wall time on a
+  // multi-core host. Serial linking does everything on the main
+  // thread so CPU time ≤ wall time. The test asserts that the
+  // default-path CPU/wall ratio is meaningfully higher than the
+  // BUN_INSTALL_SERIAL_HOISTED=1 ratio.
+  //
+  // Without the parallel path, BUN_INSTALL_SERIAL_HOISTED doesn't
+  // gate anything, so both ratios are ≈1.0 and the assertion fails.
+  //
+  // Skip on single-core machines where no fan-out is possible.
+  test.skipIf((navigator.hardwareConcurrency ?? 1) < 2)(
+    "links packages in parallel on the thread pool",
+    async () => {
+      await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
+      const warm = await install(fixture.dir, bunEnv);
+      expect(warm.exitCode).toBe(0);
+
+      async function measure(env: NodeJS.Dict<string>) {
+        await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
+        const r = await install(fixture.dir, env, ["--frozen-lockfile"]);
+        expect(r.stderr).not.toContain("error:");
+        expect(r.exitCode).toBe(0);
+        const cpu = Number(r.usage?.cpuTime.user ?? 0n) + Number(r.usage?.cpuTime.system ?? 0n);
+        return cpu / Math.max(1, r.wallMicros);
+      }
+
+      // Best-of-N per mode, interleaved to smooth over scheduler
+      // noise / page-cache warmth on a busy CI host.
+      const runs = 5;
+      let parallelRatio = 0;
+      let serialRatio = Infinity;
+      for (let i = 0; i < runs; i++) {
+        parallelRatio = Math.max(parallelRatio, await measure(bunEnv));
+        serialRatio = Math.min(serialRatio, await measure({ ...bunEnv, BUN_INSTALL_SERIAL_HOISTED: "1" }));
+      }
+
+      console.log(`parallel cpu/wall: ${parallelRatio.toFixed(2)}`);
+      console.log(`serial   cpu/wall: ${serialRatio.toFixed(2)}`);
+
+      // Parallel should consume more CPU per wall-clock second than
+      // serial by a clear margin. 1.15× covers ASAN builds where
+      // per-spawn overhead compresses the ratio; on release builds
+      // the gap is typically 1.5–2×.
+      expect(parallelRatio / serialRatio).toBeGreaterThan(1.15);
+    },
+  );
 });

@@ -106,13 +106,25 @@ pub const PackageInstaller = struct {
 
         fn run(self: *@This()) PackageInstall.Result {
             // Open (or create) this package's node_modules directory.
-            var destination_dir = bun.openDirA(bun.FD.cwd().stdDir(), self.node_modules_path) catch dir: {
-                bun.makePath(bun.FD.cwd().stdDir(), self.node_modules_path) catch {};
-                break :dir bun.openDirA(bun.FD.cwd().stdDir(), self.node_modules_path) catch |err| {
-                    return .fail(err, .opening_dest_dir, @errorReturnTrace());
+            // For the root tree — the vast majority of packages in a
+            // hoisted layout — reuse the already-open
+            // root_node_modules_folder fd instead of reopening the same
+            // absolute path from every worker. fds are thread-safe to
+            // use concurrently with the *at family.
+            var owned_dir: ?std.fs.Dir = null;
+            defer if (owned_dir) |*d| d.close();
+            const destination_dir: std.fs.Dir = if (self.tree_id == 0)
+                self.installer.root_node_modules_folder
+            else dir: {
+                const opened = bun.openDirA(bun.FD.cwd().stdDir(), self.node_modules_path) catch {
+                    bun.makePath(bun.FD.cwd().stdDir(), self.node_modules_path) catch {};
+                    break :dir bun.openDirA(bun.FD.cwd().stdDir(), self.node_modules_path) catch |err| {
+                        return .fail(err, .opening_dest_dir, @errorReturnTrace());
+                    };
                 };
+                owned_dir = opened;
+                break :dir opened;
             };
-            defer destination_dir.close();
 
             // Per-task NodeModulesFolder; only needed because PackageInstall
             // holds a pointer to one. With skip_delete=true it is never used

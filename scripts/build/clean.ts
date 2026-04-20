@@ -31,7 +31,7 @@ presets:
   release          build/release/
   debug-local      build/debug-local/
   release-local    build/release-local/
-  zig              zig caches + bun-zig.o across all profiles, .zig-cache, zig-out
+  zig              zig caches + bun-zig*.o across all profiles, .zig-cache, zig-out
   cpp              C++ obj/ + pch/ across all profiles
   cache            machine-shared build cache (~/.bun/build-cache: ccache, zig,
                    tarballs, prebuilt webkit) — affects ALL checkouts

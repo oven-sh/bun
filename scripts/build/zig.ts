@@ -253,9 +253,10 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
     restat: true,
   });
 
-  // Zig build — the big one. One invocation produces bun-zig.o. Zig's
-  // own build system handles per-file tracking; restat prunes downstream
-  // when zig's cache says nothing changed.
+  // Zig build — the big one. One invocation produces bun-zig.o (or
+  // bun-zig.{0..N-1}.o when codegenThreads()>1). Zig's own build system
+  // handles per-file tracking; restat prunes downstream when zig's cache
+  // says nothing changed.
   //
   // Default: --console + pool=console. Zig gets direct TTY, its native
   // spinner works. Ninja defers [N/M] while the console job owns the
@@ -328,9 +329,9 @@ export interface ZigBuildInputs {
 /**
  * Emit the zig download + zig build steps. Returns the output object file(s).
  *
- * For normal builds: one `bun-zig.o`. For test builds (future): `bun-test.o`.
- * Threaded codegen (LLVM_ZIG_CODEGEN_THREADS > 1) would produce multiple .o
- * files, but that's always 0 in practice — deferred.
+ * Single `bun-zig.o` when codegenThreads()<=1 (CI, Windows targets);
+ * `bun-zig.{0..N-1}.o` shards otherwise (local dev). The link step
+ * spreads the returned array into its inputs either way.
  */
 export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[] {
   n.comment("─── Zig ───");

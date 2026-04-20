@@ -1,11 +1,13 @@
 ---
 title: "Global virtual store"
-description: "Share isolated package installs across every project on the machine"
+description: "Install packages once. Every project links to the same copy."
 ---
 
-When using the [isolated linker](/pm/isolated-installs), Bun materializes each package's files **once** into a global virtual store under the package cache and symlinks `node_modules/.bun/<package>@<version>` into it. The store is shared across every project on the machine, so once a `(package, version, resolved-dependency-set)` triple has been installed anywhere, every subsequent install — including a fresh `rm -rf node_modules && bun install` — only creates one symlink per package.
+Every project on your machine depends on the same handful of heavy packages — `typescript`, `next`, `webpack`, `@babel/*`, `react-dom`. Without a shared store, every `node_modules` gets its own copy, and every fresh `bun install` writes them all out again.
 
-That makes warm installs roughly **7× faster** and brings each project's `node_modules` from hundreds of megabytes of copied files down to a directory of symlinks. Ten checkouts that would previously hold ten copies of `typescript`, `webpack`, `next`, and friends now hold one copy in the cache plus ten symlinks.
+The global virtual store changes that to **install once, link everywhere**. Package files live in one shared cache; each project's `node_modules` is a thin tree of symlinks into it. A second checkout, a new branch worktree, a CI workspace — they all point at the copy that's already on disk.
+
+The result: warm installs are roughly **7× faster** (one symlink per package instead of copying every file), and `node_modules` shrinks from hundreds of megabytes per project to a few megabytes of links.
 
 ## Enabling
 

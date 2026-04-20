@@ -436,8 +436,13 @@ function randomString(rng: () => number, minLen: number, maxLen: number): string
       // Control char
       pieces.push(String.fromCharCode(Math.floor(rng() * 0x20)));
     } else if (r < 0.96) {
-      // C1 control
-      pieces.push(String.fromCharCode(0x80 + Math.floor(rng() * 0x20)));
+      // C1 control — restricted to 0x80-0x8F. The upper half includes
+      // sequence introducers (CSI 0x9B, OSC 0x9D, DCS 0x90, etc.) which,
+      // emitted standalone, start unterminated sequences whose visible
+      // width depends on whether a stray terminator byte happens to follow.
+      // sliceAnsi's appended close codes (e.g. `\x1b]8;;\x07`) can supply
+      // such a terminator and make stripANSI(sliced) ≠ stripANSI(original).
+      pieces.push(String.fromCharCode(0x80 + Math.floor(rng() * 0x10)));
     } else {
       // Truecolor SGR
       pieces.push(`\x1b[38;2;${Math.floor(rng() * 256)};${Math.floor(rng() * 256)};${Math.floor(rng() * 256)}m`);

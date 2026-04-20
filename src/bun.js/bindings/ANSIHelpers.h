@@ -201,10 +201,16 @@ static const Char* consumeANSI(const Char* start, const Char* end)
     };
 
     auto state = State::start;
+    // Start of the *current* sub-sequence in the chain. consumeANSI greedily
+    // chains adjacent escapes; when a later sub-sequence turns out to be
+    // invalid/unterminated we must report progress up to *its* introducer,
+    // not rewind to the very first one (which would un-strip valid prefixes).
+    auto seqStart = start;
     for (auto it = start; it != end; ++it) {
         const auto c = *it;
         switch (state) {
         case State::start:
+            seqStart = it;
             switch (c) {
             case 0x1b:
                 state = State::gotEsc;
@@ -256,6 +262,10 @@ static const Char* consumeANSI(const Char* start, const Char* end)
                 state = State::needSt;
                 break;
             default:
+                // Non-ASCII can't be a valid ESC continuation; bail so the
+                // caller leaves the bytes literal (matches npm strip-ansi).
+                if (static_cast<unsigned>(c) >= 0x80)
+                    return seqStart;
                 // Otherwise, assume this is a one-byte sequence
                 state = State::start;
             }
@@ -271,7 +281,18 @@ static const Char* consumeANSI(const Char* start, const Char* end)
             // CSI parameters can be 1-15+ bytes (e.g. \x1b[1;31;48;2;255;0;0m).
             const auto* term = scanForByteInRange<0x40, 0x7e>(it, end);
             if (!term)
-                return end;
+                return seqStart;
+            // Bytes between the introducer and the terminator must be CSI
+            // parameter or intermediate bytes (0x20-0x3F per ECMA-48 §5.4).
+            // Anything else (control chars, non-ASCII text, surrogates) means
+            // the SIMD scan jumped over invalid content to land on a stray
+            // letter — bail out and leave the bytes literal. Common case is
+            // CJK text after `\x1b[` with a downstream ASCII letter.
+            for (const auto* p = it; p < term; ++p) {
+                const auto cc = static_cast<unsigned>(*p);
+                if (cc < 0x20 || cc > 0x3f)
+                    return seqStart;
+            }
             it = term; // ++it on next loop iteration steps past terminator
             state = State::start;
             break;
@@ -283,7 +304,7 @@ static const Char* consumeANSI(const Char* start, const Char* end)
             // (filenames, titles, hyperlinks), so SIMD-scan for those 3 bytes.
             const auto* term = scanForAnyByte<0x07, 0x9c, 0x1b>(it, end);
             if (!term)
-                return end;
+                return seqStart;
             it = term;
             state = (*term == static_cast<Char>(0x1b)) ? State::inOscGotEsc : State::start;
             break;
@@ -300,7 +321,7 @@ static const Char* consumeANSI(const Char* start, const Char* end)
             // ST-terminated payload: scan for ESC or C1 ST.
             const auto* term = scanForAnyByte<0x1b, 0x9c>(it, end);
             if (!term)
-                return end;
+                return seqStart;
             it = term;
             state = (*term == static_cast<Char>(0x1b)) ? State::needStGotEsc : State::start;
             break;
@@ -313,6 +334,22 @@ static const Char* consumeANSI(const Char* start, const Char* end)
                 state = State::needSt;
             break;
         }
+    }
+
+    // Input exhausted. If we're still mid-sequence in a multi-byte state,
+    // the sequence is unterminated and matches no strip-ansi pattern, so
+    // bail out so the caller leaves the bytes literal. `gotEsc` and
+    // `ignoreNextChar` fall through to `return end` to preserve the
+    // existing trailing-ESC and two-byte-ESC consumption behavior.
+    switch (state) {
+    case State::inCsi:
+    case State::inOsc:
+    case State::inOscGotEsc:
+    case State::needSt:
+    case State::needStGotEsc:
+        return seqStart;
+    default:
+        break;
     }
     return end;
 }

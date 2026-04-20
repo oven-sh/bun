@@ -105,10 +105,12 @@ describe("Bun.stripANSI", () => {
     "",
     "hello world",
 
-    // Partial sequences
+    // Partial sequences. Bun preserves unterminated sequences literal.
+    // strip-ansi's regex treats trailing digits as CSI terminators via
+    // backtracking, which we deliberately diverge from.
     ["text\x1b", "text"],
-    ["text\x1b[", "text"],
-    "text\x1b[3",
+    ["text\x1b[", "text\x1b["],
+    ["text\x1b[3", "text\x1b[3"],
 
     // Real world examples
     "\x1b[2K\x1b[1G\x1b[36m?\x1b[39m Installing...",
@@ -134,11 +136,13 @@ describe("Bun.stripANSI", () => {
     // Malformed sequences
     "\x1b[31text",
     "\x1b[moretext",
-    ["\x1b]incomplete", ""],
-    ["\x1b]", ""],
-    "\x1b]i",
-    ["\x1b]in", ""],
-    ["\x1b]inc", ""],
+    // Unterminated OSC: Bun preserves literal; strip-ansi's regex
+    // backtracks and treats letters as CSI fallback terminators.
+    ["\x1b]incomplete", "\x1b]incomplete"],
+    ["\x1b]", "\x1b]"],
+    ["\x1b]i", "\x1b]i"],
+    ["\x1b]in", "\x1b]in"],
+    ["\x1b]inc", "\x1b]inc"],
 
     // Preserves whitespace
     "\x1b[31m  text  \x1b[39m",
@@ -195,7 +199,7 @@ describe("Bun.stripANSI", () => {
 
     // Prefix characters in sequences
     "\x1b[?1049htext",
-    ["\x1b]#text", ""], // missing ST
+    ["\x1b]#text", "\x1b]#text"], // unterminated OSC — Bun keeps literal
     "\x1b[(text",
     "\x1b[)text",
     "\x1b[;text",
@@ -256,9 +260,27 @@ describe("Bun.stripANSI", () => {
     ["\x1b]2;Both\x9ctext", "text"], // ST terminator
     ["\x1b]8;;http://example.com\x07", ""], // Hyperlink OSC
 
-    // Invalid OSC sequences (missing terminator)
-    ["\x1b]0;title", ""], // No terminator, consumes rest
-    ["\x1b]2;test\x1bother", ""], // Incomplete ESC terminator
+    // Invalid OSC sequences (missing terminator). Bun preserves literal;
+    // strip-ansi's regex backtracks into a CSI fallback that consumes
+    // through the first ASCII letter — we deliberately diverge.
+    ["\x1b]0;title", "\x1b]0;title"],
+
+    // CJK (and other non-ASCII) following partial/invalid escape introducers
+    // must not be eaten. The original regression report flagged each of these.
+    ["\x1bあいう", "\x1bあいう"], // bare ESC + non-ASCII: keep verbatim
+    ["\x1b[あいう", "\x1b[あいう"], // ESC[ then non-ASCII with no terminator: keep verbatim
+    ["\x1b]8;;url本文末尾", "\x1b]8;;url本文末尾"], // unterminated OSC8 with JP payload: keep verbatim
+    ["\x1b]0;ウィンドウ", "\x1b]0;ウィンドウ"], // unterminated OSC with JP title: keep verbatim
+    ["\x1bあ\x1b[31mred\x1b[39m", "\x1bあred"], // partial-escape splice followed by valid CSI
+    ["\x1b[あm", "\x1b[あm"], // ESC[ + non-ASCII + downstream final byte: bail, keep verbatim
+    ["\x1b[31m\x1b[あm", "\x1b[あm"], // valid CSI chained into invalid CSI: strip the valid prefix only
+    ["\x1b[31m\x1b]0;noend", "\x1b]0;noend"], // valid CSI chained into unterminated OSC: same
+    ["\x1bPunterminated", "\x1bPunterminated"], // unterminated DCS (needSt EOF branch)
+    ["\x1b_unterminated", "\x1b_unterminated"], // unterminated APC (needSt EOF branch)
+    // Unterminated OSC whose payload contains an ESC. Preserved literal, but
+    // when the outer loop resumes after the leading ESC it re-tokenizes the
+    // inner `\x1bo` as a one-byte ESC sequence (SS3) — pre-existing behavior.
+    ["\x1b]2;test\x1bother", "\x1b]2;testther"],
 
     // Complex prefix combinations
     ["\x1b[[[31mtext", "[31mtext"], // [ terminates CSI
@@ -348,12 +370,12 @@ describe("Bun.stripANSI", () => {
     ["\x1b#5text", "text"], // Single-width line
     ["\x1b#6text", "text"], // Double-width line
 
-    // Malformed sequences that should partially match
-    "\x1b[31", // Incomplete CSI (no final byte)
-    ["\x1b[31;", ""], // Incomplete parameters
-    "\x1b[31;4", // Incomplete parameters
-    ["\x1b]0;title", ""], // Incomplete OSC
-    ["\x1b]0;title\x1b", ""], // Incomplete OSC terminator
+    // Malformed sequences. Bun preserves unterminated sequences literal
+    // (rather than strip-ansi's regex backtracking into a CSI fallback).
+    ["\x1b[31", "\x1b[31"], // Incomplete CSI (no final byte)
+    ["\x1b[31;", "\x1b[31;"], // Incomplete parameters
+    ["\x1b[31;4", "\x1b[31;4"], // Incomplete parameters
+    ["\x1b]0;title\x1b", "\x1b]0;title"], // Incomplete OSC terminator (trailing ESC stripped)
 
     // Sequences with invalid parameters
     ["\x1b[99999mtext", "text"], // Parameter too long (>4 digits), but strip anyway

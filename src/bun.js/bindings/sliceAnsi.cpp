@@ -476,8 +476,12 @@ static const Char* parseCsi(const Char* start, const Char* end, bool& isSgr, boo
         return it; // Return pointer to the malformed byte (treated as control up to here)
     }
 
-    // Unterminated CSI - consume everything
-    return end;
+    // Unterminated CSI — DO NOT consume to EOF. Match parseControlString and
+    // ANSIHelpers.h consumeANSI: return nullptr so the caller treats the
+    // introducer as a single width-0 char and the rest as literal text.
+    // Otherwise Bun.sliceAnsi("\x1b[31", 0, 5) silently drops "[31" while
+    // Bun.stripANSI("\x1b[31") preserves it.
+    return nullptr;
 }
 
 // Parse hyperlink: ESC]8;...;url TERMINATOR

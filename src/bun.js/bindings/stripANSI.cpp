@@ -104,8 +104,15 @@ extern "C" bool Bun__ANSI__next(BunANSIIterator* it)
         if (escPos != start) break;
         const auto after = ANSI::consumeANSI(start, end);
         if (after == start) {
-            start++;
-            break;
+            // consumeANSI didn't advance — the ESC begins an unterminated or
+            // invalid sequence that consumeANSI left literal (it returns
+            // seqStart in that case). Yield this byte as a 1-char text slice
+            // so callers see it; `start++; break;` here would silently drop
+            // the ESC and corrupt e.g. OSC 52 clipboard payloads in the REPL.
+            it->slice_ptr = start;
+            it->slice_len = 1;
+            it->cursor = static_cast<size_t>(start - it->input) + 1;
+            return true;
         }
         start = after;
     }

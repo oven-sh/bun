@@ -265,21 +265,21 @@ pub const PmFetchCommand = struct {
 
     fn reportInvalidURL(pm: *PackageManager, dep: Dependency, pkg_name: []const u8) void {
         if (dep.behavior.isRequired()) {
-            pm.log.addErrorFmt(
+            bun.handleOom(pm.log.addErrorFmt(
                 null,
                 bun.logger.Loc.Empty,
                 pm.allocator,
                 "invalid tarball url for <b>{s}<r>",
                 .{pkg_name},
-            ) catch bun.outOfMemory();
+            ));
         } else {
-            pm.log.addWarningFmt(
+            bun.handleOom(pm.log.addWarningFmt(
                 null,
                 bun.logger.Loc.Empty,
                 pm.allocator,
                 "invalid tarball url for <b>{s}<r>",
                 .{pkg_name},
-            ) catch bun.outOfMemory();
+            ));
         }
     }
 };

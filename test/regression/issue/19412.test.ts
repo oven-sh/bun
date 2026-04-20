@@ -15,6 +15,11 @@ test("node:test honours { todo: true }", { todo: true }, () => {
   assert.fail("todo tests may run but failures are not fatal");
 });
 
+let nullOptionsRan = false;
 test("node:test treats null options as no options", null, () => {
-  assert.ok(true);
+  nullOptionsRan = true;
+});
+
+test("node:test ran the previous test's body (fn not dropped)", () => {
+  assert.strictEqual(nullOptionsRan, true);
 });

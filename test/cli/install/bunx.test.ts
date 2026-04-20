@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { copyFileSync, readdirSync } from "node:fs";
+import { chmodSync, copyFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -882,8 +882,6 @@ describe("scoped packages should not match unrelated system binaries", () => {
   // full scoped name) to discover the real bin name, instead of guessing
   // the unscoped basename and tripping over a system binary.
   it("locally installed `@scope/name` resolves the real bin from its package.json", async () => {
-    const { chmodSync } = await import("node:fs");
-
     await mkdir(join(x_dir, "node_modules", "@myscope", "collide"), { recursive: true });
     await mkdir(join(x_dir, "node_modules", ".bin"), { recursive: true });
     await writeFile(
@@ -947,8 +945,6 @@ describe("scoped packages should not match unrelated system binaries", () => {
   // which excludes the system $PATH for scoped packages but still searches
   // node_modules/.bin — should find the locally-linked bin.
   it("locally installed `@scope/foo` whose bin is also named `foo` is still found", async () => {
-    const { chmodSync } = await import("node:fs");
-
     await mkdir(join(x_dir, "node_modules", "@myscope", "samebin"), { recursive: true });
     await mkdir(join(x_dir, "node_modules", ".bin"), { recursive: true });
     await writeFile(

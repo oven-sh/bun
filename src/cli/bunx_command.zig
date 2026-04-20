@@ -578,7 +578,6 @@ pub const BunxCommand = struct {
                 // system binaries. Only search node_modules/.bin directories.
                 const search_path = if (initial_bin_name_is_a_guess and
                     ORIGINAL_PATH.len > 0 and
-                    ORIGINAL_PATH.len < PATH_FOR_BIN_DIRS.len and
                     strings.endsWith(PATH_FOR_BIN_DIRS, ORIGINAL_PATH))
                     PATH_FOR_BIN_DIRS[0 .. PATH_FOR_BIN_DIRS.len - ORIGINAL_PATH.len]
                 else

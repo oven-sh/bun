@@ -48,9 +48,7 @@ export const ZIG_COMMIT_PARALLEL = "65b29282c04e42bea2539e9e31c5a59ac9cbabdb";
  * no output, so CI gets it too — only the codegen-unit count differs by
  * config (see codegenThreads()).
  */
-export function defaultZigCommit(ci: boolean, hostOs: OS, asan: boolean): string {
-  void ci;
-  void asan;
+export function defaultZigCommit(hostOs: OS): string {
   if (hostOs === "windows") return ZIG_COMMIT;
   return ZIG_COMMIT_PARALLEL;
 }
@@ -68,17 +66,17 @@ function usingParallelCompiler(cfg: Config): boolean {
  * Number of LLVM codegen units. >1 splits the build into N independent
  * LLVM modules — parallelises emit, but cross-unit calls become
  * `linkonce_odr` externs so LLVM can't inline or IPO across them.
- * Shipped release builds stay at 1 so they're optimised as one module.
- * Local dev (mostly Debug, where -O0 doesn't inline anyway) and CI
- * ASAN (not shipped) take the build-speed win.
+ *
+ * Sharding is local-dev only:
+ *   - shipped release builds need cg=1 so they're optimised as one module;
+ *   - CI splits zig-only/link-only across machines, so the link step would
+ *     need to know the zig-only runner's core count to find the shards.
+ *     Single artifact keeps the upload/download contract simple.
+ *   - COFF shard emission is unimplemented (Windows targets).
  */
 function codegenThreads(cfg: Config): number {
   if (!usingParallelCompiler(cfg)) return 0;
-  // COFF shard emission is unimplemented in oven-sh/zig; a Linux→Windows
-  // cross-compile (local zig-only) would otherwise declare N ninja outputs
-  // zig can't produce.
-  if (cfg.windows) return 1;
-  if (cfg.ci && !cfg.asan) return 1;
+  if (cfg.ci || cfg.windows) return 1;
   return availableParallelism();
 }
 

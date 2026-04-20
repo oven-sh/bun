@@ -1,6 +1,6 @@
 pub const AddCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstallCatchError(ctx, .add);
+        (try updatePackageJSONAndInstallCatchError(ctx, .add)).handleCli();
     }
 };
 

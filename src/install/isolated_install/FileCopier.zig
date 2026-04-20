@@ -4,6 +4,7 @@ pub const FileCopier = struct {
     walker: Walker,
 
     pub fn init(
+        allocator: std.mem.Allocator,
         src_dir: FD,
         src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
         dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }),
@@ -15,7 +16,7 @@ pub const FileCopier = struct {
             .walker = walker: {
                 var w = try Walker.walk(
                     src_dir,
-                    bun.default_allocator,
+                    allocator,
                     &.{},
                     skip_dirnames,
                 );
@@ -132,7 +133,17 @@ pub const FileCopier = struct {
 
                     break :dest dest_dir.createFileZ(entry.path, .{}) catch |err| {
                         Output.prettyErrorln("<r><red>{s}<r>: copy file {f}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                        Global.exit(1);
+                        const errno: bun.sys.E = switch (@as(anyerror, err)) {
+                            error.AccessDenied => .PERM,
+                            error.FileNotFound => .NOENT,
+                            error.NameTooLong => .NAMETOOLONG,
+                            error.NotDir => .NOTDIR,
+                            error.IsDir => .ISDIR,
+                            error.ReadOnlyFileSystem => .ROFS,
+                            error.NoSpaceLeft => .NOSPC,
+                            else => .FAULT,
+                        };
+                        return .{ .err = bun.sys.Error.fromCode(errno, .open) };
                     };
                 };
                 defer dest.close();
@@ -156,11 +167,11 @@ pub const FileCopier = struct {
 };
 
 const Walker = @import("../../walker_skippable.zig");
+const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
-const Global = bun.Global;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const sys = bun.sys;

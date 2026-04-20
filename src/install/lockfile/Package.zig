@@ -863,7 +863,7 @@ pub fn Package(comptime SemverIntType: type) type {
 
                                 var workspace_pkg: PackageType = .{};
 
-                                const json = pm.workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch {
+                                const json = pm.workspace_package_json_cache.getWithSource(pm.allocator, log, source, .{}).unwrap() catch {
                                     break :update_mapping false;
                                 };
 
@@ -963,8 +963,8 @@ pub fn Package(comptime SemverIntType: type) type {
             initializeStore();
             const json = JSON.parsePackageJSONUTF8(source, log, allocator) catch |err| {
                 log.print(Output.errorWriter()) catch {};
-                Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
-                Global.crash();
+                pm.addError(.{ .package_json_parse_in_dir = .{ .err = err, .dir = bun.handleOom(pm.allocator.dupe(u8, source.path.prettyDir())) } });
+                return error.InstallFailed;
             };
 
             try package.parseWithJSON(
@@ -1000,7 +1000,7 @@ pub fn Package(comptime SemverIntType: type) type {
         ) !?Dependency {
             const external_version = brk: {
                 if (comptime Environment.isWindows) {
-                    switch (tag orelse Dependency.Version.Tag.infer(version)) {
+                    switch (tag orelse Dependency.Version.Tag.infer(allocator, version)) {
                         .workspace, .folder, .symlink, .tarball => {
                             if (String.canInline(version)) {
                                 var copy = string_builder.append(String, version);
@@ -1511,7 +1511,7 @@ pub fn Package(comptime SemverIntType: type) type {
                                 string_builder.count(value);
 
                                 // If it's a folder or workspace, pessimistically assume we will need a maximum path
-                                switch (Dependency.Version.Tag.infer(value)) {
+                                switch (Dependency.Version.Tag.infer(allocator, value)) {
                                     .folder, .workspace => string_builder.cap += bun.MAX_PATH_BYTES,
                                     else => {},
                                 }
@@ -2205,7 +2205,6 @@ const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 const Environment = bun.Environment;
-const Global = bun.Global;
 const JSON = bun.json;
 const Output = bun.Output;
 const PackageJSON = bun.PackageJSON;

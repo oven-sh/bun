@@ -362,6 +362,10 @@ pub const BuildCommand = struct {
                 exitOrWatch(1, ctx.debug.hot_reload == .watch);
             };
 
+            // `bun install --analyze`: install ran inside onFetch; don't print
+            // bundler summary/output.
+            if (fetcher != null) return;
+
             // Write metafile if requested
             if (build_result.metafile) |metafile_json| {
                 if (ctx.bundler_options.metafile.len > 0) {

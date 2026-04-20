@@ -1767,13 +1767,9 @@ pub const Command = struct {
 
     fn @"bun info"(allocator: std.mem.Allocator, log: *logger.Log) !void {
         // Parse arguments manually since the standard flow doesn't work for standalone commands
-        const cli = try PackageManager.CommandLineArguments.parse(allocator, .info);
+        const cli = (try PackageManager.CommandLineArguments.parse(allocator, .info)).unwrapCli();
         const ctx = try Command.init(allocator, log, .InfoCommand);
-        const pm, _ = try PackageManager.init(
-            ctx,
-            cli,
-            PackageManager.Subcommand.info,
-        );
+        const pm, _ = (try PackageManager.init(ctx, cli, PackageManager.Subcommand.info)).unwrapCli();
 
         // Handle arguments correctly for standalone info command
         var package_name: []const u8 = "";

@@ -1290,7 +1290,8 @@ fn enqueueGitClone(
                 .ids => |ps| ps.items[0], // TODO is this correct
             };
             const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
-            const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
+            // failure already recorded on the manager; surfaces via top-level loop
+            const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h) catch break :brk null;
             pt.callback.apply.task_id = task_id;
             break :brk pt;
         } else null,
@@ -1345,7 +1346,8 @@ pub fn enqueueGitCheckout(
                 .ids => |ps| ps.items[0], // TODO is this correct
             };
             const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
-            const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
+            // failure already recorded on the manager; surfaces via top-level loop
+            const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h) catch break :brk null;
             pt.callback.apply.task_id = task_id;
             break :brk pt;
         } else null,
@@ -1379,8 +1381,10 @@ fn enqueueLocalTarball(
                         FileSystem.FilenameStore.instance,
                     ) catch unreachable,
                     .resolution = resolution,
-                    .cache_dir = this.getCacheDirectory(),
-                    .temp_dir = this.getTemporaryDirectory().handle,
+                    // cache/temp directories are eagerly initialized by installWithManager
+                    // before any task enqueue runs; once cached these never fail.
+                    .cache_dir = this.getCacheDirectory() catch unreachable,
+                    .temp_dir = (this.getTemporaryDirectory() catch unreachable).handle,
                     .dependency_id = dependency_id,
                     .integrity = integrity,
                     .url = strings.StringOrTinyString.initAppendIfNeeded(
@@ -1546,7 +1550,7 @@ fn getOrPutResolvedPackageWithFindResult(
             .package = package,
             .is_first_time = true,
             .task = .{
-                .patch_task = PatchTask.newApplyPatchHash(
+                .patch_task = try PatchTask.newApplyPatchHash(
                     this,
                     package.meta.id,
                     patchfile_hash.?,
@@ -1895,7 +1899,7 @@ fn getOrPutResolvedPackage(
             }
         },
         .symlink => {
-            const res = FolderResolution.getOrPut(.{ .global = this.globalLinkDirPath() }, version, this.lockfile.str(&version.value.symlink), this);
+            const res = FolderResolution.getOrPut(.{ .global = try this.globalLinkDirPath() }, version, this.lockfile.str(&version.value.symlink), this);
 
             switch (res) {
                 .err => |err| return err,

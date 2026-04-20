@@ -44,7 +44,7 @@ pub fn scopeForPackageName(this: *const PackageManager, name: string) *const Npm
 
 pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.array_list.Managed(u8), package_name: []const u8, allocator: std.mem.Allocator) !std.array_list.Managed(Semver.Version) {
     var list = std.array_list.Managed(Semver.Version).init(allocator);
-    var dir = this.getCacheDirectory().openDir(package_name, .{
+    var dir = (try this.getCacheDirectory()).openDir(package_name, .{
         .iterate = true,
     }) catch |err| switch (err) {
         error.FileNotFound, error.NotDir, error.AccessDenied, error.DeviceBusy => return list,
@@ -214,7 +214,7 @@ pub fn verifyResolutions(this: *PackageManager, log_level: PackageManager.Option
         }
     }
 
-    if (any_failed) this.crash();
+    if (any_failed) this.addError(.{ .already_printed = .{ .exit_code = 1 } });
 }
 
 const string = []const u8;

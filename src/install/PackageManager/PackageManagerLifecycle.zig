@@ -160,7 +160,7 @@ pub fn determinePreinstallState(
 
 pub fn hasNoMorePendingLifecycleScripts(this: *PackageManager) bool {
     this.reportSlowLifecycleScripts();
-    return this.pending_lifecycle_script_tasks.load(.monotonic) == 0;
+    return this.hasErrors() or this.pending_lifecycle_script_tasks.load(.monotonic) == 0;
 }
 
 pub fn tickLifecycleScripts(this: *PackageManager) void {
@@ -275,12 +275,12 @@ pub fn spawnPackageLifecycleScripts(
     const cwd = list.cwd;
     var this_transpiler = try this.configureEnvForScripts(ctx, log_level);
 
-    var script_env = try this_transpiler.env.map.cloneWithAllocator(bun.default_allocator);
+    var script_env = try this_transpiler.env.map.cloneWithAllocator(this.allocator);
     defer script_env.map.deinit();
 
     const original_path = script_env.get("PATH") orelse "";
 
-    var PATH: bun.EnvPath(.{}) = try .initCapacity(bun.default_allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
+    var PATH: bun.EnvPath(.{}) = try .initCapacity(this.allocator, original_path.len + 1 + "node_modules/.bin".len + cwd.len + 1);
     defer PATH.deinit();
 
     var parent: ?string = cwd;
@@ -373,7 +373,6 @@ const Environment = bun.Environment;
 const Output = bun.Output;
 const Path = bun.path;
 const Syscall = bun.sys;
-const default_allocator = bun.default_allocator;
 const Command = bun.cli.Command;
 
 const Semver = bun.Semver;

@@ -120,9 +120,9 @@ pub const UpdateInteractiveCommand = struct {
         Output.prettyln("<r><b>bun update --interactive <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
-        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .update);
+        const cli = (try PackageManager.CommandLineArguments.parse(ctx.allocator, .update)).unwrapCli();
 
-        const manager, const original_cwd = PackageManager.init(ctx, cli, .update) catch |err| {
+        const init_result = PackageManager.init(ctx, cli, .update) catch |err| {
             if (!cli.silent) {
                 if (err == error.MissingPackageJSON) {
                     Output.errGeneric("missing package.json, nothing outdated", .{});
@@ -132,9 +132,10 @@ pub const UpdateInteractiveCommand = struct {
 
             Global.crash();
         };
+        const manager, const original_cwd = init_result.unwrapCli();
         defer ctx.allocator.free(original_cwd);
 
-        try updateInteractive(ctx, original_cwd, manager);
+        (try updateInteractive(ctx, original_cwd, manager)).handleCli();
     }
 
     const PackageUpdate = struct {
@@ -312,7 +313,7 @@ pub const UpdateInteractiveCommand = struct {
         }
     }
 
-    fn updateInteractive(ctx: Command.Context, original_cwd: string, manager: *PackageManager) !void {
+    fn updateInteractive(ctx: Command.Context, original_cwd: string, manager: *PackageManager) !InstallResult {
         // make the package manager things think we are actually in root dir
         // _ = bun.sys.chdir(manager.root_dir.dir, manager.root_dir.dir);
 
@@ -325,10 +326,9 @@ pub const UpdateInteractiveCommand = struct {
 
         manager.lockfile = switch (load_lockfile_result) {
             .not_found => {
-                if (manager.options.log_level != .silent) {
-                    Output.errGeneric("missing lockfile, nothing outdated", .{});
-                }
-                Global.crash();
+                return InstallResult.fromError(.{ .outdated_lockfile_not_found = .{
+                    .silent = manager.options.log_level == .silent,
+                } });
             },
             .err => |cause| {
                 if (manager.options.log_level != .silent) {
@@ -352,7 +352,7 @@ pub const UpdateInteractiveCommand = struct {
                     }
                 }
 
-                Global.crash();
+                return InstallResult.fromError(.{ .already_printed = .{ .exit_code = 1 } });
             },
             .ok => |ok| ok.lockfile,
         };
@@ -369,7 +369,7 @@ pub const UpdateInteractiveCommand = struct {
             break :blk bun.handleOom(getAllWorkspaces(bun.default_allocator, manager));
         } else blk: {
             const root_pkg_id = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash);
-            if (root_pkg_id == invalid_package_id) return;
+            if (root_pkg_id == invalid_package_id) return .ok;
 
             const ids = bun.handleOom(bun.default_allocator.alloc(PackageID, 1));
             ids[0] = root_pkg_id;
@@ -395,7 +395,7 @@ pub const UpdateInteractiveCommand = struct {
         if (outdated_packages.len == 0) {
             // No packages need updating - just exit silently
             Output.prettyln("<r><green>✓<r> All packages are up to date!", .{});
-            return;
+            return .ok;
         }
 
         // Prompt user to select packages
@@ -487,7 +487,7 @@ pub const UpdateInteractiveCommand = struct {
 
         if (!has_package_updates and !has_catalog_updates) {
             Output.prettyln("<r><yellow>!</r> No packages selected for update", .{});
-            return;
+            return .ok;
         }
 
         // Actually update the selected packages
@@ -531,9 +531,11 @@ pub const UpdateInteractiveCommand = struct {
                 var install_ctx = ctx;
                 install_ctx.start_time = std.time.nanoTimestamp();
 
-                try PackageManager.installWithManager(manager, install_ctx, PackageManager.root_package_json_path, manager.root_dir.dir);
+                return try PackageManager.installWithManager(manager, install_ctx, PackageManager.root_package_json_path, manager.root_dir.dir);
             }
         }
+
+        return .ok;
     }
 
     fn getAllWorkspaces(
@@ -2053,6 +2055,7 @@ const Expr = JSAst.Expr;
 
 const Install = bun.install;
 const DependencyID = Install.DependencyID;
+const InstallResult = Install.InstallResult;
 const PackageID = Install.PackageID;
 const invalid_package_id = Install.invalid_package_id;
 const Behavior = Install.Dependency.Behavior;

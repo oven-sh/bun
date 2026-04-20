@@ -1,6 +1,6 @@
 pub const RemoveCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstallCatchError(ctx, .remove);
+        (try updatePackageJSONAndInstallCatchError(ctx, .remove)).handleCli();
     }
 };
 

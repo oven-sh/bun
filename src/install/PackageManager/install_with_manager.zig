@@ -3,7 +3,7 @@ pub fn installWithManager(
     ctx: Command.Context,
     root_package_json_path: [:0]const u8,
     original_cwd: []const u8,
-) !void {
+) !InstallResult {
     const log_level = manager.options.log_level;
 
     // Start resolving DNS for the default registry immediately.
@@ -83,7 +83,10 @@ pub fn installWithManager(
                 Output.flush();
             }
 
-            if (manager.options.enable.fail_early) Global.crash();
+            if (manager.options.enable.fail_early) {
+                manager.addError(.{ .already_printed = .{ .exit_code = 1 } });
+                return manager.takeResult();
+            }
         },
         .ok => {
             if (manager.subcommand == .update) {
@@ -151,15 +154,21 @@ pub fn installWithManager(
                         if (ctx.log.errors > 0) {
                             try manager.log.print(Output.errorWriter());
                         }
-                        Output.err(err, "failed to read '{s}'", .{root_package_json_path});
-                        Global.exit(1);
+                        manager.addError(.{ .root_package_json_read = .{
+                            .path = bun.handleOom(manager.allocator.dupe(u8, root_package_json_path)),
+                            .err = err,
+                        } });
+                        return manager.takeResult();
                     },
                     .parse_err => |err| {
                         if (ctx.log.errors > 0) {
                             try manager.log.print(Output.errorWriter());
                         }
-                        Output.err(err, "failed to parse '{s}'", .{root_package_json_path});
-                        Global.exit(1);
+                        manager.addError(.{ .root_package_json_parse = .{
+                            .path = bun.handleOom(manager.allocator.dupe(u8, root_package_json_path)),
+                            .err = err,
+                        } });
+                        return manager.takeResult();
                     },
                 };
 
@@ -239,7 +248,7 @@ pub fn installWithManager(
                         if (!manager.summary.overrides_changed) break :brk &.{};
                         const hashes_len = manager.lockfile.overrides.map.entries.len + lockfile.overrides.map.entries.len;
                         if (hashes_len == 0) break :brk &.{};
-                        var all_name_hashes = try bun.default_allocator.alloc(PackageNameHash, hashes_len);
+                        var all_name_hashes = try manager.allocator.alloc(PackageNameHash, hashes_len);
                         @memcpy(all_name_hashes[0..manager.lockfile.overrides.map.entries.len], manager.lockfile.overrides.map.keys());
                         @memcpy(all_name_hashes[manager.lockfile.overrides.map.entries.len..], lockfile.overrides.map.keys());
                         var i = manager.lockfile.overrides.map.entries.len;
@@ -398,8 +407,8 @@ pub fn installWithManager(
                         const changes = @as(PackageID, @truncate(mapping.len));
                         var counter_i: PackageID = 0;
 
-                        _ = manager.getCacheDirectory();
-                        _ = manager.getTemporaryDirectory();
+                        _ = try manager.getCacheDirectory();
+                        _ = try manager.getTemporaryDirectory();
 
                         while (counter_i < changes) : (counter_i += 1) {
                             if (mapping[counter_i] == invalid_package_id) {
@@ -429,10 +438,8 @@ pub fn installWithManager(
         manager.lockfile.initEmpty(manager.allocator);
 
         if (manager.options.enable.frozen_lockfile and load_result != .not_found) {
-            if (log_level != .silent) {
-                Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});
-            }
-            Global.crash();
+            manager.addError(.{ .frozen_lockfile_changed = .{ .with_note = false, .silent = log_level == .silent } });
+            return manager.takeResult();
         }
 
         const root_package_json_entry = switch (manager.workspace_package_json_cache.getWithPath(
@@ -446,15 +453,21 @@ pub fn installWithManager(
                 if (ctx.log.errors > 0) {
                     try manager.log.print(Output.errorWriter());
                 }
-                Output.err(err, "failed to read '{s}'", .{root_package_json_path});
-                Global.exit(1);
+                manager.addError(.{ .root_package_json_read = .{
+                    .path = bun.handleOom(manager.allocator.dupe(u8, root_package_json_path)),
+                    .err = err,
+                } });
+                return manager.takeResult();
             },
             .parse_err => |err| {
                 if (ctx.log.errors > 0) {
                     try manager.log.print(Output.errorWriter());
                 }
-                Output.err(err, "failed to parse '{s}'", .{root_package_json_path});
-                Global.exit(1);
+                manager.addError(.{ .root_package_json_parse = .{
+                    .path = bun.handleOom(manager.allocator.dupe(u8, root_package_json_path)),
+                    .err = err,
+                } });
+                return manager.takeResult();
             },
         };
 
@@ -475,8 +488,8 @@ pub fn installWithManager(
         root = try manager.lockfile.appendPackage(root);
 
         if (root.dependencies.len > 0) {
-            _ = manager.getCacheDirectory();
-            _ = manager.getTemporaryDirectory();
+            _ = try manager.getCacheDirectory();
+            _ = try manager.getTemporaryDirectory();
         }
         {
             var iter = manager.lockfile.patched_dependencies.iterator();
@@ -494,8 +507,8 @@ pub fn installWithManager(
 
     if (manager.pendingTaskCount() > 0 or manager.peer_dependencies.readableLength() > 0) {
         if (root.dependencies.len > 0) {
-            _ = manager.getCacheDirectory();
-            _ = manager.getTemporaryDirectory();
+            _ = try manager.getCacheDirectory();
+            _ = try manager.getTemporaryDirectory();
         }
 
         if (log_level.showProgress()) {
@@ -630,45 +643,21 @@ pub fn installWithManager(
         for (manager.update_requests) |request| {
             // prevent redundant errors
             if (request.failed) {
-                return error.InstallFailed;
+                manager.addError(.{ .already_printed = .{ .exit_code = 1 } });
+                return manager.takeResult();
             }
         }
 
         manager.verifyResolutions(log_level);
+        if (manager.hasErrors()) return manager.takeResult();
 
         if (manager.options.security_scanner != null) {
             const is_subcommand_to_run_scanner = manager.subcommand == .add or manager.subcommand == .update or manager.subcommand == .install or manager.subcommand == .remove;
 
             if (is_subcommand_to_run_scanner) {
                 if (security_scanner.performSecurityScanAfterResolution(manager, ctx, original_cwd) catch |err| {
-                    switch (err) {
-                        error.SecurityScannerInWorkspace => {
-                            Output.errGeneric("security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.", .{});
-                        },
-                        error.SecurityScannerRetryFailed => {
-                            Output.errGeneric("security scanner failed after partial install. This is probably a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues", .{});
-                        },
-                        error.InvalidPackageID => {
-                            Output.errGeneric("cannot perform partial install: security scanner package ID is invalid", .{});
-                        },
-                        error.PartialInstallFailed => {
-                            Output.errGeneric("failed to install security scanner package", .{});
-                        },
-                        error.NoPackagesInstalled => {
-                            Output.errGeneric("no packages were installed during security scanner installation", .{});
-                        },
-                        error.IPCPipeFailed => {
-                            Output.errGeneric("failed to create IPC pipe for security scanner", .{});
-                        },
-                        error.ProcessWatchFailed => {
-                            Output.errGeneric("failed to watch security scanner process", .{});
-                        },
-                        else => |e| {
-                            Output.errGeneric("security scanner failed: {s}", .{@errorName(e)});
-                        },
-                    }
-
-                    Global.exit(1);
+                    manager.addError(.{ .security_scanner_failed = .{ .err = err } });
+                    return manager.takeResult();
                 }) |results| {
                     defer {
                         var results_mut = results;
@@ -678,11 +667,12 @@ pub fn installWithManager(
                     security_scanner.printSecurityAdvisories(manager, &results);
 
                     if (results.hasFatalAdvisories()) {
-                        Output.pretty("<red>Installation aborted due to fatal security advisories<r>\n", .{});
-                        Global.exit(1);
+                        manager.addError(.security_fatal_advisory);
+                        return manager.takeResult();
                     } else if (results.hasWarnings()) {
                         if (!security_scanner.promptForWarnings()) {
-                            Global.exit(1);
+                            manager.addError(.security_warning_declined);
+                            return manager.takeResult();
                         }
                     }
                 }
@@ -771,11 +761,8 @@ pub fn installWithManager(
             }
         }
 
-        if (log_level != .silent) {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen", .{});
-            Output.note("try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile", .{});
-        }
-        Global.crash();
+        manager.addError(.{ .frozen_lockfile_changed = .{ .with_note = true, .silent = log_level == .silent } });
+        return manager.takeResult();
     }
 
     const lockfile_before_install = manager.lockfile;
@@ -807,7 +794,7 @@ pub fn installWithManager(
             Output.pretty("\n", .{});
         }
         Output.flush();
-        return;
+        return .ok;
     }
 
     const workspace_filters, const install_root_dependencies = (try getWorkspaceFilters(manager, original_cwd));
@@ -852,10 +839,17 @@ pub fn installWithManager(
         }
     };
 
+    // Hoisted/isolated install can record an error via `manager.errors` (e.g. fatal copy
+    // error, EACCES on node_modules) and return an empty summary instead of throwing.
+    if (manager.hasErrors()) return manager.takeResult();
+
     if (log_level != .silent) {
         try manager.log.print(Output.errorWriter());
     }
-    if (had_errors_before_cleaning_lockfile or manager.log.hasErrors()) Global.crash();
+    if (had_errors_before_cleaning_lockfile or manager.log.hasErrors()) {
+        manager.addError(.{ .already_printed = .{ .exit_code = 1 } });
+        return manager.takeResult();
+    }
 
     const did_meta_hash_change =
         // If the lockfile was frozen, we already checked it
@@ -931,10 +925,11 @@ pub fn installWithManager(
 
             // .monotonic is okay because at this point, this value is only accessed from this
             // thread.
-            while (manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
+            while (manager.pending_lifecycle_script_tasks.load(.monotonic) > 0 and !manager.hasErrors()) {
                 manager.reportSlowLifecycleScripts();
                 manager.sleep();
             }
+            if (manager.hasErrors()) return manager.takeResult();
         }
     }
 
@@ -947,6 +942,13 @@ pub fn installWithManager(
     }
 
     Output.flush();
+
+    if (manager.hasErrors()) return manager.takeResult();
+    if (manager.any_failed_to_install) {
+        manager.addError(.{ .already_printed = .{ .exit_code = 1 } });
+        return manager.takeResult();
+    }
+    return .ok;
 }
 
 fn printInstallSummary(
@@ -1162,11 +1164,9 @@ const installIsolatedPackages = @import("../isolated_install.zig").installIsolat
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;
-const default_allocator = bun.default_allocator;
 const strings = bun.strings;
 const Command = bun.cli.Command;
 
@@ -1179,6 +1179,7 @@ const FileSystem = Fs.FileSystem;
 const Dependency = bun.install.Dependency;
 const DependencyID = bun.install.DependencyID;
 const Features = bun.install.Features;
+const InstallResult = bun.install.InstallResult;
 const PackageID = bun.install.PackageID;
 const PackageInstall = bun.install.PackageInstall;
 const PackageNameHash = bun.install.PackageNameHash;

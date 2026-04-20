@@ -12,6 +12,25 @@
 ///
 const CommandLineArguments = @This();
 
+/// Result of CLI argument parsing. `.err` means `parse()` already wrote help text
+/// or an "error: ..." diagnostic to stderr/stdout; the caller should exit with
+/// `exit_code` (0 for --help, 1 for everything else) without printing anything
+/// further. Reuses `InstallResult.Failure` so callers inside `src/install/` can
+/// lift it directly into an `InstallResult`.
+pub const ParseResult = union(enum) {
+    args: CommandLineArguments,
+    err: bun.install.InstallResult.Failure,
+
+    /// CLI-side unwrap: return parsed args, or print errors and exit.
+    /// ONLY for src/cli/*.zig — never call from src/install/.
+    pub fn unwrapCli(this: ParseResult) CommandLineArguments {
+        return switch (this) {
+            .args => |a| a,
+            .err => |f| bun.install.InstallResult.exitForCli(f),
+        };
+    }
+};
+
 const ParamType = clap.Param(clap.Help);
 const platform_specific_backend_label = if (Environment.isMac)
     "Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\""
@@ -749,7 +768,7 @@ pub fn printHelp(subcommand: Subcommand) void {
     }
 }
 
-pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !CommandLineArguments {
+pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !ParseResult {
     Output.is_verbose = Output.isVerbose();
 
     const params: []const ParamType = switch (subcommand) {
@@ -782,12 +801,12 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     }) catch |err| {
         printHelp(subcommand);
         diag.report(Output.errorWriter(), err) catch {};
-        Global.exit(1);
+        return .{ .err = InstallResult.alreadyPrinted(1) };
     };
 
     if (args.flag("--help")) {
         printHelp(subcommand);
-        Global.exit(0);
+        return .{ .err = InstallResult.alreadyPrinted(0) };
     }
 
     var cli = CommandLineArguments{};
@@ -813,7 +832,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (args.option("--linker")) |linker| {
         cli.node_linker = Options.NodeLinker.fromStr(linker) orelse {
             Output.errGeneric("Expected --linker to be one of 'isolated' or 'hoisted'", .{});
-            Global.exit(1);
+            return .{ .err = InstallResult.alreadyPrinted(1) };
         };
     }
 
@@ -828,7 +847,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (args.option("--network-concurrency")) |network_concurrency| {
         cli.network_concurrency = std.fmt.parseInt(u16, network_concurrency, 10) catch {
             Output.errGeneric("Expected --network-concurrency to be a number between 0 and 65535: {s}", .{network_concurrency});
-            Global.crash();
+            return .{ .err = InstallResult.alreadyPrinted(1) };
         };
     }
 
@@ -839,11 +858,11 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (args.option("--minimum-release-age")) |min_age_secs| {
         const secs = std.fmt.parseFloat(f64, min_age_secs) catch {
             Output.errGeneric("Expected --minimum-release-age to be a positive number: {s}", .{min_age_secs});
-            Global.crash();
+            return .{ .err = InstallResult.alreadyPrinted(1) };
         };
         if (secs < 0) {
             Output.errGeneric("Expected --minimum-release-age to be a positive number: {s}", .{min_age_secs});
-            Global.crash();
+            return .{ .err = InstallResult.alreadyPrinted(1) };
         }
         cli.minimum_release_age_ms = secs * std.time.ms_per_s;
     }
@@ -861,7 +880,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
                 omit.peer = true;
             } else {
                 Output.errGeneric("invalid `omit` value: '{s}'", .{omit_value});
-                Global.crash();
+                return .{ .err = InstallResult.alreadyPrinted(1) };
             }
         }
         cli.omit = omit;
@@ -906,7 +925,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         if (args.option("--access")) |access| {
             cli.publish_config.access = Options.Access.fromStr(access) orelse {
                 Output.errGeneric("invalid `access` value: '{s}'", .{access});
-                Global.crash();
+                return .{ .err = InstallResult.alreadyPrinted(1) };
             };
         }
 
@@ -917,7 +936,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         if (args.option("--auth-type")) |auth_type| {
             cli.publish_config.auth_type = Options.AuthType.fromStr(auth_type) orelse {
                 Output.errGeneric("invalid `auth-type` value: '{s}'", .{auth_type});
-                Global.crash();
+                return .{ .err = InstallResult.alreadyPrinted(1) };
             };
         }
 
@@ -958,7 +977,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         if (args.option("--audit-level")) |level| {
             cli.audit_level = AuditLevel.fromString(level) orelse {
                 Output.errGeneric("invalid `--audit-level` value: '{s}'. Valid values are: low, moderate, high, critical", .{level});
-                Global.crash();
+                return .{ .err = InstallResult.alreadyPrinted(1) };
             };
         }
 
@@ -987,7 +1006,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
             {
                 // Only error for truly unrecognized values (not "any" or "none")
                 Output.errGeneric("Invalid CPU architecture: '{s}'. Valid values are: *, any, arm, arm64, ia32, mips, mipsel, ppc, ppc64, s390, s390x, x32, x64. Use !name to negate.", .{cpu_str});
-                Global.crash();
+                return .{ .err = InstallResult.alreadyPrinted(1) };
             }
         }
         cli.cpu = cpu_negatable.combine();
@@ -1011,7 +1030,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
             {
                 // Only error for truly unrecognized values (not "any" or "none")
                 Output.errGeneric("Invalid operating system: '{s}'. Valid values are: *, any, aix, darwin, freebsd, linux, openbsd, sunos, win32, android. Use !name to negate.", .{os_str});
-                Global.crash();
+                return .{ .err = InstallResult.alreadyPrinted(1) };
             }
         }
         cli.os = os_negatable.combine();
@@ -1047,7 +1066,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         }
         bun.sys.chdir("", final_path).unwrap() catch |err| {
             Output.errGeneric("failed to change directory to \"{s}\": {s}\n", .{ final_path, @errorName(err) });
-            Global.crash();
+            return .{ .err = InstallResult.alreadyPrinted(1) };
         };
     }
 
@@ -1073,34 +1092,34 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (args.option("--registry")) |registry| {
         if (!strings.hasPrefixComptime(registry, "https://") and !strings.hasPrefixComptime(registry, "http://")) {
             Output.errGeneric("Registry URL must start with 'https://' or 'http://': {f}\n", .{bun.fmt.quote(registry)});
-            Global.crash();
+            return .{ .err = InstallResult.alreadyPrinted(1) };
         }
         cli.registry = registry;
     }
 
     if (subcommand == .patch and cli.positionals.len < 2) {
         Output.errGeneric("Missing pkg to patch\n", .{});
-        Global.crash();
+        return .{ .err = InstallResult.alreadyPrinted(1) };
     }
 
     if (subcommand == .@"patch-commit" and cli.positionals.len < 2) {
         Output.errGeneric("Missing pkg folder to patch\n", .{});
-        Global.crash();
+        return .{ .err = InstallResult.alreadyPrinted(1) };
     }
 
     if (cli.production and cli.trusted) {
         Output.errGeneric("The '--production' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n", .{});
-        Global.crash();
+        return .{ .err = InstallResult.alreadyPrinted(1) };
     }
 
     if (cli.frozen_lockfile and cli.trusted) {
         Output.errGeneric("The '--frozen-lockfile' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n", .{});
-        Global.crash();
+        return .{ .err = InstallResult.alreadyPrinted(1) };
     }
 
     if (cli.analyze and cli.positionals.len == 0) {
         Output.errGeneric("Missing script(s) to analyze. Pass paths to scripts to analyze their dependencies and add any missing ones to the lockfile.\n", .{});
-        Global.crash();
+        return .{ .err = InstallResult.alreadyPrinted(1) };
     }
 
     if (comptime subcommand == .pm) {
@@ -1131,12 +1150,12 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
         if (args.option("--depth")) |depth| {
             cli.depth = std.fmt.parseInt(usize, depth, 10) catch {
                 Output.errGeneric("invalid depth value: '{s}', must be a positive integer", .{depth});
-                Global.exit(1);
+                return .{ .err = InstallResult.alreadyPrinted(1) };
             };
         }
     }
 
-    return cli;
+    return .{ .args = cli };
 }
 
 const string = []const u8;
@@ -1148,12 +1167,13 @@ const PackageManagerCommand = @import("../../cli/package_manager_command.zig").P
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const JSON = bun.json;
 const Output = bun.Output;
 const Path = bun.path;
 const URL = bun.URL;
 const clap = bun.clap;
 const strings = bun.strings;
+
+const InstallResult = bun.install.InstallResult;
 const PackageInstall = bun.install.PackageInstall;
 const Subcommand = bun.install.PackageManager.Subcommand;

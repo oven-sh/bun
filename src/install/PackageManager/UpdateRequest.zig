@@ -106,8 +106,8 @@ pub fn parse(
     positionals: []const string,
     update_requests: *Array,
     subcommand: Subcommand,
-) []UpdateRequest {
-    return parseWithError(allocator, pm, log, positionals, update_requests, subcommand, true) catch Global.crash();
+) ![]UpdateRequest {
+    return parseWithError(allocator, pm, log, positionals, update_requests, subcommand, true);
 }
 
 fn parseWithError(
@@ -123,7 +123,7 @@ fn parseWithError(
     // add
     // remove
     outer: for (positionals) |positional| {
-        var input: []u8 = bun.handleOom(bun.default_allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t")));
+        var input: []u8 = bun.handleOom(allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t")));
         {
             var temp: [2048]u8 = undefined;
             const len = std.mem.replace(u8, input, "\\\\", "/", &temp);
@@ -244,10 +244,8 @@ const string = []const u8;
 const std = @import("std");
 
 const bun = @import("bun");
-const Global = bun.Global;
 const JSAst = bun.ast;
 const Output = bun.Output;
-const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
 const logger = bun.logger;
 const strings = bun.strings;

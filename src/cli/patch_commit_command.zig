@@ -1,6 +1,6 @@
 pub const PatchCommitCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstallCatchError(ctx, .@"patch-commit");
+        (try updatePackageJSONAndInstallCatchError(ctx, .@"patch-commit")).handleCli();
     }
 };
 

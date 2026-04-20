@@ -19,12 +19,7 @@ pub fn detectAndLoadOtherLockfile(
         const data = lockfile.readToEnd(allocator).unwrap() catch break :npm;
         const migrate_result = migrateNPMLockfile(this, manager, allocator, log, data, lockfile_path) catch |err| {
             if (err == error.NPMLockfileVersionMismatch) {
-                Output.prettyErrorln(
-                    \\<red><b>error<r><d>:<r> Please upgrade package-lock.json to lockfileVersion 2 or 3
-                    \\
-                    \\Run 'npm i --lockfile-version 3 --frozen-lockfile' to upgrade your lockfile without changing dependencies.
-                , .{});
-                Global.exit(1);
+                manager.addError(.npm_lockfile_version_mismatch);
             }
             return LoadResult{ .err = .{
                 .step = .migrating,
@@ -838,7 +833,7 @@ pub fn migrateNPMLockfile(
                                     const dep_resolved: string = dep_resolved: {
                                         if (dep_pkg.get("resolved")) |resolved| {
                                             const dep_resolved = resolved.asString(this.allocator) orelse return error.InvalidNPMLockfile;
-                                            switch (Dependency.Version.Tag.infer(dep_resolved)) {
+                                            switch (Dependency.Version.Tag.infer(this.allocator, dep_resolved)) {
                                                 .git, .github => |tag| {
                                                     const dep_resolved_str = try string_buf.append(dep_resolved);
                                                     const dep_resolved_sliced = dep_resolved_str.sliced(string_buf.bytes.items);
@@ -1123,7 +1118,6 @@ const LoadResult = Lockfile.LoadResult;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const Global = bun.Global;
 const Output = bun.Output;
 const logger = bun.logger;
 const strings = bun.strings;

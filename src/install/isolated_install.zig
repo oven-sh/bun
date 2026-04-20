@@ -941,13 +941,13 @@ pub fn installIsolatedPackages(
 
                 // 2
                 sys.mkdirat(FD.cwd(), node_modules_path, 0o755).unwrap() catch |err| {
-                    Output.err(err, "failed to create './node_modules'", .{});
-                    Global.exit(1);
+                    manager.addError(.{ .isolated_mkdir = .{ .err = err, .path = "./node_modules" } });
+                    return .{};
                 };
 
                 sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch |err| {
-                    Output.err(err, "failed to create './node_modules/.bun'", .{});
-                    Global.exit(1);
+                    manager.addError(.{ .isolated_mkdir = .{ .err = err, .path = "./node_modules/.bun" } });
+                    return .{};
                 };
 
                 var rename_path: bun.AutoRelPath = .from("node_modules");
@@ -995,8 +995,8 @@ pub fn installIsolatedPackages(
         };
 
         sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch |err| {
-            Output.err(err, "failed to create './node_modules/.bun'", .{});
-            Global.exit(1);
+            manager.addError(.{ .isolated_mkdir = .{ .err = err, .path = "./node_modules/.bun" } });
+            return .{};
         };
 
         break :is_new_bun_modules true;
@@ -1196,7 +1196,9 @@ pub fn installIsolatedPackages(
                     });
                     defer pkg_cache_dir_subpath.deinit();
 
-                    const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath();
+                    // cache directory is eagerly initialized by installWithManager before
+                    // isolated install runs; once cached this never fails.
+                    const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath() catch unreachable;
                     defer cache_dir_path.deinit();
 
                     const missing_from_cache = switch (manager.getPreinstallState(pkg_id)) {
@@ -1257,15 +1259,30 @@ pub fn installIsolatedPackages(
                                 patch_info.nameAndVersionHash(),
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => |oom| return oom,
+                                error.InstallFailed => {
+                                    // Cache/temp directory open failed; diagnostics already
+                                    // printed and recorded in manager.errors.
+                                    return installer.summary;
+                                },
                                 error.InvalidURL => {
+                                    if (manager.options.enable.fail_early) {
+                                        manager.addError(.{ .isolated_enqueue_download = .{
+                                            .err = err,
+                                            .kind = .package,
+                                            .name_and_version = bun.handleOom(std.fmt.allocPrint(
+                                                manager.allocator,
+                                                "{s}@{f}",
+                                                .{ pkg_name.slice(string_buf), pkg_res.fmt(string_buf, .auto) },
+                                            )),
+                                        } });
+                                        return installer.summary;
+                                    }
+                                    // non-fail_early: keep immediate print (warning, not a recorded error)
                                     Output.err(err, "failed to enqueue package for download: {s}@{f}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
                                     });
                                     Output.flush();
-                                    if (manager.options.enable.fail_early) {
-                                        Global.exit(1);
-                                    }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
@@ -1294,15 +1311,30 @@ pub fn installIsolatedPackages(
                                 patch_info.nameAndVersionHash(),
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => bun.outOfMemory(),
+                                error.InstallFailed => {
+                                    // Cache/temp directory open failed; diagnostics already
+                                    // printed and recorded in manager.errors.
+                                    return installer.summary;
+                                },
                                 error.InvalidURL => {
+                                    if (manager.options.enable.fail_early) {
+                                        manager.addError(.{ .isolated_enqueue_download = .{
+                                            .err = err,
+                                            .kind = .github,
+                                            .name_and_version = bun.handleOom(std.fmt.allocPrint(
+                                                manager.allocator,
+                                                "{s}@{f}",
+                                                .{ pkg_name.slice(string_buf), pkg_res.fmt(string_buf, .auto) },
+                                            )),
+                                        } });
+                                        return installer.summary;
+                                    }
+                                    // non-fail_early: keep immediate print (warning, not a recorded error)
                                     Output.err(err, "failed to enqueue github package for download: {s}@{f}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
                                     });
                                     Output.flush();
-                                    if (manager.options.enable.fail_early) {
-                                        Global.exit(1);
-                                    }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
@@ -1329,15 +1361,30 @@ pub fn installIsolatedPackages(
                                 patch_info.nameAndVersionHash(),
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => bun.outOfMemory(),
+                                error.InstallFailed => {
+                                    // Cache/temp directory open failed; diagnostics already
+                                    // printed and recorded in manager.errors.
+                                    return installer.summary;
+                                },
                                 error.InvalidURL => {
+                                    if (manager.options.enable.fail_early) {
+                                        manager.addError(.{ .isolated_enqueue_download = .{
+                                            .err = err,
+                                            .kind = .tarball,
+                                            .name_and_version = bun.handleOom(std.fmt.allocPrint(
+                                                manager.allocator,
+                                                "{s}@{f}",
+                                                .{ pkg_name.slice(string_buf), pkg_res.fmt(string_buf, .auto) },
+                                            )),
+                                        } });
+                                        return installer.summary;
+                                    }
+                                    // non-fail_early: keep immediate print (warning, not a recorded error)
                                     Output.err(err, "failed to enqueue tarball for download: {s}@{f}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
                                     });
                                     Output.flush();
-                                    if (manager.options.enable.fail_early) {
-                                        Global.exit(1);
-                                    }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get()].store(.done, .monotonic);
@@ -1358,6 +1405,7 @@ pub fn installIsolatedPackages(
 
             pub fn isDone(wait: *@This()) bool {
                 const pkg_manager = wait.installer.manager;
+                if (pkg_manager.hasErrors()) return true;
                 pkg_manager.runTasks(
                     *Store.Installer,
                     wait.installer,
@@ -1396,8 +1444,11 @@ pub fn installIsolatedPackages(
             manager.sleepUntil(&wait, &Wait.isDone);
 
             if (wait.err) |err| {
-                Output.err(err, "failed to install packages", .{});
-                Global.exit(1);
+                manager.addError(.{ .isolated_install_packages = .{ .err = err } });
+                return installer.summary;
+            }
+            if (manager.hasErrors()) {
+                return installer.summary;
             }
         }
 
@@ -1460,7 +1511,6 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
-const Global = bun.Global;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const Progress = bun.Progress;

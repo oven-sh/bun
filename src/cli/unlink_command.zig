@@ -1,18 +1,25 @@
 pub const UnlinkCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        try unlink(ctx);
+        (try unlink(ctx)).handleCli();
     }
 };
 
-fn unlink(ctx: Command.Context) !void {
-    const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .unlink);
-    var manager, const original_cwd = PackageManager.init(ctx, cli, .unlink) catch |err| brk: {
+fn unlink(ctx: Command.Context) !InstallResult {
+    const cli = switch (try PackageManager.CommandLineArguments.parse(ctx.allocator, .unlink)) {
+        .args => |a| a,
+        .err => |f| return .{ .err = f },
+    };
+    const init_result = PackageManager.init(ctx, cli, .unlink) catch |err| brk: {
         if (err == error.MissingPackageJSON) {
             try attemptToCreatePackageJSON();
             break :brk try PackageManager.init(ctx, cli, .unlink);
         }
 
         return err;
+    };
+    var manager, const original_cwd = switch (init_result) {
+        .ok => |r| r,
+        .err => |f| return .{ .err = f },
     };
     defer ctx.allocator.free(original_cwd);
 
@@ -31,8 +38,11 @@ fn unlink(ctx: Command.Context) !void {
         // Step 1. parse the nearest package.json file
         {
             const package_json_source = &(bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator, .{}).unwrap() catch |err| {
-                Output.errGeneric("failed to read \"{s}\" for unlinking: {s}", .{ manager.original_package_json_path, @errorName(err) });
-                Global.crash();
+                return InstallResult.fromError(.{ .link_read_package_json = .{
+                    .path = bun.handleOom(manager.allocator.dupe(u8, manager.original_package_json_path)),
+                    .err = err,
+                    .action = .unlinking,
+                } });
             });
             lockfile.initEmpty(ctx.allocator);
 
@@ -40,31 +50,29 @@ fn unlink(ctx: Command.Context) !void {
             try package.parse(&lockfile, manager, ctx.allocator, manager.log, package_json_source, void, &resolver, Features.folder);
             name = lockfile.str(&package.name);
             if (name.len == 0) {
-                if (manager.options.log_level != .silent) {
-                    Output.prettyErrorln("<r><red>error:<r> package.json missing \"name\" <d>in \"{s}\"<r>", .{package_json_source.path.text});
-                }
-                Global.crash();
+                return InstallResult.fromError(.{ .package_json_missing_name = .{
+                    .path = bun.handleOom(manager.allocator.dupe(u8, package_json_source.path.text)),
+                    .silent = manager.options.log_level == .silent,
+                } });
             } else if (!strings.isNPMPackageName(name)) {
-                if (manager.options.log_level != .silent) {
-                    Output.prettyErrorln("<r><red>error:<r> invalid package.json name \"{s}\" <d>in \"{s}\"<r>", .{
-                        name,
-                        package_json_source.path.text,
-                    });
-                }
-                Global.crash();
+                return InstallResult.fromError(.{ .package_json_invalid_name = .{
+                    .name = bun.handleOom(manager.allocator.dupe(u8, name)),
+                    .path = bun.handleOom(manager.allocator.dupe(u8, package_json_source.path.text)),
+                    .silent = manager.options.log_level == .silent,
+                } });
             }
         }
 
-        switch (Syscall.lstat(Path.joinAbsStringZ(manager.globalLinkDirPath(), &.{name}, .auto))) {
+        switch (Syscall.lstat(Path.joinAbsStringZ(manager.globalLinkDirPath() catch return manager.takeResult(), &.{name}, .auto))) {
             .result => |stat| {
                 if (!bun.S.ISLNK(@intCast(stat.mode))) {
                     Output.prettyErrorln("<r><green>success:<r> package \"{s}\" is not globally linked, so there's nothing to do.", .{name});
-                    Global.exit(0);
+                    return .ok;
                 }
             },
             .err => {
                 Output.prettyErrorln("<r><green>success:<r> package \"{s}\" is not globally linked, so there's nothing to do.", .{name});
-                Global.exit(0);
+                return .ok;
             },
         }
 
@@ -80,9 +88,10 @@ fn unlink(ctx: Command.Context) !void {
             try manager.setupGlobalDir(ctx);
 
             break :brk manager.global_dir.?.makeOpenPath("node_modules", .{}) catch |err| {
-                if (manager.options.log_level != .silent)
-                    Output.prettyErrorln("<r><red>error:<r> failed to create node_modules in global dir due to error {s}", .{@errorName(err)});
-                Global.crash();
+                return InstallResult.fromError(.{ .global_node_modules_create = .{
+                    .err = err,
+                    .silent = manager.options.log_level == .silent,
+                } });
             };
         };
 
@@ -93,14 +102,15 @@ fn unlink(ctx: Command.Context) !void {
             var link_rel_buf: bun.PathBuffer = undefined;
 
             var node_modules_path = bun.AbsPath(.{}).initFdPath(.fromStdDir(node_modules)) catch |err| {
-                if (manager.options.log_level != .silent) {
-                    Output.err(err, "failed to link binary", .{});
-                }
-                Global.crash();
+                return InstallResult.fromError(.{ .link_binary_fdpath = .{
+                    .err = err,
+                    .silent = manager.options.log_level == .silent,
+                } });
             };
             defer node_modules_path.deinit();
 
             var bin_linker = Bin.Linker{
+                .allocator = manager.allocator,
                 .target_node_modules_path = &node_modules_path,
                 .target_package_name = strings.StringOrTinyString.init(name),
                 .bin = package.bin,
@@ -119,16 +129,16 @@ fn unlink(ctx: Command.Context) !void {
 
         // delete it if it exists
         node_modules.deleteTree(name) catch |err| {
-            if (manager.options.log_level != .silent)
-                Output.prettyErrorln("<r><red>error:<r> failed to unlink package in global dir due to error {s}", .{@errorName(err)});
-            Global.crash();
+            return InstallResult.fromError(.{ .unlink_delete = .{
+                .err = err,
+                .silent = manager.options.log_level == .silent,
+            } });
         };
 
         Output.prettyln("<r><green>success:<r> unlinked package \"{s}\"", .{name});
-        Global.exit(0);
+        return .ok;
     } else {
-        Output.prettyln("<r><red>error:<r> bun unlink {{packageName}} not implemented yet", .{});
-        Global.crash();
+        return InstallResult.fromError(.unlink_with_name_not_implemented);
     }
 }
 
@@ -145,6 +155,7 @@ const Command = bun.cli.Command;
 
 const Bin = bun.install.Bin;
 const Features = bun.install.Features;
+const InstallResult = bun.install.InstallResult;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;

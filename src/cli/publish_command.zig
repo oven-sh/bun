@@ -291,9 +291,9 @@ pub const PublishCommand = struct {
         Output.prettyln("<r><b>bun publish <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
-        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .publish);
+        const cli = (try PackageManager.CommandLineArguments.parse(ctx.allocator, .publish)).unwrapCli();
 
-        const manager, const original_cwd = PackageManager.init(ctx, cli, .publish) catch |err| {
+        const init_result = PackageManager.init(ctx, cli, .publish) catch |err| {
             if (!cli.silent) {
                 if (err == error.MissingPackageJSON) {
                     Output.errGeneric("missing package.json, nothing to publish", .{});
@@ -302,6 +302,7 @@ pub const PublishCommand = struct {
             }
             Global.crash();
         };
+        const manager, const original_cwd = init_result.unwrapCli();
         defer ctx.allocator.free(original_cwd);
 
         if (cli.positionals.len > 1) {

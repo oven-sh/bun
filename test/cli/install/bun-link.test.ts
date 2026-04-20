@@ -472,3 +472,44 @@ it("should link dependency without crashing", async () => {
   // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
 });
+
+// These exercise error paths that flow through InstallResult instead of
+// Global.crash() — the diagnostic and exit code must be preserved.
+for (const cmd of ["link", "unlink"] as const) {
+  it(`bun ${cmd} reports missing package.json "name"`, async () => {
+    await writeFile(join(link_dir, "package.json"), JSON.stringify({ version: "1.0.0" }));
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), cmd],
+      cwd: link_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    const out = await stdout.text();
+    expect(err).toContain('error: package.json missing "name"');
+    expect(err).not.toContain("panic");
+    expect(out).toContain(`bun ${cmd} v`);
+    expect(await exited).toBe(1);
+  });
+
+  it(`bun ${cmd} reports invalid package.json "name"`, async () => {
+    await writeFile(
+      join(link_dir, "package.json"),
+      JSON.stringify({ name: "not a valid npm name!", version: "1.0.0" }),
+    );
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), cmd],
+      cwd: link_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    const out = await stdout.text();
+    expect(err).toContain('error: invalid package.json name "not a valid npm name!"');
+    expect(err).not.toContain("panic");
+    expect(out).toContain(`bun ${cmd} v`);
+    expect(await exited).toBe(1);
+  });
+}

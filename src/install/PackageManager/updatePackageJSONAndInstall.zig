@@ -2,7 +2,7 @@ pub fn updatePackageJSONAndInstallWithManager(
     manager: *PackageManager,
     ctx: Command.Context,
     original_cwd: string,
-) !void {
+) !InstallResult {
     var update_requests = bun.handleOom(UpdateRequest.Array.initCapacity(manager.allocator, 64));
     defer update_requests.deinit(manager.allocator);
 
@@ -13,14 +13,14 @@ pub fn updatePackageJSONAndInstallWithManager(
                 Output.flush();
                 PackageManager.CommandLineArguments.printHelp(.add);
 
-                Global.exit(0);
+                return .ok;
             },
             .remove => {
                 Output.errGeneric("no package specified to remove", .{});
                 Output.flush();
                 PackageManager.CommandLineArguments.printHelp(.remove);
 
-                Global.exit(0);
+                return .ok;
             },
             .update => {},
             else => {},
@@ -42,12 +42,12 @@ fn updatePackageJSONAndInstallWithManagerWithUpdatesAndUpdateRequests(
     original_cwd: string,
     positionals: []const string,
     update_requests: *UpdateRequest.Array,
-) !void {
+) !InstallResult {
     var updates: []UpdateRequest = if (manager.subcommand == .@"patch-commit" or manager.subcommand == .patch)
         &[_]UpdateRequest{}
     else
-        UpdateRequest.parse(ctx.allocator, manager, ctx.log, positionals, update_requests, manager.subcommand);
-    try updatePackageJSONAndInstallWithManagerWithUpdates(
+        try UpdateRequest.parse(ctx.allocator, manager, ctx.log, positionals, update_requests, manager.subcommand);
+    return try updatePackageJSONAndInstallWithManagerWithUpdates(
         manager,
         ctx,
         &updates,
@@ -62,13 +62,14 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
     updates: *[]UpdateRequest,
     subcommand: Subcommand,
     original_cwd: string,
-) !void {
+) !InstallResult {
     const log_level = manager.options.log_level;
     if (manager.log.errors > 0) {
         if (log_level != .silent) {
             manager.log.print(Output.errorWriter()) catch {};
         }
-        Global.crash();
+        manager.addError(.{ .already_printed = .{ .exit_code = 1 } });
+        return manager.takeResult();
     }
 
     var current_package_json = switch (manager.workspace_package_json_cache.getWithPath(
@@ -81,18 +82,18 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
     )) {
         .parse_err => |err| {
             manager.log.print(Output.errorWriter()) catch {};
-            Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
-                manager.original_package_json_path,
-                @errorName(err),
-            });
-            Global.crash();
+            manager.addError(.{ .package_json_parse_failed = .{
+                .path = bun.handleOom(manager.allocator.dupe(u8, manager.original_package_json_path)),
+                .err = err,
+            } });
+            return manager.takeResult();
         },
         .read_err => |err| {
-            Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
-                manager.original_package_json_path,
-                @errorName(err),
-            });
-            Global.crash();
+            manager.addError(.{ .package_json_read_failed = .{
+                .path = bun.handleOom(manager.allocator.dupe(u8, manager.original_package_json_path)),
+                .err = err,
+            } });
+            return manager.takeResult();
         },
         .entry => |entry| entry,
     };
@@ -106,18 +107,18 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
     if (subcommand == .remove) {
         if (current_package_json.root.data != .e_object) {
-            Output.errGeneric("package.json is not an Object {{}}, so there's nothing to {s}!", .{@tagName(subcommand)});
-            Global.crash();
+            manager.addError(.{ .package_json_not_object = .{ .subcommand = @tagName(subcommand) } });
+            return manager.takeResult();
         } else if (current_package_json.root.data.e_object.properties.len == 0) {
-            Output.errGeneric("package.json is empty {{}}, so there's nothing to {s}!", .{@tagName(subcommand)});
-            Global.crash();
+            manager.addError(.{ .package_json_empty_object = .{ .subcommand = @tagName(subcommand) } });
+            return manager.takeResult();
         } else if (current_package_json.root.asProperty("devDependencies") == null and
             current_package_json.root.asProperty("dependencies") == null and
             current_package_json.root.asProperty("optionalDependencies") == null and
             current_package_json.root.asProperty("peerDependencies") == null)
         {
             Output.prettyErrorln("package.json doesn't have dependencies, there's nothing to {s}!", .{@tagName(subcommand)});
-            Global.exit(0);
+            return .ok;
         }
     }
 
@@ -251,8 +252,8 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
             .mangled_props = null,
         },
     ) catch |err| {
-        Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
-        Global.crash();
+        manager.addError(.{ .package_json_print_failed = .{ .err = err } });
+        return manager.takeResult();
     };
 
     // There are various tradeoffs with how we commit updates when you run `bun add` or `bun remove`
@@ -290,18 +291,18 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         )) {
             .parse_err => |err| {
                 manager.log.print(Output.errorWriter()) catch {};
-                Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
-                    root_package_json_path,
-                    @errorName(err),
-                });
-                Global.crash();
+                manager.addError(.{ .package_json_parse_failed = .{
+                    .path = bun.handleOom(manager.allocator.dupe(u8, root_package_json_path)),
+                    .err = err,
+                } });
+                return manager.takeResult();
             },
             .read_err => |err| {
-                Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
-                    manager.original_package_json_path,
-                    @errorName(err),
-                });
-                Global.crash();
+                manager.addError(.{ .package_json_read_failed = .{
+                    .path = bun.handleOom(manager.allocator.dupe(u8, manager.original_package_json_path)),
+                    .err = err,
+                } });
+                return manager.takeResult();
             },
             .entry => |entry| entry,
         };
@@ -328,8 +329,8 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     .mangled_props = null,
                 },
             ) catch |err| {
-                Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
-                Global.crash();
+                manager.addError(.{ .package_json_print_failed = .{ .err = err } });
+                return manager.takeResult();
             };
             root_package_json.source.contents = try manager.allocator.dupe(u8, package_json_writer2.ctx.writtenWithoutTrailingZero());
         }
@@ -337,13 +338,16 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         break :root_package_json_path root_package_json_path_buf[0..root_package_json_path.len :0];
     };
 
-    try manager.installWithManager(ctx, root_package_json_path, original_cwd);
+    switch (try manager.installWithManager(ctx, root_package_json_path, original_cwd)) {
+        .ok => {},
+        .err => |f| return .{ .err = f },
+    }
 
     if (subcommand == .update or subcommand == .add or subcommand == .link) {
         for (updates.*) |request| {
             if (request.failed) {
-                Global.exit(1);
-                return;
+                manager.addError(.{ .already_printed = .{ .exit_code = 1 } });
+                return manager.takeResult();
             }
         }
 
@@ -352,8 +356,8 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         // Now, we _re_ parse our in-memory edited package.json
         // so we can commit the version we changed from the lockfile
         var new_package_json = JSON.parsePackageJSONUTF8(source, manager.log, manager.allocator) catch |err| {
-            Output.prettyErrorln("package.json failed to parse due to error {s}", .{@errorName(err)});
-            Global.crash();
+            manager.addError(.{ .package_json_reparse_failed = .{ .err = err } });
+            return manager.takeResult();
         };
 
         if (updates.len == 0) {
@@ -392,8 +396,8 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 .mangled_props = null,
             },
         ) catch |err| {
-            Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
-            Global.crash();
+            manager.addError(.{ .package_json_print_failed = .{ .err = err } });
+            return manager.takeResult();
         };
 
         new_package_json_source = try manager.allocator.dupe(u8, package_json_writer_two.ctx.writtenWithoutTrailingZero());
@@ -407,8 +411,11 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 root_package_json_path,
                 .{},
             ).unwrap() catch |err| {
-                Output.err(err, "failed to read/parse package.json at '{s}'", .{root_package_json_path});
-                Global.exit(1);
+                manager.addError(.{ .package_json_read_or_parse_failed = .{
+                    .path = bun.handleOom(manager.allocator.dupe(u8, root_package_json_path)),
+                    .err = err,
+                } });
+                return manager.takeResult();
             };
 
             break :source_and_path .{ root_package_json_entry.source.contents, root_package_json_path };
@@ -429,8 +436,7 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
         if (subcommand == .remove) {
             if (!any_changes) {
-                Global.exit(0);
-                return;
+                return .ok;
             }
 
             var cwd = std.fs.cwd();
@@ -478,30 +484,29 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                 }
             } else |err| {
                 if (err != error.ENOENT) {
-                    Output.err(err, "while reading node_modules/.bin", .{});
-                    Global.crash();
+                    manager.addError(.{ .node_modules_bin_read = .{ .err = err } });
+                    return manager.takeResult();
                 }
             }
         }
     }
+
+    return .ok;
 }
 
 pub fn updatePackageJSONAndInstallCatchError(
     ctx: Command.Context,
     subcommand: Subcommand,
-) !void {
-    updatePackageJSONAndInstall(ctx, subcommand) catch |err| {
-        switch (err) {
-            error.InstallFailed,
-            error.InvalidPackageJSON,
-            => {
-                const log = &bun.cli.Cli.log_;
-                log.print(bun.Output.errorWriter()) catch {};
-                bun.Global.exit(1);
-                return;
-            },
-            else => return err,
-        }
+) !InstallResult {
+    return updatePackageJSONAndInstall(ctx, subcommand) catch |err| switch (err) {
+        error.InstallFailed,
+        error.InvalidPackageJSON,
+        => blk: {
+            const log = &bun.cli.Cli.log_;
+            log.print(bun.Output.errorWriter()) catch {};
+            break :blk InstallResult.fromError(.{ .already_printed = .{ .exit_code = 1 } });
+        },
+        else => |e| return e,
     };
 }
 
@@ -509,21 +514,18 @@ fn updatePackageJSONAndInstallAndCLI(
     ctx: Command.Context,
     subcommand: Subcommand,
     cli: CommandLineArguments,
-) !void {
-    var manager, const original_cwd = PackageManager.init(ctx, cli, subcommand) catch |err| brk: {
+) !InstallResult {
+    const init_result = PackageManager.init(ctx, cli, subcommand) catch |err| brk: {
         if (err == error.MissingPackageJSON) {
             switch (subcommand) {
                 .update => {
-                    Output.prettyErrorln("<r>No package.json, so nothing to update", .{});
-                    Global.crash();
+                    return InstallResult.fromError(.{ .no_package_json_for_subcommand = .{ .action = .update } });
                 },
                 .remove => {
-                    Output.prettyErrorln("<r>No package.json, so nothing to remove", .{});
-                    Global.crash();
+                    return InstallResult.fromError(.{ .no_package_json_for_subcommand = .{ .action = .remove } });
                 },
                 .patch, .@"patch-commit" => {
-                    Output.prettyErrorln("<r>No package.json, so nothing to patch", .{});
-                    Global.crash();
+                    return InstallResult.fromError(.{ .no_package_json_for_subcommand = .{ .action = .patch } });
                 },
                 else => {
                     try attemptToCreatePackageJSON();
@@ -533,6 +535,10 @@ fn updatePackageJSONAndInstallAndCLI(
         }
 
         return err;
+    };
+    var manager, const original_cwd = switch (init_result) {
+        .ok => |r| r,
+        .err => |f| return .{ .err = f },
     };
     defer ctx.allocator.free(original_cwd);
 
@@ -549,15 +555,32 @@ fn updatePackageJSONAndInstallAndCLI(
         }
     }
 
-    try updatePackageJSONAndInstallWithManager(manager, ctx, original_cwd);
+    switch (updatePackageJSONAndInstallWithManager(manager, ctx, original_cwd) catch |err| switch (err) {
+        // doPatchCommit (and other paths) call manager.addError(...) then throw
+        // error.InstallFailed. The outer catch in updatePackageJSONAndInstallCatchError
+        // has no manager in scope, so drain the structured errors here.
+        error.InstallFailed => {
+            if (manager.hasErrors()) return manager.takeResult();
+            return InstallResult.fromError(.{ .already_printed = .{ .exit_code = 1 } });
+        },
+        else => |e| return e,
+    }) {
+        .ok => {},
+        .err => |f| return .{ .err = f },
+    }
 
     if (manager.options.patch_features == .patch) {
-        try manager.preparePatch();
+        manager.preparePatch() catch |err| switch (err) {
+            error.InstallFailed => {
+                if (manager.hasErrors()) return manager.takeResult();
+                return InstallResult.fromError(.{ .already_printed = .{ .exit_code = 1 } });
+            },
+            else => |e| return e,
+        };
     }
 
-    if (manager.any_failed_to_install) {
-        Global.exit(1);
-    }
+    // any_failed_to_install is now folded into installWithManager's return value,
+    // so an explicit check + exit is no longer needed here.
 
     // Check if we need to print a warning like:
     //
@@ -675,14 +698,19 @@ fn updatePackageJSONAndInstallAndCLI(
             }
         }
     }
+
+    return .ok;
 }
 
 pub fn updatePackageJSONAndInstall(
     ctx: Command.Context,
     subcommand: Subcommand,
-) !void {
+) !InstallResult {
     var cli = switch (subcommand) {
-        inline else => |cmd| try PackageManager.CommandLineArguments.parse(ctx.allocator, cmd),
+        inline else => |cmd| switch (try PackageManager.CommandLineArguments.parse(ctx.allocator, cmd)) {
+            .args => |a| a,
+            .err => |f| return .{ .err = f },
+        },
     };
 
     // The way this works:
@@ -695,19 +723,20 @@ pub fn updatePackageJSONAndInstall(
             ctx: Command.Context,
             cli: *PackageManager.CommandLineArguments,
             subcommand: Subcommand,
+            // onAnalyze is called via fn-ptr from BundleV2 with an `anyerror!void`
+            // signature, so we stash the InstallResult here and lift it after exec.
+            result: InstallResult = .ok,
             pub fn onAnalyze(
                 this: *@This(),
                 result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result,
             ) anyerror!void {
                 // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
-                var positionals = bun.handleOom(bun.default_allocator.alloc(string, result.dependencies.keys().len + 1));
+                var positionals = bun.handleOom(this.ctx.allocator.alloc(string, result.dependencies.keys().len + 1));
                 positionals[0] = "add";
                 bun.copy(string, positionals[1..], result.dependencies.keys());
                 this.cli.positionals = positionals;
 
-                try updatePackageJSONAndInstallAndCLI(this.ctx, this.subcommand, this.cli.*);
-
-                Global.exit(0);
+                this.result = try updatePackageJSONAndInstallAndCLI(this.ctx, this.subcommand, this.cli.*);
             }
         };
         var analyzer = Analyzer{
@@ -723,7 +752,7 @@ pub fn updatePackageJSONAndInstall(
 
         // This runs the bundler.
         try bun.cli.BuildCommand.exec(bun.cli.Command.get(), &fetcher);
-        return;
+        return analyzer.result;
     }
 
     return updatePackageJSONAndInstallAndCLI(ctx, subcommand, cli);
@@ -739,18 +768,19 @@ const Global = bun.Global;
 const JSON = bun.json;
 const JSPrinter = bun.js_printer;
 const Output = bun.Output;
-const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const strings = bun.strings;
 const Command = bun.cli.Command;
 const File = bun.sys.File;
-const PackageNameHash = bun.install.PackageNameHash;
 
 const Semver = bun.Semver;
 const String = Semver.String;
 
 const Fs = bun.fs;
 const FileSystem = Fs.FileSystem;
+
+const InstallResult = bun.install.InstallResult;
+const PackageNameHash = bun.install.PackageNameHash;
 
 const PackageManager = bun.install.PackageManager;
 const CommandLineArguments = PackageManager.CommandLineArguments;

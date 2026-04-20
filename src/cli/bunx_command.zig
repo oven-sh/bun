@@ -345,7 +345,7 @@ pub const BunxCommand = struct {
             &.{opts.package_name},
             &requests_buf,
             .add,
-        );
+        ) catch Global.crash();
 
         if (update_requests.len == 0) {
             exitWithUsage();

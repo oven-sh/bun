@@ -16,11 +16,14 @@ pub fn doPatchCommit(
 ) !?PatchCommitResult {
     var folder_path_buf: bun.PathBuffer = undefined;
     var lockfile: *Lockfile = try manager.allocator.create(Lockfile);
-    defer lockfile.deinit();
+    // loadFromCwd does NOT initialize *lockfile on .not_found/.err, so deinit() must
+    // not run on those paths. Free the raw allocation on error; register deinit only
+    // after .ok has populated the struct.
+    errdefer manager.allocator.destroy(lockfile);
     switch (lockfile.loadFromCwd(manager, manager.allocator, manager.log, true)) {
         .not_found => {
-            Output.errGeneric("Cannot find lockfile. Install packages with `<cyan>bun install<r>` before patching them.", .{});
-            Global.crash();
+            manager.addError(.patch_lockfile_not_found);
+            return error.InstallFailed;
         },
         .err => |cause| {
             if (log_level != .silent) {
@@ -47,10 +50,12 @@ pub fn doPatchCommit(
 
                 Output.flush();
             }
-            Global.crash();
+            manager.addError(.{ .already_printed = .{ .exit_code = 1 } });
+            return error.InstallFailed;
         },
         .ok => {},
     }
+    defer lockfile.deinit();
 
     var argument = manager.options.positionals[1];
     const arg_kind: PatchArgKind = PatchArgKind.fromArg(argument);
@@ -73,11 +78,8 @@ pub fn doPatchCommit(
     var root_node_modules = switch (bun.sys.openatOSPath(bun.FD.cwd(), bun.OSPathLiteral("node_modules"), bun.O.DIRECTORY | bun.O.RDONLY, 0o755)) {
         .result => |fd| std.fs.Dir{ .fd = fd.cast() },
         .err => |e| {
-            Output.prettyError(
-                "<r><red>error<r>: failed to open root <b>node_modules<r> folder: {f}<r>\n",
-                .{e},
-            );
-            Global.crash();
+            manager.addError(.{ .patch_open_root_node_modules = .{ .err = e } });
+            return error.InstallFailed;
         },
     };
     defer root_node_modules.close();
@@ -92,8 +94,11 @@ pub fn doPatchCommit(
                 switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
                     .result => |s| break :brk s,
                     .err => |e| {
-                        Output.err(e, "failed to read {f}", .{bun.fmt.quote(package_json_path)});
-                        Global.crash();
+                        manager.addError(.{ .patch_read_package_json = .{
+                            .err = e,
+                            .path = bun.handleOom(manager.allocator.dupe(u8, package_json_path)),
+                        } });
+                        return error.InstallFailed;
                     },
                 }
             };
@@ -102,19 +107,21 @@ pub fn doPatchCommit(
             initializeStore();
             const json = JSON.parsePackageJSONUTF8(package_json_source, manager.log, manager.allocator) catch |err| {
                 manager.log.print(Output.errorWriter()) catch {};
-                Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), package_json_source.path.prettyDir() });
-                Global.crash();
+                manager.addError(.{ .package_json_parse_in_dir = .{
+                    .err = err,
+                    .dir = bun.handleOom(manager.allocator.dupe(u8, package_json_source.path.prettyDir())),
+                } });
+                return error.InstallFailed;
             };
 
             const version = version: {
                 if (json.asProperty("version")) |v| {
                     if (v.expr.asString(manager.allocator)) |s| break :version s;
                 }
-                Output.prettyError(
-                    "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {s}<r>\n",
-                    .{package_json_source.path.text},
-                );
-                Global.crash();
+                manager.addError(.{ .patch_missing_version = .{
+                    .path = bun.handleOom(manager.allocator.dupe(u8, package_json_source.path.text)),
+                } });
+                return error.InstallFailed;
             };
 
             var resolver: void = {};
@@ -123,11 +130,8 @@ pub fn doPatchCommit(
 
             const name = lockfile.str(&package.name);
             const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
-                    .{},
-                );
-                Global.crash();
+                manager.addError(.patch_lockfile_index_bug);
+                return error.InstallFailed;
             }) {
                 .id => |id| lockfile.packages.get(id),
                 .ids => |ids| brk: {
@@ -138,14 +142,14 @@ pub fn doPatchCommit(
                             break :brk pkg;
                         }
                     }
-                    Output.prettyError("<r><red>error<r>: could not find package with name:<r> {s}\n<r>", .{
-                        package.name.slice(lockfile.buffers.string_bytes.items),
-                    });
-                    Global.crash();
+                    manager.addError(.{ .patch_package_not_found_by_name = .{
+                        .name = bun.handleOom(manager.allocator.dupe(u8, package.name.slice(lockfile.buffers.string_bytes.items))),
+                    } });
+                    return error.InstallFailed;
                 },
             };
 
-            const cache_result = manager.computeCacheDirAndSubpath(
+            const cache_result = try manager.computeCacheDirAndSubpath(
                 name,
                 &actual_package.resolution,
                 &folder_path_buf,
@@ -160,7 +164,7 @@ pub fn doPatchCommit(
         },
         .name_and_version => brk: {
             const name, const version = Dependency.splitNameAndMaybeVersion(argument);
-            const pkg_id, const node_modules = pkgInfoForNameAndVersion(lockfile, &iterator, argument, name, version);
+            const pkg_id, const node_modules = try pkgInfoForNameAndVersion(manager, lockfile, &iterator, argument, name, version);
 
             const changes_dir = bun.path.joinZBuf(pathbuf[0..], &[_][]const u8{
                 node_modules.relative_path,
@@ -168,7 +172,7 @@ pub fn doPatchCommit(
             }, .auto);
             const pkg = lockfile.packages.get(pkg_id);
 
-            const cache_result = manager.computeCacheDirAndSubpath(
+            const cache_result = try manager.computeCacheDirAndSubpath(
                 pkg.name.slice(lockfile.buffers.string_bytes.items),
                 &pkg.resolution,
                 &folder_path_buf,
@@ -197,8 +201,8 @@ pub fn doPatchCommit(
             const cache_dir_path = switch (bun.sys.getFdPath(.fromStdDir(cache_dir), &buf2)) {
                 .result => |s| s,
                 .err => |e| {
-                    Output.err(e, "failed to read from cache", .{});
-                    Global.crash();
+                    manager.addError(.{ .patch_cache_path_read = .{ .err = e } });
+                    return error.InstallFailed;
                 },
             };
             break :old_folder bun.path.join(&[_][]const u8{
@@ -208,8 +212,8 @@ pub fn doPatchCommit(
         };
 
         const random_tempdir = bun.fs.FileSystem.tmpname("node_modules_tmp", buf2[0..], bun.fastRandom()) catch |e| {
-            Output.err(e, "failed to make tempdir", .{});
-            Global.crash();
+            manager.addError(.{ .patch_tmpname = .{ .err = e } });
+            return error.InstallFailed;
         };
 
         // If the package has nested a node_modules folder, we don't want this to
@@ -219,8 +223,11 @@ pub fn doPatchCommit(
         // will `rename()` it out and back again.
         const has_nested_node_modules = has_nested_node_modules: {
             var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
-                Output.err(e, "failed to open directory <b>{s}<r>", .{new_folder});
-                Global.crash();
+                manager.addError(.{ .patch_open_dir = .{
+                    .err = e,
+                    .path = bun.handleOom(manager.allocator.dupe(u8, new_folder)),
+                } });
+                return error.InstallFailed;
             };
             defer new_folder_handle.close();
 
@@ -236,8 +243,8 @@ pub fn doPatchCommit(
         };
 
         const patch_tag_tmpname = bun.fs.FileSystem.tmpname("patch_tmp", buf3[0..], bun.fastRandom()) catch |e| {
-            Output.err(e, "failed to make tempdir", .{});
-            Global.crash();
+            manager.addError(.{ .patch_tmpname = .{ .err = e } });
+            return error.InstallFailed;
         };
 
         var bunpatchtagbuf: BuntagHashBuf = undefined;
@@ -254,8 +261,11 @@ pub fn doPatchCommit(
                 break :has_bun_patch_tag null;
             };
             var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
-                Output.err(e, "failed to open directory <b>{s}<r>", .{new_folder});
-                Global.crash();
+                manager.addError(.{ .patch_open_dir = .{
+                    .err = e,
+                    .path = bun.handleOom(manager.allocator.dupe(u8, new_folder)),
+                } });
+                return error.InstallFailed;
             };
             defer new_folder_handle.close();
 
@@ -271,14 +281,14 @@ pub fn doPatchCommit(
             }
             break :has_bun_patch_tag patch_tag;
         };
-        defer {
+        defer restore: {
             if (has_nested_node_modules or bun_patch_tag != null) {
                 var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
-                        .{ new_folder, @errorName(e) },
-                    );
-                    Global.crash();
+                    manager.addError(.{ .patch_open_dir_restore = .{
+                        .path = bun.handleOom(manager.allocator.dupe(u8, new_folder)),
+                        .err = e,
+                    } });
+                    break :restore;
                 };
                 defer new_folder_handle.close();
 
@@ -312,71 +322,40 @@ pub fn doPatchCommit(
         const cwd = switch (bun.sys.getcwdZ(&cwdbuf)) {
             .result => |fd| fd,
             .err => |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to get cwd path {f}<r>\n",
-                    .{e},
-                );
-                Global.crash();
+                manager.addError(.{ .patch_getcwd = .{ .err = e } });
+                return error.InstallFailed;
             },
         };
         var gitbuf: bun.PathBuffer = undefined;
         const git = bun.which(&gitbuf, bun.env_var.PATH.get() orelse "", cwd, "git") orelse {
-            Output.prettyError(
-                "<r><red>error<r>: git must be installed to use `bun patch --commit` <r>\n",
-                .{},
-            );
-            Global.crash();
+            manager.addError(.patch_git_not_found);
+            return error.InstallFailed;
         };
-        const paths = bun.patch.gitDiffPreprocessPaths(bun.default_allocator, old_folder, new_folder, false);
+        const paths = bun.patch.gitDiffPreprocessPaths(manager.allocator, old_folder, new_folder, false);
         const opts = bun.patch.spawnOpts(paths[0], paths[1], cwd, git, &manager.event_loop);
 
         var spawn_result = switch (bun.spawnSync(&opts) catch |e| {
-            Output.prettyError(
-                "<r><red>error<r>: failed to make diff {s}<r>\n",
-                .{@errorName(e)},
-            );
-            Global.crash();
+            manager.addError(.{ .patch_diff_failed = .{ .err = e } });
+            return error.InstallFailed;
         }) {
             .result => |r| r,
             .err => |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to make diff {f}<r>\n",
-                    .{e},
-                );
-                Global.crash();
+                manager.addError(.{ .patch_diff_spawn_failed = .{ .err = e } });
+                return error.InstallFailed;
             },
         };
 
         const contents = switch (bun.patch.diffPostProcess(&spawn_result, paths[0], paths[1]) catch |e| {
-            Output.prettyError(
-                "<r><red>error<r>: failed to make diff {s}<r>\n",
-                .{@errorName(e)},
-            );
-            Global.crash();
+            manager.addError(.{ .patch_diff_failed = .{ .err = e } });
+            return error.InstallFailed;
         }) {
             .result => |stdout| stdout,
             .err => |stderr| {
                 defer stderr.deinit();
-                const Truncate = struct {
-                    stderr: std.array_list.Managed(u8),
-
-                    pub fn format(
-                        this: *const @This(),
-                        writer: *std.Io.Writer,
-                    ) !void {
-                        const truncate_stderr = this.stderr.items.len > 256;
-                        if (truncate_stderr) {
-                            try writer.print("{s}... ({d} more bytes)", .{ this.stderr.items[0..256], this.stderr.items.len - 256 });
-                        } else try writer.print("{s}", .{this.stderr.items[0..]});
-                    }
-                };
-                Output.prettyError(
-                    "<r><red>error<r>: failed to make diff {f}<r>\n",
-                    .{
-                        Truncate{ .stderr = stderr },
-                    },
-                );
-                Global.crash();
+                manager.addError(.{ .patch_diff_stderr = .{
+                    .stderr = bun.handleOom(manager.allocator.dupe(u8, stderr.items)),
+                } });
+                return error.InstallFailed;
             },
         };
 
@@ -389,12 +368,13 @@ pub fn doPatchCommit(
 
         break :brk contents;
     };
+    if (manager.hasErrors()) return error.InstallFailed;
     defer patchfile_contents.deinit();
 
     // write the patch contents to temp file then rename
     var tmpname_buf: [1024]u8 = undefined;
     const tempfile_name = try bun.fs.FileSystem.tmpname("tmp", &tmpname_buf, bun.fastRandom());
-    const tmpdir = manager.getTemporaryDirectory().handle;
+    const tmpdir = (try manager.getTemporaryDirectory()).handle;
     const tmpfd = switch (bun.sys.openat(
         .fromStdDir(tmpdir),
         tempfile_name,
@@ -403,15 +383,15 @@ pub fn doPatchCommit(
     )) {
         .result => |fd| fd,
         .err => |e| {
-            Output.err(e, "failed to open temp file", .{});
-            Global.crash();
+            manager.addError(.{ .patch_temp_open = .{ .err = e } });
+            return error.InstallFailed;
         },
     };
     defer tmpfd.close();
 
     if (bun.sys.File.writeAll(.{ .handle = tmpfd }, patchfile_contents.items).asErr()) |e| {
-        Output.err(e, "failed to write patch to temp file", .{});
-        Global.crash();
+        manager.addError(.{ .patch_temp_write = .{ .err = e } });
+        return error.InstallFailed;
     }
 
     @memcpy(resolution_buf[resolution_label.len .. resolution_label.len + ".patch".len], ".patch");
@@ -436,8 +416,11 @@ pub fn doPatchCommit(
         .path = .{ .string = bun.PathString.init(manager.options.patch_features.commit.patches_dir) },
     };
     if (nodefs.mkdirRecursive(args).asErr()) |e| {
-        Output.err(e, "failed to make patches dir {f}", .{bun.fmt.quote(args.path.slice())});
-        Global.crash();
+        manager.addError(.{ .patch_mkdir_patches = .{
+            .err = e,
+            .path = bun.handleOom(manager.allocator.dupe(u8, args.path.slice())),
+        } });
+        return error.InstallFailed;
     }
 
     // rename to patches dir
@@ -448,8 +431,8 @@ pub fn doPatchCommit(
         path_in_patches_dir,
         .{ .move_fallback = true },
     ).asErr()) |e| {
-        Output.err(e, "failed renaming patch file to patches dir", .{});
-        Global.crash();
+        manager.addError(.{ .patch_rename = .{ .err = e } });
+        return error.InstallFailed;
     }
 
     const patch_key = bun.handleOom(std.fmt.allocPrint(manager.allocator, "{s}", .{resolution_label}));
@@ -577,8 +560,11 @@ pub fn preparePatch(manager: *PackageManager) !void {
                 switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
                     .result => |s| break :src s,
                     .err => |e| {
-                        Output.err(e, "failed to read {f}", .{bun.fmt.quote(package_json_path)});
-                        Global.crash();
+                        manager.addError(.{ .patch_read_package_json = .{
+                            .err = e,
+                            .path = bun.handleOom(manager.allocator.dupe(u8, package_json_path)),
+                        } });
+                        return error.InstallFailed;
                     },
                 }
             };
@@ -587,19 +573,21 @@ pub fn preparePatch(manager: *PackageManager) !void {
             initializeStore();
             const json = JSON.parsePackageJSONUTF8(package_json_source, manager.log, manager.allocator) catch |err| {
                 manager.log.print(Output.errorWriter()) catch {};
-                Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), package_json_source.path.prettyDir() });
-                Global.crash();
+                manager.addError(.{ .package_json_parse_in_dir = .{
+                    .err = err,
+                    .dir = bun.handleOom(manager.allocator.dupe(u8, package_json_source.path.prettyDir())),
+                } });
+                return error.InstallFailed;
             };
 
             const version = version: {
                 if (json.asProperty("version")) |v| {
                     if (v.expr.asString(manager.allocator)) |s| break :version s;
                 }
-                Output.prettyError(
-                    "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {s}<r>\n",
-                    .{package_json_source.path.text},
-                );
-                Global.crash();
+                manager.addError(.{ .patch_missing_version = .{
+                    .path = bun.handleOom(manager.allocator.dupe(u8, package_json_source.path.text)),
+                } });
+                return error.InstallFailed;
             };
 
             var resolver: void = {};
@@ -608,11 +596,8 @@ pub fn preparePatch(manager: *PackageManager) !void {
 
             const name = lockfile.str(&package.name);
             const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
-                    .{},
-                );
-                Global.crash();
+                manager.addError(.patch_lockfile_index_bug);
+                return error.InstallFailed;
             }) {
                 .id => |id| lockfile.packages.get(id),
                 .ids => |ids| id: {
@@ -623,10 +608,10 @@ pub fn preparePatch(manager: *PackageManager) !void {
                             break :id pkg;
                         }
                     }
-                    Output.prettyError("<r><red>error<r>: could not find package with name:<r> {s}\n<r>", .{
-                        package.name.slice(lockfile.buffers.string_bytes.items),
-                    });
-                    Global.crash();
+                    manager.addError(.{ .patch_package_not_found_by_name = .{
+                        .name = bun.handleOom(manager.allocator.dupe(u8, package.name.slice(lockfile.buffers.string_bytes.items))),
+                    } });
+                    return error.InstallFailed;
                 },
             };
 
@@ -642,7 +627,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
                 break :existing_patchfile_hash null;
             };
 
-            const cache_result = manager.computeCacheDirAndSubpath(
+            const cache_result = try manager.computeCacheDirAndSubpath(
                 name,
                 &actual_package.resolution,
                 &folder_path_buf,
@@ -663,7 +648,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
         .name_and_version => brk: {
             const pkg_maybe_version_to_patch = argument;
             const name, const version = Dependency.splitNameAndMaybeVersion(pkg_maybe_version_to_patch);
-            const pkg_id, const folder = pkgInfoForNameAndVersion(manager.lockfile, &iterator, pkg_maybe_version_to_patch, name, version);
+            const pkg_id, const folder = try pkgInfoForNameAndVersion(manager, manager.lockfile, &iterator, pkg_maybe_version_to_patch, name, version);
 
             const pkg = manager.lockfile.packages.get(pkg_id);
             const pkg_name = pkg.name.slice(strbuf);
@@ -680,7 +665,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
                 break :existing_patchfile_hash null;
             };
 
-            const cache_result = manager.computeCacheDirAndSubpath(
+            const cache_result = try manager.computeCacheDirAndSubpath(
                 pkg_name,
                 &pkg.resolution,
                 &folder_path_buf,
@@ -706,12 +691,9 @@ pub fn preparePatch(manager: *PackageManager) !void {
     // meaning that changes to the folder will also change the package in the cache.
     //
     // So we will overwrite the folder by directly copying the package in cache into it
-    overwritePackageInNodeModulesFolder(cache_dir, cache_dir_subpath, module_folder) catch |e| {
-        Output.prettyError(
-            "<r><red>error<r>: error overwriting folder in node_modules: {s}\n<r>",
-            .{@errorName(e)},
-        );
-        Global.crash();
+    overwritePackageInNodeModulesFolder(manager.allocator, cache_dir, cache_dir_subpath, module_folder) catch |e| {
+        manager.addError(.{ .patch_overwrite_folder = .{ .err = e } });
+        return error.InstallFailed;
     };
 
     if (not_in_workspace_root) {
@@ -727,6 +709,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
 }
 
 fn overwritePackageInNodeModulesFolder(
+    allocator: std.mem.Allocator,
     cache_dir: std.fs.Dir,
     cache_dir_subpath: []const u8,
     node_modules_folder_path: []const u8,
@@ -762,6 +745,7 @@ fn overwritePackageInNodeModulesFolder(
     };
 
     var copier: bun.install.FileCopier = try .init(
+        allocator,
         .fromStdDir(cached_package_folder),
         src_path,
         dest_subpath,
@@ -794,12 +778,13 @@ fn nodeModulesFolderForDependencyID(iterator: *Lockfile.Tree.Iterator(.node_modu
 const IdPair = struct { DependencyID, PackageID };
 
 fn pkgInfoForNameAndVersion(
+    manager: *PackageManager,
     lockfile: *Lockfile,
     iterator: *Lockfile.Tree.Iterator(.node_modules),
     pkg_maybe_version_to_patch: []const u8,
     name: []const u8,
     version: ?[]const u8,
-) struct { PackageID, Lockfile.Tree.Iterator(.node_modules).Next } {
+) !struct { PackageID, Lockfile.Tree.Iterator(.node_modules).Next } {
     var sfb = std.heap.stackFallback(@sizeOf(IdPair) * 4, lockfile.allocator);
     var pairs = bun.handleOom(std.array_list.Managed(IdPair).initCapacity(sfb.get(), 8));
     defer pairs.deinit();
@@ -827,9 +812,10 @@ fn pkgInfoForNameAndVersion(
     }
 
     if (pairs.items.len == 0) {
-        Output.prettyErrorln("\n<r><red>error<r>: package <b>{s}<r> not found<r>", .{pkg_maybe_version_to_patch});
-        Global.crash();
-        return;
+        manager.addError(.{ .patch_package_not_found = .{
+            .name_and_version = bun.handleOom(manager.allocator.dupe(u8, pkg_maybe_version_to_patch)),
+        } });
+        return error.InstallFailed;
     }
 
     // user supplied a version e.g. `is-even@1.0.0`
@@ -837,11 +823,10 @@ fn pkgInfoForNameAndVersion(
         if (pairs.items.len == 1) {
             const dep_id, const pkg_id = pairs.items[0];
             const folder = (try nodeModulesFolderForDependencyID(iterator, dep_id)) orelse {
-                Output.prettyError(
-                    "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
-                    .{pkg_maybe_version_to_patch},
-                );
-                Global.crash();
+                manager.addError(.{ .patch_folder_not_found = .{
+                    .name_and_version = bun.handleOom(manager.allocator.dupe(u8, pkg_maybe_version_to_patch)),
+                } });
+                return error.InstallFailed;
             };
             return .{
                 pkg_id,
@@ -854,11 +839,10 @@ fn pkgInfoForNameAndVersion(
         // so we are going to try looking for each dep id in node_modules
         _, const pkg_id = pairs.items[0];
         const folder = (try nodeModulesFolderForDependencyIDs(iterator, pairs.items)) orelse {
-            Output.prettyError(
-                "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
-                .{pkg_maybe_version_to_patch},
-            );
-            Global.crash();
+            manager.addError(.{ .patch_folder_not_found = .{
+                .name_and_version = bun.handleOom(manager.allocator.dupe(u8, pkg_maybe_version_to_patch)),
+            } });
+            return error.InstallFailed;
         };
 
         return .{
@@ -873,11 +857,10 @@ fn pkgInfoForNameAndVersion(
     if (pairs.items.len == 1) {
         const dep_id, const pkg_id = pairs.items[0];
         const folder = (try nodeModulesFolderForDependencyID(iterator, dep_id)) orelse {
-            Output.prettyError(
-                "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
-                .{pkg_maybe_version_to_patch},
-            );
-            Global.crash();
+            manager.addError(.{ .patch_folder_not_found = .{
+                .name_and_version = bun.handleOom(manager.allocator.dupe(u8, pkg_maybe_version_to_patch)),
+            } });
+            return error.InstallFailed;
         };
         return .{
             pkg_id,
@@ -904,11 +887,10 @@ fn pkgInfoForNameAndVersion(
     if (count == pairs.items.len) {
         // It may be hoisted, so we'll try the first one that matches
         const folder = (try nodeModulesFolderForDependencyIDs(iterator, pairs.items)) orelse {
-            Output.prettyError(
-                "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
-                .{pkg_maybe_version_to_patch},
-            );
-            Global.crash();
+            manager.addError(.{ .patch_folder_not_found = .{
+                .name_and_version = bun.handleOom(manager.allocator.dupe(u8, pkg_maybe_version_to_patch)),
+            } });
+            return error.InstallFailed;
         };
         return .{
             pkg_id,
@@ -916,10 +898,7 @@ fn pkgInfoForNameAndVersion(
         };
     }
 
-    Output.prettyErrorln(
-        "\n<r><red>error<r>: Found multiple versions of <b>{s}<r>, please specify a precise version from the following list:<r>\n",
-        .{name},
-    );
+    var versions: std.ArrayListUnmanaged(InstallError.PatchVersionEntry) = .empty;
     var i: usize = 0;
     while (i < pairs.items.len) : (i += 1) {
         _, const pkgid = pairs.items[i];
@@ -928,7 +907,10 @@ fn pkgInfoForNameAndVersion(
 
         const pkg = lockfile.packages.get(pkgid);
 
-        Output.prettyError("  {s}@<blue>{f}<r>\n", .{ pkg.name.slice(strbuf), pkg.resolution.fmt(strbuf, .posix) });
+        bun.handleOom(versions.append(manager.allocator, .{
+            .name = bun.handleOom(manager.allocator.dupe(u8, pkg.name.slice(strbuf))),
+            .resolution = bun.handleOom(std.fmt.allocPrint(manager.allocator, "{f}", .{pkg.resolution.fmt(strbuf, .posix)})),
+        }));
 
         if (i + 1 < pairs.items.len) {
             for (pairs.items[i + 1 ..]) |*p| {
@@ -938,7 +920,11 @@ fn pkgInfoForNameAndVersion(
             }
         }
     }
-    Global.crash();
+    manager.addError(.{ .patch_multiple_versions = .{
+        .name = bun.handleOom(manager.allocator.dupe(u8, name)),
+        .versions = versions.items,
+    } });
+    return error.InstallFailed;
 }
 
 fn pathArgumentRelativeToRootWorkspacePackage(manager: *PackageManager, lockfile: *const Lockfile, argument: []const u8) ?[]const u8 {
@@ -946,7 +932,7 @@ fn pathArgumentRelativeToRootWorkspacePackage(manager: *PackageManager, lockfile
     if (workspace_package_id == 0) return null;
     const workspace_res = lockfile.packages.items(.resolution)[workspace_package_id];
     const rel_path: []const u8 = workspace_res.value.workspace.slice(lockfile.buffers.string_bytes.items);
-    return bun.handleOom(bun.default_allocator.dupe(u8, bun.path.join(&[_][]const u8{ rel_path, argument }, .posix)));
+    return bun.handleOom(manager.allocator.dupe(u8, bun.path.join(&[_][]const u8{ rel_path, argument }, .posix)));
 }
 
 const PatchArgKind = enum {
@@ -968,10 +954,8 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
-const Global = bun.Global;
 const JSON = bun.json;
 const Output = bun.Output;
-const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
 const logger = bun.logger;
 const strings = bun.strings;
@@ -987,6 +971,7 @@ const BuntagHashBuf = bun.install.BuntagHashBuf;
 const Dependency = bun.install.Dependency;
 const DependencyID = bun.install.DependencyID;
 const Features = bun.install.Features;
+const InstallError = bun.install.InstallError;
 const PackageID = bun.install.PackageID;
 const Resolution = bun.install.Resolution;
 const buntaghashbuf_make = bun.install.buntaghashbuf_make;

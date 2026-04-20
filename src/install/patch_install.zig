@@ -147,14 +147,18 @@ pub const PatchTask = struct {
         // need to switch on version.tag and handle each case appropriately
         const calc_hash = &this.callback.calc_hash;
         const hash = calc_hash.result orelse {
-            if (log_level != .silent) {
-                if (calc_hash.logger.hasErrors()) {
+            if (calc_hash.logger.hasErrors()) {
+                if (log_level != .silent) {
                     calc_hash.logger.print(Output.errorWriter()) catch {};
-                } else {
-                    Output.errGeneric("Failed to calculate hash for patch <b>{s}<r>", .{this.callback.calc_hash.patchfile_path});
                 }
+                manager.addError(.{ .already_printed = .{ .exit_code = 1 } });
+            } else {
+                manager.addError(.{ .patch_calc_hash_failed = .{
+                    .path = bun.handleOom(manager.allocator.dupe(u8, this.callback.calc_hash.patchfile_path)),
+                    .silent = log_level == .silent,
+                } });
             }
-            Global.crash();
+            return error.InstallFailed;
         };
 
         var gop = bun.handleOom(manager.lockfile.patched_dependencies.getOrPut(manager.allocator, calc_hash.name_and_version_hash));
@@ -203,7 +207,7 @@ pub const PatchTask = struct {
                 },
                 .apply_patch => {
                     debug("pkg: {s} apply patch", .{pkg.name.slice(manager.lockfile.buffers.string_bytes.items)});
-                    const patch_task = PatchTask.newApplyPatchHash(
+                    const patch_task = try PatchTask.newApplyPatchHash(
                         manager,
                         pkg.meta.id,
                         hash,
@@ -259,7 +263,7 @@ pub const PatchTask = struct {
             },
         };
         defer this.manager.allocator.free(patchfile_txt);
-        var patchfile = bun.patch.parsePatchFile(patchfile_txt) catch |e| {
+        var patchfile = bun.patch.parsePatchFile(this.manager.allocator, patchfile_txt) catch |e| {
             try log.addErrorFmtOpts(
                 this.manager.allocator,
                 "failed to parse patchfile: {s}",
@@ -268,7 +272,7 @@ pub const PatchTask = struct {
             );
             return;
         };
-        defer patchfile.deinit(bun.default_allocator);
+        defer patchfile.deinit(this.manager.allocator);
 
         // 2. Create temp dir to do all the modifications
         var tmpname_buf: [1024]u8 = undefined;
@@ -289,13 +293,13 @@ pub const PatchTask = struct {
         const resolution_label, const resolution_tag = brk: {
             // TODO: fix this threadsafety issue.
             const resolution = &this.manager.lockfile.packages.items(.resolution)[patch.pkg_id];
-            break :brk .{ bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{f}", .{resolution.fmt(this.manager.lockfile.buffers.string_bytes.items, .posix)})), resolution.tag };
+            break :brk .{ bun.handleOom(std.fmt.allocPrint(this.manager.allocator, "{f}", .{resolution.fmt(this.manager.lockfile.buffers.string_bytes.items, .posix)})), resolution.tag };
         };
         defer this.manager.allocator.free(resolution_label);
 
         // 3. copy the unpatched files into temp dir
         var pkg_install: PackageInstall = .{
-            .allocator = bun.default_allocator,
+            .allocator = this.manager.allocator,
             .cache_dir = this.callback.apply.cache_dir,
             .cache_dir_subpath = this.callback.apply.cache_dir_subpath_without_patch_hash,
             .destination_dir_subpath = tempdir_name,
@@ -511,7 +515,9 @@ pub const PatchTask = struct {
         const patchfile_path = bun.handleOom(manager.allocator.dupeZ(u8, patchdep.path.slice(manager.lockfile.buffers.string_bytes.items)));
 
         const pt = bun.new(PatchTask, .{
-            .tempdir = manager.getTemporaryDirectory().handle,
+            // temp/cache directories are eagerly initialized by installWithManager
+            // before any patch task is created; once cached these never fail.
+            .tempdir = (manager.getTemporaryDirectory() catch unreachable).handle,
             .callback = .{
                 .calc_hash = .{
                     .state = state,
@@ -532,13 +538,16 @@ pub const PatchTask = struct {
         pkg_id: PackageID,
         patch_hash: u64,
         name_and_version_hash: u64,
-    ) *PatchTask {
+    ) !*PatchTask {
         const pkg_name = pkg_manager.lockfile.packages.items(.name)[pkg_id];
 
         const resolution = &pkg_manager.lockfile.packages.items(.resolution)[pkg_id];
 
         var folder_path_buf: bun.PathBuffer = undefined;
-        const stuff = pkg_manager.computeCacheDirAndSubpath(
+        // computeCacheDirAndSubpath / getTemporaryDirectory record their own
+        // failure on pkg_manager before returning error.InstallFailed; the
+        // recorded failure surfaces when the top-level loop drains pending state.
+        const stuff = try pkg_manager.computeCacheDirAndSubpath(
             pkg_name.slice(pkg_manager.lockfile.buffers.string_bytes.items),
             resolution,
             &folder_path_buf,
@@ -548,7 +557,7 @@ pub const PatchTask = struct {
         const patchfilepath = bun.handleOom(pkg_manager.allocator.dupe(u8, pkg_manager.lockfile.patched_dependencies.get(name_and_version_hash).?.path.slice(pkg_manager.lockfile.buffers.string_bytes.items)));
 
         const pt = bun.new(PatchTask, .{
-            .tempdir = pkg_manager.getTemporaryDirectory().handle,
+            .tempdir = (try pkg_manager.getTemporaryDirectory()).handle,
             .callback = .{
                 .apply = .{
                     .pkg_id = pkg_id,
@@ -582,7 +591,6 @@ const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 
 const bun = @import("bun");
-const Global = bun.Global;
 const Output = bun.Output;
 const PackageManager = bun.PackageManager;
 const ThreadPool = bun.ThreadPool;

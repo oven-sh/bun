@@ -211,8 +211,8 @@ pub const WhyCommand = struct {
     }
 
     pub fn exec(ctx: Command.Context) !void {
-        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .why);
-        const pm, _ = try PackageManager.init(ctx, cli, PackageManager.Subcommand.why);
+        const cli = (try PackageManager.CommandLineArguments.parse(ctx.allocator, .why)).unwrapCli();
+        const pm, _ = (try PackageManager.init(ctx, cli, PackageManager.Subcommand.why)).unwrapCli();
 
         if (cli.positionals.len < 1) {
             printUsage();

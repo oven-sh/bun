@@ -47,7 +47,7 @@ pub fn runTasks(
                         if (ptask.callback.apply.install_context) |*ctx| {
                             var installer: *PackageInstaller = extract_ctx;
                             const path = ctx.path;
-                            ctx.path = std.array_list.Managed(u8).init(bun.default_allocator);
+                            ctx.path = std.array_list.Managed(u8).init(manager.allocator);
                             installer.node_modules.path = path;
                             installer.current_tree_id = ctx.tree_id;
                             const pkg_id = ptask.callback.apply.pkg_id;
@@ -299,9 +299,10 @@ pub fn runTasks(
                         if (manager.options.enable.manifest_cache) {
                             Npm.PackageManifest.Serializer.saveAsync(
                                 &entry.value_ptr.manifest,
+                                manager.allocator,
                                 manager.scopeForPackageName(name.slice()),
-                                manager.getTemporaryDirectory().handle,
-                                manager.getCacheDirectory(),
+                                (try manager.getTemporaryDirectory()).handle,
+                                try manager.getCacheDirectory(),
                             );
                         }
 
@@ -568,7 +569,7 @@ pub fn runTasks(
                 }
                 const manifest = &task.data.package_manifest;
 
-                try manager.manifests.insert(manifest.pkg.name.hash, manifest);
+                try manager.manifests.insert(manager.allocator, manifest.pkg.name.hash, manifest);
 
                 if (@hasField(@TypeOf(callbacks), "manifests_only") and callbacks.manifests_only) {
                     continue;
@@ -659,7 +660,7 @@ pub fn runTasks(
                         },
                         else => @compileError("unexpected context type"),
                     }
-                } else if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, log_level)) |pkg| handle_pkg: {
+                } else if (try manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, log_level)) |pkg| handle_pkg: {
                     // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
                     // We need to make sure we resolve the dependencies first before calling the onExtract callback
                     // TODO: move this into a separate function
@@ -856,7 +857,7 @@ pub fn runTasks(
                         },
                         else => @compileError("unexpected context type"),
                     }
-                } else if (manager.processExtractedTarballPackage(
+                } else if (try manager.processExtractedTarballPackage(
                     &package_id,
                     git_checkout.dependency_id,
                     resolution,
@@ -1068,7 +1069,7 @@ pub fn generateNetworkTaskForTarball(
         .package_manager = this,
         .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
             const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
-            const task = PatchTask.newApplyPatchHash(this, package.meta.id, patch_hash, h);
+            const task = try PatchTask.newApplyPatchHash(this, package.meta.id, patch_hash, h);
             task.callback.apply.task_id = task_id;
             break :brk task;
         } else null,
@@ -1086,8 +1087,8 @@ pub fn generateNetworkTaskForTarball(
                 FileSystem.FilenameStore.instance,
             ) catch |err| bun.handleOom(err),
             .resolution = package.resolution,
-            .cache_dir = this.getCacheDirectory(),
-            .temp_dir = this.getTemporaryDirectory().handle,
+            .cache_dir = try this.getCacheDirectory(),
+            .temp_dir = (try this.getTemporaryDirectory()).handle,
             .dependency_id = dependency_id,
             .integrity = package.meta.integrity,
             .url = strings.StringOrTinyString.initAppendIfNeeded(
@@ -1121,7 +1122,6 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const ThreadPool = bun.ThreadPool;
-const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const strings = bun.strings;
 

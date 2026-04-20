@@ -53,7 +53,7 @@ manifests: PackageManifestMap = .{},
 folders: FolderResolution.Map = .{},
 git_repositories: RepositoryMap = .{},
 
-network_dedupe_map: NetworkTask.DedupeMap = .init(bun.default_allocator),
+network_dedupe_map: NetworkTask.DedupeMap,
 async_network_task_queue: AsyncNetworkTaskQueue = .{},
 network_tarball_batch: ThreadPool.Batch = .{},
 network_resolve_batch: ThreadPool.Batch = .{},
@@ -98,7 +98,7 @@ global_link_dir_path: string = "",
 onWake: WakeHandler = .{},
 ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
-peer_dependencies: bun.LinearFifo(DependencyID, .Dynamic) = .init(default_allocator),
+peer_dependencies: bun.LinearFifo(DependencyID, .Dynamic),
 
 // name hash from alias package name -> aliased package dependency version info
 known_npm_aliases: NpmAliasMap = .{},
@@ -110,6 +110,13 @@ event_loop: jsc.AnyEventLoop,
 trusted_deps_to_add_to_package_json: std.ArrayListUnmanaged(string) = .{},
 
 any_failed_to_install: bool = false,
+
+/// Escape hatch for deep callbacks (task completions, async network handlers)
+/// that cannot change their return type to `!InstallResult`. They append a
+/// structured `InstallError` here; the top-level loop checks `hasErrors()`
+/// and bubbles them out as `InstallResult.err`. Exit code is taken from the
+/// FIRST error appended.
+errors: std.ArrayListUnmanaged(InstallError) = .empty,
 
 // When adding a `file:` dependency in a workspace package, we want to install it
 // relative to the workspace root, but the path provided is relative to the
@@ -270,11 +277,19 @@ pub fn clearCachedItemsDependingOnLockfileBuffer(this: *PackageManager) void {
     this.root_package_id.id = null;
 }
 
-pub fn crash(this: *PackageManager) noreturn {
-    if (this.options.log_level != .silent) {
-        this.log.print(Output.errorWriter()) catch {};
-    }
-    Global.crash();
+/// Append a structured install error. OOM during append is unrecoverable.
+pub fn addError(this: *PackageManager, err: InstallError) void {
+    bun.handleOom(this.errors.append(this.allocator, err));
+}
+
+pub fn hasErrors(this: *const PackageManager) bool {
+    return this.errors.items.len > 0;
+}
+
+/// Convenience: extract accumulated errors as an InstallResult, or .ok if none.
+pub fn takeResult(this: *PackageManager) InstallResult {
+    if (this.errors.items.len > 0) return .{ .err = this.errors.items };
+    return .ok;
 }
 
 const TrackInstalledBin = union(enum) {
@@ -346,7 +361,7 @@ pub var configureEnvForScriptsOnce = bun.once(struct {
                 if (!this_transpiler.env.has("JOBS")) {
                     var int_buf: [10]u8 = undefined;
                     const jobs_str = std.fmt.bufPrint(&int_buf, "{d}", .{thread_count}) catch unreachable;
-                    this_transpiler.env.map.putAllocValue(bun.default_allocator, "JOBS", jobs_str) catch unreachable;
+                    this_transpiler.env.map.putAllocValue(this.allocator, "JOBS", jobs_str) catch unreachable;
                 }
             }
         }
@@ -354,15 +369,15 @@ pub var configureEnvForScriptsOnce = bun.once(struct {
         {
             var node_path: bun.PathBuffer = undefined;
             if (this.env.getNodePath(this_transpiler.fs, &node_path)) |node_pathZ| {
-                _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.handleOom(bun.default_allocator.dupe(u8, node_pathZ)));
+                _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.handleOom(this.allocator.dupe(u8, node_pathZ)));
             } else brk: {
                 const current_path = this.env.get("PATH") orelse "";
-                var PATH = try std.array_list.Managed(u8).initCapacity(bun.default_allocator, current_path.len);
+                var PATH = try std.array_list.Managed(u8).initCapacity(this.allocator, current_path.len);
                 try PATH.appendSlice(current_path);
                 var bun_path: string = "";
                 RunCommand.createFakeTemporaryNodeExecutable(&PATH, &bun_path) catch break :brk;
                 try this.env.map.put("PATH", PATH.items);
-                _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.handleOom(bun.default_allocator.dupe(u8, bun_path)));
+                _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.handleOom(this.allocator.dupe(u8, bun_path)));
             }
         }
 
@@ -433,6 +448,9 @@ const Holder = struct {
 };
 
 pub fn allocatePackageManager() void {
+    // Holder.ptr is a process-lifetime singleton that is never freed. default_allocator is the
+    // canonical choice for process-lifetime allocations; threading ctx.allocator would add a
+    // parameter for no benefit.
     Holder.ptr = bun.handleOom(bun.default_allocator.create(PackageManager));
 }
 
@@ -453,7 +471,7 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
     pub fn run(manager: *PackageManager) !void {
         if (manager.node_gyp_tempdir_name.len > 0) return;
 
-        const tempdir = manager.getTemporaryDirectory();
+        const tempdir = try manager.getTemporaryDirectory();
         var path_buf: bun.PathBuffer = undefined;
         const node_gyp_tempdir_name = try Fs.FileSystem.tmpname("node-gyp", &path_buf, 12345);
 
@@ -463,11 +481,11 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
         var node_gyp_tempdir = tempdir.handle.makeOpenPath(manager.node_gyp_tempdir_name, .{}) catch |err| {
             if (err == error.EEXIST) {
                 // it should not exist
-                Output.prettyErrorln("<r><red>error<r>: node-gyp tempdir already exists", .{});
-                Global.crash();
+                manager.addError(.node_gyp_tempdir_exists);
+                return error.InstallFailed;
             }
-            Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
-            Global.crash();
+            manager.addError(.{ .node_gyp_tempdir_create = .{ .err = err } });
+            return error.InstallFailed;
         };
         defer node_gyp_tempdir.close();
 
@@ -481,8 +499,8 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
         };
 
         var node_gyp_file = node_gyp_tempdir.createFile(file_name, .{ .mode = mode }) catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating node-gyp tempdir", .{@errorName(err)});
-            Global.crash();
+            manager.addError(.{ .node_gyp_tempdir_create = .{ .err = err } });
+            return error.InstallFailed;
         };
         defer node_gyp_file.close();
 
@@ -507,13 +525,13 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
         };
 
         node_gyp_file.writeAll(content) catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> writing to " ++ file_name ++ " file", .{@errorName(err)});
-            Global.crash();
+            manager.addError(.{ .node_gyp_file_write = .{ .err = err } });
+            return error.InstallFailed;
         };
 
         // Add our node-gyp tempdir to the path
         const existing_path = manager.env.get("PATH") orelse "";
-        var PATH = try std.array_list.Managed(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + tempdir.name.len + 1 + manager.node_gyp_tempdir_name.len);
+        var PATH = try std.array_list.Managed(u8).initCapacity(manager.allocator, existing_path.len + 1 + tempdir.name.len + 1 + manager.node_gyp_tempdir_name.len);
         try PATH.appendSlice(existing_path);
         if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
             try PATH.append(std.fs.path.delimiter);
@@ -535,6 +553,11 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
     }
 }.run);
 
+// Runs on the HTTP thread (HTTPThread.onStart), not the main thread, so it
+// cannot return into PackageManager.init(). The HTTP thread is a process-global
+// singleton (HTTPThread.zig: `var init_once = bun.once(...)`) — init failure is
+// unrecoverable for the process, not just this install, so noreturn is correct.
+// A future programmatic Bun.install() shares the same thread and same fate.
 fn httpThreadOnInitError(err: HTTP.InitError, opts: HTTP.HTTPThread.InitOpts) noreturn {
     switch (err) {
         error.LoadCAFile => {
@@ -559,11 +582,29 @@ fn httpThreadOnInitError(err: HTTP.InitError, opts: HTTP.HTTPThread.InitOpts) no
     Global.crash();
 }
 
+/// Result of `init()`. Domain failures (no package.json access, etc.) come back
+/// as `.err` so the CLI layer can `Global.exit()` with the right code; truly
+/// unexpected errors (and `error.MissingPackageJSON`, which several callers
+/// branch on to retry) still propagate as Zig errors via `!InitResult`.
+pub const InitResult = union(enum) {
+    ok: struct { *PackageManager, string },
+    err: InstallResult.Failure,
+
+    /// CLI-side unwrap: return `(pm, cwd)`, or print errors and exit.
+    /// ONLY for src/cli/*.zig — never call from src/install/.
+    pub fn unwrapCli(this: InitResult) struct { *PackageManager, string } {
+        return switch (this) {
+            .ok => |r| r,
+            .err => |f| InstallResult.exitForCli(f),
+        };
+    }
+};
+
 pub fn init(
     ctx: Command.Context,
     cli: CommandLineArguments,
     subcommand: Subcommand,
-) !struct { *PackageManager, string } {
+) !InitResult {
     if (cli.global) {
         var explicit_global_dir: string = "";
         if (ctx.install) |opts| {
@@ -645,7 +686,7 @@ pub fn init(
                         } else {
                             Output.note("package.json is missing read permissions, or is owned by another user", .{});
                         }
-                        Global.crash();
+                        return .{ .err = InstallResult.alreadyPrinted(1) };
                     },
                     else => {
                         Output.err(err, "could not open \"{s}\"", .{
@@ -746,7 +787,7 @@ pub fn init(
                             } else child_path;
 
                             if (strings.eqlLong(maybe_workspace_path, path, true)) {
-                                fs.top_level_dir = try bun.default_allocator.dupeZ(u8, parent);
+                                fs.top_level_dir = try ctx.allocator.dupeZ(u8, parent);
                                 found = true;
                                 child_json.close();
                                 if (comptime Environment.isWindows) {
@@ -763,7 +804,7 @@ pub fn init(
             }
         }
 
-        fs.top_level_dir = try bun.default_allocator.dupeZ(u8, child_cwd);
+        fs.top_level_dir = try ctx.allocator.dupeZ(u8, child_cwd);
         break :root_package_json_file child_json;
     };
 
@@ -849,14 +890,16 @@ pub fn init(
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
     manager.* = PackageManager{
-        .preallocated_network_tasks = .init(bun.default_allocator),
-        .preallocated_resolve_tasks = .init(bun.default_allocator),
+        .preallocated_network_tasks = .init(ctx.allocator),
+        .preallocated_resolve_tasks = .init(ctx.allocator),
         .options = options,
         .active_lifecycle_scripts = .{
             .context = manager,
         },
         .network_task_fifo = NetworkQueue.init(),
         .patch_task_fifo = PatchTaskFifo.init(),
+        .network_dedupe_map = .init(ctx.allocator),
+        .peer_dependencies = .init(ctx.allocator),
         .allocator = ctx.allocator,
         .log = ctx.log,
         .root_dir = entries_option.entries,
@@ -870,7 +913,7 @@ pub fn init(
         .root_package_json_file = root_package_json_file,
         // .progress
         .event_loop = .{
-            .mini = jsc.MiniEventLoop.init(bun.default_allocator),
+            .mini = jsc.MiniEventLoop.init(ctx.allocator),
         },
         .original_package_json_path = original_package_json_path,
         .workspace_package_json_cache = workspace_package_json_cache,
@@ -970,10 +1013,10 @@ pub fn init(
 
         break :brk @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0))));
     };
-    return .{
+    return .{ .ok = .{
         manager,
         original_cwd_clone,
-    };
+    } };
 }
 
 pub fn initWithRuntime(
@@ -1027,8 +1070,8 @@ pub fn initWithRuntimeOnce(
     @memcpy(original_package_json_path[top_level_dir_no_trailing_slash.len..][0.."/package.json".len], "/package.json");
 
     manager.* = PackageManager{
-        .preallocated_network_tasks = .init(bun.default_allocator),
-        .preallocated_resolve_tasks = .init(bun.default_allocator),
+        .preallocated_network_tasks = .init(allocator),
+        .preallocated_resolve_tasks = .init(allocator),
         .options = .{
             .max_concurrent_lifecycle_scripts = cli.concurrent_scripts orelse cpu_count * 2,
         },
@@ -1036,6 +1079,8 @@ pub fn initWithRuntimeOnce(
             .context = manager,
         },
         .network_task_fifo = NetworkQueue.init(),
+        .network_dedupe_map = .init(allocator),
+        .peer_dependencies = .init(allocator),
         .allocator = allocator,
         .log = log,
         .root_dir = root_dir.entries,
@@ -1282,7 +1327,6 @@ const Progress = bun.Progress;
 const RunCommand = bun.RunCommand;
 const ThreadPool = bun.ThreadPool;
 const URL = bun.URL;
-const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
 const logger = bun.logger;
 const strings = bun.strings;
@@ -1308,6 +1352,8 @@ const DependencyID = bun.install.DependencyID;
 const Features = bun.install.Features;
 const FolderResolution = bun.install.FolderResolution;
 const IdentityContext = bun.install.IdentityContext;
+const InstallError = bun.install.InstallError;
+const InstallResult = bun.install.InstallResult;
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const NetworkTask = bun.install.NetworkTask;
 const PackageID = bun.install.PackageID;

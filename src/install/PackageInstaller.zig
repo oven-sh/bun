@@ -48,6 +48,9 @@ pub const PackageInstaller = struct {
 
     pub const NodeModulesFolder = struct {
         tree_id: Lockfile.Tree.Id = 0,
+        // Field defaults must be comptime-known, so a runtime allocator can't be referenced here.
+        // Managed.init() does not allocate; callers that need a real path assign it explicitly
+        // (hoisted_install.zig, patch_install.zig) and clearAndFree() handles either allocator.
         path: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
 
         pub fn deinit(this: *NodeModulesFolder) void {
@@ -215,9 +218,7 @@ pub const PackageInstaller = struct {
         const max = this.lockfile.buffers.trees.items[tree_id].dependencies.len;
 
         if (current_count == std.math.maxInt(usize)) {
-            if (comptime Environment.allow_assert)
-                Output.panic("Installed more packages than expected for tree id: {d}. Expected: {d}", .{ tree_id, max });
-
+            bun.assertf(false, "Installed more packages than expected for tree id: {d}. Expected: {d}", .{ tree_id, max });
             return;
         }
 
@@ -330,6 +331,7 @@ pub const PackageInstaller = struct {
             while (true) {
                 var bin_linker: Bin.Linker = .{
                     .bin = bin,
+                    .allocator = this.manager.allocator,
                     .global_bin_path = this.options.bin_path,
                     .package_name = package_name_,
                     .target_package_name = target_package_name,
@@ -368,7 +370,8 @@ pub const PackageInstaller = struct {
                     }
 
                     if (this.options.enable.fail_early) {
-                        manager.crash();
+                        if (log_level != .silent) manager.log.print(Output.errorWriter()) catch {};
+                        manager.addError(.{ .already_printed = .{ .exit_code = 1 } });
                     }
                 }
 
@@ -441,7 +444,8 @@ pub const PackageInstaller = struct {
                     }
 
                     if (this.manager.options.enable.fail_early) {
-                        Global.exit(1);
+                        this.manager.addError(.{ .already_printed = .{ .exit_code = 1 } });
+                        return;
                     }
 
                     Output.flush();
@@ -501,9 +505,10 @@ pub const PackageInstaller = struct {
             const package_name = entry.list.package_name;
             // .monotonic is okay because this value isn't modified from any other thread.
             // (Scripts are spawned on this thread.)
-            while (LifecycleScriptSubprocess.alive_count.load(.monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts) {
+            while (LifecycleScriptSubprocess.alive_count.load(.monotonic) >= this.manager.options.max_concurrent_lifecycle_scripts and !this.manager.hasErrors()) {
                 this.manager.sleep();
             }
+            if (this.manager.hasErrors()) return;
 
             const optional = entry.optional;
             const output_in_foreground = false;
@@ -524,7 +529,8 @@ pub const PackageInstaller = struct {
                 }
 
                 if (this.manager.options.enable.fail_early) {
-                    Global.exit(1);
+                    this.manager.addError(.{ .already_printed = .{ .exit_code = 1 } });
+                    return;
                 }
 
                 Output.flush();
@@ -533,7 +539,7 @@ pub const PackageInstaller = struct {
         }
 
         // .monotonic is okay because this value isn't modified from any other thread.
-        while (this.manager.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
+        while (this.manager.pending_lifecycle_script_tasks.load(.monotonic) > 0 and !this.manager.hasErrors()) {
             this.manager.reportSlowLifecycleScripts();
 
             if (log_level.showProgress()) {
@@ -594,9 +600,9 @@ pub const PackageInstaller = struct {
         // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
         // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
         if (this.successfully_installed.bit_length < this.lockfile.packages.len) {
-            const new = bun.handleOom(Bitset.initEmpty(bun.default_allocator, this.lockfile.packages.len));
+            const new = bun.handleOom(Bitset.initEmpty(this.manager.allocator, this.lockfile.packages.len));
             var old = this.successfully_installed;
-            defer old.deinit(bun.default_allocator);
+            defer old.deinit(this.manager.allocator);
             old.copyInto(new);
             this.successfully_installed = new;
         }
@@ -674,13 +680,11 @@ pub const PackageInstaller = struct {
             return;
         }
 
-        if (comptime Environment.allow_assert) {
-            Output.panic("Ran callback to install enqueued packages, but there was no task associated with it. {f}:{f} (dependency_id: {d})", .{
-                bun.fmt.quote(name.slice(this.lockfile.buffers.string_bytes.items)),
-                bun.fmt.quote(data.url),
-                dependency_id,
-            });
-        }
+        bun.assertf(false, "Ran callback to install enqueued packages, but there was no task associated with it. {f}:{f} (dependency_id: {d})", .{
+            bun.fmt.quote(name.slice(this.lockfile.buffers.string_bytes.items)),
+            bun.fmt.quote(data.url),
+            dependency_id,
+        });
     }
 
     fn getInstalledPackageScriptsCount(
@@ -712,15 +716,17 @@ pub const PackageInstaller = struct {
                 this.manager.log,
                 folder_path,
             ) catch |err| {
-                if (log_level != .silent) {
+                if (this.manager.options.enable.fail_early) {
+                    this.manager.addError(.{ .lifecycle_scripts_fill = .{
+                        .alias = bun.handleOom(this.manager.allocator.dupe(u8, alias)),
+                        .err = err,
+                        .silent = log_level == .silent,
+                    } });
+                } else if (log_level != .silent) {
                     Output.errGeneric("failed to fill lifecycle scripts for <b>{s}<r>: {s}", .{
                         alias,
                         @errorName(err),
                     });
-                }
-
-                if (this.manager.options.enable.fail_early) {
-                    Global.crash();
                 }
 
                 return 0;
@@ -868,15 +874,15 @@ pub const PackageInstaller = struct {
                     resolution.value.npm.version,
                     patch_contents_hash,
                 );
-                installer.cache_dir = this.manager.getCacheDirectory();
+                installer.cache_dir = this.manager.getCacheDirectory() catch return;
             },
             .git => {
                 installer.cache_dir_subpath = this.manager.cachedGitFolderName(&resolution.value.git, patch_contents_hash);
-                installer.cache_dir = this.manager.getCacheDirectory();
+                installer.cache_dir = this.manager.getCacheDirectory() catch return;
             },
             .github => {
                 installer.cache_dir_subpath = this.manager.cachedGitHubFolderName(&resolution.value.github, patch_contents_hash);
-                installer.cache_dir = this.manager.getCacheDirectory();
+                installer.cache_dir = this.manager.getCacheDirectory() catch return;
             },
             .folder => {
                 const folder = resolution.value.folder.slice(this.lockfile.buffers.string_bytes.items);
@@ -905,11 +911,11 @@ pub const PackageInstaller = struct {
             },
             .local_tarball => {
                 installer.cache_dir_subpath = this.manager.cachedTarballFolderName(resolution.value.local_tarball, patch_contents_hash);
-                installer.cache_dir = this.manager.getCacheDirectory();
+                installer.cache_dir = this.manager.getCacheDirectory() catch return;
             },
             .remote_tarball => {
                 installer.cache_dir_subpath = this.manager.cachedTarballFolderName(resolution.value.remote_tarball, patch_contents_hash);
-                installer.cache_dir = this.manager.getCacheDirectory();
+                installer.cache_dir = this.manager.getCacheDirectory() catch return;
             },
             .workspace => {
                 const folder = resolution.value.workspace.slice(this.lockfile.buffers.string_bytes.items);
@@ -928,7 +934,10 @@ pub const PackageInstaller = struct {
                 installer.cache_dir = std.fs.cwd();
             },
             .symlink => {
-                const directory = this.manager.globalLinkDir();
+                // globalLinkDir is lazily opened; on failure the diagnostics are
+                // already printed and recorded in manager.errors. Skip this
+                // package so the top-level loop can abort cleanly.
+                const directory = this.manager.globalLinkDir() catch return;
 
                 const folder = resolution.value.symlink.slice(this.lockfile.buffers.string_bytes.items);
 
@@ -936,7 +945,7 @@ pub const PackageInstaller = struct {
                     installer.cache_dir_subpath = ".";
                     installer.cache_dir = std.fs.cwd();
                 } else {
-                    const global_link_dir = this.manager.globalLinkDirPath();
+                    const global_link_dir = this.manager.globalLinkDirPath() catch return;
                     var ptr = &this.folder_path_buf;
                     var remain: []u8 = this.folder_path_buf[0..];
                     @memcpy(ptr[0..global_link_dir.len], global_link_dir);
@@ -1002,7 +1011,7 @@ pub const PackageInstaller = struct {
                             patch_name_and_version_hash,
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
-                            error.InvalidURL => this.failWithInvalidUrl(
+                            error.InvalidURL, error.InstallFailed => this.failEnqueue(
                                 is_pending_package_install,
                                 log_level,
                             ),
@@ -1026,7 +1035,7 @@ pub const PackageInstaller = struct {
                             patch_name_and_version_hash,
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
-                            error.InvalidURL => this.failWithInvalidUrl(
+                            error.InvalidURL, error.InstallFailed => this.failEnqueue(
                                 is_pending_package_install,
                                 log_level,
                             ),
@@ -1054,7 +1063,7 @@ pub const PackageInstaller = struct {
                             patch_name_and_version_hash,
                         ) catch |err| switch (err) {
                             error.OutOfMemory => bun.outOfMemory(),
-                            error.InvalidURL => this.failWithInvalidUrl(
+                            error.InvalidURL, error.InstallFailed => this.failEnqueue(
                                 is_pending_package_install,
                                 log_level,
                             ),
@@ -1081,7 +1090,12 @@ pub const PackageInstaller = struct {
                         package_id,
                         patch.contents_hash,
                         patch_name_and_version_hash.?,
-                    );
+                    ) catch {
+                        // failure already recorded on the manager
+                        this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                        this.summary.fail += 1;
+                        return;
+                    };
                     task.callback.apply.install_context = .{
                         .dependency_id = dependency_id,
                         .tree_id = this.current_tree_id,
@@ -1251,6 +1265,13 @@ pub const PackageInstaller = struct {
                     this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                 },
                 .failure => |cause| {
+                    if (cause.fatal) {
+                        // Diagnostic already printed inside PackageInstall; abort whole install.
+                        this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                        this.manager.addError(.{ .already_printed = .{ .exit_code = 1 } });
+                        return;
+                    }
+
                     if (comptime Environment.allow_assert) {
                         bun.assert(!cause.isPackageMissingFromCache() or (resolution.tag != .symlink and resolution.tag != .workspace));
                     }
@@ -1277,21 +1298,23 @@ pub const PackageInstaller = struct {
                         if (!Singleton.node_modules_is_ok) {
                             if (!Environment.isWindows) {
                                 const stat = bun.sys.fstat(.fromStdDir(lazy_package_dir.getDir() catch |err| {
-                                    Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
-                                        this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
-                                    });
-                                    if (Environment.isDebug) {
-                                        Output.err(err, "Failed to stat node_modules", .{});
-                                    }
-                                    Global.exit(1);
+                                    this.manager.addError(.{ .install_eacces_package = .{
+                                        .package_name = bun.handleOom(this.manager.allocator.dupe(
+                                            u8,
+                                            this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
+                                        )),
+                                        .debug_err = err,
+                                    } });
+                                    return;
                                 })).unwrap() catch |err| {
-                                    Output.err("EACCES", "Permission denied while installing <b>{s}<r>", .{
-                                        this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
-                                    });
-                                    if (Environment.isDebug) {
-                                        Output.err(err, "Failed to stat node_modules", .{});
-                                    }
-                                    Global.exit(1);
+                                    this.manager.addError(.{ .install_eacces_package = .{
+                                        .package_name = bun.handleOom(this.manager.allocator.dupe(
+                                            u8,
+                                            this.names[package_id].slice(this.lockfile.buffers.string_bytes.items),
+                                        )),
+                                        .debug_err = err,
+                                    } });
+                                    return;
                                 };
 
                                 const is_writable = if (stat.uid == bun.c.getuid())
@@ -1302,8 +1325,8 @@ pub const PackageInstaller = struct {
                                     stat.mode & bun.S.IWOTH > 0;
 
                                 if (!is_writable) {
-                                    Output.err("EACCES", "Permission denied while writing packages into node_modules.", .{});
-                                    Global.exit(1);
+                                    this.manager.addError(.install_eacces_node_modules);
+                                    return;
                                 }
                             }
                             Singleton.node_modules_is_ok = true;
@@ -1413,7 +1436,10 @@ pub const PackageInstaller = struct {
         }
     }
 
-    fn failWithInvalidUrl(
+    /// An enqueue (download/tarball) failed for this dependency. Record the
+    /// failure and unblock tree progress so the outer loop can continue or
+    /// abort via `manager.errors`.
+    fn failEnqueue(
         this: *PackageInstaller,
         comptime is_pending_package_install: bool,
         log_level: Options.LogLevel,
@@ -1456,7 +1482,8 @@ pub const PackageInstaller = struct {
             }
 
             if (this.manager.options.enable.fail_early) {
-                Global.exit(1);
+                this.manager.addError(.{ .already_printed = .{ .exit_code = 1 } });
+                return false;
             }
 
             Output.flush();
@@ -1520,7 +1547,6 @@ const std = @import("std");
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
-const Global = bun.Global;
 const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;

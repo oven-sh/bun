@@ -92,7 +92,8 @@ pub fn callback(task: *ThreadPool.Task) void {
 
     switch (this.tag) {
         .package_manifest => {
-            const allocator = bun.default_allocator;
+            // NOTE: runs on thread pool — manager.allocator must be thread-safe
+            const allocator = manager.allocator;
             var manifest = &this.request.package_manifest;
 
             const body = &manifest.network.response_buffer;
@@ -174,13 +175,21 @@ pub fn callback(task: *ThreadPool.Task) void {
         .git_clone => {
             const name = this.request.git_clone.name.slice();
             const url = this.request.git_clone.url.slice();
+            // Runs on a worker thread. Cache directory is eagerly initialized by
+            // installWithManager before tasks spawn, so this catch is defensive.
+            const cache_dir = manager.getCacheDirectory() catch |e| {
+                this.err = e;
+                this.status = Status.fail;
+                this.data = .{ .git_clone = bun.invalid_fd };
+                return;
+            };
             var attempt: u8 = 1;
             const dir = brk: {
                 if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
                     manager.allocator,
                     this.request.git_clone.env,
                     &this.log,
-                    manager.getCacheDirectory(),
+                    cache_dir,
                     this.id,
                     name,
                     https,
@@ -203,11 +212,11 @@ pub fn callback(task: *ThreadPool.Task) void {
                     break :brk null;
                 };
                 break :brk null;
-            } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
+            } orelse if (Repository.trySSH(manager.allocator, url)) |ssh| Repository.download(
                 manager.allocator,
                 this.request.git_clone.env,
                 &this.log,
-                manager.getCacheDirectory(),
+                cache_dir,
                 this.id,
                 name,
                 ssh,
@@ -227,11 +236,19 @@ pub fn callback(task: *ThreadPool.Task) void {
         },
         .git_checkout => {
             const git_checkout = &this.request.git_checkout;
+            // Runs on a worker thread. Cache directory is eagerly initialized by
+            // installWithManager before tasks spawn, so this catch is defensive.
+            const cache_dir = manager.getCacheDirectory() catch |e| {
+                this.err = e;
+                this.status = Status.fail;
+                this.data = .{ .git_checkout = .{} };
+                return;
+            };
             const data = Repository.checkout(
                 manager.allocator,
                 this.request.git_checkout.env,
                 &this.log,
-                manager.getCacheDirectory(),
+                cache_dir,
                 git_checkout.repo_dir.stdDir(),
                 git_checkout.name.slice(),
                 git_checkout.url.slice(),

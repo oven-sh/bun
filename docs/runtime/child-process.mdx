@@ -422,7 +422,7 @@ This is useful for running multiple commands in sequence through the same termin
 - **No echo without a child process on Windows.** On POSIX, the kernel line discipline echoes `write()` input back to the `data` callback even with no process attached. ConPTY has no line discipline; input is buffered for the next reader. If you need echo, spawn a process that echoes.
 - **ConPTY re-encodes output.** ConPTY renders the child's output to a virtual screen and emits whatever VT sequences describe the result, so the `data` callback receives semantically equivalent — but not byte-identical — escape sequences. Colours and text are preserved; cursor-positioning and reset sequences may be reordered or coalesced. ConPTY also emits a short VT init sequence (`\x1b[?9001h\x1b[?1004h…`) before any child output.
 - **Input `\r` is not translated to `\n` on Windows.** POSIX `ICRNL` maps carriage return to newline on input; ConPTY passes `\r` through unchanged.
-- **`process.on('SIGWINCH')` in the child does not fire under ConPTY.** `process.stdout.columns`/`rows` *do* update after `resize()`, but libuv's resize-event detection relies on a conhost window hook that ConPTY's headless conhost doesn't emit. Poll `process.stdout.columns` instead. This affects any libuv-based child (Node.js included).
+- **`process.on('SIGWINCH')` in the child does not fire under ConPTY.** `process.stdout.columns`/`rows` _do_ update after `resize()`, but libuv's resize-event detection relies on a conhost window hook that ConPTY's headless conhost doesn't emit. Poll `process.stdout.columns` instead. This affects any libuv-based child (Node.js included).
 
 ---
 

@@ -210,8 +210,8 @@ it("should report when all packages are already cached", async () => {
   expect(out).toContain("already in cache");
   expect(await exited).toBe(0);
 
-  // No tarball download on the second run.
-  expect(urls.some(u => u.endsWith(".tgz"))).toBe(false);
+  // No network requests at all on the second run.
+  expect(urls).toEqual([]);
 
   // node_modules still not created.
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);

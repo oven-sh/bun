@@ -33,6 +33,7 @@ pub const PmFetchCommand = struct {
         const resolutions = packages.items(.resolution);
         const dep_resolutions = lockfile.buffers.resolutions.items;
 
+        var fetchable: u32 = 0;
         var already_cached: u32 = 0;
 
         _ = pm.getCacheDirectory();
@@ -46,6 +47,10 @@ pub const PmFetchCommand = struct {
 
             const pkg = lockfile.packages.get(pkg_id);
 
+            if (pkg.isDisabled(pm.options.cpu, pm.options.os)) continue;
+
+            fetchable += 1;
+
             var name_and_version_hash: ?u64 = null;
             var patchfile_hash: ?u64 = null;
 
@@ -55,14 +60,29 @@ pub const PmFetchCommand = struct {
                     continue;
                 },
                 .extract => {},
-                else => continue,
+                .apply_patch, .calc_patch_hash => {
+                    // The unpatched tarball is already in the cache. `bun pm fetch`
+                    // only guarantees tarballs are cached; patches are applied
+                    // during `bun install`.
+                    already_cached += 1;
+                    continue;
+                },
+                .unknown, .extracting, .calcing_patch_hash, .applying_patch => continue,
             }
 
-            // Find a dependency that resolves to this package.
+            // Find a dependency that resolves to this package. A package may
+            // be reachable via multiple dependency edges; prefer a required
+            // one so download failures are reported as errors, not warnings.
             const dep_id: DependencyID = dep_id: {
+                const deps = lockfile.buffers.dependencies.items;
+                var first: ?DependencyID = null;
                 for (dep_resolutions, 0..) |res_pkg_id, dep_idx| {
-                    if (res_pkg_id == pkg_id) break :dep_id @intCast(dep_idx);
+                    if (res_pkg_id != pkg_id) continue;
+                    const id: DependencyID = @intCast(dep_idx);
+                    if (deps[id].behavior.isRequired()) break :dep_id id;
+                    if (first == null) first = id;
                 }
+                if (first) |id| break :dep_id id;
                 // Orphaned package, skip it.
                 continue;
             };
@@ -177,7 +197,11 @@ pub const PmFetchCommand = struct {
             var cache_dir_buf: bun.PathBuffer = undefined;
             const cache_dir = bun.getFdPath(.fromStdDir(pm.getCacheDirectory()), &cache_dir_buf) catch "";
 
-            const total_fetched = pm.extracted_count;
+            // `extracted_count` only tracks tarball extractions; git checkouts
+            // do not increment it. Use the number of packages that were not
+            // cached before this run as the authoritative fetch count so git
+            // dependencies are reflected in the summary.
+            const total_fetched = @max(pm.extracted_count, fetchable -| already_cached);
 
             if (total_fetched > 0) {
                 Output.pretty("<green>Fetched {d} package{s}<r> into cache ", .{

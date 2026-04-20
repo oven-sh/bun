@@ -74,6 +74,10 @@ function usingParallelCompiler(cfg: Config): boolean {
  */
 function codegenThreads(cfg: Config): number {
   if (!usingParallelCompiler(cfg)) return 0;
+  // COFF shard emission is unimplemented in oven-sh/zig; a Linux→Windows
+  // cross-compile (local zig-only) would otherwise declare N ninja outputs
+  // zig can't produce.
+  if (cfg.windows) return 1;
   if (cfg.ci && !cfg.asan) return 1;
   return availableParallelism();
 }

@@ -1038,6 +1038,17 @@ pub const Value = union(Tag) {
             .globalThis = globalThis,
         });
 
+        // Same wiring as the toReadableStream() path: without drain_handler the
+        // fetch backpressure pause has no resume hook on a body that was first
+        // materialised via clone(), and the socket would stay paused once the
+        // ByteStream buffer crosses the high-water mark.
+        if (locked.onStreamDrained) |onDrained| {
+            if (locked.task) |task| {
+                reader.drain_handler = onDrained;
+                reader.drain_ctx = task;
+            }
+        }
+
         reader.context.setup();
 
         if (drain_result == .estimated_size) {

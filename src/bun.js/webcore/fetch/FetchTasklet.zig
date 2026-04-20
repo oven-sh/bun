@@ -1082,6 +1082,12 @@ pub const FetchTasklet = struct {
 
     fn ignoreRemainingResponseBody(this: *FetchTasklet) void {
         log("ignoreRemainingResponseBody", .{});
+        // If we paused socket reads for body backpressure, release now: the
+        // drain_handler we're about to clear is the only path that would
+        // otherwise resume, and the idle timeout was disarmed at pause time.
+        // Without this the connection sits paused forever after a
+        // reader.cancel() or Response GC mid-stream.
+        this.maybeReleaseBodyBackpressure(0);
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
         if (this.http) |http_| {

@@ -1,7 +1,7 @@
 import { $, Glob, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstat, mkdir, readlink, rm } from "fs/promises";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isPosix, tempDir } from "harness";
 import { join } from "path";
 
 // Parallel hoisted install is POSIX-only (Windows already fans out
@@ -192,49 +192,44 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
     expect(layout.filter(p => p.startsWith("node_modules/.bin/")).length).toBeGreaterThan(0);
   });
 
-  // Observable difference between serial (pre-change) and parallel
-  // linking: parallel linking spreads ~1.5k linkat/mkdirat syscalls
-  // across the thread pool, so CPU time exceeds wall time on a
-  // multi-core host. Serial linking does everything on the main
-  // thread so CPU time ≤ wall time. The test asserts that the
-  // default-path CPU/wall ratio is meaningfully higher than the
-  // BUN_INSTALL_SERIAL_HOISTED=1 ratio.
+  // Observable difference between the pre-change serial linker and
+  // the parallel one: parallel linking spreads ~1.5k linkat/mkdirat
+  // syscalls across the thread pool, so (user+sys CPU) / wall time
+  // is well above 1 on a multi-core host. The serial linker does
+  // everything on the main thread, so that ratio stays ≈1.0
+  // (background network/extract threads add a little, but with a
+  // warm cache and frozen lockfile there is essentially none).
   //
-  // Without the parallel path, BUN_INSTALL_SERIAL_HOISTED doesn't
-  // gate anything, so both ratios are ≈1.0 and the assertion fails.
-  //
-  // Skip on single-core machines where no fan-out is possible.
-  test.skipIf((navigator.hardwareConcurrency ?? 1) < 2)("links packages in parallel on the thread pool", async () => {
-    await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
-    const warm = await install(fixture.dir, env);
-    expect(warm.exitCode).toBe(0);
-
-    async function measure(e: NodeJS.Dict<string>) {
+  // Skip on single-core machines where no fan-out is possible, and
+  // on debug/ASAN builds where sanitizer + process-startup overhead
+  // swamps the linking work and compresses the ratio toward 1.0
+  // (observed 1.12 on CI's ASAN runner).
+  test.skipIf((navigator.hardwareConcurrency ?? 1) < 2 || isDebug || isASAN)(
+    "links packages in parallel on the thread pool",
+    async () => {
       await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
-      const r = await install(fixture.dir, e, ["--frozen-lockfile"]);
-      expect(r.stderr).not.toContain("error:");
-      expect(r.exitCode).toBe(0);
-      const cpu = Number(r.usage?.cpuTime.user ?? 0n) + Number(r.usage?.cpuTime.system ?? 0n);
-      return cpu / Math.max(1, r.wallMicros);
-    }
+      const warm = await install(fixture.dir, env);
+      expect(warm.exitCode).toBe(0);
 
-    // Best-of-N per mode, interleaved to smooth over scheduler
-    // noise / page-cache warmth on a busy CI host.
-    const runs = 5;
-    let parallelRatio = 0;
-    let serialRatio = Infinity;
-    for (let i = 0; i < runs; i++) {
-      parallelRatio = Math.max(parallelRatio, await measure(env));
-      serialRatio = Math.min(serialRatio, await measure({ ...env, BUN_INSTALL_SERIAL_HOISTED: "1" }));
-    }
+      // Best-of-N to smooth over scheduler noise on a busy CI host.
+      const runs = 5;
+      let best = 0;
+      for (let i = 0; i < runs; i++) {
+        await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
+        const r = await install(fixture.dir, env, ["--frozen-lockfile"]);
+        expect(r.stderr).not.toContain("error:");
+        expect(r.exitCode).toBe(0);
+        const cpu = Number(r.usage?.cpuTime.user ?? 0n) + Number(r.usage?.cpuTime.system ?? 0n);
+        best = Math.max(best, cpu / Math.max(1, r.wallMicros));
+      }
 
-    console.log(`parallel cpu/wall: ${parallelRatio.toFixed(2)}`);
-    console.log(`serial   cpu/wall: ${serialRatio.toFixed(2)}`);
+      console.log(`cpu/wall (best of ${runs}): ${best.toFixed(2)}`);
 
-    // Parallel should consume more CPU per wall-clock second than
-    // serial by a clear margin. 1.15× covers ASAN builds where
-    // per-spawn overhead compresses the ratio; on release builds
-    // the gap is typically 1.5–2×.
-    expect(parallelRatio / serialRatio).toBeGreaterThan(1.15);
-  });
+      // With the parallel path on a release build: 1.4–2.7 observed
+      // across Linux/macOS CI. Without it (serial linking on the
+      // main thread), the ratio cannot meaningfully exceed ~1.1 —
+      // verified against bun 1.3.12 (1.10–1.16).
+      expect(best).toBeGreaterThan(1.25);
+    },
+  );
 });

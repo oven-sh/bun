@@ -368,6 +368,18 @@ pub const BunxCommand = struct {
             }
         }
 
+        // When the user types a scoped package like `@foo/bar`, the initial bin
+        // name ("bar") is only a guess — the package's actual bin may be named
+        // something else entirely. In that case we must not search the original
+        // system $PATH with the guessed name, or we may match an unrelated system
+        // binary (e.g. `bunx @uidotsh/install` would otherwise run /usr/bin/install).
+        // We still search local node_modules/.bin directories, since many scoped
+        // packages do link their bin under the unscoped name.
+        //
+        // Only the branch that strips the scope from the package name is a guess;
+        // explicit `--package` bins and hardcoded aliases like `tsc`/`claude` are
+        // known-good bin names and should still be searchable in the system $PATH.
+        var initial_bin_name_is_a_guess = false;
         const initial_bin_name = if (opts.binary_name) |bin_name|
             bin_name
         else if (strings.eqlComptime(update_request.name, "typescript"))
@@ -376,22 +388,11 @@ pub const BunxCommand = struct {
             "claude"
         else if (update_request.version.tag == .github)
             update_request.version.value.github.repo.slice(update_request.version_buf)
-        else if (strings.lastIndexOfChar(update_request.name, '/')) |index|
-            update_request.name[index + 1 ..]
-        else
-            update_request.name;
+        else if (strings.lastIndexOfChar(update_request.name, '/')) |index| blk: {
+            initial_bin_name_is_a_guess = true;
+            break :blk update_request.name[index + 1 ..];
+        } else update_request.name;
         debug("initial_bin_name: {s}", .{initial_bin_name});
-
-        // When the user types a scoped package like `@foo/bar`, the initial bin
-        // name ("bar") is only a guess — the package's actual bin may be named
-        // something else entirely. In that case we must not search the original
-        // system $PATH with the guessed name, or we may match an unrelated system
-        // binary (e.g. `bunx @uidotsh/install` would otherwise run /usr/bin/install).
-        // We still search local node_modules/.bin directories, since many scoped
-        // packages do link their bin under the unscoped name.
-        const initial_bin_name_is_a_guess = opts.binary_name == null and
-            update_request.name.len > 0 and
-            update_request.name[0] == '@';
 
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
@@ -671,11 +672,16 @@ pub const BunxCommand = struct {
                     if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                         absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"), .{ bunx_cache_dir, package_name_for_bin, bun.exe_suffix }) catch unreachable;
 
-                        // Only use the system-installed version if there is no version specified
+                        // Only use the system-installed version if there is no version specified.
+                        // `package_name_for_bin` is the real bin name from the target package's
+                        // own package.json (not a guess), so it is safe to search the full
+                        // configured $PATH for it. The local node_modules/.bin directories are
+                        // at the front of PATH_FOR_BIN_DIRS, so a locally-installed package wins
+                        // over any same-named system binary.
                         if (update_request.version.literal.isEmpty()) {
                             destination_ = bun.which(
                                 &path_buf,
-                                bunx_cache_dir,
+                                PATH_FOR_BIN_DIRS,
                                 if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
                                 package_name_for_bin,
                             );

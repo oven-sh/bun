@@ -875,6 +875,123 @@ describe("scoped packages should not match unrelated system binaries", () => {
     expect(out).toContain("CORRECT: ran the scoped package's bin");
     expect(exited).toBe(0);
   });
+
+  // Also covers https://github.com/oven-sh/bun/issues/19458 and
+  // https://github.com/oven-sh/bun/issues/17904: when a scoped package is
+  // already installed locally, bunx must read its package.json (under the
+  // full scoped name) to discover the real bin name, instead of guessing
+  // the unscoped basename and tripping over a system binary.
+  it("locally installed `@scope/name` resolves the real bin from its package.json", async () => {
+    const { chmodSync } = await import("node:fs");
+
+    await mkdir(join(x_dir, "node_modules", "@myscope", "collide"), { recursive: true });
+    await mkdir(join(x_dir, "node_modules", ".bin"), { recursive: true });
+    await writeFile(
+      join(x_dir, "node_modules", "@myscope", "collide", "package.json"),
+      JSON.stringify({ name: "@myscope/collide", version: "1.0.0", bin: { "real-bin": "./real.js" } }),
+    );
+    await writeFile(
+      join(x_dir, "node_modules", "@myscope", "collide", "real.js"),
+      `#!/usr/bin/env node\nconsole.log("REAL_BIN_RAN");\n`,
+    );
+    if (isWindows) {
+      await writeFile(
+        join(x_dir, "node_modules", ".bin", "real-bin.cmd"),
+        `@echo off\r\nnode "%~dp0..\\@myscope\\collide\\real.js" %*\r\n`,
+      );
+    } else {
+      await writeFile(
+        join(x_dir, "node_modules", ".bin", "real-bin"),
+        `#!/usr/bin/env node\nrequire("../@myscope/collide/real.js");\n`,
+      );
+      chmodSync(join(x_dir, "node_modules", "@myscope", "collide", "real.js"), 0o755);
+      chmodSync(join(x_dir, "node_modules", ".bin", "real-bin"), 0o755);
+    }
+
+    // Put a decoy named after the unscoped basename ("collide") in $PATH.
+    const fakeBinDir = tmpdirSync();
+    if (isWindows) {
+      await writeFile(join(fakeBinDir, "collide.cmd"), `@echo off\r\necho DECOY_RAN\r\n`);
+    } else {
+      const fakeBin = join(fakeBinDir, "collide");
+      await writeFile(fakeBin, `#!/bin/sh\necho DECOY_RAN\n`);
+      chmodSync(fakeBin, 0o755);
+    }
+
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", "--no-install", "@myscope/collide"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "inherit",
+      stderr: "pipe",
+      env: {
+        ...env,
+        PATH: `${fakeBinDir}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
+      },
+    });
+
+    const [err, out, exited] = await Promise.all([
+      subprocess.stderr.text(),
+      subprocess.stdout.text(),
+      subprocess.exited,
+    ]);
+
+    expect(out.trim()).toBe("REAL_BIN_RAN");
+    expect(out).not.toContain("DECOY_RAN");
+    expect(err).not.toContain("error:");
+    expect(exited).toBe(0);
+  });
+
+  // When a scoped package's bin name happens to match its unscoped
+  // basename (e.g. `@scope/foo` with bin `foo`), the first $PATH probe —
+  // which excludes the system $PATH for scoped packages but still searches
+  // node_modules/.bin — should find the locally-linked bin.
+  it("locally installed `@scope/foo` whose bin is also named `foo` is still found", async () => {
+    const { chmodSync } = await import("node:fs");
+
+    await mkdir(join(x_dir, "node_modules", "@myscope", "samebin"), { recursive: true });
+    await mkdir(join(x_dir, "node_modules", ".bin"), { recursive: true });
+    await writeFile(
+      join(x_dir, "node_modules", "@myscope", "samebin", "package.json"),
+      JSON.stringify({ name: "@myscope/samebin", version: "1.0.0", bin: { samebin: "./real.js" } }),
+    );
+    await writeFile(
+      join(x_dir, "node_modules", "@myscope", "samebin", "real.js"),
+      `#!/usr/bin/env node\nconsole.log("SAMEBIN_RAN");\n`,
+    );
+    if (isWindows) {
+      await writeFile(
+        join(x_dir, "node_modules", ".bin", "samebin.cmd"),
+        `@echo off\r\nnode "%~dp0..\\@myscope\\samebin\\real.js" %*\r\n`,
+      );
+    } else {
+      await writeFile(
+        join(x_dir, "node_modules", ".bin", "samebin"),
+        `#!/usr/bin/env node\nrequire("../@myscope/samebin/real.js");\n`,
+      );
+      chmodSync(join(x_dir, "node_modules", "@myscope", "samebin", "real.js"), 0o755);
+      chmodSync(join(x_dir, "node_modules", ".bin", "samebin"), 0o755);
+    }
+
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", "--no-install", "@myscope/samebin"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "inherit",
+      stderr: "pipe",
+      env,
+    });
+
+    const [err, out, exited] = await Promise.all([
+      subprocess.stderr.text(),
+      subprocess.stdout.text(),
+      subprocess.exited,
+    ]);
+
+    expect(out.trim()).toBe("SAMEBIN_RAN");
+    expect(err).not.toContain("error:");
+    expect(exited).toBe(0);
+  });
 });
 
 describe("package name aliases", () => {

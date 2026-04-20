@@ -740,17 +740,20 @@ fn updatePackageJSONAndInstallWithFilter(
 
     var any_remove_changes = false;
 
-    // `PackageJSONEditor.edit` can shrink `updates` in place (e.g. with
-    // `--only-missing` when the dependency already exists). Remember the
-    // original slice so each workspace sees the full set of requests.
-    const original_updates = updates.*;
+    // `PackageJSONEditor.edit` can shrink and reorder `updates` in place
+    // (e.g. with `--only-missing` when the dependency already exists it
+    // swap-removes from the slice). Take a deep copy of the elements so each
+    // workspace starts from the same set of requests, unaffected by any
+    // in-place mutation the previous workspace's edit performed.
+    const original_updates = bun.handleOom(manager.allocator.dupe(UpdateRequest, updates.*));
 
     // Pre-install: edit each matching workspace's package.json in memory.
     for (workspaces) |*workspace| {
         // `PackageJSONEditor.edit` uses `request.e_string` as a sentinel for
         // "already handled"; reset it between workspaces so every workspace
         // actually gets the dependency added.
-        updates.* = original_updates;
+        @memcpy(updates.*.ptr[0..original_updates.len], original_updates);
+        updates.*.len = original_updates.len;
         for (updates.*) |*request| request.e_string = null;
 
         var entry = switch (manager.workspace_package_json_cache.getWithPath(
@@ -828,10 +831,14 @@ fn updatePackageJSONAndInstallWithFilter(
     manager.original_package_json_path = workspaces[0].package_json_path;
 
     manager.to_update = false;
-    {
-        const cloned = updates.*;
-        manager.update_requests = cloned;
-    }
+    // Always give the install step the full request list. The pre-install loop
+    // may have left `updates.*` shrunk (if the last workspace already had every
+    // requested dependency with `--only-missing`), which would cause
+    // `cleanWithLogger` to skip populating `package_id` on the requests.
+    @memcpy(updates.*.ptr[0..original_updates.len], original_updates);
+    updates.*.len = original_updates.len;
+    for (updates.*) |*request| request.e_string = null;
+    manager.update_requests = updates.*;
 
     // Ensure the root package.json is cached (installWithManager expects it).
     _ = manager.workspace_package_json_cache.getWithPath(
@@ -862,6 +869,11 @@ fn updatePackageJSONAndInstallWithFilter(
         return;
     }
 
+    // Snapshot the post-install request state (with `package_id` populated by
+    // `cleanWithLogger`). Each workspace's post-install edit may swap-remove
+    // from `updates` again, so restore from this snapshot between iterations.
+    const resolved_updates = bun.handleOom(manager.allocator.dupe(UpdateRequest, updates.*));
+
     // Post-install: for `add`, rewrite each workspace's package.json with the
     // resolved version. For `remove`, the pre-install edit is already final.
     for (workspaces) |*workspace| {
@@ -872,7 +884,8 @@ fn updatePackageJSONAndInstallWithFilter(
 
         const final_source = switch (subcommand) {
             .add => blk: {
-                updates.* = original_updates;
+                @memcpy(updates.*.ptr[0..resolved_updates.len], resolved_updates);
+                updates.*.len = resolved_updates.len;
                 for (updates.*) |*request| request.e_string = null;
 
                 const source = &logger.Source.initPathString("package.json", workspace.before_install_source);
@@ -917,16 +930,16 @@ fn updatePackageJSONAndInstallWithFilter(
             else => unreachable,
         };
 
-        const file = (try bun.sys.File.openat(
+        const file = try bun.sys.File.openat(
             .cwd(),
             workspace.package_json_path,
             bun.O.RDWR,
             0,
-        ).unwrap()).handle.stdFile();
+        ).unwrap();
         defer file.close();
 
-        try file.pwriteAll(final_source, 0);
-        std.posix.ftruncate(file.handle, final_source.len) catch {};
+        try file.pwriteAll(final_source, 0).unwrap();
+        _ = bun.sys.ftruncate(file.handle, @intCast(final_source.len));
     }
 
     if (subcommand == .remove) {

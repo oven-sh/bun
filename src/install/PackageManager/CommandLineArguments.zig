@@ -477,6 +477,9 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>Remove a dependency<r>
                 \\  <b><green>bun remove<r> <blue>ts-node<r>
                 \\
+                \\  <d>Remove from a specific workspace package<r>
+                \\  <b><green>bun remove<r> <cyan>--filter=api<r> <blue>zod<r>
+                \\
                 \\Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
                 \\
             ;

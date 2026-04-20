@@ -11,6 +11,20 @@ import Remove from "/snippets/cli/remove.mdx";
 bun remove ts-node
 ```
 
+## `--filter`
+
+<Note>**Alias** — `-F`</Note>
+
+In a monorepo, use `--filter` to remove a dependency from one or more workspace packages instead of the root `package.json`.
+
+```bash terminal icon="terminal"
+# remove zod from the "api" workspace package
+bun remove zod --filter api
+
+# remove from every workspace package
+bun remove zod --filter '*'
+```
+
 ---
 
 <Remove />

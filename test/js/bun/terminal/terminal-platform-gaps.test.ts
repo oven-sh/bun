@@ -173,10 +173,9 @@ describe("Bun.Terminal platform behaviour", () => {
     }
   });
 
-  // On Windows, writing \x03 to ConPTY input does not currently reach a Bun
-  // child's process.on('SIGINT') — Bun installs its own console-ctrl handler
-  // (Bun__setCTRLHandler) and the interaction with ConPTY's CTRL_C_EVENT path
-  // needs separate investigation. Works on POSIX via the line discipline.
+  // ConPTY consumes \x03 from the input pipe but the resulting CTRL_C_EVENT
+  // does not reach the child's SetConsoleCtrlHandler chain (reproduces with a
+  // Node.js child too — known ConPTY limitation, see vscode#71793).
   test.todoIf(isWindows)("SAME: Ctrl+C input interrupts the child", async () => {
     const { output } = await runInTerminal(
       `process.on('SIGINT', () => { process.stdout.write('SIGINT'); process.exit(0); });
@@ -241,10 +240,11 @@ describe("Bun.Terminal platform behaviour", () => {
   // resize
   // ──────────────────────────────────────────────────────────────────────────
 
-  // On Windows, ResizePseudoConsole does change the buffer size (the
-  // "subprocess sees correct terminal dimensions" test proves the child sees
-  // it at startup), but Bun's synthetic SIGWINCH event in the child is not
-  // currently delivered under ConPTY — needs separate investigation.
+  // libuv's SIGWINCH emulation on Windows uses SetWinEventHook(EVENT_CONSOLE_LAYOUT)
+  // from conhost's window; ConPTY's conhost is headless so that never fires, and
+  // ConPTY does not generate WINDOW_BUFFER_SIZE_EVENT on the input stream either.
+  // process.stdout.columns DOES update (GetConsoleScreenBufferInfo), only the
+  // event notification is missing. Affects Node.js under node-pty equally.
   test.todoIf(isWindows)("SAME: resize while child is running fires SIGWINCH in child", async () => {
     const { output } = await runInTerminal(
       `process.on('SIGWINCH', () => setImmediate(() => {
@@ -257,6 +257,31 @@ describe("Bun.Terminal platform behaviour", () => {
         cols: 80,
         rows: 24,
         done: o => o.includes("WINCH"),
+        afterReady: t => void t.resize(133, 41),
+      },
+    );
+    expect(output).toContain("cols=133");
+    expect(output).toContain("rows=41");
+  });
+
+  test("SAME: child can observe resize by re-querying window size", async () => {
+    // SIGWINCH does not fire under ConPTY (see above), so the cached
+    // process.stdout.columns is stale. But the underlying syscall
+    // (TIOCGWINSZ / GetConsoleScreenBufferInfo) returns the new size, so an
+    // explicit refresh works on both platforms.
+    const { output } = await runInTerminal(
+      `setInterval(() => {
+         process.stdout._refreshSize();
+         if (process.stdout.columns === 133) {
+           process.stdout.write('SAW cols=' + process.stdout.columns + ' rows=' + process.stdout.rows);
+           process.exit(0);
+         }
+       }, 50);
+       process.stdout.write('READY');`,
+      {
+        cols: 80,
+        rows: 24,
+        done: o => o.includes("SAW cols="),
         afterReady: t => void t.resize(133, 41),
       },
     );

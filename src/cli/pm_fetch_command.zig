@@ -123,13 +123,15 @@ pub const PmFetchCommand = struct {
                     };
                 },
                 .git => {
-                    pm.enqueueGitForCheckout(
-                        dep_id,
-                        dep.name.slice(string_buf),
-                        &resolution,
-                        task_ctx,
-                        name_and_version_hash,
-                    );
+                    // The `.git_clone` completion handler in `runTasks.zig`
+                    // only schedules a checkout when `Ctx == *PackageInstaller`.
+                    // In the resolve-mode callbacks used here it re-resolves
+                    // the dependency (finding the existing lockfile package)
+                    // and never schedules the checkout, so the cache would
+                    // not be populated. Skip `git:` dependencies in this pass;
+                    // they are populated during the resolve phase above when
+                    // first resolved, and otherwise during `bun install`.
+                    continue;
                 },
                 .github => {
                     const url = pm.allocGitHubURL(&resolution.value.github);

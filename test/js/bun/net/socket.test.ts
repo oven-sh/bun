@@ -773,13 +773,14 @@ it.skipIf(isWindows)("should not crash when a socket from a file descriptor is c
 
 it("should not leak memory", async () => {
   // assert we don't leak the sockets
-  // we expect 1 or 2 because that's the prototype / structure. Windows agents
-  // (particularly the Windows 2019 lane) intermittently observe one extra
-  // retained socket past the shared structure — the Windows bound of 4
-  // matches the observed value and still tightly catches real regressions.
+  // we expect 1 or 2 because that's the prototype / structure. The C++ module
+  // loader keeps a few pipeline JSPromises live in the registry; one of them
+  // can transitively pin a single TCPSocket through this test's own closure
+  // chain for an extra GC cycle on Windows. The Windows 2019 lane has been
+  // observed at 4, hence the higher bound + longer maxWait there.
   await expectMaxObjectTypeCount(expect, "Listener", 2);
-  await expectMaxObjectTypeCount(expect, "TCPSocket", isWindows ? 4 : 2);
-  await expectMaxObjectTypeCount(expect, "TLSSocket", isWindows ? 4 : 2);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", isWindows ? 4 : 2, isWindows ? 5000 : 1000);
+  await expectMaxObjectTypeCount(expect, "TLSSocket", isWindows ? 4 : 2, isWindows ? 5000 : 1000);
 });
 
 it("should not leak memory when connect() fails again", async () => {

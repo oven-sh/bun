@@ -196,6 +196,7 @@ pub const PmFetchCommand = struct {
             }
 
             if (closure.err) |err| {
+                try pm.log.print(Output.errorWriter());
                 return err;
             }
         }

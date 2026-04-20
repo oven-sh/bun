@@ -4,7 +4,7 @@
 // cells and another import's context would later be allocated at the same
 // address — surfacing as e.g. `Export named 'beforeAll' not found in module
 // 'node:fs'`. Reproduced with BUN_JSC_collectContinuously=1.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("require(esm) sync queue is a GC root", async () => {

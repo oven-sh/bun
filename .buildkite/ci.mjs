@@ -827,6 +827,7 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
   const targets = releasePlatforms.map(p => ({ triplet: getTargetTriplet(p) }));
   const args = [`--targets '${JSON.stringify(targets)}'`, `--threshold-mb ${BINARY_SIZE_THRESHOLD_MB}`];
   if (recordOnly) args.push("--no-fail");
+  if (!options.canary) args.push("--release");
 
   return {
     key: "binary-size",

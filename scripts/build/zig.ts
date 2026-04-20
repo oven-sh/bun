@@ -32,39 +32,79 @@ import { streamPath } from "./stream.ts";
  * Override via `--zig-commit=<hash>` to test a new compiler.
  * From https://github.com/oven-sh/zig releases.
  *
- * TEMPORARY SPLIT: local dev uses a newer compiler with parallel sema +
- * sharded LLVM codegen (big speedup, still being proven correct). CI
- * stays on the last known-good commit so release builds aren't affected
- * by compiler bugs we haven't shaken out yet. Once the parallel compiler
- * is trusted, collapse both back to one constant.
+ * TEMPORARY SPLIT: ZIG_COMMIT is the pre-parallel-sema compiler, kept
+ * for Windows hosts only (COFF shard emission isn't implemented and
+ * the build path needs a single object). Everything else — local and
+ * CI, all targets — uses ZIG_COMMIT_PARALLEL (parallel sema is
+ * deterministic; codegen-unit count is decided separately by
+ * codegenThreads()). Once Windows is supported, collapse both back to
+ * one constant.
  */
 export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
-export const ZIG_COMMIT_PARALLEL = "65b29282c04e42bea2539e9e31c5a59ac9cbabdb";
+export const ZIG_COMMIT_PARALLEL = "0bcf4c3d998133e724d27e9fd783172ffed4c943";
 
 /**
- * The one place that picks which compiler to use. Everything coupled to
- * the parallel compiler (ZIG_PARALLEL_SEMA, -Dllvm_codegen_threads) keys
- * on the resolved cfg.zigCommit via usingParallelCompiler(), so changing
- * this — or passing --zigCommit=<hash> — is sufficient.
- *
- * Parallel compiler is darwin+linux local only for now. Linux was gated
- * off until 65b29282 fixed the self-hosted ELF `-r` merge that combines
- * sharded codegen output (#29132). CI and Windows stay on the stable
- * compiler.
+ * The one place that picks which compiler to use. The parallel compiler
+ * is used everywhere except Windows (its sharded-codegen object emission
+ * for COFF is unimplemented). Parallel SEMA is deterministic and changes
+ * no output, so CI gets it too — only the codegen-unit count differs by
+ * config (see codegenThreads()).
  */
-export function defaultZigCommit(ci: boolean, hostOs: OS): string {
-  if (ci || hostOs === "windows") return ZIG_COMMIT;
+export function defaultZigCommit(hostOs: OS): string {
+  if (hostOs === "windows") return ZIG_COMMIT;
   return ZIG_COMMIT_PARALLEL;
 }
 
 /**
- * True iff `cfg` is using the parallel-sema compiler. All parallel-only
- * build knobs (ZIG_PARALLEL_SEMA env, -Dllvm_codegen_threads>0) must key
- * on this — the stable compiler emits N sharded .o files under those
- * options but leaves getEmittedBin() as a 0-byte stub, so link fails.
+ * True iff `cfg` is using the parallel-sema compiler. Gates
+ * ZIG_PARALLEL_SEMA and the `llvm_no_merge_shards` build.zig path —
+ * the stable compiler doesn't understand either.
  */
 function usingParallelCompiler(cfg: Config): boolean {
   return cfg.zigCommit !== ZIG_COMMIT;
+}
+
+/**
+ * Number of LLVM codegen units. >1 splits the build into N independent
+ * LLVM modules — parallelises emit, but cross-unit calls become
+ * `linkonce_odr` externs so LLVM can't inline or IPO across them.
+ *
+ * Sharding is gated off for:
+ *   - Non-ASAN CI: shipped releases want full IPO; cg=1 keeps that and
+ *     keeps the upload/download contract a single file.
+ *   - Windows targets: COFF shard emission is unimplemented in oven-sh/zig.
+ *
+ * ASAN CI uses a FIXED count (CI_ASAN_CODEGEN_THREADS) so zig-only and
+ * link-only — which run on different machines — agree on the artifact
+ * names. Local builds shard at availableParallelism(); benchmark against
+ * a non-ASAN CI artifact if cross-unit inlining matters.
+ */
+function codegenThreads(cfg: Config): number {
+  if (!usingParallelCompiler(cfg)) return 0;
+  if (cfg.windows) return 1;
+  if (cfg.ci) {
+    // ASAN is a test-only build (not shipped), so cross-shard IPO loss is
+    // fine and the speedup is worth it. The count is FIXED so zig-only and
+    // link-only — which run on different machines — agree on the artifact
+    // names. Non-asan CI stays at 1: shipped releases want full IPO.
+    return cfg.asan ? CI_ASAN_CODEGEN_THREADS : 1;
+  }
+  return availableParallelism();
+}
+
+/** Fixed shard count for CI ASAN builds. Matches getZigAgent's instance size. */
+export const CI_ASAN_CODEGEN_THREADS = 8;
+
+/**
+ * Output object file names for the zig step, matching what build.zig emits.
+ * Shared between emitZig (zig-only/full) and emitLinkOnly so both sides of
+ * the CI artifact split agree on filenames.
+ */
+export function zigObjectPaths(cfg: Config): string[] {
+  const cg = codegenThreads(cfg);
+  return cg > 1
+    ? Array.from({ length: cg }, (_, i) => resolve(cfg.buildDir, `bun-zig.${i}.o`))
+    : [resolve(cfg.buildDir, "bun-zig.o")];
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -234,9 +274,10 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
     restat: true,
   });
 
-  // Zig build — the big one. One invocation produces bun-zig.o. Zig's
-  // own build system handles per-file tracking; restat prunes downstream
-  // when zig's cache says nothing changed.
+  // Zig build — the big one. One invocation produces bun-zig.o (or
+  // bun-zig.{0..N-1}.o when codegenThreads()>1). Zig's own build system
+  // handles per-file tracking; restat prunes downstream when zig's cache
+  // says nothing changed.
   //
   // Default: --console + pool=console. Zig gets direct TTY, its native
   // spinner works. Ninja defers [N/M] while the console job owns the
@@ -263,7 +304,7 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
   // ninja can track completion. Same cache dirs as the main zig build —
   // zig keys by hash, the two coexist cleanly.
   n.rule("zig_check", {
-    command: `${stream} --console --stamp=$out --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache $zig build $step $args`,
+    command: `${stream} --console --stamp=$out --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache${parallelSema} $zig build $step $args`,
     description: "zig $step",
     pool: "console",
     restat: true,
@@ -309,9 +350,9 @@ export interface ZigBuildInputs {
 /**
  * Emit the zig download + zig build steps. Returns the output object file(s).
  *
- * For normal builds: one `bun-zig.o`. For test builds (future): `bun-test.o`.
- * Threaded codegen (LLVM_ZIG_CODEGEN_THREADS > 1) would produce multiple .o
- * files, but that's always 0 in practice — deferred.
+ * Single `bun-zig.o` when codegenThreads()<=1 (non-ASAN CI, Windows
+ * targets); `bun-zig.{0..N-1}.o` shards otherwise (ASAN CI, local dev).
+ * The link step spreads the returned array into its inputs either way.
  */
 export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[] {
   n.comment("─── Zig ───");
@@ -360,11 +401,16 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
 
   // ─── Build ───
   const cacheDirs = zigCacheDirs(cfg);
-  const output = resolve(cfg.buildDir, "bun-zig.o");
+  // With the parallel compiler at >1 codegen threads, build.zig sets
+  // `llvm_no_merge_shards` and installs `bun-zig.{i}.o` per shard instead
+  // of one merged `bun-zig.o` (zig's single-threaded ELF -r merge of the
+  // shards dominated wall time). Declare every shard so ninja tracks them
+  // and the link step gets all of them; lld merges in parallel.
+  const outputs = zigObjectPaths(cfg);
   const args = zigBuildArgs(cfg);
 
   n.build({
-    outputs: [output],
+    outputs,
     rule: "zig_build",
     inputs: [],
     implicitInputs: zigBuildImplicitInputs(cfg, inputs),
@@ -377,10 +423,10 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
       zig_global_cache: cacheDirs.global,
     },
   });
-  n.phony("bun-zig", [output]);
+  n.phony("bun-zig", outputs);
   n.blank();
 
-  return [output];
+  return outputs;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -426,8 +472,8 @@ function zigBuildArgs(cfg: Config): string[] {
     `-Duse_mimalloc=true`,
     // Sharded LLVM codegen — one shard per host core on the parallel
     // compiler. Zig has no "auto" value (0 = single-threaded). MUST be 0
-    // on the stable compiler — see usingParallelCompiler().
-    `-Dllvm_codegen_threads=${usingParallelCompiler(cfg) ? availableParallelism() : 0}`,
+    // on the stable compiler — see codegenThreads().
+    `-Dllvm_codegen_threads=${codegenThreads(cfg)}`,
 
     // Versioning
     `-Dversion=${cfg.version}`,

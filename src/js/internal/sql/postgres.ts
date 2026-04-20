@@ -615,6 +615,12 @@ class PooledPostgresConnection {
       this.#onConnected.bind(this),
       this.#onClose.bind(this),
     );
+
+    // For reused orphan connections that are already connected, call onConnected manually
+    // (native doesn't queue callback since this assignment must complete first)
+    if (this.connection?.connected && this.state === PooledConnectionState.pending) {
+      this.#onConnected(null, this.connection);
+    }
   }
 
   onClose(onClose: (err: Error) => void) {

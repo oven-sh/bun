@@ -5,6 +5,7 @@
  * without always needing to run `bun install` in development.
  */
 
+import * as numeric from "_util/numeric.ts";
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
@@ -13,7 +14,6 @@ import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
-import * as numeric from "_util/numeric.ts";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -155,6 +155,36 @@ export function gcTick(trace = false) {
   // console.trace("hello");
   gc();
   return Bun.sleep(0);
+}
+
+/**
+ * Creates a collector that can wait for an object to be garbage collected.
+ * Uses WeakRef to track when the object is no longer reachable.
+ *
+ * @example
+ * ```ts
+ * let obj: SomeType | null = new SomeType();
+ * const collector = waitForCollection(obj);
+ * obj = null;
+ * const wasCollected = await collector.wait();
+ * expect(wasCollected).toBe(true);
+ * ```
+ */
+export function waitForCollection(obj: object, timeout: number = 5000, interval: number = 50) {
+  const weakRef = new WeakRef(obj);
+  return {
+    async wait(): Promise<boolean> {
+      const start = Date.now();
+      while (Date.now() - start < timeout) {
+        gc(true);
+        if (weakRef.deref() === undefined) {
+          return true;
+        }
+        await Bun.sleep(interval);
+      }
+      return false;
+    },
+  };
 }
 
 export function withoutAggressiveGC(block: () => unknown) {

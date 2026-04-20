@@ -42,29 +42,40 @@ export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
 export const ZIG_COMMIT_PARALLEL = "65b29282c04e42bea2539e9e31c5a59ac9cbabdb";
 
 /**
- * The one place that picks which compiler to use. Everything coupled to
- * the parallel compiler (ZIG_PARALLEL_SEMA, -Dllvm_codegen_threads) keys
- * on the resolved cfg.zigCommit via usingParallelCompiler(), so changing
- * this — or passing --zigCommit=<hash> — is sufficient.
- *
- * Parallel compiler is darwin+linux local only for now. Linux was gated
- * off until 65b29282 fixed the self-hosted ELF `-r` merge that combines
- * sharded codegen output (#29132). CI and Windows stay on the stable
- * compiler.
+ * The one place that picks which compiler to use. The parallel compiler
+ * is used everywhere except Windows (its sharded-codegen object emission
+ * for COFF is unimplemented). Parallel SEMA is deterministic and changes
+ * no output, so CI gets it too — only the codegen-unit count differs by
+ * config (see codegenThreads()).
  */
-export function defaultZigCommit(ci: boolean, hostOs: OS): string {
-  if (ci || hostOs === "windows") return ZIG_COMMIT;
+export function defaultZigCommit(ci: boolean, hostOs: OS, asan: boolean): string {
+  void ci;
+  void asan;
+  if (hostOs === "windows") return ZIG_COMMIT;
   return ZIG_COMMIT_PARALLEL;
 }
 
 /**
- * True iff `cfg` is using the parallel-sema compiler. All parallel-only
- * build knobs (ZIG_PARALLEL_SEMA env, -Dllvm_codegen_threads>0) must key
- * on this — the stable compiler emits N sharded .o files under those
- * options but leaves getEmittedBin() as a 0-byte stub, so link fails.
+ * True iff `cfg` is using the parallel-sema compiler. Gates
+ * ZIG_PARALLEL_SEMA and the `llvm_no_merge_shards` build.zig path —
+ * the stable compiler doesn't understand either.
  */
 function usingParallelCompiler(cfg: Config): boolean {
   return cfg.zigCommit !== ZIG_COMMIT;
+}
+
+/**
+ * Number of LLVM codegen units. >1 splits the build into N independent
+ * LLVM modules — parallelises emit, but cross-unit calls become
+ * `linkonce_odr` externs so LLVM can't inline or IPO across them.
+ * Shipped release builds stay at 1 so they're optimised as one module.
+ * Local dev (mostly Debug, where -O0 doesn't inline anyway) and CI
+ * ASAN (not shipped) take the build-speed win.
+ */
+function codegenThreads(cfg: Config): number {
+  if (!usingParallelCompiler(cfg)) return 0;
+  if (cfg.ci && !cfg.asan) return 1;
+  return availableParallelism();
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -263,7 +274,7 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
   // ninja can track completion. Same cache dirs as the main zig build —
   // zig keys by hash, the two coexist cleanly.
   n.rule("zig_check", {
-    command: `${stream} --console --stamp=$out --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache $zig build $step $args`,
+    command: `${stream} --console --stamp=$out --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache${parallelSema} $zig build $step $args`,
     description: "zig $step",
     pool: "console",
     restat: true,
@@ -365,7 +376,7 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
   // of one merged `bun-zig.o` (zig's single-threaded ELF -r merge of the
   // shards dominated wall time). Declare every shard so ninja tracks them
   // and the link step gets all of them; lld merges in parallel.
-  const cgThreads = usingParallelCompiler(cfg) ? availableParallelism() : 0;
+  const cgThreads = codegenThreads(cfg);
   const outputs =
     cgThreads > 1
       ? Array.from({ length: cgThreads }, (_, i) => resolve(cfg.buildDir, `bun-zig.${i}.o`))
@@ -435,8 +446,8 @@ function zigBuildArgs(cfg: Config): string[] {
     `-Duse_mimalloc=true`,
     // Sharded LLVM codegen — one shard per host core on the parallel
     // compiler. Zig has no "auto" value (0 = single-threaded). MUST be 0
-    // on the stable compiler — see usingParallelCompiler().
-    `-Dllvm_codegen_threads=${usingParallelCompiler(cfg) ? availableParallelism() : 0}`,
+    // on the stable compiler — see codegenThreads().
+    `-Dllvm_codegen_threads=${codegenThreads(cfg)}`,
 
     // Versioning
     `-Dversion=${cfg.version}`,

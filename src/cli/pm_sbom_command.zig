@@ -16,59 +16,23 @@ pub const PmSbomCommand = struct {
         }
     };
 
-    pub fn exec(ctx: Command.Context, pm: *PackageManager, args: []const []const u8) !void {
-        const positionals = pm.options.positionals;
-        var format: Format = .cyclonedx;
-        var outfile: ?[]const u8 = null;
-
-        // `bun pm sbom --help` should print specific help
-        if (strings.leftHasAnyInRight(args, &.{ "--help", "-h" })) {
-            printHelp();
-            Global.exit(0);
-        }
-
-        // Parse --format and -o/--outfile from positionals. The shared `pm` arg parser
-        // doesn't know about these so we look for them here, similar to how other
-        // `bun pm` subcommands check their own flags.
-        var i: usize = 1;
-        while (i < positionals.len) : (i += 1) {
-            const arg = positionals[i];
-            if (strings.eqlComptime(arg, "--format")) {
-                i += 1;
-                if (i >= positionals.len) {
-                    Output.errGeneric("missing value for --format", .{});
-                    Output.note("valid values are 'cyclonedx' or 'spdx'", .{});
-                    Global.exit(1);
-                }
-                format = Format.fromString(positionals[i]) orelse {
-                    Output.errGeneric("invalid --format value: '{s}'", .{positionals[i]});
-                    Output.note("valid values are 'cyclonedx' or 'spdx'", .{});
-                    Global.exit(1);
-                };
-            } else if (strings.hasPrefixComptime(arg, "--format=")) {
-                const value = arg["--format=".len..];
-                format = Format.fromString(value) orelse {
-                    Output.errGeneric("invalid --format value: '{s}'", .{value});
-                    Output.note("valid values are 'cyclonedx' or 'spdx'", .{});
-                    Global.exit(1);
-                };
-            } else if (strings.eqlComptime(arg, "-o") or strings.eqlComptime(arg, "--outfile")) {
-                i += 1;
-                if (i >= positionals.len) {
-                    Output.errGeneric("missing value for {s}", .{arg});
-                    Global.exit(1);
-                }
-                outfile = positionals[i];
-            } else if (strings.hasPrefixComptime(arg, "--outfile=")) {
-                outfile = arg["--outfile=".len..];
-            } else if (strings.hasPrefixComptime(arg, "-o=")) {
-                outfile = arg["-o=".len..];
-            } else {
-                Output.errGeneric("unknown option: '{s}'", .{arg});
-                Output.flush();
-                printHelp();
+    pub fn exec(ctx: Command.Context, pm: *PackageManager) !void {
+        const format: Format = if (pm.options.sbom_format) |f|
+            Format.fromString(f) orelse {
+                Output.errGeneric("invalid --format value: '{s}'", .{f});
+                Output.note("valid values are 'cyclonedx' or 'spdx'", .{});
                 Global.exit(1);
             }
+        else
+            .cyclonedx;
+
+        const outfile: ?[]const u8 = pm.options.sbom_outfile;
+
+        if (pm.options.positionals.len > 1) {
+            Output.errGeneric("unexpected argument: '{s}'", .{pm.options.positionals[1]});
+            Output.flush();
+            printHelp();
+            Global.exit(1);
         }
 
         const load_lockfile = pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true);

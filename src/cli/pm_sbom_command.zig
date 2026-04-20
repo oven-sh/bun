@@ -205,9 +205,11 @@ const Generator = struct {
             const resolved = res_list.get(resolutions_buf);
             for (deps, resolved) |dep, resolved_id| {
                 if (resolved_id == invalid_package_id or resolved_id >= pkg_flags.len) continue;
+                // `isOptional()` excludes optional peer deps (it checks
+                // `optional and !peer`), so check `isOptionalPeer()` too.
                 if (dep.behavior.isDev()) {
                     pkg_flags[resolved_id].dev = true;
-                } else if (dep.behavior.isOptional()) {
+                } else if (dep.behavior.isOptional() or dep.behavior.isOptionalPeer()) {
                     pkg_flags[resolved_id].optional = true;
                 } else {
                     pkg_flags[resolved_id].required = true;
@@ -685,7 +687,7 @@ const Generator = struct {
                     if (r != dep_id) continue;
                     if (dep.behavior.isDev()) {
                         has_dev = true;
-                    } else if (dep.behavior.isOptional()) {
+                    } else if (dep.behavior.isOptional() or dep.behavior.isOptionalPeer()) {
                         has_optional = true;
                     } else {
                         break :relationshipType .depends_on;

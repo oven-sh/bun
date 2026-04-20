@@ -842,7 +842,10 @@ pub fn addInstallObjectFile(
             compile.out_filename[0 .. compile.out_filename.len - 2]
         else
             compile.out_filename;
-        const umbrella = b.step("install-shards", "install codegen shard objects");
+        const umbrella = b.step(
+            b.fmt("install-shards-{s}", .{name}),
+            b.fmt("install {s} codegen shard objects", .{name}),
+        );
         var i: u32 = 0;
         while (i < compile.llvm_codegen_threads) : (i += 1) {
             const shard = dir.path(b, b.fmt("{s}.{d}.o", .{ stem, i }));

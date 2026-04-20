@@ -77,6 +77,23 @@ To view a complete list of options for this command:
 bun add --help
 ```
 
+## `--filter`
+
+<Note>**Alias** — `-F`</Note>
+
+In a monorepo, `bun add` from the root writes to the root `package.json`. Use `--filter` to add the dependency to one or more workspace packages instead.
+
+```bash terminal icon="terminal"
+# add zod to the "api" workspace package
+bun add zod --filter api
+
+# match by relative path
+bun add zod --filter ./packages/api
+
+# add to every workspace package
+bun add zod --filter '*'
+```
+
 ## `--global`
 
 <Note>

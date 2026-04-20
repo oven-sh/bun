@@ -177,8 +177,9 @@ pub const Subcommand = enum {
             .outdated => true,
             .install => true,
             .update => true,
+            .add => true,
+            .remove => true,
             // .pack => true,
-            // .add => true,
             else => false,
         };
     }

@@ -71,6 +71,16 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         Global.crash();
     }
 
+    if ((subcommand == .add or subcommand == .remove) and manager.options.filter_patterns.len > 0) {
+        return try updatePackageJSONAndInstallWithFilter(
+            manager,
+            ctx,
+            updates,
+            subcommand,
+            original_cwd,
+        );
+    }
+
     var current_package_json = switch (manager.workspace_package_json_cache.getWithPath(
         manager.allocator,
         manager.log,
@@ -486,6 +496,441 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
     }
 }
 
+const FilteredWorkspace = struct {
+    /// Absolute, null-terminated path to the workspace's package.json (owned).
+    package_json_path: [:0]const u8,
+    /// Workspace package name (owned).
+    name: []const u8,
+    name_hash: PackageNameHash,
+    indentation: JSPrinter.Options.Indentation,
+    preserve_trailing_newline: bool,
+    /// Serialized package.json contents after the pre-install edit.
+    before_install_source: []const u8,
+};
+
+/// Enumerate workspace packages declared in the root `package.json` and
+/// return those matching `--filter` patterns. Must be run from the workspace
+/// root (PackageManager.init has already chdir'd there).
+fn findFilteredWorkspaces(
+    manager: *PackageManager,
+    original_cwd: string,
+    root_package_json_path: [:0]const u8,
+) ![]FilteredWorkspace {
+    const allocator = manager.allocator;
+
+    // Parse --filter patterns.
+    const filter_path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(filter_path_buf);
+
+    var filters: std.ArrayListUnmanaged(WorkspaceFilter) = .{};
+    defer {
+        for (filters.items) |f| f.deinit(allocator);
+        filters.deinit(allocator);
+    }
+    try filters.ensureUnusedCapacity(allocator, manager.options.filter_patterns.len);
+    for (manager.options.filter_patterns) |pattern| {
+        filters.appendAssumeCapacity(try WorkspaceFilter.init(allocator, pattern, original_cwd, filter_path_buf[0..]));
+    }
+
+    // Load the root package.json so we can read its "workspaces" array.
+    const root_entry = switch (manager.workspace_package_json_cache.getWithPath(
+        allocator,
+        manager.log,
+        root_package_json_path,
+        .{ .guess_indentation = true },
+    )) {
+        .parse_err => |err| {
+            manager.log.print(Output.errorWriter()) catch {};
+            Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{ root_package_json_path, @errorName(err) });
+            Global.crash();
+        },
+        .read_err => |err| {
+            Output.errGeneric("failed to read package.json \"{s}\": {s}", .{ root_package_json_path, @errorName(err) });
+            Global.crash();
+        },
+        .entry => |e| e,
+    };
+
+    const workspaces_array: ?*JSAst.E.Array = brk: {
+        const prop = root_entry.root.asProperty("workspaces") orelse break :brk null;
+        switch (prop.expr.data) {
+            .e_array => |arr| break :brk arr,
+            .e_object => |obj| {
+                if (obj.get("packages")) |packages| {
+                    if (packages.data == .e_array) break :brk packages.data.e_array;
+                }
+                break :brk null;
+            },
+            else => break :brk null,
+        }
+    };
+
+    if (workspaces_array == null) {
+        Output.errGeneric("<b>--filter<r> requires a <b>\"workspaces\"<r> field in the root package.json", .{});
+        Global.exit(1);
+    }
+
+    // Enumerate workspace members.
+    var workspace_map = Package.WorkspaceMap.init(allocator);
+    defer workspace_map.map.deinit();
+
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+
+    _ = workspace_map.processNamesArray(
+        allocator,
+        &manager.workspace_package_json_cache,
+        &log,
+        workspaces_array.?,
+        &root_entry.source,
+        logger.Loc.Empty,
+        null,
+    ) catch {};
+
+    // Match workspaces against filters.
+    const top_level_dir = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
+    const match_path_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(match_path_buf);
+
+    var matched: std.ArrayListUnmanaged(FilteredWorkspace) = .{};
+    errdefer matched.deinit(allocator);
+
+    for (workspace_map.keys(), workspace_map.values()) |rel_path, entry| {
+        const abs_workspace_dir = abs_dir: {
+            const abs = bun.path.joinAbsStringBuf(top_level_dir, match_path_buf, &.{rel_path}, .posix);
+            break :abs_dir strings.withoutTrailingSlash(abs);
+        };
+
+        const is_match = is_match: {
+            var any_positive = false;
+            var matched_positive = false;
+
+            for (filters.items) |filter| {
+                const pattern, const target = switch (filter) {
+                    .name => |pattern| .{ pattern, entry.name },
+                    .path => |pattern| .{ pattern, abs_workspace_dir },
+                    .all => {
+                        any_positive = true;
+                        matched_positive = true;
+                        continue;
+                    },
+                };
+
+                switch (bun.glob.match(pattern, target)) {
+                    .match => {
+                        any_positive = true;
+                        matched_positive = true;
+                    },
+                    .no_match => {
+                        any_positive = true;
+                    },
+                    .negate_no_match => {
+                        // Excluded by a "!pattern". Skip this workspace.
+                        break :is_match false;
+                    },
+                    .negate_match => {},
+                }
+            }
+
+            // If only negative filters were given (e.g. --filter '!api'), match everything
+            // that wasn't excluded.
+            break :is_match if (any_positive) matched_positive else true;
+        };
+
+        if (!is_match) continue;
+
+        const out_path_buf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(out_path_buf);
+        const abs_package_json_path = bun.path.joinAbsStringBufZ(
+            top_level_dir,
+            out_path_buf,
+            &.{ rel_path, "package.json" },
+            .auto,
+        );
+
+        try matched.append(allocator, .{
+            .package_json_path = try allocator.dupeZ(u8, abs_package_json_path),
+            .name = try allocator.dupe(u8, entry.name),
+            .name_hash = String.Builder.stringHash(entry.name),
+            .indentation = .{},
+            .preserve_trailing_newline = false,
+            .before_install_source = "",
+        });
+    }
+
+    return matched.toOwnedSlice(allocator);
+}
+
+fn editPackageJSONForRemove(
+    current_package_json: *JSAst.Expr,
+    updates: []const UpdateRequest,
+    subcommand: Subcommand,
+) bool {
+    if (current_package_json.data != .e_object) {
+        Output.errGeneric("package.json is not an Object {{}}, so there's nothing to {s}!", .{@tagName(subcommand)});
+        Global.crash();
+    }
+
+    var any_changes = false;
+    for (updates) |request| {
+        inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
+            if (current_package_json.asProperty(list)) |query| {
+                if (query.expr.data == .e_object) {
+                    var dependencies = query.expr.data.e_object.properties.slice();
+                    var i: usize = 0;
+                    var new_len = dependencies.len;
+                    while (i < dependencies.len) : (i += 1) {
+                        if (dependencies[i].key.?.data == .e_string) {
+                            if (dependencies[i].key.?.data.e_string.eql(string, request.name)) {
+                                if (new_len > 1) {
+                                    dependencies[i] = dependencies[new_len - 1];
+                                    new_len -= 1;
+                                } else {
+                                    new_len = 0;
+                                }
+                                any_changes = true;
+                            }
+                        }
+                    }
+
+                    if (new_len != dependencies.len) {
+                        query.expr.data.e_object.properties.len = @as(u32, @truncate(new_len));
+                        if (query.expr.data.e_object.properties.len == 0) {
+                            _ = current_package_json.data.e_object.properties.swapRemove(query.i);
+                            current_package_json.data.e_object.packageJSONSort();
+                        } else {
+                            var obj = query.expr.data.e_object;
+                            obj.alphabetizeProperties();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return any_changes;
+}
+
+fn updatePackageJSONAndInstallWithFilter(
+    manager: *PackageManager,
+    ctx: Command.Context,
+    updates: *[]UpdateRequest,
+    subcommand: Subcommand,
+    original_cwd: string,
+) !void {
+    if (manager.options.global) {
+        Output.errGeneric("<b>--filter<r> is not supported with <b>--global<r>", .{});
+        Global.exit(1);
+    }
+
+    const top_level_dir_without_trailing_slash = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
+
+    var root_package_json_path_buf: bun.PathBuffer = undefined;
+    const root_package_json_path: [:0]const u8 = root_package_json_path: {
+        @memcpy(root_package_json_path_buf[0..top_level_dir_without_trailing_slash.len], top_level_dir_without_trailing_slash);
+        @memcpy(root_package_json_path_buf[top_level_dir_without_trailing_slash.len..][0.."/package.json".len], "/package.json");
+        const root_package_json_path = root_package_json_path_buf[0 .. top_level_dir_without_trailing_slash.len + "/package.json".len];
+        root_package_json_path_buf[root_package_json_path.len] = 0;
+        break :root_package_json_path root_package_json_path_buf[0..root_package_json_path.len :0];
+    };
+
+    const workspaces = try findFilteredWorkspaces(manager, original_cwd, root_package_json_path);
+
+    if (workspaces.len == 0) {
+        Output.errGeneric("<b>--filter<r> did not match any workspace", .{});
+        for (manager.options.filter_patterns) |pattern| {
+            Output.prettyErrorln("  <d>pattern:<r> {s}", .{pattern});
+        }
+        Global.exit(1);
+    }
+
+    const dependency_list = if (manager.options.update.development)
+        "devDependencies"
+    else if (manager.options.update.optional)
+        "optionalDependencies"
+    else if (manager.options.update.peer)
+        "peerDependencies"
+    else
+        "dependencies";
+
+    var any_remove_changes = false;
+
+    // Pre-install: edit each matching workspace's package.json in memory.
+    for (workspaces) |*workspace| {
+        // `PackageJSONEditor.edit` uses `request.e_string` as a sentinel for
+        // "already handled"; reset it between workspaces so every workspace
+        // actually gets the dependency added.
+        for (updates.*) |*request| request.e_string = null;
+
+        var entry = switch (manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            workspace.package_json_path,
+            .{ .guess_indentation = true },
+        )) {
+            .parse_err => |err| {
+                manager.log.print(Output.errorWriter()) catch {};
+                Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{ workspace.package_json_path, @errorName(err) });
+                Global.crash();
+            },
+            .read_err => |err| {
+                Output.errGeneric("failed to read package.json \"{s}\": {s}", .{ workspace.package_json_path, @errorName(err) });
+                Global.crash();
+            },
+            .entry => |e| e,
+        };
+
+        workspace.indentation = entry.indentation;
+        workspace.preserve_trailing_newline = entry.source.contents.len > 0 and
+            entry.source.contents[entry.source.contents.len - 1] == '\n';
+
+        switch (subcommand) {
+            .add => {
+                try PackageJSONEditor.edit(
+                    manager,
+                    updates,
+                    &entry.root,
+                    dependency_list,
+                    .{
+                        .exact_versions = manager.options.enable.exact_versions,
+                        .before_install = true,
+                    },
+                );
+            },
+            .remove => {
+                if (editPackageJSONForRemove(&entry.root, updates.*, subcommand)) {
+                    any_remove_changes = true;
+                }
+            },
+            else => unreachable,
+        }
+
+        var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+        try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, entry.source.contents.len + 1);
+        buffer_writer.append_newline = workspace.preserve_trailing_newline;
+        var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+
+        _ = JSPrinter.printJSON(
+            @TypeOf(&package_json_writer),
+            &package_json_writer,
+            entry.root,
+            &entry.source,
+            .{
+                .indent = workspace.indentation,
+                .mangled_props = null,
+            },
+        ) catch |err| {
+            Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+            Global.crash();
+        };
+
+        const new_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
+        entry.source.contents = new_source;
+        workspace.before_install_source = new_source;
+    }
+
+    // The install step resolves update requests by looking at the dependency list of
+    // `manager.workspace_name_hash`'s package. Point it at one of the workspaces we
+    // edited so the resolved version gets populated on the UpdateRequests.
+    manager.workspace_name_hash = workspaces[0].name_hash;
+    manager.root_package_id.id = null;
+    manager.original_package_json_path = workspaces[0].package_json_path;
+
+    manager.to_update = false;
+    {
+        const cloned = updates.*;
+        manager.update_requests = cloned;
+    }
+
+    // Ensure the root package.json is cached (installWithManager expects it).
+    _ = manager.workspace_package_json_cache.getWithPath(
+        manager.allocator,
+        manager.log,
+        root_package_json_path,
+        .{ .guess_indentation = true },
+    );
+
+    try manager.installWithManager(ctx, root_package_json_path, original_cwd);
+
+    if (subcommand == .add) {
+        for (updates.*) |request| {
+            if (request.failed) {
+                Global.exit(1);
+                return;
+            }
+        }
+    }
+
+    if (!manager.options.do.write_package_json) {
+        return;
+    }
+
+    // Post-install: for `add`, rewrite each workspace's package.json with the
+    // resolved version. For `remove`, the pre-install edit is already final.
+    for (workspaces) |*workspace| {
+        const final_source = switch (subcommand) {
+            .add => blk: {
+                for (updates.*) |*request| request.e_string = null;
+
+                const source = &logger.Source.initPathString("package.json", workspace.before_install_source);
+                var new_root = JSON.parsePackageJSONUTF8(source, manager.log, manager.allocator) catch |err| {
+                    Output.prettyErrorln("package.json failed to parse due to error {s}", .{@errorName(err)});
+                    Global.crash();
+                };
+
+                try PackageJSONEditor.edit(
+                    manager,
+                    updates,
+                    &new_root,
+                    dependency_list,
+                    .{
+                        .exact_versions = manager.options.enable.exact_versions,
+                        .add_trusted_dependencies = manager.options.do.trust_dependencies_from_args,
+                    },
+                );
+
+                var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
+                try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, source.contents.len + 1);
+                buffer_writer.append_newline = workspace.preserve_trailing_newline;
+                var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
+
+                _ = JSPrinter.printJSON(
+                    @TypeOf(&package_json_writer),
+                    &package_json_writer,
+                    new_root,
+                    source,
+                    .{
+                        .indent = workspace.indentation,
+                        .mangled_props = null,
+                    },
+                ) catch |err| {
+                    Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                    Global.crash();
+                };
+
+                break :blk try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
+            },
+            .remove => workspace.before_install_source,
+            else => unreachable,
+        };
+
+        const file = (try bun.sys.File.openat(
+            .cwd(),
+            workspace.package_json_path,
+            bun.O.RDWR,
+            0,
+        ).unwrap()).handle.stdFile();
+
+        try file.pwriteAll(final_source, 0);
+        std.posix.ftruncate(file.handle, final_source.len) catch {};
+        file.close();
+    }
+
+    if (subcommand == .remove and !any_remove_changes) {
+        Global.exit(0);
+    }
+}
+
 pub fn updatePackageJSONAndInstallCatchError(
     ctx: Command.Context,
     subcommand: Subcommand,
@@ -758,4 +1203,9 @@ const PackageJSONEditor = PackageManager.PackageJSONEditor;
 const PatchCommitResult = PackageManager.PatchCommitResult;
 const Subcommand = PackageManager.Subcommand;
 const UpdateRequest = PackageManager.UpdateRequest;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const attemptToCreatePackageJSON = PackageManager.attemptToCreatePackageJSON;
+
+const Lockfile = bun.install.Lockfile;
+const Package = Lockfile.Package;
+const JSAst = bun.ast;

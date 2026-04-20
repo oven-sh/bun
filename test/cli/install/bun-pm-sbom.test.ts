@@ -1,7 +1,7 @@
 import { spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
 import { VerdaccioRegistry, bunEnv, bunExe, runBunInstall } from "harness";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const registry = new VerdaccioRegistry();
@@ -93,7 +93,10 @@ describe("bun pm sbom", () => {
       expect(depsByRef["a-dep@1.0.1"]).toEqual([]);
 
       // every bom-ref appearing in dependencies must be declared
-      const declared = new Set<string>([bom.metadata.component["bom-ref"], ...bom.components.map((c: any) => c["bom-ref"])]);
+      const declared = new Set<string>([
+        bom.metadata.component["bom-ref"],
+        ...bom.components.map((c: any) => c["bom-ref"]),
+      ]);
       for (const d of bom.dependencies) {
         expect(declared.has(d.ref)).toBe(true);
         for (const r of d.dependsOn) expect(declared.has(r)).toBe(true);

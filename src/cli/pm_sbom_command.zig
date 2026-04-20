@@ -737,22 +737,22 @@ const Generator = struct {
 
 const string = []const u8;
 
+const Dependency = @import("../install/dependency.zig");
 const std = @import("std");
+const Integrity = @import("../install/integrity.zig").Integrity;
+const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
+
+const Lockfile = @import("../install/lockfile.zig");
+const DependencySlice = Lockfile.DependencySlice;
 
 const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const logger = bun.logger;
 const strings = bun.strings;
-
 const Command = bun.cli.Command;
-const Lockfile = @import("../install/lockfile.zig");
-const Dependency = @import("../install/dependency.zig");
-const Integrity = @import("../install/integrity.zig").Integrity;
-const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
 
 const install = bun.install;
 const PackageID = install.PackageID;
 const PackageManager = install.PackageManager;
 const invalid_package_id = install.invalid_package_id;
-const DependencySlice = Lockfile.DependencySlice;

@@ -345,6 +345,14 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             AbstractModuleRecord* resolvedRecord = jsCast<NodeVMModule*>(moduleNative)->moduleRecord(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
+            // innerModuleLinking asserts every visited cyclic record is past
+            // Status::New. Records produced by node:vm never go through the
+            // loader's continueModuleLoading (which is what flips New ->
+            // Unlinked for the whole graph), so do it for each dependency as
+            // we wire it in.
+            if (auto* cyclic = jsDynamicCast<JSC::CyclicModuleRecord*>(resolvedRecord); cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::New)
+                cyclic->status(JSC::CyclicModuleRecord::Status::Unlinked);
+
             record->setImportedModule(globalObject, Identifier::fromString(vm, specifier), resolvedRecord);
             RETURN_IF_EXCEPTION(scope, {});
             m_resolveCache.set(WTF::move(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
@@ -352,26 +360,39 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
         }
     }
 
-    NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (nodeVmGlobalObject) {
-        globalObject = nodeVmGlobalObject;
-    }
-
-    // CyclicModuleRecord::link asserts the record is at least Unlinked. Records
-    // built directly here never go through the loader's
-    // finishLoadingImportedModule, so move them off Status::New manually.
+    // CyclicModuleRecord::link asserts every visited record is past
+    // Status::New. Records built directly here never go through the loader's
+    // continueModuleLoading (which is what flips New -> Unlinked for the
+    // graph), so move this one off New manually. The actual record->link()
+    // call is deferred to instantiate(): we are inside a recursive [kLink]
+    // walk and the parent's loadedModules are not populated yet, so calling
+    // innerModuleLinking now would walk into a record whose loadedModules()
+    // are still empty (cyclic case).
     if (record->status() == JSC::CyclicModuleRecord::Status::New)
         record->status(JSC::CyclicModuleRecord::Status::Unlinked);
-    record->link(globalObject, scriptFetcher);
-    RETURN_IF_EXCEPTION(scope, {});
 
+    UNUSED_PARAM(scriptFetcher);
     status(Status::Linked);
     return jsUndefined();
 }
 
 JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSModuleRecord* record = m_moduleRecord.get();
+    if (!record)
+        return jsUndefined();
+
+    NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (nodeVmGlobalObject)
+        globalObject = nodeVmGlobalObject;
+
+    record->link(globalObject, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+
     return jsUndefined();
 }
 

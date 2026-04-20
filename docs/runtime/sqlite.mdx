@@ -133,6 +133,25 @@ db.close(true);
   has no effect after the first.
 </Note>
 
+<Important title="WAL sidecar files">
+  When using WAL (Write-Ahead Logging) mode with a file-based database, SQLite creates additional sidecar files:
+  `-wal` (write-ahead log) and `-shm` (shared memory). The cleanup behavior of these files after calling `.close()` 
+  varies by platform and SQLite configuration:
+
+  - **Linux**: Sidecar files are typically cleaned up after close
+  - **macOS**: Sidecar files may persist after close due to platform-specific SQLite behavior
+  - **Windows**: Behavior varies by Windows version and SQLite configuration
+
+  If you need to ensure sidecar files are cleaned up, consider manually removing them after closing the database:
+  ```ts
+  import { rmSync } from "node:fs";
+
+  db.close();
+  rmSync("mydb.sqlite-wal");
+  rmSync("mydb.sqlite-shm");
+  ```
+</Important>
+
 ### `using` statement
 
 You can use the `using` statement to ensure that a database connection is closed when the `using` block is exited.

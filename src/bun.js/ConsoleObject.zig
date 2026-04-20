@@ -1932,6 +1932,23 @@ pub const Formatter = struct {
                 var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
                 var this = ctx.formatter;
                 if (this.failed) return;
+
+                // Check if property is enumerable
+                // This ensures console.log matches Node.js behavior for non-enumerable properties
+                if (!is_symbol and !is_private_symbol) {
+                    if (ctx.parent.hasOwnProperty(globalThis, key.*)) {
+                        const property_descriptor = ctx.parent.getOwnPropertyDescriptor(globalThis, key.*) catch return;
+                        if (property_descriptor != .js_undefined) {
+                            const descriptor = property_descriptor.asObject();
+                            const enumerable_val = descriptor.get(globalThis, JSC.ZigString.static("enumerable")) catch return;
+                            if (!enumerable_val.isUndefined() and !enumerable_val.toBoolean(globalThis)) {
+                                // Property is explicitly set to enumerable: false, skip it
+                                return;
+                            }
+                        }
+                    }
+                }
+
                 const writer_ = ctx.writer;
                 var writer = WrappedWriter(Writer){
                     .ctx = writer_,

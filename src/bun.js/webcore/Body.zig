@@ -1038,10 +1038,18 @@ pub const Value = union(Tag) {
             .globalThis = globalThis,
         });
 
-        // Same wiring as the toReadableStream() path: without drain_handler the
-        // fetch backpressure pause has no resume hook on a body that was first
-        // materialised via clone(), and the socket would stay paused once the
-        // ByteStream buffer crosses the high-water mark.
+        // Same wiring as the toReadableStream() path. cancel_handler reaches
+        // ignoreRemainingResponseBody so an abandoned clone tears down the
+        // request; drain_handler reaches maybeReleaseBodyBackpressure so the
+        // socket resumes once the ByteStream drains. Without both, a body that
+        // was first materialised via clone() would leak the connection once
+        // either backpressure paused it or both branches were cancelled.
+        if (locked.onStreamCancelled) |onCancelled| {
+            if (locked.task) |task| {
+                reader.cancel_handler = onCancelled;
+                reader.cancel_ctx = task;
+            }
+        }
         if (locked.onStreamDrained) |onDrained| {
             if (locked.task) |task| {
                 reader.drain_handler = onDrained;

@@ -303,6 +303,16 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
             this.offset += to_write;
         }
 
+        // Report the new buffered size so the producer can release
+        // backpressure once we drop below its low-water mark, rather than
+        // waiting for the `.pending` branch below (which only fires at zero).
+        // FetchTasklet's `is_delivering_body_chunk` guard suppresses this
+        // when it's the controller's synchronous auto-pull running inside
+        // `pending.run()`; outside that window this is a real consumer read.
+        if (this.parent().drain_handler) |handler| {
+            handler(this.parent().drain_ctx, this.buffer.items.len - this.offset);
+        }
+
         if (this.has_received_last_chunk and remaining_in_buffer.len == 0) {
             this.buffer.clearAndFree();
             this.done = true;
@@ -332,15 +342,10 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
     this.pending_buffer = buffer;
     this.setValue(view);
 
-    // Tell the producer that JS is now blocked waiting for more bytes. This is
-    // the only point at which "the consumer wants data" is unambiguous —
-    // earlier in this function we may be servicing the controller's automatic
-    // pre-fetch pull, which drains `buffer` into the controller's queue
-    // without the user having read anything. Releasing backpressure on that
-    // auto-pull would let the queue grow unbounded; releasing here cannot,
-    // because we only reach this branch when both `buffer` and the
-    // controller's queue are empty (otherwise the controller would not have
-    // pulled).
+    // Buffer is empty and a read is now parked waiting — the consumer has
+    // caught up end-to-end. Same callback as the into_array branch above; this
+    // covers the case where the controller's queue was already empty so no
+    // intermediate drain was observed.
     if (this.parent().drain_handler) |handler| {
         handler(this.parent().drain_ctx, 0);
     }

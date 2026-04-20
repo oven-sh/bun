@@ -137,7 +137,13 @@
           {
             "group": "Process & System",
             "icon": "computer",
-            "pages": ["/runtime/environment-variables", "/runtime/shell", "/runtime/child-process", "/runtime/cron"]
+            "pages": [
+              "/runtime/environment-variables",
+              "/runtime/shell",
+              "/runtime/child-process",
+              "/runtime/webview",
+              "/runtime/cron"
+            ]
           },
           {
             "group": "Interop & Tooling",

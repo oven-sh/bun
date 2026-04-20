@@ -2477,7 +2477,8 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                     if (T == u16) {
                         break :brk buf2[0..bufSize];
                     } else {
-                        bufSize = std.unicode.wtf16LeToWtf8(buf2[0..bufSize], &u16Buf);
+                        bufSize = std.unicode.wtf8ToWtf16Le(&u16Buf, buf2[0..bufSize]) catch unreachable;
+                        u16Buf[bufSize] = 0;
                         break :brk u16Buf[0..bufSize :0];
                     }
                 };
@@ -2585,6 +2586,14 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                         }
                         if (j == len or j != last) {
                             // We matched a UNC root
+
+                            if (resolvedDeviceLen > 0) {
+                                // resolvedDevice is already set to a drive
+                                // letter (`X:`). A UNC device can never match
+                                // it, and building the UNC string below would
+                                // overwrite tmpBuf which backs resolvedDevice.
+                                continue;
+                            }
 
                             // Translated from the following JS code:
                             //   device =

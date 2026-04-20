@@ -1191,6 +1191,7 @@ pub const enqueueDependencyToRoot = enqueue.enqueueDependencyToRoot;
 pub const enqueueDependencyWithMain = enqueue.enqueueDependencyWithMain;
 pub const enqueueDependencyWithMainAndSuccessFn = enqueue.enqueueDependencyWithMainAndSuccessFn;
 pub const enqueueExtractNPMPackage = enqueue.enqueueExtractNPMPackage;
+pub const createExtractTaskForStreaming = enqueue.createExtractTaskForStreaming;
 pub const enqueueGitCheckout = enqueue.enqueueGitCheckout;
 pub const enqueueGitForCheckout = enqueue.enqueueGitForCheckout;
 pub const enqueueNetworkTask = enqueue.enqueueNetworkTask;

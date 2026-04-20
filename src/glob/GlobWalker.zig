@@ -1093,7 +1093,7 @@ pub fn GlobWalker_(
             );
         }
 
-        pub fn debugPatternComopnents(this: *GlobWalker) void {
+        pub fn debugPatternComponents(this: *GlobWalker) void {
             const pattern = this.pattern;
             const components = &this.patternComponents;
             const ptr = @intFromPtr(this);
@@ -1148,7 +1148,7 @@ pub fn GlobWalker_(
             this.arena = arena.*;
 
             if (bun.Environment.allow_assert) {
-                this.debugPatternComopnents();
+                this.debugPatternComponents();
             }
 
             return .success;

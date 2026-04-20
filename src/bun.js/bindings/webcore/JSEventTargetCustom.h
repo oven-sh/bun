@@ -32,25 +32,34 @@ namespace WebCore {
 
 // Wrapper type for JSEventTarget's castedThis because JSDOMWindow and JSWorkerGlobalScope do not inherit JSEventTarget.
 class JSEventTargetWrapper {
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSEventTargetWrapper);
-
 public:
+    JSEventTargetWrapper() = default;
+
     JSEventTargetWrapper(EventTarget& wrapped, JSC::JSObject& wrapper)
-        : m_wrapped(wrapped)
-        , m_wrapper(wrapper)
+        : m_wrapped(&wrapped)
+        , m_wrapper(&wrapper)
     {
     }
 
-    EventTarget& wrapped() { return m_wrapped; }
+    bool isNull() const { return !m_wrapped; }
+    EventTarget& wrapped()
+    {
+        ASSERT(m_wrapped);
+        return *m_wrapped;
+    }
 
-    operator JSC::JSObject&() { return m_wrapper; }
+    operator JSC::JSObject&()
+    {
+        ASSERT(m_wrapper);
+        return *m_wrapper;
+    }
 
 private:
-    EventTarget& m_wrapped;
-    JSC::JSObject& m_wrapper;
+    EventTarget* m_wrapped { nullptr };
+    JSC::JSObject* m_wrapper { nullptr };
 };
 
-std::unique_ptr<JSEventTargetWrapper> jsEventTargetCast(JSC::VM&, JSC::JSValue thisValue);
+JSEventTargetWrapper jsEventTargetCast(JSC::VM&, JSC::JSValue thisValue);
 
 template<> class IDLOperation<JSEventTarget> {
 public:
@@ -64,12 +73,13 @@ public:
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
         auto thisValue = callFrame.thisValue().toThis(&lexicalGlobalObject, JSC::ECMAMode::strict());
-        auto thisObject = jsEventTargetCast(vm, thisValue.isUndefinedOrNull() ? &lexicalGlobalObject : thisValue);
-        if (!thisObject) [[unlikely]] {
+        auto thisObject = jsEventTargetCast(vm, thisValue.isUndefinedOrNull() ? JSC::JSValue(&lexicalGlobalObject) : thisValue);
+        if (thisObject.isNull()) [[unlikely]]
             return throwThisTypeError(lexicalGlobalObject, throwScope, "EventTarget", operationName);
-        }
 
-        RELEASE_AND_RETURN(throwScope, (operation(&lexicalGlobalObject, &callFrame, thisObject.get())));
+        // Note: WebKit Ref-protects thisObject.wrapped() here, but Bun's req.signal lifecycle
+        // depends on exact ref-counting; the JS cell already keeps wrapped alive via JSDOMWrapper.
+        RELEASE_AND_RETURN(throwScope, (operation(&lexicalGlobalObject, &callFrame, &thisObject)));
     }
 };
 

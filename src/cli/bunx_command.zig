@@ -358,14 +358,22 @@ pub const BunxCommand = struct {
         // 1. Install TypeScript
         // 2. Run tsc
         // BUT: Skip this transformation if --package was explicitly specified
-        if (opts.specified_package == null and strings.eqlComptime(update_request.name, "tsc")) {
-            update_request.name = "typescript";
+        if (opts.specified_package == null) {
+            if (strings.eqlComptime(update_request.name, "tsc")) {
+                update_request.name = "typescript";
+            } else if (strings.eqlComptime(update_request.name, "claude")) {
+                // The npm package "claude" is an unrelated squatter with no bin;
+                // `bunx claude` is much more likely to mean the actual CLI.
+                update_request.name = "@anthropic-ai/claude-code";
+            }
         }
 
         const initial_bin_name = if (opts.binary_name) |bin_name|
             bin_name
         else if (strings.eqlComptime(update_request.name, "typescript"))
             "tsc"
+        else if (strings.eqlComptime(update_request.name, "@anthropic-ai/claude-code"))
+            "claude"
         else if (update_request.version.tag == .github)
             update_request.version.value.github.repo.slice(update_request.version_buf)
         else if (strings.lastIndexOfChar(update_request.name, '/')) |index|

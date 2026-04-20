@@ -1,9 +1,7 @@
-// MSVC doesn't support C11 stdatomic.h propertly yet.
-// so we use C++ std::atomic instead.
 #include "./root_certs.h"
 #include "./root_certs_header.h"
 #include "./internal/internal.h"
-#include <atomic>
+#include <mutex>
 #include <string.h>
 #include "./default_ciphers.h"
 
@@ -139,17 +137,21 @@ static void us_internal_init_root_certs(
     X509 *root_cert_instances[root_certs_size],
     STACK_OF(X509) *&root_extra_cert_instances,
     STACK_OF(X509) *&root_system_cert_instances) {
-  static std::atomic_flag root_cert_instances_lock = ATOMIC_FLAG_INIT;
-  static std::atomic_bool root_cert_instances_initialized = 0;
-
-  if (std::atomic_load(&root_cert_instances_initialized) == 1)
-    return;
-
-  while (atomic_flag_test_and_set_explicit(&root_cert_instances_lock,
-                                           std::memory_order_acquire))
-    ;
-
-  if (!atomic_exchange(&root_cert_instances_initialized, 1)) {
+  // This used to use an atomic_flag spinlock together with an atomic_bool.
+  // The bool was set to true via atomic_exchange BEFORE the certificates were
+  // actually parsed, so concurrent callers (e.g. Workers calling
+  // tls.getCACertificates() or opening a TLS connection) observed
+  // "initialized" and returned early while the STACK_OF(X509) pointers were
+  // still being pushed to and realloc'd by this thread. That's a data race
+  // which at best yields truncated/stale certificate lists and at worst
+  // crashes inside BoringSSL (e.g. when a torn read hands a freed/garbage
+  // pointer to PEM encode, or heap corruption from the concurrent access
+  // lands in the middle of X509 parsing).
+  //
+  // std::call_once does exactly what we want: initialization runs exactly
+  // once and every other caller blocks until it has fully completed.
+  static std::once_flag root_cert_instances_once;
+  std::call_once(root_cert_instances_once, [&]() {
     for (size_t i = 0; i < root_certs_size; i++) {
       root_cert_instances[i] =
           us_ssl_ctx_get_X509_without_callback_from(root_certs[i]);
@@ -171,10 +173,7 @@ static void us_internal_init_root_certs(
       us_load_system_certificates_linux(&root_system_cert_instances);
 #endif
     }
-  }
-
-  atomic_flag_clear_explicit(&root_cert_instances_lock,
-                             std::memory_order_release);
+  });
 }
 
 extern "C" int us_internal_raw_root_certs(struct us_cert_string_t **out) {

@@ -50,6 +50,7 @@
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include "BunClientData.h"
+#include "IsolatedModuleCache.h"
 #include <JavaScriptCore/Identifier.h>
 #include "ImportMetaObject.h"
 #include "NodeModuleModule.h"
@@ -1363,11 +1364,27 @@ void JSCommonJSModule::evaluate(
 
     auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
+    if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
+        Bun::IsolatedModuleCache::insert(vm, key, sourceProvider.get());
+    }
     if (this->hasEvaluated)
         return;
 
     this->sourceCode = JSC::SourceCode(WTF::move(sourceProvider));
 
+    evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
+}
+
+void JSCommonJSModule::evaluate(
+    Zig::GlobalObject* globalObject,
+    Ref<JSC::SourceProvider>&& sourceProvider,
+    bool ignoreESModuleAnnotation)
+{
+    auto& vm = JSC::getVM(globalObject);
+    this->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+    if (this->hasEvaluated)
+        return;
+    this->sourceCode = JSC::SourceCode(WTF::move(sourceProvider));
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
 
@@ -1418,6 +1435,8 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     this->evaluate(globalObject, key, source, false);
 }
 
+static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL);
+
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSString* requireMapKey,
@@ -1463,6 +1482,9 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         }
 
         auto sourceProvider = Zig::SourceProvider::create(jsCast<Zig::GlobalObject*>(globalObject), source, JSC::SourceProviderSourceType::Program, isBuiltIn);
+        if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
+            Bun::IsolatedModuleCache::insert(vm, sourceURL, sourceProvider.get());
+        }
         sourceOrigin = sourceProvider->sourceOrigin();
         moduleObject = JSCommonJSModule::create(
             vm,
@@ -1481,6 +1503,11 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
 
+    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
+}
+
+static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL)
+{
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(
             [](JSC::JSGlobalObject* lexicalGlobalObject,
@@ -1526,6 +1553,58 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             },
             sourceOrigin,
             sourceURL));
+}
+
+std::optional<JSC::SourceCode> createCommonJSModule(
+    Zig::GlobalObject* globalObject,
+    JSC::JSString* requireMapKey,
+    Ref<JSC::SourceProvider>&& sourceProvider,
+    bool ignoreESModuleAnnotation)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSCommonJSModule* moduleObject = nullptr;
+    WTF::String sourceURL = sourceProvider->sourceURL();
+    SourceOrigin sourceOrigin = sourceProvider->sourceOrigin();
+
+    JSValue entry = globalObject->requireMap()->get(globalObject, requireMapKey);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (entry) {
+        moduleObject = jsDynamicCast<JSCommonJSModule*>(entry);
+    }
+
+    if (!moduleObject) {
+        size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
+        JSString* dirname;
+        JSString* filename = requireMapKey;
+        if (index != WTF::notFound) {
+            dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
+            RETURN_IF_EXCEPTION(scope, {});
+        } else {
+            dirname = jsEmptyString(vm);
+        }
+        auto requireMap = globalObject->requireMap();
+        if (requireMap->size() == 0) {
+            requireMapKey = JSC::jsString(vm, WTF::String("."_s));
+        }
+
+        moduleObject = JSCommonJSModule::create(
+            vm,
+            globalObject->CommonJSModuleObjectStructure(),
+            requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)));
+
+        moduleObject->putDirect(vm,
+            WebCore::clientData(vm)->builtinNames().exportsPublicName(),
+            JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), 0);
+
+        requireMap->set(globalObject, filename, moduleObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+
+    return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
 }
 
 JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString)

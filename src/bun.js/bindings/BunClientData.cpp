@@ -78,7 +78,11 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
 
 JSVMClientData::~JSVMClientData()
 {
-    ASSERT(m_normalWorld->hasOneRef());
+    m_clients.forEach([](auto& client) {
+        client.willDestroyVM();
+    });
+    m_clients.clear();
+
     m_normalWorld = nullptr;
 }
 void JSVMClientData::create(VM* vm, void* bunVM)

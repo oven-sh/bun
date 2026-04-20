@@ -2366,6 +2366,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             ctx.request_body = body;
             var signal = jsc.WebCore.AbortSignal.new(this.globalThis);
             ctx.signal = signal;
+            signal.pendingActivityRef();
 
             var request_object = Request.new(Request.init(
                 ctx.method,

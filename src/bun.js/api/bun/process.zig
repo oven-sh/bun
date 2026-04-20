@@ -85,6 +85,7 @@ pub const ProcessExitHandler = struct {
             ShellSubprocess,
             ProcessHandle,
             MultiRunProcessHandle,
+            TestWorkerHandle,
             SecurityScanSubprocess,
             WebViewHostProcess,
             ChromeProcess,
@@ -118,6 +119,10 @@ pub const ProcessExitHandler = struct {
             },
             @field(TaggedPointer.Tag, @typeName(MultiRunProcessHandle)) => {
                 const subprocess = this.ptr.as(MultiRunProcessHandle);
+                subprocess.onProcessExit(process, status, rusage);
+            },
+            @field(TaggedPointer.Tag, @typeName(TestWorkerHandle)) => {
+                const subprocess = this.ptr.as(TestWorkerHandle);
                 subprocess.onProcessExit(process, status, rusage);
             },
             @field(TaggedPointer.Tag, @typeName(ShellSubprocess)) => {
@@ -1019,8 +1024,18 @@ pub const PosixSpawnOptions = struct {
     /// for stdout. This is used to preserve
     /// consistent shell semantics.
     no_sigpipe: bool = true,
+    /// setpgid(0, 0) in the child so it leads its own process group. The parent
+    /// can then `kill(-pid, sig)` to signal the child and all its descendants.
+    /// Not exposed to JS yet.
+    new_process_group: bool = false,
     /// PTY slave fd for controlling terminal setup (-1 if not using PTY).
     pty_slave_fd: i32 = -1,
+    /// Linux only. When non-null, the child sets PR_SET_PDEATHSIG to this
+    /// signal between vfork and exec in posix_spawn_bun, so the kernel kills
+    /// it when the spawning thread dies. When null, defaults to whatever this
+    /// process itself has set (so a worker with PDEATHSIG propagates it to
+    /// children automatically). Not exposed to JS yet.
+    linux_pdeathsig: ?u8 = null,
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -1089,6 +1104,10 @@ pub const WindowsSpawnOptions = struct {
     stream: bool = true,
     use_execve_on_macos: bool = false,
     can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool = false,
+    /// Linux-only; placeholder for struct compatibility.
+    linux_pdeathsig: ?u8 = null,
+    /// POSIX-only; placeholder for struct compatibility.
+    new_process_group: bool = false,
     /// PTY not supported on Windows - this is a void placeholder for struct compatibility
     pty_slave_fd: void = {},
     pub const WindowsOptions = struct {
@@ -1290,6 +1309,11 @@ pub fn spawnProcessPosix(
 
     // Pass PTY slave fd to attr for controlling terminal setup
     attr.pty_slave_fd = options.pty_slave_fd;
+    attr.new_process_group = options.new_process_group;
+
+    if (Environment.isLinux) {
+        attr.linux_pdeathsig = if (options.linux_pdeathsig) |sig| @intCast(sig) else 0;
+    }
 
     if (options.cwd.len > 0) {
         try actions.chdir(options.cwd);
@@ -1364,7 +1388,7 @@ pub fn spawnProcessPosix(
             },
             .buffer => {
                 if (Environment.isLinux) use_memfd: {
-                    if (!options.stream and i > 0) {
+                    if (!options.stream and i > 0 and bun.sys.canUseMemfd()) {
                         // use memfd if we can
                         const label = switch (i) {
                             0 => "spawn_stdio_stdin",
@@ -1968,6 +1992,7 @@ pub const sync = struct {
             remain = remain[chunk.len..];
             chunks_allocator.free(chunk);
         }
+        chunks_allocator.free(chunks);
 
         return result;
     }
@@ -2267,6 +2292,7 @@ pub const sync = struct {
 const std = @import("std");
 const MultiRunProcessHandle = @import("../../../cli/multi_run.zig").ProcessHandle;
 const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
+const TestWorkerHandle = @import("../../../cli/test/ParallelRunner.zig").Worker;
 
 const CronRegisterJob = @import("../cron.zig").CronRegisterJob;
 const CronRemoveJob = @import("../cron.zig").CronRemoveJob;

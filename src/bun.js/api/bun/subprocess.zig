@@ -28,7 +28,6 @@ observable_getters: std.enums.EnumSet(enum {
     stdin,
     stdout,
     stderr,
-    stdio,
 }) = .{},
 closed: std.enums.EnumSet(StdioKind) = .{},
 this_value: jsc.JSRef = jsc.JSRef.empty(),
@@ -474,21 +473,18 @@ pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue 
     try array.push(global, .null); // TODO: align this with options
     try array.push(global, .null); // TODO: align this with options
 
-    this.observable_getters.insert(.stdio);
-    var pipes = this.stdio_pipes.items;
-    if (this.ipc_data != null) {
-        try array.push(global, .null);
-        pipes = pipes[@min(1, pipes.len)..];
-    }
-
-    for (pipes) |item| {
+    for (this.stdio_pipes.items) |item| {
         if (Environment.isWindows) {
             if (item == .buffer) {
                 const fdno: usize = @intFromPtr(item.buffer.fd().cast());
                 try array.push(global, JSValue.jsNumber(fdno));
+            } else {
+                try array.push(global, .null);
             }
-        } else {
+        } else if (item.isValid()) {
             try array.push(global, JSValue.jsNumber(item.cast()));
+        } else {
+            try array.push(global, .null);
         }
     }
     return array;
@@ -736,22 +732,16 @@ pub fn finalizeStreams(this: *Subprocess) void {
     this.closeIO(.stdout);
     this.closeIO(.stderr);
 
-    close_stdio_pipes: {
-        if (!this.observable_getters.contains(.stdio)) {
-            break :close_stdio_pipes;
-        }
-
-        for (this.stdio_pipes.items) |item| {
-            if (Environment.isWindows) {
-                if (item == .buffer) {
-                    item.buffer.close(onPipeClose);
-                }
-            } else {
-                item.close();
+    for (this.stdio_pipes.items) |item| {
+        if (Environment.isWindows) {
+            if (item == .buffer) {
+                item.buffer.close(onPipeClose);
             }
+        } else if (item.isValid()) {
+            item.close();
         }
-        this.stdio_pipes.clearAndFree(bun.default_allocator);
     }
+    this.stdio_pipes.clearAndFree(bun.default_allocator);
 }
 
 fn deinit(this: *Subprocess) void {

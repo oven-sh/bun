@@ -658,7 +658,11 @@ pub const JSGlobalObject = opaque {
 
     extern fn JSC__JSGlobalObject__handleRejectedPromises(*JSGlobalObject) void;
     pub fn handleRejectedPromises(this: *JSGlobalObject) void {
-        return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch @panic("unreachable");
+        // JSC__JSGlobalObject__handleRejectedPromises catches and reports its
+        // own exceptions; the only thing that escapes is a TerminationException
+        // (worker terminate() or process.exit()), and the request flag may
+        // already be cleared by the time we observe it. Nothing actionable here.
+        return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch return;
     }
 
     extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
@@ -875,6 +879,11 @@ pub const JSGlobalObject = opaque {
         bun.StackCheck.configureThread();
 
         return global;
+    }
+
+    extern fn Zig__GlobalObject__createForTestIsolation(old_global: *JSGlobalObject, console: *anyopaque) *JSGlobalObject;
+    pub fn createForTestIsolation(old_global: *JSGlobalObject, console: *anyopaque) *JSGlobalObject {
+        return Zig__GlobalObject__createForTestIsolation(old_global, console);
     }
 
     extern fn Zig__GlobalObject__getModuleRegistryMap(*JSGlobalObject) *anyopaque;

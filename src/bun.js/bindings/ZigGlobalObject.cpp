@@ -566,6 +566,46 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     return globalObject;
 }
 
+// Create a fresh Zig::GlobalObject on the *same* JSC::VM as `oldGlobal`, then unprotect
+// the old one so GC can reclaim its module graph. Used by `bun test --isolate` to give
+// each test file a clean global without paying for a new JSC::VM.
+extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::GlobalObject* oldGlobal, void* console_client)
+{
+    JSC::VM& vm = oldGlobal->vm();
+    JSC::JSLockHolder locker(vm);
+
+    // The new global must inherit the old one's ScriptExecutionContext identifier so that
+    // `Bun.isMainThread` (identifier == 1) and cross-thread task dispatch keep working.
+    // Move the old context to a fresh identifier first to free the slot.
+    auto* oldContext = oldGlobal->scriptExecutionContext();
+    const auto inheritedId = oldContext->identifier();
+    oldContext->removeFromContextsMap();
+    oldContext->regenerateIdentifier();
+
+    auto* structure = Zig::GlobalObject::createStructure(vm);
+    if (!structure) [[unlikely]] {
+        BUN_PANIC("Failed to allocate global object structure for test isolation");
+    }
+    auto* globalObject = Zig::GlobalObject::create(vm, structure, inheritedId);
+    if (!globalObject) [[unlikely]] {
+        BUN_PANIC("Failed to allocate global object for test isolation");
+    }
+
+    globalObject->setConsole(console_client);
+    globalObject->isThreadLocalDefaultGlobalObject = true;
+    globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT);
+    Bun__setDefaultGlobalObject(globalObject);
+    JSC::gcProtect(globalObject);
+
+    // Drop the permanent root on the previous global so its module registry,
+    // require.cache, and user objects become collectable. JSC's CodeCache and
+    // Bun's RuntimeTranspilerCache are VM/process scoped and survive.
+    oldGlobal->isThreadLocalDefaultGlobalObject = false;
+    JSC::gcUnprotect(oldGlobal);
+
+    return globalObject;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -2729,6 +2769,13 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         ImplementationVisibility::Public,
         NoIntrinsic,
         PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);
+    putDirectNativeFunction(vm, this,
+        builtinNames.evictIsolationSourceProviderCachePrivateName(),
+        1,
+        jsFunctionEvictIsolationSourceProviderCache,
+        ImplementationVisibility::Public,
+        NoIntrinsic,
+        PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | 0);
 
     putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPrivateName(), JSC::CustomGetterSetter::create(vm, JSBuffer_getter, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
     putDirectCustomAccessor(vm, builtinNames.lazyStreamPrototypeMapPrivateName(), JSC::CustomGetterSetter::create(vm, functionLazyLoadStreamPrototypeMap_getter, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
@@ -2939,10 +2986,14 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
     auto& vm = JSC::getVM(globalObject);
     // Clear the request for the termination exception to be thrown
     vm.clearHasTerminationRequest();
-    // In case it actually has been thrown, clear the exception itself as well
+    // In case it actually has been thrown, clear the exception itself as well.
+    // tryClearException() refuses to clear termination exceptions, so use
+    // TopExceptionScope::clearException() which clears unconditionally —
+    // this function's whole purpose is to clear that specific exception so
+    // execution can resume (e.g. for process.on('exit') after terminate()).
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (scope.exception() && vm.isTerminationException(scope.exception())) {
-        (void)scope.tryClearException();
+        scope.clearException();
     }
 }
 

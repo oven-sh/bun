@@ -17,8 +17,6 @@ class GlobalObject;
 namespace WebCore {
 
 Zig::GlobalObject* toJSDOMGlobalObject(ScriptExecutionContext& ctx, DOMWrapperWorld& world);
-WEBCORE_EXPORT Zig::GlobalObject& callerGlobalObject(JSC::JSGlobalObject&, JSC::CallFrame*);
-Zig::GlobalObject& legacyActiveGlobalObjectForAccessor(JSC::JSGlobalObject&, JSC::CallFrame*);
 
 template<class JSClass>
 JSClass* toJSDOMGlobalObject(JSC::VM& vm, JSC::JSValue value)

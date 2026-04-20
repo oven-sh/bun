@@ -17,8 +17,8 @@
 
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { availableParallelism } from "node:os";
-import { resolve } from "node:path";
+import { availableParallelism, homedir } from "node:os";
+import { join, resolve } from "node:path";
 import type { Config, OS } from "./config.ts";
 import { downloadWithRetry, extractZip } from "./download.ts";
 import { assert } from "./error.ts";
@@ -39,7 +39,7 @@ import { streamPath } from "./stream.ts";
  * is trusted, collapse both back to one constant.
  */
 export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
-export const ZIG_COMMIT_PARALLEL = "445fc0cbba4eea579e5c846f2b8be7c9bdc4e1cc";
+export const ZIG_COMMIT_PARALLEL = "65b29282c04e42bea2539e9e31c5a59ac9cbabdb";
 
 /**
  * The one place that picks which compiler to use. Everything coupled to
@@ -47,15 +47,13 @@ export const ZIG_COMMIT_PARALLEL = "445fc0cbba4eea579e5c846f2b8be7c9bdc4e1cc";
  * on the resolved cfg.zigCommit via usingParallelCompiler(), so changing
  * this — or passing --zigCommit=<hash> — is sufficient.
  *
- * Parallel compiler is darwin-local only for now. Linux is gated off
- * because oven-sh/zig's self-hosted ELF `-r` merge (used to combine
- * sharded codegen output when no_link_obj=true) currently emits an
- * incomplete bun-zig.o — link fails with every Zig symbol undefined on
- * a fresh build. macOS's Mach-O merge path works. See #29132. CI and
- * Windows stay on the stable compiler regardless.
+ * Parallel compiler is darwin+linux local only for now. Linux was gated
+ * off until 65b29282 fixed the self-hosted ELF `-r` merge that combines
+ * sharded codegen output (#29132). CI and Windows stay on the stable
+ * compiler.
  */
 export function defaultZigCommit(ci: boolean, hostOs: OS): string {
-  if (ci || hostOs !== "darwin") return ZIG_COMMIT;
+  if (ci || hostOs === "windows") return ZIG_COMMIT;
   return ZIG_COMMIT_PARALLEL;
 }
 
@@ -160,11 +158,23 @@ export function codegenEmbed(cfg: Config): boolean {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Where zig lives. In vendor/ (gitignored), shared across profiles — the
- * commit pin is global and changing it affects everything.
+ * Where zig lives. Defaults to vendor/zig (gitignored), shared across
+ * profiles — the commit pin is global and changing it affects everything.
+ *
+ * Override via $BUN_ZIG_PATH to point at an existing zig install (e.g.
+ * share one compiler across worktrees, test a zig fork build, or pre-fetch
+ * in an air-gapped environment). When set, the fetch edge is skipped and
+ * the path must already contain a zig/ + lib/ layout. Mirrors the
+ * $BUN_WEBKIT_PATH override.
  */
 function zigPath(cfg: Config): string {
-  return resolve(cfg.vendorDir, "zig");
+  const env = process.env.BUN_ZIG_PATH;
+  if (!env) return resolve(cfg.vendorDir, "zig");
+  // Shells don't expand ~ inside quotes; handle it here so a quoted export works.
+  if (env === "~" || env.startsWith("~/") || env.startsWith("~\\")) return join(homedir(), env.slice(1));
+  // Anchor relative paths to the repo root so ninja's regen rule (which runs
+  // from buildDir) resolves the same path as the initial configure.
+  return resolve(cfg.cwd, env);
 }
 
 function zigExecutable(cfg: Config): string {
@@ -310,29 +320,42 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
   // ─── Download compiler ───
   const zigDest = zigPath(cfg);
   const zigExe = zigExecutable(cfg);
-  const safe = zigCompilerSafe(cfg);
-  const url = zigDownloadUrl(cfg, safe);
-  // Commit + safe go into the stamp content, so switching either retriggers.
-  const stamp = resolve(zigDest, ".zig-commit");
+  const envOverride = process.env.BUN_ZIG_PATH;
+  if (envOverride) {
+    // User-provided compiler — no fetch edge. Validate at configure time
+    // that the path has a usable layout; commit mismatch is the user's
+    // problem. zig build will error loudly if the compiler is too old.
+    assert(existsSync(zigExe), `BUN_ZIG_PATH='${envOverride}' but no zig executable at ${zigExe}`, {
+      hint: "Point $BUN_ZIG_PATH at an extracted zig install (the dir containing zig + lib/), or unset it to use the bundled compiler",
+    });
+    assert(existsSync(resolve(zigDest, "lib")), `BUN_ZIG_PATH='${envOverride}' but no lib/ dir at ${zigDest}`, {
+      hint: "zig needs its bundled stdlib at <path>/lib/ — make sure the extract wasn't partial",
+    });
+  } else {
+    const safe = zigCompilerSafe(cfg);
+    const url = zigDownloadUrl(cfg, safe);
+    // Commit + safe go into the stamp content, so switching either retriggers.
+    const stamp = resolve(zigDest, ".zig-commit");
 
-  n.build({
-    outputs: [stamp],
-    implicitOutputs: [zigExe],
-    rule: "zig_fetch",
-    inputs: [],
-    // Only fetch-cli.ts. This file (zig.ts) has emitZig and other logic
-    // unrelated to download — editing those shouldn't re-download the
-    // compiler. The URL/commit are in the rule's vars so changing those
-    // already retriggers via ninja's command tracking.
-    implicitInputs: [fetchCliPath],
-    vars: {
-      url,
-      dest: zigDest,
-      // Safe is encoded in the commit stamp (not just URL) so the CLI
-      // can short-circuit correctly when safe doesn't change.
-      commit: `${cfg.zigCommit}${safe ? "-safe" : ""}`,
-    },
-  });
+    n.build({
+      outputs: [stamp],
+      implicitOutputs: [zigExe],
+      rule: "zig_fetch",
+      inputs: [],
+      // Only fetch-cli.ts. This file (zig.ts) has emitZig and other logic
+      // unrelated to download — editing those shouldn't re-download the
+      // compiler. The URL/commit are in the rule's vars so changing those
+      // already retriggers via ninja's command tracking.
+      implicitInputs: [fetchCliPath],
+      vars: {
+        url,
+        dest: zigDest,
+        // Safe is encoded in the commit stamp (not just URL) so the CLI
+        // can short-circuit correctly when safe doesn't change.
+        commit: `${cfg.zigCommit}${safe ? "-safe" : ""}`,
+      },
+    });
+  }
   n.phony("zig-compiler", [zigExe]);
 
   // ─── Build ───

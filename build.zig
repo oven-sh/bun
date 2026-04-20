@@ -123,7 +123,7 @@ pub fn getOSVersionMin(os: OperatingSystem) ?Target.Query.OsVersion {
 pub fn getOSGlibCVersion(os: OperatingSystem) ?Version {
     return switch (os) {
         // Compiling with a newer glibc than this will break certain cloud environments. See symbols.test.ts.
-        .linux => .{ .major = 2, .minor = 26, .patch = 0 },
+        .linux => .{ .major = 2, .minor = 17, .patch = 0 },
 
         else => null,
     };

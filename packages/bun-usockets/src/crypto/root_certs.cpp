@@ -202,9 +202,45 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
 }
 
 STACK_OF(X509) *us_get_root_system_cert_instances() {
-  // Ensure single-path initialization via us_internal_init_root_certs
+  // If NODE_USE_SYSTEM_CA / --use-system-ca was set, the eager path inside
+  // us_internal_init_root_certs already populated this under its own lock.
   auto certs = us_get_default_ca_certificates();
-  return certs->root_system_cert_instances;
+  if (certs->root_system_cert_instances != NULL) {
+    return certs->root_system_cert_instances;
+  }
+
+  // Otherwise lazy-load on first call to tls.getCACertificates('system').
+  // Node returns system certs here regardless of --use-system-ca; we match
+  // that while deferring the scan cost until the API is actually called.
+  // Self-contained DCLP: the result is published via an atomic so readers
+  // never observe the pointer mid-population.
+  static std::atomic<STACK_OF(X509)*> lazy_certs{nullptr};
+  static std::atomic_flag lazy_lock = ATOMIC_FLAG_INIT;
+  static std::atomic_bool lazy_loaded{false};
+
+  if (std::atomic_load_explicit(&lazy_loaded, std::memory_order_acquire)) {
+    return lazy_certs.load(std::memory_order_relaxed);
+  }
+
+  while (atomic_flag_test_and_set_explicit(&lazy_lock,
+                                           std::memory_order_acquire))
+    ;
+
+  if (!std::atomic_load_explicit(&lazy_loaded, std::memory_order_relaxed)) {
+    STACK_OF(X509)* loaded = nullptr;
+#ifdef __APPLE__
+    us_load_system_certificates_macos(&loaded);
+#elif defined(_WIN32)
+    us_load_system_certificates_windows(&loaded);
+#else
+    us_load_system_certificates_linux(&loaded);
+#endif
+    lazy_certs.store(loaded, std::memory_order_relaxed);
+    std::atomic_store_explicit(&lazy_loaded, true, std::memory_order_release);
+  }
+
+  atomic_flag_clear_explicit(&lazy_lock, std::memory_order_release);
+  return lazy_certs.load(std::memory_order_relaxed);
 }
 
 extern "C" X509_STORE *us_get_default_ca_store() {

@@ -622,50 +622,73 @@ var pipe_serial = std.atomic.Value(u32).init(0);
 fn createPtyWindows(cols: u16, rows: u16) CreatePtyError!PtyResult {
     const w = bun.windows;
 
-    // Output pipe: ConPTY writes (client), we read (overlapped server).
-    const out_pair = try createOverlappedPipePair(std.os.windows.PIPE_ACCESS_INBOUND);
+    // Track ownership explicitly: handles are nulled out as they are closed or
+    // transferred so the errdefer cleanup never double-closes.
+    var out_server: ?w.HANDLE = null;
+    var out_client: ?w.HANDLE = null;
+    var in_server: ?w.HANDLE = null;
+    var in_client: ?w.HANDLE = null;
+    var hpcon: ?w.HPCON = null;
     errdefer {
-        _ = w.CloseHandle(out_pair.server);
-        _ = w.CloseHandle(out_pair.client);
+        if (hpcon) |h| w.ClosePseudoConsole(h);
+        if (out_server) |h| _ = w.CloseHandle(h);
+        if (out_client) |h| _ = w.CloseHandle(h);
+        if (in_server) |h| _ = w.CloseHandle(h);
+        if (in_client) |h| _ = w.CloseHandle(h);
+    }
+
+    // Output pipe: ConPTY writes (client), we read (overlapped server).
+    {
+        const pair = try createOverlappedPipePair(std.os.windows.PIPE_ACCESS_INBOUND);
+        out_server = pair.server;
+        out_client = pair.client;
     }
 
     // Input pipe: we write (overlapped server), ConPTY reads (client).
-    const in_pair = try createOverlappedPipePair(std.os.windows.PIPE_ACCESS_OUTBOUND);
-    errdefer {
-        _ = w.CloseHandle(in_pair.server);
-        _ = w.CloseHandle(in_pair.client);
+    {
+        const pair = try createOverlappedPipePair(std.os.windows.PIPE_ACCESS_OUTBOUND);
+        in_server = pair.server;
+        in_client = pair.client;
     }
 
-    var hpcon: w.HPCON = undefined;
-    const size = w.COORD{ .X = @intCast(cols), .Y = @intCast(rows) };
-    const hr = w.CreatePseudoConsole(size, in_pair.client, out_pair.client, 0, &hpcon);
-    if (hr < 0) return error.OpenPtyFailed;
-    errdefer w.ClosePseudoConsole(hpcon);
+    const size = w.COORD{ .X = clampToCoord(cols), .Y = clampToCoord(rows) };
+    {
+        var pc: w.HPCON = undefined;
+        if (w.CreatePseudoConsole(size, in_client.?, out_client.?, 0, &pc) < 0)
+            return error.OpenPtyFailed;
+        hpcon = pc;
+    }
 
     // ConPTY duplicated the client handles internally; close our copies.
-    _ = w.CloseHandle(in_pair.client);
-    _ = w.CloseHandle(out_pair.client);
+    _ = w.CloseHandle(in_client.?);
+    in_client = null;
+    _ = w.CloseHandle(out_client.?);
+    out_client = null;
 
     // Wrap server (overlapped) ends as libuv-owned FDs so they can be passed
     // to BufferedReader/StreamingWriter.start() which calls uv_pipe_open.
-    const read_fd = bun.FD.fromNative(out_pair.server).makeLibUVOwned() catch {
-        _ = w.CloseHandle(out_pair.server);
-        _ = w.CloseHandle(in_pair.server);
-        return error.DupFailed;
-    };
-    const write_fd = bun.FD.fromNative(in_pair.server).makeLibUVOwned() catch {
-        read_fd.close();
-        _ = w.CloseHandle(in_pair.server);
-        return error.DupFailed;
-    };
+    const read_fd = bun.FD.fromNative(out_server.?).makeLibUVOwned() catch return error.DupFailed;
+    out_server = null;
+    errdefer read_fd.close();
+
+    const write_fd = bun.FD.fromNative(in_server.?).makeLibUVOwned() catch return error.DupFailed;
+    in_server = null;
+
+    const result_hpcon = hpcon.?;
+    hpcon = null;
 
     return PtyResult{
         .master = bun.invalid_fd,
         .read_fd = read_fd,
         .write_fd = write_fd,
         .slave = bun.invalid_fd,
-        .hpcon = hpcon,
+        .hpcon = result_hpcon,
     };
+}
+
+/// COORD.X/Y are i16; clamp the u16 cols/rows to its range.
+inline fn clampToCoord(v: u16) i16 {
+    return @intCast(@min(v, std.math.maxInt(i16)));
 }
 
 /// Check if terminal is closed
@@ -818,7 +841,7 @@ pub fn resize(
 
     if (comptime Environment.isWindows) {
         if (this.hpcon) |hpcon| {
-            const size = bun.windows.COORD{ .X = @intCast(new_cols), .Y = @intCast(new_rows) };
+            const size = bun.windows.COORD{ .X = clampToCoord(new_cols), .Y = clampToCoord(new_rows) };
             const hr = bun.windows.ResizePseudoConsole(hpcon, size);
             if (hr < 0) {
                 return globalObject.throw("Failed to resize terminal", .{});

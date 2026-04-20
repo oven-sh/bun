@@ -10,8 +10,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
-const decoder = new TextDecoder();
-
 /** Spawn a child attached to a fresh terminal, collect all PTY output until
  *  `done()` returns true or the child exits, then close the terminal. */
 async function runInTerminal(
@@ -28,6 +26,7 @@ async function runInTerminal(
   const ready = Promise.withResolvers<void>();
   const finished = Promise.withResolvers<void>();
   const readyMarker = opts.readyMarker ?? "READY";
+  const decoder = new TextDecoder();
 
   // Use an inline terminal so the child becomes the session leader on POSIX
   // (setsid + TIOCSCTTY), which is required for SIGINT/SIGWINCH delivery.
@@ -38,7 +37,7 @@ async function runInTerminal(
       cols: opts.cols ?? 80,
       rows: opts.rows ?? 24,
       data(_t, chunk: Uint8Array) {
-        output += decoder.decode(chunk);
+        output += decoder.decode(chunk, { stream: true });
         if (output.includes(readyMarker)) ready.resolve();
         if (opts.done(output)) finished.resolve();
       },
@@ -53,6 +52,7 @@ async function runInTerminal(
   await Promise.race([finished.promise, proc.exited.then(() => finished.resolve())]);
   proc.terminal?.close();
   await proc.exited;
+  output += decoder.decode();
   return { output, exitCode: proc.exitCode };
 }
 
@@ -83,7 +83,7 @@ describe("Bun.Terminal platform behaviour", () => {
     const got = Promise.withResolvers<void>();
     await using terminal = new Bun.Terminal({
       data(_t, chunk) {
-        output += decoder.decode(chunk);
+        output += Buffer.from(chunk).toString("latin1");
         got.resolve();
       },
     });
@@ -221,7 +221,7 @@ describe("Bun.Terminal platform behaviour", () => {
     // the stream (it renders to a virtual screen and emits whatever sequences
     // describe the diff), so the byte sequence is not identical.
     expect(output).toContain("RED");
-    expect(output).toContain("\x1b[31m");
+    expect(output).toMatch(/\x1b\[(?:\d+;)*31m/);
     if (!isWindows) {
       expect(output).toContain("\x1b[31mRED\x1b[0m");
     }
@@ -327,7 +327,7 @@ describe("Bun.Terminal platform behaviour", () => {
     const second = Promise.withResolvers<void>();
     const terminal = new Bun.Terminal({
       data(_t, chunk) {
-        output += decoder.decode(chunk);
+        output += Buffer.from(chunk).toString("latin1");
         if (output.includes("FIRST")) first.resolve();
         if (output.includes("SECOND")) second.resolve();
       },
@@ -354,7 +354,7 @@ describe("Bun.Terminal platform behaviour", () => {
       env: bunEnv,
       terminal: {
         data(_t, chunk: Uint8Array) {
-          output += decoder.decode(chunk);
+          output += Buffer.from(chunk).toString("latin1");
           if (output.includes("READY")) ready.resolve();
         },
       },

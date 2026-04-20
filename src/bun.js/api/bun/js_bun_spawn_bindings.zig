@@ -430,6 +430,11 @@ pub fn spawnMaybeSync(
                         stdio[0] = .ignore;
                         stdio[1] = .ignore;
                         stdio[2] = .ignore;
+                        // ConPTY spawns with bInheritHandles=FALSE and no stdio buffer,
+                        // so extra fds and IPC pipes can't be passed to the child.
+                        if (maybe_ipc_mode != null or extra_fds.items.len > 0) {
+                            return globalThis.throwInvalidArguments("ipc and extra stdio are not supported with terminal on Windows", .{});
+                        }
                     }
                 }
             }

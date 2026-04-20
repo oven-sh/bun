@@ -518,7 +518,7 @@ namespace SpawnOptions {
     timeout?: number;
     killSignal?: string | number;
     maxBuffer?: number;
-    terminal?: TerminalOptions; // PTY support (POSIX only)
+    terminal?: TerminalOptions; // PTY (POSIX) / ConPTY (Windows) support
   }
 
   type Readable =

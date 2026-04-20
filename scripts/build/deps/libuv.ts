@@ -22,7 +22,7 @@ export const libuv: Dependency = {
     commit: LIBUV_COMMIT,
   }),
 
-  patches: ["patches/libuv/fix-win-pipe-cancel-race.patch"],
+  patches: ["patches/libuv/fix-win-pipe-cancel-race.patch", "patches/libuv/conpty-support.patch"],
 
   build: cfg => {
     const spec: NestedCmakeBuild = {

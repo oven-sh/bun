@@ -387,17 +387,17 @@ pub fn spawnMaybeSync(
 
             if (comptime !is_sync) {
                 if (try args.getTruthy(globalThis, "terminal")) |terminal_val| {
-                    if (comptime !Environment.isPosix) {
-                        return globalThis.throwInvalidArguments("terminal option is not supported on this platform", .{});
-                    }
-
                     // Check if it's an existing Terminal object
                     if (Terminal.fromJS(terminal_val)) |terminal| {
                         if (terminal.flags.closed) {
                             return globalThis.throwInvalidArguments("terminal is closed", .{});
                         }
-                        if (terminal.slave_fd == bun.invalid_fd) {
-                            return globalThis.throwInvalidArguments("terminal slave fd is no longer valid", .{});
+                        if (comptime Environment.isPosix) {
+                            if (terminal.slave_fd == bun.invalid_fd) {
+                                return globalThis.throwInvalidArguments("terminal slave fd is no longer valid", .{});
+                            }
+                        } else if (terminal.getPseudoconsole() == null) {
+                            return globalThis.throwInvalidArguments("terminal pseudoconsole is no longer valid", .{});
                         }
                         existing_terminal = terminal;
                         terminal_js_value = terminal_val;
@@ -418,11 +418,19 @@ pub fn spawnMaybeSync(
                         return globalThis.throwInvalidArguments("terminal must be a Terminal object or options object", .{});
                     }
 
-                    const terminal = existing_terminal orelse terminal_info.?.terminal;
-                    const slave_fd = terminal.getSlaveFd();
-                    stdio[0] = .{ .fd = slave_fd };
-                    stdio[1] = .{ .fd = slave_fd };
-                    stdio[2] = .{ .fd = slave_fd };
+                    if (comptime Environment.isPosix) {
+                        const terminal = existing_terminal orelse terminal_info.?.terminal;
+                        const slave_fd = terminal.getSlaveFd();
+                        stdio[0] = .{ .fd = slave_fd };
+                        stdio[1] = .{ .fd = slave_fd };
+                        stdio[2] = .{ .fd = slave_fd };
+                    } else {
+                        // On Windows, ConPTY supplies stdio via PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE.
+                        // Set stdio to .ignore so spawnProcessWindows doesn't allocate pipes.
+                        stdio[0] = .ignore;
+                        stdio[1] = .ignore;
+                        stdio[2] = .ignore;
+                    }
                 }
             }
         } else {
@@ -581,6 +589,11 @@ pub fn spawnMaybeSync(
         .pty_slave_fd = if (Environment.isPosix) blk: {
             if (terminal_info) |ti| break :blk ti.terminal.getSlaveFd().native();
             break :blk -1;
+        } else {},
+        .pseudoconsole = if (Environment.isWindows) blk: {
+            if (existing_terminal) |t| break :blk t.getPseudoconsole();
+            if (terminal_info) |ti| break :blk ti.terminal.getPseudoconsole();
+            break :blk null;
         } else {},
 
         .windows = if (Environment.isWindows) .{

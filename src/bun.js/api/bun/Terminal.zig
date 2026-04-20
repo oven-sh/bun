@@ -31,16 +31,21 @@ pub const deref = RefCount.deref;
 ref_count: RefCount,
 
 /// The master side of the PTY (original fd, used for ioctl operations)
+/// On Windows this is always invalid_fd; ConPTY uses hpcon for control.
 master_fd: bun.FD,
 
-/// Duplicated master fd for reading
+/// Duplicated master fd for reading (POSIX) / overlapped read pipe end (Windows)
 read_fd: bun.FD,
 
-/// Duplicated master fd for writing
+/// Duplicated master fd for writing (POSIX) / overlapped write pipe end (Windows)
 write_fd: bun.FD,
 
-/// The slave side of the PTY (used by child processes)
+/// The slave side of the PTY (used by child processes). Unused on Windows.
 slave_fd: bun.FD,
+
+/// Windows ConPTY handle. Used for resize and passed to uv_spawn via
+/// uv_process_options_t.pseudoconsole.
+hpcon: if (Environment.isWindows) ?bun.windows.HPCON else void = if (Environment.isWindows) null else {},
 
 /// Current terminal size
 cols: u16,
@@ -182,6 +187,7 @@ fn initTerminal(
         .read_fd = pty_result.read_fd,
         .write_fd = pty_result.write_fd,
         .slave_fd = pty_result.slave,
+        .hpcon = if (comptime Environment.isWindows) pty_result.hpcon else {},
         .cols = options.cols,
         .rows = options.rows,
         .term_name = term_name,
@@ -296,6 +302,13 @@ pub fn getSlaveFd(this: *Terminal) bun.FD {
     return this.slave_fd;
 }
 
+/// Windows: get the ConPTY handle to pass to uv_spawn via
+/// uv_process_options_t.pseudoconsole.
+pub fn getPseudoconsole(this: *Terminal) ?bun.windows.HPCON {
+    bun.assert(Environment.isWindows);
+    return this.hpcon;
+}
+
 /// Close the parent's copy of slave_fd after fork
 /// The child process has its own copy - closing the parent's ensures
 /// EOF is received on the master side when the child exits
@@ -311,6 +324,7 @@ const PtyResult = struct {
     read_fd: bun.FD,
     write_fd: bun.FD,
     slave: bun.FD,
+    hpcon: if (Environment.isWindows) bun.windows.HPCON else void,
 };
 
 const CreatePtyError = error{ OpenPtyFailed, DupFailed, NotSupported };
@@ -318,10 +332,11 @@ const CreatePtyError = error{ OpenPtyFailed, DupFailed, NotSupported };
 fn createPty(cols: u16, rows: u16) CreatePtyError!PtyResult {
     if (comptime Environment.isPosix) {
         return createPtyPosix(cols, rows);
-    } else {
-        // Windows PTY support would go here
-        return error.NotSupported;
     }
+    if (comptime Environment.isWindows) {
+        return createPtyWindows(cols, rows);
+    }
+    return error.NotSupported;
 }
 
 // OpenPtyTermios is required for the openpty() extern signature even though we pass null.
@@ -528,6 +543,116 @@ fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
         .read_fd = read_fd,
         .write_fd = write_fd,
         .slave = slave_fd_desc,
+        .hpcon = {},
+    };
+}
+
+/// Create one end of a pipe pair as an overlapped named pipe (server) and the
+/// other as a synchronous client. Returns both raw HANDLEs. Caller closes
+/// both on error. The "server" end is suitable for libuv (uv_pipe_open) and
+/// the "client" end is suitable for ConPTY (which uses synchronous I/O).
+fn createOverlappedPipePair(
+    /// PIPE_ACCESS_INBOUND: server reads, client writes.
+    /// PIPE_ACCESS_OUTBOUND: server writes, client reads.
+    server_access: u32,
+) CreatePtyError!struct { server: bun.windows.HANDLE, client: bun.windows.HANDLE } {
+    const w = bun.windows;
+    const k32 = std.os.windows.kernel32;
+    const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
+
+    const pid: u32 = std.os.windows.GetCurrentProcessId();
+    const counter = pipe_serial.fetchAdd(1, .monotonic);
+    var name_utf8_buf: [96]u8 = undefined;
+    const name = std.fmt.bufPrint(
+        &name_utf8_buf,
+        "\\\\.\\pipe\\bun-conpty-{d}-{d}",
+        .{ pid, counter },
+    ) catch return error.OpenPtyFailed;
+    var name_w_buf: [96:0]u16 = undefined;
+    const name_w_len = std.unicode.wtf8ToWtf16Le(&name_w_buf, name) catch return error.OpenPtyFailed;
+    name_w_buf[name_w_len] = 0;
+    const name_w = name_w_buf[0..name_w_len :0];
+
+    const server = k32.CreateNamedPipeW(
+        name_w,
+        server_access | std.os.windows.FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+        std.os.windows.PIPE_TYPE_BYTE | std.os.windows.PIPE_READMODE_BYTE | std.os.windows.PIPE_WAIT,
+        1,
+        65536,
+        65536,
+        0,
+        null,
+    );
+    if (server == w.INVALID_HANDLE_VALUE) return error.OpenPtyFailed;
+    errdefer _ = w.CloseHandle(server);
+
+    const client_access: u32 = if (server_access == std.os.windows.PIPE_ACCESS_INBOUND)
+        std.os.windows.GENERIC_WRITE
+    else
+        std.os.windows.GENERIC_READ;
+
+    const client = k32.CreateFileW(
+        name_w,
+        client_access,
+        0,
+        null,
+        std.os.windows.OPEN_EXISTING,
+        0,
+        null,
+    );
+    if (client == w.INVALID_HANDLE_VALUE) return error.OpenPtyFailed;
+
+    return .{ .server = server, .client = client };
+}
+
+var pipe_serial = std.atomic.Value(u32).init(0);
+
+fn createPtyWindows(cols: u16, rows: u16) CreatePtyError!PtyResult {
+    const w = bun.windows;
+
+    // Output pipe: ConPTY writes (client), we read (overlapped server).
+    const out_pair = try createOverlappedPipePair(std.os.windows.PIPE_ACCESS_INBOUND);
+    errdefer {
+        _ = w.CloseHandle(out_pair.server);
+        _ = w.CloseHandle(out_pair.client);
+    }
+
+    // Input pipe: we write (overlapped server), ConPTY reads (client).
+    const in_pair = try createOverlappedPipePair(std.os.windows.PIPE_ACCESS_OUTBOUND);
+    errdefer {
+        _ = w.CloseHandle(in_pair.server);
+        _ = w.CloseHandle(in_pair.client);
+    }
+
+    var hpcon: w.HPCON = undefined;
+    const size = w.COORD{ .X = @intCast(cols), .Y = @intCast(rows) };
+    const hr = w.CreatePseudoConsole(size, in_pair.client, out_pair.client, 0, &hpcon);
+    if (hr < 0) return error.OpenPtyFailed;
+    errdefer w.ClosePseudoConsole(hpcon);
+
+    // ConPTY duplicated the client handles internally; close our copies.
+    _ = w.CloseHandle(in_pair.client);
+    _ = w.CloseHandle(out_pair.client);
+
+    // Wrap server (overlapped) ends as libuv-owned FDs so they can be passed
+    // to BufferedReader/StreamingWriter.start() which calls uv_pipe_open.
+    const read_fd = bun.FD.fromNative(out_pair.server).makeLibUVOwned() catch {
+        _ = w.CloseHandle(out_pair.server);
+        _ = w.CloseHandle(in_pair.server);
+        return error.DupFailed;
+    };
+    const write_fd = bun.FD.fromNative(in_pair.server).makeLibUVOwned() catch {
+        read_fd.close();
+        _ = w.CloseHandle(in_pair.server);
+        return error.DupFailed;
+    };
+
+    return PtyResult{
+        .master = bun.invalid_fd,
+        .read_fd = read_fd,
+        .write_fd = write_fd,
+        .slave = bun.invalid_fd,
+        .hpcon = hpcon,
     };
 }
 
@@ -617,7 +742,9 @@ pub fn write(
     return switch (write_result) {
         .done => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
         .wrote => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
-        .pending => |amt| JSValue.jsNumber(@as(i32, @intCast(amt))),
+        // On Windows the streaming writer buffers and returns .pending=0; the
+        // bytes were accepted, so report bytes.len to match POSIX semantics.
+        .pending => |amt| JSValue.jsNumber(@as(i32, @intCast(if (Environment.isWindows) bytes.len else amt))),
         .err => |err| globalObject.throwValue(try err.toJS(globalObject)),
     };
 }
@@ -674,6 +801,16 @@ pub fn resize(
         const ioctl_result = ioctl_c.ioctl(this.master_fd.cast(), ioctl_c.TIOCSWINSZ, &winsize);
         if (ioctl_result != 0) {
             return globalObject.throw("Failed to resize terminal", .{});
+        }
+    }
+
+    if (comptime Environment.isWindows) {
+        if (this.hpcon) |hpcon| {
+            const size = bun.windows.COORD{ .X = @intCast(new_cols), .Y = @intCast(new_rows) };
+            const hr = bun.windows.ResizePseudoConsole(hpcon, size);
+            if (hr < 0) {
+                return globalObject.throw("Failed to resize terminal", .{});
+            }
         }
     }
 
@@ -763,6 +900,16 @@ pub fn asyncDispose(
 pub fn closeInternal(this: *Terminal) void {
     if (this.flags.closed) return;
     this.flags.closed = true;
+
+    if (comptime Environment.isWindows) {
+        // Close ConPTY first so conhost stops writing to our read pipe; this
+        // lets the reader observe EOF instead of blocking on ClosePseudoConsole's
+        // final flush.
+        if (this.hpcon) |hpcon| {
+            this.hpcon = null;
+            bun.windows.ClosePseudoConsole(hpcon);
+        }
+    }
 
     // Close reader (closes read_fd)
     if (this.flags.reader_started) {

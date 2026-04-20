@@ -215,7 +215,15 @@ describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 function test(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
   const { test } = bunTest();
-  test(name, fn, options);
+  if (options.only) {
+    test.only(name, fn, options);
+  } else if (options.todo) {
+    test.todo(name, fn, options);
+  } else if (options.skip) {
+    test.skip(name, fn, options);
+  } else {
+    test(name, fn, options);
+  }
 }
 
 test.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {

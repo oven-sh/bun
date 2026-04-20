@@ -711,11 +711,23 @@ pub const Installer = struct {
                         // stamp live alongside it under the entry root, so
                         // their later steps proceed unchanged with our
                         // (identical) package files.
+                        fn isCollision(e: bun.sys.E) bool {
+                            return switch (e) {
+                                .EXIST, .NOTEMPTY => true,
+                                // Windows maps a rename onto an in-use
+                                // directory to ERROR_ACCESS_DENIED, which
+                                // surfaces here as PERM/ACCES. On Linux/macOS
+                                // those are real permission errors (read-only
+                                // mount, NFS root-squash) and must propagate.
+                                .PERM, .ACCES => Environment.isWindows,
+                                else => false,
+                            };
+                        }
                         fn call(tmp: *bun.AbsPath(.{ .sep = .auto }), real: *bun.AbsPath(.{ .sep = .auto }), entry_ok: *bun.AbsPath(.{ .sep = .auto })) sys.Maybe(void) {
                             switch (sys.renameat(FD.cwd(), tmp.sliceZ(), FD.cwd(), real.sliceZ())) {
                                 .result => return .success,
-                                .err => |err| switch (err.getErrno()) {
-                                    .EXIST, .NOTEMPTY, .PERM, .ACCES => {
+                                .err => |err| {
+                                    if (isCollision(err.getErrno())) {
                                         if (sys.existsZ(entry_ok.sliceZ())) {
                                             FD.cwd().deleteTree(tmp.slice()) catch {};
                                             return .success;
@@ -723,25 +735,21 @@ pub const Installer = struct {
                                         FD.cwd().deleteTree(real.slice()) catch {};
                                         return switch (sys.renameat(FD.cwd(), tmp.sliceZ(), FD.cwd(), real.sliceZ())) {
                                             .result => .success,
-                                            .err => |e| switch (e.getErrno()) {
+                                            .err => |e| {
                                                 // Concurrent install repopulated
                                                 // it between deleteTree and
                                                 // rename — done either way.
-                                                .EXIST, .NOTEMPTY, .PERM, .ACCES => {
+                                                if (isCollision(e.getErrno())) {
                                                     FD.cwd().deleteTree(tmp.slice()) catch {};
                                                     return .success;
-                                                },
-                                                else => {
-                                                    FD.cwd().deleteTree(tmp.slice()) catch {};
-                                                    return .initErr(e);
-                                                },
+                                                }
+                                                FD.cwd().deleteTree(tmp.slice()) catch {};
+                                                return .initErr(e);
                                             },
                                         };
-                                    },
-                                    else => {
-                                        FD.cwd().deleteTree(tmp.slice()) catch {};
-                                        return .initErr(err);
-                                    },
+                                    }
+                                    FD.cwd().deleteTree(tmp.slice()) catch {};
+                                    return .initErr(err);
                                 },
                             }
                         }

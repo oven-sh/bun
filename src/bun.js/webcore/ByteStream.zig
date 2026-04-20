@@ -459,6 +459,18 @@ pub fn toBufferedValue(this: *@This(), globalThis: *jsc.JSGlobalObject, action: 
         .text => .{ .text = .init(globalThis) },
     };
 
+    // Once buffer_action is set, onPull is never called again and onData
+    // accumulates straight into `buffer` until the last chunk — there is no
+    // pull-based resume path. If the producer paused for backpressure before
+    // we got here (e.g. `res.body` accessed, >HWM buffered, then `res.text()`),
+    // the only thing that would observe `buffer_action != null` and release is
+    // FetchTasklet.evaluateBodyBackpressure, and that runs only on new data
+    // which can't arrive while paused. Fire the drain hook now so the producer
+    // releases immediately.
+    if (this.parent().drain_handler) |handler| {
+        handler(this.parent().drain_ctx, 0);
+    }
+
     return this.buffer_action.?.value();
 }
 

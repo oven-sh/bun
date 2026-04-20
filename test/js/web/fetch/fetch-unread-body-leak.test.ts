@@ -131,6 +131,49 @@ test("fetch response body backpressure is released on reader.cancel()", async ()
   expect(exitCode).toBe(0);
 });
 
+// Accessing res.body, letting the buffer cross the HWM (pausing the socket),
+// then calling res.text() takes the toBufferedValue path which sets
+// buffer_action with no pull-based resume hook. toBufferedValue must release
+// the pause itself; evaluateBodyBackpressure's buffer_action exemption only
+// runs on new data, which can't arrive while paused.
+test("fetch response body backpressure is released when .text() follows a stalled .body", async () => {
+  const SIZE = 4 * 1024 * 1024;
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch() {
+      return new Response(new Blob([Buffer.alloc(SIZE, "x")]));
+    },
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--smol",
+      "-e",
+      `
+        const res = await fetch(process.env.SERVER);
+        // Create the ByteStream and enable streaming.
+        void res.body;
+        // Let the HTTP thread buffer past the 1 MB HWM and pause.
+        for (let i = 0; i < 50; i++) await Bun.sleep(2);
+        // toBufferedValue path — must release the pause it can't otherwise see.
+        const text = await res.text();
+        if (text.length !== ${SIZE}) throw new Error("size " + text.length);
+        console.log("ok");
+      `,
+    ],
+    env: { ...bunEnv, SERVER: server.url.href },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (stderr) console.error(stderr.trim());
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
+});
+
 // response.clone() before any .body access creates the ByteStream via the
 // Body.tee() fallback path, which must wire drain_handler the same way
 // toReadableStream() does — otherwise once the buffer crosses the HWM the

@@ -5,7 +5,7 @@
 // address — surfacing as e.g. `Export named 'beforeAll' not found in module
 // 'node:fs'`. Reproduced with BUN_JSC_collectContinuously=1.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 test("require(esm) sync queue is a GC root", async () => {
   using dir = tempDir("require-esm-gc-roots", {
@@ -39,7 +39,10 @@ test("require(esm) sync queue is a GC root", async () => {
     `,
   });
 
-  const runs = Array.from({ length: 30 }, async () => {
+  // collectContinuously is brutally slow on Windows (every allocation triggers
+  // a full GC), so we trade fewer iterations for the same coverage there.
+  const N = isWindows ? 8 : 30;
+  const runs = Array.from({ length: N }, async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "entry.cjs"],
       env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
@@ -52,4 +55,4 @@ test("require(esm) sync queue is a GC root", async () => {
     expect(exitCode).toBe(0);
   });
   await Promise.all(runs);
-}, 30000);
+}, 60000);

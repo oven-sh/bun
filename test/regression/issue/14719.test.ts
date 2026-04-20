@@ -276,12 +276,14 @@ it("bun add --filter works when run from inside a workspace directory", async ()
 it("bun remove --filter removes from the matching workspace only", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.3": {} }));
+  // Root also depends on baz — --filter should never touch the root manifest.
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
       name: "monorepo",
       version: "0.0.0",
       workspaces: ["packages/*"],
+      dependencies: { baz: "^0.0.3" },
     }),
   );
   await mkdir(join(package_dir, "packages", "api"), { recursive: true });
@@ -306,6 +308,14 @@ it("bun remove --filter removes from the matching workspace only", async () => {
   const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(await exited).toBe(0);
+
+  // Root still has baz.
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "monorepo",
+    version: "0.0.0",
+    workspaces: ["packages/*"],
+    dependencies: { baz: "^0.0.3" },
+  });
 
   expect(await file(join(package_dir, "packages", "api", "package.json")).json()).toEqual({
     name: "api",

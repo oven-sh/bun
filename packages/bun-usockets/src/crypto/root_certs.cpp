@@ -219,7 +219,7 @@ STACK_OF(X509) *us_get_root_system_cert_instances() {
   static std::atomic_flag lazy_lock = ATOMIC_FLAG_INIT;
   static std::atomic_bool lazy_loaded = false;
 
-  if (std::atomic_load(&lazy_loaded)) {
+  if (std::atomic_load_explicit(&lazy_loaded, std::memory_order_acquire)) {
     return certs->root_system_cert_instances;
   }
 
@@ -227,7 +227,7 @@ STACK_OF(X509) *us_get_root_system_cert_instances() {
                                            std::memory_order_acquire))
     ;
 
-  if (!atomic_exchange(&lazy_loaded, true)) {
+  if (!std::atomic_load_explicit(&lazy_loaded, std::memory_order_relaxed)) {
 #ifdef __APPLE__
     us_load_system_certificates_macos(&certs->root_system_cert_instances);
 #elif defined(_WIN32)
@@ -235,6 +235,7 @@ STACK_OF(X509) *us_get_root_system_cert_instances() {
 #else
     us_load_system_certificates_linux(&certs->root_system_cert_instances);
 #endif
+    std::atomic_store_explicit(&lazy_loaded, true, std::memory_order_release);
   }
 
   atomic_flag_clear_explicit(&lazy_lock, std::memory_order_release);

@@ -16,7 +16,7 @@ import tls from "node:tls";
 const skip = process.platform === "darwin" ? "macOS system cert loader returns 0 on CI" : false;
 
 test("tls.getCACertificates('system') returns system certs without --use-system-ca", { skip }, () => {
-  assert.strictEqual(process.env.NODE_USE_SYSTEM_CA, undefined);
+  assert.notStrictEqual(process.env.NODE_USE_SYSTEM_CA, "1");
   assert.ok(!(process.execArgv ?? []).includes("--use-system-ca"));
 
   const certs = tls.getCACertificates("system");

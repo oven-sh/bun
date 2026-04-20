@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
-// Windows ConPTY-specific tests for Bun.Terminal.
-// The cross-platform behaviour is exercised in terminal.test.ts; this file
-// covers the parts that differ on Windows (no termios echo, ConPTY VT init
-// sequence, cmd.exe instead of /bin/echo).
-describe.skipIf(!isWindows)("Bun.Terminal (Windows ConPTY)", () => {
-  test("constructor creates a pseudoconsole", async () => {
+// Cross-platform Bun.Terminal + Bun.spawn integration tests that don't rely
+// on POSIX-only behaviour (termios echo, SIGWINCH, cat/echo binaries). The
+// remaining POSIX-specific coverage lives in terminal.test.ts.
+describe("Bun.Terminal subprocess integration", () => {
+  test("constructor creates a PTY", async () => {
     await using terminal = new Bun.Terminal({});
     expect(terminal.closed).toBe(false);
   });
@@ -37,7 +36,7 @@ describe.skipIf(!isWindows)("Bun.Terminal (Windows ConPTY)", () => {
     expect(() => terminal.resize(10, 10)).toThrow();
   });
 
-  test("termios flag accessors return 0 on Windows", async () => {
+  test.skipIf(!isWindows)("termios flag accessors return 0 on Windows", async () => {
     await using terminal = new Bun.Terminal({});
     expect(terminal.inputFlags).toBe(0);
     expect(terminal.outputFlags).toBe(0);
@@ -45,7 +44,7 @@ describe.skipIf(!isWindows)("Bun.Terminal (Windows ConPTY)", () => {
     expect(terminal.controlFlags).toBe(0);
   });
 
-  test("data callback receives ConPTY output from spawned process", async () => {
+  test("data callback receives output from spawned process", async () => {
     let output = "";
     let callbackTerminal: Bun.Terminal | undefined;
     const { promise, resolve } = Promise.withResolvers<void>();

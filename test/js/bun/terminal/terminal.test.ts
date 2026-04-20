@@ -7,8 +7,7 @@ function enableEcho(terminal: Bun.Terminal) {
   terminal.localFlags = terminal.localFlags | ECHO;
 }
 
-// Terminal (PTY) is only supported on POSIX platforms
-describe.todoIf(isWindows)("Bun.Terminal", () => {
+describe("Bun.Terminal", () => {
   describe("constructor", () => {
     test("creates a PTY with default options", async () => {
       await using terminal = new Bun.Terminal({});
@@ -431,7 +430,9 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
     });
   });
 
-  describe("data callback", () => {
+  // ConPTY has no line discipline echo without a child process, so termios-echo
+  // tests are POSIX-only.
+  describe.todoIf(isWindows)("data callback", () => {
     test("receives echoed output", async () => {
       const received: Uint8Array[] = [];
 
@@ -625,7 +626,8 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
 
       // Spawn a simple command that outputs to the PTY
       const proc = Bun.spawn({
-        cmd: ["echo", "hello from pty"],
+        cmd: [bunExe(), "-e", "console.log('hello from pty')"],
+        env: bunEnv,
         terminal,
       });
 
@@ -665,9 +667,10 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
         },
       });
 
-      // Spawn cat which will echo input back
+      // Spawn a stdin->stdout passthrough which will echo input back
       const proc = Bun.spawn({
-        cmd: ["cat"],
+        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+        env: bunEnv,
         terminal,
       });
 
@@ -686,7 +689,8 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       await using terminal = new Bun.Terminal({});
 
       const proc1 = Bun.spawn({
-        cmd: ["echo", "first"],
+        cmd: [bunExe(), "-e", "console.log('first')"],
+        env: bunEnv,
         terminal,
       });
       await proc1.exited;
@@ -696,7 +700,8 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       expect(terminal.closed).toBe(false);
 
       const proc2 = Bun.spawn({
-        cmd: ["echo", "second"],
+        cmd: [bunExe(), "-e", "console.log('second')"],
+        env: bunEnv,
         terminal,
       });
       await proc2.exited;
@@ -711,7 +716,8 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
 
       // Spawn a process that will receive SIGWINCH
       const proc = Bun.spawn({
-        cmd: ["sleep", "1"],
+        cmd: [bunExe(), "-e", "await Bun.sleep(1000)"],
+        env: bunEnv,
         terminal,
       });
 
@@ -725,7 +731,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
   });
 
   describe("ANSI escape sequences", () => {
-    test("can write ANSI color codes", async () => {
+    test.todoIf(isWindows)("can write ANSI color codes", async () => {
       const received: Uint8Array[] = [];
 
       await using terminal = new Bun.Terminal({
@@ -778,7 +784,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
       expect(written).toBe(6);
     });
 
-    test("can receive binary data in callback", async () => {
+    test.todoIf(isWindows)("can receive binary data in callback", async () => {
       const received: Uint8Array[] = [];
 
       await using terminal = new Bun.Terminal({
@@ -894,7 +900,7 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
   });
 
   describe("edge cases", () => {
-    test("handles Unicode characters", async () => {
+    test.todoIf(isWindows)("handles Unicode characters", async () => {
       const received: Uint8Array[] = [];
 
       await using terminal = new Bun.Terminal({
@@ -954,12 +960,12 @@ describe.todoIf(isWindows)("Bun.Terminal", () => {
   });
 });
 
-// Terminal (PTY) is only supported on POSIX platforms
-describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
+describe("Bun.spawn with terminal option", () => {
   test("creates subprocess with terminal attached", async () => {
     const dataChunks: Uint8Array[] = [];
 
-    const proc = Bun.spawn(["echo", "hello from terminal"], {
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('hello from terminal')"], {
+      env: bunEnv,
       terminal: {
         cols: 80,
         rows: 24,
@@ -1016,38 +1022,42 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
   });
 
   test("terminal.write sends data to subprocess stdin", async () => {
-    const dataChunks: Uint8Array[] = [];
+    let combinedOutput = "";
+    const ready = Promise.withResolvers<void>();
+    const echoed = Promise.withResolvers<void>();
 
-    // Use cat which reads from stdin and writes to stdout
-    const proc = Bun.spawn(["cat"], {
-      terminal: {
-        data: (_terminal: Bun.Terminal, data: Uint8Array) => {
-          dataChunks.push(data);
+    const proc = Bun.spawn(
+      [
+        bunExe(),
+        "-e",
+        "process.stdout.write('READY\\n'); process.stdin.setEncoding('utf8'); process.stdin.on('data', d => process.stdout.write(d));",
+      ],
+      {
+        env: bunEnv,
+        terminal: {
+          data: (_terminal: Bun.Terminal, data: Uint8Array) => {
+            combinedOutput += Buffer.from(data).toString();
+            if (combinedOutput.includes("READY")) ready.resolve();
+            if (combinedOutput.includes("hello from parent")) echoed.resolve();
+          },
         },
       },
-    });
+    );
 
-    // Wait a bit for the subprocess to be ready
-    await Bun.sleep(100);
-
-    // Write to the terminal - cat will echo it back via stdout
+    // Wait for the child to signal it's listening, then write
+    await ready.promise;
     proc.terminal!.write("hello from parent\n");
+    await echoed.promise;
 
-    // Wait for response
-    await Bun.sleep(200);
-
-    // Close terminal to send EOF and let cat exit
     proc.terminal!.close();
-
     await proc.exited;
 
-    // cat reads stdin and writes to stdout, so we should see our message
-    const combinedOutput = Buffer.concat(dataChunks).toString();
     expect(combinedOutput).toContain("hello from parent");
   });
 
   test("terminal getter returns same object each time", async () => {
-    const proc = Bun.spawn(["echo", "test"], {
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('test')"], {
+      env: bunEnv,
       terminal: {},
     });
 
@@ -1061,14 +1071,15 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
   });
 
   test("terminal is undefined when not using terminal option", async () => {
-    const proc = Bun.spawn(["echo", "test"], {});
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('test')"], { env: bunEnv });
 
     expect(proc.terminal).toBeUndefined();
     await proc.exited;
   });
 
   test("stdin/stdout/stderr return null when terminal is used", async () => {
-    const proc = Bun.spawn(["echo", "test"], {
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('test')"], {
+      env: bunEnv,
       terminal: {},
     });
 
@@ -1100,12 +1111,16 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     proc.terminal!.close();
   });
 
-  test("terminal exit callback is called when process exits", async () => {
+  // On Windows, ConPTY's conhost.exe stays alive after the attached child
+  // exits; the reader only sees EOF when ClosePseudoConsole is called. So the
+  // exit callback fires on terminal.close(), not on process exit.
+  test.todoIf(isWindows)("terminal exit callback is called when process exits", async () => {
     let exitCalled = false;
     let exitTerminal: Bun.Terminal | undefined;
     const { promise, resolve } = Promise.withResolvers<void>();
 
-    const proc = Bun.spawn(["echo", "test"], {
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('test')"], {
+      env: bunEnv,
       terminal: {
         exit: (terminal: Bun.Terminal) => {
           exitCalled = true;
@@ -1132,12 +1147,13 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     terminal.close();
 
     expect(() => {
-      Bun.spawn(["echo", "test"], { terminal });
+      Bun.spawn([bunExe(), "-e", ""], { terminal });
     }).toThrow("terminal is closed");
   });
 
   test("subprocess stdin/stdout/stderr are null when using terminal", async () => {
-    const proc = Bun.spawn(["echo", "test"], {
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('test')"], {
+      env: bunEnv,
       terminal: {},
     });
 
@@ -1161,7 +1177,7 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
       },
     });
 
-    const proc = Bun.spawn(["echo", "hello"], { terminal });
+    const proc = Bun.spawn([bunExe(), "-e", "console.log('hello')"], { env: bunEnv, terminal });
 
     // subprocess.terminal should reference the same terminal
     expect(proc.terminal).toBe(terminal);

@@ -47,12 +47,14 @@ describe.skipIf(!isWindows)("Bun.Terminal (Windows ConPTY)", () => {
 
   test("data callback receives ConPTY output from spawned process", async () => {
     let output = "";
+    let callbackTerminal: Bun.Terminal | undefined;
     const { promise, resolve } = Promise.withResolvers<void>();
 
     const terminal = new Bun.Terminal({
       cols: 80,
       rows: 24,
-      data(_term, chunk: Uint8Array) {
+      data(term, chunk: Uint8Array) {
+        callbackTerminal = term;
         output += new TextDecoder().decode(chunk);
         if (output.includes("hello-from-conpty")) resolve();
       },
@@ -68,6 +70,7 @@ describe.skipIf(!isWindows)("Bun.Terminal (Windows ConPTY)", () => {
     await proc.exited;
     terminal.close();
 
+    expect(callbackTerminal).toBe(terminal);
     expect(output).toContain("hello-from-conpty");
   });
 

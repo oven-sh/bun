@@ -215,9 +215,10 @@ describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 function test(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
   const { test } = bunTest();
-  if (options.only) {
-    test.only(name, fn, options);
-  } else if (options.todo) {
+  // Node's {only: true} is intentionally not routed to test.only() here:
+  // in Node it is a no-op unless --test-only is passed, whereas bun:test's
+  // test.only() unconditionally skips siblings.
+  if (options.todo) {
     test.todo(name, fn, options);
   } else if (options.skip) {
     test.skip(name, fn, options);

@@ -294,6 +294,29 @@ pub fn flushEvictions(this: *Watcher) void {
     for (this.evict_list[0..this.evict_list_i]) |item| {
         if (item == last_item or this.watchlist.len <= item) continue;
         this.watchlist.swapRemove(item);
+
+        // On macOS, kqueue events carry a `udata` that encodes the watchlist
+        // index of the fd at registration time. `swapRemove` moves the entry
+        // previously at `watchlist.len` into slot `item`, but its kqueue
+        // registration still points at its old (now invalid) index. Left
+        // unpatched, subsequent kevents for that fd would be routed to the
+        // wrong module, so after the first eviction an atomic write to a
+        // second imported file either stopped propagating or drove the
+        // module graph to oscillate between old and new state. See #29524.
+        //
+        // Re-register the moved entry's fd so its next event carries the
+        // updated index. EV_ADD on an existing (ident, filter) replaces the
+        // registration in place. The just-evicted slot's fd was already
+        // closed in the first pass above so there's nothing to fix up there.
+        if (comptime Environment.isMac) {
+            if (item < this.watchlist.len) {
+                const moved_fd = this.watchlist.items(.fd)[item];
+                if (moved_fd.isValid()) {
+                    this.addFileDescriptorToKQueueWithoutChecks(moved_fd, item);
+                }
+            }
+        }
+
         last_item = item;
     }
 }

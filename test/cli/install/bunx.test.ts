@@ -259,6 +259,48 @@ it("should work for github repository", async () => {
   expect(exited).toBe(0);
 });
 
+it("should work for tarball URL", async () => {
+  const tarballUrl = "https://registry.npmjs.org/cowsay/-/cowsay-1.6.0.tgz";
+
+  const withoutCache = spawn({
+    cmd: [bunExe(), "x", tarballUrl, "--help"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env,
+  });
+
+  let [err, out, exited] = await Promise.all([
+    new Response(withoutCache.stderr).text(),
+    new Response(withoutCache.stdout).text(),
+    withoutCache.exited,
+  ]);
+
+  expect(err).not.toContain("error:");
+  expect(out.trim()).toContain("Usage: cowsay");
+  expect(exited).toBe(0);
+
+  const cached = spawn({
+    cmd: [bunExe(), "x", tarballUrl, "--help"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env,
+  });
+
+  [err, out, exited] = await Promise.all([
+    new Response(cached.stderr).text(),
+    new Response(cached.stdout).text(),
+    cached.exited,
+  ]);
+
+  expect(err).not.toContain("error:");
+  expect(out.trim()).toContain("Usage: cowsay");
+  expect(exited).toBe(0);
+});
+
 it("should work for github repository with committish", async () => {
   const withoutCache = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],

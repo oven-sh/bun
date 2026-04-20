@@ -95,6 +95,29 @@ type CreateBackendFn = (
   receive: (...messages: string[]) => void,
 ) => unknown;
 
+function getInspectorHost() {
+  const DEFAULT_INSPECTOR_HOST = 'https://debug.bun.sh'
+
+  if (!process.env.BUN_INSPECTOR_HOST) {
+    return DEFAULT_INSPECTOR_HOST
+  }
+
+  let inspectorHost = process.env.BUN_INSPECTOR_HOST
+
+  // Remove trailing slash to avoid double slashes in the final URL
+  if (inspectorHost.endsWith('/')) {
+    inspectorHost = inspectorHost.slice(0, -1);
+  }
+
+  // Validate that the debug host includes a protocol
+  if (!inspectorHost.match(/^https?:\/\//i)) {
+    Bun.write(Bun.stderr, `Warning: BUN_INSPECTOR_HOST should include a protocol (http:// or https://). Got: ${inspectorHost}\n`);
+    return DEFAULT_INSPECTOR_HOST
+  }
+
+  return inspectorHost
+}
+
 export default function (
   executionContextId: number,
   url: string,
@@ -125,7 +148,7 @@ export default function (
         Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
         Bun.write(Bun.stderr, `Listening:\n  ${dim(href)}\n`);
         if (protocol.includes("ws")) {
-          Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`);
+          Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`${getInspectorHost()}/#${host}${pathname}`)}\n`);
         }
         Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
       }

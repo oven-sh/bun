@@ -35,6 +35,7 @@ const targets: Target[] = JSON.parse(values.targets!);
 const thresholdBytes = parseFloat(values["threshold-mb"]!) * 1024 * 1024;
 const noFail = values["no-fail"];
 const isRelease = values.release;
+const buildKind = isRelease ? "release" : "canary";
 
 const org = process.env.BUILDKITE_ORGANIZATION_SLUG || "bun";
 const pipeline = process.env.BUILDKITE_PIPELINE_SLUG || "bun";
@@ -124,7 +125,7 @@ async function baselineFromCommit(sha: string, label: (n: number) => string): Pr
 
 // Canary: walk recent main commits until one whose build has a matching
 // (canary vs release) binary-sizes.json.
-console.log("--- Fetching canary baseline");
+console.log(`--- Fetching ${buildKind} baseline`);
 let canaryNote = "";
 const canary: Baseline | undefined = await (async () => {
   const commits = await githubJson<{ sha: string }[]>("commits?sha=main&per_page=15");
@@ -132,7 +133,7 @@ const canary: Baseline | undefined = await (async () => {
     const b = await baselineFromCommit(sha, n => `main #${n}`);
     if (b) return b;
   }
-  canaryNote = `no recent main ${isRelease ? "release" : "canary"} build has binary-sizes.json yet`;
+  canaryNote = `no recent main ${buildKind} build has binary-sizes.json yet`;
 })().catch(e => ((canaryNote = String(e?.message || e)), undefined));
 console.log(canary ? `  ${canary.label}` : `  unavailable: ${canaryNote}`);
 
@@ -189,7 +190,7 @@ const header =
     ? `<b>${overThreshold.length}</b> over ${limit}`
     : canary
       ? `all within ${limit}`
-      : `no canary comparison (${canaryNote})`;
+      : `no ${buildKind} comparison (${canaryNote})`;
 
 const annotation = `
 <details${failed ? " open" : ""}>
@@ -197,7 +198,7 @@ const annotation = `
 <table>
 <tr>
   <th rowspan="2">target</th><th rowspan="2">this build</th>
-  <th colspan="2">canary: ${link(canary, "main")}</th>
+  <th colspan="2">${buildKind}: ${link(canary, "main")}</th>
 </tr>
 <tr><th>size</th><th>Δ</th></tr>
 ${tableRows}
@@ -220,12 +221,12 @@ Bun.spawnSync(
 );
 
 for (const r of rows) {
-  const c = r.canary ? `  canary ${fmtDelta(r.canary.bytes).padStart(10)}` : "";
+  const c = r.canary ? `  ${buildKind} ${fmtDelta(r.canary.bytes).padStart(10)}` : "";
   console.log(`  ${r.triplet.padEnd(30)} ${fmtBytes(r.now).padStart(10)}${c}`);
 }
 
 if (failed) {
-  console.error(`\nerror: ${overThreshold.length} target(s) exceeded ${limit} vs canary`);
+  console.error(`\nerror: ${overThreshold.length} target(s) exceeded ${limit} vs ${buildKind}`);
   process.exit(1);
 }
 

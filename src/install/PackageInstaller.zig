@@ -768,10 +768,6 @@ pub const PackageInstaller = struct {
             defer this.node_modules.deinit();
             this.current_tree_id = t.tree_id;
 
-            @memcpy(this.destination_dir_subpath_buf[0..t.destination_dir_subpath.len], t.destination_dir_subpath);
-            this.destination_dir_subpath_buf[t.destination_dir_subpath.len] = 0;
-            const destination_dir_subpath = this.destination_dir_subpath_buf[0..t.destination_dir_subpath.len :0];
-
             if (t.missing_from_cache) {
                 // Worker could not open the cache directory for this
                 // package. Re-run the full serial path so the download
@@ -803,7 +799,6 @@ pub const PackageInstaller = struct {
                 t.dependency_id,
                 t.package_id,
                 &this.resolutions[t.package_id],
-                destination_dir_subpath,
                 t.result,
                 &lazy_package_dir,
                 is_pending_package_install,
@@ -1421,7 +1416,6 @@ pub const PackageInstaller = struct {
                 dependency_id,
                 package_id,
                 resolution,
-                destination_dir_subpath,
                 install_result,
                 &lazy_package_dir,
                 is_pending_package_install,
@@ -1529,13 +1523,11 @@ pub const PackageInstaller = struct {
         dependency_id: DependencyID,
         package_id: PackageID,
         resolution: *const Resolution,
-        destination_dir_subpath: [:0]const u8,
         install_result: PackageInstall.Result,
         lazy_package_dir: *LazyPackageDestinationDir,
         comptime is_pending_package_install: bool,
         log_level: Options.LogLevel,
     ) void {
-        _ = destination_dir_subpath;
         const alias = this.lockfile.buffers.dependencies.items[dependency_id].name;
         const pkg_name = this.names[package_id];
         const pkg_name_hash = this.pkg_name_hashes[package_id];

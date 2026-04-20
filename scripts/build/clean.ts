@@ -67,7 +67,13 @@ const presets: Record<string, () => string[]> = {
   "release-local": profile("release-local"),
 
   zig: () => [
-    ...buildProfiles().flatMap(p => [resolve(p, "cache", "zig"), resolve(p, "bun-zig.o")]),
+    ...buildProfiles().flatMap(p => [
+      resolve(p, "cache", "zig"),
+      // Single-object (cg=1) and shard (cg>1) outputs both match.
+      ...(existsSync(p) ? readdirSync(p) : [])
+        .filter(f => /^bun-zig(\.\d+)?\.o$/.test(f))
+        .map(f => resolve(p, f)),
+    ]),
     resolve(sharedCacheDir, "zig"),
     resolve(cwd, "build", "debug", "zig-check-cache"),
     resolve(cwd, ".zig-cache"),

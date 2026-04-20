@@ -192,6 +192,13 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         true => uws.SocketContext.createSSLContext(uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err),
         false => uws.SocketContext.createNoSSLContext(uws.Loop.get(), @sizeOf(usize)),
     } orelse {
+        // Mirror connectInner: surface BoringSSL-specific construction
+        // failures (cipher / group rejection) as their dedicated error so a
+        // misconfigured server doesn't get a generic "Failed to listen".
+        if (ssl_enabled) switch (create_err) {
+            .invalid_ciphers, .invalid_groups => return globalObject.throwValue(create_err.toJS(globalObject)),
+            .none, .load_ca_file, .invalid_ca_file, .invalid_ca => {},
+        };
         const err = globalObject.createErrorInstance(
             "Failed to listen on {s}:{d}",
             .{ hostname_or_unix.slice(), port orelse 0 },
@@ -774,12 +781,29 @@ pub fn connectInner(globalObject: *jsc.JSGlobalObject, prev_maybe_tcp: ?*TCPSock
         true => uws.SocketContext.createSSLContext(uws.Loop.get(), @sizeOf(usize), ctx_opts, &create_err),
         false => uws.SocketContext.createNoSSLContext(uws.Loop.get(), @sizeOf(usize)),
     } orelse {
-        const err = jsc.SystemError{
-            .message = bun.String.static("Failed to connect"),
-            .syscall = bun.String.static("connect"),
-            .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
-        };
-        return globalObject.throwValue(err.toErrorInstance(globalObject));
+        // BoringSSL construction failures: CA-related variants historically
+        // surfaced as the generic ECONNREFUSED/ENOENT path (preserve that for
+        // backward compatibility). Newer BoringSSL-specific errors (cipher
+        // and group rejection) get a dedicated error so callers can tell
+        // config mistakes apart from network-level connect failures.
+        //
+        // `.none` is included in the generic arm because uws has multiple
+        // NULL-return paths in create_ssl_context_from_bun_options (cert
+        // load, key load, DH params, TLS_method allocation) that don't set
+        // the err out-param, plus createNoSSLContext returning NULL leaves
+        // create_err untouched. Falling through to ECONNREFUSED is the
+        // safest behavior for those.
+        switch (create_err) {
+            .none, .load_ca_file, .invalid_ca_file, .invalid_ca => {
+                const err = jsc.SystemError{
+                    .message = bun.String.static("Failed to connect"),
+                    .syscall = bun.String.static("connect"),
+                    .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
+                };
+                return globalObject.throwValue(err.toErrorInstance(globalObject));
+            },
+            .invalid_ciphers, .invalid_groups => return globalObject.throwValue(create_err.toJS(globalObject)),
+        }
     };
 
     if (ssl_enabled) {

@@ -18,6 +18,7 @@ secure_options: u32 = 0,
 request_cert: i32 = 0,
 reject_unauthorized: i32 = 0,
 ssl_ciphers: ?[*:0]const u8 = null,
+ssl_groups: ?[*:0]const u8 = null,
 protos: ?[*:0]const u8 = null,
 client_renegotiation_limit: u32 = 0,
 client_renegotiation_window: u32 = 0,
@@ -101,6 +102,9 @@ pub fn asUSockets(this: *const SSLConfig) uws.SocketContext.BunSocketContextOpti
 
     if (this.ssl_ciphers != null) {
         ctx_opts.ssl_ciphers = this.ssl_ciphers;
+    }
+    if (this.ssl_groups != null) {
+        ctx_opts.ssl_groups = this.ssl_groups;
     }
     ctx_opts.request_cert = this.request_cert;
     ctx_opts.reject_unauthorized = this.reject_unauthorized;
@@ -205,6 +209,7 @@ pub fn deinit(this: *SSLConfig) void {
         .request_cert = {},
         .reject_unauthorized = {},
         .ssl_ciphers = freeString(&this.ssl_ciphers),
+        .ssl_groups = freeString(&this.ssl_groups),
         .protos = freeString(&this.protos),
         .client_renegotiation_limit = {},
         .client_renegotiation_window = {},
@@ -243,6 +248,7 @@ pub fn clone(this: *const SSLConfig) SSLConfig {
         .request_cert = this.request_cert,
         .reject_unauthorized = this.reject_unauthorized,
         .ssl_ciphers = cloneString(this.ssl_ciphers),
+        .ssl_groups = cloneString(this.ssl_groups),
         .protos = cloneString(this.protos),
         .client_renegotiation_limit = this.client_renegotiation_limit,
         .client_renegotiation_window = this.client_renegotiation_window,
@@ -441,6 +447,32 @@ pub fn fromGenerated(
         result.ssl_ciphers = ciphers.toOwnedSliceZ(bun.default_allocator);
         result.is_using_default_ciphers = false;
         result.requires_custom_request_ctx = true;
+    }
+    if (generated.groups.get()) |groups| {
+        const owned = groups.toOwnedSliceZ(bun.default_allocator);
+        // Reject embedded NUL: the slice crosses to BoringSSL via a
+        // [*:0]const u8 pointer, so an embedded NUL silently truncates the
+        // group list and would let an attacker who can influence this string
+        // downgrade the offered groups without any error surfacing. Use
+        // ERR_INVALID_ARG_VALUE with the same "options.groups" prefix that
+        // tls.ts and _http_client.ts emit, so a user catching this error
+        // sees the same code/shape regardless of entry point.
+        if (strings.indexOfChar(owned, 0) != null) {
+            defer bun.default_allocator.free(owned);
+            // `bun.fmt.quote` self-wraps in `"..."` — don't add an outer
+            // pair in the format string. Mirrors pathNullBytes in types.zig.
+            return global.ERR(.INVALID_ARG_VALUE, "The property 'options.groups' must not contain NUL bytes. Received {f}", .{bun.fmt.quote(owned)}).throw();
+        }
+        // Node-compat: `ecdhCurve: "auto"` requests automatic curve selection.
+        // BoringSSL's set1_groups_list rejects the literal string "auto", so
+        // map it to NULL (apply Bun's PQ-friendly default) instead of passing
+        // it through and breaking Node code that uses the documented value.
+        if (strings.eql(owned, "auto")) {
+            bun.default_allocator.free(owned);
+        } else {
+            result.ssl_groups = owned;
+            result.requires_custom_request_ctx = true;
+        }
     }
 
     result.client_renegotiation_limit = generated.client_renegotiation_limit;

@@ -869,7 +869,7 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
 
   if (options.ssl_ciphers) {
     if (!SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers)) {
-      unsigned long ssl_err = ERR_get_error(); 
+      unsigned long ssl_err = ERR_get_error();
       if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
         // TLS1.2 ciphers were deliberately cleared, so don't consider
         // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()
@@ -879,6 +879,31 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
         return NULL;
       }
       ERR_clear_error();
+    }
+  }
+
+  /* TLS supported_groups (key-exchange / KEM groups). NULL applies the Bun
+   * default (PQ hybrid first); "" tells us to inherit BoringSSL's compile-time
+   * default; otherwise the caller's explicit list.
+   *
+   * Failure handling differs by source: caller-provided lists hard-fail (the
+   * caller asked for something invalid), but a failure of OUR default falls
+   * back silently to BoringSSL's compile-time default. This matches the
+   * applyBunDefaultGroups() posture in ncrypto.cpp. */
+  {
+    const char *groups = options.ssl_groups;
+    const int caller_provided = (groups != NULL);
+    if (!caller_provided) {
+      groups = BUN_DEFAULT_SSL_GROUPS;
+    }
+    if (groups[0] != '\0') {
+      if (!SSL_CTX_set1_groups_list(ssl_context, groups)) {
+        if (caller_provided) {
+          free_ssl_context(ssl_context);
+          return NULL;
+        }
+        ERR_clear_error();
+      }
     }
   }
 
@@ -1333,6 +1358,32 @@ SSL_CTX *create_ssl_context_from_bun_options(
 
   if (options.secure_options) {
     SSL_CTX_set_options(ssl_context, options.secure_options);
+  }
+
+  /* TLS supported_groups (key-exchange / KEM groups). NULL applies the Bun
+   * default (PQ hybrid first); "" tells us to inherit BoringSSL's compile-time
+   * default; otherwise the caller's explicit list.
+   *
+   * Failure handling differs by source: caller-provided lists hard-fail with
+   * INVALID_GROUPS (the caller asked for something invalid), but a failure of
+   * OUR default falls back silently to BoringSSL's compile-time default. This
+   * matches the applyBunDefaultGroups() posture in ncrypto.cpp. */
+  {
+    const char *groups = options.ssl_groups;
+    const int caller_provided = (groups != NULL);
+    if (!caller_provided) {
+      groups = BUN_DEFAULT_SSL_GROUPS;
+    }
+    if (groups[0] != '\0') {
+      if (!SSL_CTX_set1_groups_list(ssl_context, groups)) {
+        if (caller_provided) {
+          *err = CREATE_BUN_SOCKET_ERROR_INVALID_GROUPS;
+          free_ssl_context(ssl_context);
+          return NULL;
+        }
+        ERR_clear_error();
+      }
+    }
   }
 
   /* This must be free'd with free_ssl_context, not SSL_CTX_free */

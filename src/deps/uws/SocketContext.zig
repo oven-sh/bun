@@ -232,6 +232,10 @@ pub const SocketContext = opaque {
         dh_params_file_name: [*c]const u8 = null,
         ca_file_name: [*c]const u8 = null,
         ssl_ciphers: [*c]const u8 = null,
+        /// TLS supported_groups list (BoringSSL set1_groups_list syntax).
+        /// `null` → Bun default (PQ-friendly: X25519MLKEM768:X25519:P-256:P-384).
+        /// Empty string → inherit BoringSSL compile-time default.
+        ssl_groups: [*c]const u8 = null,
         ssl_prefer_low_memory_usage: i32 = 0,
         key: ?[*]const ?[*:0]const u8 = null,
         key_count: u32 = 0,

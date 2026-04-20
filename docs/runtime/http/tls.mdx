@@ -67,6 +67,30 @@ Bun.serve({
 });
 ```
 
+### Key-exchange groups
+
+By default Bun advertises the post-quantum hybrid `X25519MLKEM768` (codepoint `0x11ec`) ahead of the classical X25519 / P-256 / P-384 groups in every outbound and inbound TLS handshake. Bun applies its own list (`X25519MLKEM768:X25519:P-256:P-384`) at every `SSL_CTX` construction site, diverging from BoringSSL's compile-time default, which omits PQ.
+
+To override the group list (also known as `ecdhCurve` in Node.js):
+
+```ts
+Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"),
+    cert: Bun.file("./cert.pem"),
+    groups: "X25519MLKEM768:X25519:P-256:P-384", // [!code ++]
+  },
+});
+```
+
+The same option works on outbound clients (`fetch`, `tls.connect`, `Bun.connect`):
+
+```ts
+await fetch("https://example.com", { tls: { groups: "X25519:P-256" } });
+```
+
+Pass the empty string `""` to fall back to BoringSSL's compile-time default (no PQ) on the `fetch`, `Bun.connect`, `Bun.serve`, `tls.connect`, `tls.createServer`, and `http(s).request` paths. Passing an unknown group name causes the `SSL_CTX` construction to fail.
+
 ---
 
 ## Server name indication (SNI)

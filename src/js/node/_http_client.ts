@@ -783,6 +783,21 @@ function ClientRequest(input, options, cb) {
     validateString(mergedTlsOptions.ciphers, "options.ciphers");
     this._ensureTls().ciphers = mergedTlsOptions.ciphers;
   }
+  {
+    // Mirror tls.ts/Server. Empty-string sentinel preserved (inherit BoringSSL
+    // default). `groups` wins over `ecdhCurve` in the same merged bag (modern
+    // name shadows legacy alias). Source priority (agent vs request) is
+    // resolved by Node's standard merge semantics before we read this.
+    const groupsOpt = mergedTlsOptions.groups ?? mergedTlsOptions.ecdhCurve;
+    if (groupsOpt != null) {
+      validateString(groupsOpt, "options.groups");
+      // Reject embedded NUL: silently truncates at the BoringSSL boundary.
+      if ((groupsOpt as string).indexOf("\u0000") !== -1) {
+        throw $ERR_INVALID_ARG_VALUE("options.groups", groupsOpt, "must not contain NUL bytes");
+      }
+      this._ensureTls().groups = groupsOpt;
+    }
+  }
   if (mergedTlsOptions.servername) {
     validateString(mergedTlsOptions.servername, "options.servername");
     this._ensureTls().servername = mergedTlsOptions.servername;

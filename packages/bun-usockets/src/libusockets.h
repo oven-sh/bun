@@ -204,6 +204,7 @@ struct us_socket_context_options_t {
     const char *dh_params_file_name;
     const char *ca_file_name;
     const char *ssl_ciphers;
+    const char *ssl_groups; /* TLS supported_groups list (BoringSSL set1_groups_list syntax). NULL = Bun default (PQ-friendly). "" = inherit BoringSSL default. */
     int ssl_prefer_low_memory_usage; /* Todo: rename to prefer_low_memory_usage and apply for TCP as well */
 };
 
@@ -235,6 +236,7 @@ struct us_bun_socket_context_options_t {
     const char *dh_params_file_name;
     const char *ca_file_name;
     const char *ssl_ciphers;
+    const char *ssl_groups; /* TLS supported_groups list (BoringSSL set1_groups_list syntax). NULL = Bun default (PQ-friendly). "" = inherit BoringSSL default. */
     int ssl_prefer_low_memory_usage; /* Todo: rename to prefer_low_memory_usage and apply for TCP as well */
     const char * const *key;
     unsigned int key_count;
@@ -273,7 +275,13 @@ enum create_bun_socket_error_t {
   CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE,
   CREATE_BUN_SOCKET_ERROR_INVALID_CA,
   CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS,
+  CREATE_BUN_SOCKET_ERROR_INVALID_GROUPS,
 };
+
+/* Default TLS supported_groups list when caller passes ssl_groups = NULL.
+ * Order: PQ hybrid first, then classical fallbacks. Mirrors Chromium's default
+ * post-quantum-key-agreement enabled posture. */
+#define BUN_DEFAULT_SSL_GROUPS "X25519MLKEM768:X25519:P-256:P-384"
 
 struct us_socket_context_t *us_create_bun_ssl_socket_context(struct us_loop_t *loop,
     int ext_size, struct us_bun_socket_context_options_t options, enum create_bun_socket_error_t *err);

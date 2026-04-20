@@ -176,6 +176,9 @@ fn onInitErrorNoop(err: InitError, opts: InitOpts) noreturn {
         error.InvalidCA => {
             Output.err("HTTPThread", "the provided CA is invalid", .{});
         },
+        error.InvalidGroups => {
+            Output.err("HTTPThread", "the provided TLS groups string was rejected by BoringSSL", .{});
+        },
         error.FailedToOpenSocket => {
             Output.errGeneric("failed to start HTTP client thread", .{});
         },
@@ -284,6 +287,7 @@ pub fn connect(this: *@This(), client: *HTTPClient, comptime is_ssl: bool) !NewH
                     error.InvalidCA => error.FailedToOpenSocket,
                     error.InvalidCAFile => error.FailedToOpenSocket,
                     error.LoadCAFile => error.FailedToOpenSocket,
+                    error.InvalidGroups => error.InvalidGroups,
                 };
             };
 

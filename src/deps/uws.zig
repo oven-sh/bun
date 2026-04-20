@@ -70,6 +70,7 @@ pub const create_bun_socket_error_t = enum(c_int) {
     invalid_ca_file,
     invalid_ca,
     invalid_ciphers,
+    invalid_groups,
 
     pub fn message(this: create_bun_socket_error_t) ?[]const u8 {
         return switch (this) {
@@ -78,6 +79,7 @@ pub const create_bun_socket_error_t = enum(c_int) {
             .invalid_ca_file => "Invalid CA file",
             .invalid_ca => "Invalid CA",
             .invalid_ciphers => "Invalid ciphers",
+            .invalid_groups => "Invalid TLS groups",
         };
     }
 
@@ -91,6 +93,7 @@ pub const create_bun_socket_error_t = enum(c_int) {
             .invalid_ca_file => globalObject.ERR(.BORINGSSL, "Invalid CA file", .{}).toJS(),
             .invalid_ca => globalObject.ERR(.BORINGSSL, "Invalid CA", .{}).toJS(),
             .invalid_ciphers => globalObject.ERR(.BORINGSSL, "Invalid ciphers", .{}).toJS(),
+            .invalid_groups => globalObject.ERR(.BORINGSSL, "Invalid TLS groups", .{}).toJS(),
         };
     }
 };

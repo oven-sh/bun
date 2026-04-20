@@ -170,6 +170,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     .load_ca_file => error.LoadCAFile,
                     .invalid_ca_file => error.InvalidCAFile,
                     .invalid_ca => error.InvalidCA,
+                    .invalid_groups => error.InvalidGroups,
                     else => error.FailedToOpenSocket,
                 };
             }

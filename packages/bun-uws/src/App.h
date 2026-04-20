@@ -20,6 +20,7 @@
 
 #include <string>
 #include <charconv>
+#include <cstddef>
 #include <string_view>
 
 namespace uWS {
@@ -65,6 +66,7 @@ namespace uWS {
         const char *dh_params_file_name = nullptr;
         const char *ca_file_name = nullptr;
         const char *ssl_ciphers = nullptr;
+        const char *ssl_groups = nullptr; /* See libusockets.h: NULL = Bun PQ default; "" = inherit BoringSSL default. */
         int ssl_prefer_low_memory_usage = 0;
 
         const char **key = nullptr;
@@ -88,6 +90,11 @@ namespace uWS {
     };
 
     static_assert(sizeof(struct us_bun_socket_context_options_t) == sizeof(SocketContextOptions), "Mismatching uSockets/uWebSockets ABI");
+    // Defensive offset checks: equal sizes don't guarantee field positions
+    // match across the C/C++ memcpy boundary. Catch reorderings of newer
+    // fields at compile time.
+    static_assert(offsetof(struct us_bun_socket_context_options_t, ssl_groups) == offsetof(SocketContextOptions, ssl_groups), "Mismatching ssl_groups ABI offset");
+    static_assert(offsetof(struct us_bun_socket_context_options_t, ssl_prefer_low_memory_usage) == offsetof(SocketContextOptions, ssl_prefer_low_memory_usage), "Mismatching ssl_prefer_low_memory_usage ABI offset");
 
 template <bool SSL>
 struct TemplatedApp {

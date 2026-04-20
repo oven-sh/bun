@@ -76,6 +76,11 @@ export const SSLConfig = b.dictionary(
       internalName: "alpn_protocols",
     },
     ciphers: b.String.nullable,
+    /** TLS supported_groups; "ecdhCurve" is the Node alias. See BUN_DEFAULT_SSL_GROUPS. */
+    groups: {
+      type: b.String.nullable,
+      altNames: ["ecdhCurve"],
+    },
     clientRenegotiationLimit: {
       type: b.u32,
       default: 0,

@@ -127,6 +127,10 @@ it("bun add --filter='*' adds to every workspace", async () => {
     version: "1.0.0",
     dependencies: { baz: "^0.0.3" },
   });
+
+  // Even with two matched workspaces, there should be exactly one install
+  // (one metadata request, one tarball fetch).
+  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
 });
 
 it("bun add -d --filter puts the dependency in devDependencies", async () => {
@@ -310,6 +314,54 @@ it("bun remove --filter removes from the matching workspace only", async () => {
 
   expect(await file(join(package_dir, "packages", "web", "package.json")).json()).toEqual({
     name: "web",
+    version: "1.0.0",
+    dependencies: { baz: "^0.0.3" },
+  });
+});
+
+it("bun remove --filter with a glob removes from every matching workspace", async () => {
+  // https://github.com/oven-sh/bun/issues/27897
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {} }));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "monorepo",
+      version: "0.0.0",
+      workspaces: ["packages/*"],
+    }),
+  );
+  for (const name of ["pkg-a", "pkg-b", "other"]) {
+    await mkdir(join(package_dir, "packages", name), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", name, "package.json"),
+      JSON.stringify({ name, version: "1.0.0", dependencies: { baz: "^0.0.3" } }),
+    );
+  }
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "remove", "baz", "--filter", "pkg-*"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  expect(await file(join(package_dir, "packages", "pkg-a", "package.json")).json()).toEqual({
+    name: "pkg-a",
+    version: "1.0.0",
+  });
+  expect(await file(join(package_dir, "packages", "pkg-b", "package.json")).json()).toEqual({
+    name: "pkg-b",
+    version: "1.0.0",
+  });
+  // "other" doesn't match the glob, so it keeps the dependency.
+  expect(await file(join(package_dir, "packages", "other", "package.json")).json()).toEqual({
+    name: "other",
     version: "1.0.0",
     dependencies: { baz: "^0.0.3" },
   });

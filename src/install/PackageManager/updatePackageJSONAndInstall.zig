@@ -414,6 +414,9 @@ const FilteredWorkspace = struct {
     preserve_trailing_newline: bool,
     /// Serialized package.json contents after the pre-install edit.
     before_install_source: []const u8,
+    /// For `.remove`: whether this workspace's package.json actually had a
+    /// matching dependency removed. Unchanged workspaces are not rewritten.
+    remove_changed: bool,
 };
 
 /// Enumerate workspace packages declared in the root `package.json` and
@@ -574,6 +577,7 @@ fn findFilteredWorkspaces(
             .indentation = .{},
             .preserve_trailing_newline = false,
             .before_install_source = "",
+            .remove_changed = false,
         });
     }
 
@@ -785,9 +789,8 @@ fn updatePackageJSONAndInstallWithFilter(
                 );
             },
             .remove => {
-                if (editPackageJSONForRemove(&entry.root, updates.*, subcommand)) {
-                    any_remove_changes = true;
-                }
+                workspace.remove_changed = editPackageJSONForRemove(&entry.root, updates.*, subcommand);
+                if (workspace.remove_changed) any_remove_changes = true;
             },
             else => unreachable,
         }
@@ -853,9 +856,20 @@ fn updatePackageJSONAndInstallWithFilter(
         return;
     }
 
+    if (subcommand == .remove and !any_remove_changes) {
+        // Nothing was removed from any matched workspace; don't touch any files.
+        Global.exit(0);
+        return;
+    }
+
     // Post-install: for `add`, rewrite each workspace's package.json with the
     // resolved version. For `remove`, the pre-install edit is already final.
     for (workspaces) |*workspace| {
+        if (subcommand == .remove and !workspace.remove_changed) {
+            // This workspace didn't have the dependency; leave its package.json alone.
+            continue;
+        }
+
         const final_source = switch (subcommand) {
             .add => blk: {
                 updates.* = original_updates;
@@ -916,11 +930,6 @@ fn updatePackageJSONAndInstallWithFilter(
     }
 
     if (subcommand == .remove) {
-        if (!any_remove_changes) {
-            Global.exit(0);
-            return;
-        }
-
         cleanupNodeModulesAfterRemove(manager, updates.*);
     }
 }

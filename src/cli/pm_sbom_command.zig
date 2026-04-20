@@ -39,8 +39,14 @@ pub const PmSbomCommand = struct {
         PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, pm);
         const lockfile = load_lockfile.ok.lockfile;
 
-        var generator = try Generator.init(ctx.allocator, lockfile, pm);
-        defer generator.deinit();
+        // Everything the Generator allocates (component refs, SPDXIDs,
+        // purls, version strings, dedup maps) lives in this arena and is
+        // freed in one shot. This avoids per-field ownership bookkeeping
+        // for a one-shot CLI command that exits immediately after.
+        var arena = std.heap.ArenaAllocator.init(ctx.allocator);
+        defer arena.deinit();
+
+        const generator = try Generator.init(arena.allocator(), lockfile, pm);
 
         var writer_allocating = std.Io.Writer.Allocating.init(ctx.allocator);
         defer writer_allocating.deinit();
@@ -105,8 +111,12 @@ pub const PmSbomCommand = struct {
 /// Gathers package information from the lockfile and writes it in either
 /// CycloneDX or SPDX format. Both formats share the same underlying data
 /// collection so we collect once and then serialize.
+///
+/// All heap allocations made during construction (component refs, SPDXIDs,
+/// purls, version strings, etc.) come from an arena allocator owned by the
+/// caller, so cleanup is a single bulk free and partial-construction
+/// failures can't leak individual strings.
 const Generator = struct {
-    allocator: std.mem.Allocator,
     lockfile: *Lockfile,
 
     root: Component,
@@ -124,19 +134,21 @@ const Generator = struct {
     const invalid_index: u32 = std.math.maxInt(u32);
     const root_marker: u32 = std.math.maxInt(u32) - 1;
 
+    /// All string fields borrow either from the caller's arena or from the
+    /// lockfile's string buffer; Components are never individually freed.
     const Component = struct {
         package_id: PackageID,
         /// Unique reference used as `bom-ref` (CycloneDX). For npm packages
-        /// this is `name@version`. Always owned by `allocator`.
+        /// this is `name@version`.
         ref: []const u8,
         /// SPDXID suffix (`SPDXRef-Package-<this>`). SPDXIDs allow only
         /// `[A-Za-z0-9.-]`, and two distinct refs (e.g. `foo_bar@1.0.0` and
         /// `foo-bar@1.0.0`) can sanitize to the same value, so this is
-        /// deduplicated independently of `ref`. Always owned by `allocator`.
+        /// deduplicated independently of `ref`.
         spdx_id: []const u8,
-        /// Package name (slice into lockfile string buffer).
+        /// Package name.
         name: []const u8,
-        /// Version string. Owned by `allocator`. Empty if unavailable.
+        /// Version string. Empty if unavailable.
         version: []const u8,
         /// Package URL identifier (`pkg:npm/...`). Empty if not applicable.
         /// https://github.com/package-url/purl-spec
@@ -160,9 +172,10 @@ const Generator = struct {
         }
     };
 
+    /// `allocator` must be an arena (or otherwise bulk-freed by the caller).
+    /// The returned Generator borrows from it and has no `deinit()`.
     fn init(allocator: std.mem.Allocator, lockfile: *Lockfile, pm: *PackageManager) !Generator {
         var this: Generator = .{
-            .allocator = allocator,
             .lockfile = lockfile,
             .root = undefined,
             .components = std.array_list.Managed(Component).init(allocator),
@@ -224,7 +237,6 @@ const Generator = struct {
                 pkg_names[root_id].slice(string_bytes)
             else
                 pm.root_package_json_name_at_time_of_init;
-            var root_name_owned = false;
             // Root version isn't stored in the binary lockfile for the root
             // package itself; read it from package.json when available.
             var root_version: []const u8 = "";
@@ -238,22 +250,16 @@ const Generator = struct {
                     .result => |bytes| bytes,
                     .err => break :root_package_json,
                 };
-                defer allocator.free(contents);
                 const source = &logger.Source.initPathString("package.json", contents);
                 var log = logger.Log.init(allocator);
                 defer log.deinit();
                 const json = bun.json.parse(source, &log, allocator, false) catch break :root_package_json;
                 if (json.getStringCloned(allocator, "version") catch null) |v| {
-                    if (v.len > 0) root_version = v else allocator.free(v);
+                    if (v.len > 0) root_version = v;
                 }
                 if (root_name.len == 0) {
                     if (json.getStringCloned(allocator, "name") catch null) |n| {
-                        if (n.len > 0) {
-                            root_name = n;
-                            root_name_owned = true;
-                        } else {
-                            allocator.free(n);
-                        }
+                        if (n.len > 0) root_name = n;
                     }
                 }
             }
@@ -266,13 +272,7 @@ const Generator = struct {
                 .package_id = root_id,
                 .ref = root_ref,
                 .spdx_id = try sanitizeSpdxId(allocator, root_ref),
-                // root_name may point into the lockfile string buffer, the
-                // PackageManager, or a string literal. Dupe so ownership
-                // matches the other root fields and `deinit()` can free
-                // unconditionally. If it was already cloned from
-                // package.json, transfer ownership directly instead of
-                // allocating twice.
-                .name = if (root_name_owned) root_name else try allocator.dupe(u8, root_name),
+                .name = root_name,
                 .version = root_version,
                 .purl = if (strings.isNPMPackageName(root_name) and root_version.len > 0)
                     try makePurl(allocator, root_name, root_version)
@@ -433,25 +433,6 @@ const Generator = struct {
                 bun.handleOom(comp.deps.append(allocator, resolved_id));
             }
         }
-    }
-
-    fn deinit(this: *Generator) void {
-        for (this.components.items) |*comp| {
-            this.allocator.free(comp.ref);
-            this.allocator.free(comp.spdx_id);
-            if (comp.version.len > 0) this.allocator.free(comp.version);
-            if (comp.purl.len > 0) this.allocator.free(comp.purl);
-            if (comp.download_url.len > 0) this.allocator.free(comp.download_url);
-            comp.deps.deinit(this.allocator);
-        }
-        this.components.deinit();
-        this.allocator.free(this.root.ref);
-        this.allocator.free(this.root.spdx_id);
-        this.allocator.free(this.root.name);
-        if (this.root.version.len > 0) this.allocator.free(this.root.version);
-        if (this.root.purl.len > 0) this.allocator.free(this.root.purl);
-        this.root.deps.deinit(this.allocator);
-        this.allocator.free(this.id_to_component);
     }
 
     fn componentFor(this: *const Generator, pkg_id: PackageID) ?*const Component {

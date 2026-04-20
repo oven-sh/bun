@@ -1617,7 +1617,7 @@ pub fn handleOnDataHeaders(
     while (true) {
         var amount_read: usize = 0;
 
-        // we reset the pending_response each time wich means that on parse error this will be always be empty
+        // we reset the pending_response each time which means that on parse error this will be always be empty
         this.state.pending_response = picohttp.Response{};
 
         // minimal http/1.1 response is 16 bytes ("HTTP/1.1 200\r\n\r\n")

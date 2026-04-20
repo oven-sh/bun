@@ -1691,40 +1691,35 @@ describe("global virtual store", () => {
     }
   });
 
-  test("recovers from a partially-populated global entry", async () => {
-    // Simulate an interrupted install: the global-store directory exists but
-    // is missing files. Because population is clone-to-temp-then-rename,
-    // a fresh install must not treat the broken directory as a hit.
+  test("a leftover staging directory does not shadow the published entry", async () => {
+    // Entries are built under `<entry>.tmp-<suffix>/` and renamed into
+    // `<entry>/` as the final step, so a published entry is always complete.
+    // A crashed earlier install can leave a staging directory behind; the
+    // warm-hit check must look at the final path only.
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
       JSON.stringify({
-        name: "test-pkg-global-store-partial",
+        name: "test-pkg-global-store-staging",
         dependencies: { "no-deps": "1.0.0" },
       }),
     );
 
     await runBunInstall(bunEnv, packageDir);
     const target = readlinkSync(join(packageDir, "node_modules", ".bun", "no-deps@1.0.0"));
-    const pkgJson = join(target, "node_modules", "no-deps", "package.json");
-    const okStamp = join(target, ".bun-ok");
+    expect(existsSync(join(target, "node_modules", "no-deps", "package.json"))).toBe(true);
+    // No stamp file: the directory existing *is* the completeness signal.
+    expect(existsSync(join(target, ".bun-ok"))).toBe(false);
 
-    // The completeness sentinel is `.bun-ok`, written only after the entry's
-    // dep symlinks and bin links are in place. Simulate an interrupted
-    // earlier install by removing both the stamp and a content file.
-    expect(existsSync(okStamp)).toBe(true);
-    await rm(okStamp);
-    await rm(pkgJson);
-    expect(existsSync(target)).toBe(true);
-    expect(existsSync(pkgJson)).toBe(false);
-
+    // Fake a leftover staging sibling and re-install — the published entry
+    // should warm-hit unchanged.
+    await mkdir(`${target}.tmp-deadbeef`, { recursive: true });
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
     await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
 
-    expect(existsSync(pkgJson)).toBe(true);
-    expect(existsSync(okStamp)).toBe(true);
-    expect(await file(pkgJson).json()).toMatchObject({ name: "no-deps", version: "1.0.0" });
+    expect(readlinkSync(join(packageDir, "node_modules", ".bun", "no-deps@1.0.0"))).toBe(target);
+    expect(existsSync(join(target, "node_modules", "no-deps", "package.json"))).toBe(true);
   });
 
   test("bun's resolver follows the double-hop chain into the global store", async () => {

@@ -108,9 +108,9 @@ pub const FileCopier = struct {
                                 // create — `dest_dir` itself was already
                                 // opened above — so the original error is the
                                 // real failure and must propagate. Silently
-                                // continuing here would let `.bun-ok` be
-                                // stamped on a global-store entry that's
-                                // missing files.
+                                // continuing here would let a staged
+                                // global-store entry be renamed into place
+                                // with files missing.
                                 const entry_dirname = bun.Dirname.dirname(u16, entry.path) orelse {
                                     return .initErr(first_err);
                                 };

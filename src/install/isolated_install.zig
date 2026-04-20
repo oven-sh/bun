@@ -1479,6 +1479,7 @@ pub fn installIsolatedPackages(
             .supported_backend = .init(PackageInstall.supported_method),
             .is_new_bun_modules = is_new_bun_modules,
             .global_store_path = global_store_path,
+            .global_store_tmp_suffix = bun.fastRandom(),
         };
         defer installer.deinit();
 
@@ -1603,17 +1604,14 @@ pub fn installIsolatedPackages(
                             var store_path: bun.AbsPath(.{}) = .initTopLevelDir();
                             defer store_path.deinit();
                             if (uses_global_store) {
-                                // The global entry is built across several
-                                // task steps (clone → dep symlinks → bin
-                                // links); only the `.bun-ok` stamp written at
-                                // the end of the `binaries` step proves the
-                                // whole sequence finished. `package.json` only
-                                // proves the clone landed.
-                                installer.appendGlobalStoreEntryPath(&store_path, entry_id);
-                                store_path.append(".bun-ok");
-                                break :needs_install !sys.existsZ(store_path.sliceZ());
+                                // Global entries are built under a per-process
+                                // staging path and renamed into place as the
+                                // final step, so the directory existing at its
+                                // final path is the completeness signal.
+                                installer.appendGlobalStoreEntryPath(&store_path, entry_id, .final);
+                                break :needs_install !(sys.directoryExistsAt(FD.cwd(), store_path.sliceZ()).asValue() orelse false);
                             }
-                            installer.appendRealStorePath(&store_path, entry_id);
+                            installer.appendRealStorePath(&store_path, entry_id, .final);
                             const scope_for_patch_tag_path = store_path.save();
                             if (pkg_res_tag == .npm)
                                 // if it's from npm, it should always have a package.json.

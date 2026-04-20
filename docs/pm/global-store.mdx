@@ -97,7 +97,6 @@ The on-disk layout adds one level of indirection compared to [isolated installs]
 │   └── ...package files...
 └── links/                                # Global virtual store
     └── react@18.3.1-5664d3cd670b3205/    # <storepath>-<entry hash>
-        ├── .bun-ok                       # Completeness stamp
         └── node_modules/
             ├── react/                    # Package files (created once)
             ├── loose-envify -> ../../loose-envify@1.4.0-ea24…/node_modules/loose-envify
@@ -148,7 +147,7 @@ Each unique `(package, version, resolved-dependency-set)` triple gets one direct
 
 ### Concurrency
 
-Multiple `bun install` processes (parallel CI jobs, concurrent workspace builds) may race to populate the same global entry. Population is atomic — clone (or hardlink/copy) into a temp sibling, then `rename` into place — and the loser of the rename treats `EEXIST` as success because both writers were producing identical content-addressed bytes. The `.bun-ok` stamp written after dep symlinks and bin links are in place is what future installs check; an entry whose writer crashed mid-build is rebuilt on the next install.
+Multiple `bun install` processes (parallel CI jobs, concurrent workspace builds) may race to populate the same global entry. Each process builds the entire entry — package files, dependency symlinks, bin links — under a private `<entry>.tmp-<random>/` staging directory and renames it into place as the final step. The loser of the rename sees `EEXIST` and discards its identical staging tree; a writer that crashes mid-build leaves only an unreferenced staging directory that the next install ignores. A published entry is therefore always complete; there is no separate completeness sentinel.
 
 ## Related documentation
 

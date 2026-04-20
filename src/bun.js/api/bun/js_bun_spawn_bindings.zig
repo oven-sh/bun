@@ -732,6 +732,7 @@ pub fn spawnMaybeSync(
     if (terminal_info) |info| {
         terminal_js_value = info.js_value;
         info.terminal.closeSlaveFd();
+        subprocess.flags.owns_terminal = true;
         terminal_info = null;
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse

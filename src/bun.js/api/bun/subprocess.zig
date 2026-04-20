@@ -57,7 +57,11 @@ pub const Flags = packed struct(u8) {
     finalized: bool = false,
     deref_on_stdin_destroyed: bool = false,
     is_stdin_a_readable_stream: bool = false,
-    _: u2 = 0,
+    /// Terminal was created inline by spawn (vs. an existing Terminal passed
+    /// by the caller). Owned terminals are closed when the subprocess exits
+    /// so the exit callback fires; borrowed terminals are left open for reuse.
+    owns_terminal: bool = false,
+    _: u1 = 0,
 };
 
 pub const SignalCode = bun.SignalCode;
@@ -581,6 +585,14 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     this.setEventLoopTimerRefd(false);
 
     jsc_vm.onSubprocessExit(process);
+
+    if (Environment.isWindows and this.flags.owns_terminal) {
+        // POSIX gets EOF on the master when the child (last slave_fd holder)
+        // exits. ConPTY's conhost stays alive after the child exits, so close
+        // the pseudoconsole now to deliver EOF and fire the terminal's exit
+        // callback. Leaves the Terminal itself open to match POSIX.
+        if (this.terminal) |terminal| terminal.closePseudoconsole();
+    }
 
     var stdin: ?*jsc.WebCore.FileSink = if (this.stdin == .pipe and this.flags.is_stdin_a_readable_stream) this.stdin.pipe else this.weak_file_sink_stdin_ptr;
     var existing_stdin_value = jsc.JSValue.zero;

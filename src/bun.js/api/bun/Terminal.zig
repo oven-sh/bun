@@ -319,6 +319,18 @@ pub fn closeSlaveFd(this: *Terminal) void {
     }
 }
 
+/// Windows: close only the ConPTY handle so conhost releases its pipe ends and
+/// our reader observes EOF. Leaves the Terminal itself open (closed=false),
+/// matching POSIX semantics where child exit delivers EOF without closing the
+/// master fd.
+pub fn closePseudoconsole(this: *Terminal) void {
+    if (comptime !Environment.isWindows) return;
+    if (this.hpcon) |hpcon| {
+        this.hpcon = null;
+        bun.windows.ClosePseudoConsole(hpcon);
+    }
+}
+
 const PtyResult = struct {
     master: bun.FD,
     read_fd: bun.FD,

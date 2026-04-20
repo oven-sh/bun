@@ -1111,10 +1111,7 @@ describe("Bun.spawn with terminal option", () => {
     proc.terminal!.close();
   });
 
-  // On Windows, ConPTY's conhost.exe stays alive after the attached child
-  // exits; the reader only sees EOF when ClosePseudoConsole is called. So the
-  // exit callback fires on terminal.close(), not on process exit.
-  test.todoIf(isWindows)("terminal exit callback is called when process exits", async () => {
+  test("terminal exit callback is called when process exits", async () => {
     let exitCalled = false;
     let exitTerminal: Bun.Terminal | undefined;
     const { promise, resolve } = Promise.withResolvers<void>();

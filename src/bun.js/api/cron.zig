@@ -300,6 +300,27 @@ pub const CronRegisterJob = struct {
             return;
         };
 
+        // Per-user log directory. World-writable /tmp lets another local user
+        // pre-create a symlink at the predictable path and have launchd write
+        // through it as this user (CWE-59/377).
+        const log_dir = std.fmt.allocPrint(bun.default_allocator, "{s}/Library/Logs/bun/cron", .{home}) catch {
+            this.setErr("Out of memory", .{});
+            this.finish();
+            return;
+        };
+        defer bun.default_allocator.free(log_dir);
+        bun.FD.cwd().makePath(u8, log_dir) catch {
+            this.setErr("Failed to create ~/Library/Logs/bun/cron directory", .{});
+            this.finish();
+            return;
+        };
+        const xml_log_dir = xmlEscape(log_dir) catch {
+            this.setErr("Out of memory", .{});
+            this.finish();
+            return;
+        };
+        defer bun.default_allocator.free(xml_log_dir);
+
         const plist_path = allocPrintZ(bun.default_allocator, "{s}/Library/LaunchAgents/bun.cron.{s}.plist", .{ home, this.title }) catch {
             this.setErr("Out of memory", .{});
             this.finish();
@@ -351,13 +372,13 @@ pub const CronRegisterJob = struct {
             \\    <key>StartCalendarInterval</key>
             \\{s}
             \\    <key>StandardOutPath</key>
-            \\    <string>/tmp/bun.cron.{s}.stdout.log</string>
+            \\    <string>{s}/bun.cron.{s}.stdout.log</string>
             \\    <key>StandardErrorPath</key>
-            \\    <string>/tmp/bun.cron.{s}.stderr.log</string>
+            \\    <string>{s}/bun.cron.{s}.stderr.log</string>
             \\</dict>
             \\</plist>
             \\
-        , .{ xml_title, xml_bun, xml_title, xml_sched, xml_path, calendar_xml, xml_title, xml_title }) catch {
+        , .{ xml_title, xml_bun, xml_title, xml_sched, xml_path, calendar_xml, xml_log_dir, xml_title, xml_log_dir, xml_title }) catch {
             this.setErr("Out of memory", .{});
             this.finish();
             return;

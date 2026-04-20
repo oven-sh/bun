@@ -312,15 +312,15 @@ launchctl list | grep bun.cron
 **Logs:** stdout and stderr are written to:
 
 ```
-/tmp/bun.cron.<title>.stdout.log
-/tmp/bun.cron.<title>.stderr.log
+~/Library/Logs/bun/cron/bun.cron.<title>.stdout.log
+~/Library/Logs/bun/cron/bun.cron.<title>.stderr.log
 ```
 
 For example, a job titled `weekly-report`:
 
 ```sh
-cat /tmp/bun.cron.weekly-report.stdout.log
-tail -f /tmp/bun.cron.weekly-report.stderr.log
+cat ~/Library/Logs/bun/cron/bun.cron.weekly-report.stdout.log
+tail -f ~/Library/Logs/bun/cron/bun.cron.weekly-report.stderr.log
 ```
 
 **Manually uninstalling without code:**

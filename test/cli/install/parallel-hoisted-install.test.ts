@@ -1,5 +1,5 @@
 import { $, Glob, spawn, write } from "bun";
-import { afterAll, beforeAll, describe, expect, test, setDefaultTimeout } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstat, mkdir, readlink, rm } from "fs/promises";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { join } from "path";
@@ -199,40 +199,37 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
   // gate anything, so both ratios are ≈1.0 and the assertion fails.
   //
   // Skip on single-core machines where no fan-out is possible.
-  test.skipIf((navigator.hardwareConcurrency ?? 1) < 2)(
-    "links packages in parallel on the thread pool",
-    async () => {
+  test.skipIf((navigator.hardwareConcurrency ?? 1) < 2)("links packages in parallel on the thread pool", async () => {
+    await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
+    const warm = await install(fixture.dir, bunEnv);
+    expect(warm.exitCode).toBe(0);
+
+    async function measure(env: NodeJS.Dict<string>) {
       await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
-      const warm = await install(fixture.dir, bunEnv);
-      expect(warm.exitCode).toBe(0);
+      const r = await install(fixture.dir, env, ["--frozen-lockfile"]);
+      expect(r.stderr).not.toContain("error:");
+      expect(r.exitCode).toBe(0);
+      const cpu = Number(r.usage?.cpuTime.user ?? 0n) + Number(r.usage?.cpuTime.system ?? 0n);
+      return cpu / Math.max(1, r.wallMicros);
+    }
 
-      async function measure(env: NodeJS.Dict<string>) {
-        await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
-        const r = await install(fixture.dir, env, ["--frozen-lockfile"]);
-        expect(r.stderr).not.toContain("error:");
-        expect(r.exitCode).toBe(0);
-        const cpu = Number(r.usage?.cpuTime.user ?? 0n) + Number(r.usage?.cpuTime.system ?? 0n);
-        return cpu / Math.max(1, r.wallMicros);
-      }
+    // Best-of-N per mode, interleaved to smooth over scheduler
+    // noise / page-cache warmth on a busy CI host.
+    const runs = 5;
+    let parallelRatio = 0;
+    let serialRatio = Infinity;
+    for (let i = 0; i < runs; i++) {
+      parallelRatio = Math.max(parallelRatio, await measure(bunEnv));
+      serialRatio = Math.min(serialRatio, await measure({ ...bunEnv, BUN_INSTALL_SERIAL_HOISTED: "1" }));
+    }
 
-      // Best-of-N per mode, interleaved to smooth over scheduler
-      // noise / page-cache warmth on a busy CI host.
-      const runs = 5;
-      let parallelRatio = 0;
-      let serialRatio = Infinity;
-      for (let i = 0; i < runs; i++) {
-        parallelRatio = Math.max(parallelRatio, await measure(bunEnv));
-        serialRatio = Math.min(serialRatio, await measure({ ...bunEnv, BUN_INSTALL_SERIAL_HOISTED: "1" }));
-      }
+    console.log(`parallel cpu/wall: ${parallelRatio.toFixed(2)}`);
+    console.log(`serial   cpu/wall: ${serialRatio.toFixed(2)}`);
 
-      console.log(`parallel cpu/wall: ${parallelRatio.toFixed(2)}`);
-      console.log(`serial   cpu/wall: ${serialRatio.toFixed(2)}`);
-
-      // Parallel should consume more CPU per wall-clock second than
-      // serial by a clear margin. 1.15× covers ASAN builds where
-      // per-spawn overhead compresses the ratio; on release builds
-      // the gap is typically 1.5–2×.
-      expect(parallelRatio / serialRatio).toBeGreaterThan(1.15);
-    },
-  );
+    // Parallel should consume more CPU per wall-clock second than
+    // serial by a clear margin. 1.15× covers ASAN builds where
+    // per-spawn overhead compresses the ratio; on release builds
+    // the gap is typically 1.5–2×.
+    expect(parallelRatio / serialRatio).toBeGreaterThan(1.15);
+  });
 });

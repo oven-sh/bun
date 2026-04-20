@@ -67,12 +67,16 @@ function usingParallelCompiler(cfg: Config): boolean {
  * LLVM modules — parallelises emit, but cross-unit calls become
  * `linkonce_odr` externs so LLVM can't inline or IPO across them.
  *
- * Sharding is local-dev only:
- *   - shipped release builds need cg=1 so they're optimised as one module;
- *   - CI splits zig-only/link-only across machines, so the link step would
- *     need to know the zig-only runner's core count to find the shards.
- *     Single artifact keeps the upload/download contract simple.
- *   - COFF shard emission is unimplemented (Windows targets).
+ * Sharding is gated off for:
+ *   - CI: zig-only/link-only run on different machines, so the link step
+ *     can't know how many shards were produced. Single artifact keeps the
+ *     upload/download contract simple. (Shipped releases are always CI,
+ *     so they get cg=1 and full IPO.)
+ *   - Windows targets: COFF shard emission is unimplemented in oven-sh/zig.
+ *
+ * Local builds — Debug or Release — shard for build speed. A local
+ * `--profile=release` is for dev iteration; benchmark against a CI
+ * artifact (always cg=1) if cross-unit inlining matters.
  */
 function codegenThreads(cfg: Config): number {
   if (!usingParallelCompiler(cfg)) return 0;

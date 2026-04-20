@@ -483,7 +483,7 @@ fn findFilteredWorkspaces(
 
     // Enumerate workspace members.
     var workspace_map = Package.WorkspaceMap.init(allocator);
-    defer workspace_map.map.deinit();
+    defer workspace_map.deinit();
 
     var log = logger.Log.init(allocator);
     defer log.deinit();
@@ -705,6 +705,17 @@ fn updatePackageJSONAndInstallWithFilter(
 ) !void {
     if (manager.options.global) {
         Output.errGeneric("<b>--filter<r> is not supported with <b>--global<r>", .{});
+        Global.exit(1);
+    }
+
+    if (manager.options.enable.only_missing) {
+        // `--only-missing` shrinks the update-request slice in place when a
+        // dependency already exists. With multiple matched workspaces, each
+        // workspace may already have a different subset of the requested
+        // packages, which makes the post-install resolved-version rewrite
+        // ambiguous (it could overwrite versions `--only-missing` was meant to
+        // preserve). Reject the combination until someone needs it.
+        Output.errGeneric("<b>--filter<r> is not supported with <b>--only-missing<r>", .{});
         Global.exit(1);
     }
 

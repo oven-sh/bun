@@ -389,6 +389,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         return {};
     }
 
+    int32_t flags = RTLD_LAZY;
+    if (argCount > 2) {
+        JSC::JSValue flagsValue = callFrame->uncheckedArgument(2);
+        if (!flagsValue.isUndefined()) {
+            if (!flagsValue.isNumber()) {
+                return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "flags"_s, "integer"_s, flagsValue);
+            }
+            flags = flagsValue.toInt32(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
     JSC::JSValue moduleValue = callFrame->uncheckedArgument(0);
     JSC::JSObject* moduleObject = jsDynamicCast<JSC::JSObject*>(moduleValue);
     if (!moduleObject) [[unlikely]] {
@@ -517,7 +529,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 // On Windows, we use GetLastError() for error messages, so we can only delete after checking for errors
 #else
     CrashHandler__setDlOpenAction(utf8.data());
-    void* handle = dlopen(utf8.data(), RTLD_LAZY);
+    void* handle = dlopen(utf8.data(), flags);
     CrashHandler__setDlOpenAction(nullptr);
 
     tryToDeleteIfNecessary();

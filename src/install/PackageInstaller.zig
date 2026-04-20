@@ -116,14 +116,13 @@ pub const PackageInstaller = struct {
             const destination_dir: std.fs.Dir = if (self.tree_id == 0)
                 self.installer.root_node_modules_folder
             else dir: {
-                const opened = bun.openDirA(bun.FD.cwd().stdDir(), self.node_modules_path) catch {
+                owned_dir = bun.openDirA(bun.FD.cwd().stdDir(), self.node_modules_path) catch retry: {
                     bun.makePath(bun.FD.cwd().stdDir(), self.node_modules_path) catch {};
-                    break :dir bun.openDirA(bun.FD.cwd().stdDir(), self.node_modules_path) catch |err| {
+                    break :retry bun.openDirA(bun.FD.cwd().stdDir(), self.node_modules_path) catch |err| {
                         return .fail(err, .opening_dest_dir, @errorReturnTrace());
                     };
                 };
-                owned_dir = opened;
-                break :dir opened;
+                break :dir owned_dir.?;
             };
 
             // Per-task NodeModulesFolder; only needed because PackageInstall

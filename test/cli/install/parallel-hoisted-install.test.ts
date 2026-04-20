@@ -95,9 +95,14 @@ async function install(dir: string, env: NodeJS.Dict<string>, extraArgs: string[
 
 describe.skipIf(!isPosix)("parallel hoisted install", () => {
   let fixture: { dir: string; deps: Record<string, string>; count: number };
+  // CI's runner.node.mjs sets BUN_INSTALL_CACHE_DIR which
+  // fetchCacheDirectoryPath() checks BEFORE bunfig's [install] cache,
+  // so override it explicitly to keep the cache local to the fixture.
+  let env: NodeJS.Dict<string>;
 
   beforeAll(async () => {
     fixture = await makeTarballFixture();
+    env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(fixture.dir, ".bun-cache") };
     await write(
       join(fixture.dir, "package.json"),
       JSON.stringify({ name: "parallel-hoisted-fixture", version: "1.0.0", dependencies: fixture.deps }),
@@ -114,20 +119,20 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
 
   test("produces identical node_modules to the serial installer", async () => {
     // Warm the cache + generate the lockfile.
-    const warm = await install(fixture.dir, bunEnv);
+    const warm = await install(fixture.dir, env);
     expect(warm.stderr).not.toContain("error:");
     expect(warm.exitCode).toBe(0);
 
     // Parallel (default): fresh node_modules, warm cache.
     await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
-    const parallel = await install(fixture.dir, bunEnv, ["--frozen-lockfile"]);
+    const parallel = await install(fixture.dir, env, ["--frozen-lockfile"]);
     expect(parallel.stderr).not.toContain("error:");
     expect(parallel.exitCode).toBe(0);
     const parallelLayout = await fingerprintNodeModules(fixture.dir);
 
     // Serial fallback: fresh node_modules, warm cache.
     await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
-    const serial = await install(fixture.dir, { ...bunEnv, BUN_INSTALL_SERIAL_HOISTED: "1" }, ["--frozen-lockfile"]);
+    const serial = await install(fixture.dir, { ...env, BUN_INSTALL_SERIAL_HOISTED: "1" }, ["--frozen-lockfile"]);
     expect(serial.stderr).not.toContain("error:");
     expect(serial.exitCode).toBe(0);
     const serialLayout = await fingerprintNodeModules(fixture.dir);
@@ -150,7 +155,7 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
   test("re-routes to the serial download path when a cache entry is missing", async () => {
     // Warm the cache if the previous test didn't already.
     await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
-    const warm = await install(fixture.dir, bunEnv);
+    const warm = await install(fixture.dir, env);
     expect(warm.exitCode).toBe(0);
 
     // Delete node_modules and blow away a few packages from the cache
@@ -171,7 +176,7 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
       await rm(join(cacheDir, entry), { recursive: true, force: true });
     }
 
-    const out = await install(fixture.dir, bunEnv, ["--frozen-lockfile"]);
+    const out = await install(fixture.dir, env, ["--frozen-lockfile"]);
     expect(out.stderr).not.toContain("error:");
     expect(out.exitCode).toBe(0);
 
@@ -201,12 +206,12 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
   // Skip on single-core machines where no fan-out is possible.
   test.skipIf((navigator.hardwareConcurrency ?? 1) < 2)("links packages in parallel on the thread pool", async () => {
     await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
-    const warm = await install(fixture.dir, bunEnv);
+    const warm = await install(fixture.dir, env);
     expect(warm.exitCode).toBe(0);
 
-    async function measure(env: NodeJS.Dict<string>) {
+    async function measure(e: NodeJS.Dict<string>) {
       await rm(join(fixture.dir, "node_modules"), { recursive: true, force: true });
-      const r = await install(fixture.dir, env, ["--frozen-lockfile"]);
+      const r = await install(fixture.dir, e, ["--frozen-lockfile"]);
       expect(r.stderr).not.toContain("error:");
       expect(r.exitCode).toBe(0);
       const cpu = Number(r.usage?.cpuTime.user ?? 0n) + Number(r.usage?.cpuTime.system ?? 0n);
@@ -219,8 +224,8 @@ describe.skipIf(!isPosix)("parallel hoisted install", () => {
     let parallelRatio = 0;
     let serialRatio = Infinity;
     for (let i = 0; i < runs; i++) {
-      parallelRatio = Math.max(parallelRatio, await measure(bunEnv));
-      serialRatio = Math.min(serialRatio, await measure({ ...bunEnv, BUN_INSTALL_SERIAL_HOISTED: "1" }));
+      parallelRatio = Math.max(parallelRatio, await measure(env));
+      serialRatio = Math.min(serialRatio, await measure({ ...env, BUN_INSTALL_SERIAL_HOISTED: "1" }));
     }
 
     console.log(`parallel cpu/wall: ${parallelRatio.toFixed(2)}`);

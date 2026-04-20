@@ -422,7 +422,14 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
 
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "buf"_s, "Buffer, TypedArray, or DataView"_s, buffer);
     }
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
+    auto* bufPtr = reinterpret_cast<uint8_t*>(view->vector());
+    uint32_t bufLen = view->byteLength();
+    Vector<uint8_t> copy;
+    if (view->isShared()) [[unlikely]] {
+        copy.append(std::span { bufPtr, bufLen });
+        bufPtr = copy.begin();
+    }
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, bufPtr, bufLen)));
 }
 static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSStringDecoder* castedThis)
 {
@@ -438,7 +445,14 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return {};
     }
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
+    auto* bufPtr = reinterpret_cast<uint8_t*>(view->vector());
+    uint32_t bufLen = view->byteLength();
+    Vector<uint8_t> copy;
+    if (view->isShared()) [[unlikely]] {
+        copy.append(std::span { bufPtr, bufLen });
+        bufPtr = copy.begin();
+    }
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, bufPtr, bufLen)));
 }
 static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSStringDecoder* castedThis)
 {
@@ -460,7 +474,14 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
     uint32_t byteLength = view->byteLength();
     if (offset > byteLength)
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()) + offset, byteLength - offset)));
+    auto* bufPtr = reinterpret_cast<uint8_t*>(view->vector()) + offset;
+    uint32_t bufLen = byteLength - offset;
+    Vector<uint8_t> copy;
+    if (view->isShared()) [[unlikely]] {
+        copy.append(std::span { bufPtr, bufLen });
+        bufPtr = copy.begin();
+    }
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, bufPtr, bufLen)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_write,

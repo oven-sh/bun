@@ -522,6 +522,8 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_processEnvObject)                                      \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSS3FileStructure)                                    \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_RedisErrorConstructor)                                 \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_RedisErrorStructure)                                  \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_S3ErrorStructure)                                     \
                                                                                                              \
     V(public, JSC::LazyClassStructure, m_JSStatsClassStructure)                                              \

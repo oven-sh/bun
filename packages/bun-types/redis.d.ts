@@ -1,4 +1,38 @@
 declare module "bun" {
+  export type RedisErrorCode =
+    | "ERR_REDIS_AUTHENTICATION_FAILED"
+    | "ERR_REDIS_CONNECTION_CLOSED"
+    | "ERR_REDIS_CONNECTION_TIMEOUT"
+    | "ERR_REDIS_IDLE_TIMEOUT"
+    | "ERR_REDIS_INVALID_ARGUMENT"
+    | "ERR_REDIS_INVALID_ARRAY"
+    | "ERR_REDIS_INVALID_BULK_STRING"
+    | "ERR_REDIS_INVALID_COMMAND"
+    | "ERR_REDIS_INVALID_DATABASE"
+    | "ERR_REDIS_INVALID_ERROR_STRING"
+    | "ERR_REDIS_INVALID_INTEGER"
+    | "ERR_REDIS_INVALID_PASSWORD"
+    | "ERR_REDIS_INVALID_RESPONSE"
+    | "ERR_REDIS_INVALID_RESPONSE_TYPE"
+    | "ERR_REDIS_INVALID_SIMPLE_STRING"
+    | "ERR_REDIS_INVALID_STATE"
+    | "ERR_REDIS_INVALID_USERNAME"
+    | "ERR_REDIS_TLS_NOT_AVAILABLE"
+    | "ERR_REDIS_TLS_UPGRADE_FAILED";
+
+  /**
+   * Errors produced by Bun's native Redis client.
+   *
+   * Native Redis failures are instances of `Bun.RedisError` and include one of
+   * the `ERR_REDIS_*` error codes.
+   */
+  export class RedisError extends Error {
+    readonly name: "RedisError";
+    readonly code: RedisErrorCode;
+
+    constructor(message?: string, options?: ErrorOptions & { code?: RedisErrorCode });
+  }
+
   export interface RedisOptions {
     /**
      * Connection timeout in milliseconds
@@ -86,7 +120,9 @@ declare module "bun" {
     /**
      * Callback fired when the client disconnects from the Redis server
      *
-     * @param error The error that caused the disconnection
+     * @param error The error that caused the disconnection. This is usually a
+     * `Bun.RedisError`, but transport setup failures may surface as other
+     * `Error` instances.
      */
     onclose: ((this: RedisClient, error: Error) => void) | null;
 

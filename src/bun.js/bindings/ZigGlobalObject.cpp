@@ -78,6 +78,7 @@
 #include "JSAbortAlgorithm.h"
 #include "JSAbortController.h"
 #include "JSAbortSignal.h"
+#include "RedisError.h"
 #include "JSCompressionStream.h"
 #include "JSDecompressionStream.h"
 #include "JSBroadcastChannel.h"
@@ -1816,6 +1817,16 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSS3FileStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::createJSS3FileStructure(init.vm, init.owner));
+        });
+
+    m_RedisErrorConstructor.initLater(
+        [](const Initializer<JSObject>& init) {
+            init.set(Bun::createRedisErrorConstructor(init.vm, init.owner));
+        });
+
+    m_RedisErrorStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createRedisErrorStructure(init.vm, init.owner));
         });
 
     m_S3ErrorStructure.initLater(

@@ -42,6 +42,7 @@
 #include "BunObjectModule.h"
 #include "JSCookie.h"
 #include "JSCookieMap.h"
+#include "RedisError.h"
 #include "Secrets.h"
 
 #ifdef WIN32
@@ -388,6 +389,12 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     bunShell->putDirect(vm, JSC::Identifier::fromString(vm, "ShellError"_s), ShellError.getObject(), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     return bunShell;
+}
+
+static JSValue constructRedisError(VM& vm, JSObject* bunObject)
+{
+    auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return globalObject->m_RedisErrorConstructor.getInitializedOnMainThread(globalObject);
 }
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
@@ -1015,6 +1022,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
     randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
     randomUUIDv5                                   Bun__randomUUIDv5                                                   DontDelete|Function 3
+    RedisError                                     constructRedisError                                                 DontDelete|PropertyCallback
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
     readableStreamToBytes                          JSBuiltin                                                           Builtin|Function 1

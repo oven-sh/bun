@@ -5,6 +5,8 @@ description: "Share isolated package installs across every project on the machin
 
 When using the [isolated linker](/pm/isolated-installs), Bun materializes each package's files **once** into a global virtual store under the package cache and symlinks `node_modules/.bun/<package>@<version>` into it. The store is shared across every project on the machine, so once a `(package, version, resolved-dependency-set)` triple has been installed anywhere, every subsequent install — including a fresh `rm -rf node_modules && bun install` — only creates one symlink per package.
 
+That makes warm installs roughly **7× faster** and brings each project's `node_modules` from hundreds of megabytes of copied files down to a directory of symlinks. Ten checkouts that would previously hold ten copies of `typescript`, `webpack`, `next`, and friends now hold one copy in the cache plus ten symlinks.
+
 ## Enabling
 
 The global virtual store is **on by default** with the isolated linker on every platform. It is not used by the hoisted linker.
@@ -58,6 +60,20 @@ Warm CI install — lockfile present, package cache warm, `node_modules` deleted
 | **`--linker isolated`, global store**    | **124.8 ms** | **94 ms**   | **0**         | **4,957**      |
 
 **6.6× faster** than the same linker without the global store, **6.6× faster** than hoisted.
+
+### Disk
+
+`node_modules` sizes for the same fixture (`du -sh node_modules` on APFS; clonefile copies are copy-on-write, so the hoisted/per-project numbers are the _logical_ size — on filesystems without CoW that is also the physical size):
+
+|                                          | `node_modules` per project | shared on disk |
+| ---------------------------------------- | -------------------------- | -------------- |
+| `--linker hoisted`                       | 391 MB                     | —              |
+| `--linker isolated`, `globalStore=false` | 391 MB                     | —              |
+| **`--linker isolated`, global store**    | **~5 MB of symlinks**      | 391 MB once    |
+
+Clone the same project five times and the difference is ~2 GB of duplicated package files versus ~400 MB total. The break-even is one project; every additional checkout, branch worktree, or CI workspace after that is free.
+
+### Real-world cold→warm
 
 Cold-to-warm timings on cloned real-world repositories (macOS arm64):
 
@@ -126,7 +142,7 @@ Tools that scan `node_modules` without following symlinks, or that compare file 
 
 ### Disk usage
 
-Each unique `(package, version, resolved-dependency-set)` triple gets one directory in `<cache>/links/`. For a typical project this is one entry per package; projects that resolve the same package with different peer-dependency combinations create one entry per combination. Run `bun pm cache rm` to clear the cache including the global store.
+Each unique `(package, version, resolved-dependency-set)` triple gets one directory in `<cache>/links/`. Across many projects that's a large net win — one copy on disk instead of one per checkout — but the store does grow over time as new versions and new peer-dependency combinations land. Run `bun pm cache rm` to clear the cache including the global store; the next install repopulates only what that project needs.
 
 ### Concurrency
 

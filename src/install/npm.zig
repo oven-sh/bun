@@ -863,7 +863,7 @@ pub const PackageVersion = extern struct {
     /// `"cpu"` field in package.json
     cpu: Architecture = Architecture.all,
 
-    /// `"libc"` field in package.json, not exposed in npm registry api yet.
+    /// `"libc"` field in package.json
     libc: Libc = Libc.none,
 
     /// `hasInstallScript` field in registry API.

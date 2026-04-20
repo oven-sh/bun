@@ -590,12 +590,6 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         .env = this_transpiler.env,
     };
 
-    // Check if elide-lines is used in a non-terminal environment
-    if (ctx.bundler_options.elide_lines != null and !state.pretty_output) {
-        Output.prettyErrorln("<r><red>error<r>: --elide-lines is only supported in terminal environments", .{});
-        Global.exit(1);
-    }
-
     // initialize the handles
     var map = bun.StringHashMap(std.array_list.Managed(*ProcessHandle)).init(ctx.allocator);
     for (scripts.items, 0..) |*script, i| {

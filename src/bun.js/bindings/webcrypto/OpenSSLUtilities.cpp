@@ -45,6 +45,12 @@ const EVP_MD* digestAlgorithm(CryptoAlgorithmIdentifier hashFunction)
         return EVP_sha384();
     case CryptoAlgorithmIdentifier::SHA_512:
         return EVP_sha512();
+    case CryptoAlgorithmIdentifier::SHA3_256:
+        return EVP_sha3_256();
+    case CryptoAlgorithmIdentifier::SHA3_384:
+        return EVP_sha3_384();
+    case CryptoAlgorithmIdentifier::SHA3_512:
+        return EVP_sha3_512();
     default:
         return nullptr;
     }

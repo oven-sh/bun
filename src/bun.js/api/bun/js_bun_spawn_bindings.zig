@@ -767,6 +767,8 @@ pub fn spawnMaybeSync(
                 ctx.* = &subprocess.ipc_data.?;
                 subprocess.ipc_data.?.socket = .{ .open = posix_ipc_info };
             }
+            // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
+            subprocess.stdio_pipes.items[@intCast(ipc_channel)] = bun.invalid_fd;
         } else {
             if (ipc_data.windowsConfigureServer(
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,

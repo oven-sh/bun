@@ -455,7 +455,7 @@ pub const ShellRmTask = struct {
     rm: *Rm,
     opts: Opts,
 
-    cwd: bun.FileDescriptor,
+    cwd: bun.FD,
     cwd_path: ?CwdPath = if (bun.Environment.isPosix) 0 else null,
 
     root_task: DirTask,
@@ -677,7 +677,7 @@ pub const ShellRmTask = struct {
         }
     };
 
-    pub fn create(root_path: bun.PathString, rm: *Rm, cwd: bun.FileDescriptor, error_signal: *std.atomic.Value(bool), is_absolute: bool) *ShellRmTask {
+    pub fn create(root_path: bun.PathString, rm: *Rm, cwd: bun.FD, error_signal: *std.atomic.Value(bool), is_absolute: bool) *ShellRmTask {
         const task = bun.handleOom(bun.default_allocator.create(ShellRmTask));
         task.* = ShellRmTask{
             .rm = rm,
@@ -747,7 +747,7 @@ pub const ShellRmTask = struct {
         jsc.WorkPool.schedule(&subtask.task);
     }
 
-    pub fn getcwd(this: *ShellRmTask) bun.FileDescriptor {
+    pub fn getcwd(this: *ShellRmTask) bun.FD {
         return this.cwd;
     }
 

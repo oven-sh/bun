@@ -568,7 +568,7 @@ pub const TransformTask = struct {
                 break :brk this.log.toJS(this.global, bun.default_allocator, "Transform failed");
             };
 
-            try promise.reject(this.global, error_value);
+            try promise.rejectWithAsyncStack(this.global, error_value);
             return;
         }
 

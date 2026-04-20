@@ -108,6 +108,10 @@ pub const SocketContext = opaque {
         return c.us_socket_context_loop(@intFromBool(ssl), this);
     }
 
+    pub fn next(this: *SocketContext) ?*SocketContext {
+        return c.us_socket_context_next(this);
+    }
+
     /// closes and deinit the SocketContexts
     pub fn deinit(this: *SocketContext, ssl: bool) void {
         // we clean the callbacks to avoid UAF because we are deiniting
@@ -262,6 +266,7 @@ pub const c = struct {
     pub extern fn us_socket_context_listen(ssl: i32, context: *SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32, err: *c_int) ?*ListenSocket;
     pub extern fn us_socket_context_listen_unix(ssl: i32, context: *SocketContext, path: [*:0]const u8, pathlen: usize, options: i32, socket_ext_size: i32, err: *c_int) ?*ListenSocket;
     pub extern fn us_socket_context_loop(ssl: i32, context: *SocketContext) ?*Loop;
+    pub extern fn us_socket_context_next(context: *SocketContext) ?*SocketContext;
     pub extern fn us_socket_context_on_close(ssl: i32, context: *SocketContext, on_close: ?*const fn (*us_socket_t, i32, ?*anyopaque) callconv(.c) ?*us_socket_t) void;
     pub extern fn us_socket_context_on_connect_error(ssl: i32, context: *SocketContext, on_connect_error: ?*const fn (*uws.ConnectingSocket, i32) callconv(.c) ?*uws.ConnectingSocket) void;
     pub extern fn us_socket_context_on_data(ssl: i32, context: *SocketContext, on_data: ?*const fn (*us_socket_t, [*c]u8, i32) callconv(.c) ?*us_socket_t) void;

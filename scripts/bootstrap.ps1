@@ -1,4 +1,4 @@
-# Version: 14
+# Version: 16
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.
@@ -244,14 +244,6 @@ function Install-Python {
   Install-Scoop-Package python
 }
 
-function Install-Go {
-  Install-Scoop-Package go
-}
-
-function Install-Ruby {
-  Install-Scoop-Package ruby
-}
-
 function Install-7zip {
   Install-Scoop-Package 7zip -Command 7z
 }
@@ -401,31 +393,16 @@ function Install-Bun {
     return
   }
 
-  if ($script:IsARM64) {
-    # ARM64 bun binary from blob storage (faster than GitHub releases for CI)
-    Write-Output "Installing Bun (ARM64)..."
-    $zip = Download-File "https://buncistore.blob.core.windows.net/artifacts/bun-windows-aarch64.zip" -Name "bun-arm64.zip"
-    $extractDir = "$env:TEMP\bun-arm64"
-    Expand-Archive -Path $zip -DestinationPath $extractDir -Force
-    $bunExe = Get-ChildItem $extractDir -Recurse -Filter "*.exe" | Where-Object { $_.Name -match "bun" } | Select-Object -First 1
-    if ($bunExe) {
-      Copy-Item $bunExe.FullName "C:\Windows\System32\bun.exe" -Force
-      Write-Output "Bun ARM64 installed to C:\Windows\System32\bun.exe"
-    } else {
-      throw "Failed to find bun executable in ARM64 zip"
-    }
-  } else {
-    Write-Output "Installing Bun..."
-    $installScript = Download-File "https://bun.sh/install.ps1" -Name "bun-install.ps1"
-    $pwsh = Which pwsh powershell -Required
-    & $pwsh $installScript
-    Refresh-Path
-    # Copy to System32 so it survives Sysprep (user profile PATH is lost)
-    $bunPath = Which bun
-    if ($bunPath) {
-      Copy-Item $bunPath "C:\Windows\System32\bun.exe" -Force
-      Write-Output "Bun copied to C:\Windows\System32\bun.exe"
-    }
+  Write-Output "Installing Bun..."
+  $installScript = Download-File "https://bun.sh/install.ps1" -Name "bun-install.ps1"
+  $pwsh = Which pwsh powershell -Required
+  & $pwsh $installScript
+  Refresh-Path
+  # Copy to System32 so it survives Sysprep (user profile PATH is lost)
+  $bunPath = Which bun
+  if ($bunPath) {
+    Copy-Item $bunPath "C:\Windows\System32\bun.exe" -Force
+    Write-Output "Bun copied to C:\Windows\System32\bun.exe"
   }
 }
 
@@ -662,8 +639,6 @@ Install-NodeJs
 Install-CMake
 Install-Ninja
 Install-Python
-Install-Go
-Install-Ruby
 Install-Make
 Install-Llvm
 Install-Cygwin
@@ -676,54 +651,9 @@ if (-not $script:IsARM64) {
   Install-Scoop-Package mingw -Command gcc
 }
 
-function Install-Tailscale {
-  if (Which tailscale -ErrorAction SilentlyContinue) {
-    return
-  }
-
-  Write-Output "Installing Tailscale..."
-  $msi = "$env:TEMP\tailscale-setup.msi"
-  $arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq "Arm64") { "arm64" } else { "amd64" }
-  Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-${arch}.msi" -OutFile $msi -UseBasicParsing
-  Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait
-  Remove-Item $msi -ErrorAction SilentlyContinue
-  Refresh-Path
-  Write-Output "Tailscale installed"
-
-  # Register a startup task that reads the tailscale authkey from Azure IMDS
-  # tags and joins the tailnet. The key is set by robobun as a VM tag.
-  $joinScript = @'
-try {
-  $headers = @{ "Metadata" = "true" }
-  $response = Invoke-RestMethod -Uri "http://169.254.169.254/metadata/instance/compute/tagsList?api-version=2021-02-01" -Headers $headers
-  $authkey = ($response | Where-Object { $_.name -eq "tailscale:authkey" }).value
-  if ($authkey) {
-    $stepKey = ($response | Where-Object { $_.name -eq "buildkite:step-key" }).value
-    $buildNumber = ($response | Where-Object { $_.name -eq "buildkite:build-number" }).value
-    if ($stepKey) {
-      $hostname = "azure-${stepKey}"
-      if ($buildNumber) { $hostname += "-${buildNumber}" }
-    } else {
-      $hostname = (Invoke-RestMethod -Uri "http://169.254.169.254/metadata/instance/compute/name?api-version=2021-02-01&format=text" -Headers $headers)
-    }
-    & "C:\Program Files\Tailscale\tailscale.exe" up --authkey=$authkey --hostname=$hostname --unattended
-  }
-} catch { }
-'@
-  $scriptPath = "C:\ProgramData\tailscale-join.ps1"
-  Set-Content -Path $scriptPath -Value $joinScript -Force
-  $action = New-ScheduledTaskAction -Execute "pwsh.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
-  $trigger = New-ScheduledTaskTrigger -AtStartup
-  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-  Register-ScheduledTask -TaskName "TailscaleJoin" -Action $action -Trigger $trigger `
-    -Settings $settings -User "SYSTEM" -RunLevel Highest -Force
-  Write-Output "Registered TailscaleJoin startup task"
-}
-
 # Manual installs (not in Scoop or need special handling)
 Install-Pwsh
 Install-OpenSSH
-#Install-Tailscale  # Disabled — Tailscale adapter interferes with IPv6 multicast tests (node-dgram)
 Install-Bun
 Install-Ccache
 Install-Rust

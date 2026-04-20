@@ -285,27 +285,54 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 #endif
 }
 
+/* If the kernel filled our entire buffer, more events are likely already queued.
+ * Re-poll non-blocking and dispatch again before running pre/post callbacks, so a
+ * single tick covers all pending I/O instead of one 1024-event slice per roundtrip.
+ * Conditioned on saturation and capped at 48 iterations — matches libuv's uv__io_poll
+ * (vendor/libuv/src/unix/linux.c:1387,1590 and kqueue.c:253,451). */
+static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
+    int drain_count = 48;
+    while (UNLIKELY(loop->num_ready_polls == LIBUS_MAX_READY_POLLS) && --drain_count != 0 && loop->num_polls > 0) {
+#ifdef LIBUS_USE_EPOLL
+        static const struct timespec zero = {0, 0};
+        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, &zero);
+#else
+        do {
+            loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, LIBUS_MAX_READY_POLLS, KEVENT_FLAG_IMMEDIATE, NULL);
+        } while (IS_EINTR(loop->num_ready_polls));
+#endif
+        if (loop->num_ready_polls <= 0) {
+            loop->num_ready_polls = 0;
+            break;
+        }
+        us_internal_dispatch_ready_polls(loop);
+    }
+}
+
 void us_loop_run(struct us_loop_t *loop) {
     us_loop_integrate(loop);
 
     /* While we have non-fallthrough polls we shouldn't fall through */
     while (loop->num_polls) {
+        loop->data.tick_depth++;
         /* Emit pre callback */
         us_internal_loop_pre(loop);
 
         /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
-        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, NULL);
+        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, NULL);
 #else
         do {
-            loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);
+            loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, LIBUS_MAX_READY_POLLS, 0, NULL);
         } while (IS_EINTR(loop->num_ready_polls));
 #endif
 
         us_internal_dispatch_ready_polls(loop);
+        us_internal_drain_ready_polls(loop);
 
         /* Emit post callback */
         us_internal_loop_post(loop);
+        loop->data.tick_depth--;
     }
 }
 
@@ -314,6 +341,8 @@ extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm);
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
     if (loop->num_polls == 0)
         return;
+
+    loop->data.tick_depth++;
 
     struct us_internal_callback_t *timer_callback = (struct us_internal_callback_t*)loop->data.sweep_timer;
 
@@ -336,10 +365,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
      * it sets timed_out=1 (line 1952) and returns before any scheduler
      * interaction (line 1975). No equivalent of KEVENT_FLAG_IMMEDIATE needed. */
-    loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, timeout);
+    loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
 #else
     do {
-        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024,
+        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, LIBUS_MAX_READY_POLLS,
             /* When we won't idle (pending wakeups or zero timeout), use KEVENT_FLAG_IMMEDIATE.
              * In XNU's kqueue_scan (bsd/kern/kern_event.c):
              *  - KEVENT_FLAG_IMMEDIATE: returns immediately after kqueue_process() (line 8031)
@@ -351,11 +380,12 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     } while (IS_EINTR(loop->num_ready_polls));
 #endif
 
-
     us_internal_dispatch_ready_polls(loop);
+    us_internal_drain_ready_polls(loop);
 
     /* Emit post callback */
     us_internal_loop_post(loop);
+    loop->data.tick_depth--;
 }
 
 void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct us_poll_t *old_poll, struct us_poll_t *new_poll, int old_events, int new_events) {

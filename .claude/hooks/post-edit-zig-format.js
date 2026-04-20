@@ -45,15 +45,14 @@ function formatZigFile() {
 
 function formatTypeScriptFile() {
   try {
-    // Format the TypeScript file
-    const result = spawnSync(
-      "./node_modules/.bin/prettier",
-      ["--plugin=prettier-plugin-organize-imports", "--config", ".prettierrc", "--write", filePath],
-      {
-        cwd: process.env.CLAUDE_PROJECT_DIR || process.cwd(),
-        encoding: "utf-8",
-      },
-    );
+    // Format only — NO organize-imports plugin. That plugin strips imports
+    // it thinks are unused, which breaks split edits (add import → use it
+    // in next edit). CI's `bun run prettier` runs the plugin, so imports
+    // still get cleaned up before merge.
+    const result = spawnSync("./node_modules/.bin/prettier", ["--config", ".prettierrc", "--write", filePath], {
+      cwd: process.env.CLAUDE_PROJECT_DIR || process.cwd(),
+      encoding: "utf-8",
+    });
   } catch (error) {}
 }
 

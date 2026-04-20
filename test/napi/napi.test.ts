@@ -617,6 +617,31 @@ describe.concurrent("napi", () => {
     expect(typeof count).toBe("number");
   });
 
+  it("napi_wrap finalizers run in LIFO order during env teardown", async () => {
+    // Mirrors sqlite3/duckdb crash: a child wrapped after its parent must be finalized
+    // first so its destructor can still touch the parent. Bun previously iterated an
+    // unordered_set here, so order was hash-dependent and the child could see a freed parent.
+    const code = `
+      const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_wrap_cleanup_order.node"))});
+      globalThis.keep = addon.createParentAndChildren(32);
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(
+      "finalize order: " +
+        Array.from({ length: 32 }, (_, i) => 32 - i)
+          .concat(0)
+          .join(" "),
+    );
+    expect(exitCode).toBe(0);
+  });
+
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {
     // This test ensures that napi_reference_unref can be called during GC
     // without triggering the NAPI_CHECK_ENV_NOT_IN_GC assertion for regular modules.

@@ -20,7 +20,7 @@ export_env: *EnvMap,
 cmd_local_env: *EnvMap,
 
 arena: *bun.ArenaAllocator,
-cwd: bun.FileDescriptor,
+cwd: bun.FD,
 
 /// TODO: It would be nice to make this mutable so that certain commands (e.g.
 /// `export`) don't have to duplicate arguments. However, it is tricky because
@@ -341,7 +341,7 @@ pub fn init(
     args: *const std.array_list.Managed(?[*:0]const u8),
     export_env: *EnvMap,
     cmd_local_env: *EnvMap,
-    cwd: bun.FileDescriptor,
+    cwd: bun.FD,
     io: *IO,
 ) ?Yield {
     const stdin: BuiltinIO.Input = switch (io.stdin) {

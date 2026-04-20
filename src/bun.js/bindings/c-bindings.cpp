@@ -105,6 +105,19 @@ extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
 #endif
 }
 
+// Host CPU count, ignoring sched_getaffinity and cgroup cpu.max.
+// Used to size os.cpus() so it matches the native cpus() result count.
+extern "C" int32_t bun_sysconf__SC_NPROCESSORS_ONLN()
+{
+#if OS(WINDOWS)
+    SYSTEM_INFO sysinfo;
+    GetSystemInfo(&sysinfo);
+    return sysinfo.dwNumberOfProcessors;
+#else
+    return sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+}
+
 #if OS(DARWIN) && BUN_DEBUG
 #include <malloc/malloc.h>
 
@@ -910,6 +923,10 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 #undef EMIT_SIGNPOST
 #undef FOR_EACH_TRACE_EVENT
 
+#endif // OS(DARWIN) signpost code
+
+#if OS(DARWIN) || defined(__linux__)
+
 #define BLOB_HEADER_ALIGNMENT 16 * 1024
 
 extern "C" {
@@ -919,12 +936,25 @@ struct BlobHeader {
 } __attribute__((aligned(BLOB_HEADER_ALIGNMENT)));
 }
 
+#if OS(DARWIN)
+
 extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
 
 extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
 {
     return &BUN_COMPILED.size;
 }
+
+#else // __linux__
+
+extern "C" BlobHeader __attribute__((section(".bun"), aligned(BLOB_HEADER_ALIGNMENT), used)) BUN_COMPILED = { 0 };
+
+extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
+{
+    return &BUN_COMPILED.size;
+}
+
+#endif // OS(DARWIN) / __linux__
 
 #elif defined(_WIN32)
 // Windows PE section handling

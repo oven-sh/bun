@@ -8,7 +8,7 @@ const RefCount = bun.ptr.RefCount(@This(), "ref_count", asyncDeinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
-fd: bun.FileDescriptor,
+fd: bun.FD,
 reader: ReaderImpl,
 buf: std.ArrayListUnmanaged(u8) = .{},
 readers: Readers = .{ .inlined = .{} },
@@ -54,7 +54,7 @@ pub fn loop(this: *IOReader) *bun.Async.Loop {
     }
 }
 
-pub fn init(fd: bun.FileDescriptor, evtloop: jsc.EventLoopHandle) *IOReader {
+pub fn init(fd: bun.FD, evtloop: jsc.EventLoopHandle) *IOReader {
     const this = bun.new(IOReader, .{
         .ref_count = .init(),
         .fd = fd,

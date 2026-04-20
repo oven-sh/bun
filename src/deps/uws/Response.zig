@@ -124,7 +124,7 @@ pub fn NewResponse(ssl_flag: i32) type {
             c.uws_res_write_mark(ssl_flag, res.downcast());
         }
 
-        pub fn getNativeHandle(res: *Response) bun.FileDescriptor {
+        pub fn getNativeHandle(res: *Response) bun.FD {
             if (comptime Environment.isWindows) {
                 // on windows uSockets exposes SOCKET
                 return .fromNative(@ptrCast(c.uws_res_get_native_handle(ssl_flag, res.downcast())));
@@ -512,6 +512,18 @@ pub const AnyResponse = union(enum) {
             .SSL => |resp| resp.downcastSocket().close(true, .failure),
             .TCP => |resp| resp.downcastSocket().close(false, .failure),
         }
+    }
+
+    pub fn getNativeHandle(this: AnyResponse) bun.FD {
+        return switch (this) {
+            inline else => |resp| resp.getNativeHandle(),
+        };
+    }
+
+    pub fn prepareForSendfile(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.prepareForSendfile(),
+        };
     }
 
     pub fn onWritable(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, u64, AnyResponse) bool, optional_data: UserDataType) void {

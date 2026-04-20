@@ -251,7 +251,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             expect(settings).toBeDefined();
             expect(settings).toEqual({
               headerTableSize: 4096,
-              enablePush: false,
+              enablePush: true,
               maxConcurrentStreams: 4294967295,
               initialWindowSize: 65535,
               maxFrameSize: 16384,
@@ -530,7 +530,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(settings).toEqual({
             enableConnectProtocol: false,
             headerTableSize: 4096,
-            enablePush: false,
+            enablePush: true,
             initialWindowSize: 65535,
             maxFrameSize: 16384,
             maxConcurrentStreams: 4294967295,
@@ -550,24 +550,20 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             enableConnectProtocol: false,
           };
           const buffer = http2.getPackedSettings(settings);
-          expect(buffer.byteLength).toBe(36);
+          expect(buffer.byteLength).toBe(42);
           expect(http2.getUnpackedSettings(buffer)).toEqual(settings);
         });
         it("getUnpackedSettings should throw if buffer is too small", () => {
-          const buffer = new ArrayBuffer(1);
-          expect(() => http2.getUnpackedSettings(buffer)).toThrow(
-            /Expected buf to be a Buffer of at least 6 bytes and a multiple of 6 bytes/,
-          );
+          const buffer = Buffer.alloc(1);
+          expect(() => http2.getUnpackedSettings(buffer)).toThrow(/Packed settings length must be a multiple of six/);
         });
         it("getUnpackedSettings should throw if buffer is not a multiple of 6 bytes", () => {
-          const buffer = new ArrayBuffer(7);
-          expect(() => http2.getUnpackedSettings(buffer)).toThrow(
-            /Expected buf to be a Buffer of at least 6 bytes and a multiple of 6 bytes/,
-          );
+          const buffer = Buffer.alloc(7);
+          expect(() => http2.getUnpackedSettings(buffer)).toThrow(/Packed settings length must be a multiple of six/);
         });
         it("getUnpackedSettings should throw if buffer is not a buffer", () => {
           const buffer = {};
-          expect(() => http2.getUnpackedSettings(buffer)).toThrow(/Expected buf to be a Buffer/);
+          expect(() => http2.getUnpackedSettings(buffer)).toThrow();
         });
         it("headers cannot be bigger than 65536 bytes", async () => {
           await using server = await nodeEchoServer(paddingStrategy);

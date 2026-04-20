@@ -99,18 +99,18 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
 }
 
 template<typename Visitor>
-void JSCallbackDataWeak::visitJSFunction(Visitor& visitor)
+void JSCallbackData::visitJSFunction(Visitor& visitor)
 {
     visitor.append(m_callback);
 }
 
-template void JSCallbackDataWeak::visitJSFunction(JSC::AbstractSlotVisitor&);
-template void JSCallbackDataWeak::visitJSFunction(JSC::SlotVisitor&);
+template void JSCallbackData::visitJSFunction(JSC::AbstractSlotVisitor&);
+template void JSCallbackData::visitJSFunction(JSC::SlotVisitor&);
 
-bool JSCallbackDataWeak::WeakOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
+bool JSCallbackData::WeakOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     if (reason) [[unlikely]]
-        *reason = "Context is opaque root"_s; // FIXME: what is the context.
+        *reason = "Callback owner is an opaque root"_s;
     return visitor.containsOpaqueRoot(context);
 }
 

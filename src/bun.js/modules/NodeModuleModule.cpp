@@ -517,9 +517,9 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Check for node modules paths.
-    if (request.characterAt(0) != '.' || (request.length() > 1 && request.characterAt(1) != '.' && request.characterAt(1) != '/' &&
+    if (request.codeUnitAt(0) != '.' || (request.length() > 1 && request.codeUnitAt(1) != '.' && request.codeUnitAt(1) != '/' &&
 #if OS(WINDOWS)
-            request.characterAt(1) != '\\'
+            request.codeUnitAt(1) != '\\'
 #else
             true
 #endif

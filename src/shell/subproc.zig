@@ -4,7 +4,7 @@ pub const Stdio = util.Stdio;
 // pub const ShellSubprocess = NewShellSubprocess(.js);
 // pub const ShellSubprocessMini = NewShellSubprocess(.mini);
 
-const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FileDescriptor;
+const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.StdioResult else ?bun.FD;
 
 /// Used for captured writer
 pub const ShellIO = struct {
@@ -61,9 +61,9 @@ pub const ShellSubprocess = struct {
 
     const Writable = union(enum) {
         pipe: *jsc.WebCore.FileSink,
-        fd: bun.FileDescriptor,
+        fd: bun.FD,
         buffer: *StaticPipeWriter,
-        memfd: bun.FileDescriptor,
+        memfd: bun.FD,
         inherit: void,
         ignore: void,
 
@@ -291,8 +291,8 @@ pub const ShellSubprocess = struct {
     };
 
     pub const Readable = union(enum) {
-        fd: bun.FileDescriptor,
-        memfd: bun.FileDescriptor,
+        fd: bun.FD,
+        memfd: bun.FD,
         pipe: *PipeReader,
         inherit: void,
         ignore: void,
@@ -718,7 +718,7 @@ pub const ShellSubprocess = struct {
         }
     };
 
-    pub const WatchFd = bun.FileDescriptor;
+    pub const WatchFd = bun.FD;
 
     pub fn spawnAsync(
         event_loop: jsc.EventLoopHandle,

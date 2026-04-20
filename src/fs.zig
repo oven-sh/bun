@@ -40,7 +40,7 @@ pub const FileSystem = struct {
         return tmpdir_handle.?;
     }
 
-    pub fn getFdPath(this: *const FileSystem, fd: FileDescriptor) ![]const u8 {
+    pub fn getFdPath(this: *const FileSystem, fd: FD) ![]const u8 {
         var buf: bun.PathBuffer = undefined;
         const dir = try bun.getFdPath(fd, &buf);
         return try this.dirname_store.append([]u8, dir);
@@ -647,8 +647,8 @@ pub const FileSystem = struct {
         }
 
         pub const TmpfilePosix = struct {
-            fd: bun.FileDescriptor = bun.invalid_fd,
-            dir_fd: bun.FileDescriptor = bun.invalid_fd,
+            fd: bun.FD = bun.invalid_fd,
+            dir_fd: bun.FD = bun.invalid_fd,
 
             pub inline fn dir(this: *TmpfilePosix) std.fs.Dir {
                 return this.dir_fd.stdDir();
@@ -691,7 +691,7 @@ pub const FileSystem = struct {
         };
 
         pub const TmpfileWindows = struct {
-            fd: bun.FileDescriptor = bun.invalid_fd,
+            fd: bun.FD = bun.invalid_fd,
             existing_path: []const u8 = "",
 
             pub inline fn dir(_: *TmpfileWindows) std.fs.Dir {
@@ -1309,7 +1309,7 @@ pub const FileSystem = struct {
         pub fn kindFromAbsolute(
             fs: *RealFS,
             absolute_path: [:0]const u8,
-            existing_fd: StoredFileDescriptorType,
+            existing_fd: FD,
             store_fd: bool,
         ) !Entry.Cache {
             var outpath: bun.PathBuffer = undefined;
@@ -1364,7 +1364,7 @@ pub const FileSystem = struct {
             fs: *RealFS,
             _dir: string,
             base: string,
-            existing_fd: StoredFileDescriptorType,
+            existing_fd: FD,
             store_fd: bool,
         ) !Entry.Cache {
             var cache = Entry.Cache{
@@ -2027,7 +2027,6 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
-const FileDescriptor = bun.FileDescriptor;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const MutableString = bun.MutableString;
 const Mutex = bun.Mutex;
@@ -2035,7 +2034,6 @@ const OOM = bun.OOM;
 const Output = bun.Output;
 const PathBuffer = bun.PathBuffer;
 const PathString = bun.PathString;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const WPathBuffer = bun.WPathBuffer;
 const allocators = bun.allocators;
 const default_allocator = bun.default_allocator;

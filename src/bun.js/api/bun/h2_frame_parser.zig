@@ -198,11 +198,11 @@ const SettingsPayloadUnit = packed struct(u48) {
     }
 };
 
-const FullSettingsPayload = packed struct(u288) {
+const FullSettingsPayload = packed struct(u336) {
     _headerTableSizeType: u16 = @intFromEnum(SettingsType.SETTINGS_HEADER_TABLE_SIZE),
     headerTableSize: u32 = 4096,
     _enablePushType: u16 = @intFromEnum(SettingsType.SETTINGS_ENABLE_PUSH),
-    enablePush: u32 = 0,
+    enablePush: u32 = 1,
     _maxConcurrentStreamsType: u16 = @intFromEnum(SettingsType.SETTINGS_MAX_CONCURRENT_STREAMS),
     maxConcurrentStreams: u32 = 4294967295,
     _initialWindowSizeType: u16 = @intFromEnum(SettingsType.SETTINGS_INITIAL_WINDOW_SIZE),
@@ -211,7 +211,9 @@ const FullSettingsPayload = packed struct(u288) {
     maxFrameSize: u32 = 16384,
     _maxHeaderListSizeType: u16 = @intFromEnum(SettingsType.SETTINGS_MAX_HEADER_LIST_SIZE),
     maxHeaderListSize: u32 = 65535,
-    pub const byteSize: usize = 36;
+    _enableConnectProtocolType: u16 = @intFromEnum(SettingsType.SETTINGS_ENABLE_CONNECT_PROTOCOL),
+    enableConnectProtocol: u32 = 0,
+    pub const byteSize: usize = 42;
     pub fn toJS(this: *FullSettingsPayload, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         var result = JSValue.createEmptyObject(globalObject, 8);
         result.put(globalObject, jsc.ZigString.static("headerTableSize"), jsc.JSValue.jsNumber(this.headerTableSize));
@@ -221,9 +223,7 @@ const FullSettingsPayload = packed struct(u288) {
         result.put(globalObject, jsc.ZigString.static("maxFrameSize"), jsc.JSValue.jsNumber(this.maxFrameSize));
         result.put(globalObject, jsc.ZigString.static("maxHeaderListSize"), jsc.JSValue.jsNumber(this.maxHeaderListSize));
         result.put(globalObject, jsc.ZigString.static("maxHeaderSize"), jsc.JSValue.jsNumber(this.maxHeaderListSize));
-        // TODO: we dont support this setting yet see https://nodejs.org/api/http2.html#settings-object
-        // we should also support customSettings
-        result.put(globalObject, jsc.ZigString.static("enableConnectProtocol"), .false);
+        result.put(globalObject, jsc.ZigString.static("enableConnectProtocol"), jsc.JSValue.jsBoolean(this.enableConnectProtocol > 0));
         return result;
     }
 
@@ -235,7 +235,8 @@ const FullSettingsPayload = packed struct(u288) {
             .SETTINGS_INITIAL_WINDOW_SIZE => this.initialWindowSize = option.value,
             .SETTINGS_MAX_FRAME_SIZE => this.maxFrameSize = option.value,
             .SETTINGS_MAX_HEADER_LIST_SIZE => this.maxHeaderListSize = option.value,
-            else => {}, // we ignore unknown/unsupportd settings its not relevant if we dont apply them
+            .SETTINGS_ENABLE_CONNECT_PROTOCOL => this.enableConnectProtocol = option.value,
+            else => {},
         }
     }
     pub fn write(this: *FullSettingsPayload, comptime Writer: type, writer: Writer) bool {
@@ -1284,7 +1285,7 @@ pub const H2FrameParser = struct {
             .type = @intFromEnum(FrameType.HTTP_FRAME_SETTINGS),
             .flags = 0,
             .streamIdentifier = 0,
-            .length = 36,
+            .length = FullSettingsPayload.byteSize,
         };
         _ = settingsHeader.write(@TypeOf(writer), writer);
 
@@ -1455,7 +1456,7 @@ pub const H2FrameParser = struct {
             .type = @intFromEnum(FrameType.HTTP_FRAME_SETTINGS),
             .flags = 0,
             .streamIdentifier = 0,
-            .length = 36,
+            .length = FullSettingsPayload.byteSize,
         };
         this.outstandingSettings += 1;
         _ = settingsHeader.write(@TypeOf(writer), writer);

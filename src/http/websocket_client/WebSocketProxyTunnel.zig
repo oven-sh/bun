@@ -260,6 +260,13 @@ pub fn clearConnectedWebSocket(this: *WebSocketProxyTunnel) void {
     this.#connected_websocket = null;
 }
 
+/// Clear the upgrade client reference. Called before tunnel shutdown during
+/// cleanup so that the SSLWrapper's synchronous onHandshake/onClose callbacks
+/// do not re-enter the upgrade client's terminate/clearData path.
+pub fn detachUpgradeClient(this: *WebSocketProxyTunnel) void {
+    this.#upgrade_client = .{ .none = {} };
+}
+
 /// SSLWrapper callback: Called with encrypted data to send to network
 fn writeEncrypted(this: *WebSocketProxyTunnel, encrypted_data: []const u8) void {
     log("writeEncrypted: {} bytes", .{encrypted_data.len});

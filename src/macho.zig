@@ -130,13 +130,11 @@ pub const MachoFile = struct {
         // We assume that the section is page-aligned, so we can calculate the number of new pages
         const num_of_new_pages = @divExact(size_diff, PAGE_SIZE);
 
-        // Since we're adding a new section, we also need to increase our CODE_SIGNATURE size to add the
-        // hashes for these pages.
-        const size_of_new_hashes = num_of_new_pages * HASH_SIZE;
-
-        // So, total increase in size is size of new section + size of hashes for the new pages added
-        // due to the section
-        try self.data.ensureUnusedCapacity(@intCast(size_diff + size_of_new_hashes));
+        // Pre-grow the backing buffer to fit: the `size_diff` bytes of new section
+        // content and one SHA-256 hash per new page. `buildAndSign` may grow further
+        // to write the complete signature, but reserving this up front avoids the
+        // common reallocation.
+        try self.data.ensureUnusedCapacity(@intCast(size_diff + num_of_new_pages * HASH_SIZE));
 
         const code_sign_cmd: ?*align(1) macho.linkedit_data_command =
             if (code_sign_cmd_idx) |idx|
@@ -149,10 +147,7 @@ pub const MachoFile = struct {
             else
                 return error.MissingLinkeditSegment;
 
-        // Handle code signature specially
-        var sig_data: ?[]u8 = null;
         var sig_size: usize = 0;
-        defer if (sig_data) |sd| self.allocator.free(sd);
 
         const prev_data_slice = self.data.items[original_fileoff..];
         self.data.items.len += @as(usize, @intCast(size_diff));
@@ -176,31 +171,45 @@ pub const MachoFile = struct {
 
         if (code_sign_cmd) |cs| {
             sig_size = cs.datasize;
-            // Save existing signature if present
-            sig_data = try self.allocator.alloc(u8, sig_size);
-            @memcpy(sig_data.?, self.data.items[cs.dataoff..][0..sig_size]);
         }
 
-        // Only update offsets if the size actually changed
         if (size_diff != 0) {
-            if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.feature_flag.BUN_NO_CODESIGN_MACHO_BINARY.get()) {
-                // New signature size is the old size plus the size of the hashes for the new pages
-                sig_size = sig_size + @as(usize, @intCast(size_of_new_hashes));
-            }
-
             // We move the offsets of the LINKEDIT segment ahead by `size_diff`
             linkedit_seg.fileoff += @as(usize, @intCast(size_diff));
             linkedit_seg.vmaddr += @as(usize, @intCast(size_diff));
+        }
 
+        if (code_sign_cmd) |cs| {
             if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.feature_flag.BUN_NO_CODESIGN_MACHO_BINARY.get()) {
-                // We also update the sizes of the LINKEDIT segment to account for the hashes we're adding
-                linkedit_seg.filesize += @as(usize, @intCast(size_of_new_hashes));
-                linkedit_seg.vmsize += @as(usize, @intCast(size_of_new_hashes));
+                // `buildAndSign` replaces the template's signature with one built by
+                // `MachoSigner`, whose size depends only on the (possibly-shifted)
+                // `cs.dataoff` — not on the template signature's shape. Resize
+                // __LINKEDIT and `LC_CODE_SIGNATURE.datasize` to that exact size.
+                //
+                // This must run even when `size_diff == 0` (bundle fits in the
+                // template's existing __BUN slot): the template may have been signed
+                // with a different page size / identifier / blob set, so its
+                // `cs.datasize` can be smaller than what `sign()` will produce, which
+                // the trailing truncation in `sign()` then chops (issue #29120).
+                const new_sig_dataoff: u64 = cs.dataoff + @as(u64, @intCast(size_diff));
+                const new_sig_size = MachoSigner.computeSignatureSize(new_sig_dataoff);
 
-                // Finally, the vmsize of the segment should be page-aligned for an executable
-                linkedit_seg.vmsize = alignSize(linkedit_seg.vmsize, PAGE_SIZE);
+                // The template signature is the tail of __LINKEDIT; swap its footprint.
+                // vmsize must be page-aligned and >= filesize, so derive it from the
+                // freshly-computed filesize rather than the pre-update vmsize (otherwise
+                // an old vmsize that was already page-aligned to a wider page can leave
+                // the segment one page larger than necessary).
+                linkedit_seg.filesize = linkedit_seg.filesize - sig_size + new_sig_size;
+                linkedit_seg.vmsize = alignSize(linkedit_seg.filesize, PAGE_SIZE);
+
+                // Stamp datasize directly so the `size_diff == 0` path — which skips
+                // `updateLoadCommandOffsets` below — still records the new size.
+                cs.datasize = @intCast(new_sig_size);
+                sig_size = new_sig_size;
             }
+        }
 
+        if (size_diff != 0) {
             try self.updateLoadCommandOffsets(original_fileoff, @intCast(size_diff), linkedit_seg.fileoff, linkedit_seg.filesize, sig_size);
         }
 
@@ -448,16 +457,36 @@ pub const MachoFile = struct {
             self.allocator.destroy(self);
         }
 
+        const IDENTIFIER = "a.out\x00";
+        const SIGNATURE_PAGE_SIZE: usize = 1 << 12;
+        const SIGNATURE_HASH_SIZE: usize = 32; // SHA256 = 32 bytes
+
+        /// Compute the exact number of bytes that `sign()` will write at `sig_off`
+        /// (the `SuperBlob` + `BlobIndex` + `CodeDirectory` + identifier + page
+        /// hashes). `writeSection` uses this to size `linkedit_seg.filesize` and
+        /// the `LC_CODE_SIGNATURE.datasize` so the signer's output fits exactly
+        /// inside __LINKEDIT.
+        pub fn computeSignatureSize(sig_off: u64) usize {
+            const total_pages: usize = @intCast((sig_off + SIGNATURE_PAGE_SIZE - 1) / SIGNATURE_PAGE_SIZE);
+            const super_blob_header_size = @sizeOf(SuperBlob);
+            const blob_index_size = @sizeOf(BlobIndex);
+            const code_dir_header_size = @sizeOf(CodeDirectory);
+            const hash_offset = code_dir_header_size + IDENTIFIER.len;
+            const hashes_size = total_pages * SIGNATURE_HASH_SIZE;
+            const code_dir_length = hash_offset + hashes_size;
+            return super_blob_header_size + blob_index_size + code_dir_length;
+        }
+
         pub fn sign(self: *MachoSigner, writer: *std.Io.Writer) !void {
-            const PAGE_SIZE: usize = 1 << 12;
-            const HASH_SIZE: usize = 32; // SHA256 = 32 bytes
+            const PAGE_SIZE: usize = SIGNATURE_PAGE_SIZE;
+            const HASH_SIZE: usize = SIGNATURE_HASH_SIZE;
 
             // Calculate total binary pages before signature
             const total_pages = (self.sig_off + PAGE_SIZE - 1) / PAGE_SIZE;
             const aligned_sig_off = total_pages * PAGE_SIZE;
 
             // Calculate base signature structure sizes
-            const id = "a.out\x00";
+            const id = IDENTIFIER;
             const super_blob_header_size = @sizeOf(SuperBlob);
             const blob_index_size = @sizeOf(BlobIndex);
             const code_dir_header_size = @sizeOf(CodeDirectory);
@@ -470,6 +499,7 @@ pub const MachoFile = struct {
 
             // Calculate total signature size
             const sig_structure_size = super_blob_header_size + blob_index_size + code_dir_length;
+            bun.debugAssert(sig_structure_size == computeSignatureSize(self.sig_off));
             const total_sig_size = alignSize(sig_structure_size, PAGE_SIZE);
 
             // Setup SuperBlob

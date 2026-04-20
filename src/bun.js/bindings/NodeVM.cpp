@@ -763,7 +763,6 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         &supportsRichSourceInfo,
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
-        nullptr, // queueTaskToEventLoop
         nullptr, // shouldInterruptScriptBeforeTimeout,
         &moduleLoaderImportModule,
         nullptr, // moduleLoaderResolve

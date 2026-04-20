@@ -31,16 +31,16 @@ pub const deref = RefCount.deref;
 ref_count: RefCount,
 
 /// The master side of the PTY (original fd, used for ioctl operations)
-master_fd: bun.FileDescriptor,
+master_fd: bun.FD,
 
 /// Duplicated master fd for reading
-read_fd: bun.FileDescriptor,
+read_fd: bun.FD,
 
 /// Duplicated master fd for writing
-write_fd: bun.FileDescriptor,
+write_fd: bun.FD,
 
 /// The slave side of the PTY (used by child processes)
-slave_fd: bun.FileDescriptor,
+slave_fd: bun.FD,
 
 /// Current terminal size
 cols: u16,
@@ -292,7 +292,7 @@ pub fn createFromSpawn(
 }
 
 /// Get the slave fd for subprocess to use
-pub fn getSlaveFd(this: *Terminal) bun.FileDescriptor {
+pub fn getSlaveFd(this: *Terminal) bun.FD {
     return this.slave_fd;
 }
 
@@ -307,10 +307,10 @@ pub fn closeSlaveFd(this: *Terminal) void {
 }
 
 const PtyResult = struct {
-    master: bun.FileDescriptor,
-    read_fd: bun.FileDescriptor,
-    write_fd: bun.FileDescriptor,
-    slave: bun.FileDescriptor,
+    master: bun.FD,
+    read_fd: bun.FD,
+    write_fd: bun.FD,
+    slave: bun.FD,
 };
 
 const CreatePtyError = error{ OpenPtyFailed, DupFailed, NotSupported };
@@ -711,13 +711,13 @@ pub fn setRawMode(
 const Termios = if (Environment.isPosix) std.posix.termios else void;
 
 /// Get terminal attributes using tcgetattr
-fn getTermios(fd: bun.FileDescriptor) ?Termios {
+fn getTermios(fd: bun.FD) ?Termios {
     if (comptime !Environment.isPosix) return null;
     return std.posix.tcgetattr(fd.cast()) catch null;
 }
 
 /// Set terminal attributes using tcsetattr (TCSANOW = immediate)
-fn setTermios(fd: bun.FileDescriptor, termios_p: *const Termios) bool {
+fn setTermios(fd: bun.FD, termios_p: *const Termios) bool {
     if (comptime !Environment.isPosix) return false;
     std.posix.tcsetattr(fd.cast(), .NOW, termios_p.*) catch return false;
     return true;

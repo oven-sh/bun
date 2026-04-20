@@ -398,6 +398,34 @@ pub fn RefPtr(T: type) type {
             return uncheckedAndUnsafeInit(raw_ptr, @returnAddress());
         }
 
+        /// Wrap a raw pointer whose ref is being transferred to this RefPtr
+        /// WITHOUT incrementing the refcount. The caller gives up their ref;
+        /// this RefPtr now owns it. Unlike `adoptRef`, this does not assert
+        /// `hasOneRef()` — the pointer may have other outstanding refs.
+        /// This is the inverse of `leak()`.
+        pub fn takeRef(raw_ptr: *T) @This() {
+            if (enable_debug) {
+                raw_ptr.ref_count.debug.assertValid();
+            }
+            return uncheckedAndUnsafeInit(raw_ptr, @returnAddress());
+        }
+
+        /// Extract the raw pointer, giving up ownership WITHOUT decrementing
+        /// the refcount. The caller is responsible for the ref that this
+        /// RefPtr was holding. After calling this, the RefPtr is invalid
+        /// and must not be used. This is the inverse of `takeRef()`.
+        pub fn leak(self: *@This()) *T {
+            const ptr = self.data;
+            if (enable_debug) {
+                // mark debug tracking as released without actually derefing
+                self.data.ref_count.debug.release(self.debug, @returnAddress());
+            }
+            if (bun.Environment.isDebug) {
+                self.data = undefined;
+            }
+            return ptr;
+        }
+
         /// This will assert that ALL references are cleaned up by the time the allocation scope ends.
         pub fn newTracked(scope: *AllocationScope, init_data: T) @This() {
             const ptr: @This() = .new(init_data);

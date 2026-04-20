@@ -1904,7 +1904,7 @@ pub const Resolver = struct {
         dir_info = source_dir_info;
 
         // this is the magic!
-        if (global_cache.canUse(any_node_modules_folder) and r.usePackageManager() and esm_ != null) {
+        if (global_cache.canUse(any_node_modules_folder) and r.usePackageManager() and esm_ != null and strings.isNPMPackageName(esm_.?.name)) {
             const esm = esm_.?.withAutoVersion();
             load_module_from_cache: {
                 // If the source directory doesn't have a node_modules directory, we can
@@ -4231,7 +4231,6 @@ pub const Resolver = struct {
                         merged_config.emit_decorator_metadata = merged_config.emit_decorator_metadata or parent_config.emit_decorator_metadata;
                         if (parent_config.base_url.len > 0) {
                             merged_config.base_url = parent_config.base_url;
-                            merged_config.base_url_for_paths = parent_config.base_url_for_paths;
                         }
                         merged_config.jsx = parent_config.mergeJSX(merged_config.jsx);
                         merged_config.jsx_flags.setUnion(parent_config.jsx_flags);
@@ -4240,9 +4239,15 @@ pub const Resolver = struct {
                             merged_config.preserve_imports_not_used_as_values = value;
                         }
 
-                        var iter = parent_config.paths.iterator();
-                        while (iter.next()) |c| {
-                            merged_config.paths.put(c.key_ptr.*, c.value_ptr.*) catch unreachable;
+                        // TypeScript replaces paths across extends (child overrides parent
+                        // entirely), so when a more-specific config defines paths, replace
+                        // rather than merge. base_url_for_paths is set whenever the paths
+                        // key is present in the JSON (even if empty), so it discriminates
+                        // "not defined" from "defined as {}" — the latter clears inherited
+                        // paths per TypeScript semantics.
+                        if (parent_config.base_url_for_paths.len > 0) {
+                            merged_config.paths = parent_config.paths;
+                            merged_config.base_url_for_paths = parent_config.base_url_for_paths;
                         }
                         // todo deinit these parent configs somehow?
                     }
@@ -4384,7 +4389,7 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
-const FileDescriptorType = bun.FileDescriptor;
+const FileDescriptorType = bun.FD;
 const MutableString = bun.MutableString;
 const Mutex = bun.Mutex;
 const Output = bun.Output;

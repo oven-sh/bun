@@ -4,7 +4,7 @@ opts: Opts = .{},
 args: struct {
     sources: []const [*:0]const u8 = &[_][*:0]const u8{},
     target: [:0]const u8 = &[0:0]u8{},
-    target_fd: ?bun.FileDescriptor = null,
+    target_fd: ?bun.FD = null,
 } = .{},
 state: union(enum) {
     idle,
@@ -32,9 +32,9 @@ state: union(enum) {
 pub const ShellMvCheckTargetTask = struct {
     mv: *Mv,
 
-    cwd: bun.FileDescriptor,
+    cwd: bun.FD,
     target: [:0]const u8,
-    result: ?Maybe(?bun.FileDescriptor) = null,
+    result: ?Maybe(?bun.FD) = null,
 
     task: ShellTask(@This(), runFromThreadPool, runFromMainThread, debug),
 
@@ -71,8 +71,8 @@ pub const ShellMvBatchedTask = struct {
     mv: *Mv,
     sources: []const [*:0]const u8,
     target: [:0]const u8,
-    target_fd: ?bun.FileDescriptor,
-    cwd: bun.FileDescriptor,
+    target_fd: ?bun.FD,
+    cwd: bun.FD,
     error_signal: *std.atomic.Value(bool),
 
     err: ?Syscall.Error = null,
@@ -220,7 +220,7 @@ pub fn next(this: *Mv) Yield {
                     assert(check_target.task.result != null);
                 }
 
-                const maybe_fd: ?bun.FileDescriptor = switch (check_target.task.result.?) {
+                const maybe_fd: ?bun.FD = switch (check_target.task.result.?) {
                     .err => |e| brk: {
                         switch (e.getErrno()) {
                             Syscall.E.NOENT => {

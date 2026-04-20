@@ -68,6 +68,7 @@
               "/installation",
               "/quickstart",
               "/typescript",
+              "/typescript-6",
               "/runtime/templating/init",
               "/runtime/templating/create"
             ]
@@ -136,7 +137,13 @@
           {
             "group": "Process & System",
             "icon": "computer",
-            "pages": ["/runtime/environment-variables", "/runtime/shell", "/runtime/child-process"]
+            "pages": [
+              "/runtime/environment-variables",
+              "/runtime/shell",
+              "/runtime/child-process",
+              "/runtime/webview",
+              "/runtime/cron"
+            ]
           },
           {
             "group": "Interop & Tooling",
@@ -147,8 +154,10 @@
             "group": "Utilities",
             "icon": "wrench",
             "pages": [
+              "/runtime/csrf",
               "/runtime/secrets",
               "/runtime/console",
+              "/runtime/toml",
               "/runtime/yaml",
               "/runtime/markdown",
               "/runtime/json5",

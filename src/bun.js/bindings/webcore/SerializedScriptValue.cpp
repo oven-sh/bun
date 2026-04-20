@@ -520,9 +520,12 @@ enum class CryptoAlgorithmIdentifierTag {
     PBKDF2 = 21,
     ED25519 = 22,
     X25519 = 23,
+    SHA3_256 = 24,
+    SHA3_384 = 25,
+    SHA3_512 = 26,
 };
 
-const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 22;
+const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 26;
 
 static unsigned countUsages(CryptoKeyUsageBitmap usages)
 {
@@ -2394,6 +2397,15 @@ private:
         case CryptoAlgorithmIdentifier::SHA_512:
             write(CryptoAlgorithmIdentifierTag::SHA_512);
             break;
+        case CryptoAlgorithmIdentifier::SHA3_256:
+            write(CryptoAlgorithmIdentifierTag::SHA3_256);
+            break;
+        case CryptoAlgorithmIdentifier::SHA3_384:
+            write(CryptoAlgorithmIdentifierTag::SHA3_384);
+            break;
+        case CryptoAlgorithmIdentifier::SHA3_512:
+            write(CryptoAlgorithmIdentifierTag::SHA3_512);
+            break;
         case CryptoAlgorithmIdentifier::HKDF:
             write(CryptoAlgorithmIdentifierTag::HKDF);
             break;
@@ -3880,6 +3892,15 @@ private:
         case CryptoAlgorithmIdentifierTag::SHA_512:
             result = CryptoAlgorithmIdentifier::SHA_512;
             break;
+        case CryptoAlgorithmIdentifierTag::SHA3_256:
+            result = CryptoAlgorithmIdentifier::SHA3_256;
+            break;
+        case CryptoAlgorithmIdentifierTag::SHA3_384:
+            result = CryptoAlgorithmIdentifier::SHA3_384;
+            break;
+        case CryptoAlgorithmIdentifierTag::SHA3_512:
+            result = CryptoAlgorithmIdentifier::SHA3_512;
+            break;
         case CryptoAlgorithmIdentifierTag::HKDF:
             result = CryptoAlgorithmIdentifier::HKDF;
             break;
@@ -5022,15 +5043,20 @@ private:
 
             RefPtr<Wasm::Memory> memory;
             auto handler = [&vm, result](Wasm::Memory::GrowSuccess, PageCount oldPageCount, PageCount newPageCount) { result->growSuccessCallback(vm, oldPageCount, newPageCount); };
+            // Memory64 is not yet serialized in WasmMemoryTag, so we only
+            // support I32 address type for structured clone. Upstream WebKit
+            // has the same limitation (it calls result->memory().addressType()
+            // on an uninitialized stub here, which happens to return I32).
+            constexpr auto addressType = Wasm::AddressType::I32;
             if (RefPtr<SharedArrayBufferContents> contents = m_wasmMemoryHandles->at(index)) {
                 if (!contents->memoryHandle()) {
                     fail();
                     return JSValue();
                 }
-                memory = Wasm::Memory::create(contents.releaseNonNull(), WTF::move(handler));
+                memory = Wasm::Memory::create(contents.releaseNonNull(), addressType, WTF::move(handler));
             } else {
                 // zero size & max-size.
-                memory = Wasm::Memory::createZeroSized(JSC::MemorySharingMode::Shared, WTF::move(handler));
+                memory = Wasm::Memory::createZeroSized(JSC::MemorySharingMode::Shared, addressType, WTF::move(handler));
             }
 
             result->adopt(memory.releaseNonNull());

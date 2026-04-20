@@ -180,7 +180,7 @@ pub const BunxCommand = struct {
     /// 1 day
     const nanoseconds_cache_valid = seconds_cache_valid * 1000000000;
 
-    fn getBinNameFromSubpath(transpiler: *bun.Transpiler, dir_fd: bun.FileDescriptor, subpath_z: [:0]const u8) ![]const u8 {
+    fn getBinNameFromSubpath(transpiler: *bun.Transpiler, dir_fd: bun.FD, subpath_z: [:0]const u8) ![]const u8 {
         const target_package_json_fd = try bun.sys.openat(dir_fd, subpath_z, bun.O.RDONLY, 0).unwrap();
         const target_package_json = bun.sys.File{ .handle = target_package_json_fd };
 
@@ -250,7 +250,7 @@ pub const BunxCommand = struct {
         return error.NoBinFound;
     }
 
-    fn getBinNameFromProjectDirectory(transpiler: *bun.Transpiler, dir_fd: bun.FileDescriptor, package_name: []const u8) ![]const u8 {
+    fn getBinNameFromProjectDirectory(transpiler: *bun.Transpiler, dir_fd: bun.FD, package_name: []const u8) ![]const u8 {
         var subpath: bun.PathBuffer = undefined;
         const subpath_z = std.fmt.bufPrintZ(&subpath, bun.pathLiteral("node_modules/{s}/package.json"), .{package_name}) catch unreachable;
         return try getBinNameFromSubpath(transpiler, dir_fd, subpath_z);
@@ -307,7 +307,7 @@ pub const BunxCommand = struct {
 
     /// Check the enclosing package.json for a matching "bin"
     /// If not found, check bunx cache dir
-    fn getBinName(transpiler: *bun.Transpiler, toplevel_fd: bun.FileDescriptor, tempdir_name: []const u8, package_name: []const u8) error{ NoBinFound, NeedToInstall }![]const u8 {
+    fn getBinName(transpiler: *bun.Transpiler, toplevel_fd: bun.FD, tempdir_name: []const u8, package_name: []const u8) error{ NoBinFound, NeedToInstall }![]const u8 {
         bun.assert(toplevel_fd.isValid());
         return getBinNameFromProjectDirectory(transpiler, toplevel_fd, package_name) catch |err| {
             if (err == error.NoBinFound) {
@@ -358,14 +358,22 @@ pub const BunxCommand = struct {
         // 1. Install TypeScript
         // 2. Run tsc
         // BUT: Skip this transformation if --package was explicitly specified
-        if (opts.specified_package == null and strings.eqlComptime(update_request.name, "tsc")) {
-            update_request.name = "typescript";
+        if (opts.specified_package == null) {
+            if (strings.eqlComptime(update_request.name, "tsc")) {
+                update_request.name = "typescript";
+            } else if (strings.eqlComptime(update_request.name, "claude")) {
+                // The npm package "claude" is an unrelated squatter with no bin;
+                // `bunx claude` is much more likely to mean the actual CLI.
+                update_request.name = "@anthropic-ai/claude-code";
+            }
         }
 
         const initial_bin_name = if (opts.binary_name) |bin_name|
             bin_name
         else if (strings.eqlComptime(update_request.name, "typescript"))
             "tsc"
+        else if (strings.eqlComptime(update_request.name, "@anthropic-ai/claude-code"))
+            "claude"
         else if (update_request.version.tag == .github)
             update_request.version.value.github.repo.slice(update_request.version_buf)
         else if (strings.lastIndexOfChar(update_request.name, '/')) |index|

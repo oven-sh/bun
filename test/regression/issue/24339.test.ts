@@ -10,12 +10,13 @@ import assert from "node:assert";
 import { test } from "node:test";
 import tls from "node:tls";
 
-// On macOS, Node.js itself often returns an empty 'system' array (Security
-// framework anchor enumeration is environment-dependent), and Node's own
-// test-tls-get-ca-certificates-system.js only asserts non-empty on Windows.
-// The issue this regresses was reported on Linux, so skip on darwin to keep
-// the assertion meaningful where it can be.
-const skip = process.platform === "darwin" ? "Node.js also returns 0 system certs on macOS" : false;
+// On macOS, Bun's loader queries the default keychain search list, which does
+// not include SystemRootCertificates.keychain — so the result depends on what
+// is explicitly trusted in login/System.keychain (often nothing on clean/CI
+// Macs). Node v25's loader has the same property on this platform, and Node's
+// own test-tls-get-ca-certificates-system.js only asserts non-empty on
+// Windows. The issue this regresses was reported on Linux.
+const skip = process.platform === "darwin" ? "system cert count is environment-dependent on macOS" : false;
 
 test("tls.getCACertificates('system') returns system certs without --use-system-ca", { skip }, () => {
   assert.notStrictEqual(process.env.NODE_USE_SYSTEM_CA, "1");

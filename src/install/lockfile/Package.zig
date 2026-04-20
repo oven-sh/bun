@@ -1776,7 +1776,7 @@ pub fn Package(comptime SemverIntType: type) type {
                         // workspace names from their package jsons. duplicates not allowed
                         const gop = try seen_workspace_names.getOrPut(allocator, @truncate(String.Builder.stringHash(entry.name)));
                         if (gop.found_existing) {
-                            // this path does alot of extra work to format the error message
+                            // this path does a lot of extra work to format the error message
                             // but this is ok because the install is going to fail anyways, so this
                             // has zero effect on the happy path.
                             var cwd_buf: bun.PathBuffer = undefined;

@@ -55,6 +55,7 @@ pub const PmFetchCommand = struct {
         defer pm.allocator.free(dep_ids);
 
         var already_cached: u32 = 0;
+        var skipped_git: u32 = 0;
 
         _ = pm.getCacheDirectory();
         _ = pm.getTemporaryDirectory();
@@ -131,6 +132,7 @@ pub const PmFetchCommand = struct {
                     // not be populated. Skip `git:` dependencies in this pass;
                     // they are populated during the resolve phase above when
                     // first resolved, and otherwise during `bun install`.
+                    skipped_git += 1;
                     continue;
                 },
                 .github => {
@@ -218,7 +220,7 @@ pub const PmFetchCommand = struct {
                     if (total_fetched == 1) "" else "s",
                 });
             } else if (already_cached > 0) {
-                Output.pretty("<green>Done<r>! All {d} package{s} already in cache ", .{
+                Output.pretty("<green>Done<r>! {d} package{s} already in cache ", .{
                     already_cached,
                     if (already_cached == 1) "" else "s",
                 });
@@ -227,6 +229,12 @@ pub const PmFetchCommand = struct {
             }
             Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
             Output.pretty("<r>\n", .{});
+            if (skipped_git > 0) {
+                Output.prettyln("<yellow>note<r>: skipped {d} git dependenc{s} (run <b>bun install<r> to populate)", .{
+                    skipped_git,
+                    if (skipped_git == 1) "y" else "ies",
+                });
+            }
             if (cache_dir.len > 0) {
                 Output.prettyln("<d>Cache: {s}<r>", .{cache_dir});
             }

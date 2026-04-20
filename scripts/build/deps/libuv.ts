@@ -9,20 +9,20 @@
 
 import type { Dependency, NestedCmakeBuild } from "../source.ts";
 
-// Latest HEAD as of pin — includes recursion bug fix #4784 (a stack
-// overflow in uv__run_timers with many concurrent timers).
-const LIBUV_COMMIT = "f3ce527ea940d926c40878ba5de219640c362811";
+// Tip of oven-sh/libuv's `bun` branch — upstream f3ce527e (includes recursion
+// bug fix #4784) + the win-pipe CancelIoEx race fix + ConPTY support in
+// uv_spawn. To bump upstream, rebase the `bun` branch onto the new pin and
+// update this SHA.
+const LIBUV_COMMIT = "e85372dab4ccbf855a95b4579df98360748ce231";
 
 export const libuv: Dependency = {
   name: "libuv",
 
   source: () => ({
     kind: "github-archive",
-    repo: "libuv/libuv",
+    repo: "oven-sh/libuv",
     commit: LIBUV_COMMIT,
   }),
-
-  patches: ["patches/libuv/fix-win-pipe-cancel-race.patch", "patches/libuv/conpty-support.patch"],
 
   build: cfg => {
     const spec: NestedCmakeBuild = {

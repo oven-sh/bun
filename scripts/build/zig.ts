@@ -41,7 +41,7 @@ import { streamPath } from "./stream.ts";
  * one constant.
  */
 export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
-export const ZIG_COMMIT_PARALLEL = "65b29282c04e42bea2539e9e31c5a59ac9cbabdb";
+export const ZIG_COMMIT_PARALLEL = "faa680d0e3df6e8ab7607e6037d6d79e90f9eb27";
 
 /**
  * The one place that picks which compiler to use. The parallel compiler

@@ -137,8 +137,7 @@ end:
 
 static void us_internal_init_root_certs(
     X509 *root_cert_instances[root_certs_size],
-    STACK_OF(X509) *&root_extra_cert_instances,
-    STACK_OF(X509) *&root_system_cert_instances) {
+    STACK_OF(X509) *&root_extra_cert_instances) {
   static std::atomic_flag root_cert_instances_lock = ATOMIC_FLAG_INIT;
   static std::atomic_bool root_cert_instances_initialized = 0;
 
@@ -160,17 +159,6 @@ static void us_internal_init_root_certs(
     if (extra_certs && extra_certs[0]) {
       root_extra_cert_instances = us_ssl_ctx_load_all_certs_from_file(extra_certs);
     }
-
-    // load system certificates if NODE_USE_SYSTEM_CA=1
-    if (us_should_use_system_ca()) {
-#ifdef __APPLE__
-      us_load_system_certificates_macos(&root_system_cert_instances);
-#elif defined(_WIN32)
-      us_load_system_certificates_windows(&root_system_cert_instances);
-#else
-      us_load_system_certificates_linux(&root_system_cert_instances);
-#endif
-    }
   }
 
   atomic_flag_clear_explicit(&root_cert_instances_lock,
@@ -185,15 +173,13 @@ extern "C" int us_internal_raw_root_certs(struct us_cert_string_t **out) {
 struct us_default_ca_certificates {
   X509 *root_cert_instances[root_certs_size];
   STACK_OF(X509) *root_extra_cert_instances;
-  STACK_OF(X509) *root_system_cert_instances;
 };
 
 us_default_ca_certificates* us_get_default_ca_certificates() {
-  static us_default_ca_certificates default_ca_certificates = {{NULL}, NULL, NULL};
+  static us_default_ca_certificates default_ca_certificates = {{NULL}, NULL};
 
-  us_internal_init_root_certs(default_ca_certificates.root_cert_instances, 
-                              default_ca_certificates.root_extra_cert_instances,
-                              default_ca_certificates.root_system_cert_instances);
+  us_internal_init_root_certs(default_ca_certificates.root_cert_instances,
+                              default_ca_certificates.root_extra_cert_instances);
 
   return &default_ca_certificates;
 }
@@ -202,32 +188,23 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
   return us_get_default_ca_certificates()->root_extra_cert_instances;
 }
 
+// Lazy, thread-safe single source of truth for the OS trust store.
+// Backs both tls.getCACertificates('system') (always, matching Node) and
+// the --use-system-ca / NODE_USE_SYSTEM_CA branch in us_get_default_ca_store.
+// Loads at most once per process, on first demand from either consumer.
 STACK_OF(X509) *us_get_root_system_cert_instances() {
-  // If NODE_USE_SYSTEM_CA / --use-system-ca was set, the eager path inside
-  // us_internal_init_root_certs already populated this under its own lock.
-  auto certs = us_get_default_ca_certificates();
-  if (certs->root_system_cert_instances != NULL) {
-    return certs->root_system_cert_instances;
+  static std::atomic<STACK_OF(X509)*> cached{nullptr};
+  static std::atomic_bool done{false};
+  static std::atomic_flag lock = ATOMIC_FLAG_INIT;
+
+  if (done.load(std::memory_order_acquire)) {
+    return cached.load(std::memory_order_relaxed);
   }
 
-  // Otherwise lazy-load on first call to tls.getCACertificates('system').
-  // Node returns system certs here regardless of --use-system-ca; we match
-  // that while deferring the scan cost until the API is actually called.
-  // Self-contained DCLP: the result is published via an atomic so readers
-  // never observe the pointer mid-population.
-  static std::atomic<STACK_OF(X509)*> lazy_certs{nullptr};
-  static std::atomic_flag lazy_lock = ATOMIC_FLAG_INIT;
-  static std::atomic_bool lazy_loaded{false};
-
-  if (std::atomic_load_explicit(&lazy_loaded, std::memory_order_acquire)) {
-    return lazy_certs.load(std::memory_order_relaxed);
-  }
-
-  while (atomic_flag_test_and_set_explicit(&lazy_lock,
-                                           std::memory_order_acquire))
+  while (atomic_flag_test_and_set_explicit(&lock, std::memory_order_acquire))
     ;
 
-  if (!std::atomic_load_explicit(&lazy_loaded, std::memory_order_relaxed)) {
+  if (!done.load(std::memory_order_relaxed)) {
     STACK_OF(X509)* loaded = nullptr;
 #ifdef __APPLE__
     us_load_system_certificates_macos(&loaded);
@@ -236,12 +213,12 @@ STACK_OF(X509) *us_get_root_system_cert_instances() {
 #else
     us_load_system_certificates_linux(&loaded);
 #endif
-    lazy_certs.store(loaded, std::memory_order_relaxed);
-    std::atomic_store_explicit(&lazy_loaded, true, std::memory_order_release);
+    cached.store(loaded, std::memory_order_relaxed);
+    done.store(true, std::memory_order_release);
   }
 
-  atomic_flag_clear_explicit(&lazy_lock, std::memory_order_release);
-  return lazy_certs.load(std::memory_order_relaxed);
+  atomic_flag_clear_explicit(&lock, std::memory_order_release);
+  return cached.load(std::memory_order_relaxed);
 }
 
 extern "C" X509_STORE *us_get_default_ca_store() {
@@ -258,7 +235,6 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();
   X509** root_cert_instances = default_ca_certificates->root_cert_instances;
   STACK_OF(X509) *root_extra_cert_instances = default_ca_certificates->root_extra_cert_instances;
-  STACK_OF(X509) *root_system_cert_instances = default_ca_certificates->root_system_cert_instances;
 
   // load all root_cert_instances on the default ca store
   for (size_t i = 0; i < root_certs_size; i++) {
@@ -277,11 +253,14 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     }
   }
 
-  if (us_should_use_system_ca() && root_system_cert_instances) {
-    for (int i = 0; i < sk_X509_num(root_system_cert_instances); i++) {
-      X509 *cert = sk_X509_value(root_system_cert_instances, i);
-      X509_up_ref(cert);
-      X509_STORE_add_cert(store, cert);
+  if (us_should_use_system_ca()) {
+    STACK_OF(X509) *root_system_cert_instances = us_get_root_system_cert_instances();
+    if (root_system_cert_instances) {
+      for (int i = 0; i < sk_X509_num(root_system_cert_instances); i++) {
+        X509 *cert = sk_X509_value(root_system_cert_instances, i);
+        X509_up_ref(cert);
+        X509_STORE_add_cert(store, cert);
+      }
     }
   }
 

@@ -12,8 +12,8 @@ import tls from "node:tls";
 
 // TODO: the macOS system-cert loader (root_certs_darwin.cpp) returns 0 certs
 // on CI machines even with --use-system-ca; see BuildKite build #35340. Skip
-// here until that loader is fixed so this regression test can land.
-const skip = process.platform === "darwin" ? "macOS system cert loader returns 0 on CI" : false;
+// only on CI macOS so developer Macs still get coverage.
+const skip = process.platform === "darwin" && !!process.env.CI ? "macOS system cert loader returns 0 on CI" : false;
 
 test("tls.getCACertificates('system') returns system certs without --use-system-ca", { skip }, () => {
   assert.notStrictEqual(process.env.NODE_USE_SYSTEM_CA, "1");

@@ -734,8 +734,8 @@ const Generator = struct {
 
 const string = []const u8;
 
-const std = @import("std");
 const Lockfile = @import("../install/lockfile.zig");
+const std = @import("std");
 const Integrity = @import("../install/integrity.zig").Integrity;
 const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
 

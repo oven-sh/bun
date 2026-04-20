@@ -336,8 +336,13 @@ fn watchLoop(this: *Watcher) bun.sys.Maybe(void) {
 ///
 /// Preconditions (caller must ensure):
 /// - `fd` is a valid, open file descriptor
-/// - `fd` is not already registered with this kqueue
 /// - `watchlist_id` matches the entry's index in the watchlist
+///
+/// It is safe to call this on an `fd` that is already registered — `EV_ADD`
+/// on an existing `(ident, filter)` pair replaces the registration in place,
+/// which `flushEvictions` relies on to rewrite `udata` after `swapRemove`
+/// shuffles the watchlist. Do NOT add a guard that skips already-registered
+/// fds; that silently reintroduces issue #29524.
 ///
 /// Note: This function does not propagate kevent registration errors.
 /// If registration fails, the file will not be watched but no error is returned.

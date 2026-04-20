@@ -768,6 +768,7 @@ pub const H2FrameParser = struct {
         waitForTrailers: bool = false,
         closeAfterDrain: bool = false,
         endAfterHeaders: bool = false,
+        contentLength: i64 = -1,
         isWaitingMoreHeaders: bool = false,
         padding: ?u8 = null,
         paddingStrategy: PaddingStrategy = .none,
@@ -1919,6 +1920,17 @@ pub const H2FrameParser = struct {
                 return null;
             }
 
+            if (this.isServer and strings.eqlComptime(header.name, "content-length")) {
+                // RFC 9113 §8.1.1: malformed if content-length is not a valid non-negative integer,
+                // or if multiple content-length fields with differing values are present.
+                const parsed = std.fmt.parseInt(i64, header.value, 10) catch -1;
+                if (parsed < 0 or (stream.contentLength != -1 and stream.contentLength != parsed)) {
+                    this.endStream(stream, ErrorCode.PROTOCOL_ERROR);
+                    return null;
+                }
+                stream.contentLength = parsed;
+            }
+
             // RFC 7540 Section 6.5.2: Calculate header list size
             // Size = name length + value length + HPACK entry overhead per header
             headerListSize += header.name.len + header.value.len + HPACK_ENTRY_OVERHEAD;
@@ -1979,6 +1991,17 @@ pub const H2FrameParser = struct {
             if (offset >= payload.len) {
                 break;
             }
+        }
+
+        // RFC 9113 §8.6: a request is malformed if the value of a content-length header field
+        // does not equal the sum of the DATA frame payload lengths. A non-zero content-length
+        // with END_STREAM on the header block (no DATA frames possible) is therefore malformed.
+        // Only check once the full header block is assembled (END_HEADERS set); use
+        // stream.endAfterHeaders so the END_STREAM flag from the original HEADERS frame is
+        // honored even when CONTINUATION frames carry part of the block.
+        if (this.isServer and stream.contentLength > 0 and stream.endAfterHeaders and (flags & @intFromEnum(HeadersFrameFlags.END_HEADERS)) != 0) {
+            this.endStream(stream, ErrorCode.PROTOCOL_ERROR);
+            return null;
         }
 
         this.dispatchWith3Extra(.onStreamHeaders, stream.getIdentifier(), headers, sensitiveHeaders, jsc.JSValue.jsNumber(flags));
@@ -2318,11 +2341,12 @@ pub const H2FrameParser = struct {
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
             this.readBuffer.reset();
-            stream.endAfterHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0;
+            // CONTINUATION frames never carry END_STREAM; preserve stream.endAfterHeaders
+            // from the originating HEADERS frame so decodeHeaderBlock can validate against it.
             stream = (try this.decodeHeaderBlock(payload[0..payload.len], stream, frame.flags)) orelse {
                 return content.end;
             };
-            if (stream.endAfterHeaders) {
+            if (stream.endAfterHeaders and frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) != 0) {
                 stream.isWaitingMoreHeaders = false;
                 if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
                     const identifier = stream.getIdentifier();
@@ -2384,6 +2408,9 @@ pub const H2FrameParser = struct {
                 return content.end;
             }
             stream.endAfterHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0;
+            // Reset for each HEADERS frame so a content-length from the initial request
+            // headers does not leak into a later trailer HEADERS block.
+            stream.contentLength = -1;
             stream = (try this.decodeHeaderBlock(payload[offset..end], stream, frame.flags)) orelse {
                 return content.end;
             };

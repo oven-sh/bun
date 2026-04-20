@@ -126,9 +126,14 @@ const Generator = struct {
 
     const Component = struct {
         package_id: PackageID,
-        /// Unique reference used as `bom-ref` (CycloneDX) or to build `SPDXID` (SPDX).
-        /// For npm packages this is `name@version`. Always owned by `allocator`.
+        /// Unique reference used as `bom-ref` (CycloneDX). For npm packages
+        /// this is `name@version`. Always owned by `allocator`.
         ref: []const u8,
+        /// SPDXID suffix (`SPDXRef-Package-<this>`). SPDXIDs allow only
+        /// `[A-Za-z0-9.-]`, and two distinct refs (e.g. `foo_bar@1.0.0` and
+        /// `foo-bar@1.0.0`) can sanitize to the same value, so this is
+        /// deduplicated independently of `ref`. Always owned by `allocator`.
+        spdx_id: []const u8,
         /// Package name (slice into lockfile string buffer).
         name: []const u8,
         /// Version string. Owned by `allocator`. Empty if unavailable.
@@ -217,6 +222,7 @@ const Generator = struct {
                 pkg_names[root_id].slice(string_bytes)
             else
                 pm.root_package_json_name_at_time_of_init;
+            var root_name_owned = false;
             // Root version isn't stored in the binary lockfile for the root
             // package itself; read it from package.json when available.
             var root_version: []const u8 = "";
@@ -237,7 +243,10 @@ const Generator = struct {
                 const json = bun.json.parse(source, &log, allocator, false) catch break :root_package_json;
                 if (json.getStringCloned(allocator, "version") catch null) |v| root_version = v;
                 if (root_name.len == 0) {
-                    if (json.getStringCloned(allocator, "name") catch null) |n| root_name = n;
+                    if (json.getStringCloned(allocator, "name") catch null) |n| {
+                        root_name = n;
+                        root_name_owned = true;
+                    }
                 }
             }
             if (root_name.len == 0) root_name = "root";
@@ -248,7 +257,14 @@ const Generator = struct {
             this.root = .{
                 .package_id = root_id,
                 .ref = root_ref,
-                .name = root_name,
+                .spdx_id = try sanitizeSpdxId(allocator, root_ref),
+                // root_name may point into the lockfile string buffer, the
+                // PackageManager, or a string literal. Dupe so ownership
+                // matches the other root fields and `deinit()` can free
+                // unconditionally. If it was already cloned from
+                // package.json, transfer ownership directly instead of
+                // allocating twice.
+                .name = if (root_name_owned) root_name else try allocator.dupe(u8, root_name),
                 .version = root_version,
                 .purl = if (strings.isNPMPackageName(root_name) and root_version.len > 0)
                     try makePurl(allocator, root_name, root_version)
@@ -266,7 +282,10 @@ const Generator = struct {
         // Build a component for every other package.
         var seen_refs = bun.StringHashMap(void).init(allocator);
         defer seen_refs.deinit();
+        var seen_spdx_ids = bun.StringHashMap(void).init(allocator);
+        defer seen_spdx_ids.deinit();
         try seen_refs.put(this.root.ref, {});
+        try seen_spdx_ids.put(this.root.spdx_id, {});
 
         for (0..lockfile.packages.len) |idx| {
             const pkg_id: PackageID = @intCast(idx);
@@ -308,7 +327,8 @@ const Generator = struct {
                     version = try std.fmt.allocPrint(allocator, "{f}", .{res.fmt(string_bytes, .posix)});
                     ref = try std.fmt.allocPrint(allocator, "{s}@{s}", .{ name, version });
                     if (res.tag == .remote_tarball) {
-                        download_url = try allocator.dupe(u8, res.value.remote_tarball.slice(string_bytes));
+                        const url = res.value.remote_tarball.slice(string_bytes);
+                        if (url.len > 0) download_url = try allocator.dupe(u8, url);
                     } else if (res.tag == .git or res.tag == .github) {
                         download_url = try std.fmt.allocPrint(allocator, "{f}", .{res.fmtURL(string_bytes)});
                     }
@@ -318,7 +338,7 @@ const Generator = struct {
                 },
             }
 
-            // bom-refs/SPDXIDs must be unique within the document. Lockfiles can
+            // bom-refs must be unique within the document. Lockfiles can
             // contain duplicate name@version entries in edge cases (e.g. npm
             // aliases resolving to the same underlying package from different
             // dependency paths), so append the package index when needed.
@@ -329,13 +349,28 @@ const Generator = struct {
             }
             try seen_refs.put(ref, {});
 
+            // SPDXIDs must also be unique, but are derived from `ref` by
+            // sanitizing non-alphanumeric characters to `-`, so two distinct
+            // refs (e.g. `foo_bar@1.0.0` and `foo-bar@1.0.0`) can collide.
+            // Deduplicate on the sanitized form separately.
+            var spdx_id = try sanitizeSpdxId(allocator, ref);
+            if (seen_spdx_ids.contains(spdx_id)) {
+                const unique = try std.fmt.allocPrint(allocator, "{s}.{d}", .{ spdx_id, idx });
+                allocator.free(spdx_id);
+                spdx_id = unique;
+            }
+            try seen_spdx_ids.put(spdx_id, {});
+
             const flags = pkg_flags[idx];
+            // `required` if any required edge reaches it (or it's a workspace/root).
+            // `excluded` only when every edge is a dev dependency.
+            // `optional` when there's at least one optional edge and no required edge.
             const scope: Scope = if (flags.required or (res.tag == .root or res.tag == .workspace))
                 .required
-            else if (flags.optional and !flags.dev)
-                .optional
-            else if (flags.dev and !flags.optional and !flags.required)
+            else if (flags.dev and !flags.optional)
                 .excluded
+            else if (flags.optional)
+                .optional
             else
                 .required;
 
@@ -343,6 +378,7 @@ const Generator = struct {
             try this.components.append(.{
                 .package_id = pkg_id,
                 .ref = ref,
+                .spdx_id = spdx_id,
                 .name = name,
                 .version = version,
                 .purl = purl,
@@ -354,9 +390,9 @@ const Generator = struct {
 
         // Collect direct dependencies for each component (and the root) for
         // the dependency graph section.
-        collectDeps(&this.root, pkg_dependencies, pkg_dep_resolutions, resolutions_buf, deps_buf, allocator, lockfile.packages.len);
+        collectDeps(&this.root, pkg_dep_resolutions, resolutions_buf, allocator, lockfile.packages.len);
         for (this.components.items) |*comp| {
-            collectDeps(comp, pkg_dependencies, pkg_dep_resolutions, resolutions_buf, deps_buf, allocator, lockfile.packages.len);
+            collectDeps(comp, pkg_dep_resolutions, resolutions_buf, allocator, lockfile.packages.len);
         }
 
         return this;
@@ -364,17 +400,13 @@ const Generator = struct {
 
     fn collectDeps(
         comp: *Component,
-        pkg_dependencies: []const DependencySlice,
         pkg_dep_resolutions: []const Lockfile.PackageIDSlice,
         resolutions_buf: []const PackageID,
-        deps_buf: []const Dependency,
         allocator: std.mem.Allocator,
         pkg_len: usize,
     ) void {
         if (comp.package_id >= pkg_len) return;
         const resolved = pkg_dep_resolutions[comp.package_id].get(resolutions_buf);
-        _ = deps_buf;
-        _ = pkg_dependencies;
         for (resolved) |resolved_id| {
             if (resolved_id == invalid_package_id or resolved_id >= pkg_len) continue;
             // Deduplicate — a package can list the same dep under both
@@ -390,6 +422,7 @@ const Generator = struct {
     fn deinit(this: *Generator) void {
         for (this.components.items) |*comp| {
             this.allocator.free(comp.ref);
+            this.allocator.free(comp.spdx_id);
             if (comp.version.len > 0) this.allocator.free(comp.version);
             if (comp.purl.len > 0) this.allocator.free(comp.purl);
             if (comp.download_url.len > 0) this.allocator.free(comp.download_url);
@@ -397,18 +430,33 @@ const Generator = struct {
         }
         this.components.deinit();
         this.allocator.free(this.root.ref);
+        this.allocator.free(this.root.spdx_id);
+        this.allocator.free(this.root.name);
         if (this.root.version.len > 0) this.allocator.free(this.root.version);
         if (this.root.purl.len > 0) this.allocator.free(this.root.purl);
         this.root.deps.deinit(this.allocator);
         this.allocator.free(this.id_to_component);
     }
 
-    fn refFor(this: *const Generator, pkg_id: PackageID) ?[]const u8 {
+    fn componentFor(this: *const Generator, pkg_id: PackageID) ?*const Component {
         if (pkg_id >= this.id_to_component.len) return null;
         const idx = this.id_to_component[pkg_id];
         if (idx == invalid_index) return null;
-        if (idx == root_marker) return this.root.ref;
-        return this.components.items[idx].ref;
+        if (idx == root_marker) return &this.root;
+        return &this.components.items[idx];
+    }
+
+    /// SPDXID values may only contain letters, numbers, `.`, and `-`. Build
+    /// the `SPDXRef-Package-…` suffix by replacing anything else with `-`.
+    fn sanitizeSpdxId(allocator: std.mem.Allocator, ref: []const u8) ![]u8 {
+        const out = try allocator.alloc(u8, ref.len);
+        for (ref, 0..) |c, i| {
+            out[i] = switch (c) {
+                'A'...'Z', 'a'...'z', '0'...'9', '.', '-' => c,
+                else => '-',
+            };
+        }
+        return out;
     }
 
     fn makePurl(allocator: std.mem.Allocator, name: []const u8, version: []const u8) ![]const u8 {
@@ -521,9 +569,9 @@ const Generator = struct {
         try w.print("    {{ \"ref\": {f}, \"dependsOn\": [", .{jsonStr(comp.ref)});
         var first = true;
         for (comp.deps.items) |dep_id| {
-            const dep_ref = this.refFor(dep_id) orelse continue;
+            const dep = this.componentFor(dep_id) orelse continue;
             if (!first) try w.writeAll(", ");
-            try w.print("{f}", .{jsonStr(dep_ref)});
+            try w.print("{f}", .{jsonStr(dep.ref)});
             first = false;
         }
         try w.writeAll("] }");
@@ -547,15 +595,15 @@ const Generator = struct {
         try w.writeAll("  \"dataLicense\": \"CC0-1.0\",\n");
         try w.writeAll("  \"SPDXID\": \"SPDXRef-DOCUMENT\",\n");
         try w.print("  \"name\": {f},\n", .{jsonStr(this.root.ref)});
-        try w.print("  \"documentNamespace\": \"https://spdx.org/spdxdocs/{f}-{s}\",\n", .{
-            SpdxIdFormatter{ .ref = this.root.ref },
+        try w.print("  \"documentNamespace\": \"https://spdx.org/spdxdocs/{s}-{s}\",\n", .{
+            this.root.spdx_id,
             this.serial_uuid,
         });
         try w.writeAll("  \"creationInfo\": {\n");
         try w.print("    \"created\": \"{s}\",\n", .{this.timestamp});
         try w.print("    \"creators\": [\"Tool: bun-{s}\"]\n", .{Global.package_json_version});
         try w.writeAll("  },\n");
-        try w.print("  \"documentDescribes\": [\"SPDXRef-Package-{f}\"],\n", .{SpdxIdFormatter{ .ref = this.root.ref }});
+        try w.print("  \"documentDescribes\": [\"SPDXRef-Package-{s}\"],\n", .{this.root.spdx_id});
 
         // packages
         try w.writeAll("  \"packages\": [\n");
@@ -569,8 +617,8 @@ const Generator = struct {
         // relationships
         try w.writeAll("  \"relationships\": [\n");
         try w.print(
-            "    {{ \"spdxElementId\": \"SPDXRef-DOCUMENT\", \"relatedSpdxElement\": \"SPDXRef-Package-{f}\", \"relationshipType\": \"DESCRIBES\" }}",
-            .{SpdxIdFormatter{ .ref = this.root.ref }},
+            "    {{ \"spdxElementId\": \"SPDXRef-DOCUMENT\", \"relatedSpdxElement\": \"SPDXRef-Package-{s}\", \"relationshipType\": \"DESCRIBES\" }}",
+            .{this.root.spdx_id},
         );
         try this.writeSPDXRelationships(w, &this.root);
         for (this.components.items) |*comp| {
@@ -585,7 +633,7 @@ const Generator = struct {
         _ = this;
         try w.writeAll("    {\n");
         try w.print("      \"name\": {f},\n", .{jsonStr(comp.name)});
-        try w.print("      \"SPDXID\": \"SPDXRef-Package-{f}\",\n", .{SpdxIdFormatter{ .ref = comp.ref }});
+        try w.print("      \"SPDXID\": \"SPDXRef-Package-{s}\",\n", .{comp.spdx_id});
         if (comp.version.len > 0) {
             try w.print("      \"versionInfo\": {f},\n", .{jsonStr(comp.version)});
         }
@@ -617,7 +665,7 @@ const Generator = struct {
 
     fn writeSPDXRelationships(this: *const Generator, w: *std.Io.Writer, comp: *const Component) !void {
         for (comp.deps.items) |dep_id| {
-            const dep_ref = this.refFor(dep_id) orelse continue;
+            const dep_comp = this.componentFor(dep_id) orelse continue;
             const rel_type = relationshipType: {
                 // Use the behavior of the dependency edge from this package.
                 const pkg_dep_resolutions = this.lockfile.packages.items(.resolutions)[comp.package_id];
@@ -636,13 +684,13 @@ const Generator = struct {
             // object is the dependent. For `DEPENDS_ON` it's the other way.
             if (strings.eqlComptime(rel_type, "DEPENDS_ON")) {
                 try w.print(
-                    ",\n    {{ \"spdxElementId\": \"SPDXRef-Package-{f}\", \"relatedSpdxElement\": \"SPDXRef-Package-{f}\", \"relationshipType\": \"{s}\" }}",
-                    .{ SpdxIdFormatter{ .ref = comp.ref }, SpdxIdFormatter{ .ref = dep_ref }, rel_type },
+                    ",\n    {{ \"spdxElementId\": \"SPDXRef-Package-{s}\", \"relatedSpdxElement\": \"SPDXRef-Package-{s}\", \"relationshipType\": \"{s}\" }}",
+                    .{ comp.spdx_id, dep_comp.spdx_id, rel_type },
                 );
             } else {
                 try w.print(
-                    ",\n    {{ \"spdxElementId\": \"SPDXRef-Package-{f}\", \"relatedSpdxElement\": \"SPDXRef-Package-{f}\", \"relationshipType\": \"{s}\" }}",
-                    .{ SpdxIdFormatter{ .ref = dep_ref }, SpdxIdFormatter{ .ref = comp.ref }, rel_type },
+                    ",\n    {{ \"spdxElementId\": \"SPDXRef-Package-{s}\", \"relatedSpdxElement\": \"SPDXRef-Package-{s}\", \"relationshipType\": \"{s}\" }}",
+                    .{ dep_comp.spdx_id, comp.spdx_id, rel_type },
                 );
             }
         }
@@ -657,21 +705,6 @@ const Generator = struct {
             else => null,
         };
     }
-
-    /// SPDXID values may only contain letters, numbers, `.`, and `-`. We
-    /// derive IDs from `name@version` style refs, so sanitize anything else.
-    const SpdxIdFormatter = struct {
-        ref: []const u8,
-
-        pub fn format(this: SpdxIdFormatter, w: *std.Io.Writer) !void {
-            for (this.ref) |c| {
-                switch (c) {
-                    'A'...'Z', 'a'...'z', '0'...'9', '.', '-' => try w.writeByte(c),
-                    else => try w.writeByte('-'),
-                }
-            }
-        }
-    };
 
     // ==== helpers ============================================================
 
@@ -701,13 +734,10 @@ const Generator = struct {
 
 const string = []const u8;
 
-const Dependency = @import("../install/dependency.zig");
 const std = @import("std");
+const Lockfile = @import("../install/lockfile.zig");
 const Integrity = @import("../install/integrity.zig").Integrity;
 const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
-
-const Lockfile = @import("../install/lockfile.zig");
-const DependencySlice = Lockfile.DependencySlice;
 
 const bun = @import("bun");
 const Global = bun.Global;

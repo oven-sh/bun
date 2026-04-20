@@ -758,9 +758,11 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     // single-threaded and dominated wall time at high shard counts
     // (~9min for 64 × ~8MB shards). With this set, shards are emitted
     // directly as `{out}.{i}.o`; addInstallObjectFile installs them
-    // all and the bun link step (lld, parallel) consumes them.
+    // all and the bun link step (lld, parallel) consumes them. Only
+    // for the main object — `zig build test` reuses configureObj and
+    // its install path expects a single artifact.
     if (@hasField(std.meta.Child(@TypeOf(obj)), "llvm_no_merge_shards"))
-        obj.llvm_no_merge_shards = (opts.llvm_codegen_threads orelse 0) > 1;
+        obj.llvm_no_merge_shards = obj.kind == .obj and (opts.llvm_codegen_threads orelse 0) > 1;
 
     obj.no_link_obj = opts.os != .windows and !opts.no_llvm;
 
@@ -842,16 +844,17 @@ pub fn addInstallObjectFile(
             compile.out_filename[0 .. compile.out_filename.len - 2]
         else
             compile.out_filename;
-        const umbrella = b.step(
-            b.fmt("install-shards-{s}", .{name}),
-            b.fmt("install {s} codegen shard objects", .{name}),
-        );
+        // Group via shard 0's install step so we don't register a
+        // user-visible top-level `b.step()` for what is an internal
+        // fan-out. Ninja still parallelises the dependents.
+        var first: ?*Step = null;
         var i: u32 = 0;
         while (i < compile.llvm_codegen_threads) : (i += 1) {
             const shard = dir.path(b, b.fmt("{s}.{d}.o", .{ stem, i }));
-            umbrella.dependOn(&b.addInstallFile(shard, b.fmt("{s}.{d}.o", .{ name, i })).step);
+            const inst = &b.addInstallFile(shard, b.fmt("{s}.{d}.o", .{ name, i })).step;
+            if (first) |f| f.dependOn(inst) else first = inst;
         }
-        return umbrella;
+        return first.?;
     }
     return &b.addInstallFile(switch (out_mode) {
         .obj => bin,

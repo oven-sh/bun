@@ -1,10 +1,10 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { rm, writeFile } from "fs/promises";
+import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
 import { copyFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "os";
-import { join, resolve } from "path";
+import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
 
 let x_dir: string;
@@ -790,6 +790,90 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
       expect(out).not.toContain("EXECUTED: multi-tool (main binary)");
       expect(exited).toBe(0);
     });
+  });
+});
+
+// Regression: `bunx @scope/name` guesses the bin name as `name` (the
+// unscoped portion), then searched the full system $PATH with it. When
+// `name` happened to match an unrelated system binary — e.g.
+// `bunx @uidotsh/install` matching /usr/bin/install — the system binary
+// was executed instead of the package's actual bin.
+describe("scoped packages should not match unrelated system binaries", () => {
+  let port: number;
+
+  beforeAll(() => {
+    dummyBeforeAll();
+    port = getPort()!;
+  });
+
+  afterAll(() => {
+    dummyAfterAll();
+  });
+
+  beforeEach(async () => {
+    await dummyBeforeEach();
+  });
+
+  it("`bunx @scope/install` runs the package's bin, not a system binary named `install`", async () => {
+    // Create a scoped package whose bin name does NOT match the unscoped
+    // portion of the package name, mirroring @uidotsh/install whose bin is
+    // "uidotsh-installer".
+    const pkgRoot = tmpdirSync();
+    const packageDir = join(pkgRoot, "package");
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "@scope/install",
+        version: "1.0.0",
+        bin: { "scoped-tool": "cli.js" },
+      }),
+    );
+    await writeFile(
+      join(packageDir, "cli.js"),
+      `#!/usr/bin/env node\nconsole.log("CORRECT: ran the scoped package's bin");\n`,
+    );
+    const tgzDir = tmpdirSync();
+    // The dummy registry serves the tarball by basename of the request URL,
+    // which for `@scope/install` + version 1.0.0 is `install-1.0.0.tgz`.
+    await Bun.$`tar -czf ${join(tgzDir, "install-1.0.0.tgz")} -C ${pkgRoot} package`;
+
+    // Create a fake "install" binary in $PATH to simulate /usr/bin/install.
+    const fakeBinDir = tmpdirSync();
+    if (isWindows) {
+      await writeFile(join(fakeBinDir, "install.cmd"), `@echo WRONG: ran a system binary from PATH\r\n`);
+    } else {
+      const fakeBin = join(fakeBinDir, "install");
+      await writeFile(fakeBin, `#!/bin/sh\necho "WRONG: ran a system binary from PATH"\n`);
+      await Bun.$`chmod +x ${fakeBin}`;
+    }
+
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls, { "1.0.0": { bin: { "scoped-tool": "cli.js" }, as: "1.0.0" } }, 0, tgzDir));
+
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", "@scope/install"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "inherit",
+      stderr: "pipe",
+      env: {
+        ...env,
+        npm_config_registry: `http://localhost:${port}/`,
+        PATH: `${fakeBinDir}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
+      },
+    });
+
+    const [err, out, exited] = await Promise.all([
+      subprocess.stderr.text(),
+      subprocess.stdout.text(),
+      subprocess.exited,
+    ]);
+
+    expect(out).not.toContain("WRONG");
+    expect(err).not.toContain("WRONG");
+    expect(out).toContain("CORRECT: ran the scoped package's bin");
+    expect(exited).toBe(0);
   });
 });
 

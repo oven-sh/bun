@@ -382,6 +382,17 @@ pub const BunxCommand = struct {
             update_request.name;
         debug("initial_bin_name: {s}", .{initial_bin_name});
 
+        // When the user types a scoped package like `@foo/bar`, the initial bin
+        // name ("bar") is only a guess — the package's actual bin may be named
+        // something else entirely. In that case we must not search the original
+        // system $PATH with the guessed name, or we may match an unrelated system
+        // binary (e.g. `bunx @uidotsh/install` would otherwise run /usr/bin/install).
+        // We still search local node_modules/.bin directories, since many scoped
+        // packages do link their bin under the unscoped name.
+        const initial_bin_name_is_a_guess = opts.binary_name == null and
+            update_request.name.len > 0 and
+            update_request.name[0] == '@';
+
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
         // SAFETY: initialized by Run.configureEnvForRun
@@ -561,9 +572,20 @@ pub const BunxCommand = struct {
 
             // Only use the system-installed version if there is no version specified
             if (update_request.version.literal.isEmpty()) {
+                // If the bin name is a guess derived from a scoped package name,
+                // exclude the original system $PATH so we don't match unrelated
+                // system binaries. Only search node_modules/.bin directories.
+                const search_path = if (initial_bin_name_is_a_guess and
+                    ORIGINAL_PATH.len > 0 and
+                    ORIGINAL_PATH.len < PATH_FOR_BIN_DIRS.len and
+                    strings.endsWith(PATH_FOR_BIN_DIRS, ORIGINAL_PATH))
+                    PATH_FOR_BIN_DIRS[0 .. PATH_FOR_BIN_DIRS.len - ORIGINAL_PATH.len]
+                else
+                    PATH_FOR_BIN_DIRS;
+
                 destination_ = bun.which(
                     &path_buf,
-                    PATH_FOR_BIN_DIRS,
+                    search_path,
                     if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
                     initial_bin_name,
                 );
@@ -644,7 +666,7 @@ pub const BunxCommand = struct {
             const root_dir_fd = root_dir_info.getFileDescriptor();
             bun.assert(root_dir_fd.isValid());
             if (opts.binary_name == null) {
-                if (getBinName(&this_transpiler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
+                if (getBinName(&this_transpiler, root_dir_fd, bunx_cache_dir, result_package_name)) |package_name_for_bin| {
                     // if we check the bin name and its actually the same, we don't need to check $PATH here again
                     if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                         absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"), .{ bunx_cache_dir, package_name_for_bin, bun.exe_suffix }) catch unreachable;

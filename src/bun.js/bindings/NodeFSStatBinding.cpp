@@ -20,6 +20,10 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/DateInstance.h"
+#if !OS(WINDOWS)
+#include <sys/stat.h>
+#endif
+
 namespace Bun {
 
 class JSStatsPrototype;
@@ -29,9 +33,7 @@ class JSBigIntStatsConstructor;
 using namespace JSC;
 using namespace WebCore;
 
-#if !OS(WINDOWS)
-#include <sys/stat.h>
-#else
+#if OS(WINDOWS)
 #ifndef mode_t
 #define mode_t int32_t
 #endif

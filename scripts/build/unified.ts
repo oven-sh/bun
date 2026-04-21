@@ -101,12 +101,6 @@ const noUnify: readonly string[] = [
   // which conditional branches fire.
   "src/bun.js/bindings/ProcessBindingUV.cpp",
 
-  // Includes <sys/sysinfo.h> → linux/sysinfo.h → linux/types.h. On the CI
-  // sysroot the kernel headers error on __kernel_long_t when something
-  // earlier in the TU has already pulled a conflicting libc/kernel type
-  // header. Platform-specific system headers are fragile in shared TUs.
-  "src/bun.js/bindings/OsBinding.cpp",
-
   // Platform cert loaders include OS crypto headers (<wincrypt.h>,
   // <Security/Security.h>) and deliberately avoid OpenSSL. wincrypt
   // macro-defines X509_NAME etc., poisoning BoringSSL headers in any

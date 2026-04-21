@@ -194,8 +194,8 @@ fn initTerminal(
         .write_fd = pty_result.write_fd,
         .slave_fd = pty_result.slave,
         .hpcon = if (comptime Environment.isWindows) pty_result.hpcon else {},
-        .cols = options.cols,
-        .rows = options.rows,
+        .cols = if (Environment.isWindows) @intCast(clampToCoord(options.cols)) else options.cols,
+        .rows = if (Environment.isWindows) @intCast(clampToCoord(options.rows)) else options.rows,
         .term_name = term_name,
         .event_loop_handle = jsc.EventLoopHandle.init(globalObject.bunVM().eventLoop()),
         .globalThis = globalObject,
@@ -353,7 +353,7 @@ pub fn closePseudoconsole(this: *Terminal) void {
     if (comptime !Environment.isWindows) return;
     if (this.hpcon) |hpcon| {
         this.hpcon = null;
-        closePseudoconsoleOffThread(hpcon);
+        this.closePseudoconsoleOffThread(hpcon);
     }
 }
 
@@ -361,9 +361,9 @@ pub fn closePseudoconsole(this: *Terminal) void {
 /// drained. Our reader runs on the event-loop thread, so calling it there
 /// deadlocks. Fire from a detached thread so the event loop keeps draining;
 /// conhost completes its flush and our reader sees the final data then EOF.
-/// hpcon is passed by value so the Terminal struct may be freed before the
-/// thread completes.
-fn closePseudoconsoleOffThread(hpcon: bun.windows.HPCON) void {
+/// hpcon is passed to the thread by value so the Terminal struct may be freed
+/// before the thread completes.
+fn closePseudoconsoleOffThread(this: *Terminal, hpcon: bun.windows.HPCON) void {
     if (comptime !Environment.isWindows) return;
     const Runner = struct {
         fn run(h: bun.windows.HPCON) void {
@@ -371,9 +371,13 @@ fn closePseudoconsoleOffThread(hpcon: bun.windows.HPCON) void {
         }
     };
     const t = std.Thread.spawn(.{ .stack_size = 64 * 1024 }, Runner.run, .{hpcon}) catch {
-        // Thread.spawn failure means CreateThread is failing — the process is
-        // already in a bad state. Leak hpcon rather than risk deadlocking the
-        // event loop; conhost is cleaned up by the job object on process exit.
+        // CreateThread failed — the process is in a bad state. Close the
+        // reader so onReaderDone fires (releasing the reader ref and firing
+        // the exit callback) instead of hanging on an EOF that will never
+        // come. Then call ClosePseudoConsole sync; with our pipe end closed
+        // conhost sees broken-pipe and returns without blocking.
+        if (this.flags.reader_started and !this.flags.reader_done) this.reader.close();
+        bun.windows.ClosePseudoConsole(hpcon);
         return;
     };
     t.detach();
@@ -897,8 +901,8 @@ pub fn resize(
         }
     }
 
-    this.cols = new_cols;
-    this.rows = new_rows;
+    this.cols = if (Environment.isWindows) @intCast(clampToCoord(new_cols)) else new_cols;
+    this.rows = if (Environment.isWindows) @intCast(clampToCoord(new_rows)) else new_rows;
 
     return .js_undefined;
 }
@@ -976,6 +980,12 @@ pub fn asyncDispose(
     globalObject: *jsc.JSGlobalObject,
     _: *jsc.CallFrame,
 ) bun.JSError!JSValue {
+    // After dispose the caller must not see further data/exit callbacks.
+    // closeInternal on Windows leaves the reader draining off-thread, so
+    // suppress callbacks and downgrade the JSRef so the wrapper is
+    // GC-eligible once the caller's reference is dropped.
+    this.this_value.downgrade();
+    this.flags.finalized = true;
     this.closeInternal();
     return jsc.JSPromise.resolvedPromiseValue(globalObject, .js_undefined);
 }
@@ -995,7 +1005,7 @@ pub fn closeInternal(this: *Terminal) void {
         // closes its pipe end, and the reader observes EOF → onReaderDone.
         if (this.hpcon) |hpcon| {
             this.hpcon = null;
-            closePseudoconsoleOffThread(hpcon);
+            this.closePseudoconsoleOffThread(hpcon);
         }
         // Reader stays open even if hpcon was already null (closePseudoconsole
         // may have dispatched it earlier); onReaderDone closes on EOF.
@@ -1121,6 +1131,8 @@ fn callExitCallback(this: *Terminal, exit_code: i32, signal: ?bun.SignalCode) vo
 pub fn onReadChunk(this: *Terminal, chunk: []const u8, has_more: bun.io.ReadState) bool {
     _ = has_more;
     log("onReadChunk: {} bytes", .{chunk.len});
+
+    if (this.flags.finalized) return true;
 
     // First data received - upgrade to strong ref (connected)
     if (!this.flags.connected) {

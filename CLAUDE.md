@@ -52,9 +52,9 @@ This is an explicit exception to the "never use `bun test` directly" rule. There
 
 ### Test Organization
 
-If a test is for a specific numbered GitHub Issue, it should be placed in `test/regression/issue/${issueNumber}.test.ts`. Ensure the issue number is **REAL** and not a placeholder!
+If the bug has a GitHub Issue number **and** is a regression (it worked in a previous release and broke), the test goes in `test/regression/issue/${issueNumber}.test.ts`. Ensure the issue number is **REAL** and not a placeholder!
 
-If no valid issue number is provided, find the best existing file to modify instead, such as;
+Otherwise, add the test to the **existing test file** for the code you're changing rather than creating a new file. Look in:
 
 - `test/js/bun/` - Bun-specific API tests (http, crypto, ffi, shell, etc.)
 - `test/js/node/` - Node.js compatibility tests

@@ -98,10 +98,31 @@ const noUnify = new Set<string>([
   "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSA_OAEP.cpp",
   "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSA_PSS.cpp",
   "src/bun.js/bindings/webcrypto/SubtleCrypto.cpp",
+
+  // Platform cert loaders include OS crypto headers (<wincrypt.h>,
+  // <Security/Security.h>) and deliberately avoid OpenSSL. wincrypt
+  // macro-defines X509_NAME etc., poisoning BoringSSL headers in any
+  // sibling that includes them; the darwin file defines errSecSuccess /
+  // SecCertificateRef that clash with the real framework header. Written
+  // assuming TU isolation — keep it that way.
+  "packages/bun-usockets/src/crypto/root_certs_windows.cpp",
+  "packages/bun-usockets/src/crypto/root_certs_darwin.cpp",
 ]);
 
-/** How many .cpp files per bundle. WebKit defaults to 8; we use 16. */
-const bundleSize = 16;
+/**
+ * How many .cpp files per bundle. WebKit defaults to 8.
+ *
+ * Release non-ASAN: 16. Frontend dominates and ~80 TUs still saturates CI's
+ * cores; the extra header dedup nearly halves CPU vs 8.
+ *
+ * Debug / ASAN: 8. ASAN inflates backend time per TU, so the slowest bundle
+ * becomes the wall-clock bottleneck — smaller bundles keep more cores busy
+ * on the tail. For local debug, 8 also halves the blast radius when editing
+ * a single .cpp (7 siblings recompile, not 15).
+ */
+function bundleSizeFor(cfg: Config): number {
+  return cfg.release && !cfg.asan ? 16 : 8;
+}
 
 export interface UnifiedSplit {
   /** Generated UnifiedSource-*.cpp absolute paths to compile. */
@@ -129,6 +150,7 @@ export interface UnifiedSplit {
 export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[]): UnifiedSplit {
   const outDir = resolve(cfg.buildDir, "unified");
   mkdirSync(outDir, { recursive: true });
+  const bundleSize = bundleSizeFor(cfg);
 
   const standalone: string[] = [];
   const byDir = new Map<string, string[]>();

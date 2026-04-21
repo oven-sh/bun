@@ -1043,6 +1043,12 @@ pub fn Visit(
                         switch (stmt.data) {
                             .s_empty, .s_comment, .s_directive, .s_debugger, .s_type_script => continue,
                             .s_local => |local| {
+                                // "using" / "await using" declarations have disposal
+                                // side-effects on scope exit. Their refs can end up in
+                                // `const_values` via the macro path in `visitDecl`
+                                // (`could_be_macro`), so skip them here to avoid
+                                // silently dropping the declaration.
+                                if (local.kind.isUsing()) continue;
                                 if (!local.is_export and !local.was_commonjs_export) {
                                     var decls: []Decl = local.decls.slice();
                                     var end: usize = 0;

@@ -146,6 +146,10 @@ console.log(url, disposed);`,
     expect(stderr).toBe("");
     expect(stdout).toContain("__using");
     expect(stdout).toContain("__callDispose");
+    expect(stdout).not.toContain("using x =");
+    expect(stdout).not.toContain("await using y =");
+    expect(stdout).not.toContain("for (using z of ");
+    expect(stdout).not.toContain("using top =");
     expect(exitCode).toBe(0);
   });
 

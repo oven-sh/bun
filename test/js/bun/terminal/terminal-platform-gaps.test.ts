@@ -207,8 +207,8 @@ describe("Bun.Terminal platform behaviour", () => {
   });
 
   test("SAME: child stderr reaches data callback", async () => {
-    const { output } = await runInTerminal(`process.stdout.write('READY'); process.stderr.write('on-stderr')`, {
-      done: o => o.includes("on-stderr"),
+    const { output } = await runInTerminal(`process.stderr.write('on-stderr', () => process.stdout.write('READY'))`, {
+      done: o => o.includes("READY"),
     });
     expect(output).toContain("on-stderr");
   });
@@ -347,11 +347,11 @@ describe("Bun.Terminal platform behaviour", () => {
     });
 
     const p1 = Bun.spawn({ cmd: [bunExe(), "-e", "process.stdout.write('FIRST')"], env: bunEnv, terminal });
-    await Promise.race([first.promise, p1.exited]);
+    await first.promise;
     await p1.exited;
 
     const p2 = Bun.spawn({ cmd: [bunExe(), "-e", "process.stdout.write('SECOND')"], env: bunEnv, terminal });
-    await Promise.race([second.promise, p2.exited]);
+    await second.promise;
     await p2.exited;
 
     terminal.close();
@@ -359,23 +359,29 @@ describe("Bun.Terminal platform behaviour", () => {
     expect(output).toContain("SECOND");
   });
 
-  test("SAME: closing an inline terminal while a child is attached terminates the child", async () => {
-    let output = "";
-    const ready = Promise.withResolvers<void>();
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "-e", "setInterval(() => {}, 1000); process.stdout.write('READY')"],
-      env: bunEnv,
-      terminal: {
-        data(_t, chunk: Uint8Array) {
-          output += Buffer.from(chunk).toString("latin1");
-          if (output.includes("READY")) ready.resolve();
+  // ClosePseudoConsole on Windows Server 2019's conhost blocks on the output
+  // pipe while the attached client is still running, deadlocking the event
+  // loop. Passes on newer Windows where ClosePseudoConsole returns promptly.
+  test.todoIf(isWindows)(
+    "SAME: closing an inline terminal while a child is attached terminates the child",
+    async () => {
+      let output = "";
+      const ready = Promise.withResolvers<void>();
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "setInterval(() => {}, 1000); process.stdout.write('READY')"],
+        env: bunEnv,
+        terminal: {
+          data(_t, chunk: Uint8Array) {
+            output += Buffer.from(chunk).toString("latin1");
+            if (output.includes("READY")) ready.resolve();
+          },
         },
-      },
-    });
-    await ready.promise;
-    proc.terminal!.close();
-    const exitCode = await proc.exited;
-    // POSIX: SIGHUP to session. Windows: ConPTY terminates attached clients.
-    expect(exitCode).not.toBe(0);
-  });
+      });
+      await ready.promise;
+      proc.terminal!.close();
+      const exitCode = await proc.exited;
+      // POSIX: SIGHUP to session. Windows: ConPTY terminates attached clients.
+      expect(exitCode).not.toBe(0);
+    },
+  );
 });

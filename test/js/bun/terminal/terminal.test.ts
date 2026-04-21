@@ -963,6 +963,7 @@ describe("Bun.Terminal", () => {
 describe("Bun.spawn with terminal option", () => {
   test("creates subprocess with terminal attached", async () => {
     const dataChunks: Uint8Array[] = [];
+    const gotMarker = Promise.withResolvers<void>();
 
     const proc = Bun.spawn([bunExe(), "-e", "console.log('hello from terminal')"], {
       env: bunEnv,
@@ -971,6 +972,7 @@ describe("Bun.spawn with terminal option", () => {
         rows: 24,
         data: (terminal: Bun.Terminal, data: Uint8Array) => {
           dataChunks.push(data);
+          if (Buffer.concat(dataChunks).toString().includes("hello from terminal")) gotMarker.resolve();
         },
       },
     });
@@ -978,6 +980,7 @@ describe("Bun.spawn with terminal option", () => {
     expect(proc.terminal).toBeDefined();
     expect(proc.terminal).toBeInstanceOf(Object);
 
+    await gotMarker.promise;
     await proc.exited;
 
     // Should have received data through the terminal
@@ -993,6 +996,7 @@ describe("Bun.spawn with terminal option", () => {
   test("terminal option creates proper PTY for interactive programs", async () => {
     const dataChunks: Uint8Array[] = [];
     let terminalFromCallback: Bun.Terminal | undefined;
+    const gotMarker = Promise.withResolvers<void>();
 
     // Note: TERM env var needs to be set manually - it's not set automatically from terminal.name
     const proc = Bun.spawn([bunExe(), "-e", "console.log('TERM=' + process.env.TERM, 'TTY=' + process.stdout.isTTY)"], {
@@ -1004,10 +1008,12 @@ describe("Bun.spawn with terminal option", () => {
         data: (terminal: Bun.Terminal, data: Uint8Array) => {
           terminalFromCallback = terminal;
           dataChunks.push(data);
+          if (Buffer.concat(dataChunks).toString().includes("TTY=true")) gotMarker.resolve();
         },
       },
     });
 
+    await gotMarker.promise;
     await proc.exited;
 
     // The terminal from callback should be the same as proc.terminal

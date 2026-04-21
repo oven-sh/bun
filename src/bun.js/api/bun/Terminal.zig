@@ -168,7 +168,9 @@ const InitError = CreatePtyError || error{ WriterStartFailed, ReaderStartFailed 
 /// Internal initialization - shared by constructor and createFromSpawn
 fn initTerminal(
     globalObject: *jsc.JSGlobalObject,
-    options: Options,
+    /// term_name ownership is transferred to the Terminal struct on success or
+    /// any error after createPty; cleared in-place once moved.
+    options: *Options,
     /// If provided, use this JSValue; otherwise create one via toJS
     existing_js_value: ?jsc.JSValue,
 ) InitError!CreateResult {
@@ -180,6 +182,9 @@ fn initTerminal(
         options.term_name
     else
         jsc.ZigString.Slice.fromUTF8NeverFree("xterm-256color");
+    // Ownership moves to the struct below; clear so caller's options.deinit()
+    // doesn't double-free on the WriterStartFailed/ReaderStartFailed paths.
+    options.term_name = .{};
 
     const terminal = bun.new(Terminal, .{
         .ref_count = .init(),
@@ -287,7 +292,7 @@ pub fn constructor(
 
     var options = try Options.parseFromJS(globalObject, js_options);
 
-    const result = initTerminal(globalObject, options, this_value) catch |err| {
+    const result = initTerminal(globalObject, &options, this_value) catch |err| {
         options.deinit();
         return switch (err) {
             error.OpenPtyFailed => globalObject.throw("Failed to open PTY", .{}),
@@ -306,7 +311,7 @@ pub fn constructor(
 /// The slave_fd should be used for the subprocess's stdin/stdout/stderr
 pub fn createFromSpawn(
     globalObject: *jsc.JSGlobalObject,
-    options: Options,
+    options: *Options,
 ) InitError!CreateResult {
     return initTerminal(globalObject, options, null);
 }

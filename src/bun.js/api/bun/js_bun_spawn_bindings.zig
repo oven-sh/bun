@@ -166,10 +166,10 @@ pub fn spawnMaybeSync(
         if (abort_signal) |signal| {
             signal.unref();
         }
-        // If we created a new terminal but spawn failed, clean it up
+        // If we created a new terminal but spawn failed, close it. The
+        // writer/reader/finalize deref paths release the remaining refs.
         if (terminal_info) |info| {
             info.terminal.closeInternal();
-            info.terminal.deref();
         }
     }
 
@@ -404,7 +404,7 @@ pub fn spawnMaybeSync(
                     } else if (terminal_val.isObject()) {
                         // Create a new terminal from options
                         var term_options = try Terminal.Options.parseFromJS(globalThis, terminal_val);
-                        terminal_info = Terminal.createFromSpawn(globalThis, term_options) catch |err| {
+                        terminal_info = Terminal.createFromSpawn(globalThis, &term_options) catch |err| {
                             term_options.deinit();
                             return switch (err) {
                                 error.OpenPtyFailed => globalThis.throw("Failed to open PTY", .{}),

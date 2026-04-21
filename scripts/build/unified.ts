@@ -95,6 +95,12 @@ const noUnify: readonly string[] = [
   "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSA_PSS.cpp",
   "src/bun.js/bindings/webcrypto/SubtleCrypto.cpp",
 
+  // Conditionally redefines ~80 errno/EAI_* macros based on which system
+  // headers were already included, then uses them to build a switch. Any
+  // earlier sibling that pulls <netdb.h> changes which branch the
+  // `#if !defined` takes, and the redefinitions leak forward too.
+  "src/bun.js/bindings/ProcessBindingUV.cpp",
+
   // Platform cert loaders include OS crypto headers (<wincrypt.h>,
   // <Security/Security.h>) and deliberately avoid OpenSSL. wincrypt
   // macro-defines X509_NAME etc., poisoning BoringSSL headers in any

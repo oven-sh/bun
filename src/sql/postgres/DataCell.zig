@@ -514,13 +514,17 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
 
         return error.UnsupportedArrayFormat;
     }
-    return SQLDataCell{
-        .tag = .array,
-        .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } },
-        // Own the backing store: without this, `SQLDataCell.deinit` early-
-        // returns on `free_value == 0` and the ArrayList buffer leaks per row.
-        .free_value = 1,
-    };
+    // NOTE: Returns with `free_value = 0` (the default). Setting it to 1
+    // here to release the backing store WOULD avoid the per-row leak, but
+    // it exposes a pre-existing inconsistency where some element branches
+    // in this same function produce child cells with `free_value = 0`
+    // (e.g. the unquoted text path at line ~309). Once the parent starts
+    // calling `deinit()` on children, those inconsistent children leak
+    // their `WTFStringImpl` refcounts — CI ASAN surfaced the mismatch in
+    // `sql.test.ts`. Auditing every child branch is outside the scope of
+    // #29551; keeping the default here matches main's behavior for every
+    // other text-format array type routed through this path.
+    return SQLDataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };
 }
 
 pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, globalObject: *jsc.JSGlobalObject) !SQLDataCell {

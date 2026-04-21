@@ -51,7 +51,7 @@ export interface Host {
 const versionDefaults = {
   nodejsVersion: NODEJS_VERSION,
   nodejsAbiVersion: NODEJS_ABI_VERSION,
-  // zigCommit's default varies by ci — see defaultZigCommit() in zig.ts.
+  // zigCommit's default varies by host OS — see defaultZigCommit() in zig.ts.
   webkitVersion: WEBKIT_VERSION,
 };
 
@@ -469,7 +469,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // to test a branch before bumping the pinned default.
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
-  const zigCommit = partial.zigCommit ?? defaultZigCommit(ci, host.os);
+  const zigCommit = partial.zigCommit ?? defaultZigCommit(host.os);
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   // ─── macOS SDK ───
@@ -795,8 +795,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   // revert my WebKit test branch" before the build goes weird.
   if (cfg.webkitVersion !== versionDefaults.webkitVersion)
     features.push(`webkit-version:${cfg.webkitVersion.slice(0, 10)}`);
-  if (cfg.zigCommit !== defaultZigCommit(cfg.ci, cfg.host.os))
-    features.push(`zig-commit:${cfg.zigCommit.slice(0, 10)}`);
+  if (cfg.zigCommit !== defaultZigCommit(cfg.host.os)) features.push(`zig-commit:${cfg.zigCommit.slice(0, 10)}`);
   if (cfg.nodejsVersion !== versionDefaults.nodejsVersion) features.push(`nodejs:${cfg.nodejsVersion}`);
   lines.push(`  ${label("features")} ${features.length > 0 ? c.cyan(features.join(", ")) : c.dim("(none)")}`);
   return lines.join("\n");

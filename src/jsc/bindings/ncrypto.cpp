@@ -6,17 +6,21 @@
 #include "ncrypto.h"
 #include <openssl/asn1.h>
 #include <openssl/bn.h>
-#include <openssl/bytestring.h>
 #include <openssl/dh.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
-#include <openssl/nid.h>
-#include <openssl/obj.h>
 #include <openssl/pkcs12.h>
 #include <openssl/rand.h>
 #include <openssl/rsa.h>
 #include <openssl/x509v3.h>
+#ifdef OPENSSL_IS_BORINGSSL
+// Used by the BN_R_NEGATIVE_NUMBER fallback parser below; these headers and
+// the CBS_* / OBJ_cbs2nid APIs don't exist in OpenSSL 1.1.1/3.x.
+#include <openssl/bytestring.h>
+#include <openssl/nid.h>
+#include <openssl/obj.h>
+#endif
 #include <algorithm>
 #include <cstring>
 #if OPENSSL_VERSION_MAJOR >= 3
@@ -2400,6 +2404,7 @@ constexpr bool IsEncryptedPrivateKeyInfo(
     return len >= 1 && buffer.data[offset] != 2;
 }
 
+#ifdef OPENSSL_IS_BORINGSSL
 // Reads an ASN.1 INTEGER as an unsigned big-endian byte sequence, tolerating
 // the non-conforming case where the leading 0x00 sign byte is omitted on a
 // value with the high bit set. BoringSSL's |BN_parse_asn1_unsigned| rejects
@@ -2439,10 +2444,15 @@ EVP_PKEY* ParseSpkiRsaLoose(const unsigned char* data, size_t len)
 
     // AlgorithmIdentifier ::= SEQUENCE { algorithm OBJECT IDENTIFIER,
     //                                    parameters ANY OPTIONAL }
-    if (!CBS_get_asn1(&spki, &alg, CBS_ASN1_SEQUENCE) || !CBS_get_asn1(&alg, &oid, CBS_ASN1_OBJECT)) {
-        return nullptr;
-    }
-    if (OBJ_cbs2nid(&oid) != NID_rsaEncryption) {
+    // RFC 3279 §2.3.1 requires the parameters for rsaEncryption to be present
+    // and encoded as an explicit NULL. Reject any other encoding — the only
+    // non-conforming case we recover from is the modulus' missing sign byte.
+    CBS params;
+    if (!CBS_get_asn1(&spki, &alg, CBS_ASN1_SEQUENCE) ||
+        !CBS_get_asn1(&alg, &oid, CBS_ASN1_OBJECT) ||
+        OBJ_cbs2nid(&oid) != NID_rsaEncryption ||
+        !CBS_get_asn1(&alg, &params, CBS_ASN1_NULL) || CBS_len(&params) != 0 ||
+        CBS_len(&alg) != 0) {
         return nullptr;
     }
 
@@ -2483,6 +2493,7 @@ EVP_PKEY* ParseSpkiRsaLoose(const unsigned char* data, size_t len)
     rsa.release();
     return pkey;
 }
+#endif // OPENSSL_IS_BORINGSSL
 
 } // namespace
 
@@ -2511,7 +2522,12 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKeyPEM(
             bp,
             "PUBLIC KEY",
             [](const unsigned char** p, long l) { // NOLINT(runtime/int)
+#ifdef OPENSSL_IS_BORINGSSL
                 const unsigned char* start = *p;
+                // Clear the per-thread error queue so that, if d2i_PUBKEY
+                // fails, ERR_peek_error() is guaranteed to return the root
+                // cause pushed by this call rather than a stale earlier one.
+                ERR_clear_error();
                 EVP_PKEY* key = d2i_PUBKEY(nullptr, p, l);
                 if (key) return key;
                 // Retry using a loose parser that tolerates RSA moduli whose
@@ -2525,6 +2541,9 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKeyPEM(
                     return ParseSpkiRsaLoose(start, l);
                 }
                 return static_cast<EVP_PKEY*>(nullptr);
+#else
+                return d2i_PUBKEY(nullptr, p, l);
+#endif
             })) {
         return ret;
     }
@@ -2574,9 +2593,14 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKey(
     }
 
     if (config.type == PKEncodingType::SPKI) {
+        // Clear the per-thread error queue so that, if d2i_PUBKEY fails,
+        // ERR_peek_error() reflects the root cause pushed by this call
+        // rather than a stale error left over from an earlier operation.
+        ERR_clear_error();
         if ((key = d2i_PUBKEY(nullptr, &start, buffer.len))) {
             return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
         }
+#ifdef OPENSSL_IS_BORINGSSL
         // BoringSSL rejects RSA SPKI whose modulus has the high bit set but
         // lacks the leading 0x00 sign byte — Node (OpenSSL) accepts it, so
         // fall back to a loose parser for that specific case. The BN error
@@ -2589,6 +2613,7 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKey(
                 return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
             }
         }
+#endif
     }
 
     return ParseKeyResult(PKParseError::FAILED);

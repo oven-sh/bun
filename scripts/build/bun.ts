@@ -236,14 +236,18 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const cFlagsFull = [...flags.cflags, ...includeFlags, ...defineFlags];
 
   // ─── Step 5: PCH ───
-  // In CI, only the cpp-only job uses PCH — full mode skips it since the
-  // cpp-only artifacts are what actually get used downstream.
+  // PCH wherever we compile bun's own C++ ("full" and "cpp-only").
+  // link-only/zig-only never reach here. The PCH wrapper applies
+  // `#pragma clang system_header` to JSC headers, which is what suppresses
+  // -Wundefined-var-template on JSGenericTypedArrayView::s_info — without it
+  // a `mode=full --ci=on` build (e.g. `bun run build:ci`) fails. Real CI
+  // uses cpp-only so the previous `!cfg.ci` gate happened to work there.
   //
   // Not on Windows: matches cmake (BuildBun.cmake:868 gated on NOT WIN32).
   // clang-cl's /Yc//Yu flags exist but the wrapper+stub mechanism here
   // is built around clang's -emit-pch model. If Windows PCH is wanted
   // later, see compile.ts TODO(windows) for what needs wiring.
-  const usePch = !cfg.windows && (!cfg.ci || cfg.mode === "cpp-only");
+  const usePch = !cfg.windows && (cfg.mode === "full" || cfg.mode === "cpp-only");
   let pchOut: { pch: string; wrapperHeader: string } | undefined;
 
   if (usePch) {

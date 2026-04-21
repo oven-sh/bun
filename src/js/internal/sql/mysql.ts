@@ -31,13 +31,13 @@ initMySQL(
 
     // CALL <proc>() and multi-statement strings can yield several result sets.
     // Accumulate until the server clears SERVER_MORE_RESULTS_EXISTS (is_last).
-    const last_result = query[_results];
-    if (!last_result) {
+    const lastResult = query[_results];
+    if (!lastResult) {
       query[_results] = result;
-    } else if (last_result instanceof SQLResultArray) {
-      query[_results] = [last_result, result];
+    } else if (lastResult instanceof SQLResultArray) {
+      query[_results] = [lastResult, result];
     } else {
-      last_result.push(result);
+      lastResult.push(result);
     }
 
     if (!is_last) {

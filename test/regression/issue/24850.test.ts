@@ -32,8 +32,9 @@ describeWithContainer(
     });
 
     afterAll(async () => {
-      await sql?.unsafe(`DROP PROCEDURE IF EXISTS bun_24850`).catch(() => {});
-      await sql?.close();
+      if (!sql) return;
+      await sql.unsafe(`DROP PROCEDURE IF EXISTS bun_24850`).catch(() => {});
+      await sql.close();
     });
 
     test("CALL via prepared statement returns rows without leaking an error", async () => {

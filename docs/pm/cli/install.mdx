@@ -269,8 +269,8 @@ You can also configure this in `bunfig.toml`:
 # Only install package versions published at least 3 days ago
 minimumReleaseAge = 259200 # seconds
 
-# Exclude trusted packages from the age gate
-minimumReleaseAgeExcludes = ["@types/node", "typescript"]
+# Exempt trusted packages; "name@version" whitelists one exact version.
+minimumReleaseAgeExcludes = ["@types/node", "typescript@5.4.5"]
 ```
 
 When the minimum age filter is active:
@@ -282,6 +282,10 @@ When the minimum age filter is active:
   - Searches up to 7 days after the age gate, however if still finding rapid releases it ignores stability check
   - Exact version requests (like `package@1.1.1`) still respect the age gate but bypass the stability check
 - Versions without a `time` field are treated as passing the age check (npm registry should always provide timestamps)
+- `minimumReleaseAgeExcludes` accepts two entry shapes:
+  - Bare package name (e.g. `"typescript"`) — whitelists every current and future version of the package.
+  - Pinned `name@version` (e.g. `"typescript@5.4.5"` or `"@types/node@20.11.0"`) — whitelists exactly that one version. Other versions of the same package continue to respect the age gate, so you can punch a hole for a single vetted release without permanently disabling the gate.
+  - Pinned entries must be an exact semver version. Ranges, dist-tags, and dangling values (e.g. `"typescript@^5"`, `"typescript@latest"`, `"typescript@"`) are silently ignored — they never match, so they can't accidentally widen the whitelist.
 
 For more advanced security scanning, including integration with services & custom filtering, see [Package manager > Security Scanner API](/pm/security-scanner-api).
 

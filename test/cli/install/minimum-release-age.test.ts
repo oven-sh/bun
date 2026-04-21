@@ -1233,6 +1233,337 @@ registry = "${mockRegistryUrl}"`,
       expect(lockfile).toContain("regular-package@2.1.0");
       expect(lockfile).not.toContain("regular-package@3.0.0");
     });
+
+    // Regression test for https://github.com/oven-sh/bun/issues/28967 —
+    // `minimumReleaseAgeExcludes` should accept `name@version` entries
+    // that whitelist exactly one version without opening the door to
+    // every future release of the same package.
+    test("name@version exclusion whitelists only the pinned version", async () => {
+      using dir = tempDir("exclusions-version-pinned", {
+        "package.json": JSON.stringify({
+          dependencies: {
+            "excluded-package": "*",
+          },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAgeExcludes = ["excluded-package@1.0.1"]
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // 1.0.1 is 12h old (would normally be filtered) but is explicitly
+      // whitelisted by the `@1.0.1` pin.
+      expect(lockfile).toContain("excluded-package@1.0.1");
+      expect(lockfile).not.toContain("excluded-package@1.0.0");
+      expect(exitCode).toBe(0);
+    });
+
+    test("name@version exclusion does not whitelist other versions of the same package", async () => {
+      using dir = tempDir("exclusions-wrong-version", {
+        "package.json": JSON.stringify({
+          dependencies: {
+            "excluded-package": "*",
+          },
+        }),
+        // Pinning 0.9.0 (which doesn't exist on the mock registry) must
+        // NOT leak the age-gate bypass to the real 1.0.1 release.
+        "bunfig.toml": `[install]
+minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAgeExcludes = ["excluded-package@0.9.0"]
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // The pin is for a version that doesn't exist, so the age gate
+      // stays in effect and we fall back to 1.0.0 (10 days old).
+      expect(lockfile).toContain("excluded-package@1.0.0");
+      expect(lockfile).not.toContain("excluded-package@1.0.1");
+      expect(exitCode).toBe(0);
+    });
+
+    // Malformed entries (dangling '@', dist-tags, ranges, truncated
+    // "range-or" lists) must be treated as no-ops — parser guard that
+    // prevents a future regression from silently widening the whitelist.
+    //
+    // `"excluded-package@1.0.1 || 0.9.0"` is the trickiest: `parseUTF8`
+    // stops at the space, so without a `parsed.len == version_str.len`
+    // check it'd silently pin 1.0.1 (the too-recent version, so a
+    // regression here is detectable — the lockfile would flip from
+    // 1.0.0 to 1.0.1). The test asserts that entry is rejected as
+    // malformed and the age gate stays in force.
+    test("malformed name@... exclusions are silently ignored", async () => {
+      using dir = tempDir("exclusions-malformed", {
+        "package.json": JSON.stringify({
+          dependencies: { "excluded-package": "*" },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAgeExcludes = ["excluded-package@", "excluded-package@latest", "excluded-package@^1", "excluded-package@1.0.1 || 0.9.0"]
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // None of the malformed entries parse as an exact version, so the
+      // age gate stays in force and the install picks the older stable
+      // 1.0.0 rather than the too-recent 1.0.1.
+      expect(lockfile).toContain("excluded-package@1.0.0");
+      expect(lockfile).not.toContain("excluded-package@1.0.1");
+      expect(exitCode).toBe(0);
+    });
+
+    test("scoped name@version exclusion whitelists only the pinned version", async () => {
+      using dir = tempDir("exclusions-scoped-pinned", {
+        "package.json": JSON.stringify({
+          dependencies: {
+            "@scope/scoped-package": "*",
+          },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAgeExcludes = ["@scope/scoped-package@2.0.0"]
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // 2.0.0 is 1 day old (would be filtered) but is explicitly
+      // whitelisted. Without the pin, the install would pick 1.5.0.
+      expect(lockfile).toContain("@scope/scoped-package@2.0.0");
+      expect(lockfile).not.toContain("@scope/scoped-package@1.5.0");
+      expect(exitCode).toBe(0);
+    });
+
+    test("bare scoped name exclusion still whitelists every version", async () => {
+      using dir = tempDir("exclusions-scoped-bare", {
+        "package.json": JSON.stringify({
+          dependencies: {
+            "@scope/scoped-package": "*",
+          },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAgeExcludes = ["@scope/scoped-package"]
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // Bare name bypass — picks the 1-day-old latest.
+      expect(lockfile).toContain("@scope/scoped-package@2.0.0");
+      expect(exitCode).toBe(0);
+    });
+
+    // Regression test for the stability-check leapfrog bug flagged in
+    // #28970 review: pinning a too-recent version must not cause the
+    // install to walk past it to an older naturally-stable version.
+    //
+    // bugfix-package with a 1.8 day age gate:
+    //   1.0.3 (0.5d):       BLOCKED (too recent)
+    //   1.0.2 (1.5d):       BLOCKED (too recent) — PINNED as exclusion
+    //   1.0.1 (2.5d):       would be picked as unstable stability anchor
+    //                       (gap to 1.0.2 = 1d < 1.8d), then...
+    //   1.0.0 (8d):         ...would be picked as the "stable" version
+    //                       since gap to 1.0.1 = 5.5d ≥ 1.8d
+    //
+    // Without the short-circuit, the naive walker leapfrogs all the way
+    // to 1.0.0 instead of returning the pinned 1.0.2.
+    test("name@version exclusion short-circuits the stability check", async () => {
+      using dir = tempDir("exclusions-stability-pinned", {
+        "package.json": JSON.stringify({
+          dependencies: { "bugfix-package": "*" },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = ${1.8 * SECONDS_PER_DAY}
+minimumReleaseAgeExcludes = ["bugfix-package@1.0.2"]
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("bugfix-package@1.0.2");
+      expect(lockfile).not.toContain("bugfix-package@1.0.0");
+      expect(lockfile).not.toContain("bugfix-package@1.0.1");
+      expect(exitCode).toBe(0);
+    });
+
+    // Regression test for the naturally-old pin case: a pinned version
+    // that has *already passed* the age gate must still be honored even
+    // when newer blocked versions have set prev_package_blocked_from_age
+    // — otherwise the stability check can leapfrog right over it.
+    //
+    // bugfix-package with a 1.8 day age gate, PINNED bugfix-package@1.0.1:
+    //   1.0.3 (0.5d):       BLOCKED (too recent) → prev_blocked = 1.0.3
+    //   1.0.2 (1.5d):       BLOCKED (too recent) → prev_blocked = 1.0.2
+    //   1.0.1 (2.5d, PIN):  naturally passes the age gate. Without the
+    //                       fix, the short-circuit (which required
+    //                       `isPackageVersionTooRecent`) misses it, and
+    //                       the stability check runs — gap to 1.0.2 is
+    //                       1d < 1.8d → unstable → best=1.0.1,
+    //                       prev_blocked=1.0.1.
+    //   1.0.0 (8d):         gap to 1.0.1 = 5.5d ≥ 1.8d → "stable" →
+    //                       best=1.0.0, break. Returns 1.0.0.
+    //
+    // With the fix, `isVersionExplicitlyExcluded` alone short-circuits
+    // to 1.0.1 and the install lands on the pinned version.
+    test("naturally-old pinned version is not leapfrogged", async () => {
+      using dir = tempDir("exclusions-natural-pinned", {
+        "package.json": JSON.stringify({
+          dependencies: { "bugfix-package": "*" },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = ${1.8 * SECONDS_PER_DAY}
+minimumReleaseAgeExcludes = ["bugfix-package@1.0.1"]
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("bugfix-package@1.0.1");
+      expect(lockfile).not.toContain("bugfix-package@1.0.0");
+      expect(exitCode).toBe(0);
+    });
+
+    // The previous tests all use `"*"` which routes through
+    // `findBestVersionWithFilter` → `searchVersionList`. Dist-tag specs
+    // (e.g. `"latest"`) take a separate path via `findByDistTagWithFilter`
+    // which has its own pinned-exclusion short-circuit — cover that path
+    // explicitly so a refactor can't silently break it.
+    //
+    // Same shape as "name@version exclusion short-circuits the stability
+    // check" (pin 1.0.2, 1.8d gate, 1.0.3 blocks), but the dependency is
+    // the `latest` dist-tag instead of `*`.
+    test("name@version exclusion works on dist-tag dependency", async () => {
+      using dir = tempDir("exclusions-dist-tag-pinned", {
+        "package.json": JSON.stringify({
+          dependencies: { "bugfix-package": "latest" },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = ${1.8 * SECONDS_PER_DAY}
+minimumReleaseAgeExcludes = ["bugfix-package@1.0.2"]
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      // Dist-tag `latest` = 1.0.3 (too recent). Without the pin, the
+      // walker falls through to 1.0.0. The pin on 1.0.2 short-circuits
+      // the stability walk and lands on 1.0.2.
+      expect(lockfile).toContain("bugfix-package@1.0.2");
+      expect(lockfile).not.toContain("bugfix-package@1.0.0");
+      expect(lockfile).not.toContain("bugfix-package@1.0.1");
+      expect(exitCode).toBe(0);
+    });
+
+    // Exact-version deps (`"excluded-package": "1.0.1"`) take the
+    // `left.op == .eql` branch in `findBestVersionWithFilter` and the
+    // cached-manifest fast-path in `PackageManagerEnqueue`. Both call
+    // `isVersionFilteredByAge` — if either reverts to the raw
+    // `isPackageVersionTooRecent` check, a pin can no longer bypass the
+    // age gate for an exact-version dependency. Without this test a
+    // regression would be silent.
+    test("name@version exclusion bypasses age gate on exact-version dependency", async () => {
+      using dir = tempDir("exclusions-exact-version-pinned", {
+        "package.json": JSON.stringify({
+          dependencies: { "excluded-package": "1.0.1" },
+        }),
+        "bunfig.toml": `[install]
+minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAgeExcludes = ["excluded-package@1.0.1"]
+registry = "${mockRegistryUrl}"`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      // 1.0.1 is 12h old — without the pin, the install would fail
+      // with `too_recent`. The pin makes it pass.
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("excluded-package@1.0.1");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("configuration", () => {

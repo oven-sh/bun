@@ -102,13 +102,4 @@
 #define ZIG_EXPORT(...)
 #define ZIG_NONNULL
 
-#ifdef __cplusplus
-// These two are #include'd by the vast majority of TUs and cost ~1.1s each
-// to parse (-ftime-trace). Editing either already triggers a near-full
-// rebuild via depfiles, so precompiling them costs nothing extra
-// incrementally. Kept at the very end — they expect the macros above.
-#include "BunClientData.h"
-#include "ZigGlobalObject.h"
-#endif
-
 #endif

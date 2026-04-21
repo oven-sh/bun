@@ -13,6 +13,7 @@
 #include "BunClientData.h"
 #include "wtf/Compiler.h"
 #include "wtf/Forward.h"
+#include "WebCoreJSBuiltins.h"
 
 using namespace JSC;
 

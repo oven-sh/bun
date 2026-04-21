@@ -81,6 +81,7 @@
 #include "JSCommonJSExtensions.h"
 
 #include "ErrorCode.h"
+#include "WebCoreJSBuiltins.h"
 
 extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
 

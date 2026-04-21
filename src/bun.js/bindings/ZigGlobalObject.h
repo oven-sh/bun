@@ -26,6 +26,7 @@ class WorkerGlobalScope;
 class SubtleCrypto;
 class EventTarget;
 class Performance;
+class JSBuiltinInternalFunctions;
 } // namespace WebCore
 
 namespace Bun {
@@ -55,7 +56,6 @@ struct node_module;
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
 #include "InternalModuleRegistry.h"
-#include "WebCoreJSBuiltins.h"
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
 #include "BunHttp2CommonStrings.h"
@@ -204,7 +204,7 @@ public:
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
     void setConsole(void* console);
-    WebCore::JSBuiltinInternalFunctions& builtinInternalFunctions() { return m_builtinInternalFunctions; }
+    WebCore::JSBuiltinInternalFunctions& builtinInternalFunctions() { return *m_builtinInternalFunctions; }
     JSC::Structure* FFIFunctionStructure() const { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() const { return m_NapiClassStructure.getInitializedOnMainThread(this); }
 
@@ -530,7 +530,7 @@ public:
     V(public, JSC::LazyClassStructure, m_JSStatFSBigIntClassStructure)                                       \
     V(public, JSC::LazyClassStructure, m_JSDirentClassStructure)                                             \
                                                                                                              \
-    V(private, WebCore::JSBuiltinInternalFunctions, m_builtinInternalFunctions)                              \
+    V(private, std::unique_ptr<WebCore::JSBuiltinInternalFunctions>, m_builtinInternalFunctions)             \
     V(private, std::unique_ptr<WebCore::DOMConstructors>, m_constructors)                                    \
     V(private, Bun::CommonStrings, m_commonStrings)                                                          \
     V(private, Bun::Http2CommonStrings, m_http2CommonStrings)                                                \
@@ -740,7 +740,7 @@ public:
 private:
     void addBuiltinGlobals(JSC::VM&);
 
-    friend void WebCore::JSBuiltinInternalFunctions::initialize(Zig::GlobalObject&);
+    friend class WebCore::JSBuiltinInternalFunctions;
     uint8_t m_worldIsNormal;
     JSDOMStructureMap m_structures WTF_GUARDED_BY_LOCK(m_gcLock);
     Lock m_gcLock;

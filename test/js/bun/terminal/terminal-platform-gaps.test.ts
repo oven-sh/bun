@@ -49,8 +49,8 @@ async function runInTerminal(
   });
 
   if (opts.afterReady) {
-    await ready.promise;
-    await opts.afterReady(proc.terminal!, () => output);
+    await Promise.race([ready.promise, eof.promise]);
+    if (!proc.terminal!.closed) await opts.afterReady(proc.terminal!, () => output);
   }
 
   // Wait for the data condition or for the terminal to receive EOF (which

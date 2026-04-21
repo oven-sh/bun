@@ -756,7 +756,7 @@ pub const ShellRmTask = struct {
 
     /// Takes ownership of `path`; freed via the spawned DirTask's deinit (or here on early return).
     pub fn enqueueNoJoin(this: *ShellRmTask, parent_task: *DirTask, path: [:0]const u8, kind_hint: DirTask.EntryKindHint) void {
-        defer debug("enqueue: {s} {s}", .{ path, @tagName(kind_hint) });
+        debug("enqueue: {s} {s}", .{ path, @tagName(kind_hint) });
 
         if (this.error_signal.load(.seq_cst)) {
             bun.default_allocator.free(path);

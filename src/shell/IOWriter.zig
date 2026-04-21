@@ -206,11 +206,13 @@ fn write(this: *IOWriter) enum {
 
     if (!this.started) {
         log("IOWriter(0x{x}, fd={f}) starting", .{ @intFromPtr(this), this.fd });
+        // Set before onError: the callback chain may deref to 0 and asyncDeinit's
+        // never-started fast-path would synchronously destroy us mid-onError.
+        this.started = true;
         if (this.__start().asErr()) |e| {
             this.onError(e);
             return .failed;
         }
-        this.started = true;
         if (comptime bun.Environment.isPosix) {
             // if `handle == .fd` it means it's a file which does not
             // support polling for writeability and we should just

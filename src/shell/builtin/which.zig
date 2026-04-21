@@ -17,7 +17,6 @@ state: union(enum) {
         },
     },
     done,
-    err: jsc.SystemError,
 } = .idle,
 
 pub fn start(this: *Which) Yield {
@@ -129,7 +128,7 @@ pub fn onIOWriterChunk(this: *Which, _: usize, e: ?jsc.SystemError) Yield {
 
 pub fn deinit(this: *Which) void {
     log("({s}) deinit", .{@tagName(.which)});
-    if (this.state == .err) this.state.err.deref();
+    _ = this;
 }
 
 pub inline fn bltn(this: *Which) *Builtin {

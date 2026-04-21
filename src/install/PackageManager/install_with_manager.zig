@@ -237,12 +237,29 @@ pub fn installWithManager(
 
                     const all_name_hashes: []PackageNameHash = brk: {
                         if (!manager.summary.overrides_changed) break :brk &.{};
-                        const hashes_len = manager.lockfile.overrides.map.entries.len + lockfile.overrides.map.entries.len;
-                        if (hashes_len == 0) break :brk &.{};
-                        var all_name_hashes = try bun.default_allocator.alloc(PackageNameHash, hashes_len);
+
+                        // Collect hashes from flat maps
+                        const flat_hashes_len = manager.lockfile.overrides.map.entries.len + lockfile.overrides.map.entries.len;
+
+                        // Collect hashes from tree leaf nodes
+                        const old_tree_hashes = try manager.lockfile.overrides.collectTreeLeafHashes(bun.default_allocator);
+                        defer if (old_tree_hashes.len > 0) bun.default_allocator.free(old_tree_hashes);
+                        const new_tree_hashes = try lockfile.overrides.collectTreeLeafHashes(bun.default_allocator);
+                        defer if (new_tree_hashes.len > 0) bun.default_allocator.free(new_tree_hashes);
+
+                        const total_len = flat_hashes_len + old_tree_hashes.len + new_tree_hashes.len;
+                        if (total_len == 0) break :brk &.{};
+
+                        var all_name_hashes = try bun.default_allocator.alloc(PackageNameHash, total_len);
                         @memcpy(all_name_hashes[0..manager.lockfile.overrides.map.entries.len], manager.lockfile.overrides.map.keys());
-                        @memcpy(all_name_hashes[manager.lockfile.overrides.map.entries.len..], lockfile.overrides.map.keys());
-                        var i = manager.lockfile.overrides.map.entries.len;
+                        @memcpy(all_name_hashes[manager.lockfile.overrides.map.entries.len .. manager.lockfile.overrides.map.entries.len + lockfile.overrides.map.entries.len], lockfile.overrides.map.keys());
+                        var dest = manager.lockfile.overrides.map.entries.len + lockfile.overrides.map.entries.len;
+                        @memcpy(all_name_hashes[dest .. dest + old_tree_hashes.len], old_tree_hashes);
+                        dest += old_tree_hashes.len;
+                        @memcpy(all_name_hashes[dest .. dest + new_tree_hashes.len], new_tree_hashes);
+
+                        // Deduplicate
+                        var i: usize = manager.lockfile.overrides.map.entries.len;
                         while (i < all_name_hashes.len) {
                             if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes[0..i], all_name_hashes[i]) != null) {
                                 all_name_hashes[i] = all_name_hashes[all_name_hashes.len - 1];
@@ -361,6 +378,10 @@ pub fn installWithManager(
                     builder.clamp();
 
                     if (manager.summary.overrides_changed and all_name_hashes.len > 0) {
+                        // Pre-populate override contexts for existing resolved packages
+                        // so that re-enqueued deps can find their override tree context.
+                        manager.populateOverrideContexts();
+
                         for (manager.lockfile.buffers.dependencies.items, 0..) |*dependency, dependency_i| {
                             if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
                                 manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;

@@ -263,8 +263,8 @@ exports[`pnpm comprehensive migration tests pnpm with patches and overrides: pat
     "express@4.18.2": "patches/express@4.18.2.patch",
   },
   "overrides": {
-    "mime-types": "2.1.33",
     "negotiator@>0.6.0": "0.6.2",
+    "mime-types": "2.1.33",
   },
   "packages": {
     "accepts": ["accepts@1.3.8", "", { "dependencies": { "mime-types": "2.1.33", "negotiator": "0.6.2" } }, "sha512-acceptsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],

@@ -1226,6 +1226,9 @@ fn runWithSourceCode(
     opts.features.standard_decorators = !loader.isTypeScript() or !(task.experimental_decorators or task.emit_decorator_metadata);
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
     opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
+    // JavaScriptCore implements `using` / `await using` natively, so when
+    // targeting Bun there is no need to lower them.
+    opts.features.lower_using = !target.isBun();
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;
     opts.features.react_fast_refresh = transpiler.options.react_fast_refresh and

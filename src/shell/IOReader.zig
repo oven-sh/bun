@@ -19,6 +19,7 @@ evtloop: jsc.EventLoopHandle,
 concurrent_task: jsc.EventLoopTask,
 async_deinit: AsyncDeinitReader,
 is_reading: if (bun.Environment.isWindows) bool else u0 = if (bun.Environment.isWindows) false else 0,
+started: bool = false,
 
 pub const ChildPtr = IOReaderChildPtr;
 pub const ReaderImpl = bun.io.BufferedReader;
@@ -79,6 +80,7 @@ pub fn init(fd: bun.FD, evtloop: jsc.EventLoopHandle) *IOReader {
 
 /// Idempotent function to start the reading
 pub fn start(this: *IOReader) Yield {
+    this.started = true;
     if (bun.Environment.isPosix) {
         if (this.reader.handle == .closed or !this.reader.handle.poll.isRegistered()) {
             if (this.reader.start(this.fd, true).asErr()) |e| {
@@ -197,11 +199,7 @@ fn asyncDeinit(this: *@This()) void {
     // The async hop guards against being deref'd from inside a read callback while
     // BufferedReader is still iterating. If we never started reading, no callback can be
     // in flight, so close synchronously to avoid holding the fd until the next tick.
-    const never_started = if (bun.Environment.isWindows)
-        !this.is_reading and this.readers.len() == 0
-    else
-        this.reader.handle == .closed;
-    if (never_started) {
+    if (!this.started) {
         this.asyncDeinitCallback();
         return;
     }

@@ -804,7 +804,7 @@ pub const Interpreter = struct {
             .result => |i| i,
             .err => |*e| {
                 jsobjs.deinit();
-                if (export_env) |*ee| ee.deinit();
+                // export_env is consumed by init() on both success and failure.
                 shargs.deinit();
                 return try throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
             },
@@ -894,18 +894,24 @@ pub const Interpreter = struct {
         export_env_: ?EnvMap,
         cwd_: ?[]const u8,
     ) shell.Result(*ThisInterpreter) {
+        // Hoisted so the catch boundary's toShellSystemError() can read err.path
+        // (which borrows from this buffer) before it's returned to the pool.
+        const pathbuf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(pathbuf);
+
         var sys: Catch = .{};
-        const interpreter = initImpl(&sys, ctx, event_loop, allocator, shargs, jsobjs, export_env_) catch {
+        const interpreter = initImpl(&sys, ctx, event_loop, allocator, shargs, jsobjs, export_env_, pathbuf) catch {
             return .{ .err = .{ .sys = sys.take().toShellSystemError() } };
         };
 
         if (cwd_) |c| {
             if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| {
+                const sys_err = e.toShellSystemError();
                 interpreter.root_io.deref();
                 interpreter.root_shell.deinitImpl(false, true);
                 if (comptime bun.Environment.enableAllocScopes) interpreter.__alloc_scope.deinit();
                 allocator.destroy(interpreter);
-                return .{ .err = .{ .sys = e.toShellSystemError() } };
+                return .{ .err = .{ .sys = sys_err } };
             }
         }
 
@@ -922,6 +928,7 @@ pub const Interpreter = struct {
         shargs: *ShellArgs,
         jsobjs: []JSValue,
         export_env_: ?EnvMap,
+        pathbuf: *bun.PathBuffer,
     ) error{Sys}!*ThisInterpreter {
         var export_env = brk: {
             if (event_loop == .js) break :brk if (export_env_) |e| e else EnvMap.init(allocator);
@@ -947,12 +954,9 @@ pub const Interpreter = struct {
 
             break :brk export_env;
         };
-        // Only deinit if we built it ourselves; a caller-supplied map stays caller-owned on error.
-        errdefer if (export_env_ == null) export_env.deinit();
+        // init() consumes export_env_ regardless of outcome; callers must not free it.
+        errdefer export_env.deinit();
 
-        // Avoid the large stack allocation on Windows.
-        const pathbuf = bun.path_buffer_pool.get();
-        defer bun.path_buffer_pool.put(pathbuf);
         const cwd: [:0]const u8 = try sys.try_(Syscall.getcwdZ(pathbuf));
 
         const cwd_fd = try sys.try_(Syscall.open(cwd, bun.O.DIRECTORY | bun.O.RDONLY, 0));

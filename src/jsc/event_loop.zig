@@ -575,6 +575,44 @@ pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
     }
 }
 
+/// Like `waitForPromise`, but returns early when the event loop has nothing
+/// left that could resolve the promise — no active uv/uws handles, no tasks,
+/// no concurrent refs, no immediates. Used by the top-level-await entry
+/// points where the promise may be "unsettled" (e.g. awaiting an abort event
+/// whose only source is an unref'd `AbortSignal.timeout()` timer).
+///
+/// Without this, POSIX busy-loops at 100% CPU until the unref'd timer fires
+/// and Windows hangs forever (`uv_run(UV_RUN_NOWAIT)` early-returns when
+/// `uv__loop_alive()` is false, so unref'd Bun timers never fire via the uv
+/// scheduler). Matches Node.js, which also exits an unsettled top-level
+/// await without waiting on unref'd handles.
+///
+/// Callers that require a resolved promise on return should keep using
+/// `waitForPromise` — this variant is specifically for the top-level-entry
+/// path, which is prepared to observe a still-pending promise.
+pub fn waitForPromiseOrLoopExit(this: *EventLoop, promise: jsc.AnyPromise) void {
+    const jsc_vm = this.virtual_machine.jsc_vm;
+    switch (promise.status()) {
+        .pending => {
+            while (promise.status() == .pending) {
+                if (jsc_vm.executionForbidden()) {
+                    break;
+                }
+                this.tick();
+
+                if (promise.status() == .pending) {
+                    this.autoTick();
+                }
+
+                if (promise.status() == .pending and !this.virtual_machine.isEventLoopAlive()) {
+                    break;
+                }
+            }
+        },
+        else => {},
+    }
+}
+
 pub fn waitForPromiseWithTermination(this: *EventLoop, promise: jsc.AnyPromise) void {
     const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
     switch (promise.status()) {
@@ -584,6 +622,15 @@ pub fn waitForPromiseWithTermination(this: *EventLoop, promise: jsc.AnyPromise) 
 
                 if (!worker.hasRequestedTerminate() and promise.status() == .pending) {
                     this.autoTick();
+                }
+
+                // Same unsettled-TLA escape hatch as waitForPromiseOrLoopExit.
+                // Without this, a worker whose entry point has an unsettled
+                // top-level await (e.g. `await new Promise(() => {})`) would
+                // busy-loop forever on POSIX / hang on Windows instead of
+                // reaching the normal "worker done" path.
+                if (promise.status() == .pending and !this.virtual_machine.isEventLoopAlive()) {
+                    break;
                 }
             }
         },

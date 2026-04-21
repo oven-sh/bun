@@ -563,12 +563,23 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?
                 }
 
                 if (this.base.interpreter.jsobjs[val.idx].asArrayBuffer(global)) |buf| {
-                    const stdio: bun.shell.subproc.Stdio = .{ .array_buffer = jsc.ArrayBuffer.Strong{
-                        .array_buffer = buf,
-                        .held = .create(buf.value, global),
-                    } };
-
-                    setStdioFromRedirect(&spawn_args.stdio, this.node.redirect, stdio);
+                    // Each slot needs its own Strong; copying one Stdio into multiple slots
+                    // (e.g. for &>) would alias the same *Impl and double-free in deinit.
+                    const flags = this.node.redirect;
+                    if (flags.stdin) {
+                        spawn_args.stdio[stdin_no] = .{ .array_buffer = .{ .array_buffer = buf, .held = .create(buf.value, global) } };
+                    }
+                    if (flags.duplicate_out) {
+                        spawn_args.stdio[stdout_no] = .{ .array_buffer = .{ .array_buffer = buf, .held = .create(buf.value, global) } };
+                        spawn_args.stdio[stderr_no] = .{ .array_buffer = .{ .array_buffer = buf, .held = .create(buf.value, global) } };
+                    } else {
+                        if (flags.stdout) {
+                            spawn_args.stdio[stdout_no] = .{ .array_buffer = .{ .array_buffer = buf, .held = .create(buf.value, global) } };
+                        }
+                        if (flags.stderr) {
+                            spawn_args.stdio[stderr_no] = .{ .array_buffer = .{ .array_buffer = buf, .held = .create(buf.value, global) } };
+                        }
+                    }
                 } else if (this.base.interpreter.jsobjs[val.idx].as(jsc.WebCore.Blob)) |blob__| {
                     const blob = blob__.dupe();
                     if (this.node.redirect.stdin) {

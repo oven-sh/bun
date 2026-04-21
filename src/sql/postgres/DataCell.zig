@@ -112,7 +112,15 @@ fn decodeBinaryNumericArrayWithNulls(bytes: []const u8, comptime tag: types.Tag)
         }
     }
 
-    return SQLDataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };
+    // `free_value = 1` so `SQLDataCell.deinit` reaches the `.array` branch
+    // and frees the backing allocation from `ensureTotalCapacityPrecise`
+    // above. Without this, every binary int4[]/float4[] result row with a
+    // NULL element leaks `cap * @sizeOf(SQLDataCell)` bytes.
+    return SQLDataCell{
+        .tag = .array,
+        .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } },
+        .free_value = 1,
+    };
 }
 fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, globalObject: *jsc.JSGlobalObject, offset: ?*usize, comptime is_json_sub_array: bool) !SQLDataCell {
     const closing_brace = if (is_json_sub_array) ']' else '}';

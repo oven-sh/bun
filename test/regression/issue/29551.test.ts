@@ -302,31 +302,25 @@ if (isDockerEnabled()) {
     },
   );
 } else {
-  // Docker-less fallback — runs in local dev and in the gate-check sandbox.
-  // `resolveLocalPostgresUrl` probes common defaults before committing, so
-  // this describe turns into a no-op when no Postgres is reachable instead
-  // of flooding CI with connection failures.
-  const urlPromise = resolveLocalPostgresUrl();
-  describe("issue #29551: sql(object) serializes JS arrays for PG array columns (local)", () => {
-    let sql: SQL;
-    let skipReason = "";
+  // Docker-less fallback — covers local dev and the gate-check sandbox.
+  // Probe once at module load so the describe is a no-op (via `describe.todo`)
+  // when no Postgres is reachable, rather than emitting 15 connection-error
+  // failures on dev boxes without a database.
+  const localUrl = await resolveLocalPostgresUrl();
+  (localUrl ? describe : describe.todo)(
+    "issue #29551: sql(object) serializes JS arrays for PG array columns (local)",
+    () => {
+      let sql: SQL;
 
-    beforeAll(async () => {
-      const url = await urlPromise;
-      if (!url) {
-        skipReason = "no reachable Postgres (DATABASE_URL unset, localhost:5432 closed)";
-        return;
-      }
-      sql = new SQL({ url, max: 1 });
-    });
+      beforeAll(() => {
+        sql = new SQL({ url: localUrl!, max: 1 });
+      });
 
-    afterAll(async () => {
-      await sql?.close();
-    });
+      afterAll(async () => {
+        await sql?.close();
+      });
 
-    defineTests(() => {
-      if (!sql) throw new Error(`Skipped: ${skipReason}`);
-      return sql;
-    });
-  });
+      defineTests(() => sql);
+    },
+  );
 }

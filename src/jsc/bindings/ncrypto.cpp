@@ -2448,11 +2448,7 @@ EVP_PKEY* ParseSpkiRsaLoose(const unsigned char* data, size_t len)
     // and encoded as an explicit NULL. Reject any other encoding — the only
     // non-conforming case we recover from is the modulus' missing sign byte.
     CBS params;
-    if (!CBS_get_asn1(&spki, &alg, CBS_ASN1_SEQUENCE) ||
-        !CBS_get_asn1(&alg, &oid, CBS_ASN1_OBJECT) ||
-        OBJ_cbs2nid(&oid) != NID_rsaEncryption ||
-        !CBS_get_asn1(&alg, &params, CBS_ASN1_NULL) || CBS_len(&params) != 0 ||
-        CBS_len(&alg) != 0) {
+    if (!CBS_get_asn1(&spki, &alg, CBS_ASN1_SEQUENCE) || !CBS_get_asn1(&alg, &oid, CBS_ASN1_OBJECT) || OBJ_cbs2nid(&oid) != NID_rsaEncryption || !CBS_get_asn1(&alg, &params, CBS_ASN1_NULL) || CBS_len(&params) != 0 || CBS_len(&alg) != 0) {
         return nullptr;
     }
 

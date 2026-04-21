@@ -229,10 +229,11 @@ using namespace JSC;
 
 class BunBuiltinNames {
     WTF_MAKE_NONCOPYABLE(BunBuiltinNames);
-public:
+    friend class JSVMClientData;
     explicit BunBuiltinNames(JSC::VM&);
     ~BunBuiltinNames();
 
+public:
     BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
 
     const JSC::Identifier& resolvePublicName() const { return m_vm.propertyNames->resolve;}

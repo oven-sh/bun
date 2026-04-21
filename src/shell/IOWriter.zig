@@ -488,6 +488,9 @@ pub fn onError(this: *IOWriter, err__: bun.sys.Error) void {
         }
 
         bun.handleOom(seen.append(@intFromPtr(ptr)));
+        // Callee consumes the error (derefs it). Ref before each pass so deinitOnMainThread's
+        // deref of this.err is balanced and multiple callees don't over-deref. Matches IOReader.
+        if (this.err) |*e| e.ref();
         // TODO: This probably shouldn't call .run()
         w.ptr.onIOWriterChunk(0, this.err).run();
     }

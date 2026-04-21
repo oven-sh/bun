@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { isRope } from "bun:jsc";
+import { describe, expect, test } from "bun:test";
 import npmStringWidth from "string-width";
 
 expect.extend({
@@ -1014,9 +1014,7 @@ describe("stringWidth extended", () => {
       const flat = flatten(build());
       expect(isRope(rope)).toBe(true);
       for (const countAnsiEscapeCodes of [false, true]) {
-        expect(Bun.stringWidth(rope, { countAnsiEscapeCodes })).toBe(
-          Bun.stringWidth(flat, { countAnsiEscapeCodes }),
-        );
+        expect(Bun.stringWidth(rope, { countAnsiEscapeCodes })).toBe(Bun.stringWidth(flat, { countAnsiEscapeCodes }));
       }
       expect(isRope(rope)).toBe(true);
     });

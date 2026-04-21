@@ -3,7 +3,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-async function runTSFull(
+async function runTS(
   source: string,
   extraCompilerOptions: Record<string, unknown> = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
@@ -26,19 +26,10 @@ async function runTSFull(
     stderr: "pipe",
   });
 
-  // Drain stderr concurrently even though most tests don't assert on it —
-  // debug/ASAN builds emit startup warnings and an unread pipe could
-  // backpressure the child to a stall.
+  // Drain stderr concurrently — debug/ASAN builds can backpressure the
+  // child on an unread pipe.
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
-}
-
-async function runTS(
-  source: string,
-  extraCompilerOptions: Record<string, unknown> = {},
-): Promise<{ stdout: string; exitCode: number | null }> {
-  const { stdout, exitCode } = await runTSFull(source, extraCompilerOptions);
-  return { stdout, exitCode };
 }
 
 test.concurrent("accessor field with a legacy decorator parses and runs", async () => {
@@ -361,7 +352,7 @@ test.concurrent("decorator on a private accessor field is rejected like TypeScri
   // legacy-decorator model doesn't support decorating private class
   // members directly). This test locks in the rejection so a future
   // relaxation doesn't accidentally land a half-implemented lowering.
-  const { stdout, stderr, exitCode } = await runTSFull(`
+  const { stdout, stderr, exitCode } = await runTS(`
     function dec(target: any, key: any, desc: any) {}
     class Foo {
       @dec accessor #x = 5;
@@ -379,7 +370,7 @@ test.concurrent("decorated accessor in a class expression is rejected with a cle
   // Bun gap. Until that gap is closed, refuse to silently drop a decorator
   // on an auto-accessor inside a class expression — users need explicit
   // feedback, not code that silently ignores their decorator.
-  const { stdout, stderr, exitCode } = await runTSFull(`
+  const { stdout, stderr, exitCode } = await runTS(`
     function dec(_t: any, _k: any, _d: any) {}
     const C = class {
       @dec accessor x = 1;

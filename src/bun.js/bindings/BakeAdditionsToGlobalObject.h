@@ -2,7 +2,6 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "BunBuiltinNames.h"
-#include "WebCoreJSBuiltins.h"
 #include "headers-handwritten.h"
 
 namespace Bun {
@@ -99,16 +98,7 @@ struct BakeAdditionsToGlobalObject {
         return m_asyncLocalStorageInstance.get();
     }
 
-    JSC::JSFunction* wrapComponent(JSGlobalObject* globalObject)
-    {
-        auto* function = m_wrapComponent.get();
-        if (!function) {
-            auto& vm = globalObject->vm();
-            function = JSC::JSFunction::create(vm, globalObject, WebCore::bakeSSRResponseWrapComponentCodeGenerator(vm), globalObject);
-            m_wrapComponent.set(vm, globalObject, function);
-        }
-        return function;
-    }
+    JSC::JSFunction* wrapComponent(JSGlobalObject*);
 
     template<typename T>
     using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;

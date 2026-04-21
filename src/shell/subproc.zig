@@ -396,9 +396,14 @@ pub const ShellSubprocess = struct {
 
         pub fn close(this: *Readable) void {
             switch (this.*) {
-                inline .memfd, .fd => |fd| {
+                .memfd => |fd| {
                     this.* = .{ .closed = {} };
                     fd.close();
+                },
+                // .fd is borrowed from the shell's IOWriter (see IO.OutKind.to_subproc_stdio) or
+                // a CowFd redirect; the owner closes it.
+                .fd => {
+                    this.* = .{ .closed = {} };
                 },
                 .pipe => {
                     this.pipe.close();
@@ -409,9 +414,14 @@ pub const ShellSubprocess = struct {
 
         pub fn finalize(this: *Readable) void {
             switch (this.*) {
-                inline .memfd, .fd => |fd| {
+                .memfd => |fd| {
                     this.* = .{ .closed = {} };
                     fd.close();
+                },
+                // .fd is borrowed from the shell's IOWriter (see IO.OutKind.to_subproc_stdio) or
+                // a CowFd redirect; the owner closes it.
+                .fd => {
+                    this.* = .{ .closed = {} };
                 },
                 .pipe => |pipe| {
                     defer pipe.detach();
@@ -530,7 +540,7 @@ pub const ShellSubprocess = struct {
     pub fn finalizeSync(this: *@This()) void {
         this.closeProcess();
 
-        // this.closeIO(.stdin);
+        this.closeIO(.stdin);
         this.closeIO(.stdout);
         this.closeIO(.stderr);
     }
@@ -575,6 +585,26 @@ pub const ShellSubprocess = struct {
         this.finalizeSync();
         log("Deinit", .{});
         bun.default_allocator.destroy(this);
+    }
+
+    /// Tear down a subprocess whose stdio start() failed. Marks pending pipe readers as
+    /// errored so PipeReader.deinit's done-assert passes, drops the exit handler so a
+    /// later onProcessExit doesn't touch the freed Subprocess, then deinits.
+    ///
+    /// Windows: PipeReader.deinit asserts the libuv source is closed. Whether the source
+    /// is uv-initialized depends on how far startWithCurrentPipe got, so a blind close or
+    /// destroy is unsafe. Fall back to leaking the Subprocess (pre-existing behavior)
+    /// rather than risk closing an uninitialized handle.
+    fn abortAfterFailedStart(this: *@This()) void {
+        if (Environment.isWindows) return;
+        inline for (.{ .stdout, .stderr }) |tag| {
+            const r: *Readable = &@field(this, @tagName(tag));
+            if (r.* == .pipe and r.pipe.state == .pending) {
+                r.pipe.state = .{ .err = null };
+            }
+        }
+        this.process.exit_handler = .{};
+        this.deinit();
     }
 
     pub const SpawnArgs = struct {
@@ -767,48 +797,45 @@ pub const ShellSubprocess = struct {
             spawn_args.env_array.capacity = spawn_args.env_array.items.len;
         }
 
-        var should_close_memfd = Environment.isLinux;
-
-        defer {
-            if (should_close_memfd) {
-                inline for (0..spawn_args.stdio.len) |fd_index| {
-                    if (spawn_args.stdio[fd_index] == .memfd) {
-                        spawn_args.stdio[fd_index].memfd.close();
-                        spawn_args.stdio[fd_index] = .ignore;
-                    }
-                }
-            }
-        }
+        // Until ownership transfers into Writable/Readable, deinit any caller-provided
+        // stdio resources (memfd, ArrayBuffer.Strong, Blob) on early return so they
+        // aren't leaked.
+        var stdio_consumed = false;
+        defer if (!stdio_consumed) {
+            for (&spawn_args.stdio) |*s| s.deinit();
+        };
 
         const no_sigpipe = if (shellio.stdout) |iowriter| !iowriter.flags.is_socket else true;
 
+        // Hoist asSpawnOption results so a later one failing doesn't strand an earlier
+        // Windows *uv.Pipe in an unbound temporary inside the struct initializer.
+        const stdin_opt = switch (spawn_args.stdio[0].asSpawnOption(0)) {
+            .result => |opt| opt,
+            .err => |e| return .{ .err = .{ .custom = bun.handleOom(bun.default_allocator.dupe(u8, e.toStr())) } },
+        };
+        const stdout_opt = switch (spawn_args.stdio[1].asSpawnOption(1)) {
+            .result => |opt| opt,
+            .err => |e| {
+                if (Environment.isWindows) stdin_opt.deinit();
+                return .{ .err = .{ .custom = bun.handleOom(bun.default_allocator.dupe(u8, e.toStr())) } };
+            },
+        };
+        const stderr_opt = switch (spawn_args.stdio[2].asSpawnOption(2)) {
+            .result => |opt| opt,
+            .err => |e| {
+                if (Environment.isWindows) {
+                    stdin_opt.deinit();
+                    stdout_opt.deinit();
+                }
+                return .{ .err = .{ .custom = bun.handleOom(bun.default_allocator.dupe(u8, e.toStr())) } };
+            },
+        };
+
         var spawn_options = bun.spawn.SpawnOptions{
             .cwd = spawn_args.cwd,
-            .stdin = switch (spawn_args.stdio[0].asSpawnOption(0)) {
-                .result => |opt| opt,
-                .err => |e| {
-                    return .{ .err = .{
-                        .custom = bun.handleOom(bun.default_allocator.dupe(u8, e.toStr())),
-                    } };
-                },
-            },
-            .stdout = switch (spawn_args.stdio[1].asSpawnOption(1)) {
-                .result => |opt| opt,
-                .err => |e| {
-                    return .{ .err = .{
-                        .custom = bun.handleOom(bun.default_allocator.dupe(u8, e.toStr())),
-                    } };
-                },
-            },
-            .stderr = switch (spawn_args.stdio[2].asSpawnOption(2)) {
-                .result => |opt| opt,
-                .err => |e| {
-                    return .{ .err = .{
-                        .custom = bun.handleOom(bun.default_allocator.dupe(u8, e.toStr())),
-                    } };
-                },
-            },
-
+            .stdin = stdin_opt,
+            .stdout = stdout_opt,
+            .stderr = stderr_opt,
             .windows = if (Environment.isWindows) bun.spawn.WindowsSpawnOptions.WindowsOptions{
                 .hide_window = true,
                 .loop = event_loop,
@@ -819,10 +846,12 @@ pub const ShellSubprocess = struct {
         }
 
         spawn_args.cmd_parent.args.append(null) catch {
+            spawn_options.deinit();
             return .{ .err = .{ .custom = bun.handleOom(bun.default_allocator.dupe(u8, "out of memory")) } };
         };
 
         spawn_args.env_array.append(allocator, null) catch {
+            spawn_options.deinit();
             return .{ .err = .{ .custom = bun.handleOom(bun.default_allocator.dupe(u8, "out of memory")) } };
         };
 
@@ -831,9 +860,13 @@ pub const ShellSubprocess = struct {
             @ptrCast(spawn_args.cmd_parent.args.items.ptr),
             @ptrCast(spawn_args.env_array.items.ptr),
         ) catch |err| {
+            spawn_options.deinit();
             return .{ .err = .{ .custom = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)})) } };
         }) {
-            .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
+            .err => |err| {
+                spawn_options.deinit();
+                return .{ .err = .{ .sys = err.toShellSystemError() } };
+            },
             .result => |result| result,
         };
 
@@ -866,6 +899,7 @@ pub const ShellSubprocess = struct {
             .cmd_parent = spawn_args.cmd_parent,
         };
         subprocess.process.setExitHandler(subprocess);
+        stdio_consumed = true;
 
         if (subprocess.stdin == .pipe) {
             subprocess.stdin.pipe.signal = bun.webcore.streams.Signal.init(&subprocess.stdin);
@@ -881,15 +915,19 @@ pub const ShellSubprocess = struct {
 
         if (subprocess.stdin == .buffer) {
             if (subprocess.stdin.buffer.start().asErr()) |err| {
+                const sys_err = err.toShellSystemError();
                 _ = subprocess.tryKill(@intFromEnum(bun.SignalCode.SIGTERM));
-                return .{ .err = .{ .sys = err.toShellSystemError() } };
+                subprocess.abortAfterFailedStart();
+                return .{ .err = .{ .sys = sys_err } };
             }
         }
 
         if (subprocess.stdout == .pipe) {
             if (subprocess.stdout.pipe.start(subprocess, event_loop).asErr()) |err| {
+                const sys_err = err.toShellSystemError();
                 _ = subprocess.tryKill(@intFromEnum(bun.SignalCode.SIGTERM));
-                return .{ .err = .{ .sys = err.toShellSystemError() } };
+                subprocess.abortAfterFailedStart();
+                return .{ .err = .{ .sys = sys_err } };
             }
             if (!spawn_args.lazy and subprocess.stdout == .pipe) {
                 subprocess.stdout.pipe.readAll();
@@ -898,16 +936,16 @@ pub const ShellSubprocess = struct {
 
         if (subprocess.stderr == .pipe) {
             if (subprocess.stderr.pipe.start(subprocess, event_loop).asErr()) |err| {
+                const sys_err = err.toShellSystemError();
                 _ = subprocess.tryKill(@intFromEnum(bun.SignalCode.SIGTERM));
-                return .{ .err = .{ .sys = err.toShellSystemError() } };
+                subprocess.abortAfterFailedStart();
+                return .{ .err = .{ .sys = sys_err } };
             }
 
             if (!spawn_args.lazy and subprocess.stderr == .pipe) {
                 subprocess.stderr.pipe.readAll();
             }
         }
-
-        should_close_memfd = false;
 
         log("returning", .{});
 
@@ -1217,8 +1255,14 @@ pub const PipeReader = struct {
         if (this.process) |proc| {
             const cmd = proc.cmd_parent;
             if (this.captured_writer.err) |e| {
+                // Transfer ownership of the error out of captured_writer so
+                // PipeReader.deinit doesn't deref the same SystemError twice.
+                this.captured_writer.err = null;
+                if (this.state == .done) bun.default_allocator.free(this.state.done);
                 if (this.state != .err) {
                     this.state = .{ .err = e };
+                } else {
+                    e.deref();
                 }
             }
             const e: ?jsc.SystemError = brk: {

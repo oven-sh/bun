@@ -41,6 +41,7 @@
 #include "ZigGeneratedClasses.h"
 #include "JavaScriptCore/BuiltinNames.h"
 #include "ZigGlobalObject.h"
+#include "WebCoreJSBuiltins.h"
 
 namespace WebCore {
 using namespace JSC;

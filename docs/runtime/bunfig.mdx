@@ -669,6 +669,17 @@ Valid values are:
 | `"hoisted"`  | Link dependencies in a shared `node_modules` directory. |
 | `"isolated"` | Link dependencies inside each package installation.     |
 
+### `install.globalStore`
+
+When using the `"isolated"` linker, share package installations across projects in a global virtual store at `<cache>/links/` and link `node_modules/.bun/<pkg>@<ver>` into it instead of materializing each package into the project. Makes warm installs after `rm -rf node_modules` an order of magnitude faster. Default `true`. Can also be set with the `BUN_INSTALL_GLOBAL_STORE` environment variable.
+
+For complete documentation refer to [Package manager > Global virtual store](/pm/global-store).
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+globalStore = false
+```
+
 ### `install.publicHoistPattern`
 
 When using the `"isolated"` linker, packages matching these glob patterns are hoisted to the root `node_modules` directory so they can be resolved by any package in the project. Default `[]`. Similar to pnpm's `public-hoist-pattern`.

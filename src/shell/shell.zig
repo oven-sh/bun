@@ -4372,11 +4372,19 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             }
 
             pub fn pop(this: *Inlined) T {
-                const ret = this.items[this.items.len - 1];
+                const ret = this.items[this.len - 1];
                 this.len -= 1;
                 return ret;
             }
         };
+
+        pub fn deinit(this: *@This()) void {
+            switch (this.*) {
+                .inlined => {},
+                .heap => |*heap| heap.deinit(bun.default_allocator),
+            }
+            this.* = zeroes;
+        }
 
         pub inline fn len(this: *const @This()) usize {
             return switch (this.*) {

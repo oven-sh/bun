@@ -1380,46 +1380,70 @@ pub const FileSystem = struct {
             outpath[entry_path.len + 1] = 0;
             outpath[entry_path.len] = 0;
 
-            var absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
+            const absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
 
             if (comptime bun.Environment.isWindows) {
-                var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
-                var depth: usize = 0;
-                const buf2: *bun.PathBuffer = bun.path_buffer_pool.get();
+                const file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
+                // A Windows reparse point carries FILE_ATTRIBUTE_DIRECTORY iff
+                // the link is a directory link (junctions always do; symlinks
+                // do iff created with SYMBOLIC_LINK_FLAG_DIRECTORY; AppExec
+                // links and file symlinks don't), so this is already the
+                // correct `Entry.Kind` without following the chain.
+                cache.kind = if (file.is_directory) .dir else .file;
+                if (!file.is_reparse_point) return cache;
+
+                // For the realpath, open the path and let the kernel follow
+                // every hop, then `GetFinalPathNameByHandle` (same as libuv's
+                // `uv_fs_realpath`). The previous manual readlink+join loop
+                // resolved relative targets against `dirname(absolute_path_c)`,
+                // but that path may itself contain unresolved intermediate
+                // symlinks (e.g. with the isolated linker's global virtual
+                // store, `node_modules/.bun/<pkg>` is a symlink into
+                // `<cache>/links/`, and the dep symlinks inside point at
+                // siblings via `..\..\<dep>-<hash>`). Windows resolves
+                // relative reparse targets against the *real* parent, so the
+                // join landed in the project-side `.bun/` instead of
+                // `<cache>/links/`, the re-stat returned FileNotFound, the
+                // error was swallowed at `Entry.kind`, and a directory symlink
+                // was permanently misclassified as `.file` — surfacing as
+                // EISDIR at module load time.
+                const w = std.os.windows;
+                const wbuf = bun.w_path_buffer_pool.get();
+                defer bun.w_path_buffer_pool.put(wbuf);
+                const wpath = bun.strings.toKernel32Path(wbuf, absolute_path_c);
+                const handle = w.kernel32.CreateFileW(
+                    wpath.ptr,
+                    0,
+                    w.FILE_SHARE_READ | w.FILE_SHARE_WRITE | w.FILE_SHARE_DELETE,
+                    null,
+                    w.OPEN_EXISTING,
+                    // FILE_FLAG_BACKUP_SEMANTICS lets us open directories;
+                    // omitting FILE_FLAG_OPEN_REPARSE_POINT makes Windows
+                    // follow the full reparse chain to the final target.
+                    w.FILE_FLAG_BACKUP_SEMANTICS,
+                    null,
+                );
+                // Dangling link / loop / EACCES: `cache.kind` is already set
+                // from the link's own directory bit, which is correct for all
+                // of those. `Entry.kind`/`Entry.symlink` swallow errors and
+                // fall back to the `.file` placeholder anyway, so returning
+                // the half-populated cache is strictly better than `try`.
+                // Empty `cache.symlink` makes the resolver fall back to
+                // `parent.abs_real_path + base`.
+                if (handle == w.INVALID_HANDLE_VALUE) return cache;
+                defer _ = bun.windows.CloseHandle(handle);
+
+                var info: w.BY_HANDLE_FILE_INFORMATION = undefined;
+                if (bun.windows.GetFileInformationByHandle(handle, &info) != 0) {
+                    cache.kind = if (info.dwFileAttributes & w.FILE_ATTRIBUTE_DIRECTORY != 0) .dir else .file;
+                }
+
+                const buf2 = bun.path_buffer_pool.get();
                 defer bun.path_buffer_pool.put(buf2);
-                const buf3: *bun.PathBuffer = bun.path_buffer_pool.get();
-                defer bun.path_buffer_pool.put(buf3);
-
-                var current_buf: *bun.PathBuffer = buf2;
-                var other_buf: *bun.PathBuffer = &outpath;
-                var joining_buf: *bun.PathBuffer = buf3;
-
-                while (file.is_reparse_point) : (depth += 1) {
-                    var read: [:0]const u8 = try bun.sys.readlink(absolute_path_c, current_buf).unwrap();
-                    if (std.fs.path.isAbsolute(read)) {
-                        std.mem.swap(*bun.PathBuffer, &current_buf, &other_buf);
-                    } else {
-                        read = bun.path.joinAbsStringBufZ(std.fs.path.dirname(absolute_path_c) orelse absolute_path_c, joining_buf, &.{read}, .windows);
-                        std.mem.swap(*bun.PathBuffer, &joining_buf, &other_buf);
-                    }
-                    file = bun.sys.getFileAttributes(read) orelse return error.FileNotFound;
-                    absolute_path_c = read;
-
-                    if (depth > 20) {
-                        return error.TooManySymlinks;
-                    }
+                switch (bun.sys.getFdPath(.fromNative(handle), buf2)) {
+                    .result => |real| cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, real)),
+                    .err => {},
                 }
-
-                if (depth > 0) {
-                    cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, absolute_path_c));
-                }
-
-                if (file.is_directory) {
-                    cache.kind = .dir;
-                } else {
-                    cache.kind = .file;
-                }
-
                 return cache;
             }
 

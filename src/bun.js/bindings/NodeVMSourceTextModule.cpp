@@ -329,6 +329,7 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     JSModuleRecord* record = m_moduleRecord.get();
 
     if (length != 0) {
+        const auto& requested = record->requestedModules();
         for (unsigned i = 0; i < length; i++) {
             JSValue specifierValue = specifiers->getDirectIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, {});
@@ -353,7 +354,15 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             if (auto* cyclic = jsDynamicCast<JSC::CyclicModuleRecord*>(resolvedRecord); cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::New)
                 cyclic->status(JSC::CyclicModuleRecord::Status::Unlinked);
 
-            record->setImportedModule(globalObject, Identifier::fromString(vm, specifier), resolvedRecord);
+            // specifiers/moduleNatives were built from requestedModules() in
+            // [kLink], so the indices line up — pass the original ModuleRequest
+            // (specifier + attributes) so a `with { type: "json" }` /
+            // HostDefined import ends up in the right (specifier, type) bucket
+            // for innerModuleLinking's typed lookup.
+            if (i < requested.size()) [[likely]]
+                record->setImportedModule(globalObject, requested[i], resolvedRecord);
+            else
+                record->setImportedModule(globalObject, JSC::AbstractModuleRecord::ModuleRequest { Identifier::fromString(vm, specifier), nullptr }, resolvedRecord);
             RETURN_IF_EXCEPTION(scope, {});
             m_resolveCache.set(WTF::move(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
             RETURN_IF_EXCEPTION(scope, {});

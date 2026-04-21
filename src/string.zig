@@ -1126,7 +1126,9 @@ pub const String = extern struct {
         // which may straddle fibers — bail to resolving if we see ESC and the
         // caller wants escapes excluded. UTF-16 ropes can't use this: grapheme
         // clusters may span fibers and deep ropes iterate out of order.
-        if (js_str.isRope() and js_str.is8Bit()) {
+        // Substring ropes are skipped: they resolve via substringSharingImpl
+        // (no character copy), so the iterator indirection is just overhead.
+        if (js_str.isNonSubstringRope() and js_str.is8Bit()) {
             var state: RopeLatin1WidthIterator = .{ .bail_on_esc = !count_ansi };
             var it = state.iter();
             js_str.iterator(globalObject, &it);

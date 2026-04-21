@@ -110,7 +110,7 @@ CPP_DECL JSC::JSObject* JSC__JSCell__toObject(JSC::JSCell* cell, JSC::JSGlobalOb
 
 CPP_DECL bool JSC__JSString__eql(const JSC::JSString* arg0, JSC::JSGlobalObject* arg1, JSC::JSString* arg2);
 CPP_DECL bool JSC__JSString__is8Bit(const JSC::JSString* arg0);
-CPP_DECL bool JSC__JSString__isRope(const JSC::JSString* arg0);
+CPP_DECL bool JSC__JSString__isNonSubstringRope(const JSC::JSString* arg0);
 CPP_DECL void JSC__JSString__iterator(JSC::JSString* arg0, JSC::JSGlobalObject* arg1, void* arg2);
 CPP_DECL size_t JSC__JSString__length(const JSC::JSString* arg0);
 CPP_DECL JSC::JSObject* JSC__JSString__toObject(JSC::JSString* arg0, JSC::JSGlobalObject* arg1);

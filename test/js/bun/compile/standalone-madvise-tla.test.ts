@@ -36,8 +36,8 @@ test.skipIf(isWindows || !isDebug)("standalone madvise hint fires with top-level
 
   expect(stdout).toContain("before-await");
   expect(stdout).toContain("after-await");
-  // Output.debugWarn is debug-build-only; this proves the call site is reached
-  // before the event loop drives the TLA to completion.
-  expect(stderr).toContain("hintSourcePagesDontNeed: MADV_DONTNEED");
+  // Output.debugWarn is debug-build-only; either the success or failure
+  // variant proves the call site is reached.
+  expect(stderr).toContain("hintSourcePagesDontNeed:");
   expect(exitCode).toBe(0);
 });

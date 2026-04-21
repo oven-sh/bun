@@ -460,10 +460,14 @@ pub const Run = struct {
             vm.tick();
         }
 
-        // Entrypoint has been parsed and microtasks drained — the embedded
-        // source pages are no longer on the hot path. No-op unless this is a
-        // compiled standalone binary.
-        bun.StandaloneModuleGraph.hintSourcePagesDontNeed();
+        // Initial synchronous evaluation of the entrypoint is done (TLA may
+        // still be pending and will resolve in the loop below); the embedded
+        // source pages are off the hot path now. No-op unless this is a
+        // compiled standalone binary, and skip under --watch/--hot since those
+        // re-read source on every reload.
+        if (!this.vm.isWatcherEnabled()) {
+            bun.StandaloneModuleGraph.hintSourcePagesDontNeed();
+        }
 
         {
             if (this.vm.isWatcherEnabled()) {

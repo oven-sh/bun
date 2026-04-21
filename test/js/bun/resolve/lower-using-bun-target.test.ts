@@ -102,6 +102,8 @@ console.log(url, disposed);`,
     expect(out).toContain("__callDispose");
     expect(out).not.toContain("using x =");
     expect(out).not.toContain("await using y =");
+    expect(out).not.toContain("for (using z of ");
+    expect(out).not.toContain("using top =");
   });
 
   test("Bun.Transpiler still lowers using / await using for target=node", () => {
@@ -110,6 +112,10 @@ console.log(url, disposed);`,
 
     expect(out).toContain("__using");
     expect(out).toContain("__callDispose");
+    expect(out).not.toContain("using x =");
+    expect(out).not.toContain("await using y =");
+    expect(out).not.toContain("for (using z of ");
+    expect(out).not.toContain("using top =");
   });
 
   test("bun build --target=bun passes using / await using through", async () => {
@@ -154,6 +160,68 @@ console.log(url, disposed);`,
     expect(stdout).toContain("__using");
     expect(stdout).toContain("__callDispose");
     expect(exitCode).toBe(0);
+  });
+
+  test("top-level using in a lazily-wrapped ESM module still disposes when bundled", async () => {
+    // When bundling for bun, a module reached only via dynamic `import()` is
+    // wrapped in `__esm(() => { ... })`. The linker hoists top-level locals out
+    // of that closure as `var` + assignment; `using` must be exempt from that
+    // hoist or disposal semantics are lost.
+    using dir = tempDir("using-esm-wrap", {
+      "entry.js": `const mod = await import("./lazy.js");
+console.log("result:", mod.result);
+`,
+      "lazy.js": `using handle = { val: 42, [Symbol.dispose]() { console.log("disposed"); } };
+export const result = handle.val;
+`,
+    });
+
+    await using buildProc = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=bun", "--outfile=out.js", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([
+      buildProc.stdout.text(),
+      buildProc.stderr.text(),
+      buildProc.exited,
+    ]);
+    expect(buildStderr).toBe("");
+    expect(buildExit).toBe(0);
+
+    const out = await Bun.file(`${dir}/out.js`).text();
+    expect(out).toContain("using handle =");
+
+    await using runProc = Bun.spawn({
+      cmd: [bunExe(), "out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([runProc.stdout.text(), runProc.stderr.text(), runProc.exited]);
+
+    expect(stdout).toBe("disposed\nresult: 42\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("adjacent using declarations are not merged", () => {
+    const t = new Bun.Transpiler({ target: "bun", minify: { syntax: true } });
+    const out = t.transformSync(
+      `function f() {
+  using a = open();
+  using b = open2();
+  return [a.url, b.url];
+}
+`,
+      "js",
+    );
+    // Match esbuild: keep separate `using` statements rather than merging
+    // into `using a = open(), b = open2();`.
+    expect(out).toContain("using a = open();");
+    expect(out).toContain("using b = open2();");
   });
 
   test("bun build --target=bun output with using / await using runs correctly", async () => {

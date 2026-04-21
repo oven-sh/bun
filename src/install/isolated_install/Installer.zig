@@ -681,13 +681,18 @@ pub const Installer = struct {
                         else
                             false;
                         if (is_stale_link) {
-                            if (comptime Environment.isWindows) {
+                            const remove_err: ?sys.Error = if (comptime Environment.isWindows) win: {
                                 if (sys.rmdir(local.sliceZ()).asErr()) |_| {
-                                    _ = sys.unlink(local.sliceZ());
+                                    if (sys.unlink(local.sliceZ()).asErr()) |e| break :win e;
                                 }
-                            } else {
-                                _ = sys.unlink(local.sliceZ());
-                            }
+                                break :win null;
+                            } else sys.unlink(local.sliceZ()).asErr();
+                            if (remove_err) |e| if (e.getErrno() != .NOENT) {
+                                // Do NOT proceed: the backend below would
+                                // write *through* the still-live symlink
+                                // into the shared `<cache>/links/` entry.
+                                return .failure(.{ .link_package = e });
+                            };
                         }
                     }
 

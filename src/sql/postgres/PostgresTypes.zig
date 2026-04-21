@@ -1,5 +1,6 @@
 pub const @"bool" = @import("./types/bool.zig");
 
+pub const array_serializer = @import("./types/array_serializer.zig");
 pub const bytea = @import("./types/bytea.zig");
 pub const date = @import("./types/date.zig");
 pub const json = @import("./types/json.zig");

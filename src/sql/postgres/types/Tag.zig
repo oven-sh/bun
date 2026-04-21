@@ -184,6 +184,113 @@ pub const Tag = enum(short) {
         return 0;
     }
 
+    /// Returns true for `*_array` type OIDs (e.g. `text_array`, `int4_array`).
+    pub fn isArray(this: Tag) bool {
+        return switch (this) {
+            .bool_array,
+            .bytea_array,
+            .char_array,
+            .name_array,
+            .int8_array,
+            .int2_array,
+            .int2vector_array,
+            .int4_array,
+            .text_array,
+            .oid_array,
+            .tid_array,
+            .xid_array,
+            .cid_array,
+            .json_array,
+            .xml_array,
+            .point_array,
+            .lseg_array,
+            .path_array,
+            .box_array,
+            .polygon_array,
+            .line_array,
+            .cidr_array,
+            .float4_array,
+            .float8_array,
+            .circle_array,
+            .macaddr8_array,
+            .money_array,
+            .macaddr_array,
+            .inet_array,
+            .aclitem_array,
+            .bpchar_array,
+            .varchar_array,
+            .date_array,
+            .time_array,
+            .timestamp_array,
+            .timestamptz_array,
+            .interval_array,
+            .pg_database_array,
+            .timetz_array,
+            .bit_array,
+            .varbit_array,
+            .numeric_array,
+            .jsonb_array,
+            .jsonpath_array,
+            .pg_database_array2,
+            => true,
+            else => false,
+        };
+    }
+
+    /// For array type OIDs, returns the element type tag. For element types
+    /// that the binding layer treats as plain text (e.g. `tid`, `jsonpath`),
+    /// returns `.text`. Returns the input tag unchanged for non-array types.
+    pub fn arrayElementTag(this: Tag) Tag {
+        return switch (this) {
+            .bool_array => .bool,
+            .bytea_array => .bytea,
+            .char_array => .char,
+            .name_array => .name,
+            .int8_array => .int8,
+            .int2_array => .int2,
+            .int2vector_array => .int2vector,
+            .int4_array => .int4,
+            .text_array => .text,
+            .oid_array => .oid,
+            .xid_array => .xid,
+            .cid_array => .cid,
+            .json_array => .json,
+            .xml_array => .xml,
+            .point_array => .point,
+            .lseg_array => .lseg,
+            .path_array => .path,
+            .box_array => .box,
+            .polygon_array => .polygon,
+            .line_array => .line,
+            .cidr_array => .cidr,
+            .float4_array => .float4,
+            .float8_array => .float8,
+            .circle_array => .circle,
+            .macaddr8_array => .macaddr8,
+            .money_array => .money,
+            .macaddr_array => .macaddr,
+            .inet_array => .inet,
+            .aclitem_array => .aclitem,
+            .bpchar_array => .bpchar,
+            .varchar_array => .varchar,
+            .date_array => .date,
+            .time_array => .time,
+            .timestamp_array => .timestamp,
+            .timestamptz_array => .timestamptz,
+            .interval_array => .interval,
+            .pg_database_array, .pg_database_array2 => .pg_database,
+            .timetz_array => .timetz,
+            .bit_array => .bit,
+            .varbit_array => .varbit,
+            .numeric_array => .numeric,
+            .jsonb_array => .jsonb,
+            // `tid`, `jsonpath` have no Tag enum member; they serialize as
+            // plain text strings just like the `else` fallback in `writeBind`.
+            .tid_array, .jsonpath_array => .text,
+            else => this,
+        };
+    }
+
     fn PostgresBinarySingleDimensionArray(comptime T: type) type {
         return extern struct {
             // struct array_int4 {

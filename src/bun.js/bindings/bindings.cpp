@@ -5815,7 +5815,6 @@ extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC
 // this is largely copied from dateProtoFuncToISOString
 extern "C" int JSC__JSValue__toISOString(JSC::JSGlobalObject* globalObject, EncodedJSValue dateValue, char* buf)
 {
-    char buffer[64];
     JSC::DateInstance* thisDateObj = JSC::jsDynamicCast<JSC::DateInstance*>(JSC::JSValue::decode(dateValue));
     if (!thisDateObj)
         return -1;
@@ -5825,7 +5824,10 @@ extern "C" int JSC__JSValue__toISOString(JSC::JSGlobalObject* globalObject, Enco
 
     auto& vm = JSC::getVM(globalObject);
 
-    return static_cast<int>(Bun::toISOString(vm, thisDateObj->internalNumber(), buffer));
+    // Bun::toISOString writes up to 28 bytes + NUL into `buf`. The caller
+    // is expected to provide a 28-byte buffer (it fits ISO 8601 in UTC with
+    // millisecond precision, e.g. "2024-01-01T00:00:00.000Z" = 24 chars).
+    return static_cast<int>(Bun::toISOString(vm, thisDateObj->internalNumber(), buf));
 }
 
 extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject, char* buf)

@@ -405,8 +405,11 @@ pub const JSValue = enum(i64) {
         return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__push, .{ value, globalObject, out });
     }
 
-    extern fn JSC__JSValue__toISOString(*jsc.JSGlobalObject, jsc.JSValue, *[28]u8) c_int;
-    pub fn toISOString(this: JSValue, globalObject: *jsc.JSGlobalObject, buf: *[28]u8) []const u8 {
+    extern fn JSC__JSValue__toISOString(*jsc.JSGlobalObject, jsc.JSValue, *[29]u8) c_int;
+    /// Writes the ISO 8601 UTC representation of a JS Date into `buf`
+    /// (e.g. "2024-01-01T00:00:00.000Z", max 28 chars + NUL). Returns an empty
+    /// slice for non-Date or non-finite values.
+    pub fn toISOString(this: JSValue, globalObject: *jsc.JSGlobalObject, buf: *[29]u8) []const u8 {
         const count = JSC__JSValue__toISOString(globalObject, this, buf);
         if (count < 0) {
             return "";

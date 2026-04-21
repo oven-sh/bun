@@ -73,6 +73,23 @@ fn writeElement(
         return;
     }
 
+    // JSON / JSONB elements are JSON values — arrays/objects/primitives all
+    // get stringified and embedded as a quoted, escaped string. Must precede
+    // the `isArray` branch so e.g. a `jsonb[]` value `[[1,2],[3,4]]`
+    // becomes the 1-D literal `{"[1,2]","[3,4]"}` (two jsonb values), not
+    // a 2-D PG array `{{"1","2"},{"3","4"}}`.
+    if (element_tag == .json or element_tag == .jsonb) {
+        var str = bun.String.empty;
+        defer str.deref();
+        try value.jsonStringifyFast(globalObject, &str);
+        const slice = str.toUTF8WithoutRef(bun.default_allocator);
+        defer slice.deinit();
+        try writer.write("\"");
+        try writeEscaped(Context, writer, slice.slice());
+        try writer.write("\"");
+        return;
+    }
+
     // Nested array -> recurse (multi-dimensional arrays share one element type).
     if (value.isArray()) {
         try writeArrayLiteral(globalObject, value, element_tag, Context, writer);
@@ -96,20 +113,6 @@ fn writeElement(
     // bool[] -> canonical `t`/`f` for booleans.
     if (element_tag == .bool and value.isBoolean()) {
         try writer.write(if (value.toBoolean()) "t" else "f");
-        return;
-    }
-
-    // JSON / JSONB: each element is stringified with the SIMD-optimized path
-    // and embedded as a quoted, escaped string.
-    if (element_tag == .json or element_tag == .jsonb) {
-        var str = bun.String.empty;
-        defer str.deref();
-        try value.jsonStringifyFast(globalObject, &str);
-        const slice = str.toUTF8WithoutRef(bun.default_allocator);
-        defer slice.deinit();
-        try writer.write("\"");
-        try writeEscaped(Context, writer, slice.slice());
-        try writer.write("\"");
         return;
     }
 

@@ -287,8 +287,10 @@ pub const Tag = enum(short) {
             .numeric_array => .numeric,
             .jsonb_array => .jsonb,
             .uuid_array => .uuid,
-            // `tid`, `jsonpath` have no Tag enum member; they serialize as
-            // plain text strings just like the `else` fallback in `writeBind`.
+            // `tid` has no Tag enum member (commented out at the top of this
+            // file). `jsonpath` does, but `writeElement` has no specialised
+            // encoding for it — both are serialized as plain text, same as
+            // the `else` fallback in `writeBind`.
             .tid_array, .jsonpath_array => .text,
             else => this,
         };

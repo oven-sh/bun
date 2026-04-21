@@ -200,6 +200,24 @@ function runTests(getSql: () => SQL) {
     expect(rows[0].d[1]).toBeNull();
   });
 
+  test("jsonb[] elements that are themselves JS arrays stay 1-D", async () => {
+    const sql = getSql();
+    // A JS array nested inside a `jsonb[]` value must be stringified as a
+    // single jsonb element (`[1,2]`), NOT expanded into a second PG array
+    // dimension. A 2-D literal would silently round-trip via the JSON decoder
+    // but `array_ndims` would be 2 instead of 1.
+    const tableName = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMP TABLE ${sql(tableName)} (j jsonb[])`;
+
+    await sql`INSERT INTO ${sql(tableName)} ${sql({ j: [[1, 2], [3, 4]] })}`;
+
+    const [row] =
+      await sql`SELECT j, array_ndims(j) as ndim, array_length(j, 1) as len FROM ${sql(tableName)}`;
+    expect(row.j).toEqual([[1, 2], [3, 4]]);
+    expect(row.ndim).toBe(1);
+    expect(row.len).toBe(2);
+  });
+
   test("scalar jsonb column with array value keeps stringifying as JSON (regression guard)", async () => {
     const sql = getSql();
     // `sql({ j: ["a", "b"] })` where `j jsonb` must still emit `["a","b"]`

@@ -73,6 +73,11 @@ fn decodeBinaryNumericArrayWithNulls(bytes: []const u8, comptime tag: types.Tag)
     const dim_size_raw: int4 = @bitCast(bytes[12..16].*);
     const dim_size: u32 = @bitCast(@byteSwap(dim_size_raw));
 
+    // Reject impossibly-large `dim_size` up front: every element carries at
+    // least a 4-byte length prefix. Without this a malformed header could
+    // drive an allocation far larger than the payload can justify.
+    if (dim_size > (bytes.len - 20) / 4) return error.InvalidBinaryData;
+
     const element_bytes = @sizeOf(try tag.byteArrayType());
 
     var array: std.ArrayListUnmanaged(SQLDataCell) = .empty;

@@ -5,7 +5,7 @@ const { SQLHelper, SSLMode, SQLResultArray, buildDefinedColumnsAndQuery } = requ
 const {
   Query,
   SQLQueryFlags,
-  symbols: { _strings, _values, _flags, _results, _handle },
+  symbols: { _strings, _values, _results, _handle },
 } = require("internal/sql/query");
 const { MySQLError } = require("internal/sql/errors");
 
@@ -23,47 +23,30 @@ function wrapError(error: Error | MySQLErrorOptions) {
 }
 initMySQL(
   function onResolveMySQLQuery(query, result, commandTag, count, queries, is_last, last_insert_rowid, affected_rows) {
-    /// simple queries
-    if (query[_flags] & SQLQueryFlags.simple) {
-      $assert(result instanceof SQLResultArray, "Invalid result array");
-      // prepare for next query
-      query[_handle].setPendingValue(new SQLResultArray());
-
-      result.count = count || 0;
-      result.lastInsertRowid = last_insert_rowid;
-      result.affectedRows = affected_rows || 0;
-      const last_result = query[_results];
-
-      if (!last_result) {
-        query[_results] = result;
-      } else {
-        if (last_result instanceof SQLResultArray) {
-          // multiple results
-          query[_results] = [last_result, result];
-        } else {
-          // 3 or more results
-          last_result.push(result);
-        }
-      }
-      if (is_last) {
-        if (queries) {
-          const queriesIndex = queries.indexOf(query);
-          if (queriesIndex !== -1) {
-            queries.splice(queriesIndex, 1);
-          }
-        }
-        try {
-          query.resolve(query[_results]);
-        } catch {}
-      }
-      return;
-    }
-    /// prepared statements
     $assert(result instanceof SQLResultArray, "Invalid result array");
 
     result.count = count || 0;
     result.lastInsertRowid = last_insert_rowid;
     result.affectedRows = affected_rows || 0;
+
+    // CALL <proc>() and multi-statement strings can yield several result sets.
+    // Accumulate until the server clears SERVER_MORE_RESULTS_EXISTS (is_last).
+    const last_result = query[_results];
+    if (!last_result) {
+      query[_results] = result;
+    } else if (last_result instanceof SQLResultArray) {
+      query[_results] = [last_result, result];
+    } else {
+      last_result.push(result);
+    }
+
+    if (!is_last) {
+      // The Zig side clears the pending value after each callback; re-prime it
+      // so the follow-up result set lands in a fresh array.
+      query[_handle].setPendingValue(new SQLResultArray());
+      return;
+    }
+
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {
@@ -71,7 +54,7 @@ initMySQL(
       }
     }
     try {
-      query.resolve(result);
+      query.resolve(query[_results]);
     } catch {}
   },
 

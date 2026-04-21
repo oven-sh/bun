@@ -657,11 +657,13 @@ describe("Bun.Terminal", () => {
     });
 
     test("subprocess can read from terminal", async () => {
-      const received: Uint8Array[] = [];
+      let received = "";
+      const { promise: gotData, resolve } = Promise.withResolvers<void>();
 
       await using terminal = new Bun.Terminal({
         data(term, data) {
-          received.push(new Uint8Array(data));
+          received += Buffer.from(data).toString("latin1");
+          if (received.includes("hello from test")) resolve();
         },
       });
 
@@ -672,15 +674,13 @@ describe("Bun.Terminal", () => {
         terminal,
       });
 
-      // Write to the terminal
       terminal.write("hello from test\n");
+      await gotData;
 
-      // Wait a bit for processing
-      await Bun.sleep(100);
-
-      // Send EOF to cat
       proc.kill("SIGTERM");
       await proc.exited;
+
+      expect(received).toContain("hello from test");
     });
 
     test("multiple subprocesses can use same terminal sequentially", async () => {

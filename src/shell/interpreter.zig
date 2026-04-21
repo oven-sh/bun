@@ -534,7 +534,10 @@ pub const Interpreter = struct {
             const duped = bun.handleOom(alloc.create(ShellExecEnv));
 
             const dupedfd = switch (Syscall.dup(this.cwd_fd)) {
-                .err => |err| return .{ .err = err },
+                .err => |err| {
+                    alloc.destroy(duped);
+                    return .{ .err = err };
+                },
                 .result => |fd| fd,
             };
 
@@ -783,6 +786,7 @@ pub const Interpreter = struct {
             &export_env,
         );
 
+        defer if (cwd) |*cc| cc.deref();
         const cwd_string: ?bun.jsc.ZigString.Slice = if (cwd) |c| brk: {
             break :brk c.toUTF8(bun.default_allocator);
         } else null;
@@ -801,7 +805,6 @@ pub const Interpreter = struct {
             .err => |*e| {
                 jsobjs.deinit();
                 if (export_env) |*ee| ee.deinit();
-                if (cwd) |*cc| cc.deref();
                 shargs.deinit();
                 return try throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
             },
@@ -809,8 +812,7 @@ pub const Interpreter = struct {
 
         if (globalThis.hasException()) {
             jsobjs.deinit();
-            if (export_env) |*ee| ee.deinit();
-            if (cwd) |*cc| cc.deref();
+            // Note: export_env is now owned by interpreter.root_shell; finalize() will deinit it.
             // Note: Don't call shargs.deinit() here - interpreter.finalize() will do it
             // since interpreter.args points to shargs after init() succeeds.
             interpreter.finalize();
@@ -892,7 +894,36 @@ pub const Interpreter = struct {
         export_env_: ?EnvMap,
         cwd_: ?[]const u8,
     ) shell.Result(*ThisInterpreter) {
-        const export_env = brk: {
+        var sys: Catch = .{};
+        const interpreter = initImpl(&sys, ctx, event_loop, allocator, shargs, jsobjs, export_env_) catch {
+            return .{ .err = .{ .sys = sys.take().toShellSystemError() } };
+        };
+
+        if (cwd_) |c| {
+            if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| {
+                interpreter.root_io.deref();
+                interpreter.root_shell.deinitImpl(false, true);
+                if (comptime bun.Environment.enableAllocScopes) interpreter.__alloc_scope.deinit();
+                allocator.destroy(interpreter);
+                return .{ .err = .{ .sys = e.toShellSystemError() } };
+            }
+        }
+
+        interpreter.root_shell.__alloc_scope = if (bun.Environment.enableAllocScopes) &interpreter.__alloc_scope else {};
+
+        return .{ .result = interpreter };
+    }
+
+    fn initImpl(
+        sys: *Catch,
+        ctx: bun.cli.Command.Context,
+        event_loop: jsc.EventLoopHandle,
+        allocator: Allocator,
+        shargs: *ShellArgs,
+        jsobjs: []JSValue,
+        export_env_: ?EnvMap,
+    ) error{Sys}!*ThisInterpreter {
+        var export_env = brk: {
             if (event_loop == .js) break :brk if (export_env_) |e| e else EnvMap.init(allocator);
 
             var env_loader: *bun.DotEnv.Loader = env_loader: {
@@ -916,38 +947,30 @@ pub const Interpreter = struct {
 
             break :brk export_env;
         };
+        // Only deinit if we built it ourselves; a caller-supplied map stays caller-owned on error.
+        errdefer if (export_env_ == null) export_env.deinit();
 
         // Avoid the large stack allocation on Windows.
         const pathbuf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(pathbuf);
-        const cwd: [:0]const u8 = switch (Syscall.getcwdZ(pathbuf)) {
-            .result => |cwd| cwd,
-            .err => |err| {
-                return .{ .err = .{ .sys = err.toShellSystemError() } };
-            },
-        };
+        const cwd: [:0]const u8 = try sys.try_(Syscall.getcwdZ(pathbuf));
 
-        const cwd_fd = switch (Syscall.open(cwd, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
-            .result => |fd| fd,
-            .err => |err| {
-                return .{ .err = .{ .sys = err.toShellSystemError() } };
-            },
-        };
+        const cwd_fd = try sys.try_(Syscall.open(cwd, bun.O.DIRECTORY | bun.O.RDONLY, 0));
+        errdefer cwd_fd.close();
 
         var cwd_arr = bun.handleOom(std.array_list.Managed(u8).initCapacity(bun.default_allocator, cwd.len + 1));
         bun.handleOom(cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]));
+        errdefer cwd_arr.deinit();
 
         if (comptime bun.Environment.isDebug) {
             assert(cwd_arr.items[cwd_arr.items.len -| 1] == 0);
         }
 
         log("Duping stdin", .{});
-        const stdin_fd = switch (if (bun.Output.Source.Stdio.isStdinNull()) bun.sys.openNullDevice() else ShellSyscall.dup(shell.STDIN_FD)) {
-            .result => |fd| fd,
-            .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
-        };
+        const stdin_fd = try sys.try_(if (bun.Output.Source.Stdio.isStdinNull()) bun.sys.openNullDevice() else ShellSyscall.dup(shell.STDIN_FD));
 
         const stdin_reader = IOReader.init(stdin_fd, event_loop);
+        errdefer stdin_reader.deref();
 
         const interpreter = bun.handleOom(allocator.create(ThisInterpreter));
         interpreter.* = .{
@@ -987,13 +1010,7 @@ pub const Interpreter = struct {
             .globalThis = undefined,
         };
 
-        if (cwd_) |c| {
-            if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| return .{ .err = .{ .sys = e.toShellSystemError() } };
-        }
-
-        interpreter.root_shell.__alloc_scope = if (bun.Environment.enableAllocScopes) &interpreter.__alloc_scope else {};
-
-        return .{ .result = interpreter };
+        return interpreter;
     }
 
     pub fn initAndRunFromFile(ctx: bun.cli.Command.Context, mini: *jsc.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
@@ -1329,6 +1346,10 @@ pub const Interpreter = struct {
 
         this.keep_alive.disable();
         this.args.deinit();
+        for (this.vm_args_utf8.items[0..]) |str| {
+            str.deinit();
+        }
+        this.vm_args_utf8.deinit();
         this.allocator.destroy(this);
     }
 
@@ -1355,6 +1376,7 @@ pub const Interpreter = struct {
     pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const value = callframe.argument(0);
         const str = try bun.String.fromJS(value, globalThis);
+        defer str.deref();
 
         const slice = str.toUTF8(bun.default_allocator);
         defer slice.deinit();
@@ -1386,9 +1408,9 @@ pub const Interpreter = struct {
         // PATH = "";
 
         while (object_iter.next()) |key| {
-            const keyslice = bun.handleOom(key.toOwnedSlice(bun.default_allocator));
             var value = object_iter.value;
             if (value.isUndefined()) continue;
+            const keyslice = bun.handleOom(key.toOwnedSlice(bun.default_allocator));
 
             const value_str = value.getZigString(globalThis);
             const slice = bun.handleOom(value_str.toOwnedSlice(bun.default_allocator));
@@ -1828,7 +1850,7 @@ pub const ShellSyscall = struct {
             };
 
             return switch (Syscall.stat(path)) {
-                .err => |e| .{ .err = e.clone(bun.default_allocator) },
+                .err => |e| .{ .err = e.withPath(path_) },
                 .result => |s| .{ .result = s },
             };
         }

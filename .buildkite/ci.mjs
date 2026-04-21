@@ -705,6 +705,9 @@ function getTestBunStep(platform, options, testOptions = {}) {
 
   if (testFiles) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
+  } else {
+    // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead
+    args.push("--exclude=integration/bun-types");
   }
 
   const depends = [];

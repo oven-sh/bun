@@ -59,13 +59,15 @@ const fgOpts = {
 describe("glob.match", async () => {
   const timeout = 30 * 1000;
   function testWithOpts(namePrefix: string, bunGlobOpts: GlobScanOptions, fgOpts: FgOpts) {
-    test(
+    test.concurrent(
       `${namePrefix} recursively search node_modules`,
       async () => {
         const pattern = "**/node_modules/**/*.js";
         const glob = new Glob(pattern);
-        const filepaths = prepareEntries(await Array.fromAsync(glob.scan(bunGlobOpts)));
-        const fgFilepths = await fg.glob(pattern, fgOpts);
+        const [filepaths, fgFilepths] = await Promise.all([
+          Array.fromAsync(glob.scan(bunGlobOpts)).then(prepareEntries),
+          fg.glob(pattern, fgOpts),
+        ]);
 
         // console.error(filepaths);
         expect(filepaths.length).toEqual(fgFilepths.length);
@@ -79,13 +81,15 @@ describe("glob.match", async () => {
       timeout,
     );
 
-    test(
+    test.concurrent(
       `${namePrefix} recursive search js files`,
       async () => {
         const pattern = "**/*.js";
         const glob = new Glob(pattern);
-        const filepaths = prepareEntries(await Array.fromAsync(glob.scan(bunGlobOpts)));
-        const fgFilepths = await fg.glob(pattern, fgOpts);
+        const [filepaths, fgFilepths] = await Promise.all([
+          Array.fromAsync(glob.scan(bunGlobOpts)).then(prepareEntries),
+          fg.glob(pattern, fgOpts),
+        ]);
 
         expect(filepaths.length).toEqual(fgFilepths.length);
 
@@ -98,13 +102,15 @@ describe("glob.match", async () => {
       timeout,
     );
 
-    test(
+    test.concurrent(
       `${namePrefix} recursive search ts files`,
       async () => {
         const pattern = "**/*.ts";
         const glob = new Glob(pattern);
-        const filepaths = prepareEntries(await Array.fromAsync(glob.scan(bunGlobOpts)));
-        const fgFilepths = await fg.glob(pattern, fgOpts);
+        const [filepaths, fgFilepths] = await Promise.all([
+          Array.fromAsync(glob.scan(bunGlobOpts)).then(prepareEntries),
+          fg.glob(pattern, fgOpts),
+        ]);
 
         expect(filepaths.length).toEqual(fgFilepths.length);
 
@@ -117,7 +123,7 @@ describe("glob.match", async () => {
       timeout,
     );
 
-    test(
+    test.concurrent(
       `${namePrefix} glob not freed before matching done`,
       async () => {
         const promise = (async () => {

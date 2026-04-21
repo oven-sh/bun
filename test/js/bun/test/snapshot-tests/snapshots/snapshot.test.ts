@@ -387,61 +387,59 @@ class InlineSnapshotTester {
     return readFileSync(this.tmpdir + "/" + name, { encoding: "utf-8" });
   }
 
-  testError(eopts: { update?: boolean; msg: string }, code: string): void {
-    const thefile = this.tmpfile(code);
-
-    const spawnres = Bun.spawnSync({
-      cmd: [bunExe(), "test", ...(eopts.update ? ["-u"] : []), thefile],
+  async spawn(extraArgs: string[], thefile: string) {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...extraArgs, thefile],
       env: { ...bunEnv, CI: "false" },
       cwd: this.tmpdir,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: { toString: () => stderr }, exitCode };
+  }
+
+  async testError(eopts: { update?: boolean; msg: string }, code: string): Promise<void> {
+    const thefile = this.tmpfile(code);
+
+    const spawnres = await this.spawn(eopts.update ? ["-u"] : [], thefile);
     expect(spawnres.stderr.toString()).toInclude(eopts.msg);
     expect(spawnres.exitCode).toBe(1);
     expect(this.readfile(thefile)).toEqual(code);
   }
-  test(cb: (v: (a: string, b: string, c: string) => string) => string): void {
-    this.testInternal(
-      false,
-      cb((a, b, c) => a),
-      cb((a, b, c) => c),
-    );
-    this.testInternal(
-      true,
-      cb((a, b, c) => b),
-      cb((a, b, c) => c),
-    );
+  async test(cb: (v: (a: string, b: string, c: string) => string) => string): Promise<void> {
+    await Promise.all([
+      this.testInternal(
+        false,
+        cb((a, b, c) => a),
+        cb((a, b, c) => c),
+      ),
+      this.testInternal(
+        true,
+        cb((a, b, c) => b),
+        cb((a, b, c) => c),
+      ),
+    ]);
   }
-  testUpdateOnly(cb: (v: (b: string, c: string) => string) => string): void {
-    this.testInternal(
+  async testUpdateOnly(cb: (v: (b: string, c: string) => string) => string): Promise<void> {
+    await this.testInternal(
       true,
       cb((b, c) => b),
       cb((b, c) => c),
     );
   }
-  testInternal(use_update: boolean, before_value: string, after_value: string): void {
+  async testInternal(use_update: boolean, before_value: string, after_value: string): Promise<void> {
     const thefile = this.tmpfile(before_value);
 
     if (use_update) {
       // run without update, expect error
-      const spawnres = Bun.spawnSync({
-        cmd: [bunExe(), "test", thefile],
-        env: { ...bunEnv, CI: "false" },
-        cwd: this.tmpdir,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      const spawnres = await this.spawn([], thefile);
       expect(spawnres.stderr.toString()).toInclude("error:");
       expect(spawnres.exitCode).toBe(1);
       expect(this.readfile(thefile)).toEqual(before_value);
     }
 
     {
-      const spawnres = Bun.spawnSync({
-        cmd: [bunExe(), "test", ...(use_update ? ["-u"] : []), thefile],
-        env: { ...bunEnv, CI: "false" },
-        cwd: this.tmpdir,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      const spawnres = await this.spawn(use_update ? ["-u"] : [], thefile);
       expect(spawnres.stderr.toString()).not.toInclude("error:");
       expect({
         exitCode: spawnres.exitCode,
@@ -454,12 +452,7 @@ class InlineSnapshotTester {
 
     // run without update, expect pass with no change
     {
-      const spawnres = Bun.spawnSync({
-        cmd: [bunExe(), "test", thefile],
-        env: { ...bunEnv, CI: "false" },
-        cwd: this.tmpdir,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      const spawnres = await this.spawn([], thefile);
       expect(spawnres.stderr.toString()).not.toInclude("error:");
       expect({
         exitCode: spawnres.exitCode,
@@ -472,12 +465,7 @@ class InlineSnapshotTester {
 
     // update again, expect pass with no change
     {
-      const spawnres = Bun.spawnSync({
-        cmd: [bunExe(), "test", "-u", thefile],
-        env: { ...bunEnv, CI: "false" },
-        cwd: this.tmpdir,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      const spawnres = await this.spawn(["-u"], thefile);
       expect(spawnres.stderr.toString()).not.toInclude("error:");
       expect({
         exitCode: spawnres.exitCode,
@@ -501,8 +489,8 @@ describe("inline snapshots", () => {
   const tester = new InlineSnapshotTester({
     "helper.js": helper_js,
   });
-  test("changing inline snapshot", () => {
-    tester.test(
+  test("changing inline snapshot", async () => {
+    await tester.test(
       v => /*js*/ `
         test("inline snapshots", () => {
           expect("1").toMatchInlineSnapshot(${v("", bad, '`"1"`')});
@@ -520,8 +508,8 @@ describe("inline snapshots", () => {
       `,
     );
   });
-  test("inline snapshot update cases", () => {
-    tester.test(
+  test("inline snapshot update cases", async () => {
+    await tester.test(
       // prettier-ignore
       v => /*js*/ `
         test("cases", () => {
@@ -614,8 +602,8 @@ Date)
       `,
     );
   });
-  it("updating outside of a test", () => {
-    tester.test(
+  it("updating outside of a test", async () => {
+    await tester.test(
       v => /*js*/ `
         expect("1").toMatchInlineSnapshot(${v("", bad, '`"1"`')});
       `,
@@ -629,8 +617,8 @@ Date)
       `,
     );
   });
-  it("should error trying to update the same line twice", () => {
-    tester.testError(
+  it("should error trying to update the same line twice", async () => {
+    await tester.testError(
       {
         msg: "error: Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value",
       },
@@ -651,9 +639,9 @@ Date)
   });
 
   // snapshot in a snapshot
-  it("should not allow a snapshot in a snapshot", () => {
+  it("should not allow a snapshot in a snapshot", async () => {
     // this is possible to support, but is not supported
-    tester.testError(
+    await tester.testError(
       { msg: "error: Failed to update inline snapshot: Did not advance." },
       ((v: (a: string, b: string, c: string) => string) => /*js*/ `
         test("cases", () => {
@@ -666,8 +654,8 @@ Date)
     );
   });
 
-  it("requires exactly 'toMatchInlineSnapshot' 1", () => {
-    tester.testError(
+  it("requires exactly 'toMatchInlineSnapshot' 1", async () => {
+    await tester.testError(
       { msg: "error: Failed to update inline snapshot: Could not find 'toMatchInlineSnapshot' here" },
       /*js*/ `
         test("cases", () => {
@@ -676,8 +664,8 @@ Date)
       `,
     );
   });
-  it("requires exactly 'toMatchInlineSnapshot' 2", () => {
-    tester.testError(
+  it("requires exactly 'toMatchInlineSnapshot' 2", async () => {
+    await tester.testError(
       { msg: "error: Failed to update inline snapshot: Could not find 'toMatchInlineSnapshot' here" },
       /*js*/ `
         test("cases", () => {
@@ -686,8 +674,8 @@ Date)
       `,
     );
   });
-  it("only replaces when the argument is a literal string 1", () => {
-    tester.testError(
+  it("only replaces when the argument is a literal string 1", async () => {
+    await tester.testError(
       {
         update: true,
         msg: "error: Failed to update inline snapshot: Argument must be a string literal",
@@ -700,8 +688,8 @@ Date)
       `,
     );
   });
-  it("only replaces when the argument is a literal string 2", () => {
-    tester.testError(
+  it("only replaces when the argument is a literal string 2", async () => {
+    await tester.testError(
       {
         update: true,
         msg: "error: Failed to update inline snapshot: Argument must be a string literal",
@@ -714,8 +702,8 @@ Date)
       `,
     );
   });
-  it("only replaces when the argument is a literal string 3", () => {
-    tester.testError(
+  it("only replaces when the argument is a literal string 3", async () => {
+    await tester.testError(
       {
         update: true,
         msg: "error: Failed to update inline snapshot: Argument must be a string literal",
@@ -727,8 +715,8 @@ Date)
       `,
     );
   });
-  it("only replaces when the argument is a literal string 4", () => {
-    tester.testError(
+  it("only replaces when the argument is a literal string 4", async () => {
+    await tester.testError(
       {
         update: true,
         msg: "Matcher error: Expected properties must be an object",
@@ -740,8 +728,8 @@ Date)
       `,
     );
   });
-  it("does not allow spread 1", () => {
-    tester.testError(
+  it("does not allow spread 1", async () => {
+    await tester.testError(
       {
         update: true,
         msg: "error: Failed to update inline snapshot: Spread is not allowed",
@@ -753,8 +741,8 @@ Date)
       `,
     );
   });
-  it("does not allow spread 2", () => {
-    tester.testError(
+  it("does not allow spread 2", async () => {
+    await tester.testError(
       {
         update: true,
         msg: "error: Failed to update inline snapshot: Spread is not allowed",
@@ -766,8 +754,8 @@ Date)
       `,
     );
   });
-  it("limit two arguments", () => {
-    tester.testError(
+  it("limit two arguments", async () => {
+    await tester.testError(
       {
         update: true,
         msg: "error: Failed to update inline snapshot: Snapshot expects at most two arguments",
@@ -779,8 +767,8 @@ Date)
       `,
     );
   });
-  it("must be in test file", () => {
-    tester.testError(
+  it("must be in test file", async () => {
+    await tester.testError(
       {
         update: true,
         msg: "Inline snapshot matchers must be called from the test file",
@@ -794,8 +782,8 @@ Date)
     );
     expect(readFileSync(tester.tmpdir + "/helper.js", "utf-8")).toBe(helper_js);
   });
-  it("is right file", () => {
-    tester.test(
+  it("is right file", async () => {
+    await tester.test(
       v => /*js*/ `
         import {wrongFile} from "./helper";
         test("cases", () => {
@@ -805,8 +793,8 @@ Date)
       `,
     );
   });
-  it("indentation", () => {
-    tester.test(
+  it("indentation", async () => {
+    await tester.test(
       // prettier-ignore
       v => /*js*/ `
         test("cases", () => {
@@ -824,8 +812,8 @@ Date)
       `,
     );
   });
-  it("preserve existing indentation", () => {
-    tester.testUpdateOnly(
+  it("preserve existing indentation", async () => {
+    await tester.testUpdateOnly(
       // prettier-ignore
       v => /*js*/ `
         test("cases", () => {
@@ -850,20 +838,22 @@ indentation"
       `,
     );
   });
-  it("#16403", () => {
-    tester.test(v =>
-      v(
-        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot();\n\t});\n',
-        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t  [\n\t\t    "ab",\n\t\t    "cd",\n\t\t  ]\n\t\t`);\n\t});\n',
-        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t  [\n\t\t    "C2",\n\t\t    "B2",\n\t\t  ]\n\t\t`);\n\t});\n',
+  it("#16403", async () => {
+    await Promise.all([
+      tester.test(v =>
+        v(
+          '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot();\n\t});\n',
+          '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t  [\n\t\t    "ab",\n\t\t    "cd",\n\t\t  ]\n\t\t`);\n\t});\n',
+          '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t  [\n\t\t    "C2",\n\t\t    "B2",\n\t\t  ]\n\t\t`);\n\t});\n',
+        ),
       ),
-    );
-    tester.testUpdateOnly(v =>
-      v(
-        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t\t[\n\t\t\t  "ab",\n\t\t\t  "cd",\n\t\t\t]\n\t\t`);\n\t});\n',
-        '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t\t[\n\t\t\t  "C2",\n\t\t\t  "B2",\n\t\t\t]\n\t\t`);\n\t});\n',
+      tester.testUpdateOnly(v =>
+        v(
+          '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t\t[\n\t\t\t  "ab",\n\t\t\t  "cd",\n\t\t\t]\n\t\t`);\n\t});\n',
+          '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot(`\n\t\t\t[\n\t\t\t  "C2",\n\t\t\t  "B2",\n\t\t\t]\n\t\t`);\n\t});\n',
+        ),
       ),
-    );
+    ]);
   });
 });
 test("indented inline snapshots", () => {

@@ -4,19 +4,20 @@ import * as path from "path";
 const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "yaml", "text", "sqlite", "file"];
 const other_loaders_do_not_crash = ["webassembly", "does_not_exist"];
 
-async function testBunRunRequire(dir: string, loader: string | null, filename: string): Promise<unknown> {
-  if (loader != null) throw new Error("cannot use loader with require()");
-  const cmd = [bunExe(), "-e", `const contents = require('./${filename}'); console.log(JSON.stringify(contents));`];
-  const result = Bun.spawnSync({
+async function runCmd(cmd: string[], dir: string): Promise<unknown> {
+  await using proc = Bun.spawn({
     cmd: cmd,
     cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  if (result.exitCode !== 0) {
-    if (result.stderr.toString().includes("panic")) {
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) {
+    if (stderr.includes("panic")) {
       console.error("cmd stderr");
-      console.log(result.stderr.toString());
+      console.log(stderr);
       console.error("cmd stdout");
-      console.log(result.stdout.toString());
+      console.log(stdout);
       console.error("cmd args");
       console.log(JSON.stringify(cmd));
       console.error("cmd cwd");
@@ -24,10 +25,16 @@ async function testBunRunRequire(dir: string, loader: string | null, filename: s
       throw new Error("panic");
     }
     return "error";
-    // return result.stderr.toString().match(/error: .+/)?.[0];
+    // return stderr.match(/error: .+/)?.[0];
   } else {
-    return JSON.parse(result.stdout.toString());
+    return JSON.parse(stdout);
   }
+}
+
+async function testBunRunRequire(dir: string, loader: string | null, filename: string): Promise<unknown> {
+  if (loader != null) throw new Error("cannot use loader with require()");
+  const cmd = [bunExe(), "-e", `const contents = require('./${filename}'); console.log(JSON.stringify(contents));`];
+  return runCmd(cmd, dir);
 }
 async function testBunRun(dir: string, loader: string | null, filename: string): Promise<unknown> {
   const cmd = [
@@ -35,27 +42,7 @@ async function testBunRun(dir: string, loader: string | null, filename: string):
     "-e",
     `import * as contents from './${filename}'${loader != null ? ` with {type: '${loader}'}` : ""}; console.log(JSON.stringify(contents));`,
   ];
-  const result = Bun.spawnSync({
-    cmd: cmd,
-    cwd: dir,
-  });
-  if (result.exitCode !== 0) {
-    if (result.stderr.toString().includes("panic")) {
-      console.error("cmd stderr");
-      console.log(result.stderr.toString());
-      console.error("cmd stdout");
-      console.log(result.stdout.toString());
-      console.error("cmd args");
-      console.log(JSON.stringify(cmd));
-      console.error("cmd cwd");
-      console.log(dir);
-      throw new Error("panic");
-    }
-    return "error";
-    // return result.stderr.toString().match(/error: .+/)?.[0];
-  } else {
-    return JSON.parse(result.stdout.toString());
-  }
+  return runCmd(cmd, dir);
 }
 async function testBunRunAwaitImport(dir: string, loader: string | null, filename: string): Promise<unknown> {
   const cmd = [
@@ -63,28 +50,7 @@ async function testBunRunAwaitImport(dir: string, loader: string | null, filenam
     "-e",
     `console.log(JSON.stringify(await import('./${filename}'${loader != null ? `, {with: {type: '${loader}'}}` : ""})));`,
   ];
-  const result = Bun.spawnSync({
-    cmd: cmd,
-    cwd: dir,
-  });
-  console.timeEnd("testBunRunAwaitImport: " + dir + " " + loader);
-  if (result.exitCode !== 0) {
-    if (result.stderr.toString().includes("panic")) {
-      console.error("cmd stderr");
-      console.log(result.stderr.toString());
-      console.error("cmd stdout");
-      console.log(result.stdout.toString());
-      console.error("cmd args");
-      console.log(JSON.stringify(cmd));
-      console.error("cmd cwd");
-      console.log(dir);
-      throw new Error("panic");
-    }
-    return "error";
-    // return result.stderr.toString().match(/error: .+/)?.[0];
-  } else {
-    return JSON.parse(result.stdout.toString());
-  }
+  return runCmd(cmd, dir);
 }
 async function testBunBuild(dir: string, loader: string | null, filename: string): Promise<unknown> {
   await Bun.write(
@@ -99,26 +65,7 @@ async function testBunBuild(dir: string, loader: string | null, filename: string
   });
   if (result.success) {
     const cmd = [bunExe(), "out/main_" + loader + ".js"];
-    const result = Bun.spawnSync({
-      cmd: cmd,
-      cwd: dir,
-    });
-    if (result.exitCode !== 0) {
-      if (result.stderr.toString().includes("panic")) {
-        console.error("cmd stderr");
-        console.log(result.stderr.toString());
-        console.error("cmd stdout");
-        console.log(result.stdout.toString());
-        console.error("cmd args");
-        console.log(JSON.stringify(cmd));
-        console.error("cmd cwd");
-        console.log(dir);
-        throw new Error("panic");
-      }
-      return "error";
-    } else {
-      return JSON.parse(result.stdout.toString());
-    }
+    return runCmd(cmd, dir);
   } else {
     return "error";
   }
@@ -137,26 +84,7 @@ async function testBunBuildRequire(dir: string, loader: string | null, filename:
   });
   if (result.success) {
     const cmd = [bunExe(), "out/main_" + loader + ".js"];
-    const result = Bun.spawnSync({
-      cmd: cmd,
-      cwd: dir,
-    });
-    if (result.exitCode !== 0) {
-      if (result.stderr.toString().includes("panic")) {
-        console.error("cmd stderr");
-        console.log(result.stderr.toString());
-        console.error("cmd stdout");
-        console.log(result.stdout.toString());
-        console.error("cmd args");
-        console.log(JSON.stringify(cmd));
-        console.error("cmd cwd");
-        console.log(dir);
-        throw new Error("panic");
-      }
-      return "error";
-    } else {
-      return JSON.parse(result.stdout.toString());
-    }
+    return runCmd(cmd, dir);
   } else {
     return "error";
   }
@@ -173,15 +101,11 @@ const default_tests = Object.fromEntries(
   loaders.map(loader => [loader, { loader, filename: "no_extension" }]),
 ) as Tests;
 async function compileAndTest(code: string, tests: Tests = default_tests): Promise<Record<string, unknown>> {
-  console.time("import {} from '';");
-  const v1 = await compileAndTest_inner(code, tests, testBunRun);
-  console.timeEnd("import {} from '';");
-  console.time("await import()");
-  const v2 = await compileAndTest_inner(code, tests, testBunRunAwaitImport);
-  console.timeEnd("await import()");
-  console.time("Bun.build()");
-  const v3 = await compileAndTest_inner(code, tests, testBunBuild);
-  console.timeEnd("Bun.build()");
+  const [v1, v2, v3] = await Promise.all([
+    compileAndTest_inner(code, tests, testBunRun),
+    compileAndTest_inner(code, tests, testBunRunAwaitImport),
+    compileAndTest_inner(code, tests, testBunBuild),
+  ]);
   if (!Bun.deepEquals(v1, v2) || !Bun.deepEquals(v2, v3)) {
     console.log("====  regular import  ====\n" + JSON.stringify(v1, null, 2) + "\n");
     console.log("====  await import  ====\n" + JSON.stringify(v2, null, 2) + "\n");
@@ -195,13 +119,18 @@ async function compileAndTest_inner(
   tests: Tests,
   cb: (dir: string, loader: string | null, filename: string) => Promise<unknown>,
 ): Promise<Record<string, unknown>> {
-  let res: Record<string, unknown> = {};
-  for (const [label, test] of Object.entries(tests)) {
-    test.dir = tempDirWithFiles("import-attributes", {
-      [test.filename]: code,
-    });
-    res[label] = await cb(test.dir!, test.loader, test.filename);
-  }
+  const dirs: Record<string, string> = {};
+  const entries = Object.entries(tests);
+  const results = await Promise.all(
+    entries.map(async ([label, test]) => {
+      const dir = tempDirWithFiles("import-attributes", {
+        [test.filename]: code,
+      });
+      dirs[label] = dir;
+      return [label, await cb(dir, test.loader, test.filename)] as const;
+    }),
+  );
+  let res: Record<string, unknown> = Object.fromEntries(results);
   if (Object.hasOwn(res, "text")) {
     expect(res.text).toEqual({ default: code });
     delete res.text;
@@ -225,12 +154,12 @@ async function compileAndTest_inner(
         default: { filename: expect.any(String) },
       });
       expect((sqlite_res as any).default.filename.toUpperCase()).toStartWith(
-        path.join(tests.sqlite!.dir!, "out").toUpperCase(),
+        path.join(dirs.sqlite!, "out").toUpperCase(),
       );
     } else {
       expect(sqlite_res).toStrictEqual({
-        db: { filename: path.join(tests.sqlite!.dir!, tests.sqlite!.filename) },
-        default: { filename: path.join(tests.sqlite!.dir!, tests.sqlite!.filename) },
+        db: { filename: path.join(dirs.sqlite!, tests.sqlite!.filename) },
+        default: { filename: path.join(dirs.sqlite!, tests.sqlite!.filename) },
       });
     }
     delete res.sqlite;
@@ -244,7 +173,7 @@ async function compileAndTest_inner(
     } else {
       delete (file_res as any).__esModule;
       expect(file_res).toEqual({
-        default: path.join(tests.file!.dir!, tests.file!.filename),
+        default: path.join(dirs.file!, tests.file!.filename),
       });
     }
     delete res.file;

@@ -5,9 +5,10 @@ import { join } from "path";
 
 // This test file programmatically runs esbuild's decorator test suite
 // (vendor/esbuild/scripts/decorator-tests.ts) against Bun's transpiler.
-// Each test is run as a standalone .ts file in a temp directory with
-// a tsconfig that does NOT have experimentalDecorators, so standard
-// decorators are used.
+// All tests are written into a single .ts file (each wrapped in its own
+// IIFE scope) in a temp directory with a tsconfig that does NOT have
+// experimentalDecorators, so standard decorators are used. A single Bun
+// subprocess transpiles and runs the file, reporting per-test results.
 
 const testBoilerplate = `
 // Polyfill Symbol.metadata (not natively available in JSC)
@@ -53,24 +54,6 @@ function filterStderr(stderr: string) {
     .filter(line => !line.startsWith("WARNING: ASAN"))
     .join("\n")
     .trim();
-}
-
-async function runDecoratorTest(code: string) {
-  using dir = tempDir("es-dec-esbuild", {
-    "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
-    "test.ts": testBoilerplate + "\n" + code,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr: filterStderr(rawStderr), exitCode };
 }
 
 // Read the esbuild decorator test source and extract individual tests
@@ -173,22 +156,101 @@ function shouldTodo(name: string): boolean {
   return todoPatterns.some(p => p.test(name));
 }
 
-describe("ES Decorators (esbuild test suite)", () => {
-  for (const entry of allTests) {
-    const { name, body, isAsync } = entry;
+// Build a single runner script that executes every test body in its own
+// IIFE scope (matching the original per-file isolation) and reports the
+// outcome of each on stdout. This lets us spawn one Bun process instead
+// of one per test while still surfacing per-test pass/fail.
+const PASS_MARKER = "ESDEC_PASS";
+const FAIL_MARKER = "ESDEC_FAIL";
 
-    const testCode = isAsync
-      ? `(async () => {${body}})().catch(e => { console.error(e); process.exit(1); });`
-      : `(() => {${body}})();`;
+function buildRunnerSource(): string {
+  let src = testBoilerplate + "\n";
+  src += `const __PASS = ${JSON.stringify(PASS_MARKER)};\n`;
+  src += `const __FAIL = ${JSON.stringify(FAIL_MARKER)};\n`;
+  src += `function __report(i, err) {\n`;
+  src += `  if (err === undefined) console.log(__PASS + i);\n`;
+  src += `  else console.log(__FAIL + i + __FAIL + (err && (err.stack || err.message) || String(err)).replace(/\\n/g, "\\\\n"));\n`;
+  src += `}\n`;
+  src += `async function __main() {\n`;
+  for (let i = 0; i < allTests.length; i++) {
+    const { name, body, isAsync } = allTests[i];
+    if (shouldTodo(name)) continue;
+    if (isAsync) {
+      src += `try { await (async () => {${body}})(); __report(${i}); } catch (e) { __report(${i}, e); }\n`;
+    } else {
+      src += `try { (() => {${body}})(); __report(${i}); } catch (e) { __report(${i}, e); }\n`;
+    }
+  }
+  src += `}\n__main().catch(e => { console.error(e); process.exit(1); });\n`;
+  return src;
+}
+
+interface RunResult {
+  ok: boolean;
+  error?: string;
+}
+
+async function runAllDecoratorTests(): Promise<{
+  results: Map<number, RunResult>;
+  stderr: string;
+  exitCode: number;
+  stdout: string;
+}> {
+  using dir = tempDir("es-dec-esbuild", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+    "test.ts": buildRunnerSource(),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const stderr = filterStderr(rawStderr);
+
+  const results = new Map<number, RunResult>();
+  for (const line of stdout.split("\n")) {
+    if (line.startsWith(PASS_MARKER)) {
+      const idx = Number(line.slice(PASS_MARKER.length));
+      results.set(idx, { ok: true });
+    } else if (line.startsWith(FAIL_MARKER)) {
+      const rest = line.slice(FAIL_MARKER.length);
+      const sep = rest.indexOf(FAIL_MARKER);
+      const idx = Number(rest.slice(0, sep));
+      const error = rest.slice(sep + FAIL_MARKER.length).replace(/\\n/g, "\n");
+      results.set(idx, { ok: false, error });
+    }
+  }
+
+  return { results, stderr, exitCode, stdout };
+}
+
+const runPromise = runAllDecoratorTests();
+
+describe("ES Decorators (esbuild test suite)", () => {
+  for (let i = 0; i < allTests.length; i++) {
+    const { name } = allTests[i];
 
     if (shouldTodo(name)) {
       test.todo(name);
     } else {
       test(name, async () => {
-        const { stdout, stderr, exitCode } = await runDecoratorTest(testCode);
-        if (exitCode !== 0) {
+        const { results, stderr, exitCode, stdout } = await runPromise;
+        const result = results.get(i);
+        if (!result) {
           throw new Error(
-            `Test "${name}" failed with exit code ${exitCode}\n` + `stdout: ${stdout}\n` + `stderr: ${stderr}`,
+            `Test "${name}" produced no result (runner exit code ${exitCode})\n` +
+              `stdout: ${stdout}\n` +
+              `stderr: ${stderr}`,
+          );
+        }
+        if (!result.ok) {
+          throw new Error(
+            `Test "${name}" failed with exit code ${exitCode}\n` + `stdout: ${result.error}\n` + `stderr: ${stderr}`,
           );
         }
       });

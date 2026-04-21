@@ -589,29 +589,26 @@ describe("Bun.Terminal", () => {
     });
   });
 
-  describe("drain callback", () => {
+  // On Windows the StreamingWriter is async so drain fires after each write.
+  // On POSIX, drain only fires after backpressure clears, which requires a
+  // reader on the slave side; with no child attached the buffer never drains.
+  describe.todoIf(!isWindows)("drain callback", () => {
     test("drain callback is invoked when writer is ready", async () => {
-      const { promise, resolve } = Promise.withResolvers<boolean>();
+      const { promise, resolve } = Promise.withResolvers<void>();
       let drainCalled = false;
 
       const terminal = new Bun.Terminal({
         drain(term) {
           drainCalled = true;
-          resolve(true);
+          resolve();
         },
       });
 
-      // Write some data to trigger drain callback when buffer is flushed
       terminal.write("hello");
-
-      // Wait for drain with timeout - drain may be called immediately or after flush
-      const result = await Promise.race([promise, Bun.sleep(100).then(() => false)]);
-
+      await promise;
       terminal.close();
 
-      // Drain callback should have been called (or will be called on close)
-      // The key is that the callback mechanism works without throwing
-      expect(typeof drainCalled).toBe("boolean");
+      expect(drainCalled).toBe(true);
     });
   });
 

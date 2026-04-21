@@ -168,7 +168,12 @@ pub fn spawnMaybeSync(
         }
         // If we created a new terminal but spawn failed, close it. The
         // writer/reader/finalize deref paths release the remaining refs.
+        // Downgrade the JSRef so the wrapper is GC-eligible, and mark
+        // finalized so onReaderDone skips the JS exit callback — the user
+        // never received this terminal (spawn threw).
         if (terminal_info) |info| {
+            info.terminal.this_value.downgrade();
+            info.terminal.flags.finalized = true;
             info.terminal.closeInternal();
         }
     }

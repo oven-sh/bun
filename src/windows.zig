@@ -3626,7 +3626,6 @@ pub extern "kernel32" fn IsProcessInJob(process: HANDLE, job: HANDLE, result: *B
 
 pub const EXTENDED_STARTUPINFO_PRESENT = 0x80000;
 pub const PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x2000D;
-pub const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x20016;
 
 /// Handle to a Windows pseudoconsole (ConPTY).
 pub const HPCON = *anyopaque;

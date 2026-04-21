@@ -169,7 +169,27 @@ pub fn BundleThread(CompletionStruct: type) type {
                 completion.log = out_log;
             }
 
-            completion.result = .{ .value = try this.runFromJSInNewThread(transpiler.options.entry_points) };
+            // Check the VM-wide sub-build cache ON the bundle thread. Builds
+            // are processed sequentially here, so an earlier build's sub-build
+            // (e.g. worker building frontend.tsx?bundle) may have seeded the
+            // cache. If so, skip the full build — one build, shared result.
+            const cached_result: ?BundleV2.BuildResult = cache_check: {
+                if (!@hasField(CompletionStruct, "js_bundle_owner")) break :cache_check null;
+                const owner = completion.js_bundle_owner orelse break :cache_check null;
+                const cache = this.vmSubBuildCache() orelse break :cache_check null;
+                const snap = cache.lookup(owner.path, owner.config) orelse break :cache_check null;
+                defer snap.deref();
+                const owned = try snap.materialize();
+                break :cache_check BundleV2.BuildResult{
+                    .output_files = std.array_list.Managed(options.OutputFile).fromOwnedSlice(
+                        bun.default_allocator,
+                        owned,
+                    ),
+                    .direct_file_count = snap.direct_file_count,
+                };
+            };
+
+            completion.result = .{ .value = cached_result orelse try this.runFromJSInNewThread(transpiler.options.entry_points) };
 
             var out_log = Logger.Log.init(bun.default_allocator);
             bun.handleOom(this.transpiler.log.appendToWithRecycled(&out_log, true));

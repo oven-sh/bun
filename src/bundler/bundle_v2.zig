@@ -3308,7 +3308,7 @@ pub const BundleV2 = struct {
     /// for paths without a VM (CLI build, certain DevServer-internal
     /// builds), in which case sub-builds fall back to the per-top-level
     /// `sub_build_cache` only.
-    fn vmSubBuildCache(this: *BundleV2) ?*SubBuildCache {
+    pub fn vmSubBuildCache(this: *BundleV2) ?*SubBuildCache {
         const completion = this.completion orelse return null;
         // Called from the bundle worker thread, so use the concurrent
         // accessor that doesn't assert thread-local VM presence.
@@ -3506,6 +3506,20 @@ pub const BundleV2 = struct {
             } else {
                 sub_bundler.pipeline = try BuildPipeline.createOneshot();
             }
+        }
+        // Inherit the parent's completion so the sub-build can access the
+        // VM-wide sub-build cache (via vmSubBuildCache). Without this, the
+        // sub-build seeds nothing and subsequent builds of the same entry
+        // can't reuse the result.
+        sub_bundler.completion = this.completion;
+
+        // Pre-seed the sub-build's per-build cache with the parent's entries.
+        // This ensures nested sub-builds (e.g. worker.ts?bundle containing
+        // frontend.tsx?bundle) reuse results from the parent's earlier
+        // sub-builds (e.g. the top-level frontend.tsx?bundle). Without this,
+        // --compile builds produce different manifests for the same entry.
+        for (this.sub_build_cache.items) |entry| {
+            sub_bundler.sub_build_cache.append(entry) catch {};
         }
         defer {
             // If we created our own oneshot pipeline, free it.

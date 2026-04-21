@@ -82,6 +82,16 @@ pub fn build(this: *JSBundle) !void {
     const global = this.global;
     const vm = global.bunVM();
 
+    // Check if another build (e.g. a worker's sub-build) already produced
+    // output for this same (path, config). Reuse it to ensure identical
+    // manifests between the server and worker.
+    if (vm.bundle_sub_build_cache.lookup(this.path, this.config)) |snap| {
+        defer snap.deref();
+        this.populateFromCacheSnapshot(snap, global);
+        this.build_state = .complete;
+        return;
+    }
+
     var config: JSBundler.Config = .{};
     errdefer config.deinit(bun.default_allocator);
     try config.entry_points.insert(this.path);
@@ -343,17 +353,132 @@ pub fn onBuildComplete(this: *JSBundle, completion_task: *bun.BundleV2.JSBundleC
                 bundle_file_index += 1;
             }
 
-            // Store BundleFile objects on the JSBundle
-            if (files_array) |arr| {
-                this.files_value = .create(arr, globalThis);
-            }
-            if (entrypoint_js_value) |ep_val| {
-                this.entrypoint_value = .create(ep_val, globalThis);
-            }
+            // Seed the VM-wide sub-build cache so other builds of the same
+            // entry (e.g. a worker's sub-build) reuse this result. Also
+            // check if another build already seeded the cache — if so, use
+            // THAT result to ensure identical manifests regardless of build
+            // order.
+            const vm_cache = &globalThis.bunVM().bundle_sub_build_cache;
+            if (vm_cache.lookup(this.path, this.config)) |snap| {
+                // Another build (e.g. worker's sub-build) already built this
+                // entry. Use its result for identical manifests.
+                defer snap.deref();
+                this.populateFromCacheSnapshot(snap, globalThis);
+                this.build_state = .complete;
+            } else {
+                // First build of this entry — seed cache and use our result.
+                var ep_idx: ?u32 = null;
+                for (output_files, 0..) |*of, idx| {
+                    if (of.output_kind == .@"entry-point") {
+                        ep_idx = @intCast(idx);
+                        break;
+                    }
+                }
+                const snap = vm_cache.insert(
+                    this.path,
+                    this.config,
+                    output_files,
+                    ep_idx,
+                    bundle.direct_file_count,
+                ) catch null;
+                if (snap) |s| s.deref();
 
-            this.build_state = .complete;
+                // Store BundleFile objects on the JSBundle
+                if (files_array) |arr| {
+                    this.files_value = .create(arr, globalThis);
+                }
+                if (entrypoint_js_value) |ep_val| {
+                    this.entrypoint_value = .create(ep_val, globalThis);
+                }
+                this.build_state = .complete;
+            }
         },
         .pending => unreachable,
+    }
+}
+
+/// Populate files_value and entrypoint_value from a SubBuildCache snapshot.
+/// Used when another build already produced output for this (path, config).
+fn populateFromCacheSnapshot(this: *JSBundle, snap: *const bun.bundle_v2.SubBuildCache.Snapshot, globalThis: *jsc.JSGlobalObject) void {
+    const output_files = snap.materialize() catch return;
+    defer bun.default_allocator.free(output_files);
+
+    // Only use direct files (not nested sub-build outputs) — same as
+    // patchSubBuildExports which uses `result.output_files[0..direct_file_count]`.
+    const direct_count: u32 = @min(snap.direct_file_count, @as(u32, @intCast(output_files.len)));
+
+    // Count visible files (excluding sourcemaps etc) for array sizing
+    var visible_count: u32 = 0;
+    for (output_files[0..direct_count]) |*of| {
+        switch (of.output_kind) {
+            .sourcemap, .bytecode, .module_info => {},
+            else => visible_count += 1,
+        }
+    }
+
+    const files_array = jsc.JSValue.createEmptyArray(globalThis, visible_count) catch return;
+    var entrypoint_js_value: ?jsc.JSValue = null;
+
+    var actual_idx: u32 = 0;
+    for (output_files[0..direct_count]) |*output_file| {
+        // Skip sourcemaps/bytecode/metafiles — same as patchSubBuildExports
+        switch (output_file.output_kind) {
+            .sourcemap, .bytecode, .module_info, .@"metafile-json", .@"metafile-markdown" => continue,
+            else => {},
+        }
+        var blob = bun.handleOom(output_file.toBlob(bun.default_allocator, globalThis));
+        const content_type = blob.contentTypeOrMimeType() orelse
+            output_file.loader.toMimeType(&.{}).value;
+
+        var route_path = output_file.dest_path;
+        if (bun.strings.hasPrefixComptime(route_path, "./") or bun.strings.hasPrefixComptime(route_path, ".\\"))
+            route_path = route_path[1..];
+        const file_name = if (route_path.len > 0 and route_path[0] == '/') route_path[1..] else route_path;
+
+        const bundle_file_kind: BundleFile.OutputKind = switch (output_file.output_kind) {
+            .@"entry-point" => .@"entry-point",
+            .chunk => .chunk,
+            .asset => .asset,
+            .sourcemap => .sourcemap,
+            else => .asset,
+        };
+
+        var file_size: u64 = output_file.size_without_sourcemap;
+        var encoding_str: ?[]const u8 = null;
+        if (this.config.compress != null and output_file.output_kind != .sourcemap) {
+            if (compressBlob(&blob, globalThis)) |compressed| {
+                blob.deinit();
+                blob = compressed.blob;
+                file_size = compressed.size;
+                encoding_str = compressed.encoding;
+            }
+        }
+
+        const bundle_file = BundleFile.init(file_name, bundle_file_kind, content_type, file_size, blob, encoding_str);
+        const bundle_file_js = BundleFile.toJS(bundle_file, globalThis);
+
+        if (output_file.output_kind == .@"entry-point" and
+            (output_file.loader.isJavaScriptLike() or output_file.loader == .css))
+        {
+            entrypoint_js_value = bundle_file_js;
+            var ep = output_file.dest_path;
+            if (bun.strings.hasPrefixComptime(ep, "./") or bun.strings.hasPrefixComptime(ep, ".\\"))
+                ep = ep[2..]
+            else if (ep.len > 0 and ep[0] == '/')
+                ep = ep[1..];
+            if (this.actual_entrypoint) |old| bun.default_allocator.free(old);
+            this.actual_entrypoint = bun.handleOom(bun.default_allocator.dupe(u8, ep));
+        }
+
+        files_array.putIndex(globalThis, actual_idx, bundle_file_js) catch {};
+        actual_idx += 1;
+    }
+
+    this.files_value.deinit();
+    this.files_value = .create(files_array, globalThis);
+    if (entrypoint_js_value) |ep_val| {
+        this.entrypoint_value.deinit();
+        this.entrypoint_value = .create(ep_val, globalThis);
     }
 }
 

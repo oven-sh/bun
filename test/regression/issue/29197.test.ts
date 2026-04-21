@@ -41,7 +41,7 @@ async function runTS(
   return { stdout, exitCode };
 }
 
-test("accessor field with a legacy decorator parses and runs", async () => {
+test.concurrent("accessor field with a legacy decorator parses and runs", async () => {
   const { stdout, exitCode } = await runTS(`
     function example(target: any, key: any, desc: any): void {
       console.log("dec:" + key + ":" + typeof desc?.get + ":" + typeof desc?.set);
@@ -59,7 +59,7 @@ test("accessor field with a legacy decorator parses and runs", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("undecorated accessor field parses and runs under experimentalDecorators", async () => {
+test.concurrent("undecorated accessor field parses and runs under experimentalDecorators", async () => {
   const { stdout, exitCode } = await runTS(`
     class Foo {
       accessor x = "value";
@@ -76,7 +76,7 @@ test("undecorated accessor field parses and runs under experimentalDecorators", 
   expect(exitCode).toBe(0);
 });
 
-test("static accessor field parses and runs under experimentalDecorators", async () => {
+test.concurrent("static accessor field parses and runs under experimentalDecorators", async () => {
   const { stdout, exitCode } = await runTS(`
     class Counter {
       static accessor count = 0;
@@ -91,7 +91,7 @@ test("static accessor field parses and runs under experimentalDecorators", async
   expect(exitCode).toBe(0);
 });
 
-test("static accessor field is accessible through a subclass", async () => {
+test.concurrent("static accessor field is accessible through a subclass", async () => {
   // A naive rewrite would emit `return this.#storage` for the synthesized
   // static getter/setter, which triggers JavaScript's private-field brand
   // check and throws TypeError when the receiver is a subclass. We must
@@ -111,7 +111,7 @@ test("static accessor field is accessible through a subclass", async () => {
 });
 
 // https://github.com/oven-sh/bun/issues/27335
-test("TypeScript accessibility modifier before accessor works", async () => {
+test.concurrent("TypeScript accessibility modifier before accessor works", async () => {
   const { stdout, exitCode } = await runTS(`
     class Person {
       public accessor name: string = "John";
@@ -128,7 +128,7 @@ test("TypeScript accessibility modifier before accessor works", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("accessor field in a class expression works under experimentalDecorators", async () => {
+test.concurrent("accessor field in a class expression works under experimentalDecorators", async () => {
   const { stdout, exitCode } = await runTS(`
     const Foo = class {
       accessor x = 1;
@@ -143,7 +143,7 @@ test("accessor field in a class expression works under experimentalDecorators", 
   expect(exitCode).toBe(0);
 });
 
-test("legacy decorator on accessor receives an accessor-style descriptor", async () => {
+test.concurrent("legacy decorator on accessor receives an accessor-style descriptor", async () => {
   // TypeScript's `__decorate` invokes property decorators with the
   // descriptor fetched via `Object.getOwnPropertyDescriptor`, so a decorator
   // applied to an `accessor` field sees `get`/`set` — not a data descriptor.
@@ -165,7 +165,7 @@ test("legacy decorator on accessor receives an accessor-style descriptor", async
   expect(exitCode).toBe(0);
 });
 
-test("accessor field initializer can reference outer scope", async () => {
+test.concurrent("accessor field initializer can reference outer scope", async () => {
   const { stdout, exitCode } = await runTS(`
     const base = 10;
     class Box {
@@ -178,7 +178,7 @@ test("accessor field initializer can reference outer scope", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("accessor field with a non-identifier string key", async () => {
+test.concurrent("accessor field with a non-identifier string key", async () => {
   // `"foo-bar"` is a valid class element name but NOT a valid private
   // identifier, so the helper must fall back to the counter-based
   // `#_accessor_storage_N` naming rather than emit `#foo-bar_accessor_storage`.
@@ -198,7 +198,7 @@ test("accessor field with a non-identifier string key", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("accessor field with a computed key evaluates the key exactly once", async () => {
+test.concurrent("accessor field with a computed key evaluates the key exactly once", async () => {
   // The rewrite expands one `accessor [expr]` into a field plus a getter and
   // a setter. Without hoisting, `expr` would run three times (or at least
   // twice for the get/set pair). This test asserts it runs exactly once.
@@ -221,7 +221,7 @@ test("accessor field with a computed key evaluates the key exactly once", async 
   expect(exitCode).toBe(0);
 });
 
-test("synthesized backing storage does not collide with user private field", async () => {
+test.concurrent("synthesized backing storage does not collide with user private field", async () => {
   // A hostile class can declare `#_accessor_storage_0` itself — the
   // synthesized backing-field name must skip past any user-declared
   // collision rather than silently emit two members with the same
@@ -244,7 +244,7 @@ test("synthesized backing storage does not collide with user private field", asy
   expect(exitCode).toBe(0);
 });
 
-test("computed-key temp does not clobber user variable of the same name", async () => {
+test.concurrent("computed-key temp does not clobber user variable of the same name", async () => {
   // The temp variable we hoist for computed-key evaluation uses a
   // `__bun_accessor_key_N$` name. If the user happens to bind that name
   // at module scope, we must pick a different N rather than emit a
@@ -268,7 +268,7 @@ test("computed-key temp does not clobber user variable of the same name", async 
   expect(exitCode).toBe(0);
 });
 
-test("decorated computed-key accessor evaluates the key expression exactly once", async () => {
+test.concurrent("decorated computed-key accessor evaluates the key expression exactly once", async () => {
   // When a computed accessor has a legacy decorator, the rewrite emits
   // `get [(_tmp = expr())]() { ... }` for single-eval semantics, but the
   // decorator descriptor key passed to `__legacyDecorateClassTS(...)` must
@@ -292,7 +292,7 @@ test("decorated computed-key accessor evaluates the key expression exactly once"
   expect(exitCode).toBe(0);
 });
 
-test("decorator metadata: accessor field records its declared type", () => {
+test.concurrent("decorator metadata: accessor field records its declared type", () => {
   // Under `experimentalDecorators: true` + `emitDecoratorMetadata: true`,
   // a decorated typed accessor must still get `design:type` pointing to the
   // user's declared type — not `Object` (which is what happens if the
@@ -335,7 +335,7 @@ test("decorator metadata: accessor field records its declared type", () => {
   expect(out).not.toMatch(/\baccessor\s+str\b/);
 });
 
-test("sibling classes with computed accessor keys use distinct temp vars", async () => {
+test.concurrent("sibling classes with computed accessor keys use distinct temp vars", async () => {
   // Two classes at the same hoisting scope each need a computed-key temp.
   // The counter must not reset to 0 between classes — otherwise both
   // classes would produce `var __bun_accessor_key_0$;` and the second
@@ -354,7 +354,7 @@ test("sibling classes with computed accessor keys use distinct temp vars", async
   expect(exitCode).toBe(0);
 });
 
-test("decorator on a private accessor field is rejected like TypeScript", async () => {
+test.concurrent("decorator on a private accessor field is rejected like TypeScript", async () => {
   // TypeScript emits `TS1206: Decorators are not valid here` for
   // `@dec accessor #x` under `experimentalDecorators`. Bun's parser
   // rejects it at the private-identifier property branch too (the
@@ -374,7 +374,7 @@ test("decorator on a private accessor field is rejected like TypeScript", async 
   expect(exitCode).not.toBe(0);
 });
 
-test("decorated accessor in a class expression is rejected with a clear error", async () => {
+test.concurrent("decorated accessor in a class expression is rejected with a clear error", async () => {
   // Legacy decorators on any class-expression member are a pre-existing
   // Bun gap. Until that gap is closed, refuse to silently drop a decorator
   // on an auto-accessor inside a class expression — users need explicit

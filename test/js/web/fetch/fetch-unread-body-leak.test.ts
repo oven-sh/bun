@@ -213,17 +213,17 @@ test("fetch response body backpressure resumes after clone()-before-body-access"
         // HWM and the socket pauses. Without drain_handler wired on the tee()
         // path, nothing would resume it.
         const reader = clone.body.getReader();
-        await reader.read();
+        const first = await reader.read();
         for (let i = 0; i < 50; i++) await Bun.sleep(2);
         // Now drain both branches; this requires the socket to resume.
         const a = await res.bytes();
-        let b = 0;
+        let b = first.value.byteLength;
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
           b += value.length;
         }
-        if (a.byteLength !== ${SIZE} || b >= ${SIZE} || b === 0) {
+        if (a.byteLength !== ${SIZE} || b !== ${SIZE}) {
           throw new Error("size mismatch: " + a.byteLength + " / " + b);
         }
         console.log("ok");

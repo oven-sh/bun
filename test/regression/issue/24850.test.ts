@@ -56,11 +56,15 @@ describeWithContainer(
       expect(x).toBe(1);
     });
 
-    test("CALL via sql.unsafe (text protocol) still returns multi-result", async () => {
-      const result = await sql.unsafe(`CALL bun_24850('{"id": 3, "value": "world"}')`);
+    test("CALL via sql.unsafe with params (prepared) returns rows without leaking an error", async () => {
+      const result = await sql.unsafe(`CALL bun_24850(?)`, [JSON.stringify({ id: 3, value: "world" })]);
       expect(result.length).toBe(2);
-      const [rows] = result as any;
+      const [rows, ok] = result as any;
       expect(rows[0]).toEqual({ id: 3, value: "world" });
+      expect(ok.length).toBe(0);
+
+      const [{ x }] = await sql`SELECT 1 AS x`;
+      expect(x).toBe(1);
     });
   },
 );

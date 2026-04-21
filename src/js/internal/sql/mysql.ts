@@ -41,8 +41,9 @@ initMySQL(
     }
 
     if (!is_last) {
-      // The Zig side clears the pending value after each callback; re-prime it
-      // so the follow-up result set lands in a fresh array.
+      // The Zig side swaps the pending value out for js_undefined before
+      // invoking this callback; re-prime so the follow-up result set lands in
+      // a fresh array.
       query[_handle].setPendingValue(new SQLResultArray());
       return;
     }

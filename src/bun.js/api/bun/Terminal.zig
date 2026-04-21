@@ -205,12 +205,13 @@ fn initTerminal(
     switch (terminal.writer.start(pty_result.write_fd, true)) {
         .result => terminal.ref(),
         .err => {
-            // Writer never took ownership of write_fd; reader never started.
-            // Close all PTY resources directly and drop the initial ref.
+            // writer.start() may have allocated a poll holding write_fd before
+            // failing; closeInternal → writer.close() frees it and closes the
+            // fd. Pre-set writer_done so onWriterClose's deref is skipped and
+            // the struct isn't freed mid-closeInternal.
+            terminal.flags.writer_done = true;
             terminal.read_fd.close();
             terminal.read_fd = bun.invalid_fd;
-            terminal.write_fd.close();
-            terminal.write_fd = bun.invalid_fd;
             terminal.closeInternal();
             terminal.deref();
             return error.WriterStartFailed;
@@ -220,8 +221,9 @@ fn initTerminal(
     // Start reader with the read fd - adds a ref
     switch (terminal.reader.start(pty_result.read_fd, true)) {
         .err => {
-            // Reader never started; close read_fd directly. Writer was started:
-            // closeInternal -> writer.close() will deref the writer's ref.
+            // Reader never started: closeInternal skips reader.close() but
+            // runs writer.close() → onWriterClose → deref (2→1). Then drop
+            // the initial ref (1→0).
             terminal.read_fd.close();
             terminal.read_fd = bun.invalid_fd;
             terminal.closeInternal();
@@ -317,7 +319,7 @@ pub fn getSlaveFd(this: *Terminal) bun.FD {
 /// Windows: get the ConPTY handle to pass to uv_spawn via
 /// uv_process_options_t.pseudoconsole.
 pub fn getPseudoconsole(this: *Terminal) ?bun.windows.HPCON {
-    bun.assert(Environment.isWindows);
+    if (comptime !Environment.isWindows) return null;
     return this.hpcon;
 }
 

@@ -77,12 +77,14 @@ console.log(new Foo().x);
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("mixing accessor with experimentalDecorators legacy @dec is a clear error, not silent wrong semantics", async () => {
-  using dir = tempDir("issue-29553-mixed", {
-    "tsconfig.json": JSON.stringify({
-      compilerOptions: { experimentalDecorators: true },
-    }),
-    "main.ts": `function legacyDec(target: any, key: string) {}
+test.concurrent(
+  "mixing accessor with experimentalDecorators legacy @dec is a clear error, not silent wrong semantics",
+  async () => {
+    using dir = tempDir("issue-29553-mixed", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { experimentalDecorators: true },
+      }),
+      "main.ts": `function legacyDec(target: any, key: string) {}
 
 class Foo {
   @legacyDec
@@ -91,9 +93,10 @@ class Foo {
   accessor x: number = 0;
 }
 `,
-  });
+    });
 
-  const [, stderr, exitCode] = await runBun(String(dir), "main.ts");
-  expect(stderr).toContain("Cannot mix the `accessor` keyword with `experimentalDecorators: true`");
-  expect(exitCode).not.toBe(0);
-});
+    const [, stderr, exitCode] = await runBun(String(dir), "main.ts");
+    expect(stderr).toContain("Cannot mix the `accessor` keyword with `experimentalDecorators: true`");
+    expect(exitCode).not.toBe(0);
+  },
+);

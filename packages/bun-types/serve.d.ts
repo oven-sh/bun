@@ -686,16 +686,25 @@ declare module "bun" {
       /**
        * Callback called when an error is thrown during request handling
        * @param error The error that was thrown
+       * @param request The {@link Request} that was being handled when the
+       * error was thrown. May be `undefined` if the error occurred before a
+       * {@link Request} was created (for example, during early request
+       * parsing).
        * @returns A response to send to the client
        *
        * @example
        * ```ts
-       * error: (error) => {
+       * error: (error, request) => {
+       *   console.error(`Error while handling ${request?.url}:`, error);
        *   return new Response("Internal Server Error", { status: 500 });
        * }
        * ```
        */
-      error?: (this: Server<WebSocketData>, error: ErrorLike) => Response | Promise<Response> | void | Promise<void>;
+      error?: (
+        this: Server<WebSocketData>,
+        error: ErrorLike,
+        request: Request,
+      ) => Response | Promise<Response> | void | Promise<void>;
 
       /**
        * Uniquely identify a server instance with an ID

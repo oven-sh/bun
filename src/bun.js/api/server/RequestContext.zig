@@ -2006,10 +2006,15 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.server) |server| {
                 if (server.config.onError != .zero and !this.flags.has_called_error_handler) {
                     this.flags.has_called_error_handler = true;
+                    const request_value: jsc.JSValue = if (this.request_weakref.get()) |request|
+                        request.tryJSValue() orelse .js_undefined
+                    else
+                        .js_undefined;
+                    request_value.ensureStillAlive();
                     const result = server.config.onError.call(
                         server.globalThis,
                         server.js_value.tryGet() orelse .js_undefined,
-                        &.{value},
+                        &.{ value, request_value },
                     ) catch |err| server.globalThis.takeException(err);
                     defer result.ensureStillAlive();
                     if (!result.isEmptyOrUndefinedOrNull()) {

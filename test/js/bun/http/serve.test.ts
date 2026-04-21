@@ -658,6 +658,162 @@ describe("streaming", () => {
     );
   });
 
+  describe("error handler receives the Request (#29563)", () => {
+    it("passes the Request as the second argument when fetch throws synchronously", async () => {
+      let receivedRequest: Request | undefined;
+      await runTest(
+        {
+          fetch(_req) {
+            throw new Error("sync boom");
+          },
+          error(e, request) {
+            receivedRequest = request;
+            return new Response(`handled ${request.url} (${request.method}) ${request.headers.get("x-trace")}`, {
+              status: 502,
+            });
+          },
+        },
+        async server => {
+          const url = new URL("/throws/sync?q=1", server.url.origin).toString();
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "x-trace": "abc" },
+            body: "hi",
+          });
+          expect(response.status).toBe(502);
+          expect(await response.text()).toBe(`handled ${url} (POST) abc`);
+          expect(receivedRequest).toBeInstanceOf(Request);
+          expect(receivedRequest!.url).toBe(url);
+          expect(receivedRequest!.method).toBe("POST");
+          expect(receivedRequest!.headers.get("x-trace")).toBe("abc");
+        },
+      );
+    });
+
+    it("passes the Request when fetch returns a rejected promise", async () => {
+      let receivedRequest: Request | undefined;
+      await runTest(
+        {
+          async fetch(_req) {
+            await Bun.sleep(1);
+            throw new Error("async boom");
+          },
+          error(e, request) {
+            receivedRequest = request;
+            return new Response(`async:${request.url}`, { status: 500 });
+          },
+        },
+        async server => {
+          const url = new URL("/throws/async", server.url.origin).toString();
+          const response = await fetch(url);
+          expect(response.status).toBe(500);
+          expect(await response.text()).toBe(`async:${url}`);
+          expect(receivedRequest).toBeInstanceOf(Request);
+          expect(receivedRequest!.url).toBe(url);
+        },
+      );
+    });
+
+    it("passes the Request when a ReadableStream start() throws", async () => {
+      let receivedRequest: Request | undefined;
+      await runTest(
+        {
+          fetch(_req) {
+            return new Response(
+              new ReadableStream({
+                start() {
+                  throw new TypeError("stream start");
+                },
+              }),
+            );
+          },
+          error(e, request) {
+            receivedRequest = request;
+            return new Response(`stream:${request.url}`, { status: 500 });
+          },
+        },
+        async server => {
+          const url = new URL("/stream-throws", server.url.origin).toString();
+          const response = await fetch(url);
+          expect(response.status).toBe(500);
+          expect(await response.text()).toBe(`stream:${url}`);
+          expect(receivedRequest).toBeInstanceOf(Request);
+          expect(receivedRequest!.url).toBe(url);
+        },
+      );
+    });
+
+    it("allows the Request to be used inside a Promise returned from error()", async () => {
+      await runTest(
+        {
+          fetch(_req) {
+            throw new Error("promise boom");
+          },
+          async error(_e, request) {
+            // Yield a few times so the response is produced after the
+            // synchronous onError.call returns.
+            await Bun.sleep(1);
+            await Bun.sleep(1);
+            const body = `${request.url}|${request.method}|${request.headers.get("x-id")}`;
+            return new Response(body, { status: 500 });
+          },
+        },
+        async server => {
+          const url = new URL("/promise-error", server.url.origin).toString();
+          const response = await fetch(url, { headers: { "x-id": "xyz" } });
+          expect(response.status).toBe(500);
+          expect(await response.text()).toBe(`${url}|GET|xyz`);
+        },
+      );
+    });
+
+    it("is the same Request object that was passed to fetch()", async () => {
+      let requestFromFetch: Request | undefined;
+      let requestFromError: Request | undefined;
+      await runTest(
+        {
+          fetch(req) {
+            requestFromFetch = req;
+            throw new Error("same-request boom");
+          },
+          error(_e, request) {
+            requestFromError = request;
+            return new Response("ok", { status: 500 });
+          },
+        },
+        async server => {
+          const response = await fetch(server.url.origin);
+          expect(response.status).toBe(500);
+          // Same JS wrapper object, not just same content.
+          expect(requestFromError).toBe(requestFromFetch);
+        },
+      );
+    });
+
+    it("is backwards-compatible with single-argument error handlers", async () => {
+      let receivedError: Error | undefined;
+      await runTest(
+        {
+          fetch(_req) {
+            throw new TypeError("legacy");
+          },
+          // Intentionally only declare one parameter; this must keep working.
+          error(e) {
+            receivedError = e;
+            return new Response("legacy ok", { status: 500 });
+          },
+        },
+        async server => {
+          const response = await fetch(server.url.origin);
+          expect(response.status).toBe(500);
+          expect(await response.text()).toBe("legacy ok");
+          expect(receivedError).toBeInstanceOf(TypeError);
+          expect(receivedError!.message).toBe("legacy");
+        },
+      );
+    });
+  });
+
   it("text from JS, 2 chunks, with delay", async () => {
     const fixture = resolve(import.meta.dir, "./fetch.js.txt");
     const textToExpect = readFileSync(fixture, "utf-8");

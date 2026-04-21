@@ -401,12 +401,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             defer current_task.enqueue();
 
             for (events) |event| {
-                // `event.index` comes from `kevent.udata` on macOS and can be
-                // stale (pointing past the compacted watchlist) if the kernel
-                // pre-queued an event before `flushEvictions`/swapRemove
-                // re-registered the moved fd. Guard matches what
-                // DevServer.onFileUpdate and path_watcher.onFileUpdate already
-                // do.
+                // Stale udata: kevent.udata can outlive a swapRemove in flushEvictions.
                 if (event.index >= file_paths.len) continue;
                 const file_path = file_paths[event.index];
                 const update_count = counts[event.index] + 1;

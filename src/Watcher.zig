@@ -278,10 +278,7 @@ pub fn flushEvictions(this: *Watcher) void {
     for (this.evict_list[0..this.evict_list_i]) |item| {
         // catch duplicates, since the list is sorted, duplicates will appear right after each other
         if (item == last_item) continue;
-        // `item` may be >= fds.len if a kqueue event with a stale `udata` (i.e.
-        // a watchlist index that has since been compacted away) fed
-        // `removeAtIndex` before the second pass got a chance to run. Match the
-        // bounds check the second pass already has so we don't OOB-read `fds`.
+        // Stale udata from a kevent can point past the compacted watchlist; match the second pass's guard.
         if (item >= fds.len) continue;
 
         if (!Environment.isWindows) {
@@ -300,19 +297,10 @@ pub fn flushEvictions(this: *Watcher) void {
         if (item == last_item or this.watchlist.len <= item) continue;
         this.watchlist.swapRemove(item);
 
-        // On macOS, kqueue events carry a `udata` that encodes the watchlist
-        // index of the fd at registration time. `swapRemove` moves the entry
-        // previously at `watchlist.len` into slot `item`, but its kqueue
-        // registration still points at its old (now invalid) index. Left
-        // unpatched, subsequent kevents for that fd would be routed to the
-        // wrong module, so after the first eviction an atomic write to a
-        // second imported file either stopped propagating or drove the
-        // module graph to oscillate between old and new state. See #29524.
-        //
-        // Re-register the moved entry's fd so its next event carries the
-        // updated index. EV_ADD on an existing (ident, filter) replaces the
-        // registration in place. The just-evicted slot's fd was already
-        // closed in the first pass above so there's nothing to fix up there.
+        // swapRemove put a different entry at `item`, but its kqueue registration still
+        // carries its old `udata` (= pre-swap index). Rewrite it so subsequent kevents
+        // route to the right module; EV_ADD on an existing (ident, filter) replaces in
+        // place. See #29524.
         if (comptime Environment.isMac) {
             if (item < this.watchlist.len) {
                 const moved_fd = this.watchlist.items(.fd)[item];
@@ -343,14 +331,12 @@ fn watchLoop(this: *Watcher) bun.sys.Maybe(void) {
 /// - `fd` is a valid, open file descriptor
 /// - `watchlist_id` matches the entry's index in the watchlist
 ///
-/// It is safe to call this on an `fd` that is already registered — `EV_ADD`
-/// on an existing `(ident, filter)` pair replaces the registration in place,
-/// which `flushEvictions` relies on to rewrite `udata` after `swapRemove`
-/// shuffles the watchlist. Do NOT add a guard that skips already-registered
-/// fds; that silently reintroduces issue #29524.
+/// Safe to call on an already-registered `fd`: `EV_ADD` on an existing
+/// `(ident, filter)` replaces the registration in place, which `flushEvictions`
+/// relies on to rewrite `udata` after `swapRemove`. Adding a
+/// skip-if-registered guard here silently reintroduces #29524.
 ///
-/// Note: This function does not propagate kevent registration errors.
-/// If registration fails, the file will not be watched but no error is returned.
+/// Does not propagate kevent registration errors.
 pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FD, watchlist_id: usize) void {
     const KEvent = std.c.Kevent;
 

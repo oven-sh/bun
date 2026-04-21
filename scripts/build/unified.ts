@@ -112,11 +112,21 @@ const noUnify: readonly string[] = [
 ];
 
 /**
- * How many .cpp files per bundle. WebKit defaults to 8; we use 16 — frontend
- * parsing dominates and ~80 TUs still saturates CI's cores. Measured faster
- * than 8 for both release and ASAN on CI.
+ * How many .cpp files per bundle. WebKit defaults to 8.
+ *
+ * Release (incl. release-asan): 32. Measured 701s vs 866s @ 16 vs 1532s @ 8
+ * release cpp-only — frontend parsing dominates, so more dedup wins. ~70 TUs
+ * still keeps CI's 16–32 cores saturated.
+ *
+ * Debug: 8. Local iteration cares about incremental blast radius — editing
+ * one .cpp recompiles its 7 siblings, not 31.
+ *
+ * Fixed per profile rather than host-core-derived so bundle composition is
+ * identical across machines (ccache, reproducible builds).
  */
-const bundleSize = 16;
+function bundleSizeFor(cfg: Config): number {
+  return cfg.release ? 32 : 8;
+}
 
 export interface UnifiedSplit {
   /** Generated UnifiedSource-*.cpp absolute paths to compile. */
@@ -144,6 +154,7 @@ export interface UnifiedSplit {
 export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[]): UnifiedSplit {
   const outDir = resolve(cfg.buildDir, "unified");
   mkdirSync(outDir, { recursive: true });
+  const bundleSize = bundleSizeFor(cfg);
 
   // Files with active per-file flag overrides (flags.ts) can't share a TU
   // with files that need different flags. Computed here so the override's

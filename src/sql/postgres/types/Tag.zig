@@ -239,60 +239,18 @@ pub const Tag = enum(short) {
         };
     }
 
-    /// For array type OIDs, returns the element type tag. For element types
-    /// that the binding layer treats as plain text (e.g. `tid`, `jsonpath`),
-    /// returns `.text`. Returns the input tag unchanged for non-array types.
+    /// For array type OIDs, returns the element tag that the array serializer
+    /// treats specially (bool/bytea/json/jsonb for element formatting, box for
+    /// the `;` delimiter). Every other array — and every non-array tag —
+    /// maps to `.text`, which is the `String.fromJS` fallback path.
     pub fn arrayElementTag(this: Tag) Tag {
         return switch (this) {
             .bool_array => .bool,
             .bytea_array => .bytea,
-            .char_array => .char,
-            .name_array => .name,
-            .int8_array => .int8,
-            .int2_array => .int2,
-            .int2vector_array => .int2vector,
-            .int4_array => .int4,
-            .text_array => .text,
-            .oid_array => .oid,
-            .xid_array => .xid,
-            .cid_array => .cid,
             .json_array => .json,
-            .xml_array => .xml,
-            .point_array => .point,
-            .lseg_array => .lseg,
-            .path_array => .path,
-            .box_array => .box,
-            .polygon_array => .polygon,
-            .line_array => .line,
-            .cidr_array => .cidr,
-            .float4_array => .float4,
-            .float8_array => .float8,
-            .circle_array => .circle,
-            .macaddr8_array => .macaddr8,
-            .money_array => .money,
-            .macaddr_array => .macaddr,
-            .inet_array => .inet,
-            .aclitem_array => .aclitem,
-            .bpchar_array => .bpchar,
-            .varchar_array => .varchar,
-            .date_array => .date,
-            .time_array => .time,
-            .timestamp_array => .timestamp,
-            .timestamptz_array => .timestamptz,
-            .interval_array => .interval,
-            .pg_database_array, .pg_database_array2 => .pg_database,
-            .timetz_array => .timetz,
-            .bit_array => .bit,
-            .varbit_array => .varbit,
-            .numeric_array => .numeric,
             .jsonb_array => .jsonb,
-            .uuid_array => .uuid,
-            // `tid` has no Tag enum member (commented out at the top of this
-            // file). `jsonpath` does, but `writeElement` has no specialised
-            // encoding for it — both are serialized as plain text, same as
-            // the `else` fallback in `writeBind`.
-            .tid_array, .jsonpath_array => .text,
-            else => this,
+            .box_array => .box,
+            else => .text,
         };
     }
 

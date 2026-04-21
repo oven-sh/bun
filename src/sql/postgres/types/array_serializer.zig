@@ -1,22 +1,6 @@
-//! Serializes a JS array to a PostgreSQL text-format array literal so it can
-//! be bound to a parameter whose server-inferred type is a PG array (e.g.
-//! `text[]`, `int4[]`, `jsonb[]`).
-//!
-//! Used when `sql(object)` is expanded for INSERT/UPDATE and a property value
-//! is a plain JS array — the server infers the parameter type from the column,
-//! and we need to emit a valid literal in that representation.
-//!
-//! Element formatting mirrors `arrayValueSerializer` in
-//! `src/js/internal/sql/postgres.ts`, with extra bytea/json handling for
-//! cases only reachable at bind time (when we know the server-inferred type).
-//!
-//! PG accepts quoted element values for most array types (`{"1"}` for
-//! `int4[]`, `{"true"}` for `bool[]`, `{"2024-01-01"}` for `date[]`), so
-//! quoting universally keeps the serializer simple. We still special-case
-//! element types that need specific encoding:
-//!   - `bytea[]`    -> `"\x<hex>"`
-//!   - `json[]`/`jsonb[]` -> JSON.stringify, quoted
-//!   - `bool[]`     -> bare `t`/`f` (compact + canonical)
+//! Emits a PG text-format array literal (e.g. `{"a","b"}`) for a JS array
+//! bound to an array-typed parameter — used by `sql(object)` expansion.
+//! Mirrors `arrayValueSerializer` in `src/js/internal/sql/postgres.ts`.
 pub const Error = AnyPostgresError || bun.JSError;
 
 pub fn writeTo(

@@ -258,10 +258,9 @@ function defineTests(getSql: () => SQL) {
 /// exercise the fix without needing any configuration. Returns `null` if
 /// no reachable Postgres is found.
 async function resolveLocalPostgresUrl(): Promise<string | null> {
-  const candidates = [
-    process.env.DATABASE_URL,
-    "postgres://bun_test@localhost:5432/bun_test",
-  ].filter((u): u is string => typeof u === "string" && u.length > 0);
+  const candidates = [process.env.DATABASE_URL, "postgres://bun_test@localhost:5432/bun_test"].filter(
+    (u): u is string => typeof u === "string" && u.length > 0,
+  );
 
   for (const url of candidates) {
     try {

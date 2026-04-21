@@ -5,7 +5,7 @@
  *   - resolve all deps → lib paths + include dirs
  *   - emit codegen → generated .cpp/.h/.zig
  *   - emit zig build → bun-zig.o
- *   - build PCH from root.h (implicit deps: WebKit libs + all codegen)
+ *   - build PCH from root-pch.h (implicit deps: WebKit libs + all codegen)
  *   - compile all C/C++ with the PCH
  *   - link everything → bun-debug (or bun-profile, bun-asan, etc.)
  *   - smoke test: run `<exe> --revision` to catch load-time failures

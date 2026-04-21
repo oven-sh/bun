@@ -35,6 +35,8 @@ using namespace WebCore;
 
 #if OS(WINDOWS)
 #ifndef mode_t
+#pragma push_macro("mode_t")
+#define BUN_PUSHED_MODE_T
 #define mode_t int32_t
 #endif
 
@@ -944,3 +946,8 @@ void initJSBigIntStatsClassStructure(JSC::LazyClassStructure::Initializer& init)
 }
 
 } // namespace Bun
+
+#ifdef BUN_PUSHED_MODE_T
+#pragma pop_macro("mode_t")
+#undef BUN_PUSHED_MODE_T
+#endif

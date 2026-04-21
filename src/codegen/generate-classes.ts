@@ -1600,7 +1600,7 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
   const name = className(typeName);
 
   let DEFINE_VISIT_CHILDREN_LIST = [...Object.entries(fields), ...Object.entries(proto)]
-    .filter(([name, { cache = false, internal = false }]) => (cache || internal) === true)
+    .filter(([name, { cache = false }]) => cache === true)
     .map(([name]) => `visitor.append(thisObject->m_${name});`)
     .join("\n");
 

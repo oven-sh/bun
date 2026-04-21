@@ -16,6 +16,10 @@ pub const PosixLoop = extern struct {
     /// Number of polls owned by Bun
     active: u32 = 0,
 
+    /// Incremented atomically by wakeup(), swapped to 0 before epoll/kqueue.
+    /// If non-zero, the event loop will return immediately so we can skip the GC safepoint.
+    pending_wakeups: u32 = 0,
+
     /// The list of ready polls
     ready_polls: [1024]EventType align(16),
 

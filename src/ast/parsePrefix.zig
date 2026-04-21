@@ -390,7 +390,58 @@ pub fn ParsePrefix(
                 _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true, .allow_const_modifier = true });
             }
 
-            const class = try p.parseClass(classKeyword, name, ParseClassOptions{});
+            const class = try p.parseClass(classKeyword, name, ParseClassOptions{
+                .allow_ts_decorators = is_typescript_enabled or p.options.features.standard_decorators,
+            });
+            p.popScope();
+
+            return p.newExpr(class, loc);
+        }
+        fn t_at(noalias p: *P) anyerror!Expr {
+            // Parse decorators before a class expression: @dec class { ... }
+            const ts_decorators = try p.parseTypeScriptDecorators();
+
+            // Expect class keyword after decorators
+            if (p.lexer.token != .t_class) {
+                try p.lexer.expected(.t_class);
+                return error.SyntaxError;
+            }
+
+            const loc = p.lexer.loc();
+            const classKeyword = p.lexer.range();
+            try p.lexer.next();
+            var name: ?js_ast.LocRef = null;
+
+            _ = p.pushScopeForParsePass(.class_name, loc) catch unreachable;
+
+            // Parse an optional class name
+            if (p.lexer.token == .t_identifier) {
+                const name_text = p.lexer.identifier;
+                if (!is_typescript_enabled or !strings.eqlComptime(name_text, "implements")) {
+                    if (p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eqlComptime(name_text, "await")) {
+                        p.log.addRangeError(p.source, p.lexer.range(), "Cannot use \"await\" as an identifier here") catch unreachable;
+                    }
+
+                    name = js_ast.LocRef{
+                        .loc = p.lexer.loc(),
+                        .ref = p.newSymbol(
+                            .other,
+                            name_text,
+                        ) catch unreachable,
+                    };
+                    try p.lexer.next();
+                }
+            }
+
+            // Even anonymous classes can have TypeScript type parameters
+            if (is_typescript_enabled) {
+                _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true, .allow_const_modifier = true });
+            }
+
+            const class = try p.parseClass(classKeyword, name, ParseClassOptions{
+                .ts_decorators = ts_decorators,
+                .allow_ts_decorators = true,
+            });
             p.popScope();
 
             return p.newExpr(class, loc);
@@ -727,6 +778,7 @@ pub fn ParsePrefix(
                 .t_plus_plus => t_plus_plus(p),
                 .t_function => t_function(p),
                 .t_class => t_class(p),
+                .t_at => t_at(p),
                 .t_new => t_new(p, flags),
                 .t_super => t_super(p, level),
                 else => {

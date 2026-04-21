@@ -112,6 +112,7 @@ pub fn onShellMkdirTaskDone(this: *Mkdir, task: *ShellMkdirTask) void {
 
     if (err) |e| {
         const error_string = this.bltn().taskErrorToString(.mkdir, e);
+        if (this.state.exec.err) |prev| prev.deref();
         this.state.exec.err = e;
         output_task.start(error_string).run();
         return;
@@ -129,8 +130,8 @@ pub const ShellMkdirOutputTask = OutputTask(Mkdir, .{
 
 const ShellMkdirOutputTaskVTable = struct {
     pub fn writeErr(this: *Mkdir, childptr: anytype, errbuf: []const u8) ?Yield {
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stderr.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
         _ = this.bltn().writeNoIO(.stderr, errbuf);
@@ -142,8 +143,8 @@ const ShellMkdirOutputTaskVTable = struct {
     }
 
     pub fn writeOut(this: *Mkdir, childptr: anytype, output: *OutputSrc) ?Yield {
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stdout.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             const slice = output.slice();
             log("THE SLICE: {d} {s}", .{ slice.len, slice });
             return this.bltn().stdout.enqueue(childptr, slice, safeguard);
@@ -256,7 +257,7 @@ pub const ShellMkdirTask = struct {
             switch (node_fs.mkdirRecursiveImpl(args, *MkdirVerboseVTable, &vtable)) {
                 .result => {},
                 .err => |e| {
-                    this.err = e.withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
+                    this.err = e.withPath(filepath).toShellSystemError();
                     std.mem.doNotOptimizeAway(&node_fs);
                 },
             }
@@ -274,7 +275,7 @@ pub const ShellMkdirTask = struct {
                     }
                 },
                 .err => |e| {
-                    this.err = e.withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
+                    this.err = e.withPath(filepath).toShellSystemError();
                     std.mem.doNotOptimizeAway(&node_fs);
                 },
             }

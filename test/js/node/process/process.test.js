@@ -269,19 +269,21 @@ it("process.umask()", () => {
 });
 
 it("process.versions", () => {
-  // Expected dependency versions (from CMake-generated header)
+  // Expected dependency versions — must match scripts/build/deps/*.ts commits.
+  // These are the ACTUAL commits built into bun (not derived values, so
+  // bumping a dep requires updating this test too).
   const expectedVersions = {
-    boringssl: "29a2cd359458c9384694b75456026e4b57e3e567",
-    libarchive: "898dc8319355b7e985f68a9819f182aaed61b53a",
-    mimalloc: "4c283af60cdae205df5a872530c77e2a6a307d43",
+    boringssl: "0c5fce43b7ed5eb6001487ee48ac65766f5ddcd1",
+    libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
+    mimalloc: "57029fb1f193e633462e76af745599e1dbfd4b58",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
-    zlib: "886098f3f339617b4243b286f5ed364b9989e245",
-    tinycc: "ab631362d839333660a265d3084d8ff060b96753",
-    lolhtml: "8d4c273ded322193d017042d1f48df2766b0f88b",
-    ares: "d1722e6e8acaf10eb73fa995798a9cd421d9f85e",
-    libdeflate: "dc76454a39e7e83b68c3704b6e3784654f8d5ac5",
-    zstd: "794ea1b0afca0f020f4e57b6732332231fb23c70",
-    lshpack: "3d0f1fc1d6e66a642e7a98c55deb38aa986eb4b0",
+    zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
+    tinycc: "12882eee073cfe5c7621bcfadf679e1372d4537b",
+    lolhtml: "77127cd2b8545998756e8d64e36ee2313c4bb312",
+    ares: "3ac47ee46edd8ea40370222f91613fc16c434853",
+    libdeflate: "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
+    zstd: "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+    lshpack: "8905c024b6d052f083a3d11d0a169b3c2735c8a1",
   };
 
   for (const [name, expectedHash] of Object.entries(expectedVersions)) {

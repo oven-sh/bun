@@ -245,6 +245,16 @@ pub const All = struct {
     }
 
     pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bool {
+        // On POSIX, if there are pending immediate tasks, use a zero timeout
+        // so epoll/kqueue returns immediately without the overhead of writing
+        // to the eventfd via wakeup().
+        if (comptime Environment.isPosix) {
+            if (vm.event_loop.immediate_tasks.items.len > 0) {
+                spec.* = .{ .nsec = 0, .sec = 0 };
+                return true;
+            }
+        }
+
         var maybe_now: ?timespec = null;
         while (this.timers.peek()) |min| {
             const now = maybe_now orelse now: {

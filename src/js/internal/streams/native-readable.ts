@@ -111,7 +111,7 @@ function ensureConstructed(this: NativeReadable, cb: null | (() => void)) {
 function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
   maxToRead ??= stream[kHighWaterMark] as number;
   var chunk = stream[kRemainingChunk];
-  if (chunk?.byteLength ?? 0 < MIN_BUFFER_SIZE) {
+  if ((chunk?.byteLength ?? 0) < MIN_BUFFER_SIZE) {
     var size = maxToRead > MIN_BUFFER_SIZE ? maxToRead : MIN_BUFFER_SIZE;
     stream[kRemainingChunk] = chunk = Buffer.alloc(size);
   }

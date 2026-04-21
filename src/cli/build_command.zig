@@ -3,6 +3,7 @@ pub const BuildCommand = struct {
         Global.configureAllocator(.{ .long_running = true });
         const allocator = ctx.allocator;
         var log = ctx.log;
+        const user_requested_browser_target = ctx.args.target != null and ctx.args.target.? == .browser;
         if (ctx.bundler_options.compile or ctx.bundler_options.bytecode) {
             // set this early so that externals are set up correctly and define is right
             ctx.args.target = .bun;
@@ -84,6 +85,7 @@ pub const BuildCommand = struct {
         this_transpiler.options.drop = ctx.args.drop;
         this_transpiler.options.bundler_feature_flags = Runtime.Features.initBundlerFeatureFlags(allocator, ctx.args.feature_flags);
 
+        this_transpiler.options.allow_unresolved = if (ctx.bundler_options.allow_unresolved) |a| options.AllowUnresolved.fromStrings(a) else .all;
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
         this_transpiler.options.metafile = ctx.bundler_options.metafile.len > 0 or ctx.bundler_options.metafile_md.len > 0;
 
@@ -98,44 +100,75 @@ pub const BuildCommand = struct {
         var was_renamed_from_index = false;
 
         if (ctx.bundler_options.compile) {
-            if (ctx.bundler_options.outdir.len > 0) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --outdir", .{});
-                Global.exit(1);
-                return;
-            }
-
-            const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_target.os, "root/");
-
-            this_transpiler.options.public_path = base_public_path;
-
-            if (outfile.len == 0) {
-                outfile = std.fs.path.basename(this_transpiler.options.entry_points[0]);
-                const ext = std.fs.path.extension(outfile);
-                if (ext.len > 0) {
-                    outfile = outfile[0 .. outfile.len - ext.len];
-                }
-
-                if (strings.eqlComptime(outfile, "index")) {
-                    outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "index");
-                    was_renamed_from_index = !strings.eqlComptime(outfile, "index");
-                }
-
-                if (strings.eqlComptime(outfile, "bun")) {
-                    outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "bun");
-                }
-            }
-
-            // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
-            if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for --outfile", .{});
-                Global.exit(1);
-                return;
-            }
-
             if (ctx.bundler_options.transform_only) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> --compile does not support --no-bundle", .{});
                 Global.exit(1);
                 return;
+            }
+
+            // Check if all entrypoints are HTML files for standalone HTML mode
+            const has_all_html_entrypoints = brk: {
+                if (this_transpiler.options.entry_points.len == 0) break :brk false;
+                for (this_transpiler.options.entry_points) |entry_point| {
+                    if (!strings.hasSuffixComptime(entry_point, ".html")) break :brk false;
+                }
+                break :brk true;
+            };
+
+            if (user_requested_browser_target and has_all_html_entrypoints) {
+                // --compile --target=browser with all HTML entrypoints: produce self-contained HTML
+                ctx.args.target = .browser;
+                if (ctx.bundler_options.code_splitting) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile --target browser with --splitting", .{});
+                    Global.exit(1);
+                    return;
+                }
+
+                this_transpiler.options.compile_to_standalone_html = true;
+                // This is not a bun executable compile - clear compile flags
+                this_transpiler.options.compile = false;
+                ctx.bundler_options.compile = false;
+
+                if (ctx.bundler_options.outdir.len == 0 and outfile.len == 0) {
+                    outfile = std.fs.path.basename(this_transpiler.options.entry_points[0]);
+                }
+
+                this_transpiler.options.supports_multiple_outputs = ctx.bundler_options.outdir.len > 0;
+            } else {
+                // Standard --compile: produce standalone bun executable
+                if (ctx.bundler_options.outdir.len > 0) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --outdir", .{});
+                    Global.exit(1);
+                    return;
+                }
+
+                const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_target.os, "root/");
+
+                this_transpiler.options.public_path = base_public_path;
+
+                if (outfile.len == 0) {
+                    outfile = std.fs.path.basename(this_transpiler.options.entry_points[0]);
+                    const ext = std.fs.path.extension(outfile);
+                    if (ext.len > 0) {
+                        outfile = outfile[0 .. outfile.len - ext.len];
+                    }
+
+                    if (strings.eqlComptime(outfile, "index")) {
+                        outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "index");
+                        was_renamed_from_index = !strings.eqlComptime(outfile, "index");
+                    }
+
+                    if (strings.eqlComptime(outfile, "bun")) {
+                        outfile = std.fs.path.basename(std.fs.path.dirname(this_transpiler.options.entry_points[0]) orelse "bun");
+                    }
+                }
+
+                // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
+                if (strings.eqlComptime(outfile, "bun") or strings.eqlComptime(outfile, "bunx")) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for --outfile", .{});
+                    Global.exit(1);
+                    return;
+                }
             }
         }
 
@@ -512,6 +545,57 @@ pub const BuildCommand = struct {
                 if (result != .success) {
                     Output.printErrorln("{s}", .{result.err.slice()});
                     Global.exit(1);
+                }
+
+                // Write external sourcemap files next to the compiled executable.
+                // With --splitting, there can be multiple .map files (one per chunk).
+                if (this_transpiler.options.source_map == .external) {
+                    for (output_files) |f| {
+                        if (f.output_kind == .sourcemap and f.value == .buffer) {
+                            const sourcemap_bytes = f.value.buffer.bytes;
+                            if (sourcemap_bytes.len == 0) continue;
+
+                            // Use the sourcemap's own dest_path basename if available,
+                            // otherwise fall back to {outfile}.map
+                            const map_basename = if (f.dest_path.len > 0)
+                                bun.path.basename(f.dest_path)
+                            else brk: {
+                                const exe_base = bun.path.basename(outfile);
+                                break :brk if (compile_target.os == .windows and !strings.hasSuffixComptime(exe_base, ".exe"))
+                                    try std.fmt.allocPrint(allocator, "{s}.exe.map", .{exe_base})
+                                else
+                                    try std.fmt.allocPrint(allocator, "{s}.map", .{exe_base});
+                            };
+
+                            // root_dir already points to the outfile's parent directory,
+                            // so use map_basename (not a path with directory components)
+                            // to avoid writing to a doubled directory path.
+                            var pathbuf: bun.PathBuffer = undefined;
+                            switch (bun.jsc.Node.fs.NodeFS.writeFileWithPathBuffer(
+                                &pathbuf,
+                                .{
+                                    .data = .{ .buffer = .{
+                                        .buffer = .{
+                                            .ptr = @constCast(sourcemap_bytes.ptr),
+                                            .len = @as(u32, @truncate(sourcemap_bytes.len)),
+                                            .byte_len = @as(u32, @truncate(sourcemap_bytes.len)),
+                                        },
+                                    } },
+                                    .encoding = .buffer,
+                                    .dirfd = .fromStdDir(root_dir),
+                                    .file = .{ .path = .{
+                                        .string = bun.PathString.init(map_basename),
+                                    } },
+                                },
+                            )) {
+                                .err => |err| {
+                                    Output.err(err, "failed to write sourcemap file '{s}'", .{map_basename});
+                                    had_err = true;
+                                },
+                                .result => {},
+                            }
+                        }
+                    }
                 }
 
                 const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));

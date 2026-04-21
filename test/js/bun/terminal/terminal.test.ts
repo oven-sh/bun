@@ -1152,9 +1152,13 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
 
   test("existing terminal works with subprocess", async () => {
     const dataChunks: Uint8Array[] = [];
+    const { promise: gotData, resolve: gotDataResolve } = Promise.withResolvers<void>();
 
     await using terminal = new Bun.Terminal({
-      data: (_t, data) => dataChunks.push(data),
+      data: (_t, data) => {
+        dataChunks.push(data);
+        if (Buffer.concat(dataChunks).includes("hello")) gotDataResolve();
+      },
     });
 
     const proc = Bun.spawn(["echo", "hello"], { terminal });
@@ -1165,7 +1169,9 @@ describe.todoIf(isWindows)("Bun.spawn with terminal option", () => {
     await proc.exited;
     expect(proc.exitCode).toBe(0);
 
-    // Data should have been received
+    // PTY data is delivered asynchronously and may arrive after the child exits;
+    // wait for the data callback rather than assuming it already fired.
+    await gotData;
     const output = Buffer.concat(dataChunks).toString();
     expect(output).toContain("hello");
   });

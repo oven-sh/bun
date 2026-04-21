@@ -60,16 +60,18 @@ async function getDevServerURL() {
   async function readStream() {
     const string_decoder = new StringDecoder("utf-8");
     const stdout = dev_server!.stdout!;
+    let accumulated = "";
     for await (const chunk of stdout) {
       const str = string_decoder.write(chunk);
       console.error(str);
 
       if (!hasLoaded) {
-        let match = str.match(/http:\/\/localhost:\d+/);
+        accumulated += str;
+        let match = accumulated.match(/http:\/\/localhost:\d+/);
         if (match) {
           baseUrl = match[0];
         }
-        if (str.toLowerCase().includes("ready")) {
+        if (accumulated.toLowerCase().includes("ready") && baseUrl) {
           hasLoaded = true;
           loaded();
         }

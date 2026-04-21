@@ -1,23 +1,27 @@
 pub const FileCopier = struct {
     src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
-    dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }),
+    dest_subpath: bun.Path(.{ .sep = .auto, .unit = .os }),
     walker: Walker,
 
     pub fn init(
         src_dir: FD,
         src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
-        dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }),
+        dest_subpath: bun.Path(.{ .sep = .auto, .unit = .os }),
         skip_dirnames: []const bun.OSPathSlice,
     ) OOM!FileCopier {
         return .{
             .src_path = src_path,
             .dest_subpath = dest_subpath,
-            .walker = try .walk(
-                src_dir,
-                bun.default_allocator,
-                &.{},
-                skip_dirnames,
-            ),
+            .walker = walker: {
+                var w = try Walker.walk(
+                    src_dir,
+                    bun.default_allocator,
+                    &.{},
+                    skip_dirnames,
+                );
+                w.resolve_unknown_entry_types = true;
+                break :walker w;
+            },
         };
     }
 
@@ -94,8 +98,22 @@ pub const FileCopier = struct {
                         }
                     },
                     .file => {
-                        bun.copyFile(this.src_path.sliceZ(), this.dest_subpath.sliceZ()).unwrap() catch {
-                            if (bun.Dirname.dirname(u16, entry.path)) |entry_dirname| {
+                        switch (bun.copyFile(this.src_path.sliceZ(), this.dest_subpath.sliceZ())) {
+                            .result => {},
+                            .err => |first_err| {
+                                // Retry after creating the parent directory.
+                                // For root-level files (`index.js`,
+                                // `package.json`, `LICENSE`) `dirname` is
+                                // null and there is no missing parent to
+                                // create — `dest_dir` itself was already
+                                // opened above — so the original error is the
+                                // real failure and must propagate. Silently
+                                // continuing here would let a staged
+                                // global-store entry be renamed into place
+                                // with files missing.
+                                const entry_dirname = bun.Dirname.dirname(u16, entry.path) orelse {
+                                    return .initErr(first_err);
+                                };
                                 bun.MakePath.makePath(u16, dest_dir, entry_dirname) catch {};
                                 switch (bun.copyFile(this.src_path.sliceZ(), this.dest_subpath.sliceZ())) {
                                     .result => {},
@@ -103,8 +121,8 @@ pub const FileCopier = struct {
                                         return .initErr(err);
                                     },
                                 }
-                            }
-                        };
+                            },
+                        }
                     },
                     else => unreachable,
                 }

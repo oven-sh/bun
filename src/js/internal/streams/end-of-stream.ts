@@ -26,6 +26,7 @@ const SymbolDispose = Symbol.dispose;
 const PromisePrototypeThen = $Promise.prototype.$then;
 
 let addAbortListener;
+let AsyncLocalStorage;
 
 function isRequest(stream) {
   return stream.setHeader && typeof stream.abort === "function";
@@ -45,7 +46,8 @@ function eos(stream, options, callback) {
   validateFunction(callback, "callback");
   validateAbortSignal(options.signal, "options.signal");
 
-  callback = once(callback);
+  AsyncLocalStorage ??= require("node:async_hooks").AsyncLocalStorage;
+  callback = once(AsyncLocalStorage.bind(callback));
 
   if (isReadableStream(stream) || isWritableStream(stream)) {
     return eosWeb(stream, options, callback);

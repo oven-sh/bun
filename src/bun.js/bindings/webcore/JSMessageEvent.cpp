@@ -454,7 +454,7 @@ void JSMessageEvent::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<JSMessageEvent*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
     visitor.reportExtraMemoryVisited(thisObject->wrapped().memoryCost());
 }
 
@@ -466,7 +466,7 @@ void JSMessageEvent::visitOutputConstraints(JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<JSMessageEvent*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 template void JSMessageEvent::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);

@@ -656,11 +656,15 @@ TLSSocket.prototype.setSession = function setSession(session) {
 };
 
 TLSSocket.prototype.getPeerCertificate = function getPeerCertificate(abbreviated) {
-  const cert =
-    arguments.length < 1 ? this._handle?.getPeerCertificate?.() : this._handle?.getPeerCertificate?.(abbreviated);
-  if (cert) {
-    return translatePeerCertificate(cert);
+  if (this._handle) {
+    const cert =
+      arguments.length < 1 ? this._handle.getPeerCertificate?.() : this._handle.getPeerCertificate?.(abbreviated);
+    if (cert) {
+      return translatePeerCertificate(cert);
+    }
+    return {};
   }
+  return null;
 };
 
 TLSSocket.prototype.getCertificate = function getCertificate() {
@@ -681,16 +685,24 @@ TLSSocket.prototype.getX509Certificate = function getX509Certificate() {
 };
 
 TLSSocket.prototype[buntls] = function (port, host) {
+  const ctx = this[ksecureContext];
+  // RFC 6066 forbids IP literals in SNI. Match Node.js: only default servername to host
+  // when host is not an IP. For IP hosts, pass "" so the native layer skips SNI instead of
+  // falling back to the connection host.
+  let servername = this.servername || ctx?.servername;
+  if (servername === undefined) {
+    servername = host && !net.isIP(host) ? host : "";
+  }
   return {
     socket: this._handle,
     ALPNProtocols: this.ALPNProtocols,
-    serverName: this.servername || host || "localhost",
     checkServerIdentity: this[kcheckServerIdentity],
     session: this[ksession],
     rejectUnauthorized: this._rejectUnauthorized,
     requestCert: this._requestCert,
     ciphers: this.ciphers,
-    ...this[ksecureContext],
+    ...ctx,
+    servername,
   };
 };
 
@@ -866,7 +878,15 @@ function normalizeConnectArgs(listArgs) {
 function connect(...args) {
   let normal = normalizeConnectArgs(args);
   const options = normal[0];
-  const { ALPNProtocols } = options as { ALPNProtocols?: unknown };
+  const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: unknown };
+
+  if (servername && net.isIP(servername)) {
+    throw $ERR_INVALID_ARG_VALUE(
+      "options.servername",
+      servername,
+      "Setting the TLS ServerName to an IP address is not permitted.",
+    );
+  }
 
   if (ALPNProtocols) {
     convertALPNProtocols(ALPNProtocols, options);

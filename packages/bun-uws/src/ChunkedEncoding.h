@@ -32,116 +32,108 @@ namespace uWS {
     constexpr uint64_t STATE_HAS_SIZE = 1ull << (sizeof(uint64_t) * 8 - 1);//0x8000000000000000;
     constexpr uint64_t STATE_IS_CHUNKED = 1ull << (sizeof(uint64_t) * 8 - 2);//0x4000000000000000;
     constexpr uint64_t STATE_IS_CHUNKED_EXTENSION = 1ull << (sizeof(uint64_t) * 8 - 3);//0x2000000000000000;
-    constexpr uint64_t STATE_SIZE_MASK = ~(STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_IS_CHUNKED_EXTENSION);//0x1FFFFFFFFFFFFFFF;
+    constexpr uint64_t STATE_WAITING_FOR_LF = 1ull << (sizeof(uint64_t) * 8 - 4);//0x1000000000000000;
+    /* RFC 7230 4.1: chunk-size = 1*HEXDIG. Tracks that at least one hex digit has
+     * been consumed for the current chunk-size line, across packet boundaries.
+     * Without this a bare "\r\n" or ";ext\r\n" would parse as size 0. */
+    constexpr uint64_t STATE_HAS_HEXDIG = 1ull << (sizeof(uint64_t) * 8 - 5);//0x0800000000000000;
+    constexpr uint64_t STATE_SIZE_MASK = ~(STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_IS_CHUNKED_EXTENSION | STATE_WAITING_FOR_LF | STATE_HAS_HEXDIG);//0x07FFFFFFFFFFFFFF;
     constexpr uint64_t STATE_IS_ERROR = ~0ull;//0xFFFFFFFFFFFFFFFF;
-    constexpr uint64_t STATE_SIZE_OVERFLOW = 0x0Full << (sizeof(uint64_t) * 8 - 8);//0x0F00000000000000;
+    /* Overflow guard: if any of bits 54-58 are set before the next *16, one more
+     * hex digit (plus the +2 for the trailing CRLF of chunk-data) would carry into
+     * STATE_HAS_HEXDIG at bit 59. Limits chunk size to 14 hex digits (~72 PB). */
+    constexpr uint64_t STATE_SIZE_OVERFLOW = 0x1Full << (sizeof(uint64_t) * 8 - 10);//0x07C0000000000000;
 
-    inline unsigned int chunkSize(uint64_t state) {
+    inline uint64_t chunkSize(uint64_t state) {
         return state & STATE_SIZE_MASK;
     }
 
-    inline bool isParsingChunkedExtension(uint64_t state) {
-        return (state & STATE_IS_CHUNKED_EXTENSION) != 0;
-    }
+    /* Parses the chunk-size line: HEXDIG+ [;ext...] CRLF
+     *
+     * Returns the new state. On return, exactly one of:
+     *   - state has STATE_HAS_SIZE set (success, data advanced past LF)
+     *   - state == STATE_IS_ERROR     (malformed input)
+     *   - data is empty                (short read; flags persist for resume)
+     *
+     * Resume flags:
+     *   STATE_WAITING_FOR_LF       -> saw '\r' on previous call, need '\n'
+     *   STATE_IS_CHUNKED_EXTENSION -> mid-extension, skip hex parsing on resume
+     *
+     * Structure follows upstream uWS (scan-for-LF) with strict CRLF validation
+     * added. Every byte is consumed in a forward scan so TCP segment boundaries
+     * splitting the line at any point are handled by construction.
+     *
+     * RFC 7230 4.1.1:
+     *   chunk          = chunk-size [ chunk-ext ] CRLF chunk-data CRLF
+     *   chunk-size     = 1*HEXDIG
+     *   chunk-ext      = *( ";" chunk-ext-name [ "=" chunk-ext-val ] )
+     *   chunk-ext-name = token
+     *   chunk-ext-val  = token / quoted-string  (TODO: quoted-string unsupported)
+     */
+    inline uint64_t consumeHexNumber(std::string_view &data, uint64_t state) {
+        /* Resume: '\r' was the last byte of the previous segment. Rare path,
+         * use data directly to avoid the p/len load on the hot path. */
+        if (state & STATE_WAITING_FOR_LF) [[unlikely]] {
+            if (!data.length()) return state;
+            if (data[0] != '\n') return STATE_IS_ERROR;
+            if (!(state & STATE_HAS_HEXDIG)) return STATE_IS_ERROR;
+            data.remove_prefix(1);
+            return ((state & ~(STATE_WAITING_FOR_LF | STATE_IS_CHUNKED_EXTENSION | STATE_HAS_HEXDIG)) + 2)
+                   | STATE_HAS_SIZE | STATE_IS_CHUNKED;
+        }
 
-    /* Reads hex number until CR or out of data to consume. Updates state. Returns bytes consumed. */
-    inline void consumeHexNumber(std::string_view &data, uint64_t &state) {
+        /* Load pointer+length into locals so the loops operate in registers.
+         * Without this, Clang writes back to the string_view on every iteration.
+         * Error paths skip the writeback: HttpParser returns immediately on
+         * STATE_IS_ERROR and never reads data. */
+        const char *p = data.data();
+        size_t len = data.length();
 
-        /* RFC 9110: 5.5 Field Values (TLDR; anything above 31 is allowed \r, \n ; depending on context)*/
-
-        if(!isParsingChunkedExtension(state)){
-            /* Consume everything higher than 32 and not ; (extension)*/
-            while (data.length() && data[0] > 32 && data[0] != ';') {
-
-                unsigned char digit = (unsigned char)data[0];
-                if (digit >= 'a') {
-                    digit = (unsigned char) (digit - ('a' - ':'));
-                } else if (digit >= 'A') {
-                    digit = (unsigned char) (digit - ('A' - ':'));
-                }
-
-                unsigned int number = ((unsigned int) digit - (unsigned int) '0');
-
-                if (number > 16 || (chunkSize(state) & STATE_SIZE_OVERFLOW)) {
-                    state = STATE_IS_ERROR;
-                    return;
-                }
-
-                // extract state bits
-                uint64_t bits = /*state &*/ STATE_IS_CHUNKED;
-
-                state = (state & STATE_SIZE_MASK) * 16ull + number;
-
-                state |= bits;
-                data.remove_prefix(1);
+        /* Hex digits. Skipped when resuming mid-extension so that extension bytes
+         * like 'a' aren't misparsed as hex. */
+        if (!(state & STATE_IS_CHUNKED_EXTENSION)) {
+            while (len) {
+                unsigned char c = (unsigned char) *p;
+                if (c <= 32 || c == ';') break; /* fall through to drain loop */
+                unsigned int d = c | 0x20; /* fold A-F -> a-f; '0'..'9' unchanged */
+                unsigned int n;
+                if      ((unsigned)(d - '0') < 10) [[likely]] n = d - '0';
+                else if ((unsigned)(d - 'a') < 6)            n = d - 'a' + 10;
+                else return STATE_IS_ERROR;
+                if (chunkSize(state) & STATE_SIZE_OVERFLOW) [[unlikely]] return STATE_IS_ERROR;
+                state = ((state & STATE_SIZE_MASK) * 16ull + n) | STATE_IS_CHUNKED | STATE_HAS_HEXDIG;
+                ++p; --len;
             }
         }
 
-        auto len = data.length();
-        if(len) {
-            // consume extension
-            if(data[0] == ';' || isParsingChunkedExtension(state)) {
-                // mark that we are parsing chunked extension
-                state |= STATE_IS_CHUNKED_EXTENSION;
-                /* we got chunk extension lets remove it*/
-                while(data.length()) {
-                    if(data[0] == '\r') {
-                        // we are done parsing extension
-                        state &= ~STATE_IS_CHUNKED_EXTENSION;
-                        break;
-                    }
-                    /* RFC 9110: Token format (TLDR; anything bellow 32 is not allowed)
-                    * TODO: add support for quoted-strings values (RFC 9110: 3.2.6. Quoted-String)
-                    * Example of chunked encoding with extensions:
-                    *
-                    * 4;key=value\r\n
-                    * Wiki\r\n
-                    * 5;foo=bar;baz=quux\r\n
-                    * pedia\r\n
-                    * 0\r\n
-                    * \r\n
-                    *
-                    * The chunk size is in hex (4, 5, 0), followed by optional
-                    * semicolon-separated extensions. Extensions consist of a key
-                    * (token) and optional value. The value may be a token or a
-                    * quoted string. The chunk data follows the CRLF after the
-                    * extensions and must be exactly the size specified.
-                    *
-                    * RFC 7230 Section 4.1.1 defines chunk extensions as:
-                    * chunk-ext = *( ";" chunk-ext-name [ "=" chunk-ext-val ] )
-                    * chunk-ext-name = token
-                    * chunk-ext-val = token / quoted-string
-                    */
-                    if(data[0] <= 32) {
-                        state = STATE_IS_ERROR;
-                        return;
-                    }
-
-                    data.remove_prefix(1);
+        /* Drain [;ext...] \r \n. Upstream-style forward scan for LF, with strict
+         * validation: only >32 bytes (extension) and exactly one '\r' immediately
+         * before '\n' are allowed. */
+        while (len) {
+            unsigned char c = (unsigned char) *p;
+            if (c == '\n') return STATE_IS_ERROR; /* bare LF */
+            ++p; --len;
+            if (c == '\r') {
+                if (!len) {
+                    data = std::string_view(p, len);
+                    return state | STATE_WAITING_FOR_LF;
                 }
+                if (*p != '\n') return STATE_IS_ERROR;
+                if (!(state & STATE_HAS_HEXDIG)) return STATE_IS_ERROR;
+                ++p; --len;
+                data = std::string_view(p, len);
+                return ((state & ~(STATE_IS_CHUNKED_EXTENSION | STATE_HAS_HEXDIG)) + 2)
+                       | STATE_HAS_SIZE | STATE_IS_CHUNKED;
             }
-            if(data.length() >= 2) {
-                /* Consume \r\n */
-                if((data[0] != '\r' || data[1] != '\n')) {
-                    state = STATE_IS_ERROR;
-                    return;
-                }
-                state += 2; // include the two last /r/n
-                state |= STATE_HAS_SIZE | STATE_IS_CHUNKED;
-
-                data.remove_prefix(2);
-            }
+            if (c <= 32) return STATE_IS_ERROR;
+            state |= STATE_IS_CHUNKED_EXTENSION;
         }
-        // short read
+        data = std::string_view(p, len);
+        return state; /* short read */
     }
 
-    inline void decChunkSize(uint64_t &state, unsigned int by) {
-
-        //unsigned int bits = state & STATE_IS_CHUNKED;
-
+    inline void decChunkSize(uint64_t &state, uint64_t by) {
         state = (state & ~STATE_SIZE_MASK) | (chunkSize(state) - by);
-
-        //state |= bits;
     }
 
     inline bool hasChunkSize(uint64_t state) {
@@ -183,8 +175,8 @@ namespace uWS {
             }
 
             if (!hasChunkSize(state)) {
-                consumeHexNumber(data, state);
-                if (isParsingInvalidChunkedEncoding(state)) {
+                state = consumeHexNumber(data, state);
+                if (isParsingInvalidChunkedEncoding(state)) [[unlikely]] {
                     return std::nullopt;
                 }
                 if (hasChunkSize(state) && chunkSize(state) == 2) {
@@ -200,11 +192,15 @@ namespace uWS {
 
                     return std::string_view(nullptr, 0);
                 }
+                if (!hasChunkSize(state)) [[unlikely]] {
+                    /* Incomplete chunk-size line — need more data from the network. */
+                    return std::nullopt;
+                }
                 continue;
             }
 
             // do we have data to emit all?
-            unsigned int remaining = chunkSize(state);
+            uint64_t remaining = chunkSize(state);
             if (data.length() >= remaining) {
                 // emit all but 2 bytes then reset state to 0 and goto beginning
                 // not fin
@@ -244,7 +240,7 @@ namespace uWS {
             } else {
                 /* We will consume all our input data */
                 std::string_view emitSoon;
-                unsigned int size = chunkSize(state);
+                uint64_t size = chunkSize(state);
                 size_t len = data.length();
                 if (size > 2) {
                     uint64_t maximalAppEmit = size - 2;
@@ -280,7 +276,7 @@ namespace uWS {
                         return std::nullopt;
                     }
                 }
-                decChunkSize(state, (unsigned int) len);
+                decChunkSize(state, (uint64_t) len);
                 state |= STATE_IS_CHUNKED;
                 data.remove_prefix(len);
                 if (emitSoon.length()) {

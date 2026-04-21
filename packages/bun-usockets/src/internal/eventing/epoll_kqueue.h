@@ -54,6 +54,10 @@ struct us_loop_t {
     /* Number of polls owned by bun */
     unsigned int bun_polls;
 
+    /* Incremented atomically by wakeup(), swapped to 0 before epoll/kqueue.
+     * If non-zero, the event loop will return immediately so we can skip the GC safepoint. */
+    unsigned int pending_wakeups;
+
     /* The list of ready polls */
 #ifdef LIBUS_USE_EPOLL
     alignas(LIBUS_EXT_ALIGNMENT) struct epoll_event ready_polls[1024];

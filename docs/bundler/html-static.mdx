@@ -464,7 +464,7 @@ Bun automatically handles all common web assets:
 - **Media** (`<video>`, `<audio>`, `<source>`) are copied and hashed
 - Any `<link>` tag with an `href` attribute pointing to a local file is rewritten to the new path, and hashed
 
-All paths are resolved relative to your HTML file, making it easy to organize your project however you want.
+All paths are resolved relative to your HTML file, so you can organize your project however you want.
 
 <Warning>
 **This is a work in progress**
@@ -480,6 +480,16 @@ All paths are resolved relative to your HTML file, making it easy to organize yo
 ## How this works
 
 This is a small wrapper around Bun's support for HTML imports in JavaScript.
+
+## Standalone HTML
+
+You can bundle your entire frontend into a **single self-contained `.html` file** with no external dependencies using `--compile --target=browser`. All JavaScript, CSS, and images are inlined directly into the HTML.
+
+```bash terminal icon="terminal"
+bun build --compile --target=browser ./index.html --outdir=dist
+```
+
+Learn more in the [Standalone HTML docs](/bundler/standalone-html).
 
 ## Adding a backend to your frontend
 

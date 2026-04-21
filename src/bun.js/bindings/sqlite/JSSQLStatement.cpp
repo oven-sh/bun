@@ -443,7 +443,7 @@ public:
     }
     DECLARE_VISIT_CHILDREN;
     DECLARE_EXPORT_INFO;
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
 
     size_t static estimatedSize(JSCell* cell, VM& vm)
@@ -758,8 +758,6 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     }
 
     // Slow path:
-
-    JSC::ObjectInitializationScope initializationScope(vm);
 
     // 64 is the maximum we can preallocate here
     // see https://github.com/oven-sh/bun/issues/987
@@ -2022,7 +2020,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction, (JSGlobalObject * l
             return {};
         }
 
-        castedThis->userPrototype.set(vm, classObject, prototype.getObject());
+        castedThis->userPrototype.set(vm, castedThis, prototype.getObject());
 
         // Force the prototypes to be re-created
         if (castedThis->version_db) {
@@ -2791,7 +2789,7 @@ void JSSQLStatement::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 DEFINE_VISIT_CHILDREN(JSSQLStatement);
 
 template<typename Visitor>
-void JSSQLStatement::visitAdditionalChildren(Visitor& visitor)
+void JSSQLStatement::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     JSSQLStatement* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
@@ -2807,7 +2805,7 @@ void JSSQLStatement::visitOutputConstraints(JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<JSSQLStatement*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 template void JSSQLStatement::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);

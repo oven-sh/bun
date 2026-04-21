@@ -1,7 +1,7 @@
 pub const ContentsOrFd = union(enum) {
     fd: struct {
-        dir: StoredFileDescriptorType,
-        file: StoredFileDescriptorType,
+        dir: FD,
+        file: FD,
     },
     contents: string,
 
@@ -31,8 +31,10 @@ tree_shaking: bool = false,
 known_target: options.Target,
 module_type: options.ModuleType = .unknown,
 emit_decorator_metadata: bool = false,
+experimental_decorators: bool = false,
 ctx: *BundleV2,
 package_version: string = "",
+package_name: string = "",
 is_entry_point: bool = false,
 
 const ParseTaskStage = union(enum) {
@@ -60,8 +62,8 @@ pub const Result = struct {
     };
 
     const WatcherData = struct {
-        fd: bun.StoredFileDescriptorType,
-        dir_fd: bun.StoredFileDescriptorType,
+        fd: bun.FD,
+        dir_fd: bun.FD,
 
         /// When no files to watch, this encoding is used.
         pub const none: WatcherData = .{
@@ -83,6 +85,9 @@ pub const Result = struct {
         content_hash_for_additional_file: u64 = 0,
 
         loader: Loader,
+
+        /// The package name from package.json, used for barrel optimization.
+        package_name: string = "",
     };
 
     pub const Error = struct {
@@ -118,7 +123,9 @@ pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *
         .source_index = source_index,
         .module_type = resolve_result.module_type,
         .emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata,
+        .experimental_decorators = resolve_result.flags.experimental_decorators,
         .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
+        .package_name = if (resolve_result.package_json) |package_json| package_json.name else "",
         .known_target = ctx.transpiler.options.target,
     };
 }
@@ -376,7 +383,7 @@ fn getAST(
                 .data = source.contents,
             }, Logger.Loc{ .start = 0 });
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, "text/plain", null);
+            ast.addUrlForCss(allocator, source, "text/plain", null, transpiler.options.compile_to_standalone_html);
             return ast;
         },
         .md => {
@@ -392,7 +399,7 @@ fn getAST(
                 .data = html,
             }, Logger.Loc{ .start = 0 });
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, "text/html", null);
+            ast.addUrlForCss(allocator, source, "text/html", null, transpiler.options.compile_to_standalone_html);
             return ast;
         },
 
@@ -643,7 +650,7 @@ fn getAST(
                 .content_hash = content_hash,
             };
             var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, source, "")).?);
-            ast.addUrlForCss(allocator, source, null, unique_key);
+            ast.addUrlForCss(allocator, source, null, unique_key, transpiler.options.compile_to_standalone_html);
             return ast;
         },
     }
@@ -900,7 +907,7 @@ const OnBeforeParsePlugin = struct {
     const OnBeforeParseResultWrapper = extern struct {
         original_source: ?[*]const u8 = null,
         original_source_len: usize = 0,
-        original_source_fd: bun.FileDescriptor = bun.invalid_fd,
+        original_source_fd: bun.FD = bun.invalid_fd,
         loader: Loader,
         check: if (bun.Environment.isDebug) u32 else u0 = if (bun.Environment.isDebug) 42069 else 0, // Value to ensure OnBeforeParseResult is wrapped in this struct
         result: OnBeforeParseResult,
@@ -1197,6 +1204,7 @@ fn runWithSourceCode(
     var opts = js_parser.Parser.Options.init(task.jsx, loader);
     opts.bundle = true;
     opts.warn_about_unbundled_modules = false;
+    opts.allow_unresolved = &transpiler.options.allow_unresolved;
     opts.macro_context = &transpiler.macro_context.?;
     opts.package_version = task.package_version;
 
@@ -1211,7 +1219,11 @@ fn runWithSourceCode(
     opts.features.minify_identifiers = transpiler.options.minify_identifiers;
     opts.features.minify_keep_names = transpiler.options.keep_names;
     opts.features.minify_whitespace = transpiler.options.minify_whitespace;
-    opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
+    opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
+    // emitDecoratorMetadata implies legacy/experimental decorators, as it only
+    // makes sense with TypeScript's legacy decorator system (reflect-metadata).
+    // TC39 standard decorators have their own metadata mechanism.
+    opts.features.standard_decorators = !loader.isTypeScript() or !(task.experimental_decorators or task.emit_decorator_metadata);
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
     opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
@@ -1291,6 +1303,7 @@ fn runWithSourceCode(
         .unique_key_for_additional_file = unique_key_for_additional_file.key,
         .side_effects = task.side_effects,
         .loader = loader,
+        .package_name = task.package_name,
 
         // Hash the files in here so that we do it in parallel.
         .content_hash_for_additional_file = if (loader.shouldCopyForBundling())
@@ -1443,10 +1456,10 @@ const Resolver = _resolver.Resolver;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
 const ImportRecord = bun.ImportRecord;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const ThreadPoolLib = bun.ThreadPool;
 const Transpiler = bun.Transpiler;
 const bake = bun.bake;

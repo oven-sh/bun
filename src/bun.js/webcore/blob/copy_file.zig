@@ -7,8 +7,8 @@ pub const CopyFile = struct {
     offset: SizeType = 0,
     size: SizeType = 0,
     max_length: SizeType = Blob.max_size,
-    destination_fd: bun.FileDescriptor = bun.invalid_fd,
-    source_fd: bun.FileDescriptor = bun.invalid_fd,
+    destination_fd: bun.FD = bun.invalid_fd,
+    source_fd: bun.FD = bun.invalid_fd,
 
     system_error: ?SystemError = null,
 
@@ -75,7 +75,7 @@ pub const CopyFile = struct {
             system_error.message = bun.String.static("Failed to copy file");
         }
 
-        const instance = system_error.toErrorInstance(this.globalThis);
+        const instance = system_error.toErrorInstanceWithAsyncStack(this.globalThis, promise);
         if (this.store) |store| {
             store.deref();
         }
@@ -625,9 +625,9 @@ pub const CopyFileWindows = struct {
     read_write_loop: ReadWriteLoop = .{},
 
     pub const ReadWriteLoop = struct {
-        source_fd: bun.FileDescriptor = bun.invalid_fd,
+        source_fd: bun.FD = bun.invalid_fd,
         must_close_source_fd: bool = false,
-        destination_fd: bun.FileDescriptor = bun.invalid_fd,
+        destination_fd: bun.FD = bun.invalid_fd,
         must_close_destination_fd: bool = false,
         written: usize = 0,
         read_buf: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
@@ -850,7 +850,7 @@ pub const CopyFileWindows = struct {
         return promise;
     }
 
-    fn preparePathlike(pathlike: *jsc.Node.PathOrFileDescriptor, must_close: *bool, is_reading: bool) bun.sys.Maybe(bun.FileDescriptor) {
+    fn preparePathlike(pathlike: *jsc.Node.PathOrFileDescriptor, must_close: *bool, is_reading: bool) bun.sys.Maybe(bun.FD) {
         if (pathlike.* == .path) {
             const fd = switch (bun.sys.openatWindowsT(
                 u8,
@@ -1040,7 +1040,7 @@ pub const CopyFileWindows = struct {
     pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) void {
         const globalThis = this.event_loop.global;
         const promise = this.promise.swap();
-        const err_instance = err.toJS(globalThis);
+        const err_instance = err.toJSWithAsyncStack(globalThis, promise);
 
         var event_loop = this.event_loop;
         event_loop.enter();

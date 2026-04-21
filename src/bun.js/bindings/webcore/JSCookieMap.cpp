@@ -113,8 +113,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
     } else if (initValue.isObject()) {
         auto* object = initValue.getObject();
 
-        if (isArray(lexicalGlobalObject, object)) {
-            auto* array = jsCast<JSArray*>(object);
+        // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
+        auto* array = jsDynamicCast<JSArray*>(object);
+        if (array) {
             Vector<Vector<String>> seqSeq;
 
             uint32_t length = array->length();

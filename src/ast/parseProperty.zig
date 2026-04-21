@@ -158,7 +158,7 @@ pub fn ParseProperty(
                         try p.lexer.next();
                     },
                     .t_private_identifier => {
-                        if (!opts.is_class or opts.ts_decorators.len > 0) {
+                        if (!opts.is_class or (opts.ts_decorators.len > 0 and !p.options.features.standard_decorators)) {
                             try p.lexer.expected(.t_identifier);
                         }
 
@@ -299,6 +299,16 @@ pub fn ParseProperty(
                                                 return null;
                                             }
                                         },
+                                        .p_accessor => {
+                                            // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
+                                            if (opts.is_class and p.options.features.standard_decorators and
+                                                (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_accessor)
+                                            {
+                                                kind = .auto_accessor;
+                                                errors = null;
+                                                continue :restart;
+                                            }
+                                        },
                                         .p_private, .p_protected, .p_public, .p_readonly, .p_override => {
                                             // Skip over TypeScript keywords
                                             if (opts.is_class and is_typescript_enabled and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == keyword) {
@@ -411,7 +421,7 @@ pub fn ParseProperty(
                             try p.lexer.next();
                         } else if (p.lexer.token == .t_exclamation and
                             !p.lexer.has_newline_before and
-                            kind == .normal and
+                            (kind == .normal or kind == .auto_accessor) and
                             !opts.is_async and
                             !opts.is_generator)
                         {
@@ -430,7 +440,7 @@ pub fn ParseProperty(
 
                 // Parse a class field with an optional initial value
                 if (opts.is_class and
-                    kind == .normal and !opts.is_async and
+                    (kind == .normal or kind == .auto_accessor) and !opts.is_async and
                     !opts.is_generator and
                     p.lexer.token != .t_open_paren and
                     !has_type_parameters and
@@ -516,6 +526,12 @@ pub fn ParseProperty(
                         .initializer = initializer,
                         .ts_metadata = ts_metadata,
                     };
+                }
+
+                // Auto-accessor fields cannot be methods
+                if (kind == .auto_accessor and p.lexer.token == .t_open_paren) {
+                    p.log.addRangeError(p.source, key_range, "auto-accessor properties cannot have a method body") catch unreachable;
+                    return error.SyntaxError;
                 }
 
                 // Parse a method expression

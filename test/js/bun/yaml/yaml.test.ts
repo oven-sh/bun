@@ -622,6 +622,14 @@ null_value: null
       expect(() => YAML.parse(":\n :  - invalid")).toThrow(SyntaxError);
     });
 
+    test("throws on invalid flow mapping inside block mapping (no assertion failure)", () => {
+      expect(() => YAML.parse("a: 1\nb: {c]}")).toThrow(SyntaxError);
+      expect(() => YAML.parse("a: 1\nb: {c: [}")).toThrow(SyntaxError);
+      expect(() => YAML.parse("a: 1\nb: { @bad }")).toThrow(SyntaxError);
+      expect(() => YAML.parse("a: 1\nb: {x: {y: ]}}")).toThrow(SyntaxError);
+      expect(() => YAML.parse("first: ok\nsecond: {key: [unclosed}")).toThrow(SyntaxError);
+    });
+
     test("handles dates and timestamps", () => {
       const yaml = `
 date: 2024-01-15

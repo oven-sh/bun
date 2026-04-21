@@ -1015,8 +1015,16 @@ pub fn VisitExpr(
                         .e_binary => |e2| {
                             if (in.assign_target != .none and e2.op == .bin_assign) {
                                 const was_anonymous_named_expr = e2.right.isAnonymousNamed();
+                                // Propagate name for anonymous decorated class expressions
+                                if (was_anonymous_named_expr and e2.right.data == .e_class and
+                                    e2.right.data.e_class.should_lower_standard_decorators and
+                                    @as(Expr.Tag, e2.left.data) == .e_identifier)
+                                {
+                                    p.decorator_class_name = p.loadNameFromRef(e2.left.data.e_identifier.ref);
+                                }
                                 e2.left = p.visitExprInOut(e2.left, ExprIn{ .assign_target = .replace });
                                 e2.right = p.visitExpr(e2.right);
+                                p.decorator_class_name = null;
 
                                 if (@as(Expr.Tag, e2.left.data) == .e_identifier) {
                                     e2.right = p.maybeKeepExprSymbolName(
@@ -1089,12 +1097,34 @@ pub fn VisitExpr(
                     }
 
                     if (property.value != null) {
+                        // Propagate name from property key for decorated anonymous class expressions
+                        // e.g., { Foo: @dec class {} } should give the class .name = "Foo"
+                        if (in.assign_target == .none and
+                            property.value.?.data == .e_class and
+                            property.value.?.data.e_class.should_lower_standard_decorators and
+                            property.value.?.data.e_class.class_name == null and
+                            property.key != null and
+                            property.key.?.data == .e_string)
+                        {
+                            p.decorator_class_name = property.key.?.data.e_string.string(p.allocator) catch null;
+                        }
                         property.value = p.visitExprInOut(property.value.?, ExprIn{ .assign_target = in.assign_target });
+                        p.decorator_class_name = null;
                     }
 
                     if (property.initializer != null) {
                         const was_anonymous_named_expr = property.initializer.?.isAnonymousNamed();
+                        if (was_anonymous_named_expr and property.initializer.?.data == .e_class and
+                            property.initializer.?.data.e_class.should_lower_standard_decorators)
+                        {
+                            if (property.value) |val| {
+                                if (@as(Expr.Tag, val.data) == .e_identifier) {
+                                    p.decorator_class_name = p.loadNameFromRef(val.data.e_identifier.ref);
+                                }
+                            }
+                        }
                         property.initializer = p.visitExpr(property.initializer.?);
+                        p.decorator_class_name = null;
 
                         if (property.value) |val| {
                             if (@as(Expr.Tag, val.data) == .e_identifier) {
@@ -1327,6 +1357,10 @@ pub fn VisitExpr(
                         p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
                     }
 
+                    if (e_.args.len >= 1) {
+                        bun.handleOom(p.checkDynamicSpecifier(e_.args.slice()[0], e_.target.loc, "require()"));
+                    }
+
                     if (p.options.features.allow_runtime) {
                         p.recordUsageOfRuntimeRequire();
                     }
@@ -1357,6 +1391,10 @@ pub fn VisitExpr(
                             },
                             else => {},
                         }
+                    }
+
+                    if (e_.args.len >= 1) {
+                        bun.handleOom(p.checkDynamicSpecifier(e_.args.slice()[0], e_.target.loc, "require.resolve()"));
                     }
 
                     return expr;
@@ -1627,7 +1665,16 @@ pub fn VisitExpr(
                     return expr;
                 }
 
+                // Save name from assignment context before visiting (nested visits may overwrite it)
+                const decorator_name_from_context = p.decorator_class_name;
+                p.decorator_class_name = null;
+
                 _ = p.visitClass(expr.loc, e_, Ref.None);
+
+                // Lower standard decorators for class expressions
+                if (e_.should_lower_standard_decorators) {
+                    return p.lowerStandardDecoratorsExpr(e_, expr.loc, decorator_name_from_context);
+                }
 
                 // Remove unused class names when minifying (only when bundling is enabled)
                 // unless --keep-names is specified

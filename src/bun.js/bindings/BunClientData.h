@@ -4,6 +4,7 @@ namespace WebCore {
 
 class ExtendedDOMClientIsoSubspaces;
 class ExtendedDOMIsoSubspaces;
+class JSBuiltinFunctions;
 
 class DOMWrapperWorld;
 }
@@ -18,13 +19,15 @@ class DOMWrapperWorld;
 // #include "WorkerThreadType.h"
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
+#include <wtf/WeakHashSet.h>
 #include <wtf/RefPtr.h>
+#include "JSVMClientDataClient.h"
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/StdLibExtras.h>
-#include "WebCoreJSBuiltins.h"
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
 namespace Zig {
+class GlobalObject;
 }
 
 namespace WebCore {
@@ -60,6 +63,7 @@ public:
     JSC::IsoHeapCellType m_heapCellTypeForNodeVMGlobalObject;
     JSC::IsoHeapCellType m_heapCellTypeForNapiHandleScopeImpl;
     JSC::IsoHeapCellType m_heapCellTypeForBakeGlobalObject;
+    JSC::IsoHeapCellType m_heapCellTypeForNativePromiseContext;
     // JSC::IsoHeapCellType m_heapCellTypeForGeneratedClass;
 
 private:
@@ -89,7 +93,7 @@ public:
 
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
-    JSBuiltinFunctions& builtinFunctions() { return m_builtinFunctions; }
+    JSBuiltinFunctions& builtinFunctions() { return *m_builtinFunctions; }
 
     String overrideSourceURL(const StackFrame&, const String& originalSourceURL) const
     {
@@ -117,11 +121,21 @@ public:
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
+    // All access should go through that class. Stored as the JSC base type to
+    // avoid pulling ZigSourceProvider.h into this header; the cache class
+    // downcasts on lookup. Values hold strong refs by design: this map is the
+    // only owner once the previous global is GC'd, so a weak map would empty
+    // after every swap.
+    WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
+
+    void addClient(JSVMClientDataClient& client) { m_clients.add(client); }
+
 private:
     bool isWebCoreJSClientData() const final { return true; }
 
     BunBuiltinNames m_builtinNames;
-    JSBuiltinFunctions m_builtinFunctions;
+    std::unique_ptr<JSBuiltinFunctions> m_builtinFunctions;
 
     JSHeapData* m_heapData;
 
@@ -134,6 +148,7 @@ private:
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
 
     std::optional<WebCore::HTTPHeaderIdentifiers> m_httpHeaderIdentifiers;
+    WeakHashSet<JSVMClientDataClient> m_clients;
 };
 
 } // namespace WebCore

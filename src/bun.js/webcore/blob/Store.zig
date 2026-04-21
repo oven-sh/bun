@@ -263,7 +263,7 @@ pub const File = struct {
                 .path = .{
                     .encoded_slice = switch (path_like) {
                         .encoded_slice => |slice| try slice.toOwned(bun.default_allocator),
-                        else => try jsc.ZigString.init(path_like.slice()).toSliceClone(bun.default_allocator),
+                        else => try jsc.ZigString.fromUTF8(path_like.slice()).toSliceClone(bun.default_allocator),
                     },
                 },
             }, globalThis.bunVM()),
@@ -343,7 +343,7 @@ pub const S3 = struct {
                         try self.promise.resolve(globalObject, .true);
                     },
                     .not_found, .failure => |err| {
-                        try self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        try self.promise.reject(globalObject, err.toJSWithAsyncStack(globalObject, self.store.getPath(), self.promise.get()));
                     },
                 }
             }
@@ -395,7 +395,7 @@ pub const S3 = struct {
                     },
 
                     inline .not_found, .failure => |err| {
-                        try self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        try self.promise.reject(globalObject, err.toJSWithAsyncStack(globalObject, self.store.getPath(), self.promise.get()));
                     },
                 }
             }

@@ -132,6 +132,12 @@ describe.concurrent(() => {
               {
                 "url": "foo",
                 "content_type": "application/zip",
+                "name": "bun-windows-aarch64.zip",
+                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-windows-aarch64.zip`,
+              },
+              {
+                "url": "foo",
+                "content_type": "application/zip",
                 "name": "bun-linux-x64.zip",
                 "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-linux-x64.zip`,
               },
@@ -140,6 +146,12 @@ describe.concurrent(() => {
                 "content_type": "application/zip",
                 "name": "bun-linux-x64-baseline.zip",
                 "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-linux-x64-baseline.zip`,
+              },
+              {
+                "url": "foo",
+                "content_type": "application/zip",
+                "name": "bun-linux-aarch64.zip",
+                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-linux-aarch64.zip`,
               },
               {
                 "url": "foo",

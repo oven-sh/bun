@@ -27,7 +27,7 @@ pub const ShellCondExprStatTask = struct {
     condexpr: *CondExpr,
     result: ?Maybe(bun.Stat) = null,
     path: [:0]const u8,
-    cwdfd: bun.FileDescriptor,
+    cwdfd: bun.FD,
 
     pub fn runFromThreadPool(this: *ShellCondExprStatTask) void {
         this.result = ShellSyscall.statat(this.cwdfd, this.path);
@@ -168,6 +168,10 @@ fn commandImplStart(this: *CondExpr) Yield {
         .@"-d",
         .@"-f",
         => {
+            // Empty string expansion produces no args, or the path is an empty string;
+            // the path doesn't exist. On Windows, stat("") can succeed and return the
+            // cwd's stat, so we must check for empty paths explicitly.
+            if (this.args.items.len == 0 or this.args.items[0].len == 0) return this.parent.childDone(this, 1);
             this.state = .waiting_stat;
             return this.doStat();
         },

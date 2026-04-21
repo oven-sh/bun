@@ -44,6 +44,12 @@ class FSWatcher extends EventEmitter {
   constructor(path, options, listener) {
     super();
 
+    if (path instanceof URL) {
+      path = Bun.fileURLToPath(path);
+    } else if (typeof path === "string" && path.startsWith("file:")) {
+      path = Bun.fileURLToPath(path);
+    }
+
     if (typeof options === "function") {
       listener = options;
       options = {};
@@ -627,12 +633,12 @@ var access = function access(path, mode, callback) {
 
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
-{
-  const existsCb = exists;
-  exists[kCustomPromisifiedSymbol] = function exists(path) {
+const existsCb = exists;
+exists[kCustomPromisifiedSymbol] = {
+  exists(path) {
     return new Promise(resolve => existsCb(path, resolve));
-  };
-}
+  },
+}.exists;
 defineCustomPromisifyArgs(read, ["bytesRead", "buffer"]);
 defineCustomPromisifyArgs(readv, ["bytesRead", "buffers"]);
 defineCustomPromisifyArgs(write, ["bytesWritten", "buffer"]);
@@ -646,6 +652,7 @@ const statWatchers = new Map();
 function getValidatedPath(p: any) {
   if (p instanceof URL) return Bun.fileURLToPath(p as URL);
   if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
+  if (p.startsWith("file:")) return Bun.fileURLToPath(p);
   return require("node:path").resolve(p);
 }
 function watchFile(filename, options, listener) {

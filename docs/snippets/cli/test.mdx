@@ -14,6 +14,11 @@ bun test <patterns>
   Re-run each test file <code>NUMBER</code> times, helps catch certain bugs
 </ParamField>
 
+<ParamField path="--retry" type="number">
+  Default retry count for all tests. Failed tests will be retried up to <code>NUMBER</code> times. Overridden by
+  per-test <code>{`{ retry: N }`}</code>
+</ParamField>
+
 <ParamField path="--concurrent" type="boolean">
   Treat all tests as <code>test.concurrent()</code> tests
 </ParamField>

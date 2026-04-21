@@ -1,7 +1,7 @@
-import { file, Glob } from "bun";
+import { file } from "bun";
 import { readdirSync } from "fs";
 import path from "path";
-import "../../scripts/glob-sources.mjs";
+import { globAllSources } from "../../scripts/glob-sources.ts";
 
 // prettier-ignore
 const words: Record<string, { reason: string; regex?: boolean }> = {
@@ -60,39 +60,30 @@ const words_keys = [...Object.keys(words)];
 
 const limits = await Bun.file(import.meta.dir + "/ban-limits.json").json();
 
-const sources: Array<{ output: string; paths: string[]; excludes?: string[] }> = await file(
-  path.join("cmake", "Sources.json"),
-).json();
+const root = path.resolve(import.meta.dir, "..", "..");
+const zigSources = globAllSources().zig;
 
 let counts: Record<string, [number, string][]> = {};
 
-for (const source of sources) {
-  const { paths, excludes } = source;
-
-  for (const pattern of paths) {
-    const glob = new Glob(pattern);
-
-    for await (const source of glob.scan()) {
-      if (!source.endsWith(".zig")) continue;
-      if (source.startsWith("src" + path.sep + "deps")) continue;
-      if (source.startsWith("src" + path.sep + "codegen")) continue;
-      if (source.startsWith("src" + path.sep + "unicode" + path.sep + "uucode")) continue;
-      const content = await file(source).text();
-      for (const word of words_keys) {
-        let regex = words[word].regex ? new RegExp(word, "gm") : undefined;
-        const did_match = regex ? regex.test(content) : content.includes(word);
-        if (regex) regex.lastIndex = 0;
-        if (did_match) {
-          counts[word] ??= [];
-          const lines = content.split("\n");
-          for (let line_i = 0; line_i < lines.length; line_i++) {
-            const trim = lines[line_i].trim();
-            if (trim.startsWith("//") || trim.startsWith("\\\\")) continue;
-            const count = regex ? [...lines[line_i].matchAll(regex)].length : lines[line_i].split(word).length - 1;
-            for (let count_i = 0; count_i < count; count_i++) {
-              counts[word].push([line_i + 1, source]);
-            }
-          }
+for (const abs of zigSources) {
+  const source = path.relative(root, abs);
+  if (source.startsWith("src" + path.sep + "deps")) continue;
+  if (source.startsWith("src" + path.sep + "codegen")) continue;
+  if (source.startsWith("src" + path.sep + "unicode" + path.sep + "uucode")) continue;
+  const content = await file(abs).text();
+  for (const word of words_keys) {
+    let regex = words[word].regex ? new RegExp(word, "gm") : undefined;
+    const did_match = regex ? regex.test(content) : content.includes(word);
+    if (regex) regex.lastIndex = 0;
+    if (did_match) {
+      counts[word] ??= [];
+      const lines = content.split("\n");
+      for (let line_i = 0; line_i < lines.length; line_i++) {
+        const trim = lines[line_i].trim();
+        if (trim.startsWith("//") || trim.startsWith("\\\\")) continue;
+        const count = regex ? [...lines[line_i].matchAll(regex)].length : lines[line_i].split(word).length - 1;
+        for (let count_i = 0; count_i < count; count_i++) {
+          counts[word].push([line_i + 1, source]);
         }
       }
     }

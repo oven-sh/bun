@@ -3,6 +3,7 @@ pub fn writeOutputFilesToDisk(
     root_path: string,
     chunks: []Chunk,
     output_files: *OutputFileListBuilder,
+    standalone_chunk_contents: ?[]const ?[]const u8,
 ) !void {
     const trace = bun.perf.trace("Bundler.writeOutputFilesToDisk");
     defer trace.end();
@@ -42,6 +43,29 @@ pub fn writeOutputFilesToDisk(
     const bv2: *bundler.BundleV2 = @fieldParentPtr("linker", c);
 
     for (chunks, 0..) |*chunk, chunk_index_in_chunks_list| {
+        // In standalone mode, only write HTML chunks to disk.
+        // Insert placeholder output files for non-HTML chunks to keep indices aligned.
+        if (standalone_chunk_contents != null and chunk.content != .html) {
+            _ = output_files.insertForChunk(options.OutputFile.init(.{
+                .data = .{ .saved = 0 },
+                .hash = null,
+                .loader = chunk.content.loader(),
+                .input_path = "",
+                .display_size = 0,
+                .output_kind = .chunk,
+                .input_loader = .js,
+                .output_path = "",
+                .is_executable = false,
+                .source_map_index = null,
+                .bytecode_index = null,
+                .module_info_index = null,
+                .side = .client,
+                .entry_point_index = null,
+                .referenced_css_chunks = &.{},
+            }));
+            continue;
+        }
+
         const trace2 = bun.perf.trace("Bundler.writeChunkToDisk");
         defer trace2.end();
         defer max_heap_allocator.reset();
@@ -65,17 +89,31 @@ pub fn writeOutputFilesToDisk(
         else
             c.resolver.opts.public_path;
 
-        var code_result = chunk.intermediate_output.code(
-            code_allocator,
-            c.parse_graph,
-            &c.graph,
-            public_path,
-            chunk,
-            chunks,
-            &display_size,
-            c.resolver.opts.compile and !chunk.flags.is_browser_chunk_from_server_build,
-            chunk.content.sourcemap(c.options.source_maps) != .none,
-        ) catch |err| bun.Output.panic("Failed to create output chunk: {s}", .{@errorName(err)});
+        var code_result = if (standalone_chunk_contents) |scc|
+            chunk.intermediate_output.codeStandalone(
+                code_allocator,
+                c.parse_graph,
+                &c.graph,
+                public_path,
+                chunk,
+                chunks,
+                &display_size,
+                false,
+                false,
+                scc,
+            ) catch |err| bun.Output.panic("Failed to create output chunk: {s}", .{@errorName(err)})
+        else
+            chunk.intermediate_output.code(
+                code_allocator,
+                c.parse_graph,
+                &c.graph,
+                public_path,
+                chunk,
+                chunks,
+                &display_size,
+                c.resolver.opts.compile and !chunk.flags.is_browser_chunk_from_server_build,
+                chunk.content.sourcemap(c.options.source_maps) != .none,
+            ) catch |err| bun.Output.panic("Failed to create output chunk: {s}", .{@errorName(err)});
 
         var source_map_output_file: ?options.OutputFile = null;
 
@@ -318,7 +356,7 @@ pub fn writeOutputFilesToDisk(
                 .js,
             .hash = chunk.template.placeholder.hash,
             .output_kind = output_kind,
-            .loader = .js,
+            .loader = chunk.content.loader(),
             .source_map_index = source_map_index,
             .bytecode_index = bytecode_index,
             .size = @as(u32, @truncate(code_result.buffer.len)),
@@ -344,9 +382,14 @@ pub fn writeOutputFilesToDisk(
             },
         }));
 
-        // We want the chunk index to remain the same in `output_files` so the indices in `OutputFile.referenced_css_chunks` work
-        bun.assertf(chunk_index == chunk_index_in_chunks_list, "chunk_index ({d}) != chunk_index_in_chunks_list ({d})", .{ chunk_index, chunk_index_in_chunks_list });
+        // We want the chunk index to remain the same in `output_files` so the indices in `OutputFile.referenced_css_chunks` work.
+        // In standalone mode, non-HTML chunks are skipped so this invariant doesn't apply.
+        if (standalone_chunk_contents == null)
+            bun.assertf(chunk_index == chunk_index_in_chunks_list, "chunk_index ({d}) != chunk_index_in_chunks_list ({d})", .{ chunk_index, chunk_index_in_chunks_list });
     }
+
+    // In standalone mode, additional output files (assets) are inlined into the HTML.
+    if (standalone_chunk_contents != null) return;
 
     {
         const additional_output_files = output_files.getMutableAdditionalOutputFiles();

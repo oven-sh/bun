@@ -399,7 +399,20 @@ pub const Bunfig = struct {
 
                     if (test_.get("rerunEach")) |expr| {
                         try this.expect(expr, .e_number);
+                        if (this.ctx.test_options.retry != 0) {
+                            try this.addError(expr.loc, "\"rerunEach\" cannot be used with \"retry\"");
+                            return;
+                        }
                         this.ctx.test_options.repeat_count = expr.data.e_number.toU32();
+                    }
+
+                    if (test_.get("retry")) |expr| {
+                        try this.expect(expr, .e_number);
+                        if (this.ctx.test_options.repeat_count != 0) {
+                            try this.addError(expr.loc, "\"retry\" cannot be used with \"rerunEach\"");
+                            return;
+                        }
+                        this.ctx.test_options.retry = expr.data.e_number.toU32();
                     }
 
                     if (test_.get("concurrentTestGlob")) |expr| {
@@ -466,6 +479,37 @@ pub const Bunfig = struct {
                             },
                             else => {
                                 try this.addError(expr.loc, "coveragePathIgnorePatterns must be a string or array of strings");
+                                return;
+                            },
+                        }
+                    }
+
+                    if (test_.get("pathIgnorePatterns")) |expr| brk: {
+                        // Only skip if --path-ignore-patterns was explicitly passed via CLI
+                        if (this.ctx.test_options.path_ignore_patterns_from_cli) break :brk;
+
+                        switch (expr.data) {
+                            .e_string => |str| {
+                                const pattern = try str.string(allocator);
+                                const patterns = try allocator.alloc(string, 1);
+                                patterns[0] = pattern;
+                                this.ctx.test_options.path_ignore_patterns = patterns;
+                            },
+                            .e_array => |arr| {
+                                if (arr.items.len == 0) break :brk;
+
+                                const patterns = try allocator.alloc(string, arr.items.len);
+                                for (arr.items.slice(), 0..) |item, i| {
+                                    if (item.data != .e_string) {
+                                        try this.addError(item.loc, "pathIgnorePatterns array must contain only strings");
+                                        return;
+                                    }
+                                    patterns[i] = try item.data.e_string.string(allocator);
+                                }
+                                this.ctx.test_options.path_ignore_patterns = patterns;
+                            },
+                            else => {
+                                try this.addError(expr.loc, "pathIgnorePatterns must be a string or array of strings");
                                 return;
                             },
                         }
@@ -614,6 +658,12 @@ pub const Bunfig = struct {
                             if (install.node_linker == null) {
                                 try this.addError(node_linker_expr.loc, "Expected one of \"isolated\" or \"hoisted\"");
                             }
+                        }
+                    }
+
+                    if (install_obj.get("globalStore")) |global_store_expr| {
+                        if (global_store_expr.asBool()) |global_store| {
+                            install.global_store = global_store;
                         }
                     }
 

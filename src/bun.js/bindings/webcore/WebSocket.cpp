@@ -34,6 +34,7 @@
 #include "WebSocketDeflate.h"
 #include "headers.h"
 #include "blob.h"
+#include "BunString.h"
 #include "ZigGeneratedClasses.h"
 #include "CloseEvent.h"
 #include <wtf/text/Base64.h>
@@ -377,7 +378,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const String& protocol)
 {
-    return create(context, url, Vector<String> { 1, protocol });
+    return create(context, url, Vector<String> { protocol });
 }
 
 ExceptionOr<void> WebSocket::connect(const String& url)
@@ -387,7 +388,7 @@ ExceptionOr<void> WebSocket::connect(const String& url)
 
 ExceptionOr<void> WebSocket::connect(const String& url, const String& protocol)
 {
-    return connect(url, Vector<String> { 1, protocol }, std::nullopt);
+    return connect(url, Vector<String> { protocol }, std::nullopt);
 }
 
 static String resourceName(const URL& url)
@@ -461,9 +462,10 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };
     }
 
-    bool is_secure = m_url.protocolIs("wss"_s) || m_url.protocolIs("https"_s);
+    bool is_unix = m_url.protocolIs("ws+unix"_s) || m_url.protocolIs("wss+unix"_s);
+    bool is_secure = m_url.protocolIs("wss"_s) || m_url.protocolIs("https"_s) || m_url.protocolIs("wss+unix"_s);
 
-    if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure) {
+    if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure && !is_unix) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
         updateHasPendingActivity();
@@ -543,17 +545,67 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (!protocols.isEmpty())
         protocolString = joinStrings(protocols, subprotocolSeparator());
 
-    ZigString host = Zig::toZigString(m_url.host());
+    // Materialize host/path as WTF::String so the BunString wrappers hold a
+    // stable WTFStringImpl backing (preserving 8-bit vs UTF-16 encoding).
+    // ZigString wrappers over non-ASCII Latin1/UTF-16 data lose the encoding
+    // tag and corrupt the HTTP upgrade request build in Zig.
+    String hostString = m_url.host().toString();
     auto resource = resourceName(m_url);
-    ZigString path = Zig::toZigString(resource);
-    ZigString clientProtocolString = Zig::toZigString(protocolString);
+    String unixSocketPathString;
+    if (is_unix) {
+        // ws+unix:///path/to/sock.sock[:/request/path][?query]
+        // The URL pathname is "/path/to/sock.sock:/request/path". Split on the
+        // first ':' into the socket path and the HTTP request path, matching
+        // the npm `ws` package's ws+unix: handling. Anything after the first
+        // colon becomes the request path; if there is no colon the request
+        // path is "/" (plus any query string).
+        auto pathname = m_url.path();
+        if (pathname.isEmpty()) {
+            m_state = CLOSED;
+            updateHasPendingActivity();
+            return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
+        }
+        size_t colon = pathname.find(':');
+        if (colon == notFound) {
+            unixSocketPathString = pathname.toString();
+            resource = makeString('/', m_url.queryWithLeadingQuestionMark());
+        } else {
+            unixSocketPathString = pathname.left(colon).toString();
+            auto requestPath = pathname.substring(colon + 1);
+            // Ensure origin-form per RFC 7230 §5.3.1 (leading '/').
+            if (requestPath.isEmpty()) {
+                resource = makeString('/', m_url.queryWithLeadingQuestionMark());
+            } else if (requestPath.startsWith('/')) {
+                resource = makeString(requestPath, m_url.queryWithLeadingQuestionMark());
+            } else {
+                resource = makeString('/', requestPath, m_url.queryWithLeadingQuestionMark());
+            }
+        }
+        if (unixSocketPathString.isEmpty()) {
+            m_state = CLOSED;
+            updateHasPendingActivity();
+            return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
+        }
+        // Host header defaults to "localhost" over a unix socket, matching
+        // Node's http.request({ socketPath }) and the npm `ws` package.
+        if (hostString.isEmpty()) {
+            hostString = "localhost"_s;
+        }
+    }
+    BunString host = Bun::toString(hostString);
+    BunString path = Bun::toString(resource);
+    BunString unixSocketPath = Bun::toString(unixSocketPathString);
+    BunString clientProtocolString = Bun::toString(protocolString);
     uint16_t port = is_secure ? 443 : 80;
     if (auto userPort = m_url.port()) {
         port = userPort.value();
     }
 
-    Vector<ZigString, 8> headerNames;
-    Vector<ZigString, 8> headerValues;
+    // Hold WTF::Strings so the BunString wrappers stay valid for the Zig call.
+    Vector<String, 8> headerNameStrings;
+    Vector<String, 8> headerValueStrings;
+    Vector<BunString, 8> headerNames;
+    Vector<BunString, 8> headerValues;
 
     auto headersOrException = FetchHeaders::create(WTF::move(headersInit));
     if (headersOrException.hasException()) [[unlikely]] {
@@ -563,17 +615,29 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     }
 
     auto headers = headersOrException.releaseReturnValue();
+    headerNameStrings.reserveInitialCapacity(headers.get().internalHeaders().size());
+    headerValueStrings.reserveInitialCapacity(headers.get().internalHeaders().size());
     headerNames.reserveInitialCapacity(headers.get().internalHeaders().size());
     headerValues.reserveInitialCapacity(headers.get().internalHeaders().size());
     // lowerCaseKeys = false so we dont touch the keys casing
     auto iterator = headers.get().createIterator(false);
     while (auto value = iterator.next()) {
-        headerNames.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->key));
-        headerValues.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->value));
+        headerNameStrings.append(value->key);
+        headerValueStrings.append(value->value);
+    }
+    for (size_t i = 0; i < headerNameStrings.size(); ++i) {
+        headerNames.unsafeAppendWithoutCapacityCheck(Bun::toString(headerNameStrings[i]));
+        headerValues.unsafeAppendWithoutCapacityCheck(Bun::toString(headerValueStrings[i]));
     }
 
     // Determine connection type based on proxy usage and TLS requirements
     bool hasProxy = proxyConfig.has_value();
+
+    // Unix domain sockets are local; proxies do not apply.
+    if (is_unix) {
+        proxyConfig = std::nullopt;
+        hasProxy = false;
+    }
 
     // Check NO_PROXY even for explicitly-provided proxies
     if (hasProxy) {
@@ -600,19 +664,21 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
 
     this->incPendingActivityCount();
 
-    // Prepare proxy parameters (use local variables, not member fields)
-    ZigString proxyHost = hasProxy ? Zig::toZigString(proxyConfig->host) : ZigString {};
-    ZigString proxyAuth = hasProxy ? Zig::toZigString(proxyConfig->authorization) : ZigString {};
+    // Prepare proxy parameters (use local variables, not member fields).
+    // The BunString wrappers reference the underlying WTF::Strings in proxyConfig
+    // and remain valid for the duration of the connect() call.
+    BunString proxyHost = hasProxy ? Bun::toString(proxyConfig->host) : BunString { BunStringTag::Empty };
+    BunString proxyAuth = hasProxy ? Bun::toString(proxyConfig->authorization) : BunString { BunStringTag::Empty };
     uint16_t proxyPort = hasProxy ? proxyConfig->port : 0;
 
-    Vector<ZigString, 8> proxyHeaderNames;
-    Vector<ZigString, 8> proxyHeaderValues;
+    Vector<BunString, 8> proxyHeaderNames;
+    Vector<BunString, 8> proxyHeaderValues;
     if (hasProxy) {
         proxyHeaderNames.reserveInitialCapacity(proxyConfig->headers.size());
         proxyHeaderValues.reserveInitialCapacity(proxyConfig->headers.size());
         for (const auto& header : proxyConfig->headers) {
-            proxyHeaderNames.unsafeAppendWithoutCapacityCheck(Zig::toZigString(header.first));
-            proxyHeaderValues.unsafeAppendWithoutCapacityCheck(Zig::toZigString(header.second));
+            proxyHeaderNames.unsafeAppendWithoutCapacityCheck(Bun::toString(header.first));
+            proxyHeaderValues.unsafeAppendWithoutCapacityCheck(Bun::toString(header.second));
         }
     }
 
@@ -624,7 +690,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         auto encoded = base64EncodeToString(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()));
         targetAuthorization = makeString("Basic "_s, encoded);
     }
-    ZigString targetAuth = Zig::toZigString(targetAuthorization);
+    BunString targetAuth = Bun::toString(targetAuthorization);
 
     // Pass SSLConfig pointer to Zig (ownership transferred - Zig will deinit when connection closes)
     // After this call, m_sslConfig should not be used by C++ anymore
@@ -647,7 +713,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
             sslConfig, is_secure,
-            targetAuthorization.isEmpty() ? nullptr : &targetAuth);
+            targetAuthorization.isEmpty() ? nullptr : &targetAuth,
+            is_unix ? &unixSocketPath : nullptr);
     } else {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
@@ -659,7 +726,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
             (hasProxy && !proxyConfig->authorization.isEmpty()) ? &proxyAuth : nullptr,
             proxyHeaderNames.begin(), proxyHeaderValues.begin(), proxyHeaderNames.size(),
             sslConfig, is_secure,
-            targetAuthorization.isEmpty() ? nullptr : &targetAuth);
+            targetAuthorization.isEmpty() ? nullptr : &targetAuth,
+            is_unix ? &unixSocketPath : nullptr);
     }
 
     proxyHeaderValues.clear();
@@ -959,20 +1027,16 @@ ExceptionOr<void> WebSocket::terminate()
 
 ExceptionOr<void> WebSocket::ping()
 {
-    auto message = WTF::String::number(WTF::jsCurrentTime());
-    // LOG(Network, "WebSocket %p ping() Sending Timestamp '%s'", this, message.data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
     // No exception is raised if the connection was once established but has subsequently been closed.
     if (m_state == CLOSING || m_state == CLOSED) {
-        size_t payloadSize = message.length();
-        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
-        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
 
-    this->sendWebSocketString(message, Opcode::Ping);
+    // Send empty ping frame per RFC 6455 and Node.js ws compatibility
+    this->sendWebSocketData(nullptr, 0, Opcode::Ping);
 
     return {};
 }
@@ -1042,20 +1106,16 @@ ExceptionOr<void> WebSocket::ping(ArrayBufferView& arrayBufferView)
 
 ExceptionOr<void> WebSocket::pong()
 {
-    auto message = WTF::String::number(WTF::jsCurrentTime());
-    // LOG(Network, "WebSocket %p pong() Sending Timestamp '%s'", this, message.data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
     // No exception is raised if the connection was once established but has subsequently been closed.
     if (m_state == CLOSING || m_state == CLOSED) {
-        size_t payloadSize = message.length();
-        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
-        m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
 
-    this->sendWebSocketString(message, Opcode::Pong);
+    // Send empty pong frame per RFC 6455 and Node.js ws compatibility
+    this->sendWebSocketData(nullptr, 0, Opcode::Pong);
 
     return {};
 }
@@ -1247,6 +1307,16 @@ void WebSocket::didConnect()
     }
     m_state = OPEN;
 
+    // Native callback: fire synchronously, skip Event construction +
+    // dispatchEvent + the postTask deferral. The m_state = OPEN above is
+    // the only bookkeeping the native path needs — sendTextNative checks
+    // it. incPendingActivityCount is a JS-GC-root concern; the native
+    // consumer holds a RefPtr so it doesn't need it.
+    if (m_native.onOpen) {
+        m_native.onOpen(m_native.ctx);
+        return;
+    }
+
     if (auto* context = scriptExecutionContext()) {
 
         if (this->hasEventListeners("open"_s)) {
@@ -1271,6 +1341,18 @@ void WebSocket::didReceiveMessage(String&& message)
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, message = WTF::move(message)]() mutable {
     if (m_state != OPEN)
         return;
+
+    // Native callback: hand off the UTF-8 bytes directly. UTF8View checks
+    // is8Bit() && containsOnlyASCII() first — if true (the common case for
+    // CDP JSON), span() is a zero-copy view over the existing buffer.
+    // Only non-ASCII Latin1 or UTF-16 strings pay for a transcode into
+    // a CString. The callback reads the span, we drop it — no
+    // MessageEvent, no dispatchEvent, no postTask.
+    if (m_native.onMessage) {
+        Bun::UTF8View view(message);
+        m_native.onMessage(m_native.ctx, view.span());
+        return;
+    }
 
     // if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
     //     if (auto* inspector = m_channel->channelInspector()) {
@@ -1414,6 +1496,18 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
         return;
     const bool wasConnecting = m_state == CONNECTING;
     m_state = CLOSED;
+
+    // Native callback: state transitioned, hand off the close code.
+    // Covers both connect-failure (didFailWithErrorCode →
+    // didReceiveClose) and server-initiated close. The consumer's
+    // onClose distinguishes by whether onOpen ever fired. Cleanup
+    // (disablePendingActivity) is the caller's job — didFailWithErrorCode
+    // posts it after the switch.
+    if (m_native.onClose) {
+        m_native.onClose(m_native.ctx, code);
+        return;
+    }
+
     if (auto* context = scriptExecutionContext()) {
         this->incPendingActivityCount();
         if (wasConnecting && isConnectionError) {
@@ -1469,6 +1563,17 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     ASSERT(scriptExecutionContext());
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
     this->m_upgradeClient = nullptr;
+
+    // Native callback: state transition above is done, hand off the code.
+    // disablePendingActivity releases the GC-root ref connect() took —
+    // the native consumer holds a RefPtr so GC-rooting doesn't matter,
+    // but the count should balance for the ASSERT below and any future
+    // consumer of hasPendingActivity().
+    if (m_native.onClose) {
+        m_native.onClose(m_native.ctx, code);
+        disablePendingActivity();
+        return;
+    }
 
     // since we are open and closing now we know that we have at least one pending activity
     // so we just call decPendingActivityCount() after dispatching the event
@@ -1684,9 +1789,14 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
     }
     }
 
-    m_state = CLOSED;
+    // didReceiveClose already set m_state = CLOSED. The connect() ref
+    // kept us alive across the switch (including across the native
+    // onClose callback dropping its RefPtr); release it from a task so
+    // the caller's stack frame unwinds first. ContextDestructionObserver
+    // holds a WeakPtr — a Worker terminated mid-connect returns null
+    // here; deref directly since there's no loop to post to.
     if (auto* context = scriptExecutionContext()) {
-        context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext&) {
             protectedThis->disablePendingActivity();
         });
     } else {

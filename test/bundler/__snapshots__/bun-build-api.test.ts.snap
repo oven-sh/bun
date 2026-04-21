@@ -2,13 +2,17 @@
 
 exports[`Bun.build Bun.write(BuildArtifact) 1`] = `
 "var __defProp = Object.defineProperty;
+var __returnValue = (v) => v;
+function __exportSetter(name, newValue) {
+  this[name] = __returnValue.bind(null, newValue);
+}
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, {
       get: all[name],
       enumerable: true,
       configurable: true,
-      set: (newValue) => all[name] = () => newValue
+      set: __exportSetter.bind(all, name)
     });
 };
 
@@ -31,13 +35,17 @@ NS.then(({ fn: fn2 }) => {
 
 exports[`Bun.build outdir + reading out blobs works 1`] = `
 "var __defProp = Object.defineProperty;
+var __returnValue = (v) => v;
+function __exportSetter(name, newValue) {
+  this[name] = __returnValue.bind(null, newValue);
+}
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, {
       get: all[name],
       enumerable: true,
       configurable: true,
-      set: (newValue) => all[name] = () => newValue
+      set: __exportSetter.bind(all, name)
     });
 };
 
@@ -58,23 +66,27 @@ NS.then(({ fn: fn2 }) => {
 "
 `;
 
-exports[`Bun.build BuildArtifact properties: hash 1`] = `"d1c7nm6t"`;
+exports[`Bun.build BuildArtifact properties: hash 1`] = `"est79qzq"`;
 
-exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"rm7e36cf"`;
+exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"7gfnt0h6"`;
 
-exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"d1c7nm6t"`;
+exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"est79qzq"`;
 
 exports[`Bun.build BuildArtifact properties sourcemap: hash index.js.map 1`] = `"00000000"`;
 
 exports[`Bun.build new Response(BuildArtifact) sets content type: response text 1`] = `
 "var __defProp = Object.defineProperty;
+var __returnValue = (v) => v;
+function __exportSetter(name, newValue) {
+  this[name] = __returnValue.bind(null, newValue);
+}
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, {
       get: all[name],
       enumerable: true,
       configurable: true,
-      set: (newValue) => all[name] = () => newValue
+      set: __exportSetter.bind(all, name)
     });
 };
 

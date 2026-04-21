@@ -14,6 +14,10 @@ if (libcFamily == "musl") {
   // @duckdb/node-bindings does not distribute musl binaries, so we skip this test on musl to avoid CI noise
   process.exit(0);
 }
+if (process.platform === "win32" && process.arch === "arm64") {
+  // @duckdb/node-bindings does not distribute win32-arm64 binaries
+  process.exit(0);
+}
 
 import { describe, test } from "bun:test";
 import assert from "node:assert";

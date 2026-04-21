@@ -253,6 +253,20 @@ pub fn setConnectedWebSocket(this: *WebSocketProxyTunnel, ws: *WebSocketClient) 
     this.#upgrade_client = .{ .none = {} };
 }
 
+/// Clear the connected WebSocket reference. Called before tunnel shutdown during
+/// a clean close so the tunnel's onClose callback doesn't dispatch a spurious
+/// abrupt close (1006) after the WebSocket has already sent a clean close frame.
+pub fn clearConnectedWebSocket(this: *WebSocketProxyTunnel) void {
+    this.#connected_websocket = null;
+}
+
+/// Clear the upgrade client reference. Called before tunnel shutdown during
+/// cleanup so that the SSLWrapper's synchronous onHandshake/onClose callbacks
+/// do not re-enter the upgrade client's terminate/clearData path.
+pub fn detachUpgradeClient(this: *WebSocketProxyTunnel) void {
+    this.#upgrade_client = .{ .none = {} };
+}
+
 /// SSLWrapper callback: Called with encrypted data to send to network
 fn writeEncrypted(this: *WebSocketProxyTunnel, encrypted_data: []const u8) void {
     log("writeEncrypted: {} bytes", .{encrypted_data.len});
@@ -290,16 +304,22 @@ pub fn onWritable(this: *WebSocketProxyTunnel) void {
 
     // Send buffered encrypted data
     const to_send = this.#write_buffer.slice();
-    if (to_send.len == 0) return;
+    if (to_send.len > 0) {
+        const written = this.#socket.write(to_send);
+        if (written < 0) return;
 
-    const written = this.#socket.write(to_send);
-    if (written < 0) return;
+        const written_usize: usize = @intCast(written);
+        if (written_usize == to_send.len) {
+            this.#write_buffer.reset();
+        } else {
+            this.#write_buffer.cursor += written_usize;
+            return; // still have backpressure
+        }
+    }
 
-    const written_usize: usize = @intCast(written);
-    if (written_usize == to_send.len) {
-        this.#write_buffer.reset();
-    } else {
-        this.#write_buffer.cursor += written_usize;
+    // Tunnel drained - let the connected WebSocket flush its send_buffer
+    if (this.#connected_websocket) |ws| {
+        ws.handleTunnelWritable();
     }
 }
 

@@ -149,15 +149,30 @@ pub const ClientEntryPoint = struct {
 };
 
 pub const ServerEntryPoint = struct {
-    source: logger.Source = undefined,
+    /// The generated wrapper source for `bun:main`. Always a valid slice
+    /// (either empty or owned by `bun.default_allocator`) so readers never
+    /// see `undefined` memory regardless of the `generated` flag's state.
+    contents: []const u8 = "",
+    generated: bool = false,
+
+    pub fn deinit(entry: *ServerEntryPoint) void {
+        if (entry.contents.len > 0) {
+            bun.default_allocator.free(entry.contents);
+        }
+        entry.contents = "";
+        entry.generated = false;
+    }
 
     pub fn generate(
         entry: *ServerEntryPoint,
-        allocator: std.mem.Allocator,
         is_hot_reload_enabled: bool,
         path_to_use: string,
-        name: string,
     ) !void {
+        // Use the global allocator so this buffer's lifetime is decoupled
+        // from whichever arena the caller's VM happens to be using; the
+        // slice is read later from `getHardcodedModule` which outlives any
+        // per-transpile arena.
+        const allocator = bun.default_allocator;
         const code = brk: {
             if (is_hot_reload_enabled) {
                 break :brk try std.fmt.allocPrint(
@@ -227,9 +242,13 @@ pub const ServerEntryPoint = struct {
             );
         };
 
-        entry.source = logger.Source.initPathString(name, code);
-        entry.source.path.text = name;
-        entry.source.path.namespace = "server-entry";
+        // Free the previous buffer on regenerate (hot reload) instead of
+        // leaking it. `contents` is either "" or a prior allocPrint result.
+        if (entry.contents.len > 0) {
+            allocator.free(entry.contents);
+        }
+        entry.contents = code;
+        entry.generated = true;
     }
 };
 

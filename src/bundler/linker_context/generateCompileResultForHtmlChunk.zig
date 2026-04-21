@@ -42,6 +42,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         chunk: *Chunk,
         chunks: []Chunk,
         minify_whitespace: bool,
+        compile_to_standalone_html: bool,
         output: std.array_list.Managed(u8),
         end_tag_indices: struct {
             head: ?u32 = 0,
@@ -49,6 +50,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             html: ?u32 = 0,
         },
         added_head_tags: bool,
+        added_body_script: bool,
 
         pub fn onWriteHTML(this: *@This(), bytes: []const u8) void {
             bun.handleOom(this.output.appendSlice(bytes));
@@ -104,6 +106,18 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 element.remove();
                 return;
             }
+
+            if (this.compile_to_standalone_html and import_record.source_index.isValid()) {
+                // In standalone HTML mode, inline assets as data: URIs
+                const url_for_css = this.linker.parse_graph.ast.items(.url_for_css)[import_record.source_index.get()];
+                if (url_for_css.len > 0) {
+                    element.setAttribute(url_attribute, url_for_css) catch {
+                        std.debug.panic("unexpected error from Element.setAttribute", .{});
+                    };
+                    return;
+                }
+            }
+
             if (unique_key_for_additional_files.len > 0) {
                 // Replace the external href/src with the unique key so that we later will rewrite it to the final URL or pathname
                 element.setAttribute(url_attribute, unique_key_for_additional_files) catch {
@@ -142,17 +156,39 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 try endTag.before(slice, true);
         }
 
+        /// Insert inline script before </body> so DOM elements are available.
+        fn addBodyTags(this: *@This(), endTag: *lol.EndTag) !void {
+            if (this.added_body_script) return;
+            this.added_body_script = true;
+
+            var html_appender = std.heap.stackFallback(256, bun.default_allocator);
+            const allocator = html_appender.get();
+            if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
+                const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\">{s}</script>", .{js_chunk.unique_key}, 0));
+                defer allocator.free(script);
+                try endTag.before(script, true);
+            }
+        }
+
         fn getHeadTags(this: *@This(), allocator: std.mem.Allocator) bun.BoundedArray([]const u8, 2) {
             var array: bun.BoundedArray([]const u8, 2) = .{};
-            // Put CSS before JS to reduce changes of flash of unstyled content
-            if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
-                const link_tag = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}, 0));
-                array.appendAssumeCapacity(link_tag);
-            }
-            if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
-                // type="module" scripts do not block rendering, so it is okay to put them in head
-                const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}, 0));
-                array.appendAssumeCapacity(script);
+            if (this.compile_to_standalone_html) {
+                // In standalone HTML mode, only put CSS in <head>; JS goes before </body>
+                if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
+                    const style_tag = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<style>{s}</style>", .{css_chunk.unique_key}, 0));
+                    array.appendAssumeCapacity(style_tag);
+                }
+            } else {
+                // Put CSS before JS to reduce chances of flash of unstyled content
+                if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
+                    const link_tag = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}, 0));
+                    array.appendAssumeCapacity(link_tag);
+                }
+                if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
+                    // type="module" scripts do not block rendering, so it is okay to put them in head
+                    const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}, 0));
+                    array.appendAssumeCapacity(script);
+                }
             }
             return array;
         }
@@ -170,7 +206,12 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         fn endBodyTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.c) lol.Directive {
             const this: *@This() = @ptrCast(@alignCast(opaque_this.?));
             if (this.linker.dev_server == null) {
-                this.addHeadTags(end) catch return .stop;
+                if (this.compile_to_standalone_html) {
+                    // In standalone mode, insert JS before </body> so DOM is available
+                    this.addBodyTags(end) catch return .stop;
+                } else {
+                    this.addHeadTags(end) catch return .stop;
+                }
             } else {
                 this.end_tag_indices.body = @intCast(this.output.items.len);
             }
@@ -180,7 +221,13 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         fn endHtmlTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.c) lol.Directive {
             const this: *@This() = @ptrCast(@alignCast(opaque_this.?));
             if (this.linker.dev_server == null) {
-                this.addHeadTags(end) catch return .stop;
+                if (this.compile_to_standalone_html) {
+                    // Fallback: if no </body> was found, insert both CSS and JS before </html>
+                    this.addHeadTags(end) catch return .stop;
+                    this.addBodyTags(end) catch return .stop;
+                } else {
+                    this.addHeadTags(end) catch return .stop;
+                }
             } else {
                 this.end_tag_indices.html = @intCast(this.output.items.len);
             }
@@ -199,6 +246,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         .log = c.log,
         .allocator = worker.allocator,
         .minify_whitespace = c.options.minify_whitespace,
+        .compile_to_standalone_html = c.options.compile_to_standalone_html,
         .chunk = chunk,
         .chunks = chunks,
         .output = std.array_list.Managed(u8).init(output_allocator),
@@ -209,6 +257,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             .head = null,
         },
         .added_head_tags = false,
+        .added_body_script = false,
     };
 
     HTMLScanner.HTMLProcessor(HTMLLoader, true).run(
@@ -233,14 +282,27 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             break :brk html;
         break :brk @intCast(html_loader.output.items.len); // inject at end of file.
     } else brk: {
-        if (!html_loader.added_head_tags) {
+        if (!html_loader.added_head_tags or !html_loader.added_body_script) {
             @branchHint(.cold); // this is if the document is missing all head, body, and html elements.
             var html_appender = std.heap.stackFallback(256, bun.default_allocator);
             const allocator = html_appender.get();
-            const slices = html_loader.getHeadTags(allocator);
-            for (slices.slice()) |slice| {
-                bun.handleOom(html_loader.output.appendSlice(slice));
-                allocator.free(slice);
+            if (!html_loader.added_head_tags) {
+                const slices = html_loader.getHeadTags(allocator);
+                for (slices.slice()) |slice| {
+                    bun.handleOom(html_loader.output.appendSlice(slice));
+                    allocator.free(slice);
+                }
+                html_loader.added_head_tags = true;
+            }
+            if (!html_loader.added_body_script) {
+                if (html_loader.compile_to_standalone_html) {
+                    if (html_loader.chunk.getJSChunkForHTML(html_loader.chunks)) |js_chunk| {
+                        const script = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "<script type=\"module\">{s}</script>", .{js_chunk.unique_key}, 0));
+                        defer allocator.free(script);
+                        bun.handleOom(html_loader.output.appendSlice(script));
+                    }
+                }
+                html_loader.added_body_script = true;
             }
         }
         break :brk if (Environment.isDebug) undefined else 0; // value is ignored. fail loud if hit in debug

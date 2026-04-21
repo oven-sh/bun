@@ -577,19 +577,27 @@ describe("fetch", () => {
   });
 
   it.concurrent('redirect: "follow"', async () => {
+    using target = Bun.serve({
+      port: 0,
+      tls,
+      fetch() {
+        return new Response("redirected!");
+      },
+    });
     using server = Bun.serve({
       port: 0,
       fetch(req) {
         return new Response(null, {
           status: 302,
           headers: {
-            Location: "https://example.com",
+            Location: target.url.href,
           },
         });
       },
     });
     const response = await fetch(`http://${server.hostname}:${server.port}`, {
       redirect: "follow",
+      tls: { ca: tls.cert },
     });
     expect(response.status).toBe(200);
     expect(response.headers.get("location")).toBe(null);
@@ -734,8 +742,15 @@ it.concurrent("simultaneous HTTPS fetch", async () => {
 });
 
 it.concurrent("website with tlsextname", async () => {
-  // irony
-  await fetch("https://bun.sh", { method: "HEAD" });
+  using server = Bun.serve({
+    port: 0,
+    tls,
+    fetch() {
+      return new Response("OK");
+    },
+  });
+  const resp = await fetch(server.url, { method: "HEAD", tls: { ca: tls.cert } });
+  expect(resp.status).toBe(200);
 });
 
 function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?: boolean) {

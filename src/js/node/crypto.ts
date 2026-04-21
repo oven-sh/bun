@@ -199,18 +199,18 @@ function Sign(algorithm, options): void {
 }
 $toClass(Sign, "Sign", Writable);
 
-Sign.prototype._write = function _write(chunk, encoding, callback) {
-  this.update(chunk, encoding);
-  callback();
-};
-
-Sign.prototype.update = function update(data, encoding) {
-  return this[kHandle].update(this, data, encoding);
-};
-
-Sign.prototype.sign = function sign(options, encoding) {
-  return this[kHandle].sign(options, encoding);
-};
+Object.assign(Sign.prototype, {
+  _write: function (chunk, encoding, callback) {
+    this.update(chunk, encoding);
+    callback();
+  },
+  update: function (data, encoding) {
+    return this[kHandle].update(this, data, encoding);
+  },
+  sign: function (options, encoding) {
+    return this[kHandle].sign(options, encoding);
+  },
+});
 
 crypto_exports.Sign = Sign;
 crypto_exports.sign = sign;
@@ -237,9 +237,11 @@ $toClass(Verify, "Verify", Writable);
 Verify.prototype._write = Sign.prototype._write;
 Verify.prototype.update = Sign.prototype.update;
 
-Verify.prototype.verify = function verify(options, signature, sigEncoding) {
-  return this[kHandle].verify(options, signature, sigEncoding);
-};
+Object.assign(Verify.prototype, {
+  verify: function (options, signature, sigEncoding) {
+    return this[kHandle].verify(options, signature, sigEncoding);
+  },
+});
 
 crypto_exports.Verify = Verify;
 crypto_exports.verify = verify;
@@ -250,82 +252,76 @@ function createVerify(algorithm, options?) {
 
 crypto_exports.createVerify = createVerify;
 
-{
-  function Hash(algorithm, options?): void {
-    if (!new.target) {
-      return new Hash(algorithm, options);
-    }
-
-    const handle = new _Hash(algorithm, options);
-    this[kHandle] = handle;
-
-    LazyTransform.$apply(this, [options]);
+function Hash(algorithm, options?): void {
+  if (!new.target) {
+    return new Hash(algorithm, options);
   }
-  $toClass(Hash, "Hash", LazyTransform);
 
-  Hash.prototype.copy = function copy(options) {
+  const handle = new _Hash(algorithm, options);
+  this[kHandle] = handle;
+
+  LazyTransform.$apply(this, [options]);
+}
+$toClass(Hash, "Hash", LazyTransform);
+
+Object.assign(Hash.prototype, {
+  copy: function (options) {
     return new Hash(this[kHandle], options);
-  };
-
-  Hash.prototype._transform = function _transform(chunk, encoding, callback) {
+  },
+  _transform: function (chunk, encoding, callback) {
     this[kHandle].update(this, chunk, encoding);
     callback();
-  };
-
-  Hash.prototype._flush = function _flush(callback) {
+  },
+  _flush: function (callback) {
     this.push(this[kHandle].digest(null, false));
     callback();
-  };
-
-  Hash.prototype.update = function update(data, encoding) {
+  },
+  update: function (data, encoding) {
     return this[kHandle].update(this, data, encoding);
-  };
-
-  Hash.prototype.digest = function digest(outputEncoding) {
+  },
+  digest: function (outputEncoding) {
     return this[kHandle].digest(outputEncoding);
-  };
+  },
+});
 
-  crypto_exports.Hash = Hash;
-  crypto_exports.createHash = function createHash(algorithm, options) {
-    return new Hash(algorithm, options);
-  };
-}
+crypto_exports.Hash = Hash;
+crypto_exports.createHash = function createHash(algorithm, options) {
+  return new Hash(algorithm, options);
+};
 
-{
-  function Hmac(hmac, key, options?): void {
-    if (!new.target) {
-      return new Hmac(hmac, key, options);
-    }
-
-    const handle = new _Hmac(hmac, key, options);
-    this[kHandle] = handle;
-
-    LazyTransform.$apply(this, [options]);
+function Hmac(hmac, key, options?): void {
+  if (!new.target) {
+    return new Hmac(hmac, key, options);
   }
-  $toClass(Hmac, "Hmac", LazyTransform);
 
-  Hmac.prototype.update = function update(data, encoding) {
+  const handle = new _Hmac(hmac, key, options);
+  this[kHandle] = handle;
+
+  LazyTransform.$apply(this, [options]);
+}
+$toClass(Hmac, "Hmac", LazyTransform);
+
+Object.assign(Hmac.prototype, {
+  update: function (data, encoding) {
     return this[kHandle].update(this, data, encoding);
-  };
-
-  Hmac.prototype.digest = function digest(outputEncoding) {
+  },
+  digest: function (outputEncoding) {
     return this[kHandle].digest(outputEncoding);
-  };
-
-  Hmac.prototype._transform = function _transform(chunk, encoding, callback) {
+  },
+  _transform: function (chunk, encoding, callback) {
     this[kHandle].update(this, chunk, encoding);
     callback();
-  };
-  Hmac.prototype._flush = function _flush(callback) {
+  },
+  _flush: function (callback) {
     this.push(this[kHandle].digest());
     callback();
-  };
+  },
+});
 
-  crypto_exports.Hmac = Hmac;
-  crypto_exports.createHmac = function createHmac(hmac, key, options) {
-    return new Hmac(hmac, key, options);
-  };
-}
+crypto_exports.Hmac = Hmac;
+crypto_exports.createHmac = function createHmac(hmac, key, options) {
+  return new Hmac(hmac, key, options);
+};
 
 crypto_exports.getHashes = getHashes;
 
@@ -390,62 +386,6 @@ crypto_exports.createECDH = function createECDH(curve) {
     return decoder;
   }
 
-  function setAutoPadding(ap) {
-    this[kHandle].setAutoPadding(ap);
-    return this;
-  }
-
-  function getAuthTag() {
-    return this[kHandle].getAuthTag();
-  }
-
-  function setAuthTag(tagbuf, encoding) {
-    this[kHandle].setAuthTag(tagbuf, encoding);
-    return this;
-  }
-
-  function setAAD(aadbuf, options) {
-    this[kHandle].setAAD(aadbuf, options);
-    return this;
-  }
-
-  function _transform(chunk, encoding, callback) {
-    this.push(this[kHandle].update(chunk, encoding));
-    callback();
-  }
-
-  function _flush(callback) {
-    try {
-      this.push(this[kHandle].final());
-    } catch (e) {
-      callback(e);
-      return;
-    }
-    callback();
-  }
-
-  function update(data, inputEncoding, outputEncoding) {
-    const res = this[kHandle].update(data, inputEncoding);
-
-    if (outputEncoding && outputEncoding !== "buffer") {
-      this._decoder = getDecoder(this._decoder, outputEncoding);
-      return this._decoder.write(res);
-    }
-
-    return res;
-  }
-
-  function final(outputEncoding) {
-    const res = this[kHandle].final();
-
-    if (outputEncoding && outputEncoding !== "buffer") {
-      this._decoder = getDecoder(this._decoder, outputEncoding);
-      return this._decoder.end(res);
-    }
-
-    return res;
-  }
-
   function Cipheriv(cipher, key, iv, options): void {
     if (!new.target) {
       return new Cipheriv(cipher, key, iv, options);
@@ -457,13 +397,52 @@ crypto_exports.createECDH = function createECDH(curve) {
   }
   $toClass(Cipheriv, "Cipheriv", LazyTransform);
 
-  Cipheriv.prototype.setAutoPadding = setAutoPadding;
-  Cipheriv.prototype.getAuthTag = getAuthTag;
-  Cipheriv.prototype.setAAD = setAAD;
-  Cipheriv.prototype._transform = _transform;
-  Cipheriv.prototype._flush = _flush;
-  Cipheriv.prototype.update = update;
-  Cipheriv.prototype.final = final;
+  Object.assign(Cipheriv.prototype, {
+    setAutoPadding: function (ap) {
+      this[kHandle].setAutoPadding(ap);
+      return this;
+    },
+    getAuthTag: function () {
+      return this[kHandle].getAuthTag();
+    },
+    setAAD: function (aadbuf, options) {
+      this[kHandle].setAAD(aadbuf, options);
+      return this;
+    },
+    _transform: function (chunk, encoding, callback) {
+      this.push(this[kHandle].update(chunk, encoding));
+      callback();
+    },
+    _flush: function (callback) {
+      try {
+        this.push(this[kHandle].final());
+      } catch (e) {
+        callback(e);
+        return;
+      }
+      callback();
+    },
+    update: function (data, inputEncoding, outputEncoding) {
+      const res = this[kHandle].update(data, inputEncoding);
+
+      if (outputEncoding && outputEncoding !== "buffer") {
+        this._decoder = getDecoder(this._decoder, outputEncoding);
+        return this._decoder.write(res);
+      }
+
+      return res;
+    },
+    final: function (outputEncoding) {
+      const res = this[kHandle].final();
+
+      if (outputEncoding && outputEncoding !== "buffer") {
+        this._decoder = getDecoder(this._decoder, outputEncoding);
+        return this._decoder.end(res);
+      }
+
+      return res;
+    },
+  });
 
   function Decipheriv(cipher, key, iv, options): void {
     if (!new.target) {
@@ -476,13 +455,18 @@ crypto_exports.createECDH = function createECDH(curve) {
   }
   $toClass(Decipheriv, "Decipheriv", LazyTransform);
 
-  Decipheriv.prototype.setAutoPadding = setAutoPadding;
-  Decipheriv.prototype.setAuthTag = setAuthTag;
-  Decipheriv.prototype.setAAD = setAAD;
-  Decipheriv.prototype._transform = _transform;
-  Decipheriv.prototype._flush = _flush;
-  Decipheriv.prototype.update = update;
-  Decipheriv.prototype.final = final;
+  Object.assign(Decipheriv.prototype, {
+    setAutoPadding: Cipheriv.prototype.setAutoPadding,
+    setAuthTag: function (tagbuf, encoding) {
+      this[kHandle].setAuthTag(tagbuf, encoding);
+      return this;
+    },
+    setAAD: Cipheriv.prototype.setAAD,
+    _transform: Cipheriv.prototype._transform,
+    _flush: Cipheriv.prototype._flush,
+    update: Cipheriv.prototype.update,
+    final: Cipheriv.prototype.final,
+  });
 
   crypto_exports.Cipheriv = Cipheriv;
   crypto_exports.Decipheriv = Decipheriv;

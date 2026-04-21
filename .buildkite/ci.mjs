@@ -99,6 +99,23 @@ function getTargetLabel(target) {
  * @property {string[]} [features]
  */
 
+// Azure VM sizes for Windows CI runners.
+// DDSv6 = x64, DPSv6 = ARM64 (Cobalt 100). Quota: 100 cores per family in eastus2.
+const azureVmSizes = {
+  "windows-x64": {
+    build: "Standard_D16ds_v6", // 16 vCPU, 64 GiB — C++ build, link
+    test: "Standard_D4ds_v6", // 4 vCPU, 16 GiB — test shards
+  },
+  "windows-aarch64": {
+    build: "Standard_D16pds_v6", // 16 vCPU, 64 GiB, local NVMe — C++ build, link
+    test: "Standard_D4pds_v6", // 4 vCPU, 16 GiB, local NVMe — test shards
+  },
+};
+
+function getAzureVmSize(os, arch, tier = "build") {
+  return azureVmSizes[`${os}-${arch}`]?.[tier];
+}
+
 /**
  * @type {Platform[]}
  */
@@ -114,8 +131,7 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23" },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
-  // TODO: Re-enable when Windows ARM64 VS component installation is resolved on Buildkite runners
-  // { os: "windows", arch: "aarch64", release: "2019" },
+  { os: "windows", arch: "aarch64", release: "11" },
 ];
 
 /**
@@ -138,8 +154,7 @@ const testPlatforms = [
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
-  // TODO: Enable when Windows ARM64 CI runners are ready
-  // { os: "windows", arch: "aarch64", release: "2019", tier: "oldest" },
+  { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
 ];
 
 /**
@@ -209,12 +224,12 @@ function getImageLabel(platform) {
  * @returns {string}
  */
 function getImageName(platform, options) {
-  const { os } = platform;
-  const { buildImages, publishImages } = options;
+  const { os, distro } = platform;
+  const { buildImages, publishImages, imageFilter } = options;
 
   const name = getImageKey(platform);
 
-  if (buildImages && !publishImages) {
+  if (buildImages && !publishImages && (!imageFilter || os === imageFilter || distro === imageFilter)) {
     return `${name}-build-${getBuildNumber()}`;
   }
 
@@ -304,15 +319,8 @@ function getCppAgent(platform, options) {
     };
   }
 
-  // Cross-compile Windows ARM64 from x64 runners
-  if (os === "windows" && arch === "aarch64") {
-    return getEc2Agent({ ...platform, arch: "x64" }, options, {
-      instanceType: "c7i.4xlarge",
-    });
-  }
-
   return getEc2Agent(platform, options, {
-    instanceType: arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
+    instanceType: os === "windows" ? getAzureVmSize(os, arch) : arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
   });
 }
 
@@ -333,10 +341,8 @@ function getLinkBunAgent(platform, options) {
   }
 
   if (os === "windows") {
-    // Cross-compile Windows ARM64 from x64 runners
-    const agentPlatform = arch === "aarch64" ? { ...platform, arch: "x64" } : platform;
-    return getEc2Agent(agentPlatform, options, {
-      instanceType: "r7i.large",
+    return getEc2Agent(platform, options, {
+      instanceType: getAzureVmSize(os, arch),
     });
   }
 
@@ -363,9 +369,21 @@ function getZigPlatform() {
  * @param {PipelineOptions} options
  * @returns {Agent}
  */
-function getZigAgent(_platform, options) {
+function getZigAgent(platform, options) {
+  const { os, arch } = platform;
+
+  // Windows builds Zig natively on Azure
+  if (os === "windows") {
+    return getEc2Agent(platform, options, {
+      instanceType: getAzureVmSize(os, arch),
+    });
+  }
+
+  // Everything else cross-compiles from Linux aarch64. ASAN gets a wider
+  // box: it builds with cg=CI_ASAN_CODEGEN_THREADS (8) so it can use the
+  // parallel backend; release stays at cg=1 (full IPO) so 2 vCPU suffice.
   return getEc2Agent(getZigPlatform(), options, {
-    instanceType: "r8g.large",
+    instanceType: platform.profile === "asan" ? "r8g.2xlarge" : "r8g.large",
   });
 }
 
@@ -388,7 +406,7 @@ function getTestAgent(platform, options) {
   // TODO: delete this block when we upgrade to mimalloc v3
   if (os === "windows") {
     return getEc2Agent(platform, options, {
-      instanceType: "c7i.2xlarge",
+      instanceType: getAzureVmSize(os, arch, "test"),
       cpuCount: 2,
       threadsPerCore: 1,
     });
@@ -428,52 +446,64 @@ function getTestAgent(platform, options) {
  */
 
 /**
+ * Build the scripts/build.ts argument list from a target's properties.
+ * Replaces the old getBuildEnv (cmake -D env vars) + getBuildCommand
+ * (--target passthrough) with direct build.ts flags.
+ *
  * @param {Target} target
  * @param {PipelineOptions} options
- * @returns {Record<string, string | undefined>}
- */
-function getBuildEnv(target, options) {
-  const { baseline, abi } = target;
-  const { canary } = options;
-  const revision = typeof canary === "number" ? canary : 1;
-
-  return {
-    ENABLE_BASELINE: baseline ? "ON" : "OFF",
-    ENABLE_CANARY: revision > 0 ? "ON" : "OFF",
-    CANARY_REVISION: revision,
-    ABI: abi === "musl" ? "musl" : undefined,
-    CMAKE_VERBOSE_MAKEFILE: "ON",
-    CMAKE_TLS_VERIFY: "0",
-  };
-}
-
-/**
- * @param {Target} target
- * @param {PipelineOptions} options
+ * @param {"cpp-only" | "zig-only" | "link-only"} mode
  * @returns {string}
  */
-function getBuildCommand(target, options, label) {
-  const { profile } = target;
-  const buildProfile = profile || "release";
+function getBuildArgs(target, options, mode) {
+  const { os, arch, abi, baseline, profile } = target;
+  const { canary } = options;
 
-  if (target.os === "windows" && label === "build-bun") {
-    // Only sign release builds, not canary builds (DigiCert charges per signature)
-    const enableSigning = !options.canary ? " -DENABLE_WINDOWS_CODESIGNING=ON" : "";
-    return `bun run build:${buildProfile}${enableSigning}`;
+  const args = [`--profile=ci-${mode}`];
+
+  // zig-only cross-compiles (linux host → all targets); os/arch/abi must
+  // all be explicit — host detection (detectLinuxAbi checks /etc/alpine-release)
+  // would report the build box's abi (Alpine→musl), not the target's.
+  // cpp-only/link-only: native build, host detection is correct.
+  if (mode === "zig-only") {
+    args.push(`--os=${os}`, `--arch=${arch}`);
+    if (os === "linux") args.push(`--abi=${abi ?? "gnu"}`);
+  } else if (abi === "musl") {
+    args.push("--abi=musl");
   }
+  if (baseline) args.push("--baseline=on");
+  if (profile === "asan") args.push("--asan=on");
 
-  return `bun run build:${buildProfile}`;
+  // canary: options.canary can be number (revision count) or undefined
+  // (default on). Old system used CANARY_REVISION as a counter; build.ts
+  // has only on/off — disabled only when explicitly 0.
+  const canaryRev = typeof canary === "number" ? canary : 1;
+  if (canaryRev === 0) args.push("--canary=off");
+
+  return args.join(" ");
 }
 
 /**
- * Get extra flags needed when cross-compiling Windows ARM64 from x64.
- * Applied to C++ and link steps (not Zig, which has its own toolchain handling).
+ * @param {Target} target
+ * @param {PipelineOptions} options
+ * @param {"cpp-only" | "zig-only" | "link-only"} mode
+ * @returns {string}
  */
-function getWindowsArm64CrossFlags(target) {
-  if (target.os === "windows" && target.arch === "aarch64") {
-    return " --toolchain windows-aarch64";
-  }
-  return "";
+function getBuildCommand(target, options, mode) {
+  // Windows code signing is handled by a dedicated 'windows-sign' step after
+  // all Windows builds complete — see getWindowsSignStep(). smctl is x64-only,
+  // so signing on the build agent wouldn't work for ARM64 anyway.
+  //
+  // Literal `node` — ci.mjs generates pipeline YAML that runs on a
+  // different agent later, so process.execPath (the generator's path)
+  // is wrong. PATH on the agent has node via bootstrap.sh.
+  // --experimental-strip-types for Node 24's .ts support (unflagged in
+  // 25+; drop once CI bumps past the ABI-141 blocker).
+  //
+  // Windows ARM64 node v24 intermittently fastfails (0xC0000409) in
+  // fetch-cli.ts; run build.ts under bun there instead.
+  const runtime = target.os === "windows" && target.arch === "aarch64" ? "bun" : "node --experimental-strip-types";
+  return `${runtime} scripts/build.ts ${getBuildArgs(target, options, mode)}`;
 }
 
 /**
@@ -482,40 +512,17 @@ function getWindowsArm64CrossFlags(target) {
  * @returns {Step}
  */
 function getBuildCppStep(platform, options) {
-  const command = getBuildCommand(platform, options);
-  const crossFlags = getWindowsArm64CrossFlags(platform);
-
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
     agents: getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    env: {
-      BUN_CPP_ONLY: "ON",
-      ...getBuildEnv(platform, options),
-    },
-    // We used to build the C++ dependencies and bun in separate steps.
-    // However, as long as the zig build takes longer than both sequentially,
-    // it's cheaper to run them in the same step. Can be revisited in the future.
-    command: [`${command}${crossFlags} --target bun`, `${command}${crossFlags} --target dependencies`],
+    // cpp-only builds deps + bun's C++ in one ninja graph (ninja pulls
+    // everything the archive transitively needs). The old two-command
+    // split (--target bun, --target dependencies) was a cmake artifact.
+    command: getBuildCommand(platform, options, "cpp-only"),
   };
-}
-
-/**
- * @param {Target} target
- * @returns {string}
- */
-function getBuildToolchain(target) {
-  const { os, arch, abi, baseline } = target;
-  let key = `${os}-${arch}`;
-  if (abi) {
-    key += `-${abi}`;
-  }
-  if (baseline) {
-    key += "-baseline";
-  }
-  return key;
 }
 
 /**
@@ -524,15 +531,15 @@ function getBuildToolchain(target) {
  * @returns {Step}
  */
 function getBuildZigStep(platform, options) {
-  const toolchain = getBuildToolchain(platform);
   return {
     key: `${getTargetKey(platform)}-build-zig`,
     retry: getRetry(),
     label: `${getTargetLabel(platform)} - build-zig`,
     agents: getZigAgent(platform, options),
     cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform, options),
-    command: `${getBuildCommand(platform, options)} --target bun-zig --toolchain ${toolchain}`,
+    // zig cross-compiles via --os/--arch in build args. No separate
+    // toolchain file — zig handles cross-compilation natively.
+    command: getBuildCommand(platform, options, "zig-only"),
     timeout_in_minutes: 35,
   };
 }
@@ -551,11 +558,13 @@ function getLinkBunStep(platform, options) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {
-      BUN_LINK_ONLY: "ON",
+      // ASAN runtime settings — unrelated to build config, affects the
+      // linked binary's startup during the smoke test.
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
-      ...getBuildEnv(platform, options),
     },
-    command: `${getBuildCommand(platform, options, "build-bun")}${getWindowsArm64CrossFlags(platform)} --target bun`,
+    // link-only downloads artifacts from the sibling build-cpp and
+    // build-zig steps (derived from BUILDKITE_STEP_KEY) before ninja runs.
+    command: getBuildCommand(platform, options, "link-only"),
   };
 }
 
@@ -586,8 +595,35 @@ function getTargetTriplet(platform) {
  */
 function needsBaselineVerification(platform) {
   const { os, arch, baseline } = platform;
-  if (os !== "linux") return false;
-  return (arch === "x64" && baseline) || arch === "aarch64";
+  if (os === "linux") return (arch === "x64" && baseline) || arch === "aarch64";
+  if (os === "windows") return arch === "x64" && baseline;
+  return false;
+}
+
+/**
+ * Returns the emulator binary name for the given platform.
+ * Linux uses QEMU user-mode; Windows uses Intel SDE.
+ * @param {Platform} platform
+ * @returns {string}
+ */
+function getEmulatorBinary(platform) {
+  const { os, arch } = platform;
+  if (os === "windows") return "sde-external/sde.exe";
+  if (arch === "aarch64") return "qemu-aarch64-static";
+  return "qemu-x86_64-static";
+}
+
+const SDE_VERSION = "9.58.0-2025-06-16";
+const SDE_URL = `https://downloadmirror.intel.com/859732/sde-external-${SDE_VERSION}-win.tar.xz`;
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step}
+ */
+function hasWebKitChanges(options) {
+  const { changedFiles = [] } = options;
+  return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
 }
 
 /**
@@ -596,9 +632,38 @@ function needsBaselineVerification(platform) {
  * @returns {Step}
  */
 function getVerifyBaselineStep(platform, options) {
-  const { arch } = platform;
+  const { os } = platform;
   const targetKey = getTargetKey(platform);
-  const archArg = arch === "x64" ? "x64" : "aarch64";
+  const triplet = getTargetTriplet(platform);
+  const emulator = getEmulatorBinary(platform);
+  const jitStressFlag = hasWebKitChanges(options) ? " --jit-stress" : "";
+
+  // Scan bun-profile, not bun. The stripped binary has no .symtab (ELF) and
+  // no companion .pdb (PE) — the static scanner would emit <no-symbol@addr>
+  // for everything and none of the allowlist entries would match. bun-profile
+  // has identical .text so violation results are the same, just attributable.
+  const profileDir = `${triplet}-profile`;
+  const profileExe = os === "windows" ? "bun-profile.exe" : "bun-profile";
+
+  const setupCommands =
+    os === "windows"
+      ? [
+          `echo Downloading build artifacts...`,
+          `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun`,
+          `echo Extracting ${profileDir}.zip...`,
+          `tar -xf ${profileDir}.zip`,
+          `echo Downloading Intel SDE...`,
+          `curl.exe -fsSL -o sde.tar.xz "${SDE_URL}"`,
+          `echo Extracting Intel SDE...`,
+          `7z x -y sde.tar.xz`,
+          `7z x -y sde.tar`,
+          `ren sde-external-${SDE_VERSION}-win sde-external`,
+        ]
+      : [
+          `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
+          `unzip -o '${profileDir}.zip'`,
+          `chmod +x ${profileDir}/${profileExe}`,
+        ];
 
   return {
     key: `${targetKey}-verify-baseline`,
@@ -607,75 +672,12 @@ function getVerifyBaselineStep(platform, options) {
     agents: getLinkBunAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    timeout_in_minutes: 5,
+    timeout_in_minutes: hasWebKitChanges(options) ? 30 : 10,
     command: [
-      `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
-      `unzip -o '${getTargetTriplet(platform)}.zip'`,
-      `unzip -o '${getTargetTriplet(platform)}-profile.zip'`,
-      `chmod +x ${getTargetTriplet(platform)}/bun ${getTargetTriplet(platform)}-profile/bun-profile`,
-      `./scripts/verify-baseline-cpu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}/bun`,
-      `./scripts/verify-baseline-cpu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}-profile/bun-profile`,
+      ...setupCommands,
+      `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml`,
+      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --emulator ${emulator}${jitStressFlag}`,
     ],
-  };
-}
-
-/**
- * Returns true if the PR modifies SetupWebKit.cmake (WebKit version changes).
- * JIT stress tests under QEMU should run when WebKit is updated to catch
- * JIT-generated code that uses unsupported CPU instructions.
- * @param {PipelineOptions} options
- * @returns {boolean}
- */
-function hasWebKitChanges(options) {
-  const { changedFiles = [] } = options;
-  return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
-}
-
-/**
- * Returns a step that runs JSC JIT stress tests under QEMU.
- * This verifies that JIT-compiled code doesn't use CPU instructions
- * beyond the baseline target (no AVX on x64, no LSE on aarch64).
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
-function getJitStressTestStep(platform, options) {
-  const { arch } = platform;
-  const targetKey = getTargetKey(platform);
-  const archArg = arch === "x64" ? "x64" : "aarch64";
-
-  return {
-    key: `${targetKey}-jit-stress-qemu`,
-    label: `${getTargetLabel(platform)} - jit-stress-qemu`,
-    depends_on: [`${targetKey}-build-bun`],
-    agents: getLinkBunAgent(platform, options),
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    // JIT stress tests are slow under QEMU emulation
-    timeout_in_minutes: 30,
-    command: [
-      `buildkite-agent artifact download '*.zip' . --step ${targetKey}-build-bun`,
-      `unzip -o '${getTargetTriplet(platform)}.zip'`,
-      `chmod +x ${getTargetTriplet(platform)}/bun`,
-      `./scripts/verify-jit-stress-qemu.sh --arch ${archArg} --binary ${getTargetTriplet(platform)}/bun`,
-    ],
-  };
-}
-
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
-function getBuildBunStep(platform, options) {
-  return {
-    key: `${getTargetKey(platform)}-build-bun`,
-    label: `${getTargetLabel(platform)} - build-bun`,
-    agents: getCppAgent(platform, options),
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform, options),
-    command: getBuildCommand(platform, options),
   };
 }
 
@@ -717,14 +719,14 @@ function getTestBunStep(platform, options, testOptions = {}) {
     agents: getTestAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: os === "darwin" ? 2 : 20,
+    parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
     timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
     command:
       os === "windows"
-        ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
+        ? `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 node .\\scripts\\runner.node.mjs ${args.join(" ")}`
         : `./scripts/runner.node.mjs ${args.join(" ")}`,
   };
 }
@@ -739,6 +741,7 @@ function getBuildImageStep(platform, options) {
   const { publishImages } = options;
   const action = publishImages ? "publish-image" : "create-image";
 
+  const cloud = os === "windows" ? "azure" : "aws";
   const command = [
     "node",
     "./scripts/machine.mjs",
@@ -747,7 +750,7 @@ function getBuildImageStep(platform, options) {
     `--arch=${arch}`,
     distro && `--distro=${distro}`,
     `--release=${release}`,
-    "--cloud=aws",
+    `--cloud=${cloud}`,
     "--ci",
     "--authorized-org=oven-sh",
   ];
@@ -772,13 +775,99 @@ function getBuildImageStep(platform, options) {
 }
 
 /**
- * @param {Platform[]} buildPlatforms
+ * Batch-signs all Windows artifacts on an x64 agent. DigiCert smctl is x64-only
+ * and silently fails under ARM64 emulation, so signing must happen here instead
+ * of inline during each build. Re-uploads signed zips with the same names so
+ * the release step picks them up transparently.
+ * @param {Platform[]} windowsPlatforms
  * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getReleaseStep(buildPlatforms, options) {
+function getWindowsSignStep(windowsPlatforms, options) {
+  // Each build-bun step produces two zips: <triplet>-profile.zip and <triplet>.zip
+  const artifacts = [];
+  const buildSteps = [];
+  for (const platform of windowsPlatforms) {
+    const triplet = getTargetTriplet(platform);
+    const stepKey = `${getTargetKey(platform)}-build-bun`;
+    artifacts.push(`${triplet}-profile.zip`, `${triplet}.zip`);
+    buildSteps.push(stepKey, stepKey);
+  }
+
+  // Run on an x64 build agent — smctl doesn't work on ARM64
+  const signPlatform = windowsPlatforms.find(p => p.arch === "x64" && !p.baseline) ?? windowsPlatforms[0];
+
+  return {
+    key: "windows-sign",
+    label: `${getBuildkiteEmoji("windows")} sign`,
+    depends_on: windowsPlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+    agents: getEc2Agent(signPlatform, options, {
+      instanceType: getAzureVmSize("windows", "x64", "test"),
+    }),
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    command: [
+      `powershell -NoProfile -ExecutionPolicy Bypass -File .buildkite/scripts/sign-windows-artifacts.ps1 ` +
+        `-Artifacts ${artifacts.join(",")} ` +
+        `-BuildSteps ${buildSteps.join(",")}`,
+    ],
+  };
+}
+
+/**
+ * Aggregates stripped-binary sizes from every release build, compares them
+ * against the latest main build's binary-sizes.json, and fails if any grew
+ * past the threshold. Runs on PR builds (comparison) and main (record-only,
+ * to produce the baseline artifact).
+ *
+ * @param {Platform[]} releasePlatforms
+ * @param {PipelineOptions} options
+ * @param {{ recordOnly: boolean }} [extra]
+ * @returns {Step}
+ */
+function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {}) {
+  const targets = releasePlatforms.map(p => ({ triplet: getTargetTriplet(p) }));
+  const args = [`--targets '${JSON.stringify(targets)}'`, `--threshold-mb ${BINARY_SIZE_THRESHOLD_MB}`];
+  if (recordOnly) args.push("--no-fail");
+  if (!options.canary) args.push("--release");
+
+  return {
+    key: "binary-size",
+    label: `${getBuildkiteEmoji("package")} binary-size`,
+    agents: getEc2Agent(
+      buildPlatforms.find(p => p.os === "linux" && p.arch === "aarch64" && p.distro === "amazonlinux"),
+      options,
+      { instanceType: "c8g.large" },
+    ),
+    depends_on: releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+    allow_dependency_failure: true,
+    soft_fail: !!options.skipSizeCheck,
+    retry: {
+      manual: { permit_on_passed: true },
+      automatic: [{ exit_status: "*", limit: 2 }],
+    },
+    cancel_on_build_failing: isMergeQueue(),
+    command: `bun scripts/binary-size.ts ${args.join(" ")}`,
+  };
+}
+
+const BINARY_SIZE_THRESHOLD_MB = 0.5;
+
+/**
+ * @param {Platform[]} buildPlatforms
+ * @param {PipelineOptions} options
+ * @param {{ signed: boolean }} [extra]
+ * @returns {Step}
+ */
+function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
+
+  // When signing ran, depend on windows-sign instead of the raw Windows builds
+  // so we wait for signed artifacts before releasing.
+  const depends_on = signed
+    ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
+    : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
 
   return {
     key: "release",
@@ -786,27 +875,14 @@ function getReleaseStep(buildPlatforms, options) {
     agents: {
       queue: "test-darwin",
     },
-    depends_on: buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
+    depends_on,
     env: {
       CANARY: revision,
+      // Tells upload-release.sh to fetch Windows zips from the sign step
+      // (same filenames, but the signed re-uploads are the ones we want).
+      WINDOWS_ARTIFACT_STEP: signed ? "windows-sign" : "",
     },
     command: ".buildkite/scripts/upload-release.sh",
-  };
-}
-
-/**
- * @param {Platform[]} buildPlatforms
- * @returns {Step}
- */
-function getBenchmarkStep() {
-  return {
-    key: "benchmark",
-    label: "📊",
-    agents: {
-      queue: "build-image",
-    },
-    depends_on: `linux-x64-build-bun`,
-    command: "node .buildkite/scripts/upload-benchmark.mjs",
   };
 }
 
@@ -891,9 +967,11 @@ function getBenchmarkStep() {
  * @property {string | boolean} [skipEverything]
  * @property {string | boolean} [skipBuilds]
  * @property {string | boolean} [skipTests]
+ * @property {string | boolean} [skipSizeCheck]
  * @property {string | boolean} [forceBuilds]
  * @property {string | boolean} [forceTests]
  * @property {string | boolean} [buildImages]
+ * @property {string | boolean} [signWindows]
  * @property {string | boolean} [publishImages]
  * @property {number} [canary]
  * @property {Platform[]} [buildPlatforms]
@@ -1169,9 +1247,12 @@ async function getPipelineOptions() {
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
-    buildImages: parseOption(/\[(build images?)\]/i),
+    skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
+    signWindows: parseOption(/\[(sign windows)\]/i),
+    buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
     dryRun: parseOption(/\[(dry run)\]/i),
-    publishImages: parseOption(/\[(publish images?)\]/i),
+    publishImages: parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
+    imageFilter: (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase(),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };
@@ -1196,13 +1277,12 @@ async function getPipeline(options = {}) {
     return;
   }
 
-  const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
+  const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages, imageFilter } = options;
   const imagePlatforms = new Map(
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
           .filter(({ os }) => os !== "darwin")
-          // Windows ARM64 cross-compiles from x64 runners, no separate image needed
-          .filter(({ os, arch }) => !(os === "windows" && arch === "aarch64"))
+          .filter(({ os, distro }) => !imageFilter || os === imageFilter || distro === imageFilter)
           .map(platform => [getImageKey(platform), platform])
       : [],
   );
@@ -1256,10 +1336,6 @@ async function getPipeline(options = {}) {
 
         if (needsBaselineVerification(target)) {
           steps.push(getVerifyBaselineStep(target, options));
-          // Run JIT stress tests under QEMU when WebKit is updated
-          if (hasWebKitChanges(options)) {
-            steps.push(getJitStressTestStep(target, options));
-          }
         }
 
         return getStepWithDependsOn(
@@ -1287,10 +1363,25 @@ async function getPipeline(options = {}) {
     }
   }
 
-  if (isMainBranch()) {
-    steps.push(getReleaseStep(buildPlatforms, options));
+  const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
+  if (!buildId && strippedPlatforms.length) {
+    steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: isMainBranch() }));
   }
-  steps.push(getBenchmarkStep());
+
+  // Sign Windows builds on release (non-canary main) or when [sign windows]
+  // is in the commit message (for testing the sign step on a branch).
+  // DigiCert charges per signature, so canary builds are never signed.
+  const shouldSignWindows = (isMainBranch() && !options.canary) || options.signWindows;
+  if (shouldSignWindows) {
+    const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
+    if (windowsPlatforms.length > 0) {
+      steps.push(getWindowsSignStep(windowsPlatforms, options));
+    }
+  }
+
+  if (isMainBranch()) {
+    steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows }));
+  }
 
   /** @type {Map<string, GroupStep>} */
   const stepsByGroup = new Map();
@@ -1341,6 +1432,10 @@ async function main() {
           { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
         );
         const doc = await res.json();
+        if (!Array.isArray(doc)) {
+          console.error(`-> page ${i}, unexpected response:`, JSON.stringify(doc));
+          break;
+        }
         console.log(`-> page ${i}, found ${doc.length} items`);
         if (doc.length === 0) break;
         for (const { filename, status } of doc) {
@@ -1355,7 +1450,7 @@ async function main() {
     } catch (e) {
       console.error(e);
     }
-    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+    if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
       console.log(`- PR is only docs, skipping tests!`);
       return;
     }

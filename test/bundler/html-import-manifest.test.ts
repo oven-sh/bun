@@ -1,4 +1,7 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { tempDirWithFiles } from "harness";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 describe.concurrent("bundler", () => {
@@ -103,11 +106,11 @@ console.log(favicon);
             "files": [
               {
                 "input": "client.html",
-                "path": "./client-5y90hwq3.js",
+                "path": "./client-sjg7egv9.js",
                 "loader": "js",
                 "isEntry": true,
                 "headers": {
-                  "etag": "xGxKikG0dN0",
+                  "etag": "efKwB-6QGwk",
                   "content-type": "text/javascript;charset=utf-8"
                 }
               },
@@ -117,7 +120,7 @@ console.log(favicon);
                 "loader": "html",
                 "isEntry": true,
                 "headers": {
-                  "etag": "hZ3u5t2Rmuo",
+                  "etag": "sJJm55rxM4I",
                   "content-type": "text/html;charset=utf-8"
                 }
               },
@@ -127,7 +130,7 @@ console.log(favicon);
                 "loader": "css",
                 "isEntry": true,
                 "headers": {
-                  "etag": "0k_h5oYVQlA",
+                  "etag": "4B9l6JnTRAU",
                   "content-type": "text/css;charset=utf-8"
                 }
               },
@@ -146,6 +149,64 @@ console.log(favicon);
           "
         `);
       },
+    },
+  });
+
+  // Test that non-JS/CSS assets referenced directly in HTML (favicon, images)
+  // are included in the manifest files array (regression test for #27820)
+  itBundled("html-import/html-referenced-assets-in-manifest", {
+    outdir: "out/",
+    files: {
+      "/server.js": `
+import html from "./index.html";
+
+// Verify the favicon asset is in the manifest files array
+const faviconEntry = html.files.find(f => f.path.includes("favicon") && f.path.endsWith(".svg"));
+if (!faviconEntry) {
+  throw new Error("favicon.svg not found in manifest files: " + JSON.stringify(html.files.map(f => f.path)));
+}
+
+console.log(JSON.stringify(html, null, 2));
+`,
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <title>Test</title>
+  </head>
+  <body>
+    <h1>Favicon Test</h1>
+    <script type="module" src="./app.ts"></script>
+  </body>
+</html>`,
+      "/app.ts": `console.log("app loaded");`,
+      "/favicon.svg": `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">T</text></svg>`,
+    },
+    entryPoints: ["/server.js"],
+    target: "bun",
+
+    run: {
+      validate({ stdout }) {
+        const manifest = JSON.parse(stdout);
+        // Verify manifest has a favicon entry with correct metadata
+        const favicon = manifest.files.find((f: any) => f.path.includes("favicon"));
+        expect(favicon).toBeDefined();
+        expect(favicon.loader).toBe("file");
+        expect(favicon.headers["content-type"]).toBe("image/svg+xml");
+      },
+    },
+
+    onAfterBundle(api) {
+      const serverCode = api.readFile("out/server.js");
+      const match = serverCode.match(/__jsonParse\("(.+?)"\)/s);
+      expect(match).not.toBeNull();
+      const manifest = JSON.parse(JSON.parse('"' + match![1] + '"'));
+      // The favicon.svg should be in the files array
+      const faviconFile = manifest.files.find((f: any) => f.path.includes("favicon"));
+      expect(faviconFile).toBeDefined();
+      expect(faviconFile.loader).toBe("file");
+      expect(faviconFile.headers["content-type"]).toBe("image/svg+xml");
     },
   });
 
@@ -229,17 +290,17 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "DLJP98vzFzQ",
+                  "etag": "xAZoSOIIQJ8",
                 },
                 "input": "home.html",
                 "isEntry": true,
                 "loader": "js",
-                "path": "./home-5f8tg1jd.js",
+                "path": "./home-4688280z.js",
               },
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "_Qy4EtlcGvs",
+                  "etag": "uIE6dXgvM-4",
                 },
                 "input": "home.html",
                 "isEntry": true,
@@ -249,7 +310,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/css;charset=utf-8",
-                  "etag": "6qg2qb7a2qo",
+                  "etag": "ZTZtbLd3364",
                 },
                 "input": "home.html",
                 "isEntry": true,
@@ -264,17 +325,17 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "t8rrkgPylZo",
+                  "etag": "INLwcb4oxw8",
                 },
                 "input": "about.html",
                 "isEntry": true,
                 "loader": "js",
-                "path": "./about-e59abjgr.js",
+                "path": "./about-0jghy87f.js",
               },
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "igL7YEH9e0I",
+                  "etag": "ZpqlG2wo2xo",
                 },
                 "input": "about.html",
                 "isEntry": true,
@@ -284,7 +345,7 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/css;charset=utf-8",
-                  "etag": "DE8kdBXWhVg",
+                  "etag": "x6pW8hAzxGI",
                 },
                 "input": "about.html",
                 "isEntry": true,
@@ -297,6 +358,41 @@ console.log("About manifest:", aboutHtml);
         ]
       `);
     },
+  });
+
+  // The HTML chunk's etag must change when only a referenced JS/CSS chunk
+  // changes; otherwise the browser 304s to a body that points at chunks the
+  // server no longer has.
+  test("html-import/etag-changes-with-referenced-chunks", async () => {
+    const dir = tempDirWithFiles("html-etag", {
+      "server.ts": `import m from "./index.html"; console.log(JSON.stringify(m));`,
+      "index.html": `<!doctype html><script type="module" src="./app.ts"></script>`,
+      "app.ts": `console.log(1);`,
+    });
+
+    async function buildAndReadManifest() {
+      const out = join(dir, "out");
+      const r = await Bun.build({ entrypoints: [join(dir, "server.ts")], outdir: out, target: "bun" });
+      expect(r.success).toBe(true);
+      const js = readFileSync(join(out, "server.js"), "utf8");
+      const m = js.match(/__jsonParse\("(.+?)"\)/s)!;
+      return JSON.parse(JSON.parse('"' + m[1] + '"')) as {
+        files: Array<{ loader: string; path: string; headers: { etag: string } }>;
+      };
+    }
+
+    const a = await buildAndReadManifest();
+    writeFileSync(join(dir, "app.ts"), `console.log(2);`);
+    const b = await buildAndReadManifest();
+
+    const htmlA = a.files.find(f => f.loader === "html")!;
+    const htmlB = b.files.find(f => f.loader === "html")!;
+    const jsA = a.files.find(f => f.loader === "js")!;
+    const jsB = b.files.find(f => f.loader === "js")!;
+
+    expect(jsA.path).not.toBe(jsB.path);
+    expect(htmlA.path).toBe(htmlB.path);
+    expect(htmlA.headers.etag).not.toBe(htmlB.headers.etag);
   });
 
   // Test that import with {type: 'file'} still works as a file import

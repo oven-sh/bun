@@ -49,7 +49,8 @@ auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSOb
     auto& vm = lexicalGlobalObject.vm();
     JSLockHolder lock(vm);
     auto* handler = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String {}, [callback = WTF::move(callback)](JSGlobalObject*, CallFrame*) mutable {
-        callback();
+        // Exchange callback so captured variables are deallocated immediately rather than waiting for GC of the handler.
+        std::exchange(callback, {})();
         return JSC::JSValue::encode(JSC::jsUndefined());
     });
 

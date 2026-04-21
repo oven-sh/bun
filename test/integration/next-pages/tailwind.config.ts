@@ -6,6 +6,7 @@ const config: Config = {
     "./src/**/*.{js,ts,jsx,tsx,mdx}",
     // './src/app/**/*.{js,ts,jsx,tsx,mdx}',
   ],
+  safelist: ["rounded-bl-full", "rounded-br-full"],
   theme: {
     extend: {
       backgroundImage: {

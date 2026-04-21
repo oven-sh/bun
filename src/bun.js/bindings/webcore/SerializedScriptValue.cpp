@@ -78,6 +78,9 @@
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSArrayInlines.h>
+#include <JavaScriptCore/ButterflyInlines.h>
+#include <JavaScriptCore/ObjectInitializationScope.h>
 #include <JavaScriptCore/JSDataView.h>
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/JSMapIterator.h>
@@ -114,6 +117,7 @@
 #include "JSPrivateKeyObject.h"
 #include "CryptoKeyType.h"
 #include "JSNodePerformanceHooksHistogram.h"
+#include "../napi.h"
 #include <limits>
 #include <algorithm>
 
@@ -516,9 +520,12 @@ enum class CryptoAlgorithmIdentifierTag {
     PBKDF2 = 21,
     ED25519 = 22,
     X25519 = 23,
+    SHA3_256 = 24,
+    SHA3_384 = 25,
+    SHA3_512 = 26,
 };
 
-const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 22;
+const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 26;
 
 static unsigned countUsages(CryptoKeyUsageBitmap usages)
 {
@@ -829,7 +836,7 @@ template<> bool writeLittleEndian<uint8_t>(Vector<uint8_t>& buffer, const uint8_
     return true;
 }
 
-class CloneSerializer : CloneBase {
+class CloneSerializer : public CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
 
 public:
@@ -2390,6 +2397,15 @@ private:
         case CryptoAlgorithmIdentifier::SHA_512:
             write(CryptoAlgorithmIdentifierTag::SHA_512);
             break;
+        case CryptoAlgorithmIdentifier::SHA3_256:
+            write(CryptoAlgorithmIdentifierTag::SHA3_256);
+            break;
+        case CryptoAlgorithmIdentifier::SHA3_384:
+            write(CryptoAlgorithmIdentifierTag::SHA3_384);
+            break;
+        case CryptoAlgorithmIdentifier::SHA3_512:
+            write(CryptoAlgorithmIdentifierTag::SHA3_512);
+            break;
         case CryptoAlgorithmIdentifier::HKDF:
             write(CryptoAlgorithmIdentifierTag::HKDF);
             break;
@@ -2450,7 +2466,7 @@ private:
 
     void write(SerializableErrorType errorType)
     {
-        write(enumToUnderlyingType(errorType));
+        write(std::to_underlying(errorType));
     }
 
     void write(const CryptoKey* key)
@@ -2662,7 +2678,9 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // objects have been handled. If we reach this point and
             // the input is not an Object object then we should throw
             // a DataCloneError.
-            if (inObject->classInfo() != JSFinalObject::info())
+            // NapiPrototype is allowed because napi_create_object should behave
+            // like a plain object from JS's perspective (matches Node.js).
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info())
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);
@@ -2828,7 +2846,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
     return SerializationReturnCode::SuccessfullyCompleted;
 }
 
-class CloneDeserializer : CloneBase {
+class CloneDeserializer : public CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
 
 public:
@@ -3874,6 +3892,15 @@ private:
         case CryptoAlgorithmIdentifierTag::SHA_512:
             result = CryptoAlgorithmIdentifier::SHA_512;
             break;
+        case CryptoAlgorithmIdentifierTag::SHA3_256:
+            result = CryptoAlgorithmIdentifier::SHA3_256;
+            break;
+        case CryptoAlgorithmIdentifierTag::SHA3_384:
+            result = CryptoAlgorithmIdentifier::SHA3_384;
+            break;
+        case CryptoAlgorithmIdentifierTag::SHA3_512:
+            result = CryptoAlgorithmIdentifier::SHA3_512;
+            break;
         case CryptoAlgorithmIdentifierTag::HKDF:
             result = CryptoAlgorithmIdentifier::HKDF;
             break;
@@ -4194,7 +4221,7 @@ private:
     bool read(SerializableErrorType& errorType)
     {
         std::underlying_type_t<SerializableErrorType> errorTypeInt;
-        if (!read(errorTypeInt) || errorTypeInt > enumToUnderlyingType(SerializableErrorType::Last))
+        if (!read(errorTypeInt) || errorTypeInt > std::to_underlying(SerializableErrorType::Last))
             return false;
 
         errorType = static_cast<SerializableErrorType>(errorTypeInt);
@@ -4685,36 +4712,28 @@ private:
             return tryConvertToBigInt32(bigInt);
         }
 #endif
-        JSBigInt* bigInt = nullptr;
+        Vector<JSBigInt::Digit, 16> digits;
         if constexpr (sizeof(JSBigInt::Digit) == sizeof(uint64_t)) {
-            bigInt = JSBigInt::tryCreateWithLength(m_lexicalGlobalObject->vm(), lengthInUint64);
-            if (!bigInt) {
-                fail();
-                return JSValue();
-            }
+            digits.reserveInitialCapacity(lengthInUint64);
             for (uint32_t index = 0; index < lengthInUint64; ++index) {
                 uint64_t digit64 = 0;
                 if (!read(digit64))
                     return JSValue();
-                bigInt->setDigit(index, digit64);
+                digits.append(digit64);
             }
         } else {
             ASSERT(sizeof(JSBigInt::Digit) == sizeof(uint32_t));
-            bigInt = JSBigInt::tryCreateWithLength(m_lexicalGlobalObject->vm(), lengthInUint64 * 2);
-            if (!bigInt) {
-                fail();
-                return JSValue();
-            }
+            digits.reserveInitialCapacity(lengthInUint64 * 2);
             for (uint32_t index = 0; index < lengthInUint64; ++index) {
                 uint64_t digit64 = 0;
                 if (!read(digit64))
                     return JSValue();
-                bigInt->setDigit(index * 2, static_cast<uint32_t>(digit64));
-                bigInt->setDigit(index * 2 + 1, static_cast<uint32_t>(digit64 >> 32));
+                digits.append(static_cast<uint32_t>(digit64));
+                digits.append(static_cast<uint32_t>(digit64 >> 32));
             }
         }
-        bigInt->setSign(sign);
-        bigInt = bigInt->tryRightTrim(m_lexicalGlobalObject->vm());
+
+        auto* bigInt = JSBigInt::tryCreateFrom(nullptr, m_lexicalGlobalObject->vm(), sign, digits.span());
         if (!bigInt) {
             fail();
             return JSValue();
@@ -5024,15 +5043,20 @@ private:
 
             RefPtr<Wasm::Memory> memory;
             auto handler = [&vm, result](Wasm::Memory::GrowSuccess, PageCount oldPageCount, PageCount newPageCount) { result->growSuccessCallback(vm, oldPageCount, newPageCount); };
+            // Memory64 is not yet serialized in WasmMemoryTag, so we only
+            // support I32 address type for structured clone. Upstream WebKit
+            // has the same limitation (it calls result->memory().addressType()
+            // on an uninitialized stub here, which happens to return I32).
+            constexpr auto addressType = Wasm::AddressType::I32;
             if (RefPtr<SharedArrayBufferContents> contents = m_wasmMemoryHandles->at(index)) {
                 if (!contents->memoryHandle()) {
                     fail();
                     return JSValue();
                 }
-                memory = Wasm::Memory::create(contents.releaseNonNull(), WTF::move(handler));
+                memory = Wasm::Memory::create(contents.releaseNonNull(), addressType, WTF::move(handler));
             } else {
                 // zero size & max-size.
-                memory = Wasm::Memory::createZeroSized(JSC::MemorySharingMode::Shared, WTF::move(handler));
+                memory = Wasm::Memory::createZeroSized(JSC::MemorySharingMode::Shared, addressType, WTF::move(handler));
             }
 
             result->adopt(memory.releaseNonNull());
@@ -5574,11 +5598,39 @@ SerializedScriptValue::SerializedScriptValue(WTF::FixedVector<SimpleInMemoryProp
     m_memoryCost = computeMemoryCost();
 }
 
+SerializedScriptValue::SerializedScriptValue(WTF::FixedVector<SimpleCloneableValue>&& elements)
+    : m_simpleArrayElements(WTF::move(elements))
+    , m_fastPath(FastPath::SimpleArray)
+{
+    m_memoryCost = computeMemoryCost();
+}
+
 SerializedScriptValue::SerializedScriptValue(const String& fastPathString)
     : m_fastPathString(fastPathString)
     , m_fastPath(FastPath::String)
 {
     m_memoryCost = computeMemoryCost();
+}
+
+SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& butterflyData, uint32_t length, FastPath fastPath)
+    : m_arrayButterflyData(WTF::move(butterflyData))
+    , m_arrayLength(length)
+    , m_fastPath(fastPath)
+{
+    m_memoryCost = computeMemoryCost();
+}
+
+SerializedScriptValue::SerializedScriptValue(WTF::FixedVector<DenseArrayElement>&& denseElements)
+    : m_denseArrayElements(WTF::move(denseElements))
+    , m_fastPath(FastPath::DenseArray)
+{
+    m_memoryCost = computeMemoryCost();
+}
+
+Ref<SerializedScriptValue> SerializedScriptValue::createDenseArrayFastPath(
+    WTF::FixedVector<DenseArrayElement>&& elements)
+{
+    return adoptRef(*new SerializedScriptValue(WTF::move(elements)));
 }
 
 size_t SerializedScriptValue::computeMemoryCost() const
@@ -5652,6 +5704,36 @@ size_t SerializedScriptValue::computeMemoryCost() const
             }
         }
 
+        break;
+    case FastPath::SimpleArray:
+        cost += m_simpleArrayElements.byteSize();
+        for (const auto& elem : m_simpleArrayElements) {
+            std::visit(WTF::makeVisitor(
+                           [&](JSC::JSValue) { /* already included in byteSize() */ },
+                           [&](const String& s) { cost += s.sizeInBytes(); }),
+                elem);
+        }
+        break;
+    case FastPath::Int32Array:
+    case FastPath::DoubleArray:
+        cost += m_arrayButterflyData.size();
+        break;
+    case FastPath::DenseArray:
+        cost += m_denseArrayElements.byteSize();
+        for (const auto& elem : m_denseArrayElements) {
+            std::visit(WTF::makeVisitor(
+                           [&](JSC::JSValue) { /* already included in byteSize() */ },
+                           [&](const String& s) { cost += s.sizeInBytes(); },
+                           [&](const SimpleCloneableObject& obj) {
+                               cost += obj.properties.byteSize();
+                               for (const auto& prop : obj.properties) {
+                                   cost += prop.propertyName.sizeInBytes();
+                                   if (std::holds_alternative<WTF::String>(prop.value))
+                                       cost += std::get<WTF::String>(prop.value).sizeInBytes();
+                               }
+                           }),
+                elem);
+        }
         break;
     case FastPath::None:
         break;
@@ -5843,7 +5925,9 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     if (canUseFastPath) {
         bool canUseStringFastPath = false;
         bool canUseObjectFastPath = false;
+        bool canUseArrayFastPath = false;
         JSObject* object = nullptr;
+        JSArray* array = nullptr;
         Structure* structure = nullptr;
         if (value.isCell()) {
             auto* cell = value.asCell();
@@ -5853,7 +5937,10 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                 object = cell->getObject();
                 structure = object->structure();
 
-                if (isObjectFastPathCandidate(structure)) {
+                if (auto* jsArray = jsDynamicCast<JSArray*>(object)) {
+                    canUseArrayFastPath = true;
+                    array = jsArray;
+                } else if (isObjectFastPathCandidate(structure)) {
                     canUseObjectFastPath = true;
                 }
             }
@@ -5864,6 +5951,147 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             String stringValue = jsString->value(&lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             return SerializedScriptValue::createStringFastPath(stringValue);
+        }
+
+        if (canUseArrayFastPath) {
+            ASSERT(array != nullptr);
+            // Arrays with named properties (e.g. arr.foo = "bar") cannot use fast path
+            // as we only copy indexed elements. maxOffset == invalidOffset means no named properties.
+            if (structure->maxOffset() != invalidOffset)
+                canUseArrayFastPath = false;
+        }
+
+        if (canUseArrayFastPath) {
+            ASSERT(array != nullptr);
+            unsigned length = array->length();
+            auto arrayType = array->indexingType();
+
+            // Tier 1/2: Int32 / Double butterfly memcpy fast path
+            if ((arrayType == ArrayWithInt32 || arrayType == ArrayWithDouble)
+                && length <= array->butterfly()->vectorLength()
+                && !array->structure()->holesMustForwardToPrototype(array)) {
+
+                if (arrayType == ArrayWithInt32) {
+                    auto* data = array->butterfly()->contiguous().data();
+                    if (!containsHole(data, length)) {
+                        size_t byteSize = sizeof(JSValue) * length;
+                        Vector<uint8_t> buffer(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(data), byteSize });
+                        return SerializedScriptValue::createInt32ArrayFastPath(WTF::move(buffer), length);
+                    }
+                } else {
+                    auto* data = array->butterfly()->contiguousDouble().data();
+                    if (!containsHole(data, length)) {
+                        size_t byteSize = sizeof(double) * length;
+                        Vector<uint8_t> buffer(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(data), byteSize });
+                        return SerializedScriptValue::createDoubleArrayFastPath(WTF::move(buffer), length);
+                    }
+                }
+                // Holes present → fall through to normal path
+            }
+
+            // Tier 3: Contiguous array with butterfly direct access
+            if (arrayType == ArrayWithContiguous
+                && length <= array->butterfly()->vectorLength()
+                && !array->structure()->holesMustForwardToPrototype(array)) {
+
+                auto* data = array->butterfly()->contiguous().data();
+                WTF::Vector<DenseArrayElement> elements;
+                elements.reserveInitialCapacity(length);
+                bool ok = true;
+                bool hasObjects = false;
+                HashSet<JSObject*> seenObjects;
+
+                for (unsigned i = 0; i < length; i++) {
+                    JSValue elem = data[i].get();
+                    if (!elem) {
+                        ok = false;
+                        break;
+                    } // hole
+
+                    if (!elem.isCell()) {
+                        // primitive: int32, double, bool, null, undefined
+                        elements.append(elem);
+                    } else if (elem.isString()) {
+                        auto* str = asString(elem);
+                        String strValue = str->value(&lexicalGlobalObject);
+                        RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+                        elements.append(Bun::toCrossThreadShareable(strValue));
+                    } else if (elem.isObject()) {
+                        auto* obj = elem.getObject();
+                        // Shared references can't be preserved in the fast path,
+                        // fall back to the normal serialization path.
+                        if (!seenObjects.add(obj).isNewEntry) {
+                            ok = false;
+                            break;
+                        }
+                        auto* objStructure = obj->structure();
+                        if (!isObjectFastPathCandidate(objStructure)) {
+                            ok = false;
+                            break;
+                        }
+
+                        // Collect properties (same logic as SimpleObject fast path)
+                        WTF::Vector<SimpleInMemoryPropertyTableEntry> properties;
+                        bool objOk = true;
+                        objStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                            JSValue propValue = obj->getDirect(entry.offset());
+                            if (propValue.isCell()) {
+                                if (!propValue.isString()) {
+                                    objOk = false;
+                                    return false;
+                                }
+                                auto* string = asString(propValue);
+                                String stringValue = string->value(&lexicalGlobalObject);
+                                if (scope.exception()) {
+                                    objOk = false;
+                                    return false;
+                                }
+                                properties.append({ entry.key()->isolatedCopy(),
+                                    Bun::toCrossThreadShareable(stringValue) });
+                            } else {
+                                properties.append({ entry.key()->isolatedCopy(), propValue });
+                            }
+                            return true;
+                        });
+                        RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+                        if (!objOk) {
+                            ok = false;
+                            break;
+                        }
+
+                        SimpleCloneableObject clonedObj;
+                        clonedObj.properties = WTF::FixedVector<SimpleInMemoryPropertyTableEntry>(WTF::move(properties));
+                        elements.append(WTF::move(clonedObj));
+                        hasObjects = true;
+                    } else {
+                        ok = false;
+                        break; // Symbol, BigInt, etc. → fallback
+                    }
+                }
+
+                if (ok) {
+                    if (hasObjects) {
+                        return SerializedScriptValue::createDenseArrayFastPath(
+                            WTF::FixedVector<DenseArrayElement>(WTF::move(elements)));
+                    } else {
+                        // No objects present → use existing SimpleArray path
+                        WTF::Vector<SimpleCloneableValue> simpleElements;
+                        simpleElements.reserveInitialCapacity(length);
+                        for (auto& elem : elements) {
+                            std::visit(WTF::makeVisitor(
+                                           [&](JSC::JSValue v) { simpleElements.append(v); },
+                                           [&](WTF::String& s) { simpleElements.append(WTF::move(s)); },
+                                           [&](SimpleCloneableObject&) { ASSERT_NOT_REACHED(); }),
+                                elem);
+                        }
+                        return SerializedScriptValue::createArrayFastPath(
+                            WTF::FixedVector<SimpleCloneableValue>(WTF::move(simpleElements)));
+                    }
+                }
+                // holes / unsupported types → fall through to normal serialization path
+            }
+
+            // ArrayStorage / Undecided / holes forwarding → fall through to normal serialization path
         }
 
         if (canUseObjectFastPath) {
@@ -6142,6 +6370,21 @@ Ref<SerializedScriptValue> SerializedScriptValue::createObjectFastPath(WTF::Fixe
     return adoptRef(*new SerializedScriptValue(WTF::move(object)));
 }
 
+Ref<SerializedScriptValue> SerializedScriptValue::createArrayFastPath(WTF::FixedVector<SimpleCloneableValue>&& elements)
+{
+    return adoptRef(*new SerializedScriptValue(WTF::move(elements)));
+}
+
+Ref<SerializedScriptValue> SerializedScriptValue::createInt32ArrayFastPath(Vector<uint8_t>&& data, uint32_t length)
+{
+    return adoptRef(*new SerializedScriptValue(WTF::move(data), length, FastPath::Int32Array));
+}
+
+Ref<SerializedScriptValue> SerializedScriptValue::createDoubleArrayFastPath(Vector<uint8_t>&& data, uint32_t length)
+{
+    return adoptRef(*new SerializedScriptValue(WTF::move(data), length, FastPath::DoubleArray));
+}
+
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(JSContextRef originContext, JSValueRef apiValue, JSValueRef* exception)
 {
     JSGlobalObject* lexicalGlobalObject = toJS(originContext);
@@ -6287,6 +6530,170 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
             *didFail = false;
 
         return object;
+    }
+    case FastPath::SimpleArray: {
+        unsigned length = m_simpleArrayElements.size();
+
+        // Pre-convert all elements to JSValues (including creating JSStrings)
+        // before entering ObjectInitializationScope, since jsString() allocates
+        // GC cells which is not allowed inside the initialization scope.
+        MarkedArgumentBuffer values;
+        values.ensureCapacity(length);
+        for (unsigned i = 0; i < length; i++) {
+            JSValue elemValue = std::visit(
+                WTF::makeVisitor(
+                    [](JSValue v) -> JSValue { return v; },
+                    [&](const String& s) -> JSValue { return jsString(vm, s); }),
+                m_simpleArrayElements[i]);
+            values.append(elemValue);
+        }
+
+        Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+        ObjectInitializationScope initScope(vm);
+        JSArray* resultArray = JSArray::tryCreateUninitializedRestricted(initScope, resultStructure, length);
+
+        if (!resultArray) [[unlikely]] {
+            if (didFail)
+                *didFail = true;
+            return {};
+        }
+
+        for (unsigned i = 0; i < length; i++)
+            resultArray->initializeIndex(initScope, i, values.at(i));
+
+        if (didFail)
+            *didFail = false;
+        return resultArray;
+    }
+    case FastPath::DenseArray: {
+        unsigned length = m_denseArrayElements.size();
+
+        // Pre-convert all elements to JSValues (including creating JSStrings and objects)
+        // before entering ObjectInitializationScope, since allocations are not allowed inside it.
+        MarkedArgumentBuffer values;
+        values.ensureCapacity(length);
+
+        // Structure cache: reuse the Structure from the first object for subsequent objects
+        // with the same shape (same property names in same order), avoiding repeated
+        // Structure transitions. Only used when property names exactly match.
+        Structure* cachedStructure = nullptr;
+        Vector<JSC::Identifier> cachedIdentifiers;
+
+        for (unsigned i = 0; i < length; i++) {
+            JSValue elemValue = std::visit(WTF::makeVisitor(
+                                               [](JSC::JSValue v) -> JSValue { return v; },
+                                               [&](const WTF::String& s) -> JSValue { return jsString(vm, s); },
+                                               [&](const SimpleCloneableObject& obj) -> JSValue {
+                                                   unsigned propCount = obj.properties.size();
+
+                                                   // Check if we can use the cached structure (same property count AND names,
+                                                   // and no out-of-line storage — JSFinalObject::create cannot allocate a butterfly).
+                                                   bool useCache = cachedStructure && cachedIdentifiers.size() == propCount
+                                                       && cachedStructure->outOfLineCapacity() == 0;
+                                                   if (useCache) {
+                                                       for (unsigned j = 0; j < propCount; j++) {
+                                                           if (cachedIdentifiers[j].string() != obj.properties[j].propertyName) {
+                                                               useCache = false;
+                                                               break;
+                                                           }
+                                                       }
+                                                   }
+
+                                                   JSObject* newObj;
+                                                   if (useCache) {
+                                                       // Structure cache hit → create with pre-built Structure (no transitions)
+                                                       newObj = JSFinalObject::create(vm, cachedStructure);
+                                                       for (unsigned j = 0; j < propCount; j++) {
+                                                           const auto& prop = obj.properties[j];
+                                                           JSValue propVal = std::visit(WTF::makeVisitor(
+                                                                                            [](JSValue v) -> JSValue { return v; },
+                                                                                            [&](const String& s) -> JSValue { return jsString(vm, s); }),
+                                                               prop.value);
+                                                           newObj->putDirect(vm, cachedIdentifiers[j], propVal);
+                                                       }
+                                                   } else {
+                                                       // No cache or shape mismatch → build from scratch
+                                                       newObj = constructEmptyObject(globalObject, globalObject->objectPrototype(),
+                                                           std::min(propCount, JSFinalObject::maxInlineCapacity));
+                                                       for (unsigned j = 0; j < propCount; j++) {
+                                                           const auto& prop = obj.properties[j];
+                                                           JSC::Identifier id = JSC::Identifier::fromString(vm, prop.propertyName);
+                                                           JSValue propVal = std::visit(WTF::makeVisitor(
+                                                                                            [](JSValue v) -> JSValue { return v; },
+                                                                                            [&](const String& s) -> JSValue { return jsString(vm, s); }),
+                                                               prop.value);
+                                                           newObj->putDirect(vm, id, propVal);
+                                                       }
+
+                                                       // Cache the Structure from the first object we build
+                                                       if (!cachedStructure) {
+                                                           cachedStructure = newObj->structure();
+                                                           cachedIdentifiers.reserveInitialCapacity(propCount);
+                                                           for (const auto& prop : obj.properties)
+                                                               cachedIdentifiers.append(JSC::Identifier::fromString(vm, prop.propertyName));
+                                                       }
+                                                   }
+
+                                                   return newObj;
+                                               }),
+                m_denseArrayElements[i]);
+            values.append(elemValue);
+        }
+
+        Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+        ObjectInitializationScope initScope(vm);
+        JSArray* resultArray = JSArray::tryCreateUninitializedRestricted(initScope, resultStructure, length);
+
+        if (!resultArray) [[unlikely]] {
+            if (didFail)
+                *didFail = true;
+            return {};
+        }
+
+        for (unsigned i = 0; i < length; i++)
+            resultArray->initializeIndex(initScope, i, values.at(i));
+
+        if (didFail)
+            *didFail = false;
+        return resultArray;
+    }
+    case FastPath::Int32Array:
+    case FastPath::DoubleArray: {
+        IndexingType arrayType = (m_fastPath == FastPath::Int32Array) ? ArrayWithInt32 : ArrayWithDouble;
+        Structure* resultStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(arrayType);
+
+        if (hasAnyArrayStorage(resultStructure->indexingType())) [[unlikely]]
+            break; // isHavingABadTime → fall through to normal deserialization
+
+        unsigned outOfLineStorage = resultStructure->outOfLineCapacity();
+        unsigned vectorLength = Butterfly::optimalContiguousVectorLength(resultStructure, m_arrayLength);
+        void* memory = vm.auxiliarySpace().allocate(
+            vm,
+            Butterfly::totalSize(0, outOfLineStorage, true, vectorLength * sizeof(EncodedJSValue)),
+            nullptr, AllocationFailureMode::ReturnNull);
+
+        if (!memory) [[unlikely]] {
+            if (didFail)
+                *didFail = true;
+            return {};
+        }
+
+        Butterfly* butterfly = Butterfly::fromBase(memory, 0, outOfLineStorage);
+        butterfly->setVectorLength(vectorLength);
+        butterfly->setPublicLength(m_arrayLength);
+
+        if (m_fastPath == FastPath::DoubleArray)
+            memcpy(butterfly->contiguousDouble().data(), m_arrayButterflyData.span().data(), m_arrayButterflyData.size());
+        else
+            memcpy(butterfly->contiguous().data(), m_arrayButterflyData.span().data(), m_arrayButterflyData.size());
+
+        // Clear unused tail slots with hole values
+        Butterfly::clearRange(arrayType, butterfly, m_arrayLength, vectorLength);
+
+        JSArray* resultArray = JSArray::createWithButterfly(vm, nullptr, resultStructure, butterfly);
+        if (didFail)
+            *didFail = false;
+        return resultArray;
     }
     case FastPath::None: {
         break;

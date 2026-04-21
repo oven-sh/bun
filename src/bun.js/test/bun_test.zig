@@ -151,6 +151,22 @@ pub const BunTestRoot = struct {
         this.hook_scope.destroy(this.gpa);
         bun.assert(this.active_file == null);
     }
+    /// Drop preload-level hooks registered in the previous global. The next
+    /// file's `loadPreloads()` re-registers them against the fresh global.
+    pub fn resetHookScopeForTestIsolation(this: *BunTestRoot) void {
+        bun.assert(this.hook_scope.entries.items.len == 0);
+        this.hook_scope.destroy(this.gpa);
+        this.hook_scope = DescribeScope.create(this.gpa, .{
+            .parent = null,
+            .name = null,
+            .concurrent = false,
+            .mode = .normal,
+            .only = .no,
+            .has_callback = false,
+            .test_id_for_debugger = 0,
+            .line_no = 0,
+        });
+    }
 
     pub fn enterFile(this: *BunTestRoot, file_id: jsc.Jest.TestRunner.File.ID, reporter: *test_command.CommandLineReporter, default_concurrent: bool, first_last: FirstLast) void {
         group.begin(@src());
@@ -590,7 +606,19 @@ pub const BunTest = struct {
                 try debug.dumpDescribe(this.collection.root_scope);
 
                 const has_filter = if (this.reporter) |reporter| if (reporter.jest.filter_regex) |_| true else false else false;
-                const should_randomize: ?std.Random = if (this.reporter) |reporter| reporter.jest.randomize else null;
+                // Derive a per-file shuffle PRNG from (seed, file_path) so a
+                // file's test order depends only on the path and the printed
+                // seed — not on which worker ran it or what files preceded it
+                // on that worker. This is what makes --parallel --randomize
+                // reproducible via --seed=N.
+                var per_file_prng: ?std.Random.DefaultPrng = if (this.reporter) |reporter| blk: {
+                    const seed = reporter.jest.randomize_seed orelse break :blk null;
+                    const path = reporter.jest.files.items(.source)[this.file_id].path.text;
+                    // Basename only so the hash is platform-independent (path
+                    // separators and absolute prefixes differ on Windows).
+                    break :blk std.Random.DefaultPrng.init(bun.hash(std.fs.path.basename(path)) +% seed);
+                } else null;
+                const should_randomize: ?std.Random = if (per_file_prng) |*p| p.random() else null;
 
                 var order = Order.init(this.gpa, this.arena, .{
                     .always_use_hooks = this.collection.root_scope.base.only == .no and !has_filter,

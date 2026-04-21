@@ -20,12 +20,7 @@
           "completionType": "javascript_files"
         }
       ],
-      "examples": [
-        "bun run ./index.js",
-        "bun run ./index.tsx",
-        "bun run dev",
-        "bun run lint"
-      ],
+      "examples": ["bun run ./index.js", "bun run ./index.tsx", "bun run dev", "bun run lint"],
       "usage": "Usage: bun run [flags] <file or script>",
       "documentationUrl": "https://bun.com/docs/cli/run",
       "dynamicCompletions": {
@@ -58,6 +53,14 @@
         {
           "name": "rerun-each",
           "description": "Re-run each test file <NUMBER> times, helps catch certain bugs",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "retry",
+          "description": "Default retry count for all tests, overridden by per-test { retry: N }",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -152,11 +155,7 @@
           "completionType": "test_files"
         }
       ],
-      "examples": [
-        "bun test",
-        "bun test foo bar",
-        "bun test --test-name-pattern baz"
-      ],
+      "examples": ["bun test", "bun test foo bar", "bun test --test-name-pattern baz"],
       "usage": "Usage: bun test [flags] [<patterns>]",
       "documentationUrl": "https://bun.com/docs/cli/test",
       "dynamicCompletions": {
@@ -199,9 +198,7 @@
       "examples": [],
       "usage": "Usage: bunx [flags] <package><@version> [flags and arguments for the package]",
       "dynamicCompletions": {},
-      "aliases": [
-        "bunx"
-      ]
+      "aliases": ["bunx"]
     },
     "repl": {
       "name": "repl",
@@ -232,10 +229,7 @@
           "completionType": "script"
         }
       ],
-      "examples": [
-        "bun exec \"echo hi\"",
-        "bun exec \"echo \\\"hey friends\\\"!\""
-      ],
+      "examples": ["bun exec \"echo hi\"", "bun exec \"echo \\\"hey friends\\\"!\""],
       "usage": "Usage: bun exec <script>",
       "dynamicCompletions": {}
     },
@@ -545,14 +539,9 @@
           "type": "string"
         }
       ],
-      "examples": [
-        "bun install",
-        "bun install --production"
-      ],
+      "examples": ["bun install", "bun install --production"],
       "usage": "Usage: bun install [flags] <name>@<version>",
-      "aliases": [
-        "i"
-      ],
+      "aliases": ["i"],
       "documentationUrl": "https://bun.com/docs/cli/install.",
       "dynamicCompletions": {}
     },
@@ -864,9 +853,7 @@
         "bun add --peer esbuild"
       ],
       "usage": "Usage: bun add [flags] <package><@version>",
-      "aliases": [
-        "a"
-      ],
+      "aliases": ["a"],
       "documentationUrl": "https://bun.com/docs/cli/add.",
       "dynamicCompletions": {
         "packages": true
@@ -1126,13 +1113,9 @@
           "completionType": "installed_package"
         }
       ],
-      "examples": [
-        "bun remove ts-node"
-      ],
+      "examples": ["bun remove ts-node"],
       "usage": "Usage: bun remove [flags] [<packages>]",
-      "aliases": [
-        "rm"
-      ],
+      "aliases": ["rm"],
       "documentationUrl": "https://bun.com/docs/cli/remove.",
       "dynamicCompletions": {
         "packages": true
@@ -1422,12 +1405,7 @@
           "type": "string"
         }
       ],
-      "examples": [
-        "bun update",
-        "bun update --latest",
-        "bun update -i",
-        "bun update zod jquery@3"
-      ],
+      "examples": ["bun update", "bun update --latest", "bun update -i", "bun update zod jquery@3"],
       "usage": "Usage: bun update [flags] <name>@<version>",
       "documentationUrl": "https://bun.com/docs/cli/update.",
       "dynamicCompletions": {}
@@ -1452,10 +1430,7 @@
           "type": "string"
         }
       ],
-      "examples": [
-        "bun audit",
-        "bun audit --json"
-      ],
+      "examples": ["bun audit", "bun audit --json"],
       "usage": "Usage: bun audit [flags]",
       "documentationUrl": "https://bun.com/docs/install/audit.",
       "dynamicCompletions": {}
@@ -1997,10 +1972,7 @@
           "completionType": "package"
         }
       ],
-      "examples": [
-        "bun link",
-        "bun link <package>"
-      ],
+      "examples": ["bun link", "bun link <package>"],
       "usage": "Usage: bun link [flags] [<packages>]",
       "documentationUrl": "https://bun.com/docs/cli/link.",
       "dynamicCompletions": {}
@@ -2252,9 +2224,7 @@
           "type": "string"
         }
       ],
-      "examples": [
-        "bun unlink"
-      ],
+      "examples": ["bun unlink"],
       "usage": "Usage: bun unlink [flags]",
       "documentationUrl": "https://bun.com/docs/cli/unlink.",
       "dynamicCompletions": {}
@@ -3248,11 +3218,7 @@
           "completionType": "package"
         }
       ],
-      "examples": [
-        "bun info react",
-        "bun info react@18.0.0",
-        "bun info react version --json"
-      ],
+      "examples": ["bun info react", "bun info react@18.0.0", "bun info react version --json"],
       "usage": "Usage: bun info [flags] <package>[@<version>]",
       "documentationUrl": "https://bun.com/docs/cli/info.",
       "dynamicCompletions": {}
@@ -3603,12 +3569,7 @@
           "type": "string"
         }
       ],
-      "examples": [
-        "bun init",
-        "bun init --yes",
-        "bun init --react",
-        "bun init --react=tailwind my-app"
-      ],
+      "examples": ["bun init", "bun init --yes", "bun init --react", "bun init --react=tailwind my-app"],
       "usage": "Usage: bun init [flags] [<folder>]",
       "dynamicCompletions": {}
     },
@@ -3621,9 +3582,7 @@
       "usage": "Usage:",
       "documentationUrl": "https://bun.com/docs/cli/bun-create",
       "dynamicCompletions": {},
-      "aliases": [
-        "c"
-      ]
+      "aliases": ["c"]
     },
     "upgrade": {
       "name": "upgrade",
@@ -3637,10 +3596,7 @@
           "type": "string"
         }
       ],
-      "examples": [
-        "bun upgrade",
-        "bun upgrade --stable"
-      ],
+      "examples": ["bun upgrade", "bun upgrade --stable"],
       "usage": "Usage: bun upgrade [flags]",
       "documentationUrl": "https://bun.com/docs/installation#upgrading",
       "dynamicCompletions": {}
@@ -3743,9 +3699,7 @@
       "description": "Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).",
       "hasValue": true,
       "valueType": "val",
-      "choices": [
-        "auto"
-      ],
+      "choices": ["auto"],
       "required": false,
       "multiple": false
     },
@@ -3827,12 +3781,7 @@
       "description": "Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first",
       "hasValue": true,
       "valueType": "val",
-      "choices": [
-        "verbatim",
-        "(default)",
-        "ipv4first",
-        "ipv6first"
-      ],
+      "choices": ["verbatim", "(default)", "ipv4first", "ipv6first"],
       "required": false,
       "multiple": false
     },
@@ -3898,9 +3847,7 @@
       "description": "One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"",
       "hasValue": true,
       "valueType": "val",
-      "choices": [
-        "strict"
-      ],
+      "choices": ["strict"],
       "required": false,
       "multiple": false
     },

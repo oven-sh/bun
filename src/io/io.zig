@@ -15,7 +15,7 @@ pub const Source = @import("./source.zig").Source;
 pub const Loop = struct {
     pending: Request.Queue = .{},
     waker: bun.Async.Waker,
-    epoll_fd: if (Environment.isLinux) bun.FileDescriptor else void = if (Environment.isLinux) .invalid,
+    epoll_fd: if (Environment.isLinux) bun.FD else void = if (Environment.isLinux) .invalid,
 
     cached_now: posix.timespec = .{
         .nsec = 0,
@@ -34,7 +34,7 @@ pub const Loop = struct {
 
             {
                 var epoll = std.mem.zeroes(std.os.linux.epoll_event);
-                epoll.events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.ERR | std.os.linux.EPOLL.HUP;
+                epoll.events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.ET | std.os.linux.EPOLL.ERR | std.os.linux.EPOLL.HUP;
                 epoll.data.ptr = @intFromPtr(&loop);
                 const rc = std.os.linux.epoll_ctl(loop.epoll_fd.cast(), std.os.linux.EPOLL.CTL_ADD, loop.waker.getFd().cast(), &epoll);
 
@@ -165,9 +165,8 @@ pub const Loop = struct {
                 const pollable: Pollable = Pollable.from(event.data.u64);
                 if (pollable.tag() == .empty) {
                     if (event.data.ptr == @intFromPtr(&loop)) {
-                        // this is the event poll, lets read it
-                        var bytes: [8]u8 = undefined;
-                        _ = bun.sys.read(loop.fd(), &bytes);
+                        // Edge-triggered: no need to read the eventfd counter
+                        continue;
                     }
                 }
                 _ = Poll.onUpdateEpoll(pollable.poll(), pollable.tag(), event);
@@ -175,7 +174,7 @@ pub const Loop = struct {
         }
     }
 
-    pub fn pollfd(this: *const Loop) bun.FileDescriptor {
+    pub fn pollfd(this: *const Loop) bun.FD {
         if (comptime Environment.isLinux) {
             return this.epoll_fd;
         }
@@ -183,7 +182,7 @@ pub const Loop = struct {
         return this.waker.getFd();
     }
 
-    pub fn fd(this: *const Loop) bun.FileDescriptor {
+    pub fn fd(this: *const Loop) bun.FD {
         return this.waker.getFd();
     }
 
@@ -327,7 +326,7 @@ pub const Action = union(enum) {
     close: CloseAction,
 
     pub const FileAction = struct {
-        fd: bun.FileDescriptor,
+        fd: bun.FD,
         poll: *Poll,
         ctx: *anyopaque,
         tag: Pollable.Tag,
@@ -335,7 +334,7 @@ pub const Action = union(enum) {
     };
 
     pub const CloseAction = struct {
-        fd: bun.FileDescriptor,
+        fd: bun.FD,
         poll: *Poll,
         ctx: *anyopaque,
         tag: Pollable.Tag,
@@ -492,7 +491,7 @@ pub const Poll = struct {
             comptime action: @Type(.enum_literal),
             tag: Pollable.Tag,
             poll: *Poll,
-            fd: bun.FileDescriptor,
+            fd: bun.FD,
             kqueue_event: *std.posix.system.kevent64_s,
         ) void {
             log("register({s}, {f})", .{ @tagName(action), fd });
@@ -562,7 +561,7 @@ pub const Poll = struct {
         }
     };
 
-    pub fn unregisterWithFd(this: *Poll, watcher_fd: bun.FileDescriptor, fd: bun.FileDescriptor) void {
+    pub fn unregisterWithFd(this: *Poll, watcher_fd: bun.FD, fd: bun.FD) void {
         _ = linux.epoll_ctl(
             watcher_fd.cast(),
             linux.EPOLL.CTL_DEL,
@@ -621,7 +620,7 @@ pub const Poll = struct {
         }
     }
 
-    pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: bun.FileDescriptor) bun.sys.Maybe(void) {
+    pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: bun.FD) bun.sys.Maybe(void) {
         const watcher_fd = loop.pollfd();
 
         log("register: {s} ({f})", .{ @tagName(flag), fd });

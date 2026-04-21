@@ -584,7 +584,13 @@ pub fn installWithManager(
             try waitForEverythingExceptPeers(manager);
         }
 
-        if (manager.peer_dependencies.readableLength() > 0) {
+        // Resolving a peer dep can create a NEW package whose own peer deps
+        // get re-queued to `peer_dependencies` during `drainDependencyList`.
+        // When all manifests are cached (synchronous resolution), no I/O tasks
+        // are spawned, so `pendingTaskCount() == 0`. We must drain the peer
+        // queue iteratively here — entering the event loop (`waitForPeers`)
+        // with zero pending I/O would block forever.
+        while (manager.peer_dependencies.readableLength() > 0) {
             try manager.processPeerDependencyList();
             manager.drainDependencyList();
         }
@@ -637,9 +643,29 @@ pub fn installWithManager(
                 if (security_scanner.performSecurityScanAfterResolution(manager, ctx, original_cwd) catch |err| {
                     switch (err) {
                         error.SecurityScannerInWorkspace => {
-                            Output.pretty("<red>Security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.<r>\n", .{});
+                            Output.errGeneric("security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.", .{});
                         },
-                        else => {},
+                        error.SecurityScannerRetryFailed => {
+                            Output.errGeneric("security scanner failed after partial install. This is probably a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues", .{});
+                        },
+                        error.InvalidPackageID => {
+                            Output.errGeneric("cannot perform partial install: security scanner package ID is invalid", .{});
+                        },
+                        error.PartialInstallFailed => {
+                            Output.errGeneric("failed to install security scanner package", .{});
+                        },
+                        error.NoPackagesInstalled => {
+                            Output.errGeneric("no packages were installed during security scanner installation", .{});
+                        },
+                        error.IPCPipeFailed => {
+                            Output.errGeneric("failed to create IPC pipe for security scanner", .{});
+                        },
+                        error.ProcessWatchFailed => {
+                            Output.errGeneric("failed to watch security scanner process", .{});
+                        },
+                        else => |e| {
+                            Output.errGeneric("security scanner failed: {s}", .{@errorName(e)});
+                        },
                     }
 
                     Global.exit(1);

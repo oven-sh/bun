@@ -75,6 +75,7 @@ pub const PendingValue = struct {
     onStartBuffering: ?*const fn (ctx: *anyopaque) void = null,
     onStartStreaming: ?*const fn (ctx: *anyopaque) jsc.WebCore.DrainResult = null,
     onReadableStreamAvailable: ?*const fn (ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void = null,
+    onStreamCancelled: ?*const fn (ctx: ?*anyopaque) void = null,
     size_hint: Blob.SizeType = 0,
 
     deinit: bool = false,
@@ -310,6 +311,15 @@ pub const Value = union(Tag) {
             return js_value;
         }
 
+        /// Like `toJS` but populates the error's stack trace with async frames
+        /// from the given promise's await chain. Use when rejecting from a
+        /// fetch/body callback at the top of the event loop.
+        pub fn toJSWithAsyncStack(this: *@This(), globalObject: *jsc.JSGlobalObject, promise: *jsc.JSPromise) jsc.JSValue {
+            const js_value = this.toJS(globalObject);
+            js_value.attachAsyncStackFromPromise(globalObject, promise);
+            return js_value;
+        }
+
         pub fn dupe(this: *const @This(), globalObject: *jsc.JSGlobalObject) @This() {
             var value = this.*;
             switch (this.*) {
@@ -460,9 +470,10 @@ pub const Value = union(Tag) {
                 blob.resolveSize();
                 const value = try jsc.WebCore.ReadableStream.fromBlobCopyRef(globalThis, &blob, blob.size);
 
+                const stream = (try jsc.WebCore.ReadableStream.fromJS(value, globalThis)).?;
                 this.* = .{
                     .Locked = .{
-                        .readable = jsc.WebCore.ReadableStream.Strong.init((try jsc.WebCore.ReadableStream.fromJS(value, globalThis)).?, globalThis),
+                        .readable = jsc.WebCore.ReadableStream.Strong.init(stream, globalThis),
                         .global = globalThis,
                     },
                 };
@@ -494,6 +505,13 @@ pub const Value = union(Tag) {
                     .context = undefined,
                     .globalThis = globalThis,
                 });
+
+                if (locked.onStreamCancelled) |onCancelled| {
+                    if (locked.task) |task| {
+                        reader.cancel_handler = onCancelled;
+                        reader.cancel_ctx = task;
+                    }
+                }
 
                 reader.context.setup();
 
@@ -815,16 +833,10 @@ pub const Value = union(Tag) {
     }
 
     pub fn tryUseAsAnyBlob(this: *Value) ?AnyBlob {
-        if (this.* == .WTFStringImpl) {
-            if (this.WTFStringImpl.canUseAsUTF8()) {
-                return AnyBlob{ .WTFStringImpl = this.WTFStringImpl };
-            }
-        }
-
         const any_blob: AnyBlob = switch (this.*) {
-            .Blob => AnyBlob{ .Blob = this.Blob },
-            .InternalBlob => AnyBlob{ .InternalBlob = this.InternalBlob },
-            // .InlineBlob => AnyBlob{ .InlineBlob = this.InlineBlob },
+            .Blob => .{ .Blob = this.Blob },
+            .InternalBlob => .{ .InternalBlob = this.InternalBlob },
+            .WTFStringImpl => |str| if (str.canUseAsUTF8()) .{ .WTFStringImpl = str } else return null,
             .Locked => this.Locked.toAnyBlobAllowPromise() orelse return null,
             else => return null,
         };
@@ -897,7 +909,7 @@ pub const Value = union(Tag) {
 
                 if (promise_value.asAnyPromise()) |promise| {
                     if (promise.status() == .pending) {
-                        try promise.reject(global, this.Error.toJS(global));
+                        try promise.rejectWithAsyncStack(global, this.Error.toJS(global));
                     }
                 }
             }
@@ -1565,15 +1577,15 @@ pub const ValueBufferer = struct {
     }
 
     pub fn onResolveStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        var args = callframe.arguments_old(2);
-        var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+        const args = callframe.arguments_old(2);
+        const sink = bun.api.NativePromiseContext.take(@This(), args.ptr[args.len - 1]) orelse return .js_undefined;
         sink.handleResolveStream(true);
         return .js_undefined;
     }
 
     pub fn onRejectStream(_: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const args = callframe.arguments_old(2);
-        var sink = args.ptr[args.len - 1].asPromisePtr(@This());
+        const sink = bun.api.NativePromiseContext.take(@This(), args.ptr[args.len - 1]) orelse return .js_undefined;
         const err = args.ptr[0];
         sink.handleRejectStream(err, true);
         return .js_undefined;
@@ -1645,12 +1657,13 @@ pub const ValueBufferer = struct {
             if (assignment_result.asAnyPromise()) |promise| {
                 switch (promise.status()) {
                     .Pending => {
-                        assignment_result.then(
+                        const cell = bun.api.NativePromiseContext.create(globalThis, sink);
+                        assignment_result.thenWithValue(
                             globalThis,
-                            sink,
+                            cell,
                             onResolveStream,
                             onRejectStream,
-                        );
+                        ) catch {};
                     },
                     .Fulfilled => {
                         defer stream.value.unprotect();

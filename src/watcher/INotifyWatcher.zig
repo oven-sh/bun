@@ -14,7 +14,7 @@ const log = Output.scoped(.watcher, .visible);
 // `bun.Watcher` has the same hardcoded `max_count`.
 const eventlist_bytes_size = (Event.largest_size / 2) * max_count;
 const EventListBytes = [eventlist_bytes_size]u8;
-fd: bun.FileDescriptor = bun.invalid_fd,
+fd: bun.FD = bun.invalid_fd,
 loaded: bool = false,
 
 // Avoid statically allocating because it increases the binary size.
@@ -212,6 +212,7 @@ pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
         }
     }
 
+    this.read_ptr = null;
     return .{ .result = this.eventlist_ptrs[0..count] };
 }
 

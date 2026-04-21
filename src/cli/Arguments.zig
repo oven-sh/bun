@@ -124,6 +124,8 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
     clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
+    clap.parseParam("--cron-title <STR>               Title for cron execution mode") catch unreachable,
+    clap.parseParam("--cron-period <STR>              Cron period for cron execution mode") catch unreachable,
 };
 
 pub const auto_or_run_params = [_]ParamType{
@@ -184,6 +186,8 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
     clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
     clap.parseParam("-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
+    clap.parseParam("--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '<empty>' for opaque specifiers. Default is '*' (allow all).") catch unreachable,
+    clap.parseParam("--reject-unresolved              Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time.") catch unreachable,
     clap.parseParam("--packages <STR>                 Add dependencies to bundle or keep them external. \"external\", \"bundle\" is supported. Defaults to \"bundle\".") catch unreachable,
     clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
     clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
@@ -220,6 +224,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
     clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
     clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
+    clap.parseParam("--retry <NUMBER>                 Default retry count for all tests, overridden by per-test { retry: N }") catch unreachable,
     clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
     clap.parseParam("--only                           Run only tests that are marked with \"test.only()\" or \"describe.only()\"") catch unreachable,
     clap.parseParam("--pass-with-no-tests             Exit with code 0 when no tests are found") catch unreachable,
@@ -236,6 +241,13 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
     clap.parseParam("--only-failures                  Only display test failures, hiding passing tests.") catch unreachable,
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
+    clap.parseParam("--path-ignore-patterns <STR>...   Glob patterns for test file paths to ignore.") catch unreachable,
+    clap.parseParam("--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against.") catch unreachable,
+    clap.parseParam("--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another.") catch unreachable,
+    clap.parseParam("--parallel <NUMBER>?             Run test files in parallel using N worker processes. Implies --isolate. Defaults to CPU core count.") catch unreachable,
+    clap.parseParam("--parallel-delay <NUMBER>        Milliseconds the first --parallel worker must be busy before spawning the rest. 0 spawns all immediately. Default 5.") catch unreachable,
+    clap.parseParam("--test-worker                    (internal) Run as a --parallel worker, receiving files over IPC.") catch unreachable,
+    clap.parseParam("--shard <STR>                    Run a subset of test files, e.g. '--shard=1/3' runs the first of three shards. Useful for splitting tests across multiple CI jobs.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -542,6 +554,11 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.test_options.coverage.reports_directory = dir;
         }
 
+        if (args.options("--path-ignore-patterns").len > 0) {
+            ctx.test_options.path_ignore_patterns = args.options("--path-ignore-patterns");
+            ctx.test_options.path_ignore_patterns_from_cli = true;
+        }
+
         if (args.option("--bail")) |bail| {
             if (bail.len > 0) {
                 ctx.test_options.bail = std.fmt.parseInt(u32, bail, 10) catch |e| {
@@ -567,6 +584,18 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 };
             }
         }
+        if (args.option("--retry")) |retry_count| {
+            if (retry_count.len > 0) {
+                ctx.test_options.retry = std.fmt.parseInt(u32, retry_count, 10) catch |e| {
+                    Output.prettyErrorln("<r><red>error<r>: --retry expects a number: {s}", .{@errorName(e)});
+                    Global.exit(1);
+                };
+            }
+        }
+        if (ctx.test_options.retry != 0 and ctx.test_options.repeat_count != 0) {
+            Output.prettyErrorln("<r><red>error<r>: --retry cannot be used with --rerun-each", .{});
+            Global.exit(1);
+        }
         if (args.option("--test-name-pattern")) |namePattern| {
             ctx.test_options.test_filter_pattern = namePattern;
             const regex = RegularExpression.init(bun.String.fromBytes(namePattern), RegularExpression.Flags.none) catch {
@@ -582,12 +611,66 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             };
             ctx.test_options.test_filter_regex = regex;
         }
+        if (args.option("--changed")) |since| {
+            ctx.test_options.changed = since;
+        }
+        if (args.option("--shard")) |shard| {
+            const sep = bun.strings.indexOfChar(shard, '/') orelse {
+                Output.prettyErrorln("<r><red>error<r>: --shard expects <d>'<r>index/count<d>'<r>, e.g. --shard=1/3", .{});
+                Global.exit(1);
+            };
+            const index_str = shard[0..sep];
+            const count_str = shard[sep + 1 ..];
+            const index = std.fmt.parseInt(u32, index_str, 10) catch {
+                Output.prettyErrorln("<r><red>error<r>: --shard index must be a positive integer, got \"{s}\"", .{index_str});
+                Global.exit(1);
+            };
+            const count = std.fmt.parseInt(u32, count_str, 10) catch {
+                Output.prettyErrorln("<r><red>error<r>: --shard count must be a positive integer, got \"{s}\"", .{count_str});
+                Global.exit(1);
+            };
+            if (count == 0) {
+                Output.prettyErrorln("<r><red>error<r>: --shard count must be greater than 0", .{});
+                Global.exit(1);
+            }
+            if (index == 0 or index > count) {
+                Output.prettyErrorln("<r><red>error<r>: --shard index must be between 1 and {d}, got {d}", .{ count, index });
+                Global.exit(1);
+            }
+            ctx.test_options.shard = .{ .index = index, .count = count };
+        }
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");
         ctx.test_options.only = args.flag("--only");
         ctx.test_options.pass_with_no_tests = args.flag("--pass-with-no-tests");
         ctx.test_options.concurrent = args.flag("--concurrent");
         ctx.test_options.randomize = args.flag("--randomize");
+        ctx.test_options.isolate = args.flag("--isolate");
+        ctx.test_options.test_worker = args.flag("--test-worker");
+
+        if (args.option("--parallel")) |parallel_str| {
+            const parsed: u32 = if (parallel_str.len > 0)
+                std.fmt.parseInt(u32, parallel_str, 10) catch {
+                    Output.prettyErrorln("<red>error<r>: --parallel expects a positive integer, received \"{s}\"", .{parallel_str});
+                    Global.exit(1);
+                }
+            else
+                @max(bun.getThreadCount(), 1);
+            if (parsed == 0) {
+                Output.prettyErrorln("<red>error<r>: --parallel expects a positive integer, received \"0\"", .{});
+                Global.exit(1);
+            }
+            ctx.test_options.parallel = parsed;
+            // --parallel implies --isolate inside each worker.
+            ctx.test_options.isolate = true;
+        }
+
+        if (args.option("--parallel-delay")) |delay_str| {
+            ctx.test_options.parallel_delay_ms = std.fmt.parseInt(u32, delay_str, 10) catch {
+                Output.prettyErrorln("<red>error<r>: --parallel-delay expects a non-negative integer (milliseconds), received \"{s}\"", .{delay_str});
+                Global.exit(1);
+            };
+        }
 
         if (args.option("--seed")) |seed_str| {
             ctx.test_options.randomize = true;
@@ -810,6 +893,23 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.runtime_options.dns_result_order = order;
         }
 
+        const has_cron_title = args.option("--cron-title");
+        const has_cron_period = args.option("--cron-period");
+        if (has_cron_title) |t| {
+            ctx.runtime_options.cron_title = t;
+        }
+        if (has_cron_period) |p| {
+            ctx.runtime_options.cron_period = p;
+        }
+        if ((has_cron_title != null) != (has_cron_period != null)) {
+            Output.errGeneric("--cron-title and --cron-period must be provided together", .{});
+            Global.exit(1);
+        }
+        if (has_cron_title != null and (ctx.runtime_options.cron_title.len == 0 or ctx.runtime_options.cron_period.len == 0)) {
+            Output.errGeneric("--cron-title and --cron-period must not be empty", .{});
+            Global.exit(1);
+        }
+
         if (args.option("--inspect")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{} }
@@ -817,8 +917,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Command.Debugger{ .enable = .{
                     .path_or_port = inspect_flag,
                 } };
-
-            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-wait")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -829,8 +927,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .path_or_port = inspect_flag,
                     .wait_for_connection = true,
                 } };
-
-            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         } else if (args.option("--inspect-brk")) |inspect_flag| {
             ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                 Command.Debugger{ .enable = .{
@@ -843,8 +939,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     .wait_for_connection = true,
                     .set_breakpoint_on_first_line = true,
                 } };
-
-            bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
 
         const cpu_prof_flag = args.flag("--cpu-prof");
@@ -1015,6 +1109,21 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 externals[i] = external;
             }
             opts.external = externals;
+        }
+
+        if (args.flag("--reject-unresolved") and args.options("--allow-unresolved").len > 0) {
+            Output.prettyErrorln("<r><red>error<r>: --reject-unresolved and --allow-unresolved cannot be used together", .{});
+            Global.crash();
+        } else if (args.flag("--reject-unresolved")) {
+            ctx.bundler_options.allow_unresolved = &.{};
+        } else if (args.options("--allow-unresolved").len > 0) {
+            const raw = args.options("--allow-unresolved");
+            var allow = try allocator.alloc([]const u8, raw.len);
+            for (raw, 0..) |val, i| {
+                // "<empty>" sentinel represents the empty-string pattern (for matching opaque specifiers)
+                allow[i] = if (strings.eqlComptime(val, "<empty>")) "" else val;
+            }
+            ctx.bundler_options.allow_unresolved = allow;
         }
 
         if (args.option("--packages")) |packages| {

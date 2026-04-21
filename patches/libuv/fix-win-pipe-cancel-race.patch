@@ -1,0 +1,38 @@
+--- a/src/win/pipe.c
++++ b/src/win/pipe.c
+@@ -2013,7 +2013,34 @@ static int uv__pipe_read_data(uv_loop_t* loop,
+         }
+       }
+     }
+-    more = *bytes_read == max_bytes;
++    /* Only indicate that more data may be available if we actually verify it.
++     * When bytes_read == max_bytes, the caller will loop back and call
++     * ReadFile again. If the pipe is empty at that point, ReadFile returns
++     * ERROR_IO_PENDING and we CancelIoEx the request. There is a Windows
++     * kernel race where data arriving on the pipe concurrently with the
++     * CancelIoEx can be drained from the pipe to satisfy the pending read,
++     * then silently discarded when the cancellation is applied. The read
++     * reports ERROR_OPERATION_ABORTED with 0 bytes transferred, but the
++     * data is no longer in the pipe either.
++     * Use PeekNamedPipe to confirm data is available before looping; if
++     * so, the next ReadFile will complete synchronously and we never enter
++     * the CancelIoEx path. */
++    if (*bytes_read == max_bytes) {
++      bytes_available = 0;
++      if (PeekNamedPipe(handle->handle,
++                        NULL,
++                        0,
++                        NULL,
++                        &bytes_available,
++                        NULL) &&
++          bytes_available > 0) {
++        more = 1;
++      } else {
++        more = 0;
++      }
++    } else {
++      more = 0;
++    }
+   }
+ 
+   /* Call the read callback. */

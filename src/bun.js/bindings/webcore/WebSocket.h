@@ -168,6 +168,38 @@ public:
         m_rejectUnauthorized = rejectUnauthorized;
     }
 
+    // C++-only callback mode. When set, didConnect/didReceiveMessage/
+    // didClose call these function pointers directly instead of building
+    // Event objects and going through dispatchEvent. Fires synchronously
+    // from the socket's onData — no event-loop tick deferral, no JSValue
+    // allocation. Used when a C++ subsystem owns the socket lifecycle
+    // end-to-end (e.g. CDP::Transport connecting to an existing Chrome
+    // instance over ws://, where every message is handled by C++ JSON
+    // parsing and JS only sees the final settled promise).
+    //
+    // onMessage gets text frames only — binary frames are dropped (the
+    // only current consumer speaks JSON). If a consumer needs binary,
+    // add onBinary alongside. onClose fires for both clean and abrupt
+    // close; the error-code-to-string mapping is the caller's job.
+    struct NativeCallbacks {
+        void* ctx = nullptr;
+        void (*onOpen)(void* ctx) = nullptr;
+        void (*onMessage)(void* ctx, std::span<const char> utf8) = nullptr;
+        void (*onClose)(void* ctx, unsigned short code) = nullptr;
+    };
+    void setNativeCallbacks(NativeCallbacks cb) { m_native = cb; }
+    bool hasNativeCallbacks() const { return m_native.onMessage != nullptr; }
+
+    // Public wrapper for the native-callback consumer to send text frames.
+    // Bypasses the ExceptionOr<> wrapping — the caller has already checked
+    // m_state == OPEN (onOpen fired), and there's no JS caller to surface
+    // an exception to. Same underlying write path as send(String).
+    void sendTextNative(const String& message)
+    {
+        if (m_state != OPEN) return;
+        sendWebSocketString(message, Opcode::Text);
+    }
+
     bool rejectUnauthorized() const
     {
         return m_rejectUnauthorized;
@@ -195,8 +227,8 @@ public:
     {
         ASSERT(m_pendingActivityCount > 0);
         m_pendingActivityCount--;
-        deref();
         updateHasPendingActivity();
+        deref();
     }
 
     size_t memoryCost() const;
@@ -258,6 +290,8 @@ private:
     void* m_sslConfig { nullptr };
 
     bool m_dispatchedErrorEvent { false };
+
+    NativeCallbacks m_native;
     // RefPtr<PendingActivity<WebSocket>> m_pendingActivity;
 };
 

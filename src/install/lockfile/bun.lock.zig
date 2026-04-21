@@ -535,7 +535,13 @@ pub const Stringifier = struct {
                                 &path_buf,
                             );
 
-                            try writer.writeByte(']');
+                            if (pkg_meta.integrity.tag.isSupported()) {
+                                try writer.print(", \"{f}\"]", .{
+                                    pkg_meta.integrity,
+                                });
+                            } else {
+                                try writer.writeByte(']');
+                            }
                         },
                         .remote_tarball => {
                             try writer.print("[\"{f}@{f}\", ", .{
@@ -558,7 +564,13 @@ pub const Stringifier = struct {
                                 &path_buf,
                             );
 
-                            try writer.writeByte(']');
+                            if (pkg_meta.integrity.tag.isSupported()) {
+                                try writer.print(", \"{f}\"]", .{
+                                    pkg_meta.integrity,
+                                });
+                            } else {
+                                try writer.writeByte(']');
+                            }
                         },
                         .symlink => {
                             try writer.print("[\"{f}@link:{f}\", ", .{
@@ -644,9 +656,16 @@ pub const Stringifier = struct {
                                 &path_buf,
                             );
 
-                            try writer.print(", {f}]", .{
-                                repo.resolved.fmtJson(buf, .{}),
-                            });
+                            if (pkg_meta.integrity.tag.isSupported()) {
+                                try writer.print(", {f}, \"{f}\"]", .{
+                                    repo.resolved.fmtJson(buf, .{}),
+                                    pkg_meta.integrity,
+                                });
+                            } else {
+                                try writer.print(", {f}]", .{
+                                    repo.resolved.fmtJson(buf, .{}),
+                                });
+                            }
                         },
                         else => unreachable,
                     }
@@ -1869,6 +1888,16 @@ pub fn parseIntoBinaryLockfile(
 
                     pkg.meta.integrity = Integrity.parse(integrity_str);
                 },
+                .local_tarball, .remote_tarball => {
+                    // integrity is optional for tarball deps (backward compat)
+                    if (i < pkg_info.len) {
+                        const integrity_expr = pkg_info.at(i);
+                        if (integrity_expr.asString(allocator)) |integrity_str| {
+                            pkg.meta.integrity = Integrity.parse(integrity_str);
+                            i += 1;
+                        }
+                    }
+                },
                 inline .git, .github => |tag| {
                     // .bun-tag
                     if (i >= pkg_info.len) {
@@ -1885,6 +1914,15 @@ pub fn parseIntoBinaryLockfile(
                     };
 
                     @field(res.value, @tagName(tag)).resolved = try string_buf.append(bun_tag_str);
+
+                    // Optional integrity hash (added to pin tarball content)
+                    if (i < pkg_info.len) {
+                        const integrity_expr = pkg_info.at(i);
+                        if (integrity_expr.asString(allocator)) |integrity_str| {
+                            pkg.meta.integrity = Integrity.parse(integrity_str);
+                            i += 1;
+                        }
+                    }
                 },
                 else => {},
             }

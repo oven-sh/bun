@@ -77,6 +77,8 @@ BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv5);
 
+#include "sliceAnsi.h"
+
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunStripANSI);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionBunWrapAnsi);
@@ -97,6 +99,7 @@ static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunOb
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
 static JSValue constructSecretsObject(VM& vm, JSObject* bunObject);
+static JSValue constructWebViewObject(VM& vm, JSObject* bunObject);
 
 static JSValue constructEnvObject(VM& vm, JSObject* object)
 {
@@ -518,18 +521,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
     size_t readBytes = 0;
     bool isTypedArray = arg.isCell() && isTypedArrayType(arg.asCell()->type());
 
-    if (isTypedArray) {
-        auto* view = jsCast<JSC::JSArrayBufferView*>(arg.asCell());
-        if (view->isDetached()) {
-            throwTypeError(globalObject, scope, "ArrayBuffer is detached"_s);
-            return {};
-        }
-        auto* data = static_cast<const uint8_t*>(view->vector());
-        size_t length = view->byteLength();
-
-        // Apply optional start/end offsets (byte offsets for typed arrays)
-        size_t start = 0;
-        size_t end = length;
+    // Apply optional start/end offsets (byte offsets for typed arrays, character offsets for strings).
+    // Populates start/end clamped to [0, length], with start <= end.
+    size_t start;
+    size_t end;
+    const auto parseOffsets = [&](size_t length) {
+        start = 0;
+        end = length;
 
         JSValue startArg = callFrame->argument(1);
         if (startArg.isNumber()) {
@@ -547,6 +545,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
 
         if (start > end)
             start = end;
+    };
+
+    if (isTypedArray) {
+        auto* view = jsCast<JSC::JSArrayBufferView*>(arg.asCell());
+        if (view->isDetached()) {
+            throwTypeError(globalObject, scope, "ArrayBuffer is detached"_s);
+            return {};
+        }
+        auto* data = static_cast<const uint8_t*>(view->vector());
+        size_t length = view->byteLength();
+        parseOffsets(length);
 
         const uint8_t* sliceData = data + start;
         size_t sliceLen = end - start;
@@ -588,8 +597,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
         RETURN_IF_EXCEPTION(scope, {});
         auto view = inputString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        result = JSC::streamingJSONParse(globalObject, view, values);
-        readBytes = result.charactersConsumed;
+
+        size_t length = view->length();
+        parseOffsets(length);
+
+        if (start != 0 || end != length) {
+            result = JSC::streamingJSONParse(globalObject, view->substring(start, end - start), values);
+        } else {
+            result = JSC::streamingJSONParse(globalObject, view, values);
+        }
+        readBytes = start + result.charactersConsumed;
     }
 
     RETURN_IF_EXCEPTION(scope, {});
@@ -780,6 +797,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGl
         jsValue = WebCore::toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTF::move(object));
     }
 
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto* jsDOMURL = jsCast<JSDOMURL*>(jsValue.asCell());
     vm.heap.reportExtraMemoryAllocated(jsDOMURL, jsDOMURL->wrapped().memoryCostForGC());
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
@@ -797,6 +815,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
     JSValue arg0 = callFrame->argument(0);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool useV8 = false;
+    bool useArrayBuffer = false;
     if (!arg0.isUndefined()) {
         if (arg0.isString()) {
             auto str = arg0.toWTFString(globalObject);
@@ -813,6 +832,31 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
     }
 
     if (useV8) {
+        JSValue arg1 = callFrame->argument(1);
+        if (!arg1.isUndefined()) {
+            if (arg1.isString()) {
+                auto str = arg1.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                if (str == "arraybuffer"_s) {
+                    useArrayBuffer = true;
+                } else {
+                    throwTypeError(globalObject, throwScope, "Expected 'arraybuffer' or undefined as second argument"_s);
+                    return {};
+                }
+            }
+        }
+
+        if (useArrayBuffer) {
+            JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
+            auto bytes = builder.jsonBytes();
+            auto released = bytes.releaseBuffer();
+            auto span = released.leakSpan();
+            auto buffer = ArrayBuffer::createFromBytes(std::span<const uint8_t> { span.data(), span.size() }, createSharedTask<void(void*)>([](void* p) {
+                fastFree(p);
+            }));
+            return JSC::JSValue::encode(JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(), WTF::move(buffer)));
+        }
+
         JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
         return JSC::JSValue::encode(jsString(vm, builder.json()));
     }
@@ -934,6 +978,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     build                                          BunObject_callback_build                                            DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 3
     connect                                        BunObject_callback_connect                                          DontDelete|Function 1
+    cron                                           BunObject_lazyPropCb_wrap_cron                                      DontDelete|PropertyCallback
     cwd                                            BunObject_lazyPropCb_wrap_cwd                                       DontEnum|DontDelete|PropertyCallback
     color                                          BunObject_callback_color                                            DontDelete|Function 2
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
@@ -947,7 +992,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     file                                           BunObject_callback_file                                             DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
     gc                                             Generated::BunObject::jsGc                                          DontDelete|Function 1
-    generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 1
+    generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 2
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
     hash                                           BunObject_lazyPropCb_wrap_hash                                      DontDelete|PropertyCallback
@@ -988,6 +1033,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     serve                                          BunObject_callback_serve                                            DontDelete|Function 1
     sha                                            BunObject_callback_sha                                              DontDelete|Function 1
     shrink                                         BunObject_callback_shrink                                           DontDelete|Function 1
+    sliceAnsi                                      jsFunctionBunSliceAnsi                                              DontDelete|Function 5
     sleep                                          functionBunSleep                                                    DontDelete|Function 1
     sleepSync                                      BunObject_callback_sleepSync                                        DontDelete|Function 1
     spawn                                          BunObject_callback_spawn                                            DontDelete|Function 1
@@ -995,12 +1041,13 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stderr                                         BunObject_lazyPropCb_wrap_stderr                                    DontDelete|PropertyCallback
     stdin                                          BunObject_lazyPropCb_wrap_stdin                                     DontDelete|PropertyCallback
     stdout                                         BunObject_lazyPropCb_wrap_stdout                                    DontDelete|PropertyCallback
-    stringWidth                                    Generated::BunObject::jsStringWidth                                 DontDelete|Function 2
+    stringWidth                                    BunObject_callback_stringWidth                                      DontDelete|Function 2
     stripANSI                                      jsFunctionBunStripANSI                                              DontDelete|Function 1
     wrapAnsi                                       jsFunctionBunWrapAnsi                                               DontDelete|Function 3
     Terminal                                       BunObject_lazyPropCb_wrap_Terminal                                  DontDelete|PropertyCallback
     unsafe                                         BunObject_lazyPropCb_wrap_unsafe                                    DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
+    WebView                                        constructWebViewObject                                              ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     RedisClient                                    BunObject_lazyPropCb_wrap_ValkeyClient                              DontDelete|PropertyCallback
     redis                                          BunObject_lazyPropCb_wrap_valkey                                    DontDelete|PropertyCallback
@@ -1125,6 +1172,12 @@ static JSValue constructSecretsObject(VM& vm, JSObject* bunObject)
 {
     auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
     return Bun::createSecretsObject(vm, zigGlobalObject);
+}
+
+static JSValue constructWebViewObject(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return zigGlobalObject->m_JSWebViewClassStructure.constructor(zigGlobalObject);
 }
 
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)

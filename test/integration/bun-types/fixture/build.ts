@@ -19,7 +19,6 @@ expectAssignable<Bun.Build.CompileTarget>("bun-windows-x64-modern");
 Bun.build({
   entrypoints: ["hey"],
   splitting: false,
-  // @ts-expect-error Currently not supported
   compile: {},
 });
 

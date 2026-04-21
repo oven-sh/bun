@@ -1,6 +1,13 @@
 // Tests which apply to both dev and prod. They are run twice.
 import { devAndProductionTest, devTest, emptyHtmlFile } from "./bake-harness";
 
+const hmrSelfAcceptingModule = (label: string) => `
+  console.log(${JSON.stringify(label)});
+  if (import.meta.hot) {
+    import.meta.hot.accept();
+  }
+`;
+
 devAndProductionTest("define config via bunfig.toml", {
   files: {
     "index.html": emptyHtmlFile({
@@ -86,7 +93,7 @@ devAndProductionTest("missing all meta tags works fine", {
     "public/index.html": `
       <title>Dashboard</title>
       <link rel="stylesheet" href="../src/app/styles.css"></link>
-        
+
       <div id="root" />
       <script type="module" src="../src/app/index.tsx"></script>
     `,
@@ -192,5 +199,100 @@ devTest("using runtime import", {
           ]
         : []),
     );
+  },
+});
+devTest("hmr handles rapid consecutive edits", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": hmrSelfAcceptingModule("render 1"),
+  },
+  async test(dev) {
+    await using client = await dev.client("/");
+    await client.expectMessage("render 1");
+
+    // Regression coverage for https://github.com/oven-sh/bun/issues/19736.
+    await client.js`
+      const tracked = [];
+      globalThis.__hmrErrors = tracked;
+
+      const maybeRecord = value => {
+        const message =
+          typeof value === "string"
+            ? value
+            : value?.message ?? value?.reason ?? "";
+        if (typeof message === "string" && message.includes("Unknown HMR script")) {
+          console.log("HMR_ERROR: " + message);
+          tracked.push(message);
+          return true;
+        }
+        return false;
+      };
+
+      window.addEventListener("error", event => {
+        if (maybeRecord(event.error ?? event.message)) {
+          event.preventDefault();
+        }
+      });
+
+      window.addEventListener("unhandledrejection", event => {
+        if (maybeRecord(event.reason)) {
+          event.preventDefault();
+        }
+      });
+
+      const hmrSymbol = Symbol.for("bun:hmr");
+      const originalHmr = globalThis[hmrSymbol];
+      if (typeof originalHmr === "function") {
+        globalThis[hmrSymbol] = function (...args) {
+          try {
+            return originalHmr.apply(this, args);
+          } catch (error) {
+            maybeRecord(error);
+          }
+        };
+      }
+    `;
+
+    for (let i = 2; i <= 10; i++) {
+      await Bun.write(dev.join("index.ts"), hmrSelfAcceptingModule(`render ${i}`));
+      await Bun.sleep(1);
+    }
+
+    // Wait event-driven for "render 10" to appear. Intermediate renders may
+    // be skipped (watcher coalescing) and the final render may fire multiple
+    // times (duplicate reloads), so we just listen for any occurrence.
+    const finalRender = "render 10";
+    await new Promise<void>((resolve, reject) => {
+      const check = () => {
+        for (const msg of client.messages) {
+          if (typeof msg === "string" && msg.includes("HMR_ERROR")) {
+            cleanup();
+            reject(new Error("Unexpected HMR error message: " + msg));
+            return;
+          }
+          if (msg === finalRender) {
+            cleanup();
+            resolve();
+            return;
+          }
+        }
+      };
+      const cleanup = () => {
+        client.off("message", check);
+      };
+      client.on("message", check);
+      // Check messages already buffered.
+      check();
+    });
+    // Drain all buffered messages — intermediate renders and possible
+    // duplicates of the final render are expected and harmless.
+    client.messages.length = 0;
+
+    const hmrErrors = await client.js`return globalThis.__hmrErrors ? [...globalThis.__hmrErrors] : [];`;
+    if (hmrErrors.length > 0) {
+      throw new Error("Unexpected HMR errors: " + hmrErrors.join(", "));
+    }
   },
 });

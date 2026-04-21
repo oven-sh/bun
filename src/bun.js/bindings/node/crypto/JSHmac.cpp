@@ -172,6 +172,9 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
 
     // Get the HMAC instance
     JSHmac* hmac = jsDynamicCast<JSHmac*>(callFrame->thisValue());
+    if (!hmac) [[unlikely]] {
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "Hmac"_s);
+    }
 
     // Check if already finalized, return empty buffer if already finalized
     if (hmac->m_finalized) {

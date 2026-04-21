@@ -380,7 +380,7 @@ pub const Result = union(Tag) {
             defer promise.toJS().unprotect();
             switch (result) {
                 .err => |err| {
-                    promise.reject(globalThis, err.toJS(globalThis)) catch {}; // TODO: properly propagate exception upwards
+                    promise.rejectWithAsyncStack(globalThis, err.toJS(globalThis)) catch {}; // TODO: properly propagate exception upwards
                 },
                 .done => {
                     promise.resolve(globalThis, .false) catch {}; // TODO: properly propagate exception upwards
@@ -536,7 +536,7 @@ pub const Result = union(Tag) {
                     break :brk js_err;
                 };
                 result.* = .{ .temporary = .{} };
-                promise.reject(globalThis, value) catch {}; // TODO: properly propagate exception upwards
+                promise.rejectWithAsyncStack(globalThis, value) catch {}; // TODO: properly propagate exception upwards
             },
             .done => {
                 promise.resolve(globalThis, .false) catch {}; // TODO: properly propagate exception upwards

@@ -703,6 +703,17 @@ void NodeVMSpecialSandbox::finishCreation(VM& vm)
 
 const JSC::ClassInfo NodeVMSpecialSandbox::s_info = { "NodeVMSpecialSandbox"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMSpecialSandbox) };
 
+template<typename Visitor>
+void NodeVMSpecialSandbox::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = jsCast<NodeVMSpecialSandbox*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_parentGlobal);
+}
+
+DEFINE_VISIT_CHILDREN(NodeVMSpecialSandbox);
+
 NodeVMGlobalObject::NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions contextOptions, JSValue importer)
     : Base(vm, structure, &globalObjectMethodTable())
     , m_dynamicImportCallback(vm, this, importer)
@@ -752,7 +763,6 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         &supportsRichSourceInfo,
         &shouldInterruptScript,
         &javaScriptRuntimeFlags,
-        nullptr, // queueTaskToEventLoop
         nullptr, // shouldInterruptScriptBeforeTimeout,
         &moduleLoaderImportModule,
         nullptr, // moduleLoaderResolve
@@ -1209,10 +1219,15 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
             return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "params"_s, "Array"_s, paramsArg);
         }
 
-        auto* paramsArray = jsCast<JSArray*>(paramsArg);
+        auto* paramsArray = jsDynamicCast<JSArray*>(paramsArg);
+        if (!paramsArray) [[unlikely]] {
+            // isArray() accepts Proxy->Array, but jsDynamicCast returns null.
+            return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "params"_s, "Array"_s, paramsArg);
+        }
         unsigned length = paramsArray->length();
         for (unsigned i = 0; i < length; i++) {
-            JSValue param = paramsArray->getIndexQuickly(i);
+            JSValue param = paramsArray->getIndex(globalObject, i);
+            RETURN_IF_EXCEPTION(scope, {});
             if (!param.isString()) {
                 return ERR::INVALID_ARG_TYPE(scope, globalObject, "params"_s, "Array<string>"_s, paramsArg);
             }
@@ -1256,8 +1271,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     JSScope* functionScope = options.parsingContext ? options.parsingContext : globalObject;
 
     if (!options.contextExtensions.isUndefinedOrNull() && !options.contextExtensions.isEmpty() && options.contextExtensions.isObject() && isArray(globalObject, options.contextExtensions)) {
-        auto* contextExtensionsArray = jsCast<JSArray*>(options.contextExtensions);
-        unsigned length = contextExtensionsArray->length();
+        auto* contextExtensionsArray = jsDynamicCast<JSArray*>(options.contextExtensions);
+        unsigned length = contextExtensionsArray ? contextExtensionsArray->length() : 0;
 
         if (length > 0) {
             // Get the global scope from the parsing context
@@ -1265,7 +1280,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
 
             // Create JSWithScope objects for each context extension
             for (unsigned i = 0; i < length; i++) {
-                JSValue extension = contextExtensionsArray->getIndexQuickly(i);
+                JSValue extension = contextExtensionsArray->getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, {});
                 if (extension.isObject()) {
                     JSObject* extensionObject = asObject(extension);
                     currentScope = JSWithScope::create(vm, options.parsingContext, currentScope, extensionObject);
@@ -1769,10 +1785,15 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
                     return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
 
                 // Validate that all items in the array are objects
-                auto* contextExtensionsArray = jsCast<JSArray*>(contextExtensionsValue);
+                auto* contextExtensionsArray = jsDynamicCast<JSArray*>(contextExtensionsValue);
+                if (!contextExtensionsArray) [[unlikely]] {
+                    // isArray() accepts Proxy->Array, but jsDynamicCast returns null.
+                    return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
+                }
                 unsigned length = contextExtensionsArray->length();
                 for (unsigned i = 0; i < length; i++) {
-                    JSValue extension = contextExtensionsArray->getIndexQuickly(i);
+                    JSValue extension = contextExtensionsArray->getIndex(globalObject, i);
+                    RETURN_IF_EXCEPTION(scope, {});
                     if (!extension.isObject())
                         return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions[0]"_s, "object"_s, extension);
                 }

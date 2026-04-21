@@ -598,7 +598,7 @@ pub const PackageJSON = struct {
     pub fn parse(
         r: *resolver.Resolver,
         input_path: string,
-        dirname_fd: StoredFileDescriptorType,
+        dirname_fd: FD,
         package_id: ?Install.PackageID,
         comptime include_scripts_: enum { ignore_scripts, include_scripts },
         comptime include_dependencies: enum { main, local, none },
@@ -1476,6 +1476,10 @@ pub const ESModule = struct {
         }
 
         pub fn parseSubpath(subpath: *[]const u8, specifier: string, subpath_buf: []u8) void {
+            if (specifier.len + 1 > subpath_buf.len) {
+                subpath.* = "";
+                return;
+            }
             subpath_buf[0] = '.';
             bun.copy(u8, subpath_buf[1..], specifier);
             subpath.* = subpath_buf[0 .. specifier.len + 1];
@@ -2153,9 +2157,9 @@ const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const MainFieldMap = bun.StringMap;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const default_allocator = bun.default_allocator;
 const glob = bun.glob;
 const js_ast = bun.ast;

@@ -58,6 +58,7 @@ pub fn next(this: *Touch) Yield {
             if (exec.started) {
                 if (this.state.exec.tasks_done >= this.state.exec.tasks_count and this.state.exec.output_done >= this.state.exec.output_waiting) {
                     const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
+                    if (this.state.exec.err) |e| e.deref();
                     this.state = .done;
                     return this.bltn().done(exit_code);
                 }
@@ -80,11 +81,11 @@ pub fn next(this: *Touch) Yield {
 }
 
 pub fn onIOWriterChunk(this: *Touch, _: usize, e: ?jsc.SystemError) Yield {
+    if (e) |err| err.deref();
+
     if (this.state == .waiting_write_err) {
         return this.bltn().done(1);
     }
-
-    if (e) |err| err.deref();
 
     return this.next();
 }
@@ -114,6 +115,7 @@ pub fn onShellTouchTaskDone(this: *Touch, task: *ShellTouchTask) void {
             .state = .waiting_write_err,
         });
         const error_string = this.bltn().taskErrorToString(.touch, e);
+        if (this.state.exec.err) |prev| prev.deref();
         this.state.exec.err = e;
         output_task.start(error_string).run();
         return;
@@ -132,8 +134,8 @@ pub const ShellTouchOutputTask = OutputTask(Touch, .{
 
 const ShellTouchOutputTaskVTable = struct {
     pub fn writeErr(this: *Touch, childptr: anytype, errbuf: []const u8) ?Yield {
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stderr.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             return this.bltn().stderr.enqueue(childptr, errbuf, safeguard);
         }
         _ = this.bltn().writeNoIO(.stderr, errbuf);
@@ -145,8 +147,8 @@ const ShellTouchOutputTaskVTable = struct {
     }
 
     pub fn writeOut(this: *Touch, childptr: anytype, output: *OutputSrc) ?Yield {
+        this.state.exec.output_waiting += 1;
         if (this.bltn().stdout.needsIO()) |safeguard| {
-            this.state.exec.output_waiting += 1;
             const slice = output.slice();
             log("THE SLICE: {d} {s}", .{ slice.len, slice });
             return this.bltn().stdout.enqueue(childptr, slice, safeguard);
@@ -249,12 +251,12 @@ pub const ShellTouchTask = struct {
                         break :out;
                     },
                     .err => |e| {
-                        this.err = e.withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
+                        this.err = e.withPath(filepath).toShellSystemError();
                         break :out;
                     },
                 }
             }
-            this.err = err.withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
+            this.err = err.withPath(filepath).toShellSystemError();
         }
 
         if (this.event_loop == .js) {

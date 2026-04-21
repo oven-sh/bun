@@ -168,6 +168,12 @@ CPP_DECL uint32_t JSC__JSInternalPromise__status(const JSC::JSInternalPromise* a
 
 CPP_DECL void JSC__JSFunction__optimizeSoon(JSC::EncodedJSValue JSValue0);
 
+#pragma mark - REPL Functions
+
+CPP_DECL JSC::EncodedJSValue Bun__REPL__evaluate(JSC::JSGlobalObject* globalObject, const unsigned char* sourcePtr, size_t sourceLen, const unsigned char* filenamePtr, size_t filenameLen, JSC::EncodedJSValue* exception);
+CPP_DECL JSC::EncodedJSValue Bun__REPL__getCompletions(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue targetValue, const unsigned char* prefixPtr, size_t prefixLen);
+CPP_DECL JSC::EncodedJSValue Bun__REPL__formatValue(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue valueEncoded, int32_t depth, bool colors);
+
 #pragma mark - JSC::JSGlobalObject
 
 CPP_DECL VirtualMachine* JSC__JSGlobalObject__bunVM(JSC::JSGlobalObject* arg0);
@@ -577,13 +583,14 @@ BUN_DECLARE_HOST_FUNCTION(NetworkSink__write);
 ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);
 ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(
     JSC::JSGlobalObject* globalObject, void* socketContext, CppWebSocket* websocket,
-    const ZigString* host, uint16_t port, const ZigString* path, const ZigString* protocols,
-    ZigString* headerNames, ZigString* headerValues, size_t headerCount,
-    const ZigString* proxyHost, uint16_t proxyPort,
-    const ZigString* proxyAuthorization,
-    ZigString* proxyHeaderNames, ZigString* proxyHeaderValues, size_t proxyHeaderCount,
+    const BunString* host, uint16_t port, const BunString* path, const BunString* protocols,
+    BunString* headerNames, BunString* headerValues, size_t headerCount,
+    const BunString* proxyHost, uint16_t proxyPort,
+    const BunString* proxyAuthorization,
+    BunString* proxyHeaderNames, BunString* proxyHeaderValues, size_t proxyHeaderCount,
     void* sslConfig, bool targetIsSecure,
-    const ZigString* targetAuthorization);
+    const BunString* targetAuthorization,
+    const BunString* unixSocketPath);
 ZIG_DECL void Bun__WebSocketHTTPClient__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL size_t Bun__WebSocketHTTPClient__memoryCost(WebSocketHTTPClient* arg0);
 #endif
@@ -593,13 +600,14 @@ ZIG_DECL size_t Bun__WebSocketHTTPClient__memoryCost(WebSocketHTTPClient* arg0);
 ZIG_DECL void Bun__WebSocketHTTPSClient__cancel(WebSocketHTTPSClient* arg0);
 ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(
     JSC::JSGlobalObject* globalObject, void* socketContext, CppWebSocket* websocket,
-    const ZigString* host, uint16_t port, const ZigString* path, const ZigString* protocols,
-    ZigString* headerNames, ZigString* headerValues, size_t headerCount,
-    const ZigString* proxyHost, uint16_t proxyPort,
-    const ZigString* proxyAuthorization,
-    ZigString* proxyHeaderNames, ZigString* proxyHeaderValues, size_t proxyHeaderCount,
+    const BunString* host, uint16_t port, const BunString* path, const BunString* protocols,
+    BunString* headerNames, BunString* headerValues, size_t headerCount,
+    const BunString* proxyHost, uint16_t proxyPort,
+    const BunString* proxyAuthorization,
+    BunString* proxyHeaderNames, BunString* proxyHeaderValues, size_t proxyHeaderCount,
     void* sslConfig, bool targetIsSecure,
-    const ZigString* targetAuthorization);
+    const BunString* targetAuthorization,
+    const BunString* unixSocketPath);
 ZIG_DECL void Bun__WebSocketHTTPSClient__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL size_t Bun__WebSocketHTTPSClient__memoryCost(WebSocketHTTPSClient* arg0);
 
@@ -748,6 +756,8 @@ BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onResolveStream);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__Describe2__bunTestThen);
 BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__Describe2__bunTestCatch);
+BUN_DECLARE_HOST_FUNCTION(Bun__CronJob__onPromiseResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__CronJob__onPromiseReject);
 
 #endif
 

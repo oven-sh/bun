@@ -68,6 +68,7 @@ pub const LinkerContext = struct {
         banner: []const u8 = "",
         footer: []const u8 = "",
         css_chunking: bool = false,
+        compile_to_standalone_html: bool = false,
         source_maps: options.SourceMapOption = .none,
         target: options.Target = .browser,
         compile: bool = false,
@@ -186,7 +187,7 @@ pub const LinkerContext = struct {
     pub fn shouldIncludePart(c: *LinkerContext, source_index: Index.Int, part: Part) bool {
         // As an optimization, ignore parts containing a single import statement to
         // an internal non-wrapped file. These will be ignored anyway and it's a
-        // performance hit to spin up a goroutine only to discover this later.
+        // performance hit to include the part only to discover it's unnecessary later.
         if (part.stmts.len == 1) {
             if (part.stmts[0].data == .s_import) {
                 const record = c.graph.ast.items(.import_records)[source_index].at(part.stmts[0].data.s_import.import_record_index);
@@ -1186,6 +1187,10 @@ pub const LinkerContext = struct {
         ast: *const JSAst,
     ) !bool {
         const record = ast.import_records.at(import_record_index);
+        // Barrel optimization: deferred import records should be dropped
+        if (record.flags.is_unused) {
+            return true;
+        }
         // Is this an external import?
         if (!record.source_index.isValid()) {
             // Keep the "import" statement if import statements are supported
@@ -1236,7 +1241,7 @@ pub const LinkerContext = struct {
         switch (other_flags.wrap) {
             .none => {},
             .cjs => {
-                // Replace the statement with a call to "require()" if this module is not wrapped
+                // Replace the statement with a call to "require()" since the other module is CJS-wrapped
                 try stmts.inside_wrapper_prefix.appendNonDependency(
                     Stmt.alloc(S.Local, .{
                         .decls = try G.Decl.List.fromSlice(
@@ -1500,10 +1505,13 @@ pub const LinkerContext = struct {
             );
         }
 
-        // Mix in hashes for referenced asset paths (i.e. the "file" loader)
+        // Mix in hashes for content referenced via output pieces. JS chunks
+        // express cross-chunk dependencies via `cross_chunk_imports` above, but
+        // HTML (and CSS) chunks only reference other chunks through pieces, so
+        // recurse on those too.
         switch (chunk.intermediate_output) {
-            .pieces => |pieces| for (pieces.slice()) |piece| {
-                if (piece.query.kind == .asset) {
+            .pieces => |pieces| for (pieces.slice()) |piece| switch (piece.query.kind) {
+                .asset => {
                     var from_chunk_dir = std.fs.path.dirnamePosix(chunk.final_rel_path) orelse "";
                     if (strings.eqlComptime(from_chunk_dir, "."))
                         from_chunk_dir = "";
@@ -1518,7 +1526,15 @@ pub const LinkerContext = struct {
                         },
                         .source_index => {},
                     }
-                }
+                },
+                .chunk => c.appendIsolatedHashesForImportedChunks(hash, chunks, piece.query.index, chunk_visit_map),
+                .scb => c.appendIsolatedHashesForImportedChunks(
+                    hash,
+                    chunks,
+                    c.graph.files.items(.entry_point_chunk_index)[piece.query.index],
+                    chunk_visit_map,
+                ),
+                .none, .html_import => {},
             },
             else => {},
         }
@@ -1682,6 +1698,25 @@ pub const LinkerContext = struct {
                 if (record.source_index.isValid()) {
                     c.markFileLiveForTreeShaking(
                         other_source_index,
+                        side_effects,
+                        parts,
+                        import_records,
+                        entry_point_kinds,
+                        css_reprs,
+                    );
+                }
+            }
+            return;
+        }
+
+        // HTML files can reference non-JS/CSS assets (favicons, images, etc.)
+        // via .url kind import records. Follow all import records for HTML files
+        // so these assets are marked live and included in the manifest.
+        if (c.parse_graph.input_files.items(.loader)[source_index] == .html) {
+            for (import_records[source_index].slice()) |*record| {
+                if (record.source_index.isValid()) {
+                    c.markFileLiveForTreeShaking(
+                        record.source_index.get(),
                         side_effects,
                         parts,
                         import_records,
@@ -2321,6 +2356,14 @@ pub const LinkerContext = struct {
             };
         }
 
+        // Barrel optimization: deferred import records point to empty ASTs
+        if (record.flags.is_unused) {
+            return .{
+                .value = .{},
+                .status = .external,
+            };
+        }
+
         // Is this a disabled file?
         const other_source_index = record.source_index.get();
         const other_id = other_source_index;
@@ -2340,9 +2383,9 @@ pub const LinkerContext = struct {
         if (!named_import.alias_is_star and
             flags.has_lazy_export and
 
-            // CommonJS exports
-            !flags.uses_export_keyword and !strings.eqlComptime(named_import.alias orelse "", "default") and
             // ESM exports
+            !flags.uses_export_keyword and !strings.eqlComptime(named_import.alias orelse "", "default") and
+            // CommonJS exports
             !flags.uses_exports_ref and !flags.uses_module_ref)
         {
             // Just warn about it and replace the import with "undefined"

@@ -285,7 +285,7 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     // DFS using explicit stack
     WTF::Vector<uint32_t> stackNodes(nodeCount);
     WTF::Vector<size_t> stackEdgeIdx(nodeCount);
-    WTF::Vector<uint8_t> visited(nodeCount, 0);
+    WTF::Vector<uint8_t> visited(WTF::FillWith {}, nodeCount, static_cast<uint8_t>(0));
 
     uint32_t postOrderIndex = 0;
     int stackTop = 0;
@@ -364,9 +364,9 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     uint32_t rootPostOrderIndex = nodeCount - 1;
     uint32_t noEntry = nodeCount;
 
-    WTF::Vector<uint8_t> affected(nodeCount, 0);
-    WTF::Vector<uint32_t> dominators(nodeCount, noEntry);
-    WTF::Vector<uint32_t> nodeOrdinalToDominator(nodeCount, 0);
+    WTF::Vector<uint8_t> affected(WTF::FillWith {}, nodeCount, static_cast<uint8_t>(0));
+    WTF::Vector<uint32_t> dominators(WTF::FillWith {}, nodeCount, noEntry);
+    WTF::Vector<uint32_t> nodeOrdinalToDominator(WTF::FillWith {}, nodeCount, 0u);
 
     // Root dominates itself
     dominators[rootPostOrderIndex] = rootPostOrderIndex;

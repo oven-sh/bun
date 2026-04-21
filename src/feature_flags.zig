@@ -31,9 +31,6 @@ pub const enable_keepalive = true;
 
 pub const atomic_file_watcher = env.isLinux;
 
-// This change didn't seem to make a meaningful difference in microbenchmarks
-pub const latin1_is_now_ascii = false;
-
 pub const http_buffer_pooling = true;
 
 pub const disable_lolhtml = false;

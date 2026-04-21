@@ -46,7 +46,6 @@ pub fn fmtStorePath(str: string) StorePathFormatter {
 
 // these bytes are skipped
 // so we just make it repeat bun bun bun bun bun bun bun bun bun
-// because why not
 pub const alignment_bytes_to_repeat_buffer = [_]u8{0} ** 144;
 
 pub fn initializeStore() void {
@@ -209,6 +208,10 @@ pub const ExtractData = struct {
         path: string = "",
         buf: []u8 = "",
     } = null,
+    /// Integrity hash computed from the raw tarball bytes.
+    /// Used for HTTPS/local tarball dependencies where the hash
+    /// is not available from a registry manifest.
+    integrity: Integrity = .{},
 };
 
 pub const DependencyInstallContext = struct {
@@ -242,6 +245,7 @@ pub const PackageManifestError = error{
 
 pub const ExtractTarball = @import("./extract_tarball.zig");
 pub const NetworkTask = @import("./NetworkTask.zig");
+pub const TarballStream = @import("./TarballStream.zig");
 pub const Npm = @import("./npm.zig");
 pub const PackageManager = @import("./PackageManager.zig");
 pub const PackageManifestMap = @import("./PackageManifestMap.zig");
@@ -269,6 +273,7 @@ pub const ExternalStringList = external.ExternalStringList;
 pub const ExternalStringMap = external.ExternalStringMap;
 pub const VersionSlice = external.VersionSlice;
 
+pub const Integrity = @import("./integrity.zig").Integrity;
 pub const Dependency = @import("./dependency.zig");
 pub const Behavior = @import("./dependency.zig").Behavior;
 

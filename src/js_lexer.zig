@@ -38,7 +38,7 @@ pub const JSONOptions = struct {
     /// Enable JSON-specific warnings/errors
     is_json: bool = false,
 
-    /// tsconfig.json supports comments & trailing comments
+    /// tsconfig.json supports comments & trailing commas
     allow_comments: bool = false,
     allow_trailing_commas: bool = false,
 
@@ -3110,8 +3110,6 @@ pub fn isIdentifierUTF16(text: []const u16) bool {
     return true;
 }
 
-// TODO: implement this to actually work right
-// this fn is a stub!
 pub fn rangeOfIdentifier(source: *const Source, loc: logger.Loc) logger.Range {
     const contents = source.contents;
     if (loc.start == -1 or @as(usize, @intCast(loc.start)) >= contents.len) return logger.Range.None;

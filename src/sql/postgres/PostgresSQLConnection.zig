@@ -680,6 +680,20 @@ pub fn call(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
         break :brk b.allocatedSlice();
     };
 
+    // Reject null bytes in connection parameters to prevent Postgres startup
+    // message parameter injection (null bytes act as field terminators in the
+    // wire protocol's key\0value\0 format).
+    inline for (.{ .{ username, "username" }, .{ password, "password" }, .{ database, "database" }, .{ path, "path" } }) |entry| {
+        if (entry[0].len > 0 and std.mem.indexOfScalar(u8, entry[0], 0) != null) {
+            bun.default_allocator.free(options_buf);
+            tls_config.deinit();
+            if (tls_ctx) |tls| {
+                tls.deinit(true);
+            }
+            return globalObject.throwInvalidArguments(entry[1] ++ " must not contain null bytes", .{});
+        }
+    }
+
     const on_connect = arguments[9];
     const on_close = arguments[10];
     const idle_timeout = arguments[11].toInt32();
@@ -1076,6 +1090,16 @@ pub fn canPrepareQuery(noalias this: *const @This()) bool {
     return this.flags.is_ready_for_query and !this.flags.waiting_to_prepare and this.pipelined_requests == 0;
 }
 
+/// Process pending requests and flush. Called from the enqueue path when
+/// unnamed prepared statements with params skip writeQuery+Sync and need
+/// advance() to send everything atomically on an idle connection.
+pub fn advanceAndFlush(this: *PostgresSQLConnection) void {
+    if (!this.flags.has_backpressure and this.flags.is_ready_for_query) {
+        this.advance();
+        this.flushData();
+    }
+}
+
 fn advance(this: *PostgresSQLConnection) void {
     var offset: usize = 0;
     debug("advance", .{});
@@ -1168,24 +1192,52 @@ fn advance(this: *PostgresSQLConnection) void {
                                 const binding_value = PostgresSQLQuery.js.bindingGetCached(thisValue) orelse .zero;
                                 const columns_value = PostgresSQLQuery.js.columnsGetCached(thisValue) orelse .zero;
                                 req.flags.binary = statement.fields.len > 0;
-                                debug("binding and executing stmt", .{});
-                                PostgresRequest.bindAndExecute(this.globalObject, statement, binding_value, columns_value, PostgresSQLConnection.Writer, this.writer()) catch |err| {
-                                    if (this.globalObject.tryTakeException()) |err_| {
-                                        req.onJSError(err_, this.globalObject);
-                                    } else {
-                                        req.onWriteFail(err, this.globalObject, this.getQueriesArray());
-                                    }
-                                    if (offset == 0) {
-                                        req.deref();
-                                        this.requests.discard(1);
-                                    } else {
-                                        // deinit later
-                                        req.status = .fail;
-                                        offset += 1;
-                                    }
-                                    debug("bind and execute failed: {s}", .{@errorName(err)});
-                                    continue;
-                                };
+
+                                if (this.flags.use_unnamed_prepared_statements) {
+                                    // For unnamed prepared statements, always include Parse
+                                    // before Bind+Execute. The unnamed statement may not exist
+                                    // on the current server connection when using PgBouncer or
+                                    // other connection poolers in transaction mode.
+                                    debug("parse, bind and execute unnamed stmt", .{});
+                                    var query_str = req.query.toUTF8(bun.default_allocator);
+                                    defer query_str.deinit();
+                                    PostgresRequest.parseAndBindAndExecute(this.globalObject, query_str.slice(), statement, binding_value, columns_value, false, PostgresSQLConnection.Writer, this.writer()) catch |err| {
+                                        if (this.globalObject.tryTakeException()) |err_| {
+                                            req.onJSError(err_, this.globalObject);
+                                        } else {
+                                            req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                        }
+                                        if (offset == 0) {
+                                            req.deref();
+                                            this.requests.discard(1);
+                                        } else {
+                                            // deinit later
+                                            req.status = .fail;
+                                            offset += 1;
+                                        }
+                                        debug("parse, bind and execute failed: {s}", .{@errorName(err)});
+                                        continue;
+                                    };
+                                } else {
+                                    debug("binding and executing stmt", .{});
+                                    PostgresRequest.bindAndExecute(this.globalObject, statement, binding_value, columns_value, PostgresSQLConnection.Writer, this.writer()) catch |err| {
+                                        if (this.globalObject.tryTakeException()) |err_| {
+                                            req.onJSError(err_, this.globalObject);
+                                        } else {
+                                            req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                        }
+                                        if (offset == 0) {
+                                            req.deref();
+                                            this.requests.discard(1);
+                                        } else {
+                                            // deinit later
+                                            req.status = .fail;
+                                            offset += 1;
+                                        }
+                                        debug("bind and execute failed: {s}", .{@errorName(err)});
+                                        continue;
+                                    };
+                                }
 
                                 this.flags.is_ready_for_query = false;
                                 req.status = .binding;
@@ -1254,6 +1306,49 @@ fn advance(this: *PostgresSQLConnection) void {
                                     return;
                                 }
 
+                                if (this.flags.use_unnamed_prepared_statements) {
+                                    // For unnamed prepared statements, send Parse+Describe+Bind+Execute
+                                    // atomically to prevent PgBouncer from splitting them across
+                                    // server connections. Uses signature field types for encoding
+                                    // (text format for unknowns); actual types will be cached from
+                                    // ParameterDescription for subsequent executions.
+                                    const thisValue = req.thisValue.tryGet() orelse {
+                                        bun.assertf(false, "query value was freed earlier than expected", .{});
+                                        bun.assert(offset == 0);
+                                        req.deref();
+                                        this.requests.discard(1);
+                                        continue;
+                                    };
+                                    const binding_value = PostgresSQLQuery.js.bindingGetCached(thisValue) orelse .zero;
+                                    const columns_value = PostgresSQLQuery.js.columnsGetCached(thisValue) orelse .zero;
+                                    debug("parseAndBindAndExecute (unnamed, first execution)", .{});
+                                    PostgresRequest.parseAndBindAndExecute(this.globalObject, query_str.slice(), statement, binding_value, columns_value, true, PostgresSQLConnection.Writer, this.writer()) catch |err| {
+                                        if (this.globalObject.tryTakeException()) |err_| {
+                                            req.onJSError(err_, this.globalObject);
+                                        } else {
+                                            statement.status = .failed;
+                                            statement.error_response = .{ .postgres_error = err };
+                                            req.onWriteFail(err, this.globalObject, this.getQueriesArray());
+                                        }
+                                        bun.assert(offset == 0);
+                                        req.deref();
+                                        this.requests.discard(1);
+                                        debug("parseAndBindAndExecute failed: {s}", .{@errorName(err)});
+                                        continue;
+                                    };
+                                    this.flags.is_ready_for_query = false;
+                                    this.flags.waiting_to_prepare = true;
+                                    req.status = .binding;
+                                    statement.status = .parsing;
+                                    req.flags.pipelined = true;
+                                    this.pipelined_requests += 1;
+                                    this.flushDataAndResetTimeout();
+                                    return;
+                                }
+
+                                // Named prepared statements: send Parse+Describe first, wait for
+                                // ParameterDescription, then send Bind+Execute in a second phase.
+                                // This is safe because named statements persist on the connection.
                                 const connection_writer = this.writer();
                                 debug("writing query", .{});
                                 // write query and wait for it to be prepared
@@ -1626,7 +1721,10 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     // This will usually start with "v="
                     const comparison_signature = final.data.slice();
 
-                    if (comparison_signature.len < 2 or !bun.strings.eqlLong(server_signature, comparison_signature[2..], true)) {
+                    if (comparison_signature.len < 2 or
+                        server_signature.len != comparison_signature.len - 2 or
+                        BoringSSL.c.CRYPTO_memcmp(server_signature.ptr, comparison_signature[2..].ptr, server_signature.len) != 0)
+                    {
                         debug("SASLFinal - SASL Server signature mismatch\nExpected: {s}\nActual: {s}", .{ server_signature, comparison_signature[2..] });
                         this.fail("The server did not return the correct signature", error.SASL_SIGNATURE_MISMATCH);
                     } else {

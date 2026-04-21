@@ -398,6 +398,71 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     expect(messages).toContain("hello via tls tunnel");
     gc();
   });
+
+  test("server-initiated ping survives through TLS tunnel proxy", async () => {
+    // Regression test: sendPong checked socket.isClosed() on the detached tcp
+    // field instead of using hasTCP(). For wss:// through HTTP proxy, the
+    // WebSocket uses initWithTunnel which sets tcp = detached (all I/O goes
+    // through proxy_tunnel). Detached sockets return true for isClosed(), so
+    // sendPong would immediately dispatch a 1006 close instead of sending the
+    // pong through the tunnel.
+    using pingServer = Bun.serve({
+      port: 0,
+      tls: {
+        key: tlsCerts.key,
+        cert: tlsCerts.cert,
+      },
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("Expected WebSocket", { status: 400 });
+      },
+      websocket: {
+        message(ws, message) {
+          if (String(message) === "ready") {
+            // Send a ping after the client confirms it's connected.
+            // On the buggy code path, this triggers sendPong on the detached
+            // socket → dispatchAbruptClose → 1006.
+            ws.ping();
+            // Follow up with a text message. If the client receives this,
+            // the connection survived the ping/pong exchange.
+            ws.send("after-ping");
+          }
+        },
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+    const ws = new WebSocket(`wss://127.0.0.1:${pingServer.port}`, {
+      proxy: `http://127.0.0.1:${proxyPort}`,
+      tls: { rejectUnauthorized: false },
+    });
+
+    ws.onopen = () => {
+      ws.send("ready");
+    };
+
+    ws.onmessage = event => {
+      if (String(event.data) === "after-ping") {
+        ws.close(1000);
+      }
+    };
+
+    ws.onclose = event => {
+      if (event.code === 1000) {
+        resolve();
+      } else {
+        reject(new Error(`Unexpected close code: ${event.code}`));
+      }
+    };
+
+    ws.onerror = event => {
+      reject(event);
+    };
+
+    await promise;
+    gc();
+  });
 });
 
 describe("WebSocket through HTTPS proxy (TLS proxy)", () => {

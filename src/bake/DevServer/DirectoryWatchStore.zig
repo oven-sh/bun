@@ -238,7 +238,7 @@ fn appendDepAssumeCapacity(store: *DirectoryWatchStore, dep: Dep) Dep.Index {
 
 pub const Entry = struct {
     /// The directory handle the watch is placed on
-    dir: bun.FileDescriptor,
+    dir: bun.FD,
     dir_fd_owned: bool,
     /// Files which request this import index
     first_dep: Dep.Index,

@@ -201,6 +201,7 @@ pub const Runtime = struct {
         unwrap_commonjs_to_esm: bool = false,
 
         emit_decorator_metadata: bool = false,
+        standard_decorators: bool = false,
 
         /// If true and if the source is transpiled as cjs, don't wrap the module.
         /// This is used for `--print` entry points so we can get the result.
@@ -226,6 +227,7 @@ pub const Runtime = struct {
 
         /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
         /// Returns a pointer to a StringSet containing the enabled flags, or the empty set if no flags are provided.
+        /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
         pub fn initBundlerFeatureFlags(allocator: std.mem.Allocator, feature_flags: []const []const u8) *const bun.StringSet {
             if (feature_flags.len == 0) {
                 return &empty_bundler_feature_flags;
@@ -236,6 +238,12 @@ pub const Runtime = struct {
             for (feature_flags) |flag| {
                 bun.handleOom(set.insert(flag));
             }
+            set.map.sort(struct {
+                keys: []const []const u8,
+                pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+                    return std.mem.lessThan(u8, ctx.keys[a], ctx.keys[b]);
+                }
+            }{ .keys = set.map.keys() });
             return set;
         }
 
@@ -254,7 +262,9 @@ pub const Runtime = struct {
             .dont_bundle_twice,
             .commonjs_at_runtime,
             .emit_decorator_metadata,
+            .standard_decorators,
             .lower_using,
+            .repl_mode,
 
             // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
         };
@@ -268,6 +278,15 @@ pub const Runtime = struct {
             }
 
             hasher.update(std.mem.asBytes(&bools));
+
+            // Hash --feature flags. These directly affect transpiled output via
+            // feature("NAME") replacement in visitExpr.zig. When empty, we add
+            // nothing to the hash so existing cache entries remain valid.
+            // Keys are sorted in initBundlerFeatureFlags so flag order on the CLI doesn't matter.
+            for (this.bundler_feature_flags.keys()) |flag| {
+                hasher.update(flag);
+                hasher.update("\x00");
+            }
         }
 
         pub fn shouldUnwrapRequire(this: *const Features, package_name: string) bool {
@@ -341,6 +360,16 @@ pub const Runtime = struct {
         __legacyDecorateClassTS: ?Ref = null,
         __legacyDecorateParamTS: ?Ref = null,
         __legacyMetadataTS: ?Ref = null,
+        __publicField: ?Ref = null,
+        __privateIn: ?Ref = null,
+        __privateGet: ?Ref = null,
+        __privateAdd: ?Ref = null,
+        __privateSet: ?Ref = null,
+        __privateMethod: ?Ref = null,
+        __decoratorStart: ?Ref = null,
+        __decoratorMetadata: ?Ref = null,
+        __runInitializers: ?Ref = null,
+        __decorateElement: ?Ref = null,
         @"$$typeof": ?Ref = null,
         __using: ?Ref = null,
         __callDispose: ?Ref = null,
@@ -358,6 +387,16 @@ pub const Runtime = struct {
             "__legacyDecorateClassTS",
             "__legacyDecorateParamTS",
             "__legacyMetadataTS",
+            "__publicField",
+            "__privateIn",
+            "__privateGet",
+            "__privateAdd",
+            "__privateSet",
+            "__privateMethod",
+            "__decoratorStart",
+            "__decoratorMetadata",
+            "__runInitializers",
+            "__decorateElement",
             "$$typeof",
             "__using",
             "__callDispose",
@@ -379,6 +418,7 @@ pub const Runtime = struct {
         /// When generating the list of runtime imports, we sort it for determinism.
         /// This is a lookup table so we don't need to resort the strings each time
         pub const all_sorted_index = brk: {
+            @setEvalBranchQuota(1000000);
             var out: [all.len]usize = undefined;
             for (all, 0..) |name, i| {
                 for (all_sorted, 0..) |cmp, j| {

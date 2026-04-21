@@ -31,10 +31,12 @@ pub fn installIsolatedPackages(
             pkg_id: PackageID,
         };
 
-        var node_queue: bun.LinearFifo(QueuedNode, .Dynamic) = .init(lockfile.allocator);
-        defer node_queue.deinit();
+        // DFS so a deduplicated node's full subtree (and therefore its `peers`)
+        // is finalized before any later sibling encounters it.
+        var node_queue: std.ArrayListUnmanaged(QueuedNode) = .empty;
+        defer node_queue.deinit(lockfile.allocator);
 
-        try node_queue.writeItem(.{
+        try node_queue.append(lockfile.allocator, .{
             .parent_id = .invalid,
             .dep_id = invalid_dependency_id,
             .pkg_id = 0,
@@ -43,13 +45,162 @@ pub fn installIsolatedPackages(
         var dep_ids_sort_buf: std.ArrayListUnmanaged(DependencyID) = .empty;
         defer dep_ids_sort_buf.deinit(lockfile.allocator);
 
-        // Used by leaves and linked dependencies. They can be deduplicated early
-        // because peers won't change them.
+        // For each package, the peer dependency names declared anywhere in its
+        // transitive closure that are not satisfied within that closure (i.e., the
+        // walk-up in the loop below would continue past this package).
         //
-        // In the pnpm repo without this map: 772,471 nodes
-        //                 and with this map: 314,022 nodes
-        var early_dedupe: std.AutoHashMap(PackageID, Store.Node.Id) = .init(lockfile.allocator);
+        // A node's `peers` set (the second-pass dedup key) is exactly the resolved
+        // package for each of these names as seen from the node's ancestor chain, so
+        // two nodes with the same package and the same ancestor resolution for each
+        // name will produce identical subtrees and identical second-pass entries.
+        //
+        // The universe of distinct peer-dependency names is small even in large
+        // lockfiles, so each per-package set is a bitset over that universe and the
+        // fixpoint is bitwise OR/ANDNOT on a contiguous buffer.
+        var peer_name_idx: std.AutoArrayHashMapUnmanaged(PackageNameHash, void) = .empty;
+        defer peer_name_idx.deinit(lockfile.allocator);
+        for (dependencies) |dep| {
+            if (dep.behavior.isPeer()) {
+                try peer_name_idx.put(lockfile.allocator, dep.name_hash, {});
+            }
+        }
+        const peer_name_count: u32 = @intCast(peer_name_idx.count());
+
+        var leaking_peers: bun.bit_set.DynamicBitSetUnmanaged.List = try .initEmpty(
+            lockfile.allocator,
+            lockfile.packages.len,
+            peer_name_count,
+        );
+        defer leaking_peers.deinit(lockfile.allocator);
+
+        if (peer_name_count != 0) {
+            // The runtime child of a peer edge is whichever package an ancestor's
+            // dependency with that name resolves to, which may be an `npm:`-aliased
+            // target whose package name differs. Index resolutions by *dependency*
+            // name so the union below covers every package a peer could become.
+            const peer_targets: []std.ArrayListUnmanaged(PackageID) = try lockfile.allocator.alloc(
+                std.ArrayListUnmanaged(PackageID),
+                peer_name_count,
+            );
+            @memset(peer_targets, .empty);
+            defer {
+                for (peer_targets) |*list| list.deinit(lockfile.allocator);
+                lockfile.allocator.free(peer_targets);
+            }
+            for (dependencies, resolutions) |dep, res| {
+                if (res == invalid_package_id) continue;
+                const bit = peer_name_idx.getIndex(dep.name_hash) orelse continue;
+                if (std.mem.indexOfScalar(PackageID, peer_targets[bit].items, res) == null) {
+                    try peer_targets[bit].append(lockfile.allocator, res);
+                }
+            }
+
+            // Per-package bits computed once: own peer-dep names, and non-peer
+            // dependency names that will appear in `node_dependencies` (i.e., not
+            // filtered out by bundled/disabled/unresolved).
+            var own_peers: bun.bit_set.DynamicBitSetUnmanaged.List = try .initEmpty(
+                lockfile.allocator,
+                lockfile.packages.len,
+                peer_name_count,
+            );
+            defer own_peers.deinit(lockfile.allocator);
+            var provides: bun.bit_set.DynamicBitSetUnmanaged.List = try .initEmpty(
+                lockfile.allocator,
+                lockfile.packages.len,
+                peer_name_count,
+            );
+            defer provides.deinit(lockfile.allocator);
+            for (0..lockfile.packages.len) |pkg_idx| {
+                const pkg_id: PackageID = @intCast(pkg_idx);
+                const deps = pkg_dependency_slices[pkg_id];
+                for (deps.begin()..deps.end()) |_dep_id| {
+                    const dep_id: DependencyID = @intCast(_dep_id);
+                    const dep = dependencies[dep_id];
+                    const bit = peer_name_idx.getIndex(dep.name_hash) orelse continue;
+                    if (dep.behavior.isPeer()) {
+                        own_peers.set(pkg_id, bit);
+                    } else if (!Tree.isFilteredDependencyOrWorkspace(
+                        dep_id,
+                        pkg_id,
+                        workspace_filters,
+                        install_root_dependencies,
+                        manager,
+                        lockfile,
+                    )) {
+                        provides.set(pkg_id, bit);
+                    }
+                }
+            }
+
+            var scratch = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(lockfile.allocator, peer_name_count);
+            defer scratch.deinit(lockfile.allocator);
+
+            var changed = true;
+            while (changed) {
+                changed = false;
+                for (0..lockfile.packages.len) |pkg_idx| {
+                    const pkg_id: PackageID = @intCast(pkg_idx);
+                    const deps = pkg_dependency_slices[pkg_id];
+
+                    scratch.copyInto(own_peers.at(pkg_id));
+
+                    for (deps.begin()..deps.end()) |_dep_id| {
+                        const dep_id: DependencyID = @intCast(_dep_id);
+                        const dep = dependencies[dep_id];
+                        if (dep.behavior.isPeer()) {
+                            if (peer_name_idx.getIndex(dep.name_hash)) |bit| {
+                                for (peer_targets[bit].items) |child| {
+                                    scratch.setUnion(leaking_peers.at(child));
+                                }
+                            }
+                        } else {
+                            const res_pkg = resolutions[dep_id];
+                            if (res_pkg != invalid_package_id) {
+                                scratch.setUnion(leaking_peers.at(res_pkg));
+                            }
+                        }
+                    }
+                    scratch.setExclude(provides.at(pkg_id));
+
+                    var dst = leaking_peers.at(pkg_id);
+                    if (!scratch.eql(dst)) {
+                        dst.copyInto(scratch);
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        // Two would-be nodes with the same (pkg_id, ctx_hash) will end up with the
+        // same `peers` set and therefore become the same entry in the second pass.
+        // ctx_hash is 0 when the package has no leaking peers (or is a workspace).
+        const EarlyDedupeKey = struct { pkg_id: PackageID, ctx_hash: u64 };
+        var early_dedupe: std.AutoHashMap(EarlyDedupeKey, Store.Node.Id) = .init(lockfile.allocator);
         defer early_dedupe.deinit();
+
+        var root_declares_workspace = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(lockfile.allocator, lockfile.packages.len);
+        defer root_declares_workspace.deinit(lockfile.allocator);
+        for (pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end()) |_dep_idx| {
+            const dep_idx: DependencyID = @intCast(_dep_idx);
+            if (!dependencies[dep_idx].behavior.isWorkspace()) continue;
+            const res = resolutions[dep_idx];
+            if (res == invalid_package_id) continue;
+            // Only mark workspaces that root will actually queue; an entry excluded
+            // by --filter or `bun install <pkgs>` never gets a root-declared node,
+            // so a `workspace:` reference must keep its dependencies.
+            if (Tree.isFilteredDependencyOrWorkspace(
+                dep_idx,
+                0,
+                workspace_filters,
+                install_root_dependencies,
+                manager,
+                lockfile,
+            )) continue;
+            if (packages_to_install) |packages| {
+                if (std.mem.indexOfScalar(PackageID, packages, res) == null) continue;
+            }
+            root_declares_workspace.set(res);
+        }
 
         var peer_dep_ids: std.array_list.Managed(DependencyID) = .init(lockfile.allocator);
         defer peer_dep_ids.deinit();
@@ -58,7 +209,7 @@ pub fn installIsolatedPackages(
         defer visited_parent_node_ids.deinit();
 
         // First pass: create full dependency tree with resolved peers
-        next_node: while (node_queue.readItem()) |entry| {
+        next_node: while (node_queue.pop()) |entry| {
             check_cycle: {
                 // check for cycles
                 const nodes_slice = nodes.slice();
@@ -113,14 +264,67 @@ pub fn installIsolatedPackages(
 
             if (entry.dep_id != invalid_dependency_id) {
                 const entry_dep = dependencies[entry.dep_id];
-                if (pkg_deps.len == 0 or entry_dep.version.tag == .workspace) dont_dedupe: {
-                    const dedupe_entry = try early_dedupe.getOrPut(entry.pkg_id);
+
+                // A `workspace:` protocol reference does not own the workspace's
+                // dependencies when root also declares that workspace; the
+                // root-declared entry does. (If root does not declare it, the
+                // protocol reference is the only one and must keep them.)
+                if (entry_dep.version.tag == .workspace and
+                    !entry_dep.behavior.isWorkspace() and
+                    root_declares_workspace.isSet(entry.pkg_id))
+                {
+                    skip_dependencies = true;
+                }
+
+                dont_dedupe: {
+                    const nodes_slice = nodes.slice();
+                    const node_nodes = nodes_slice.items(.nodes);
+                    const node_dep_ids = nodes_slice.items(.dep_id);
+                    const node_parent_ids = nodes_slice.items(.parent_id);
+                    const node_dependencies = nodes_slice.items(.dependencies);
+                    const node_peers = nodes_slice.items(.peers);
+
+                    const ctx_hash: u64 = if (entry_dep.version.tag == .workspace or peer_name_count == 0)
+                        0
+                    else ctx: {
+                        const leaks = leaking_peers.at(entry.pkg_id);
+                        if (leaks.count() == 0) break :ctx 0;
+
+                        const peer_names = peer_name_idx.keys();
+                        var hasher = bun.Wyhash11.init(0);
+                        var it = leaks.iterator(.{});
+                        while (it.next()) |bit| {
+                            const peer_name_hash = peer_names[bit];
+                            const resolved: PackageID = resolved: {
+                                var curr_id = entry.parent_id;
+                                while (curr_id != .invalid) {
+                                    for (node_dependencies[curr_id.get()].items) |ids| {
+                                        if (dependencies[ids.dep_id].name_hash == peer_name_hash) {
+                                            break :resolved ids.pkg_id;
+                                        }
+                                    }
+                                    for (node_peers[curr_id.get()].list.items) |ids| {
+                                        if (!ids.auto_installed and dependencies[ids.dep_id].name_hash == peer_name_hash) {
+                                            break :resolved ids.pkg_id;
+                                        }
+                                    }
+                                    curr_id = node_parent_ids[curr_id.get()];
+                                }
+                                break :resolved invalid_package_id;
+                            };
+                            // Auto-install fallback is declarer-specific; let the
+                            // second pass handle this position rather than risk an
+                            // unsound key.
+                            if (resolved == invalid_package_id) break :dont_dedupe;
+                            hasher.update(std.mem.asBytes(&peer_name_hash));
+                            hasher.update(std.mem.asBytes(&resolved));
+                        }
+                        break :ctx hasher.final();
+                    };
+
+                    const dedupe_entry = try early_dedupe.getOrPut(.{ .pkg_id = entry.pkg_id, .ctx_hash = ctx_hash });
                     if (dedupe_entry.found_existing) {
                         const dedupe_node_id = dedupe_entry.value_ptr.*;
-
-                        const nodes_slice = nodes.slice();
-                        const node_nodes = nodes_slice.items(.nodes);
-                        const node_dep_ids = nodes_slice.items(.dep_id);
 
                         const dedupe_dep_id = node_dep_ids[dedupe_node_id.get()];
                         if (dedupe_dep_id == invalid_dependency_id) {
@@ -132,11 +336,33 @@ pub fn installIsolatedPackages(
                             break :dont_dedupe;
                         }
 
+                        if ((dedupe_dep.version.tag == .workspace) != (entry_dep.version.tag == .workspace)) {
+                            break :dont_dedupe;
+                        }
+
                         if (dedupe_dep.version.tag == .workspace and entry_dep.version.tag == .workspace) {
                             if (dedupe_dep.behavior.isWorkspace() != entry_dep.behavior.isWorkspace()) {
-                                // only attach the dependencies to one of the workspaces
-                                skip_dependencies = true;
                                 break :dont_dedupe;
+                            }
+                        }
+
+                        // The skipped subtree would have walked up through this
+                        // ancestor chain marking each node with its leaking peers.
+                        // DFS guarantees `dedupe_node`'s subtree is fully processed,
+                        // so its `peers` is exactly that set; propagate it here.
+                        const set_ctx: Store.Node.TransitivePeer.OrderedArraySetCtx = .{
+                            .string_buf = string_buf,
+                            .pkg_names = pkg_names,
+                        };
+                        for (node_peers[dedupe_node_id.get()].list.items) |peer| {
+                            const peer_name_hash = dependencies[peer.dep_id].name_hash;
+                            var curr_id = entry.parent_id;
+                            walk: while (curr_id != .invalid) {
+                                for (node_dependencies[curr_id.get()].items) |ids| {
+                                    if (dependencies[ids.dep_id].name_hash == peer_name_hash) break :walk;
+                                }
+                                try node_peers[curr_id.get()].insert(lockfile.allocator, peer, &set_ctx);
+                                curr_id = node_parent_ids[curr_id.get()];
                             }
                         }
 
@@ -170,6 +396,8 @@ pub fn installIsolatedPackages(
                 continue;
             }
 
+            const queue_mark = node_queue.items.len;
+
             dep_ids_sort_buf.clearRetainingCapacity();
             try dep_ids_sort_buf.ensureUnusedCapacity(lockfile.allocator, pkg_deps.len);
             for (pkg_deps.begin()..pkg_deps.end()) |_dep_id| {
@@ -202,7 +430,7 @@ pub fn installIsolatedPackages(
                             for (packages) |package_to_install| {
                                 if (package_to_install == pkg_id) {
                                     node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
-                                    try node_queue.writeItem(.{
+                                    try node_queue.append(lockfile.allocator, .{
                                         .parent_id = node_id,
                                         .dep_id = dep_id,
                                         .pkg_id = pkg_id,
@@ -238,7 +466,7 @@ pub fn installIsolatedPackages(
                         // - add it as a dependency
                         // - queue it
                         node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = dep_id, .pkg_id = pkg_id });
-                        try node_queue.writeItem(.{
+                        try node_queue.append(lockfile.allocator, .{
                             .parent_id = node_id,
                             .dep_id = dep_id,
                             .pkg_id = pkg_id,
@@ -370,13 +598,17 @@ pub fn installIsolatedPackages(
                     // visited parents length == 0 means the node satisfied it's own
                     // peer. don't queue.
                     node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = peer_dep_id, .pkg_id = resolved_pkg_id });
-                    try node_queue.writeItem(.{
+                    try node_queue.append(lockfile.allocator, .{
                         .parent_id = node_id,
                         .dep_id = peer_dep_id,
                         .pkg_id = resolved_pkg_id,
                     });
                 }
             }
+
+            // node_queue is a stack: reverse children so the first one pushed is the
+            // first popped, matching BFS sibling order.
+            std.mem.reverse(QueuedNode, node_queue.items[queue_mark..]);
         }
 
         if (manager.options.log_level.isVerbose()) {
@@ -614,6 +846,422 @@ pub fn installIsolatedPackages(
         };
     };
 
+    // Compute entry_hash for the global virtual store. The hash makes a
+    // global-store directory name unique to this entry's *resolved* dependency
+    // closure, so two projects that resolve `react@18.3.1` to the same set of
+    // transitive versions share one on-disk entry, while a project that
+    // resolves a transitive dep to a different version gets its own.
+    //
+    // Eligibility propagates: an entry is only global-store-eligible (hash != 0)
+    // when the package itself comes from an immutable cache (npm/git/tarball,
+    // unpatched, no lifecycle scripts) *and* every dependency it links to is
+    // also eligible. The second condition matters because dep symlinks live
+    // inside the global entry; baking a project-local path (workspace, folder)
+    // into a shared directory would break for every other consumer.
+    const WyhashWriter = struct {
+        hasher: *std.hash.Wyhash,
+        const E = error{};
+        pub fn writer(self: *@This()) std.io.GenericWriter(*@This(), E, write) {
+            return .{ .context = self };
+        }
+        fn write(self: *@This(), bytes: []const u8) E!usize {
+            self.hasher.update(bytes);
+            return bytes.len;
+        }
+    };
+
+    const global_store_path: ?[:0]const u8 = if (manager.options.enable.global_virtual_store) global_store_path: {
+        const entries = store.entries.slice();
+        const entry_hashes = entries.items(.entry_hash);
+        const entry_node_ids = entries.items(.node_id);
+        const entry_dependencies = entries.items(.dependencies);
+
+        const node_pkg_ids = store.nodes.items(.pkg_id);
+        const node_dep_ids = store.nodes.items(.dep_id);
+
+        const pkgs = lockfile.packages.slice();
+        const pkg_names = pkgs.items(.name);
+        const pkg_name_hashes = pkgs.items(.name_hash);
+        const pkg_resolutions = pkgs.items(.resolution);
+        const pkg_metas = pkgs.items(.meta);
+
+        const string_buf = lockfile.buffers.string_bytes.items;
+        const dependencies = lockfile.buffers.dependencies.items;
+
+        // Packages newly trusted via `bun add --trust` (not yet written to the
+        // lockfile) will have their lifecycle scripts run this install; treat
+        // them the same as lockfile-trusted packages for eligibility.
+        var trusted_from_update = manager.findTrustedDependenciesFromUpdateRequests();
+        defer trusted_from_update.deinit(manager.allocator);
+
+        const State = enum { unvisited, in_progress, ineligible, done };
+        const states = try manager.allocator.alloc(State, store.entries.len);
+        defer manager.allocator.free(states);
+        @memset(states, .unvisited);
+
+        // Iterative DFS so dependency cycles (which the isolated graph permits)
+        // can't overflow the stack and are handled deterministically: a back-edge
+        // contributes the dependency *name* to the parent's hash but not the
+        // child's own hash (still being computed). Two entries that only differ
+        // by which side of a cycle they sit on still get distinct hashes via
+        // their own store-path bytes.
+        var stack: std.ArrayListUnmanaged(struct { id: Store.Entry.Id, dep_idx: u32, hasher: std.hash.Wyhash }) = .empty;
+        defer stack.deinit(manager.allocator);
+
+        for (0..store.entries.len) |_root_id| {
+            if (states[_root_id] != .unvisited) continue;
+            try stack.append(manager.allocator, .{ .id = .from(@intCast(_root_id)), .dep_idx = 0, .hasher = undefined });
+
+            while (stack.items.len > 0) {
+                const top = &stack.items[stack.items.len - 1];
+                const id = top.id;
+                const idx = id.get();
+
+                if (states[idx] == .unvisited) {
+                    states[idx] = .in_progress;
+
+                    const node_id = entry_node_ids[idx];
+                    const pkg_id = node_pkg_ids[node_id.get()];
+                    const dep_id = node_dep_ids[node_id.get()];
+                    const pkg_res = pkg_resolutions[pkg_id];
+
+                    const eligible = switch (pkg_res.tag) {
+                        .npm, .git, .github, .local_tarball, .remote_tarball => eligible: {
+                            // Patched packages and packages with lifecycle scripts
+                            // mutate (or may mutate) their install directory, so a
+                            // shared global copy would either diverge from the
+                            // patch or be mutated underneath other projects.
+                            if (lockfile.patched_dependencies.count() > 0) {
+                                var name_version_buf: bun.PathBuffer = undefined;
+                                const name_version = std.fmt.bufPrint(&name_version_buf, "{s}@{f}", .{
+                                    pkg_names[pkg_id].slice(string_buf),
+                                    pkg_res.fmt(string_buf, .posix),
+                                }) catch {
+                                    // Overflow is implausible (PathBuffer ≫
+                                    // any name+version), but if it ever fired
+                                    // the safe answer is "not eligible" rather
+                                    // than letting a possibly-patched package
+                                    // slip into the shared store.
+                                    break :eligible false;
+                                };
+                                if (lockfile.patched_dependencies.contains(bun.Semver.String.Builder.stringHash(name_version))) {
+                                    break :eligible false;
+                                }
+                            }
+                            // `run_preinstall()` authorizes scripts by the
+                            // dependency *alias* name, so an aliased install
+                            // like `foo: npm:bar@1` is trusted if `foo` is in
+                            // trustedDependencies even though the package name
+                            // is `bar`. Mirror that here so the alias case
+                            // can't slip past the eligibility check.
+                            //
+                            // Intentionally *not* gated on `do.run_scripts`
+                            // (a later install without `--ignore-scripts`
+                            // would run the postinstall through the project
+                            // symlink and mutate the shared directory) *or*
+                            // on `meta.hasInstallScript()` (that flag is not
+                            // serialised in `bun.lock`, so it reads `false`
+                            // on every install after the first; a trusted
+                            // scripted package would flip from project-local
+                            // on the cold install to global on the warm one).
+                            // Over-excludes the rare "trusted but actually no
+                            // scripts" case in exchange for not needing a
+                            // lockfile-format change.
+                            const dep_name, const dep_name_hash = if (dep_id != invalid_dependency_id)
+                                .{ dependencies[dep_id].name.slice(string_buf), dependencies[dep_id].name_hash }
+                            else
+                                .{ pkg_names[pkg_id].slice(string_buf), pkg_name_hashes[pkg_id] };
+                            if (lockfile.hasTrustedDependency(dep_name, &pkg_res) or
+                                trusted_from_update.contains(@truncate(dep_name_hash)))
+                            {
+                                break :eligible false;
+                            }
+                            break :eligible true;
+                        },
+                        else => false,
+                    };
+
+                    if (!eligible) {
+                        states[idx] = .ineligible;
+                        entry_hashes[idx] = 0;
+                        _ = stack.pop();
+                        continue;
+                    }
+
+                    // Seed the hash with this entry's own store-path string so
+                    // entries with identical dep sets but different package
+                    // versions never collide. Hashed through a writer so an
+                    // unusually long store path (long scope + git URL + peer
+                    // hash) can't overflow a fixed buffer and feed
+                    // uninitialized stack bytes into the hash.
+                    top.hasher = .init(0x9E3779B97F4A7C15);
+                    {
+                        var hw: WyhashWriter = .{ .hasher = &top.hasher };
+                        var w = hw.writer();
+                        w.print("{f}", .{Store.Entry.fmtStorePath(id, &store, lockfile)}) catch unreachable;
+                    }
+                    // The store path for `.npm` is just `name@version`, which
+                    // is *not* unique across registries (an enterprise proxy
+                    // can serve a patched `foo@1.0.0`). Fold in the tarball
+                    // integrity so a cross-registry / cross-tarball collision
+                    // gets a different global directory instead of reusing the
+                    // first project's bytes.
+                    top.hasher.update(std.mem.asBytes(&pkg_metas[pkg_id].integrity));
+                }
+
+                if (states[idx] == .ineligible) {
+                    _ = stack.pop();
+                    continue;
+                }
+
+                const deps = entry_dependencies[idx].slice();
+                var advanced = false;
+                while (top.dep_idx < deps.len) : (top.dep_idx += 1) {
+                    const dep = deps[top.dep_idx];
+                    const dep_idx = dep.entry_id.get();
+                    const dep_name_hash = dependencies[dep.dep_id].name_hash;
+                    switch (states[dep_idx]) {
+                        .done => {
+                            top.hasher.update(std.mem.asBytes(&dep_name_hash));
+                            top.hasher.update(std.mem.asBytes(&entry_hashes[dep_idx]));
+                        },
+                        .ineligible => {
+                            // A dep that can't live in the global store poisons
+                            // this entry too: its symlink would point at a
+                            // project-local path.
+                            states[idx] = .ineligible;
+                            entry_hashes[idx] = 0;
+                        },
+                        .in_progress => {
+                            // Cycle back-edge: the dep's hash isn't known yet.
+                            // Fold a placeholder; the SCC pass below replaces
+                            // every cycle member's hash with one that's
+                            // independent of which edge happened to be the
+                            // back-edge in this DFS.
+                            top.hasher.update(std.mem.asBytes(&dep_name_hash));
+                        },
+                        .unvisited => {
+                            try stack.append(manager.allocator, .{ .id = dep.entry_id, .dep_idx = 0, .hasher = undefined });
+                            advanced = true;
+                            // re-fetch `top` after potential realloc
+                            break;
+                        },
+                    }
+                    if (states[idx] == .ineligible) break;
+                }
+
+                if (advanced) continue;
+
+                if (states[idx] != .ineligible) {
+                    var h = top.hasher.final();
+                    // 0 is the "not eligible" sentinel.
+                    if (h == 0) h = 1;
+                    entry_hashes[idx] = h;
+                    states[idx] = .done;
+                }
+                _ = stack.pop();
+            }
+        }
+
+        // SCC pass: the DFS hash above is visit-order-dependent for cycle
+        // members (which edge becomes the back-edge depends on which member
+        // the outer loop reached first, which depends on entry IDs, which
+        // depend on the *whole project's* dependency set). That's harmless
+        // for correctness — different orderings just give different keys —
+        // but it means a package that's part of an npm cycle never shares a
+        // global entry across projects, defeating the feature for chunks of
+        // the ecosystem (`es-abstract`↔`object.assign`, the babel core
+        // cycle, etc.).
+        //
+        // Tarjan's algorithm groups entries into strongly-connected
+        // components. For singleton SCCs the pass-1 hash is already
+        // visit-order-independent and is left alone. For multi-member SCCs
+        // every member gets the same hash, computed from the sorted member
+        // store-paths plus the sorted external-dep hashes — inputs that are
+        // identical regardless of which member the project happened to list
+        // first. The dep symlinks inside the SCC then point at siblings with
+        // the same hash suffix, so they resolve in any project that produces
+        // the same SCC closure.
+        {
+            const n: u32 = @intCast(store.entries.len);
+            const tarjan_index = try manager.allocator.alloc(u32, n);
+            defer manager.allocator.free(tarjan_index);
+            @memset(tarjan_index, std.math.maxInt(u32));
+            const lowlink = try manager.allocator.alloc(u32, n);
+            defer manager.allocator.free(lowlink);
+            const on_stack = try manager.allocator.alloc(bool, n);
+            defer manager.allocator.free(on_stack);
+            @memset(on_stack, false);
+
+            var scc_stack: std.ArrayListUnmanaged(u32) = .empty;
+            defer scc_stack.deinit(manager.allocator);
+            var work: std.ArrayListUnmanaged(struct { v: u32, child: u32 }) = .empty;
+            defer work.deinit(manager.allocator);
+            var scc_ext: std.AutoArrayHashMapUnmanaged(u64, void) = .empty;
+            defer scc_ext.deinit(manager.allocator);
+
+            var index_counter: u32 = 0;
+            for (0..n) |root| {
+                if (tarjan_index[root] != std.math.maxInt(u32)) continue;
+                try work.append(manager.allocator, .{ .v = @intCast(root), .child = 0 });
+                while (work.items.len > 0) {
+                    const frame = &work.items[work.items.len - 1];
+                    const v = frame.v;
+                    if (frame.child == 0) {
+                        tarjan_index[v] = index_counter;
+                        lowlink[v] = index_counter;
+                        index_counter += 1;
+                        try scc_stack.append(manager.allocator, v);
+                        on_stack[v] = true;
+                    }
+                    const deps = entry_dependencies[v].slice();
+                    var recursed = false;
+                    while (frame.child < deps.len) : (frame.child += 1) {
+                        const w = deps[frame.child].entry_id.get();
+                        if (tarjan_index[w] == std.math.maxInt(u32)) {
+                            frame.child += 1;
+                            try work.append(manager.allocator, .{ .v = w, .child = 0 });
+                            recursed = true;
+                            break;
+                        } else if (on_stack[w]) {
+                            lowlink[v] = @min(lowlink[v], tarjan_index[w]);
+                        }
+                    }
+                    if (recursed) continue;
+                    if (lowlink[v] == tarjan_index[v]) {
+                        const start = blk: {
+                            var i = scc_stack.items.len;
+                            while (i > 0) : (i -= 1) {
+                                if (scc_stack.items[i - 1] == v) break :blk i - 1;
+                            }
+                            unreachable;
+                        };
+                        const members = scc_stack.items[start..];
+                        for (members) |m| on_stack[m] = false;
+                        if (members.len == 1) {
+                            // Singleton SCC. Tarjan emits SCCs in reverse
+                            // topological order, so every dep's hash is final
+                            // by now (including any cycle-member deps that
+                            // just got their SCC hash). Recompute this entry's
+                            // hash from those final values so a dependent of
+                            // a cycle picks up the order-independent SCC hash
+                            // rather than the pass-1 placeholder.
+                            const m = members[0];
+                            if (entry_hashes[m] != 0) {
+                                var sub: std.hash.Wyhash = .init(0x9E3779B97F4A7C15);
+                                var hw: WyhashWriter = .{ .hasher = &sub };
+                                var w_ = hw.writer();
+                                w_.print("{f}", .{Store.Entry.fmtStorePath(.from(m), &store, lockfile)}) catch unreachable;
+                                sub.update(std.mem.asBytes(&pkg_metas[node_pkg_ids[entry_node_ids[m].get()]].integrity));
+                                var poisoned = false;
+                                for (entry_dependencies[m].slice()) |dep| {
+                                    const dh = entry_hashes[dep.entry_id.get()];
+                                    if (dh == 0) {
+                                        poisoned = true;
+                                        break;
+                                    }
+                                    const dep_name_hash = dependencies[dep.dep_id].name_hash;
+                                    sub.update(std.mem.asBytes(&dep_name_hash));
+                                    sub.update(std.mem.asBytes(&dh));
+                                }
+                                if (poisoned) {
+                                    entry_hashes[m] = 0;
+                                } else {
+                                    var h = sub.final();
+                                    if (h == 0) h = 1;
+                                    entry_hashes[m] = h;
+                                }
+                            }
+                        } else if (members.len > 1) {
+                            // One order-independent hash for the whole SCC:
+                            // collect a sub-hash per member (store path +
+                            // integrity), collect every external-dep hash,
+                            // sort both lists, then hash the concatenation.
+                            // Sorting by *content* (not entry index) is what
+                            // makes this stable across projects.
+                            scc_ext.clearRetainingCapacity();
+                            var member_sub: std.ArrayListUnmanaged(u64) = .empty;
+                            defer member_sub.deinit(manager.allocator);
+                            var any_ineligible = false;
+                            for (members) |m| {
+                                if (entry_hashes[m] == 0) any_ineligible = true;
+                                var sub: std.hash.Wyhash = .init(0);
+                                var hw: WyhashWriter = .{ .hasher = &sub };
+                                var w_ = hw.writer();
+                                w_.print("{f}", .{Store.Entry.fmtStorePath(.from(m), &store, lockfile)}) catch unreachable;
+                                sub.update(std.mem.asBytes(&pkg_metas[node_pkg_ids[entry_node_ids[m].get()]].integrity));
+                                try member_sub.append(manager.allocator, sub.final());
+                                for (entry_dependencies[m].slice()) |dep| {
+                                    const di = dep.entry_id.get();
+                                    // Skip intra-SCC edges; those are captured
+                                    // by member_sub.
+                                    if (std.mem.indexOfScalar(u32, members, di) != null) continue;
+                                    if (entry_hashes[di] == 0) any_ineligible = true;
+                                    // Dep symlinks inside the entry are named
+                                    // by the dependency *alias*, so two SCCs
+                                    // that reach the same external entry under
+                                    // different aliases must hash differently.
+                                    var ext: std.hash.Wyhash = .init(0);
+                                    ext.update(std.mem.asBytes(&dependencies[dep.dep_id].name_hash));
+                                    ext.update(std.mem.asBytes(&entry_hashes[di]));
+                                    try scc_ext.put(manager.allocator, ext.final(), {});
+                                }
+                            }
+                            std.mem.sort(u64, member_sub.items, {}, std.sort.asc(u64));
+                            const ext_keys = scc_ext.keys();
+                            std.mem.sort(u64, ext_keys, {}, std.sort.asc(u64));
+                            var hasher: std.hash.Wyhash = .init(0x42A7C15F9E3779B9);
+                            for (member_sub.items) |k| hasher.update(std.mem.asBytes(&k));
+                            for (ext_keys) |k| hasher.update(std.mem.asBytes(&k));
+                            var h = hasher.final();
+                            if (h == 0) h = 1;
+                            const final_h: u64 = if (any_ineligible) 0 else h;
+                            for (members) |m| entry_hashes[m] = final_h;
+                        }
+                        scc_stack.items.len = start;
+                    }
+                    _ = work.pop();
+                    if (work.items.len > 0) {
+                        const parent = &work.items[work.items.len - 1];
+                        lowlink[parent.v] = @min(lowlink[parent.v], lowlink[v]);
+                    }
+                }
+            }
+        }
+
+        // Ineligibility can surface mid-cycle: A→B→A where B turns out to
+        // depend on a workspace package. The DFS above already finalised A's
+        // hash via the `.in_progress` back-edge before B was marked
+        // ineligible, so A would wrongly land in the global store with a
+        // dangling dep symlink. Close the gap with a fixed-point pass: any
+        // entry that still links to an ineligible dep becomes ineligible too.
+        var changed = true;
+        while (changed) {
+            changed = false;
+            for (0..store.entries.len) |idx| {
+                if (entry_hashes[idx] == 0) continue;
+                for (entry_dependencies[idx].slice()) |dep| {
+                    if (entry_hashes[dep.entry_id.get()] == 0) {
+                        entry_hashes[idx] = 0;
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // <cache_dir>/links — created lazily by the first task that misses.
+        // getCacheDirectory() populates `cache_directory_path` as a side-effect.
+        _ = manager.getCacheDirectory();
+        const cache_dir_path = manager.cache_directory_path;
+        if (cache_dir_path.len == 0) break :global_store_path null;
+        break :global_store_path try manager.allocator.dupeZ(
+            u8,
+            bun.path.joinAbsString(cache_dir_path, &.{"links"}, .auto),
+        );
+    } else null;
+    defer if (global_store_path) |p| manager.allocator.free(p);
+
     // setup node_modules/.bun
     const is_new_bun_modules = is_new_bun_modules: {
         const node_modules_path = bun.OSPathLiteral("node_modules");
@@ -830,7 +1478,10 @@ pub fn installIsolatedPackages(
             .trusted_dependencies_from_update_requests = manager.findTrustedDependenciesFromUpdateRequests(),
             .supported_backend = .init(PackageInstall.supported_method),
             .is_new_bun_modules = is_new_bun_modules,
+            .global_store_path = global_store_path,
+            .global_store_tmp_suffix = bun.fastRandom(),
         };
+        defer installer.deinit();
 
         for (tasks, 0..) |*task, _entry_id| {
             const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));
@@ -914,14 +1565,53 @@ pub fn installIsolatedPackages(
                 => |pkg_res_tag| {
                     const patch_info = try installer.packagePatchInfo(pkg_name, pkg_name_hash, &pkg_res);
 
+                    const uses_global_store = installer.entryUsesGlobalStore(entry_id);
+
+                    // An entry that lost global-store eligibility since the
+                    // previous install (newly patched, newly trusted, a dep
+                    // that became a workspace package) still has a stale
+                    // `node_modules/.bun/<storepath>` symlink/junction into
+                    // `<cache>/links/`. The existence check below would pass
+                    // *through* it and skip the task, leaving the project to
+                    // run against the shared entry (and, if the task did run,
+                    // write the new project-local tree through the link into
+                    // the shared cache). Treat the stale link as
+                    // needs-install so `link_package` detaches and rebuilds.
+                    const has_stale_gvs_link = !uses_global_store and stale: {
+                        if (installer.global_store_path == null) break :stale false;
+                        var local: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
+                        defer local.deinit();
+                        installer.appendLocalStoreEntryPath(&local, entry_id);
+                        if (comptime bun.Environment.isWindows) {
+                            break :stale if (sys.getFileAttributes(local.sliceZ())) |a| a.is_reparse_point else false;
+                        }
+                        break :stale if (sys.lstat(local.sliceZ()).asValue()) |st|
+                            std.posix.S.ISLNK(@intCast(st.mode))
+                        else
+                            false;
+                    };
+
                     const needs_install =
                         manager.options.enable.force_install or
-                        is_new_bun_modules or
+                        // A freshly-created `node_modules/.bun` only implies the
+                        // *project-local* entries are missing; global virtual-
+                        // store entries persist across `rm -rf node_modules` and
+                        // should still take the cheap symlink-only path.
+                        (is_new_bun_modules and !uses_global_store) or
+                        has_stale_gvs_link or
                         patch_info == .remove or
                         needs_install: {
                             var store_path: bun.AbsPath(.{}) = .initTopLevelDir();
                             defer store_path.deinit();
-                            installer.appendStorePath(&store_path, entry_id);
+                            if (uses_global_store) {
+                                // Global entries are built under a per-process
+                                // staging path and renamed into place as the
+                                // final step, so the directory existing at its
+                                // final path is the completeness signal.
+                                installer.appendGlobalStoreEntryPath(&store_path, entry_id, .final);
+                                break :needs_install !(sys.directoryExistsAt(FD.cwd(), store_path.sliceZ()).asValue() orelse false);
+                            }
+                            installer.appendRealStorePath(&store_path, entry_id, .final);
                             const scope_for_patch_tag_path = store_path.save();
                             if (pkg_res_tag == .npm)
                                 // if it's from npm, it should always have a package.json.
@@ -944,6 +1634,20 @@ pub fn installIsolatedPackages(
                         };
 
                     if (!needs_install) {
+                        if (uses_global_store) {
+                            // Warm hit: the global virtual store already holds
+                            // this entry's files, dep symlinks, and bin links.
+                            // The only per-install work is the project-level
+                            // `node_modules/.bun/<storepath>` → global symlink.
+                            switch (installer.linkProjectToGlobalStore(entry_id)) {
+                                .result => {},
+                                .err => |err| {
+                                    entry_steps[entry_id.get()].store(.done, .monotonic);
+                                    installer.onTaskFail(entry_id, .{ .symlink_dependencies = err });
+                                    continue;
+                                },
+                            }
+                        }
                         if (entry_hoisted[entry_id.get()]) {
                             installer.linkToHiddenNodeModules(entry_id);
                         }
@@ -1082,6 +1786,7 @@ pub fn installIsolatedPackages(
                         .local_tarball => {
                             manager.enqueueTarballForReading(
                                 dep_id,
+                                pkg_id,
                                 dep.name.slice(string_buf),
                                 &pkg_res,
                                 ctx,
@@ -1238,6 +1943,7 @@ const install = bun.install;
 const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;
+const PackageNameHash = install.PackageNameHash;
 const Resolution = install.Resolution;
 const Store = install.Store;
 const invalid_dependency_id = install.invalid_dependency_id;

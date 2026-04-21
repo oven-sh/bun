@@ -214,6 +214,7 @@ pub const StrictModeReservedWordsRemap = ComptimeStringMap(string, .{
 
 pub const PropertyModifierKeyword = enum {
     p_abstract,
+    p_accessor,
     p_async,
     p_declare,
     p_get,
@@ -227,6 +228,7 @@ pub const PropertyModifierKeyword = enum {
 
     pub const List = ComptimeStringMap(PropertyModifierKeyword, .{
         .{ "abstract", .p_abstract },
+        .{ "accessor", .p_accessor },
         .{ "async", .p_async },
         .{ "declare", .p_declare },
         .{ "get", .p_get },

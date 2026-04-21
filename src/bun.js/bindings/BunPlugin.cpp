@@ -511,6 +511,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         return {};
     }
 
+    if (!callframe->argument(0).isString()) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) requires a module name string"_s));
+        return {};
+    }
+
     JSC::JSString* specifierString = callframe->argument(0).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     WTF::String specifier = specifierString->value(globalObject);
@@ -518,6 +523,12 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     if (specifier.isEmpty()) {
         scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) requires a module and function"_s));
+        return {};
+    }
+
+    JSC::JSValue callbackValue = callframe->argument(1);
+    if (!callbackValue.isCell() || !callbackValue.isCallable()) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) requires a function"_s));
         return {};
     }
 
@@ -575,12 +586,6 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     resolveSpecifier();
     RETURN_IF_EXCEPTION(scope, {});
-
-    JSC::JSValue callbackValue = callframe->argument(1);
-    if (!callbackValue.isCell() || !callbackValue.isCallable()) {
-        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) requires a function"_s));
-        return {};
-    }
 
     JSC::JSObject* callback = callbackValue.getObject();
 
@@ -954,6 +959,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     global->onResolvePlugins.namespaces.clear();
 
     delete global->onLoadPlugins.virtualModules;
+    global->onLoadPlugins.virtualModules = nullptr;
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

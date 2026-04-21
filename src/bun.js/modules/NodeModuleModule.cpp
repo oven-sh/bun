@@ -1148,12 +1148,16 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     auto& vm = JSC::getVM(globalObject);
     auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
-    if (constructor->hasNonReifiedStaticProperties()) {
-        constructor->reifyAllStaticProperties(globalObject);
-        if (topExceptionScope.exception()) {
-            (void)topExceptionScope.tryClearException();
-        }
-    }
+    // Don't bulk-reifyAllStaticProperties here. JSObject::reifyAllStaticProperties
+    // walks every PropertyCallbackAttribute back-to-back without an exception
+    // check between them, and several of our callbacks (getBuiltinModulesObject,
+    // getGlobalPathsObject, …) call constructArray/constructEmptyArray which
+    // open a ThrowScope at the same recursion depth as the next callback's
+    // ThrowScope — that trips the exception-check verifier on the synthetic
+    // ESM path (BUN_JSC_validateExceptionChecks=1). The loop below already
+    // does constructor->get(property) per-export, which lazy-reifies one entry
+    // at a time inside JSObject::get's own ThrowScope and is checked
+    // immediately after.
 
     exportNames.reserveCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) + 1);
     exportValues.ensureCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) + 1);

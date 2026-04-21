@@ -231,25 +231,28 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
         });
       `,
     });
+    // Wait for "close" before forcing GC so main-VM destruct-on-exit (ASAN
+    // CI sets BUN_DESTRUCT_VM_ON_EXIT=1) does not race the worker thread's
+    // own teardown — terminate() returns before the worker finishes.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
         const w = new Worker("./worker.ts");
-        w.onmessage = () => {
-          w.terminate();
+        w.onmessage = () => w.terminate();
+        w.addEventListener("close", () => {
           Bun.gc(true);
           console.log("ok");
-          process.exit(0);
-        };
+        });
       `,
       ],
       env: bunEnv,
       cwd: String(dir),
       stderr: "pipe",
     });
-    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(stdout.trim()).toBe("ok");
     expect(exitCode).toBe(0);
   }, 130_000);

@@ -3,5 +3,10 @@
     "package": "elysia",
     "repository": "https://github.com/elysiajs/elysia",
     "tag": "1.4.12"
+  },
+  {
+    "package": "axios",
+    "repository": "https://github.com/axios/axios",
+    "tag": "v1.12.2"
   }
 ]

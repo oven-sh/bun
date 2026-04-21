@@ -95,10 +95,10 @@ const noUnify: readonly string[] = [
   "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSA_PSS.cpp",
   "src/bun.js/bindings/webcrypto/SubtleCrypto.cpp",
 
-  // Conditionally redefines ~80 errno/EAI_* macros based on which system
-  // headers were already included, then uses them to build a switch. Any
-  // earlier sibling that pulls <netdb.h> changes which branch the
-  // `#if !defined` takes, and the redefinitions leak forward too.
+  // Redefines ~80 errno/EAI_* macros (the EAI_* ones unconditionally, the
+  // rest via `#if !defined`) and uses them to build a switch. The defines
+  // leak forward; an earlier sibling pulling <netdb.h>/<errno.h> changes
+  // which conditional branches fire.
   "src/bun.js/bindings/ProcessBindingUV.cpp",
 
   // Platform cert loaders include OS crypto headers (<wincrypt.h>,

@@ -47,11 +47,7 @@ import { slash } from "./shell.ts";
  * Files that must compile standalone. Reasons inline.
  * Paths are repo-root-relative; matched against `relative(cwd, abs)`.
  */
-const noUnify = new Set<string>([
-  // Files with per-file flag overrides can't share a TU with files that
-  // need different flags. Pulled from flags.ts so the two lists can't drift.
-  ...fileOverrides.map(o => o.file),
-
+const noUnify: readonly string[] = [
   // Heavy single-file TUs that already saturate a core. Bundling them with
   // siblings would serialize work that should run in parallel.
   "src/bun.js/bindings/ZigGlobalObject.cpp",
@@ -107,7 +103,7 @@ const noUnify = new Set<string>([
   // assuming TU isolation — keep it that way.
   "packages/bun-usockets/src/crypto/root_certs_windows.cpp",
   "packages/bun-usockets/src/crypto/root_certs_darwin.cpp",
-]);
+];
 
 /**
  * How many .cpp files per bundle. WebKit defaults to 8.
@@ -152,13 +148,26 @@ export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[
   mkdirSync(outDir, { recursive: true });
   const bundleSize = bundleSizeFor(cfg);
 
+  // Files with active per-file flag overrides (flags.ts) can't share a TU
+  // with files that need different flags. Computed here so the override's
+  // `when` predicate is honored — a file only excluded on linux+lto can
+  // still bundle on macOS.
+  const skip = new Set(noUnify);
+  for (const o of fileOverrides) {
+    if (o.when === undefined || o.when(cfg)) skip.add(o.file);
+  }
+
   const standalone: string[] = [];
   const byDir = new Map<string, string[]>();
 
   for (const abs of cxxSources) {
+    if (!cfg.unifiedSources) {
+      standalone.push(abs);
+      continue;
+    }
     // slash(): noUnify keys and the dir tag below are posix-style.
     const rel = slash(relative(cfg.cwd, abs));
-    if (noUnify.has(rel)) {
+    if (skip.has(rel)) {
       standalone.push(abs);
       continue;
     }

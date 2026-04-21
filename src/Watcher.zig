@@ -488,7 +488,7 @@ fn appendDirectoryAssumeCapacity(
         // id
         event.ident = @intCast(fd.native());
 
-        // Store the hash for fast filtering later
+        // Store the index for fast filtering later
         event.udata = @as(usize, @intCast(watchlist_id));
         var events: [1]KEvent = .{event};
 

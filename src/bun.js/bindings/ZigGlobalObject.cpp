@@ -3628,6 +3628,11 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     if (vm.entryScope) {
         // Exiting while running JavaScript code (e.g. `process.exit()`), so we can't destroy it
         // just now. Perhaps later in this case we can defer destruction to run later.
+        // The caller is still about to run VirtualMachine.deinit() (has_terminated=true);
+        // drop our context from the cross-thread map so worker dispatchExit can't
+        // postTaskTo() an event loop that's been marked terminated.
+        if (auto* ctx = globalObject->scriptExecutionContext())
+            ctx->removeFromContextsMap();
         return;
     }
     gcUnprotect(globalObject);

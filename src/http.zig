@@ -2033,13 +2033,15 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
     result.body.?.* = body;
     callback.run(@fieldParentPtr("client", this), result);
 
-    // Response-body backpressure: the callback above runs synchronously on this
-    // (HTTP) thread and appends the chunk to the consumer's buffer. If that
-    // pushed the buffer past its high-water mark the consumer flips
-    // `signals.body_backpressure`; observe it here while we still hold the
-    // socket and pause reads so the kernel's receive window closes instead of
-    // our heap growing without bound. `is_done` already released/closed the
-    // socket above, so only the streaming-more-to-come path is eligible.
+    // Response-body backpressure: the callback above queues the chunk for the
+    // JS thread and returns; the JS thread later sets `body_backpressure`
+    // from `evaluateBodyBackpressure` once `ByteStream.buffer` crosses the
+    // high-water mark. What we read here therefore reflects the *previous*
+    // delivery round — the pause is one chunk behind the crossing — but this
+    // is the only point on the HTTP thread that holds the socket, and the
+    // overshoot is bounded at roughly HWM + one recv buffer. `is_done`
+    // already released/closed the socket above, so only the
+    // streaming-more-to-come path is eligible.
     if (!is_done and !this.flags.body_read_paused and this.signals.get(.body_backpressure)) {
         log("body backpressure: pausing socket reads", .{});
         this.flags.body_read_paused = true;

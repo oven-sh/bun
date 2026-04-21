@@ -72,11 +72,12 @@ test("fetch response body applies backpressure when the reader stalls", async ()
 // reader.cancel() (or Response GC) while the socket is paused must release the
 // pause. The drain_handler is cleared in ignoreRemainingResponseBody, so
 // without an explicit release there the connection would sit paused forever
-// with its idle timeout disarmed.
+// with its idle timeout disarmed. The subprocess deliberately stays alive
+// after cancel() so process exit can't close the FD and mask the regression;
+// the observable is `server.pendingRequests` dropping to 0, which only
+// happens once the client has drained the response (i.e. the socket resumed).
 test("fetch response body backpressure is released on reader.cancel()", async () => {
   const CHUNK = Buffer.alloc(256 * 1024, "x");
-  let serverClosed = false;
-  const { promise: closed, resolve: markClosed } = Promise.withResolvers<void>();
 
   using server = Bun.serve({
     port: 0,
@@ -86,11 +87,10 @@ test("fetch response body backpressure is released on reader.cancel()", async ()
         new ReadableStream({
           type: "direct",
           async pull(controller) {
-            for (let i = 0; i < 512; i++) await controller.write(CHUNK);
-          },
-          cancel() {
-            serverClosed = true;
-            markClosed();
+            // Small enough that, once the client resumes and ignores, the
+            // response drains and completes within the test window.
+            for (let i = 0; i < 32; i++) await controller.write(CHUNK);
+            controller.close();
           },
         }),
       );
@@ -109,10 +109,11 @@ test("fetch response body backpressure is released on reader.cancel()", async ()
         // Stall long enough for the buffer to cross the HWM and pause.
         for (let i = 0; i < 50; i++) await Bun.sleep(2);
         await reader.cancel();
-        // Hold the process open briefly so the server sees the connection
-        // close before we exit.
-        await Bun.sleep(50);
-        console.log("ok");
+        process.stdout.write("cancelled\\n");
+        // Stay alive: process exit would close the socket regardless of
+        // whether the pause was released, masking the regression. The parent
+        // kills us once the server reports the response drained.
+        setInterval(() => {}, 1 << 30);
       `,
     ],
     env: { ...bunEnv, SERVER: server.url.href },
@@ -120,15 +121,25 @@ test("fetch response body backpressure is released on reader.cancel()", async ()
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (stderr) console.error(stderr.trim());
+  let buffered = "";
+  for await (const chunk of proc.stdout) {
+    buffered += Buffer.from(chunk).toString();
+    if (buffered.includes("cancelled\n")) break;
+  }
+  expect(buffered).toContain("cancelled");
 
-  // If the pause was never released, the connection stays open and the
-  // server's `cancel()` never fires.
-  await closed;
-  expect(serverClosed).toBe(true);
-  expect(stdout.trim()).toBe("ok");
-  expect(exitCode).toBe(0);
+  // The subprocess is still alive (setInterval ref), so the only way the
+  // server's pending count reaches 0 is the client having resumed the paused
+  // socket and drained the 8 MB to completion. If the regression recurs the
+  // socket stays paused, the server can't finish sending, and this loop runs
+  // until the test runner's timeout fails it.
+  while (server.pendingRequests > 0) {
+    await Bun.sleep(5);
+  }
+  expect(server.pendingRequests).toBe(0);
+
+  proc.kill();
+  await proc.exited;
 });
 
 // Accessing res.body, letting the buffer cross the HWM (pausing the socket),

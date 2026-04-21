@@ -51,11 +51,7 @@ test("AbortSignal.timeout awaited at top-level does not hang or spin", async () 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const elapsed = performance.now() - started;
 
   expect(stripAsanWarning(stderr)).toBe("");
@@ -87,11 +83,7 @@ test("AbortSignal.timeout fires when something else keeps the loop alive", async
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stripAsanWarning(stderr)).toBe("");
   expect(stdout).toBe("run aborted\n");
@@ -104,20 +96,12 @@ test("top-level await on a never-resolving promise exits cleanly", async () => {
   // Windows and burned CPU in a tight loop on POSIX.
   const started = performance.now();
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      "console.log('before'); await new Promise(() => {}); console.log('after');",
-    ],
+    cmd: [bunExe(), "-e", "console.log('before'); await new Promise(() => {}); console.log('after');"],
     env: bunEnv,
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const elapsed = performance.now() - started;
 
   expect(stripAsanWarning(stderr)).toBe("");

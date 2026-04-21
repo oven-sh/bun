@@ -16,9 +16,13 @@ import { bunEnv, bunExe } from "harness";
 //            ref'd handles), so the uv timer that would have drained Bun's
 //            heap never fired. The process hung forever.
 //
-// `loadEntryPoint` now breaks when the event loop has nothing left to make
-// progress — matching Node.js (unsettled top-level await exits cleanly
-// rather than waiting on unref'd handles).
+// `loadEntryPoint` now routes the TLA wait through
+// `EventLoop.waitForPromiseOrLoopExit`, which breaks when the event loop
+// has nothing left to make progress — matching Node.js (unsettled
+// top-level await exits cleanly rather than waiting on unref'd handles).
+// `waitForPromise` itself is unchanged — its callers (Expect.toThrow,
+// bundler, REPL, …) still rely on the "returns with promise resolved"
+// contract.
 
 test("AbortSignal.timeout awaited at top-level does not hang or spin", async () => {
   // The timeout is deliberately long (60s). Before the fix, POSIX would

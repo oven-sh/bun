@@ -1411,7 +1411,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 
     class Owner final : public JSC::WeakHandleOwner {
       public:
-          bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason) final
+          bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor&, ASCIILiteral* reason) final
           {
               auto* controller = JSC::jsCast<${name}*>(handle.slot()->asCell());
               if (${name}::hasPendingActivity(controller->wrapped())) {

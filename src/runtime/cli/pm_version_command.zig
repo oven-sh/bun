@@ -179,7 +179,25 @@ pub const PmVersionCommand = struct {
         }
 
         if (pm.options.git_tag_version) {
-            try gitCommitAndTag(ctx.allocator, new_version_str, pm.options.message, package_json_dir, saved_lockfile_path);
+            // Only stage the lockfile when it lives inside the repository
+            // that git will actually discover from `package_json_dir`. If
+            // the package has its own nested `.git` (git submodule or a
+            // standalone repo vendored inside the workspace), git will
+            // resolve to that repo and reject the absolute workspace-root
+            // lockfile path with `fatal: ... is outside repository`, which
+            // would fail the entire version bump. Drop the arg in that case
+            // so the nested repo just gets `package.json` (same as before
+            // this PR).
+            const stage_lockfile_path: ?[:0]const u8 = blk: {
+                const lp = saved_lockfile_path orelse break :blk null;
+                var root_buf: bun.PathBuffer = undefined;
+                const git_root = findGitRoot(package_json_dir, &root_buf) orelse break :blk null;
+                break :blk switch (bun.path.isParentOrEqual(git_root, lp)) {
+                    .parent, .equal => lp,
+                    .unrelated => null,
+                };
+            };
+            try gitCommitAndTag(ctx.allocator, new_version_str, pm.options.message, package_json_dir, stage_lockfile_path);
         }
 
         if (scripts_obj) |s| {
@@ -233,7 +251,8 @@ pub const PmVersionCommand = struct {
         // `bun pm version` called from `packages/foo` still picks up the
         // surrounding repo. `.git` can be a file (git submodules / worktrees)
         // as well as a directory, so check for "exists" not "is directory".
-        if (!findGitRoot(cwd)) {
+        var root_buf: bun.PathBuffer = undefined;
+        if (findGitRoot(cwd, &root_buf) == null) {
             pm.options.git_tag_version = false;
             return;
         }
@@ -244,24 +263,32 @@ pub const PmVersionCommand = struct {
         }
     }
 
-    fn findGitRoot(start_dir: []const u8) bool {
-        var path_buf: bun.PathBuffer = undefined;
+    /// Walk up from `start_dir` looking for a `.git` file or directory.
+    /// On success returns a slice of `out_buf` containing the absolute path
+    /// of the directory that holds `.git` (i.e. the git repository root).
+    /// Returns `null` when no `.git` is found up to the filesystem root.
+    fn findGitRoot(start_dir: []const u8, out_buf: *bun.PathBuffer) ?[]const u8 {
+        var probe_buf: bun.PathBuffer = undefined;
         var current_dir = start_dir;
 
         while (true) {
-            const git_path_z = bun.path.joinAbsStringBufZ(current_dir, &path_buf, &.{".git"}, .auto);
+            const git_path_z = bun.path.joinAbsStringBufZ(current_dir, &probe_buf, &.{".git"}, .auto);
             // Accept both file (submodule / worktree pointer) and directory
             // (normal repository). `existsAt` on Windows only matches files,
             // so we use `existsAtType` and check both variants explicitly.
             if (bun.FD.cwd().existsAtType(git_path_z).asValue()) |entry| {
                 switch (entry) {
-                    .file, .directory => return true,
+                    .file, .directory => {
+                        const len = current_dir.len;
+                        @memcpy(out_buf[0..len], current_dir);
+                        return out_buf[0..len];
+                    },
                 }
             }
 
             const parent = bun.path.dirname(current_dir, .auto);
             if (strings.eql(parent, current_dir)) {
-                return false;
+                return null;
             }
             current_dir = parent;
         }

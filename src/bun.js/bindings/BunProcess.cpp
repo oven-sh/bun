@@ -3,6 +3,7 @@
 
 #include "BunProcess.h"
 #include "DLHandleMap.h"
+#include "WebCoreJSBuiltins.h"
 #include "v8/node.h"
 
 // Include the CMake-generated dependency versions header

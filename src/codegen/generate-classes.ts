@@ -1386,7 +1386,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     values.length ||
     obj.estimatedSize ||
     Object.keys(callbacks).length ||
-    obj.hasPendingActivity ||
     [...Object.values(klass), ...Object.values(proto)].find(a => !!a.cache)
       ? "DECLARE_VISIT_CHILDREN;\n"
       : "";
@@ -1414,7 +1413,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
                   return true;
               }
 
-              return visitor.containsOpaqueRoot(context);
+              return false;
           }
           void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
       };
@@ -1624,13 +1623,17 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
   //     and re-greys thisObject if it was already marked (Heap::addToRememberedSet pushes it
   //     back onto m_mutatorMarkStack so visitChildren runs again), or
   //   - jsvalueArray, a FixedVector<WriteBarrier<>> populated before allocateCell() and never
-  //     resized, or
-  //   - addOpaqueRoot(wrapped()), where wrapped() is m_ctx set once at construction.
+  //     resized.
   //
   // In all cases the write barrier (or immutability) guarantees correctness, so re-walking
   // every live instance of every generated type after each mutator yield is pure overhead.
   // Only visitChildren is needed.
-  if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize || values.length || hasPendingActivity) {
+  //
+  // hasPendingActivity does not need visitChildren at all: liveness is decided by the
+  // WeakHandleOwner calling hasPendingActivity(wrapped()) directly during weak processing.
+  // The previous addOpaqueRoot(wrapped()) had no consumer (the Weak's context was nullptr,
+  // so containsOpaqueRoot(context) always checked for nullptr, never m_ctx).
+  if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize || values.length) {
     DEFINE_VISIT_CHILDREN = `
 template<typename Visitor>
 void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -1649,7 +1652,6 @@ visitor.reportExtraMemoryVisited(size);
     ${values}
     ${DEFINE_VISIT_CHILDREN_LIST}
     ${obj.valuesArray ? "for (auto& value : thisObject->jsvalueArray) { visitor.append(value); }" : ""}
-    ${hasPendingActivity ? "visitor.addOpaqueRoot(thisObject->wrapped());" : ""}
 }
 
 DEFINE_VISIT_CHILDREN(${name});

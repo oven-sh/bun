@@ -58,8 +58,11 @@ async function runInTerminal(
   // proc.exited: on Windows the exit IOCP and the final pipe-data IOCP are
   // independent and closing the terminal after the former drops the latter.
   await Promise.race([finished.promise, eof.promise]);
-  proc.terminal?.close();
+  // Kill before closing the terminal so ClosePseudoConsole on older Windows
+  // doesn't have to wait on a still-running client.
+  proc.kill();
   await proc.exited;
+  proc.terminal?.close();
   output += decoder.decode();
   return { output, exitCode: proc.exitCode };
 }
@@ -151,7 +154,7 @@ describe("Bun.Terminal platform behaviour", () => {
     const { output } = await runInTerminal(
       `process.stdout.write('READY');
        process.stdin.setEncoding('utf8');
-       process.stdin.on('data', d => { process.stdout.write('GOT:' + d); process.exit(0); });`,
+       process.stdin.on('data', d => process.stdout.write('GOT:' + d));`,
       {
         done: o => o.includes("GOT:hello"),
         afterReady: t => void t.write("hello\r"),
@@ -165,10 +168,7 @@ describe("Bun.Terminal platform behaviour", () => {
     const { output } = await runInTerminal(
       `process.stdout.write('READY');
        process.stdin.setEncoding('utf8');
-       process.stdin.on('data', d => {
-         process.stdout.write('HEX:' + Buffer.from(d).toString('hex'));
-         process.exit(0);
-       });`,
+       process.stdin.on('data', d => process.stdout.write('HEX:' + Buffer.from(d).toString('hex')));`,
       {
         done: o => o.includes("HEX:"),
         afterReady: t => void t.write("\r"),
@@ -277,11 +277,12 @@ describe("Bun.Terminal platform behaviour", () => {
     // (TIOCGWINSZ / GetConsoleScreenBufferInfo) returns the new size, so an
     // explicit refresh works on both platforms.
     const { output } = await runInTerminal(
-      `setInterval(() => {
+      `let done = false;
+       setInterval(() => {
          process.stdout._refreshSize();
-         if (process.stdout.columns === 133) {
+         if (!done && process.stdout.columns === 133) {
+           done = true;
            process.stdout.write('SAW cols=' + process.stdout.columns + ' rows=' + process.stdout.rows);
-           process.exit(0);
          }
        }, 50);
        process.stdout.write('READY');`,

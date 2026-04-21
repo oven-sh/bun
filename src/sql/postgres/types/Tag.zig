@@ -105,6 +105,7 @@ pub const Tag = enum(short) {
     varbit = 1562,
     numeric = 1700,
     uuid = 2950,
+    uuid_array = 2951,
 
     bool_array = 1000,
     bytea_array = 1001,
@@ -232,6 +233,7 @@ pub const Tag = enum(short) {
             .jsonb_array,
             .jsonpath_array,
             .pg_database_array2,
+            .uuid_array,
             => true,
             else => false,
         };
@@ -284,6 +286,7 @@ pub const Tag = enum(short) {
             .varbit_array => .varbit,
             .numeric_array => .numeric,
             .jsonb_array => .jsonb,
+            .uuid_array => .uuid,
             // `tid`, `jsonpath` have no Tag enum member; they serialize as
             // plain text strings just like the `else` fallback in `writeBind`.
             .tid_array, .jsonpath_array => .text,

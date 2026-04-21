@@ -169,6 +169,37 @@ function runTests(getSql: () => SQL) {
     expect(rows[0].j).toEqual([{ a: 1 }, { b: 2 }]);
   });
 
+  test("uuid[] via sql(object)", async () => {
+    const sql = getSql();
+    const tableName = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMP TABLE ${sql(tableName)} (ids uuid[])`;
+
+    const ids = ["550e8400-e29b-41d4-a716-446655440000", "550e8400-e29b-41d4-a716-446655440001"];
+    await sql`INSERT INTO ${sql(tableName)} ${sql({ ids })}`;
+
+    const rows = await sql`SELECT ids FROM ${sql(tableName)}`;
+    expect(rows[0].ids).toEqual(ids);
+  });
+
+  test("non-finite Date element in date[] emits NULL", async () => {
+    const sql = getSql();
+    // `new Date(NaN).toISOString()` throws — used to fall through to
+    // `String.fromJS` → `"Invalid Date"` → PG rejects with
+    // `invalid input syntax for type date`. Emit SQL NULL instead, matching
+    // how null / undefined elements are handled.
+    const tableName = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMP TABLE ${sql(tableName)} (d date[])`;
+
+    await sql`INSERT INTO ${sql(tableName)} ${sql({
+      d: [new Date("2024-01-01T00:00:00Z"), new Date(NaN)],
+    })}`;
+
+    const rows = await sql`SELECT d FROM ${sql(tableName)}`;
+    expect(rows[0].d).toHaveLength(2);
+    expect(rows[0].d[0]).toBeInstanceOf(Date);
+    expect(rows[0].d[1]).toBeNull();
+  });
+
   test("scalar jsonb column with array value keeps stringifying as JSON (regression guard)", async () => {
     const sql = getSql();
     // `sql({ j: ["a", "b"] })` where `j jsonb` must still emit `["a","b"]`

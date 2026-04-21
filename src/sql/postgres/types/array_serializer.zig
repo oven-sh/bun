@@ -113,18 +113,21 @@ fn writeElement(
         return;
     }
 
-    // Date -> ISO 8601 in UTC, quoted.
+    // Date -> ISO 8601 in UTC, quoted. `toISOString` returns an empty slice
+    // for non-finite dates (NaN, ±Infinity); emit NULL rather than falling
+    // through to `String.fromJS`, which would yield `"Invalid Date"` — PG
+    // rejects that as invalid input syntax for any date/timestamp column.
     if (value.isDate()) {
         var iso_buf: [29]u8 = undefined;
         const iso = value.toISOString(globalObject, &iso_buf);
-        if (iso.len > 0) {
-            try writer.write("\"");
-            try writer.write(iso);
-            try writer.write("\"");
+        if (iso.len == 0) {
+            try writer.write("null");
             return;
         }
-        // Non-finite Date (NaN, ±Infinity) falls through to the default
-        // String.fromJS path below.
+        try writer.write("\"");
+        try writer.write(iso);
+        try writer.write("\"");
+        return;
     }
 
     // Default: stringify via `String.fromJS` (uses `Array.prototype.toString`

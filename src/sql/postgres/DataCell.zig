@@ -215,6 +215,7 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                     .aclitem_array,
                     .pg_database_array,
                     .pg_database_array2,
+                    .uuid_array,
                     => {
                         // this is also a string until we reach "," or "}" but a single word string like Bun
                         var current_idx: usize = 0;
@@ -693,6 +694,8 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
         .timestamp_array,
         .timestamptz_array,
         .interval_array,
+
+        .uuid_array,
         => |tag| {
             return try parseArray(bytes, bigint, tag, globalObject, null, false);
         },

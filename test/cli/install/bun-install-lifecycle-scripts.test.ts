@@ -4,8 +4,8 @@ import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
   VerdaccioRegistry,
   assertManifestsPopulated,
-  bunExe,
   bunEnv as baseEnv,
+  bunExe,
   isLinux,
   isWindows,
   readdirSorted,

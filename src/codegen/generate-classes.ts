@@ -1382,11 +1382,19 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     externs += `extern JSC_CALLCONV size_t ${symbolName(typeName, "estimatedSize")}(void* ptr);` + "\n";
   }
 
+  for (const a of [...Object.values(klass), ...Object.values(proto)]) {
+    if (a.internal === true) {
+      throw new Error(
+        `${typeName}: 'internal: true' on a property is not implemented (no users today; the visitChildren plumbing for it was never wired up consistently). Use 'cache: true' or add it to 'values' instead.`,
+      );
+    }
+  }
   const DECLARE_VISIT_CHILDREN =
     values.length ||
     obj.estimatedSize ||
+    obj.valuesArray ||
     Object.keys(callbacks).length ||
-    [...Object.values(klass), ...Object.values(proto)].find(a => !!a.cache)
+    [...Object.values(klass), ...Object.values(proto)].find(a => a.cache === true)
       ? "DECLARE_VISIT_CHILDREN;\n"
       : "";
   const sizeEstimator = "static size_t estimatedSize(JSCell* cell, VM& vm);";
@@ -1633,7 +1641,7 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
   // WeakHandleOwner calling hasPendingActivity(wrapped()) directly during weak processing.
   // The previous addOpaqueRoot(wrapped()) had no consumer (the Weak's context was nullptr,
   // so containsOpaqueRoot(context) always checked for nullptr, never m_ctx).
-  if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize || values.length) {
+  if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize || values.length || obj.valuesArray) {
     DEFINE_VISIT_CHILDREN = `
 template<typename Visitor>
 void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)

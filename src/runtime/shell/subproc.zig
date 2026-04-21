@@ -498,13 +498,9 @@ pub const ShellSubprocess = struct {
             return .success;
         }
 
-        return switch (this.process.kill(@intCast(sig))) {
-            // The shell's subprocess doesn't distinguish "signal delivered"
-            // from "process was already gone" — both are a no-op success
-            // for the shell's best-effort termination flow.
-            .result => .success,
-            .err => |err| .{ .err = err },
-        };
+        // Shell kill is best-effort — drop the "delivered?" bool, keep errors.
+        if (this.process.kill(@intCast(sig)).asErr()) |err| return .{ .err = err };
+        return .success;
     }
 
     // fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.enum_literal)) bool {

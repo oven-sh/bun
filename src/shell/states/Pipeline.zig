@@ -97,7 +97,11 @@ fn setupCommands(this: *Pipeline) ?Yield {
 
     this.cmds = if (cmd_count >= 1) bun.handleOom(this.base.allocator().alloc(CmdOrResult, cmd_count)) else null;
     if (this.cmds == null) return null;
+    // Pre-fill so a mid-loop failure leaves cmds[i..] in a state deinit() can skip safely.
+    for (this.cmds.?) |*c| c.* = .{ .result = 0 };
+
     var pipes = bun.handleOom(this.base.allocator().alloc(Pipe, if (cmd_count > 1) cmd_count - 1 else 1));
+    this.pipes = pipes;
 
     if (cmd_count > 1) {
         var pipes_set: u32 = 0;
@@ -107,6 +111,7 @@ fn setupCommands(this: *Pipeline) ?Yield {
                 closefd(pipe[1]);
             }
             const system_err = err.toShellSystemError();
+            defer system_err.deref();
             return this.writeFailingError("bun: {f}\n", .{system_err.message});
         }
     }
@@ -125,7 +130,16 @@ fn setupCommands(this: *Pipeline) ?Yield {
                 const subshell_state = switch (this.base.shell.dupeForSubshell(this.base.allocScope(), this.base.allocator(), cmd_io, .pipeline)) {
                     .result => |s| s,
                     .err => |err| {
+                        cmd_io.deref();
+                        if (cmd_count > 1) {
+                            // Close pipe ends not yet wrapped in an IOReader/IOWriter; the
+                            // wrapped ones are owned by cmds[0..i]/cmd_io and close on deref.
+                            for (pipes[i..]) |p| closefd(p[0]);
+                            const w_start = @min(i + 1, @as(u32, @intCast(pipes.len)));
+                            for (pipes[w_start..]) |p| closefd(p[1]);
+                        }
                         const system_err = err.toShellSystemError();
+                        defer system_err.deref();
                         return this.writeFailingError("bun: {f}\n", .{system_err.message});
                     },
                 };
@@ -144,8 +158,6 @@ fn setupCommands(this: *Pipeline) ?Yield {
             .assigns => {},
         }
     }
-
-    this.pipes = pipes;
 
     return null;
 }
@@ -201,8 +213,7 @@ pub fn onIOWriterChunk(this: *Pipeline, _: usize, err: ?jsc.SystemError) Yield {
         return .failed;
     }
 
-    this.state = .{ .done = .{} };
-    return .done;
+    return this.parent.childDone(this, 1);
 }
 
 pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) Yield {
@@ -261,18 +272,16 @@ pub fn childDone(this: *Pipeline, child: ChildPtr, exit_code: ExitCode) Yield {
 }
 
 pub fn deinit(this: *Pipeline) void {
-    // If commands was zero then we didn't allocate anything
-    if (this.cmds == null) return;
-    for (this.cmds.?) |*cmd_or_result| {
-        if (cmd_or_result.* == .cmd) {
-            cmd_or_result.cmd.call("deinit", .{}, void);
+    if (this.cmds) |cmds| {
+        for (cmds) |*cmd_or_result| {
+            if (cmd_or_result.* == .cmd) {
+                cmd_or_result.cmd.call("deinit", .{}, void);
+            }
         }
+        this.base.allocator().free(cmds);
     }
     if (this.pipes) |pipes| {
         this.base.allocator().free(pipes);
-    }
-    if (this.cmds) |cmds| {
-        this.base.allocator().free(cmds);
     }
     this.io.deref();
     this.base.endScope();

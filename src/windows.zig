@@ -3646,8 +3646,6 @@ pub extern "kernel32" fn ResizePseudoConsole(
 
 pub extern "kernel32" fn ClosePseudoConsole(hPC: HPCON) callconv(.winapi) void;
 
-pub const PSEUDOCONSOLE_INHERIT_CURSOR: DWORD = 1;
-
 pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
 pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x400;
 pub const JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x800;

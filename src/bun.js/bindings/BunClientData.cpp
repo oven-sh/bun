@@ -47,6 +47,8 @@ JSHeapData::JSHeapData(Heap& heap)
 {
 }
 
+JSHeapData::~JSHeapData() = default;
+
 #define CLIENT_ISO_SUBSPACE_INIT(subspace) subspace(m_heapData->subspace)
 
 JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvider)

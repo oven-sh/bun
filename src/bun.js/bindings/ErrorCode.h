@@ -1,11 +1,8 @@
 // To add a new error code, put it in ErrorCode.ts
 #pragma once
 
-#include "ZigGlobalObject.h"
 #include "root.h"
 #include <JavaScriptCore/JSInternalFieldObjectImpl.h>
-#include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
-#include "BunClientData.h"
 #include "ErrorCode+List.h"
 #include "CryptoKeyType.h"
 

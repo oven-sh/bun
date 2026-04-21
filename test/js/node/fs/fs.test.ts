@@ -115,7 +115,7 @@ it.concurrent("fs.writeFile(2, data) should work when its inherited", async () =
 
 it.concurrent("fs.writeFile(/dev/null, data) should work", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), require("os").devNull],
+    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), os.devNull],
     env: bunEnv,
     stdio: ["inherit", "pipe", "inherit"],
   });

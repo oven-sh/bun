@@ -256,6 +256,114 @@ test.concurrent.skipIf(!isLinux)(
   },
 );
 
+// Regression guard for a nested git repo inside a workspace: when
+// `packages/first` has its own `.git` (submodule-like), `findGitRoot`
+// discovers that inner repo, and git spawned from `packages/first`
+// resolves to it. The workspace-root `bun.lock` lives outside that
+// nested repo, so staging it as an absolute path would fail with
+// `fatal: ... is outside repository`. The fix drops the lockfile arg
+// in that case and lets the nested repo commit just `package.json`,
+// matching the pre-PR behavior for that package.
+test.concurrent.skipIf(!isLinux)(
+  "bun pm version succeeds when packages/* has its own nested git repo",
+  async () => {
+    const dir = tempDirWithFiles("issue-28935-nested-git", {
+      "package.json": JSON.stringify({
+        name: "root",
+        private: true,
+        workspaces: ["packages/*"],
+      }),
+      "packages/first/package.json": JSON.stringify({
+        name: "first",
+        version: "1.0.0",
+      }),
+      "packages/second/package.json": JSON.stringify({
+        name: "second",
+        version: "1.0.0",
+        dependencies: { first: "workspace:*" },
+      }),
+    });
+
+    {
+      const { exitCode } = await run([bunExe(), "install"], dir);
+      expect(exitCode).toBe(0);
+    }
+
+    const gitEnv = {
+      ...bunEnv,
+      GIT_CONFIG_NOSYSTEM: "1",
+      HOME: "",
+      XDG_CONFIG_HOME: "",
+      USERPROFILE: "",
+      GIT_AUTHOR_NAME: "Test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "Test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+    };
+
+    // Initialize a nested git repo inside `packages/first` — but NOT at
+    // the workspace root. The workspace-root `bun.lock` is therefore
+    // outside the only repo findGitRoot can discover from packages/first.
+    const packageFirstDir = join(dir, "packages", "first");
+    for (const argv of [
+      ["git", "init", "-q"],
+      ["git", "add", "."],
+      ["git", "commit", "-q", "-m", "init"],
+    ]) {
+      await using gitProc = spawn({
+        cmd: argv,
+        cwd: packageFirstDir,
+        env: gitEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const stderr = await gitProc.stderr.text();
+      const code = await gitProc.exited;
+      if (code !== 0) throw new Error(`${argv.join(" ")} failed: ${stderr}`);
+    }
+
+    // Bump first's version. The workspace `bun.lock` lives outside the
+    // nested repo; if the fix is working, `git add` inside the nested
+    // repo is only asked to stage `package.json` and the command exits
+    // 0. Without the fix it exits 1 with "Git add failed" because git
+    // rejects the out-of-tree absolute lockfile path.
+    await using versionProc = spawn({
+      cmd: [bunExe(), "pm", "version", "minor"],
+      cwd: packageFirstDir,
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [versionStdout, , versionCode] = await Promise.all([
+      versionProc.stdout.text(),
+      versionProc.stderr.text(),
+      versionProc.exited,
+    ]);
+    expect(versionStdout.trim().split("\n").at(-1)).toBe("v1.1.0");
+    expect(versionCode).toBe(0);
+
+    // The workspace-root `bun.lock` still gets updated in-memory and
+    // written to disk even though it is outside the nested repo.
+    const lockfile = await Bun.file(join(dir, "bun.lock")).text();
+    const firstIdx = lockfile.indexOf('"packages/first"');
+    expect(firstIdx).toBeGreaterThanOrEqual(0);
+    expect(lockfile.slice(firstIdx)).toMatch(/"name":\s*"first"[\s\S]*?"version":\s*"1\.1\.0"/);
+
+    // The nested repo's HEAD commit contains only the package.json bump —
+    // the outer `bun.lock` was (correctly) not passed to `git add`.
+    await using showProc = spawn({
+      cmd: ["git", "show", "--name-only", "--pretty=format:", "HEAD"],
+      cwd: packageFirstDir,
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const changed = (await showProc.stdout.text()).trim().split("\n").filter(Boolean).sort();
+    expect(changed).toEqual(["package.json"]);
+    expect(await showProc.exited).toBe(0);
+  },
+);
+
 test.concurrent("bun pm version in a non-workspace project with a lockfile does not crash", async () => {
   // Regression guard: the updateLockfileWorkspaceVersion helper must no-op
   // when the bumped package isn't tracked in `workspace_versions` (here the

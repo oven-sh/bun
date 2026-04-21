@@ -736,7 +736,9 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     auto key = JSC::Identifier::fromString(vm, keyString);
 
     auto* loader = globalObject->moduleLoader();
+    bool entryExistedBefore = false;
     if (auto* entry = loader->registryEntry(key)) {
+        entryExistedBefore = true;
         if (isModuleEvaluated(entry->record())) {
             auto* ns = entry->record()->getModuleNamespace(globalObject, false);
             RETURN_IF_EXCEPTION(scope, {});
@@ -761,16 +763,27 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         // The load promise stays Pending when this module shares an SCC with an
         // outer module that is still Evaluating (e.g. ESM entry → CJS shim →
         // require(esm) → imports something the entry already loaded). For a
-        // non-TLA record that has reached Evaluating, the body has already run
-        // synchronously; only the status flip waits on the SCC root. Treat that
-        // as success — the namespace is fully populated.
+        // non-TLA record whose status is exactly Evaluating, the body already
+        // ran synchronously; only the status flip waits on the SCC root. Treat
+        // that as success — the namespace is fully populated.
+        //
+        // Explicitly exclude EvaluatingAsync: a record reaches that state when
+        // it OR any dependency has top-level await, in which case bindings can
+        // still be in TDZ and we must throw the "async module" error instead
+        // of returning a half-initialized namespace.
         if (auto* entry = loader->registryEntry(key)) {
             if (auto* cyclic = jsDynamicCast<JSC::CyclicModuleRecord*>(entry->record())) {
-                if (cyclic->status() >= JSC::CyclicModuleRecord::Status::Evaluating && !cyclic->hasTLA() && !cyclic->evaluationError())
+                auto status = cyclic->status();
+                if ((status == JSC::CyclicModuleRecord::Status::Evaluating || status == JSC::CyclicModuleRecord::Status::Evaluated) && !cyclic->hasTLA() && !cyclic->evaluationError())
                     break;
             }
         }
-        loader->removeEntry(key);
+        // Only drop the entry we created. If the entry already existed (an
+        // outer import() is mid-load, or the module is EvaluatingAsync from a
+        // prior import), removing it would force a second evaluation and a
+        // second namespace object once that outer load completes.
+        if (!entryExistedBefore)
+            loader->removeEntry(key);
         return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
     }
     }
@@ -3266,9 +3279,16 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     // plugin namespace that has an onLoad handler, it is a fully-resolved
     // virtual key — return it unchanged so we don't fall through to the
     // filesystem resolver and fail with "Cannot find module".
+    //
+    // FIXME(module-loader): this short-circuit ignores the plugin's filter
+    // and bypasses any onResolve handler for static imports written directly
+    // as "ns:..." in source. The proper fix is for moduleLoaderImportModule
+    // to mark keys it already resolved so we can skip only those.
     if (!globalObject->onLoadPlugins.namespaces.isEmpty()) {
         auto keyStr = keyZ.toWTFString();
-        if (auto colon = keyStr.find(':'); colon != WTF::notFound) {
+        if (auto colon = keyStr.find(':'); colon != WTF::notFound && !(colon == 1 && isASCIIAlpha(keyStr[0]))) {
+            // colon == 1 with a leading ASCII letter is a Windows drive
+            // ("C:\\..."), never a plugin namespace.
             auto ns = keyStr.left(colon);
             for (const auto& registered : globalObject->onLoadPlugins.namespaces) {
                 if (registered == ns) {

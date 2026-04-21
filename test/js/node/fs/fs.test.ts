@@ -3706,7 +3706,7 @@ describe('kernel32 long path conversion does not mangle "../../path" into "path"
         env: bunEnv,
       });
       const exitCode = await proc.exited;
-      expect(exitCode === 0).toBeTrue();
+      expect(exitCode).toBe(0);
     });
   }
   for (const [name, code] of existTests) {
@@ -3718,7 +3718,7 @@ describe('kernel32 long path conversion does not mangle "../../path" into "path"
         env: bunEnv,
       });
       const exitCode = await proc.exited;
-      expect(exitCode === 0).toBeTrue();
+      expect(exitCode).toBe(0);
     });
   }
 });

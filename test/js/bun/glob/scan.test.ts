@@ -59,7 +59,7 @@ const fgOpts = {
 describe("glob.match", async () => {
   const timeout = 30 * 1000;
   function testWithOpts(namePrefix: string, bunGlobOpts: GlobScanOptions, fgOpts: FgOpts) {
-    test.concurrent(
+    test(
       `${namePrefix} recursively search node_modules`,
       async () => {
         const pattern = "**/node_modules/**/*.js";
@@ -81,7 +81,7 @@ describe("glob.match", async () => {
       timeout,
     );
 
-    test.concurrent(
+    test(
       `${namePrefix} recursive search js files`,
       async () => {
         const pattern = "**/*.js";
@@ -102,7 +102,7 @@ describe("glob.match", async () => {
       timeout,
     );
 
-    test.concurrent(
+    test(
       `${namePrefix} recursive search ts files`,
       async () => {
         const pattern = "**/*.ts";
@@ -123,7 +123,7 @@ describe("glob.match", async () => {
       timeout,
     );
 
-    test.concurrent(
+    test(
       `${namePrefix} glob not freed before matching done`,
       async () => {
         const promise = (async () => {

@@ -249,9 +249,7 @@ describe("ES Decorators (esbuild test suite)", () => {
           );
         }
         if (!result.ok) {
-          throw new Error(
-            `Test "${name}" failed with exit code ${exitCode}\n` + `stdout: ${result.error}\n` + `stderr: ${stderr}`,
-          );
+          throw new Error(`Test "${name}" failed\n` + `error: ${result.error}\n` + `stderr: ${stderr}`);
         }
       });
     }

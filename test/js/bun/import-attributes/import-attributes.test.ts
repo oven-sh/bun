@@ -94,7 +94,6 @@ type Tests = Record<
   {
     loader: string | null;
     filename: string;
-    dir?: string;
   }
 >;
 const default_tests = Object.fromEntries(

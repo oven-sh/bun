@@ -407,7 +407,7 @@ class InlineSnapshotTester {
     expect(this.readfile(thefile)).toEqual(code);
   }
   async test(cb: (v: (a: string, b: string, c: string) => string) => string): Promise<void> {
-    await Promise.all([
+    const settled = await Promise.allSettled([
       this.testInternal(
         false,
         cb((a, b, c) => a),
@@ -419,6 +419,7 @@ class InlineSnapshotTester {
         cb((a, b, c) => c),
       ),
     ]);
+    for (const r of settled) if (r.status === "rejected") throw r.reason;
   }
   async testUpdateOnly(cb: (v: (b: string, c: string) => string) => string): Promise<void> {
     await this.testInternal(
@@ -839,7 +840,7 @@ indentation"
     );
   });
   it("#16403", async () => {
-    await Promise.all([
+    const settled = await Promise.allSettled([
       tester.test(v =>
         v(
           '\tit(\'should get range of notes\', () => {\n\t\tconst range = ["C2", "B2"];\n\n\t\texpect(range).toMatchInlineSnapshot();\n\t});\n',
@@ -854,6 +855,7 @@ indentation"
         ),
       ),
     ]);
+    for (const r of settled) if (r.status === "rejected") throw r.reason;
   });
 });
 test("indented inline snapshots", () => {

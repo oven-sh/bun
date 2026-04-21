@@ -13,57 +13,55 @@ test("spawn can write to stdin multiple chunks", async () => {
   const maxFD = getMaxFD();
 
   var remaining = N;
-  const proms: Promise<void>[] = [];
   while (remaining > 0) {
+    const proms = new Array(concurrency);
     for (let i = 0; i < concurrency; i++) {
-      proms.push(
-        (async function () {
-          const proc = spawn({
-            cmd: [bunExe(), join(import.meta.dir, "stdin-repro.js")],
-            stdout: "pipe",
-            stdin: "pipe",
-            stderr: "inherit",
-            env: { ...bunEnv },
-          });
+      proms[i] = (async function () {
+        const proc = spawn({
+          cmd: [bunExe(), join(import.meta.dir, "stdin-repro.js")],
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "inherit",
+          env: { ...bunEnv },
+        });
 
-          const prom2 = (async function () {
-            let inCounter = 0;
-            while (true) {
-              proc.stdin!.write("Wrote to stdin!\n");
-              await proc.stdin!.flush();
-              await Bun.sleep(delay);
+        const prom2 = (async function () {
+          let inCounter = 0;
+          while (true) {
+            proc.stdin!.write("Wrote to stdin!\n");
+            await proc.stdin!.flush();
+            await Bun.sleep(delay);
 
-              if (inCounter++ === 6) break;
+            if (inCounter++ === 6) break;
+          }
+          await proc.stdin!.end();
+          return inCounter;
+        })();
+
+        const prom = (async function () {
+          let chunks: any[] = [];
+
+          try {
+            for await (var chunk of proc.stdout) {
+              chunks.push(chunk);
             }
-            await proc.stdin!.end();
-            return inCounter;
-          })();
+          } catch (e: any) {
+            console.log(e.stack);
+            throw e;
+          }
 
-          const prom = (async function () {
-            let chunks: any[] = [];
+          return Buffer.concat(chunks).toString().trim();
+        })();
 
-            try {
-              for await (var chunk of proc.stdout) {
-                chunks.push(chunk);
-              }
-            } catch (e: any) {
-              console.log(e.stack);
-              throw e;
-            }
+        const [chunks, , exitCode] = await Promise.all([prom, prom2, proc.exited]);
 
-            return Buffer.concat(chunks).toString().trim();
-          })();
-
-          const [chunks, , exitCode] = await Promise.all([prom, prom2, proc.exited]);
-
-          expect(chunks).toBe("Wrote to stdin!\n".repeat(7).trim());
-          expect(exitCode).toBe(0);
-        })(),
-      );
+        expect(chunks).toBe("Wrote to stdin!\n".repeat(7).trim());
+        expect(exitCode).toBe(0);
+      })();
     }
+    await Promise.all(proms);
     remaining -= concurrency;
   }
-  await Promise.all(proms);
 
   const newMaxFD = getMaxFD();
 

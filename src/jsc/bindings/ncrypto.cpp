@@ -6,11 +6,16 @@
 #include "ncrypto.h"
 #include <openssl/asn1.h>
 #include <openssl/bn.h>
+#include <openssl/bytestring.h>
 #include <openssl/dh.h>
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
+#include <openssl/nid.h>
+#include <openssl/obj.h>
 #include <openssl/pkcs12.h>
 #include <openssl/rand.h>
+#include <openssl/rsa.h>
 #include <openssl/x509v3.h>
 #include <algorithm>
 #include <cstring>
@@ -2395,6 +2400,94 @@ constexpr bool IsEncryptedPrivateKeyInfo(
     return len >= 1 && buffer.data[offset] != 2;
 }
 
+// Reads an ASN.1 INTEGER as an unsigned big-endian byte sequence, tolerating
+// the non-conforming case where the leading 0x00 sign byte is omitted on a
+// value with the high bit set. BoringSSL's |BN_parse_asn1_unsigned| rejects
+// that encoding with BN_R_NEGATIVE_NUMBER, but OpenSSL (and therefore Node)
+// accepts it, so we match Node here.
+bool ParseAsn1IntegerLooseUnsigned(CBS* cbs, BignumPointer* out)
+{
+    CBS child;
+    if (!CBS_get_asn1(cbs, &child, CBS_ASN1_INTEGER) || CBS_len(&child) == 0) {
+        return false;
+    }
+    const unsigned char* data = CBS_data(&child);
+    size_t len = CBS_len(&child);
+    // Strip one leading 0x00 if present (standard encoding for values whose
+    // top bit is set). Everything else is treated as unsigned bytes.
+    if (len > 1 && data[0] == 0x00) {
+        data += 1;
+        len -= 1;
+    }
+    out->reset(data, len);
+    return *out;
+}
+
+// Fallback parser for RSA SubjectPublicKeyInfo DER that tolerates an
+// RSAPublicKey.modulus encoded without the leading 0x00 sign byte. Returns
+// nullptr if the input is not an RSA SPKI or is otherwise malformed.
+EVP_PKEY* ParseSpkiRsaLoose(const unsigned char* data, size_t len)
+{
+    CBS cbs, spki, alg, oid, bitstr, rsa_pub_key;
+    CBS_init(&cbs, data, len);
+
+    // SubjectPublicKeyInfo ::= SEQUENCE { algorithm AlgorithmIdentifier,
+    //                                     subjectPublicKey BIT STRING }
+    if (!CBS_get_asn1(&cbs, &spki, CBS_ASN1_SEQUENCE) || CBS_len(&cbs) != 0) {
+        return nullptr;
+    }
+
+    // AlgorithmIdentifier ::= SEQUENCE { algorithm OBJECT IDENTIFIER,
+    //                                    parameters ANY OPTIONAL }
+    if (!CBS_get_asn1(&spki, &alg, CBS_ASN1_SEQUENCE) ||
+        !CBS_get_asn1(&alg, &oid, CBS_ASN1_OBJECT)) {
+        return nullptr;
+    }
+    if (OBJ_cbs2nid(&oid) != NID_rsaEncryption) {
+        return nullptr;
+    }
+
+    // subjectPublicKey BIT STRING. The first content byte is the count of
+    // unused trailing bits (must be zero for SPKI).
+    if (!CBS_get_asn1(&spki, &bitstr, CBS_ASN1_BITSTRING) || CBS_len(&spki) != 0) {
+        return nullptr;
+    }
+    uint8_t unused_bits;
+    if (!CBS_get_u8(&bitstr, &unused_bits) || unused_bits != 0) {
+        return nullptr;
+    }
+
+    // RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent INTEGER }
+    if (!CBS_get_asn1(&bitstr, &rsa_pub_key, CBS_ASN1_SEQUENCE) ||
+        CBS_len(&bitstr) != 0) {
+        return nullptr;
+    }
+
+    BignumPointer n, e;
+    if (!ParseAsn1IntegerLooseUnsigned(&rsa_pub_key, &n) ||
+        !ParseAsn1IntegerLooseUnsigned(&rsa_pub_key, &e) ||
+        CBS_len(&rsa_pub_key) != 0) {
+        return nullptr;
+    }
+
+    RSAPointer rsa(RSA_new());
+    if (!rsa || !RSA_set0_key(rsa.get(), n.get(), e.get(), nullptr)) {
+        return nullptr;
+    }
+    // RSA_set0_key took ownership of both bignums on success.
+    n.release();
+    e.release();
+
+    EVP_PKEY* pkey = EVP_PKEY_new();
+    if (!pkey) return nullptr;
+    if (!EVP_PKEY_assign_RSA(pkey, rsa.get())) {
+        EVP_PKEY_free(pkey);
+        return nullptr;
+    }
+    rsa.release();
+    return pkey;
+}
+
 } // namespace
 
 bool EVPKeyPointer::IsRSAPrivateKey(const Buffer<const unsigned char>& buffer)
@@ -2422,7 +2515,20 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKeyPEM(
             bp,
             "PUBLIC KEY",
             [](const unsigned char** p, long l) { // NOLINT(runtime/int)
-                return d2i_PUBKEY(nullptr, p, l);
+                const unsigned char* start = *p;
+                EVP_PKEY* key = d2i_PUBKEY(nullptr, p, l);
+                if (key) return key;
+                // Retry using a loose parser that tolerates RSA moduli whose
+                // leading 0x00 sign byte has been omitted — Node (OpenSSL)
+                // accepts that encoding, BoringSSL does not. The BN error
+                // sits at the bottom of the error stack (root cause).
+                const uint32_t err = ERR_peek_error();
+                if (ERR_GET_LIB(err) == ERR_LIB_BN
+                    && ERR_GET_REASON(err) == BN_R_NEGATIVE_NUMBER) {
+                    ERR_clear_error();
+                    return ParseSpkiRsaLoose(start, l);
+                }
+                return static_cast<EVP_PKEY*>(nullptr);
             })) {
         return ret;
     }
@@ -2471,8 +2577,22 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKey(
         return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
     }
 
-    if (config.type == PKEncodingType::SPKI && (key = d2i_PUBKEY(nullptr, &start, buffer.len))) {
-        return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
+    if (config.type == PKEncodingType::SPKI) {
+        if ((key = d2i_PUBKEY(nullptr, &start, buffer.len))) {
+            return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
+        }
+        // BoringSSL rejects RSA SPKI whose modulus has the high bit set but
+        // lacks the leading 0x00 sign byte — Node (OpenSSL) accepts it, so
+        // fall back to a loose parser for that specific case. The BN error
+        // sits at the bottom of the error stack (root cause).
+        const uint32_t err = ERR_peek_error();
+        if (ERR_GET_LIB(err) == ERR_LIB_BN
+            && ERR_GET_REASON(err) == BN_R_NEGATIVE_NUMBER) {
+            ERR_clear_error();
+            if ((key = ParseSpkiRsaLoose(buffer.data, buffer.len))) {
+                return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
+            }
+        }
     }
 
     return ParseKeyResult(PKParseError::FAILED);

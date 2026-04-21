@@ -179,7 +179,6 @@ fn writeHex(
 const bun = @import("bun");
 const protocol = @import("../PostgresProtocol.zig");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
-
 const Tag = @import("./Tag.zig").Tag;
 
 const jsc = bun.jsc;

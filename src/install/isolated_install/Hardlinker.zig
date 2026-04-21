@@ -115,10 +115,7 @@ pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
                                 }
                                 switch (sys.link(u16, this.src.sliceZ(), destfile_path)) {
                                     .result => {},
-                                    .err => |link_err2| switch (link_err2.getErrno()) {
-                                        .UV_EEXIST, .EXIST => {},
-                                        else => return .initErr(link_err2),
-                                    },
+                                    .err => |link_err2| return .initErr(link_err2),
                                 }
                             },
                             .UV_ENOENT,
@@ -142,10 +139,7 @@ pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
 
                                 switch (sys.link(u16, this.src.sliceZ(), destfile_path)) {
                                     .result => {},
-                                    .err => |link_err2| switch (link_err2.getErrno()) {
-                                        .UV_EEXIST, .EXIST => {},
-                                        else => return .initErr(link_err2),
-                                    },
+                                    .err => |link_err2| return .initErr(link_err2),
                                 }
                             },
                             else => return .initErr(link_err1),
@@ -181,11 +175,7 @@ pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
                                 FD.cwd().deleteTree(this.dest.slice()) catch {};
                                 switch (sys.linkatZ(entry.dir, entry.basename, FD.cwd(), this.dest.sliceZ())) {
                                     .result => {},
-                                    // Another writer (concurrent install into a
-                                    // shared global-store entry) re-created the
-                                    // same hardlink between our delete and this
-                                    // retry; it points at identical bytes.
-                                    .err => |link_err2| if (link_err2.getErrno() != .EXIST) return .initErr(link_err2),
+                                    .err => |link_err2| return .initErr(link_err2),
                                 }
                             },
                             .NOENT => {
@@ -196,7 +186,7 @@ pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
                                 FD.cwd().makePath(u8, dest_parent) catch {};
                                 switch (sys.linkatZ(entry.dir, entry.basename, FD.cwd(), this.dest.sliceZ())) {
                                     .result => {},
-                                    .err => |link_err2| if (link_err2.getErrno() != .EXIST) return .initErr(link_err2),
+                                    .err => |link_err2| return .initErr(link_err2),
                                 }
                             },
                             else => return .initErr(link_err1),

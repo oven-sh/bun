@@ -827,12 +827,7 @@ pub const Bin = extern struct {
 
                         switch (bun.sys.symlinkRunningExecutable(rel_target, abs_dest)) {
                             .err => |real_error| {
-                                // EEXIST after we just created `.bin/` means
-                                // another writer (parallel install into the
-                                // same shared virtual-store entry, or another
-                                // task on this thread pool) beat us to the
-                                // link between makePath and this retry.
-                                if (real_error.getErrno() == .EXIST) return;
+                                // It was just created, no need to delete destination and symlink again
                                 this.err = real_error.toZigErr();
                                 return;
                             },

@@ -1706,11 +1706,9 @@ pub const Installer = struct {
                 .EXIST => {
                     // Existing entry from a previous install. If it's a
                     // symlink, replace it (stale link from a different
-                    // hash). If it's a *real directory* it's either a
-                    // pre-global-store layout (safe to wipe) or a detached
-                    // `bun patch` workspace the user is actively editing —
-                    // distinguished by the `.bun-patch` marker that
-                    // `detachModuleFolderFromSharedStore` writes.
+                    // hash). If it's a real directory, that's the
+                    // pre-global-store layout (`bun patch` detaches
+                    // `node_modules/<pkg>`, not this path).
                     const is_symlink = if (comptime Environment.isWindows)
                         if (sys.getFileAttributes(dest.sliceZ())) |a| a.is_reparse_point else true
                     else if (sys.lstat(dest.sliceZ()).asValue()) |st|

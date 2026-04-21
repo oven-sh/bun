@@ -969,7 +969,7 @@ pub const FetchTasklet = struct {
     fn maybeReleaseBodyBackpressure(this: *FetchTasklet, buffered: usize) void {
         if (buffered >= body_low_water_mark) return;
         if (!this.signal_store.body_backpressure.load(.monotonic)) return;
-        this.signal_store.body_backpressure.store(false, .release);
+        this.signal_store.body_backpressure.store(false, .monotonic);
         log("body backpressure released (buffered={d})", .{buffered});
         if (this.http) |http_| {
             // Reuse the response-body-drain queue: on the HTTP thread it both
@@ -1008,7 +1008,7 @@ pub const FetchTasklet = struct {
         if (buffered >= body_high_water_mark) {
             if (this.signal_store.body_backpressure.load(.monotonic)) return;
             log("body backpressure requested (ByteStream buffered={d})", .{buffered});
-            this.signal_store.body_backpressure.store(true, .release);
+            this.signal_store.body_backpressure.store(true, .monotonic);
             return;
         }
         // Release when our buffer is below the low-water mark. We don't gate

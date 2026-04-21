@@ -432,7 +432,8 @@ Options:
                           on/off/true/false/yes/no/1/0.
                           Fields: asan, lto, assertions, logs, baseline,
                                   canary, valgrind, webkit (prebuilt|local),
-                                  buildDir, mode (full|cpp-only|link-only)
+                                  buildDir, mode (full|cpp-only|link-only),
+                                  unifiedSources, timeTrace
   --target=<name>         Build a specific ninja target (repeatable)
   --configure-only        Emit build.ninja, don't run it
   -j<N>, -v, -k<N>        Passed through to ninja

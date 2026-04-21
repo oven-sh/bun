@@ -371,6 +371,7 @@ export const bunOnlyFlags: Flag[] = [
   {
     flag: "-ftime-trace",
     when: c => c.timeTrace,
+    lang: "cxx",
     desc: "Emit per-TU Chrome-trace JSON next to each .o (analyze with ClangBuildAnalyzer)",
   },
 

@@ -38,6 +38,7 @@
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Config } from "./config.ts";
+import { fileOverrides } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import { slash } from "./shell.ts";
 
@@ -45,29 +46,16 @@ import { slash } from "./shell.ts";
  * Directories whose files all compile standalone. Reasons inline.
  * Matched as a prefix of `relative(cwd, abs)`.
  */
-const noUnifyDirs: readonly string[] = [
-  // Each V8*.cpp invokes ASSERT_V8_TYPE_LAYOUT_MATCHES which expands a
-  // `__LINE__`-named namespace containing `using BunType = ...`. Two files
-  // hitting the same source line collide. Also `using Isolate = ...` aliases
-  // differ per file. Only ~30 small files; not worth restructuring.
-  "src/bun.js/bindings/v8/",
-
-  // WebKit-derived crypto algorithm files each define file-static helpers
-  // with the same names (`aesAlgorithm`, `cryptEncrypt`, `ALG128`, `IVSIZE`,
-  // ...). ~85 files; the alternative is wrapping ~15 files' statics in
-  // named namespaces and qualifying every call site, which diverges from
-  // upstream for marginal gain.
-  "src/bun.js/bindings/webcrypto/",
-];
+const noUnifyDirs: readonly string[] = [];
 
 /**
  * Files that must compile standalone. Reasons inline.
  * Paths are repo-root-relative; matched against `relative(cwd, abs)`.
  */
 const noUnify = new Set<string>([
-  // Has per-file flag override (see flags.ts fileOverrides) — can't share
-  // a TU with files that need different flags.
-  "src/bun.js/bindings/workaround-missing-symbols.cpp",
+  // Files with per-file flag overrides can't share a TU with files that
+  // need different flags. Pulled from flags.ts so the two lists can't drift.
+  ...fileOverrides.map(o => o.file),
 
   // Heavy single-file TUs that already saturate a core. Bundling them with
   // siblings would serialize work that should run in parallel.
@@ -85,17 +73,40 @@ const noUnify = new Set<string>([
   // both end up in the same bundle. TODO: extract helpers to a shared header.
   "src/bun.js/bindings/webcore/JSMIMEType.cpp",
 
-  // Wraps JSC::Wasm::StreamingCompiler. Its wrapperKey()/toJSNewlyCreated()
-  // overloads live in namespace WebCore but the wrapped type is in JSC::Wasm,
-  // so two-phase lookup only finds them via ordinary lookup at template
-  // definition time — which fails if JSDOMWrapperCache.h was already parsed
-  // by an earlier file in the bundle.
+  // These instantiate JSDOMConvert templates with JSC::* types whose toJS()
+  // overloads live in namespace WebCore — ADL can't find them, so they rely
+  // on ordinary lookup at template definition time. That fails if an earlier
+  // file in the bundle already parsed JSDOMConvertInterface.h /
+  // JSDOMWrapperCache.h before the overload was visible.
   "src/bun.js/bindings/webcore/JSWasmStreamingCompiler.cpp",
+  "src/bun.js/bindings/webcore/JSDOMPromiseDeferred.cpp",
+  "src/bun.js/bindings/webcore/JSMessageEventCustom.cpp",
   "src/bun.js/bindings/sqlite/JSSQLStatement.cpp",
+
+  // WebKit-derived crypto algorithm impls share file-static helper names
+  // (`aesAlgorithm`, `cryptEncrypt`, `ALG128`, `IVSIZE`, ...) — upstream
+  // also compiles these outside unified sources. The remaining ~70
+  // webcrypto files (JS bindings, key types) bundle cleanly.
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CBC.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CBCOpenSSL.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CFB.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CFBOpenSSL.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CTR.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CTROpenSSL.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_GCM.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_GCMOpenSSL.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_KW.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmECDSA.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmHMAC.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSAES_PKCS1_v1_5.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSASSA_PKCS1_v1_5.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSA_OAEP.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSA_PSS.cpp",
+  "src/bun.js/bindings/webcrypto/SubtleCrypto.cpp",
 ]);
 
-/** How many .cpp files per bundle. WebKit uses 8. */
-const bundleSize = 8;
+/** How many .cpp files per bundle. WebKit defaults to 8; we use 16. */
+const bundleSize = 16;
 
 export interface UnifiedSplit {
   /** Generated UnifiedSource-*.cpp absolute paths to compile. */
@@ -142,10 +153,11 @@ export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[
 
   const unified: string[] = [];
   const bundled: string[] = [];
-  // Stable iteration: sort directory keys so bundle numbering is deterministic
-  // across glob-order changes (globSync order can vary by filesystem).
+  // Stable iteration: sort directory keys and basenames by code unit (default
+  // .sort()) so bundle composition is identical regardless of glob order or
+  // host LC_COLLATE.
   for (const dir of [...byDir.keys()].sort()) {
-    const files = byDir.get(dir)!.sort((a, b) => basename(a).localeCompare(basename(b)));
+    const files = byDir.get(dir)!.sort((a, b) => (basename(a) < basename(b) ? -1 : 1));
 
     // Single file in a directory: no point wrapping it. Compile directly so
     // compiler diagnostics point at the real path.

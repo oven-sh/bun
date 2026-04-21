@@ -94,21 +94,8 @@ console.log(url, disposed);`,
     expect(out).toContain("using top =");
   });
 
-  test("Bun.Transpiler still lowers using / await using for target=browser", () => {
-    const browserTranspiler = new Bun.Transpiler({ target: "browser" });
-    const out = browserTranspiler.transformSync(source, "js");
-
-    expect(out).toContain("__using");
-    expect(out).toContain("__callDispose");
-    expect(out).not.toContain("using x =");
-    expect(out).not.toContain("await using y =");
-    expect(out).not.toContain("for (using z of ");
-    expect(out).not.toContain("using top =");
-  });
-
-  test("Bun.Transpiler still lowers using / await using for target=node", () => {
-    const nodeTranspiler = new Bun.Transpiler({ target: "node" });
-    const out = nodeTranspiler.transformSync(source, "js");
+  test.each(["browser", "node"] as const)("Bun.Transpiler still lowers using / await using for target=%s", target => {
+    const out = new Bun.Transpiler({ target }).transformSync(source, "js");
 
     expect(out).toContain("__using");
     expect(out).toContain("__callDispose");

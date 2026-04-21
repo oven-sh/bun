@@ -342,8 +342,9 @@ debugger;
     // Enable Inspector + Debugger (so `debugger;` actually pauses), but not
     // TestReporter yet. JSC's debugger starts with breakpoints inactive and
     // doesn't pause on `debugger;` unless both are opted in. Arm the paused
-    // listener before initialized so we can't miss the event.
-    const paused = session.waitForEvent("Debugger.paused", 30000);
+    // listener before initialized so we can't miss the event; no internal
+    // timer here — the file-level setDefaultTimeout is the single bound.
+    const paused = new Promise<void>(resolve => session.addEventListener("Debugger.paused", () => resolve()));
     session.enableInspector();
     session.send("Debugger.enable");
     session.send("Debugger.setBreakpointsActive", { active: true });

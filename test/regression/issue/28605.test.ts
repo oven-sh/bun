@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test("jsxImportSource from nested tsconfig is used when running from workspace root", async () => {
+test.concurrent("jsxImportSource from nested tsconfig is used when running from workspace root", async () => {
   using dir = tempDir("issue-28605", {
     "package.json": JSON.stringify({
       private: true,
@@ -10,24 +10,12 @@ test("jsxImportSource from nested tsconfig is used when running from workspace r
     "node_modules/chat/package.json": JSON.stringify({
       name: "chat",
       version: "1.0.0",
-      exports: {
-        "./jsx-runtime": "./jsx-runtime.js",
-        "./jsx-dev-runtime": "./jsx-dev-runtime.js",
-      },
+      exports: { "./jsx-dev-runtime": "./jsx-dev-runtime.js" },
     }),
-    "node_modules/chat/jsx-runtime.js": `
-      export function jsx(type, props) { return JSON.stringify({ type, props }); }
-      export function jsxs(type, props) { return JSON.stringify({ type, props }); }
-      export const Fragment = "Fragment";
-    `,
     "node_modules/chat/jsx-dev-runtime.js": `
       export function jsxDEV(type, props) { return JSON.stringify({ type, props }); }
       export const Fragment = "Fragment";
     `,
-    "services/connect/package.json": JSON.stringify({
-      name: "connect",
-      version: "1.0.0",
-    }),
     "services/connect/tsconfig.json": JSON.stringify({
       compilerOptions: {
         jsx: "react-jsx",
@@ -54,16 +42,13 @@ test("jsxImportSource from nested tsconfig is used when running from workspace r
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).not.toContain("Cannot find module");
-  expect(stdout).toContain('"type":"div"');
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(exitCode).toBe(0);
+  expect(stdout).toContain('"type":"div"');
 });
 
-test("jsxImportSource from deeply nested tsconfig overrides root tsconfig", async () => {
+test.concurrent("jsxImportSource from deeply nested tsconfig overrides root tsconfig", async () => {
   using dir = tempDir("issue-28605-nested", {
-    "package.json": JSON.stringify({ private: true }),
     "tsconfig.json": JSON.stringify({
       compilerOptions: {
         jsx: "react-jsx",
@@ -73,16 +58,8 @@ test("jsxImportSource from deeply nested tsconfig overrides root tsconfig", asyn
     "node_modules/nested-jsx/package.json": JSON.stringify({
       name: "nested-jsx",
       version: "1.0.0",
-      exports: {
-        "./jsx-runtime": "./jsx-runtime.js",
-        "./jsx-dev-runtime": "./jsx-dev-runtime.js",
-      },
+      exports: { "./jsx-dev-runtime": "./jsx-dev-runtime.js" },
     }),
-    "node_modules/nested-jsx/jsx-runtime.js": `
-      export function jsx(type, props) { return JSON.stringify({ source: "nested", type, props }); }
-      export function jsxs(type, props) { return JSON.stringify({ source: "nested", type, props }); }
-      export const Fragment = "Fragment";
-    `,
     "node_modules/nested-jsx/jsx-dev-runtime.js": `
       export function jsxDEV(type, props) { return JSON.stringify({ source: "nested", type, props }); }
       export const Fragment = "Fragment";
@@ -119,9 +96,8 @@ test("jsxImportSource from deeply nested tsconfig overrides root tsconfig", asyn
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).not.toContain("Cannot find module");
-  expect(stdout).toContain('"source":"nested"');
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(exitCode).toBe(0);
+  // Both the startup and post-startup paths must pick up the nested tsconfig.
+  expect(stdout.match(/"source":"nested"/g)?.length).toBe(2);
 });

@@ -283,8 +283,6 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
                             break :inner;
                         }
                         blob.content_type_was_set = true;
-                        // WHATWG File API: preserve the lowercased input
-                        // verbatim; do not canonicalize to charset-appended forms.
                         if (globalObject.bunVM().mimeTypeInternedValue(slice)) |interned| {
                             blob.content_type = interned;
                             break :inner;
@@ -329,8 +327,6 @@ pub fn constructS3FileWithS3Credentials(
                             break :inner;
                         }
                         blob.content_type_was_set = true;
-                        // WHATWG File API: preserve the lowercased input
-                        // verbatim; do not canonicalize to charset-appended forms.
                         if (globalObject.bunVM().mimeTypeInternedValue(slice)) |interned| {
                             blob.content_type = interned;
                             break :inner;

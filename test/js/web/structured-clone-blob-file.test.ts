@@ -15,8 +15,6 @@ describe("structuredClone with Blob and File", () => {
       const cloned = structuredClone(blob);
       expect(cloned).toBeInstanceOf(Blob);
       expect(cloned.size).toBe(11);
-      // Per WHATWG File API, `text/plain` must NOT be canonicalized to
-      // `text/plain;charset=utf-8` — see #29257.
       expect(cloned.type).toBe("text/plain");
 
       const originalText = await blob.text();

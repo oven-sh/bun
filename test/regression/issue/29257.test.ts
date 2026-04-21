@@ -22,8 +22,7 @@ test("new Blob([], { type: 'text/plain' }).type is preserved verbatim", () => {
 
 test("File/Blob type is preserved for other types Bun used to canonicalize", () => {
   // These are the types Compact.toMimeType() substitutes into
-  // charset-appended forms for HTTP responses. None of them should leak
-  // the substitution into the File/Blob `type` property.
+  // charset-appended forms for HTTP responses.
   const types = [
     "text/plain",
     "text/css",
@@ -39,8 +38,6 @@ test("File/Blob type is preserved for other types Bun used to canonicalize", () 
 });
 
 test("File/Blob type with explicit charset is preserved verbatim", () => {
-  // A user who explicitly passes a charset parameter should get it back
-  // unchanged — not silently swapped for a different canonical form.
   const file = new File([], "x.txt", { type: "text/plain;charset=utf-8" });
   expect(file.type).toBe("text/plain;charset=utf-8");
 
@@ -49,16 +46,12 @@ test("File/Blob type with explicit charset is preserved verbatim", () => {
 });
 
 test("File/Blob type is lowercased (per WHATWG spec)", () => {
-  // The spec requires lowercasing but not charset canonicalization.
   expect(new File([], "x", { type: "TEXT/PLAIN" }).type).toBe("text/plain");
   expect(new Blob([], { type: "Text/Plain" }).type).toBe("text/plain");
 });
 
 test("uncommon MIME types still round-trip unchanged", () => {
-  // Types not in the interning table take the copyLowercase path. They
-  // should also round-trip verbatim (lowercased) — check both the File
-  // and Blob constructor paths since they share logic but are separate
-  // call sites in src/bun.js/webcore/Blob.zig.
+  // Types not in the interning table take the copyLowercase path.
   const file = new File([], "x", { type: "application/x-custom-type" });
   expect(file.type).toBe("application/x-custom-type");
   const blob = new Blob([], { type: "application/x-custom-type" });
@@ -72,18 +65,15 @@ test("Bun.file(path, { type: 'text/plain' }).type is preserved verbatim", () => 
 });
 
 test("Blob.prototype.slice(start, end, type) preserves the type verbatim", () => {
-  // Covers the `getSlice` / `getSliceFrom` path in Blob.zig. This hits
-  // the interning fast-path and also exercises the fix to the
-  // `content_type_was_set` flag computation in `getSliceFrom`.
+  // Covers the `getSlice` / `getSliceFrom` path in Blob.zig.
   const parent = new Blob(["hello world"]);
   const slice = parent.slice(0, 5, "text/plain");
   expect(slice.type).toBe("text/plain");
 });
 
 test("Bun.s3.file(path, { type: 'text/plain' }).type is preserved verbatim", () => {
-  // Covers the S3File constructor paths in S3File.zig (same bug, different
-  // file). The object is never actually touched over the network — we only
-  // check that the `type` field is set from our argument verbatim.
+  // Covers the S3File constructor paths in S3File.zig. The object is never
+  // actually touched over the network.
   const file = Bun.s3.file("test.txt", { type: "text/plain" });
   expect(file.type).toBe("text/plain");
 });

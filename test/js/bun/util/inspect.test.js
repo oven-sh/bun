@@ -587,8 +587,6 @@ describe("console.logging class displays names and extends", async () => {
 });
 
 it("console.log on a Blob shows name", () => {
-  // Per WHATWG File API, `text/plain` must NOT be canonicalized to
-  // `text/plain;charset=utf-8` — see #29257.
   const blob = new Blob(["foo"], { type: "text/plain" });
   expect(Bun.inspect(blob)).toBe('Blob (3 bytes) {\n  type: "text/plain"\n}');
   blob.name = "bar";

@@ -1828,16 +1828,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
                             break :inner;
                         }
                         blob.content_type_was_set = true;
-
-                        // WHATWG File API: the stored `type` must be the
-                        // lowercased input verbatim — do NOT canonicalize into
-                        // charset-appended forms like `text/plain;charset=utf-8`.
-                        //
-                        // `blob` may have come from `get()` → `dupe()`, which
-                        // shallow-copies a parent's `content_type_allocated=true`
-                        // flag along with an aliased pointer. Reset the flag
-                        // before overwriting so we don't mark a static slice
-                        // (or a future copyLowercase buffer) with stale state.
+                        // reset: dupe() shallow-copies the parent's content_type_allocated flag
                         blob.content_type_allocated = false;
                         if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
                             blob.content_type = interned;
@@ -1939,12 +1930,7 @@ pub fn constructBunFile(
                             break :inner;
                         }
                         blob.content_type_was_set = true;
-                        // WHATWG File API: preserve the lowercased input
-                        // verbatim; do not canonicalize to charset-appended forms.
-                        //
-                        // `findOrCreateFileFromPath` can return a duped blob
-                        // (standalone module graph path), which shallow-copies
-                        // `content_type_allocated=true`. Reset before overwrite.
+                        // reset: dupe() shallow-copies the parent's content_type_allocated flag
                         blob.content_type_allocated = false;
                         if (vm.mimeTypeInternedValue(slice)) |interned| {
                             blob.content_type = interned;
@@ -2344,8 +2330,6 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
                     }
                     this.content_type_was_set = true;
 
-                    // WHATWG File API: preserve the lowercased input
-                    // verbatim; do not canonicalize to charset-appended forms.
                     if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
                         this.content_type = interned;
                     } else {
@@ -2690,8 +2674,6 @@ pub fn getWriter(
                         }
                         this.content_type_was_set = true;
 
-                        // WHATWG File API: preserve the lowercased input
-                        // verbatim; do not canonicalize to charset-appended forms.
                         if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
                             this.content_type = interned;
                         } else {
@@ -2866,12 +2848,8 @@ pub fn getSliceFrom(this: *Blob, globalThis: *jsc.JSGlobalObject, relativeStart:
         blob.content_type = content_type;
     }
     blob.content_type_allocated = content_type_was_allocated;
-    // The slice's `content_type_was_set` is true if the parent already
-    // had one set *or* the caller of `.slice(start, end, type)` passed a
-    // non-empty `type` argument. Checking the argument slice directly
-    // (rather than the old `content_type_was_allocated` flag) is required
-    // for the interned path, which points at a static slice and leaves
-    // `content_type_was_allocated` false.
+    // Check `content_type.len` directly — the interned path points at a static
+    // slice and leaves `content_type_was_allocated` false even when a type was passed.
     blob.content_type_was_set = this.content_type_was_set or content_type.len > 0;
 
     var blob_ = Blob.new(blob);
@@ -2955,8 +2933,6 @@ pub fn getSlice(
                     break :inner;
                 }
 
-                // WHATWG File API: preserve the lowercased input
-                // verbatim; do not canonicalize to charset-appended forms.
                 if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
                     content_type = interned;
                     break :inner;
@@ -3384,14 +3360,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
                                     break :inner;
                                 }
                                 blob.content_type_was_set = true;
-
-                                // WHATWG File API: preserve the lowercased input
-                                // verbatim; do not canonicalize to charset-appended forms.
-                                //
-                                // `blob` came from `get()` which may shallow-copy
-                                // a parent's `content_type_allocated=true` via
-                                // `dupe()`. Reset before overwrite so we do not
-                                // mark a static slice as owned.
+                                // reset: dupe() shallow-copies the parent's content_type_allocated flag
                                 blob.content_type_allocated = false;
                                 if (globalThis.bunVM().mimeTypeInternedValue(slice)) |interned| {
                                     blob.content_type = interned;
@@ -3559,17 +3528,9 @@ pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
     if (this.store != null) this.store.?.ref();
     var duped = this.*;
     duped.setNotHeapAllocated();
-    // NOTE: both branches below are currently unreachable — `setNotHeapAllocated`
-    // above zeroes the ref count so `duped.isHeapAllocated()` is always false.
-    // That means neither the use-after-free workaround (first branch) nor the
-    // `content_type` duplication for `include_content_type=true` (second branch)
-    // ever runs at runtime. Left in place because fixing both guards (e.g. by
-    // checking `this.isHeapAllocated()` instead) would activate previously-dead
-    // behavior and is out of scope for the WHATWG-compliance fix; it needs
-    // its own testing and is tracked as a separate follow-up. If/when the
-    // guards are revived, `jsc.VirtualMachine.get().mimeType(duped.content_type)`
-    // below must be swapped for `mimeTypeInternedValue` or it will silently
-    // re-introduce the charset canonicalization this PR removes elsewhere.
+    // NOTE: both branches below are dead — `setNotHeapAllocated` zeroes the ref
+    // count so `duped.isHeapAllocated()` is always false. If revived, swap
+    // `mimeType` → `mimeTypeInternedValue` to avoid re-introducing charset canonicalization.
     if (duped.content_type_allocated and duped.isHeapAllocated() and !include_content_type) {
         // for now, we just want to avoid a use-after-free here
         if (jsc.VirtualMachine.get().mimeType(duped.content_type)) |mime| {

@@ -355,16 +355,10 @@ pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []
     return null;
 }
 
-/// Look up a MIME type string in the interned table and return its raw
-/// (uncanonicalized) static-string slice, if it exists.
-///
-/// Unlike `mimeTypeFromString`, this does NOT substitute canonical
-/// charset-appended forms (e.g. `text/plain` is returned as-is, not as
-/// `text/plain;charset=utf-8`). Use this where the WHATWG File/Blob API
-/// requires preserving the user-supplied MIME type verbatim.
-///
-/// Returns a slice into a static `_bytes` blob — safe to store without
-/// allocation tracking.
+/// Like `mimeTypeFromString`, but returns the raw interned slice with no
+/// charset substitution (e.g. `text/plain` is returned as-is, not as
+/// `text/plain;charset=utf-8`). Used for WHATWG File/Blob `type`, which
+/// must preserve the user-supplied value. Slice is static; safe to store.
 pub fn mimeTypeInternedValue(this: *RareData, allocator: std.mem.Allocator, str: []const u8) ?[]const u8 {
     if (this.mime_types == null) {
         this.mime_types = bun.http.MimeType.createHashTable(

@@ -38,17 +38,6 @@ class TestReporterSession extends InspectorSession {
     this.send("TestReporter.enable");
   }
 
-  /** Send a command and resolve with its result once the ack arrives. */
-  sendAndWait(method: string, params: any = {}): Promise<any> {
-    if (!this.framer) throw new Error("Socket not connected");
-    this.ref();
-    const id = this.nextId++;
-    return new Promise(resolve => {
-      this.messageCallbacks.set(id, resolve);
-      this.framer!.send(this.socket as any, JSON.stringify({ id, method, params }));
-    });
-  }
-
   enableAll() {
     this.send("Inspector.enable");
     this.send("TestReporter.enable");
@@ -283,17 +272,23 @@ describe("suite B", () => {
     // Regression: the retroactive and live reporting paths used independent
     // ID counters, so enabling mid-collection handed out colliding IDs.
     //
-    // To hit that window deterministically the fixture hits a `debugger;`
-    // statement after the top-level describe() calls. With the Debugger
-    // domain enabled the main thread parks in runWhilePaused, which keeps
-    // dispatching inspector commands, so we can send TestReporter.enable
-    // (retroactive reporting runs against a tree with the two describes but
-    // no tests yet) and then Debugger.resume — all as explicit
-    // request/response pairs, no timing assumptions.
+    // To hit that window deterministically the fixture blocks the main thread
+    // on a synchronous stdin read after the top-level describe() calls. While
+    // it's parked there we send TestReporter.enable (which sits in the main
+    // thread's concurrent-task queue), then unblock stdin; the very next
+    // vm.eventLoop().tick() after module eval drains that queue and runs
+    // retroactive reporting against a tree that has describes but no tests.
+    //
+    // A `debugger;`+Debugger.paused handshake would avoid the fixed delay
+    // below, but Debugger.enable is handled before module loading begins and
+    // deopts *everything* (bun:test internals included) to the interpreter
+    // with per-op hooks. On the release-asan CI lane that pushed startup past
+    // the file timeout, so we stick with the stdin block.
 
     using dir = tempDir("test-reporter-mid-collection", {
       "mid.test.ts": `
 import { describe, test, expect } from "bun:test";
+import fs from "node:fs";
 
 describe("suite A", () => {
   test("test A1", () => { expect(1).toBe(1); });
@@ -303,11 +298,11 @@ describe("suite B", () => {
   test("test B1", () => { expect(3).toBe(3); });
 });
 
-// At this point both describes are in root_scope.entries with
-// test_id_for_debugger == 0, but their callbacks (which register the inner
-// test() calls) have not run yet. Pause here so the harness can enable
-// TestReporter against exactly this partially-collected tree.
-debugger;
+// Both describes are now in root_scope.entries with test_id_for_debugger == 0,
+// but their callbacks (which register the inner test() calls) have not run
+// yet. Tell the harness and block until it has queued TestReporter.enable.
+fs.writeSync(1, "READY\\n");
+fs.readSync(0, Buffer.alloc(1));
 `,
     });
 
@@ -335,38 +330,45 @@ debugger;
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
+      stdin: "pipe",
     });
 
     await socketPromise;
 
-    // Enable Inspector + Debugger (so `debugger;` actually pauses), but not
-    // TestReporter yet. JSC's debugger starts with breakpoints inactive and
-    // doesn't pause on `debugger;` unless both are opted in. Arm the paused
-    // listener before initialized so we can't miss the event; no internal
-    // timer here — the file-level setDefaultTimeout is the single bound.
-    const paused = new Promise<void>(resolve => session.addEventListener("Debugger.paused", () => resolve()));
     session.enableInspector();
-    session.send("Debugger.enable");
-    session.send("Debugger.setBreakpointsActive", { active: true });
-    session.send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
     session.initialize();
 
-    await paused;
+    // Wait until the fixture has registered both describes and parked on
+    // readSync(). It writes READY to stdout just before blocking.
+    {
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (!buf.includes("READY")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+      }
+      reader.releaseLock();
+    }
 
-    // Main thread is parked in runWhilePaused with phase == .collection and
-    // root_scope == [suite A, suite B]. runWhilePaused dispatches inspector
-    // commands on the main thread, so this enable runs retroactive reporting
-    // right here and the ack tells us it's done.
-    await session.sendAndWait("TestReporter.enable");
+    // Subprocess main thread is blocked in readSync; enable goes to the
+    // debugger thread and gets posted onto the main thread's concurrent
+    // queue. We can't await an inspector ack (the thread that would answer
+    // is the one we've blocked), so we wait for the debugger thread — which
+    // is otherwise idle, parked on epoll for this socket — to have had time
+    // to read the bytes and post the task. That's a single epoll wake plus a
+    // handful of function calls; 250ms is orders of magnitude more than that
+    // path needs even under ASAN. If the scheduler somehow withholds the
+    // debugger thread for the full window the failure mode is only that the
+    // buggy build no longer exercises the mid-collection path (it then
+    // passes vacuously), not a false failure on a fixed build.
+    session.enableTestReporter();
+    await Bun.sleep(250);
 
-    // The two describes should already have been reported retroactively.
-    const afterRetro = [...session.getFoundTests().values()].map(t => ({ type: t.type, name: t.name }));
-    expect(afterRetro).toEqual([
-      { type: "describe", name: "suite A" },
-      { type: "describe", name: "suite B" },
-    ]);
-
-    await session.sendAndWait("Debugger.resume");
+    // Unblock the synchronous stdin read so collection can proceed.
+    proc.stdin.write("\n");
+    proc.stdin.end();
 
     // Wait for exit *and* socket close — FIN is ordered after data on a
     // unix stream socket, so close guarantees every frame has been through

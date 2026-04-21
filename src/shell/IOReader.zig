@@ -194,6 +194,17 @@ pub fn onReaderDone(this: *IOReader) void {
 
 fn asyncDeinit(this: *@This()) void {
     log("IOReader(0x{x}) asyncDeinit", .{@intFromPtr(this)});
+    // The async hop guards against being deref'd from inside a read callback while
+    // BufferedReader is still iterating. If we never started reading, no callback can be
+    // in flight, so close synchronously to avoid holding the fd until the next tick.
+    const never_started = if (bun.Environment.isWindows)
+        this.reader.source == null
+    else
+        this.reader.handle == .closed;
+    if (never_started) {
+        this.asyncDeinitCallback();
+        return;
+    }
     this.async_deinit.enqueue(); // calls `asyncDeinitCallback`
 }
 

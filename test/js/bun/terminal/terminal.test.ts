@@ -1132,9 +1132,7 @@ describe("Bun.spawn with terminal option", () => {
     });
 
     await proc.exited;
-
-    // Wait for the exit callback with timeout
-    await Promise.race([promise, Bun.sleep(500)]);
+    await promise;
 
     // The exit callback should be called when EOF is received on the PTY
     expect(exitCalled).toBe(true);

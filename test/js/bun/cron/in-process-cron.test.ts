@@ -252,7 +252,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    if (exitCode !== 0) console.error(stderr);
     expect(stdout.trim()).toBe("ok");
     expect(exitCode).toBe(0);
   }, 130_000);

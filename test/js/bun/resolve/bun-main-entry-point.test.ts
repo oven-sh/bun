@@ -32,9 +32,14 @@ test.concurrent("dynamic import('bun:main') returns the wrapper module", async (
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("OK\n");
-  expect(stripAsanWarning(stderr)).toEqual([]);
-  expect(exitCode).toBe(0);
+  // Surface child diagnostics on failure: a bare stdout assertion hides why
+  // the child exited (ASAN report / unhandled rejection / signal).
+  expect({ stdout, stderr: stripAsanWarning(stderr), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "OK\n",
+    stderr: [],
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 test.concurrent("import('bun:main') from a preload (before the module map is populated)", async () => {

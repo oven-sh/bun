@@ -591,6 +591,11 @@ fn enqueueFile(this: *IOWriter) Yield {
     if (this.is_writing) {
         return .suspended;
     }
+    // The pollable path sets `started` in write(); the non-pollable file path bypasses
+    // write() entirely, so set it here. asyncDeinit's never-started fast-path must not
+    // fire for a writer that actually wrote — bump()'s onIOWriterChunk callback can deref
+    // us while doFileWrite is still on the stack.
+    this.started = true;
     this.setWriting(true);
 
     return this.doFileWrite();

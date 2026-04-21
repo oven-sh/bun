@@ -29,6 +29,7 @@
 #include <JavaScriptCore/YarrMatchingContextHolder.h>
 #include "ErrorCode.h"
 #include "napi_external.h"
+#include "WebCoreJSBuiltins.h"
 
 #include <JavaScriptCore/JSPromise.h>
 

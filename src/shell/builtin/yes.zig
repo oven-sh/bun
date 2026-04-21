@@ -74,9 +74,10 @@ pub fn start(this: *@This()) Yield {
         return this.bltn().stdout.enqueue(this, this.buffer[0..this.buffer_used], safeguard);
     }
 
+    const evtloop = this.bltn().eventLoop();
     this.task = .{
-        .evtloop = this.bltn().eventLoop(),
-        .concurrent_task = jsc.EventLoopTask.fromEventLoop(this.task.evtloop),
+        .evtloop = evtloop,
+        .concurrent_task = jsc.EventLoopTask.fromEventLoop(evtloop),
     };
     return this.writeNoIO();
 }

@@ -1,6 +1,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "NodeModuleModule.h"
+#include "WebCoreJSBuiltins.h"
 
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/VM.h>

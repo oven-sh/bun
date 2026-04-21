@@ -217,12 +217,12 @@ export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[
       const chunk = files.slice(i, i + bundleSize);
       const n = i / bundleSize;
       const out = resolve(outDir, `UnifiedSource-${tag}-${n}.cpp`);
-      // Absolute include paths: the bundle lives in buildDir but the sources
-      // are in src/. -I doesn't help for #include "foo.cpp"; absolute is
-      // simplest and matches what compile_commands.json consumers expect.
-      // slash(): clang accepts forward slashes everywhere; native backslashes
-      // in `#include "C:\..."` are escape sequences.
-      const body = chunk.map(f => `#include "${slash(f)}"`).join("\n") + "\n";
+      // Paths relative to the bundle file: ccache hashes source content
+      // verbatim (CCACHE_BASEDIR only rewrites command-line args), so an
+      // absolute checkout root in the body would defeat cache sharing
+      // across worktrees. slash(): clang accepts forward slashes everywhere;
+      // native backslashes in `#include "C:\..."` are escape sequences.
+      const body = chunk.map(f => `#include "${slash(relative(outDir, f))}"`).join("\n") + "\n";
       writeIfChanged(out, body);
       unified.push(out);
       bundled.push(...chunk);

@@ -209,11 +209,18 @@ function runTests(getSql: () => SQL) {
     const tableName = "t_" + randomUUIDv7("hex").replaceAll("-", "");
     await sql`CREATE TEMP TABLE ${sql(tableName)} (j jsonb[])`;
 
-    await sql`INSERT INTO ${sql(tableName)} ${sql({ j: [[1, 2], [3, 4]] })}`;
+    await sql`INSERT INTO ${sql(tableName)} ${sql({
+      j: [
+        [1, 2],
+        [3, 4],
+      ],
+    })}`;
 
-    const [row] =
-      await sql`SELECT j, array_ndims(j) as ndim, array_length(j, 1) as len FROM ${sql(tableName)}`;
-    expect(row.j).toEqual([[1, 2], [3, 4]]);
+    const [row] = await sql`SELECT j, array_ndims(j) as ndim, array_length(j, 1) as len FROM ${sql(tableName)}`;
+    expect(row.j).toEqual([
+      [1, 2],
+      [3, 4],
+    ]);
     expect(row.ndim).toBe(1);
     expect(row.len).toBe(2);
   });

@@ -38,10 +38,10 @@ fn writeArrayLiteral(
     comptime Context: type,
     writer: protocol.NewWriter(Context),
 ) Error!void {
-    if (!value.isArray()) {
-        try writer.write("{}");
-        return;
-    }
+    // Both entry points gate on `value.isArray()` before dispatching here —
+    // `writeTo` via `writeBind` in `PostgresRequest.zig`, and the recursive
+    // call in `writeElement` below. A non-array would be a caller bug.
+    bun.assert(value.isArray());
 
     var iter = try jsc.JSArrayIterator.init(value, globalObject);
     if (iter.len == 0) {
@@ -79,8 +79,12 @@ fn writeElement(
         return;
     }
 
-    // bytea[] elements are Buffers / typed arrays — encode as `"\x<hex>"`.
-    if (element_tag == .bytea) {
+    // bytea[] elements are Buffers — encode as `"\x<hex>"`. Typed arrays
+    // are NOT matched here; they fall through to the array/default path so
+    // they serialize as their own array of numeric elements. This mirrors
+    // `arrayValueSerializer` in `src/js/internal/sql/postgres.ts` which
+    // gates on `Buffer.isBuffer(value)`, not on `ArrayBuffer.isView`.
+    if (element_tag == .bytea and value.isBuffer(globalObject)) {
         if (value.asArrayBuffer(globalObject)) |buf| {
             try writer.write("\"\\\\x");
             try writeHex(Context, writer, buf.byteSlice());

@@ -411,16 +411,20 @@ pub const JSValue = enum(i64) {
     /// slice for non-Date or non-finite values.
     pub fn toISOString(this: JSValue, globalObject: *jsc.JSGlobalObject, buf: *[29]u8) []const u8 {
         const count = JSC__JSValue__toISOString(globalObject, this, buf);
-        if (count < 0) {
+        // Defensive: the C++ side asserts `count < 29` but asserts are
+        // compiled out in release. Clamp to the buffer so we never slice
+        // out of bounds even if the binding is ever changed to write more.
+        if (count < 0 or count > buf.len) {
             return "";
         }
 
         return buf[0..@as(usize, @intCast(count))];
     }
-    extern fn JSC__JSValue__DateNowISOString(*JSGlobalObject, f64) JSValue;
+    extern fn JSC__JSValue__DateNowISOString(*JSGlobalObject, *[28]u8) c_int;
     pub fn getDateNowISOString(globalObject: *jsc.JSGlobalObject, buf: *[28]u8) []const u8 {
+        // `JSC__JSValue__DateNowISOString` writes at most 28 bytes (no NUL).
         const count = JSC__JSValue__DateNowISOString(globalObject, buf);
-        if (count < 0) {
+        if (count < 0 or count > buf.len) {
             return "";
         }
 

@@ -5824,8 +5824,8 @@ extern "C" int JSC__JSValue__toISOString(JSC::JSGlobalObject* globalObject, Enco
 
     auto& vm = JSC::getVM(globalObject);
 
-    // Bun::toISOString writes up to 28 bytes + NUL into `buf`. The caller
-    // is expected to provide a 28-byte buffer (it fits ISO 8601 in UTC with
+    // Bun::toISOString writes up to 28 bytes plus a NUL terminator into
+    // `buf`. Callers must provide a 29-byte buffer (fits ISO 8601 in UTC with
     // millisecond precision, e.g. "2024-01-01T00:00:00.000Z" = 24 chars).
     return static_cast<int>(Bun::toISOString(vm, thisDateObj->internalNumber(), buf));
 }

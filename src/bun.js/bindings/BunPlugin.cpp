@@ -529,6 +529,12 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         return {};
     }
 
+    JSC::JSValue callbackValue = callframe->argument(1);
+    if (!callbackValue.isCell() || !callbackValue.isCallable()) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) requires a function"_s));
+        return {};
+    }
+
     auto resolveSpecifier = [&]() -> void {
         JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
         if (sourceOrigin.isNull())
@@ -583,12 +589,6 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     resolveSpecifier();
     RETURN_IF_EXCEPTION(scope, {});
-
-    JSC::JSValue callbackValue = callframe->argument(1);
-    if (!callbackValue.isCell() || !callbackValue.isCallable()) {
-        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) requires a function"_s));
-        return {};
-    }
 
     JSC::JSObject* callback = callbackValue.getObject();
 

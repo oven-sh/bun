@@ -2468,15 +2468,6 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
                         this.eventLoop().autoTick();
                     }
 
-                    // Drain microtasks a user `process.on('unhandledRejection',
-                    // …)` handler may have queued inside `autoTick`'s
-                    // `handleRejectedPromises()` — see the matching comment in
-                    // EventLoop.waitForPromiseOrLoopExit. `hasAnyHandleWork`
-                    // can't see JSC microtasks, so without this drain a
-                    // handler that resolves the TLA promise would lose its
-                    // continuation when we break below.
-                    this.eventLoop().drainMicrotasksWithGlobal(this.global, this.jsc_vm) catch break;
-
                     // Top-level await with no ref'd handle to resolve it:
                     // bail so POSIX doesn't burn 100% CPU and Windows doesn't
                     // hang on `uv_run(NOWAIT)` skipping its loop body. See
@@ -2484,7 +2475,15 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
                     // (and for why this deliberately avoids `isEventLoopAlive`,
                     // which short-circuits on `unhandled_error_counter != 0`).
                     if (this.pending_internal_promise.?.status() == .pending and !this.eventLoop().hasAnyHandleWork()) {
-                        break;
+                        // Drain microtasks a user `process.on('unhandledRejection',
+                        // …)` handler may have queued inside `autoTick`'s
+                        // `handleRejectedPromises()` — see waitForPromiseOrLoopExit.
+                        // If the drain runs the continuation that settles the promise,
+                        // re-check and fall through to the loop condition.
+                        this.eventLoop().drainMicrotasksWithGlobal(this.global, this.jsc_vm) catch break;
+                        if (this.pending_internal_promise.?.status() == .pending and !this.eventLoop().hasAnyHandleWork()) {
+                            break;
+                        }
                     }
                 }
             },

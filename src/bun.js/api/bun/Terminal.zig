@@ -341,14 +341,33 @@ pub fn closeSlaveFd(this: *Terminal) void {
 /// Windows: close only the ConPTY handle so conhost releases its pipe ends and
 /// our reader observes EOF. Leaves the Terminal itself open (closed=false),
 /// matching POSIX semantics where child exit delivers EOF without closing the
-/// master fd. Only called when the attached child has already exited, so
-/// ClosePseudoConsole's final flush is bounded.
+/// master fd.
 pub fn closePseudoconsole(this: *Terminal) void {
     if (comptime !Environment.isWindows) return;
     if (this.hpcon) |hpcon| {
         this.hpcon = null;
-        bun.windows.ClosePseudoConsole(hpcon);
+        closePseudoconsoleOffThread(hpcon);
     }
+}
+
+/// On Windows < 11 24H2, ClosePseudoConsole blocks until the output pipe is
+/// drained. Our reader runs on the event-loop thread, so calling it there
+/// deadlocks. Fire from a detached thread so the event loop keeps draining;
+/// conhost completes its flush and our reader sees the final data then EOF.
+/// hpcon is passed by value so the Terminal struct may be freed before the
+/// thread completes.
+fn closePseudoconsoleOffThread(hpcon: bun.windows.HPCON) void {
+    if (comptime !Environment.isWindows) return;
+    const Runner = struct {
+        fn run(h: bun.windows.HPCON) void {
+            bun.windows.ClosePseudoConsole(h);
+        }
+    };
+    const t = std.Thread.spawn(.{ .stack_size = 64 * 1024 }, Runner.run, .{hpcon}) catch {
+        bun.windows.ClosePseudoConsole(hpcon);
+        return;
+    };
+    t.detach();
 }
 
 const PtyResult = struct {
@@ -956,25 +975,28 @@ pub fn closeInternal(this: *Terminal) void {
     if (this.flags.closed) return;
     this.flags.closed = true;
 
-    // Close reader (closes read_fd)
-    if (this.flags.reader_started) {
-        this.reader.close();
-    }
-    this.read_fd = bun.invalid_fd;
-
     // Close writer (closes write_fd)
     this.writer.close();
     this.write_fd = bun.invalid_fd;
 
     if (comptime Environment.isWindows) {
-        // ClosePseudoConsole on older Windows blocks until the output pipe is
-        // drained. With our reader already closed above, conhost sees
-        // broken-pipe on its next write and returns without blocking.
+        // Dispatch ClosePseudoConsole off-thread (it blocks until the output
+        // pipe is drained on Windows < 11 24H2) and leave the reader open so
+        // the event loop can keep draining; conhost flushes the final frame,
+        // closes its pipe end, and the reader observes EOF → onReaderDone.
         if (this.hpcon) |hpcon| {
             this.hpcon = null;
-            bun.windows.ClosePseudoConsole(hpcon);
+            closePseudoconsoleOffThread(hpcon);
+            // Reader stays open; onReaderDone will close it on EOF.
+            return;
         }
     }
+
+    // Close reader (closes read_fd)
+    if (this.flags.reader_started) {
+        this.reader.close();
+    }
+    this.read_fd = bun.invalid_fd;
 
     // Close master fd
     if (this.master_fd != bun.invalid_fd) {

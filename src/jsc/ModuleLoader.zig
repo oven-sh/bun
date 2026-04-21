@@ -222,6 +222,27 @@ pub fn transpileSourceCode(
             };
 
             var input_file_fd: FD = bun.invalid_fd;
+
+            // Resolve per-file JSX and decorator settings from the nearest
+            // enclosing tsconfig.json instead of using only the root config.
+            var jsx = jsc_vm.transpiler.options.jsx;
+            var emit_decorator_metadata = jsc_vm.transpiler.options.emit_decorator_metadata;
+            var experimental_decorators = jsc_vm.transpiler.options.experimental_decorators;
+            if (path.isFile() and std.fs.path.isAbsolute(path.name.dir)) {
+                if (jsc_vm.transpiler.resolver.readDirInfo(path.name.dir) catch null) |dir_info| {
+                    if (dir_info.enclosing_tsconfig_json) |tsconfig| {
+                        jsx = tsconfig.mergeJSX(jsx);
+                        jsx.development = switch (jsc_vm.transpiler.options.force_node_env) {
+                            .development => true,
+                            .production => false,
+                            .unspecified => jsc_vm.transpiler.options.jsx.development,
+                        };
+                        emit_decorator_metadata = emit_decorator_metadata or tsconfig.emit_decorator_metadata;
+                        experimental_decorators = experimental_decorators or tsconfig.experimental_decorators;
+                    }
+                }
+            }
+
             var parse_options = Transpiler.ParseOptions{
                 .allocator = allocator,
                 .path = path,
@@ -231,9 +252,9 @@ pub fn transpileSourceCode(
                 .file_fd_ptr = &input_file_fd,
                 .file_hash = hash,
                 .macro_remappings = macro_remappings,
-                .jsx = jsc_vm.transpiler.options.jsx,
-                .emit_decorator_metadata = jsc_vm.transpiler.options.emit_decorator_metadata,
-                .experimental_decorators = jsc_vm.transpiler.options.experimental_decorators,
+                .jsx = jsx,
+                .emit_decorator_metadata = emit_decorator_metadata,
+                .experimental_decorators = experimental_decorators,
                 .virtual_source = virtual_source,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,

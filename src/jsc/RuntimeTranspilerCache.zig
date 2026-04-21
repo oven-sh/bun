@@ -17,7 +17,8 @@
 /// Version 18: Include ESM record (module info) with an ES Module, see #15758
 /// Version 19: Sourcemap blob is InternalSourceMap (varint stream + sync points), not VLQ.
 /// Version 20: InternalSourceMap stream is bit-packed windows.
-const expected_version = 20;
+/// Version 21: Include JSX runtime and development flag in feature hashing for per-file JSX cache separation.
+const expected_version = 21;
 
 const debug = Output.scoped(.cache, .visible);
 const MINIMUM_CACHE_SIZE = 50 * 1024;

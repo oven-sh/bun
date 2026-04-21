@@ -113,6 +113,7 @@ pub const Options = struct {
     /// Parse terminal options from a JS object
     pub fn parseFromJS(globalObject: *jsc.JSGlobalObject, js_options: JSValue) bun.JSError!Options {
         var options = Options{};
+        errdefer options.deinit();
 
         if (try js_options.getOptional(globalObject, "cols", i32)) |n| {
             if (n > 0 and n <= 65535) options.cols = @intCast(n);
@@ -210,13 +211,19 @@ fn initTerminal(
     switch (terminal.writer.start(pty_result.write_fd, true)) {
         .result => terminal.ref(),
         .err => {
-            // writer.start() may have allocated a poll holding write_fd before
-            // failing; closeInternal → writer.close() frees it and closes the
-            // fd. Pre-set writer_done so onWriterClose's deref is skipped and
-            // the struct isn't freed mid-closeInternal.
+            // POSIX: writer.start() may have allocated a poll holding write_fd
+            // before registerWithFd failed; closeInternal → writer.close()
+            // frees the poll and closes write_fd. Windows: writer.start()
+            // failure leaves source==null so writer.close() is a no-op; close
+            // write_fd directly. Pre-set writer_done so onWriterClose's deref
+            // is skipped and the struct isn't freed mid-closeInternal.
             terminal.flags.writer_done = true;
             terminal.read_fd.close();
             terminal.read_fd = bun.invalid_fd;
+            if (comptime Environment.isWindows) {
+                terminal.write_fd.close();
+                terminal.write_fd = bun.invalid_fd;
+            }
             terminal.closeInternal();
             terminal.deref();
             return error.WriterStartFailed;

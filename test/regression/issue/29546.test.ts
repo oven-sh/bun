@@ -49,9 +49,13 @@ test("AbortSignal.timeout awaited at top-level does not hang or spin", async () 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   const elapsed = performance.now() - started;
 
+  // Order matters: a hang regression shows up as elapsed >= 30_000 (and,
+  // in the worst case, a SIGTERM exit code from the test timeout). Assert
+  // elapsed first so the diff surfaces the actual failure signal rather
+  // than the exit-code side effect.
   expect(stdout).toBe("");
-  expect(exitCode).toBe(0);
   expect(elapsed).toBeLessThan(30_000);
+  expect(exitCode).toBe(0);
 });
 
 test("AbortSignal.timeout fires when something else keeps the loop alive", async () => {
@@ -95,9 +99,10 @@ test("top-level await on a never-resolving promise exits cleanly", async () => {
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   const elapsed = performance.now() - started;
 
+  // See test 1 for assertion ordering rationale.
   expect(stdout).toBe("before\n");
-  expect(exitCode).toBe(0);
   expect(elapsed).toBeLessThan(30_000);
+  expect(exitCode).toBe(0);
 });
 
 test("unhandled rejection mid-TLA does not abandon an in-flight wait", async () => {

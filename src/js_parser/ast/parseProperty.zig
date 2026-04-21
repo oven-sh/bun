@@ -300,8 +300,11 @@ pub fn ParseProperty(
                                             }
                                         },
                                         .p_accessor => {
-                                            // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
-                                            if (opts.is_class and p.options.features.standard_decorators and
+                                            // "accessor" keyword for auto-accessor class fields. This is a
+                                            // standalone TC39 proposal (ES2022+) / TypeScript 4.9+ syntax
+                                            // and is valid regardless of whether the file uses legacy
+                                            // (`experimentalDecorators`) or standard decorators.
+                                            if (opts.is_class and
                                                 (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == .p_accessor)
                                             {
                                                 kind = .auto_accessor;

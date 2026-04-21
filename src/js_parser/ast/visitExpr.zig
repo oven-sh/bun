@@ -1676,6 +1676,35 @@ pub fn VisitExpr(
                     return p.lowerStandardDecoratorsExpr(e_, expr.loc, decorator_name_from_context);
                 }
 
+                // Class expressions never reach `lowerClass`, so any `ts_decorators`
+                // on class-expression members are silently dropped by the
+                // legacy-decorator path (a pre-existing Bun limitation, not
+                // specific to `accessor`). Until class-expression legacy
+                // decorators are implemented, refuse to silently drop a
+                // decorator on an auto-accessor inside a class expression —
+                // otherwise the user would get valid-looking code where the
+                // `@dec` never fires.
+                if (parser_feature__typescript and !p.options.features.standard_decorators) {
+                    for (e_.properties) |p2| {
+                        if (p2.kind == .auto_accessor and p2.ts_decorators.len > 0) {
+                            // Report *every* offender so the user sees all
+                            // violations in one compile pass.
+                            bun.handleOom(p.log.addError(
+                                p.source,
+                                p2.ts_decorators.slice()[0].loc,
+                                "Legacy decorators on `accessor` fields inside a class expression are not yet supported. Move the class to a declaration or drop the decorator.",
+                            ));
+                        }
+                    }
+                }
+
+                // Rewrite `accessor x = ...` fields into `#storage + get/set`
+                // for class expressions that aren't going through the standard-
+                // decorators lowering (JSC does not parse the `accessor` keyword).
+                // No prefix-statement sink here — computed-key hoisting only
+                // applies in statement position.
+                p.rewriteAutoAccessorProperties(e_, null);
+
                 // Remove unused class names when minifying (only when bundling is enabled)
                 // unless --keep-names is specified
                 if (p.options.features.minify_syntax and p.options.bundle and

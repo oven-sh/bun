@@ -80,6 +80,11 @@ function prebuiltUrl(cfg: Config): string {
 /**
  * Prebuilt extraction dir. Suffix in the key so switching debug ↔ release
  * doesn't reuse a wrong-ABI extraction.
+ *
+ * Under cacheDir (not downloadCacheDir): in CI that's `<buildDir>/cache`, so
+ * split-build artifact upload — `relative(buildDir, lib)` in ci.ts — stays
+ * traversal-free. The ~200MB download is what actually persists across
+ * runners, via the separate tarball cache at `downloadCacheDir/tarballs/`.
  */
 function prebuiltDestDir(cfg: Config): string {
   const version16 = cfg.webkitVersion.slice(0, 16);

@@ -15,8 +15,8 @@
  * `buildDir/deps/<name>/`. This supports "local" dep mode where the user edits
  * vendored source directly — the fetch step is skipped and no .ref is written.
  *
- * Tarballs are cached in `cacheDir/tarballs/<identity-hash>.tar.gz` so
- * re-extraction after a failed patch doesn't re-download.
+ * Tarballs are cached in `downloadCacheDir/tarballs/<name>-<url-hash>.tar.gz`
+ * so re-extraction after a failed patch doesn't re-download.
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
@@ -152,7 +152,9 @@ export type Source =
       rmAfterExtract?: string[];
       /**
        * Where extracted files land. Default: `vendor/<name>/`. Prebuilt deps
-       * (WebKit, nodejs-headers) override to `cacheDir/<name>-<version>/`.
+       * (WebKit, nodejs-headers) override to `cacheDir/<name>-<version>/` —
+       * buildDir-relative in CI so split-build artifact upload works; the
+       * tarball itself is cached separately in `downloadCacheDir/tarballs/`.
        */
       destDir?: string;
     };
@@ -478,10 +480,13 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // ship prebuilts). Outputs are the lib files directly; stamp confirms
   // identity for restat.
   //
-  // $rm_paths: space-separated paths (relative to dest) to delete after
-  // extraction. Trailing positional args to fetch-cli, may be empty.
+  // $cache: tarball cache dir (downloadCacheDir/tarballs) — the download is
+  // kept there so CI agents with BUN_DEPS_CACHE_PATH re-extract instead of
+  // re-downloading. $rm_paths: space-separated paths (relative to dest) to
+  // delete after extraction. Trailing positional args to fetch-cli, may be
+  // empty.
   n.rule("dep_fetch_prebuilt", {
-    command: `${stream} ${cfg.jsRuntime} ${fetchCli} prebuilt $name $url $dest $identity $rm_paths`,
+    command: `${stream} ${cfg.jsRuntime} ${fetchCli} prebuilt $name $url $dest $identity $cache $rm_paths`,
     description: "fetch $name (prebuilt)",
     restat: true,
     pool: "dep",
@@ -881,7 +886,7 @@ function emitFetch(
       repo: source.repo,
       commit: source.commit,
       dest: srcDir,
-      cache: resolve(cfg.cacheDir, "tarballs"),
+      cache: resolve(cfg.downloadCacheDir, "tarballs"),
       // Pass patches space-separated. Shell-safe because patch paths are
       // under our control (no spaces in repo paths per convention).
       patches: patchPaths.join(" "),
@@ -938,6 +943,7 @@ function emitPrebuilt(
       url: source.url,
       dest: destDir,
       identity: source.identity,
+      cache: resolve(cfg.downloadCacheDir, "tarballs"),
       // Space-separated relative paths. No quoting needed — paths are
       // under our control (include/node/openssl etc.), no spaces.
       rm_paths: (source.rmAfterExtract ?? []).join(" "),

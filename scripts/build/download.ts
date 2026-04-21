@@ -30,6 +30,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -73,6 +74,16 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
       // partial; a failed unlink must not abort the retry loop. Next attempt's
       // createWriteStream truncates anyway.
       await rm(tmpPath, { force: true }).catch(() => {});
+      // Concurrent writer won? With a shared BUN_DEPS_CACHE_PATH two agents
+      // can race the same URL-hash-keyed tarball; on Windows the loser's
+      // rename can EPERM if AV/indexer has the freshly-written dest open.
+      // Callers only reach here after checking !existsSync(dest), so a file
+      // appearing mid-call is the same content (same URL) — treat as done
+      // instead of re-downloading 200MB on every retry.
+      if (existsSync(dest)) {
+        console.log(`${dest} now present (concurrent download won the race)`);
+        return;
+      }
     }
   }
 
@@ -123,6 +134,22 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
 }
 
 /**
+ * Integrity probe: does `tar -tzf` walk the whole archive without error?
+ *
+ * Used to decide whether a cached tarball is itself bad vs. extraction
+ * failed for environmental reasons (disk full, staging dir unwritable).
+ * Listing reads and gunzips every block but writes nothing to disk, so it
+ * isolates the archive from the destination. Anything other than a clean
+ * non-zero exit — spawn failure (tar not found) or signal death (OOM
+ * killer) — counts as "lists cleanly": can't judge the file, so don't
+ * delete a possibly-shared artifact.
+ */
+export function tarballListsCleanly(tarball: string): boolean {
+  const r = spawnSync("tar", ["-tzf", tarball], { stdio: "ignore" });
+  return r.error !== undefined || r.signal !== null || r.status === 0;
+}
+
+/**
  * Extract a .zip archive with mtime normalization.
  *
  * Tries `unzip` first (most systems), falls back to `tar` (bsdtar — what
@@ -168,7 +195,15 @@ export async function extractZip(zipPath: string, dest: string): Promise<void> {
  * If a tarball has multiple top-level entries, the whole staging dir becomes
  * `dest/` (no hoist).
  *
- * @param identity Written to `dest/.identity`. Changing it triggers re-download.
+ * @param identity Written to `dest/.identity`. A mismatch triggers
+ *   re-extract; whether that also re-downloads depends on the URL-hash
+ *   key below (for current deps, identity changes imply URL changes).
+ * @param cache Directory for the downloaded tarball (keyed by URL hash —
+ *   `identity` alone doesn't cover os/arch). Lets CI agents persist the
+ *   ~200MB WebKit download across ephemeral runners (via
+ *   `BUN_DEPS_CACHE_PATH`) while `dest` stays buildDir-relative so
+ *   split-build artifact upload keeps working. Tarball is kept after
+ *   extraction; a hit skips the download but still re-extracts.
  * @param rmPaths Paths (relative to `dest/`) to delete after extraction.
  *   Used to remove conflicting headers (WebKit's unicode/, nodejs's openssl/).
  *   Deleted via fs.rm — no shell, cross-platform.
@@ -178,6 +213,7 @@ export async function fetchPrebuilt(
   url: string,
   dest: string,
   identity: string,
+  cache: string,
   rmPaths: string[] = [],
 ): Promise<void> {
   const stampPath = resolve(dest, ".identity");
@@ -192,29 +228,54 @@ export async function fetchPrebuilt(
     console.log(`identity changed (was ${existing.slice(0, 16)}, now ${identity.slice(0, 16)}), re-fetching`);
   }
 
-  console.log(`fetching ${url}`);
-
   // Process-unique temp paths so concurrent builds (shared cacheDir across
   // checkouts) can't stomp each other's download/extraction.
   const suffix = `.${process.pid}.${Date.now().toString(36)}`;
 
-  // ─── Download ───
-  const destParent = resolve(dest, "..");
-  await mkdir(destParent, { recursive: true });
-  const tarballPath = `${dest}${suffix}.tar.gz`;
-  await downloadWithRetry(url, tarballPath, name);
+  // ─── Download (with cache) ───
+  // Keyed on URL hash — same scheme as fetchDep. `identity` is NOT a
+  // sufficient key: WebKit's identity is version + abi suffix but the URL
+  // also varies by os/arch, so identity-keyed cache would collide across
+  // cross-arch agents sharing one BUN_DEPS_CACHE_PATH.
+  await mkdir(cache, { recursive: true });
+  const urlHash = createHash("sha256").update(url).digest("hex").slice(0, 16);
+  const tarballPath = resolve(cache, `${name}-${urlHash}.tar.gz`);
+  if (existsSync(tarballPath)) {
+    console.log(`cached tarball ${tarballPath}`);
+  } else {
+    console.log(`fetching ${url}`);
+    await downloadWithRetry(url, tarballPath, name);
+  }
 
   // ─── Extract ───
   // Extract to a private staging dir, then hoist. We don't extract directly
   // into dest/ because the tarball's top-level dir name is unpredictable
   // (e.g. `bun-webkit/` vs `libfoo-1.2.3/`).
+  const destParent = resolve(dest, "..");
+  await mkdir(destParent, { recursive: true });
   const stagingDir = `${dest}${suffix}.staging`;
   await mkdir(stagingDir, { recursive: true });
 
   try {
     // stripComponents=0: keep top-level dir for hoisting.
-    await extractTarGz(tarballPath, stagingDir, 0);
-    await rm(tarballPath, { force: true });
+    try {
+      await extractTarGz(tarballPath, stagingDir, 0);
+    } catch (err) {
+      // Extraction failed. Distinguish a corrupt cached tarball from an
+      // environment failure (ENOSPC on the staging disk, tar missing,
+      // signal): `tar -tzf` walks the whole archive without writing
+      // anything. If THAT also fails the tarball is bad — drop it so the
+      // next run re-downloads instead of failing forever on the same
+      // file. If it succeeds the tarball is fine; keep it (it may be a
+      // shared 200MB artifact we'd otherwise re-fetch for no reason).
+      // Swallow the rm rejection so the ORIGINAL extraction error is what
+      // surfaces, not a secondary EACCES/EROFS from a read-only cache.
+      if (!tarballListsCleanly(tarballPath)) {
+        console.log(`dropping unreadable cached tarball ${tarballPath}`);
+        await rm(tarballPath, { force: true }).catch(() => {});
+      }
+      throw err;
+    }
 
     // Hoist: if single top-level dir, promote its contents to dest.
     // If multiple entries (unusual), the staging dir becomes dest.
@@ -249,6 +310,6 @@ export async function fetchPrebuilt(
     console.log(`extracted to ${dest}`);
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
-    await rm(tarballPath, { force: true });
+    // Tarball stays in cache for the next runner.
   }
 }

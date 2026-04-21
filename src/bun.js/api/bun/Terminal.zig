@@ -334,31 +334,14 @@ pub fn closeSlaveFd(this: *Terminal) void {
 /// Windows: close only the ConPTY handle so conhost releases its pipe ends and
 /// our reader observes EOF. Leaves the Terminal itself open (closed=false),
 /// matching POSIX semantics where child exit delivers EOF without closing the
-/// master fd.
+/// master fd. Only called when the attached child has already exited, so
+/// ClosePseudoConsole's final flush is bounded.
 pub fn closePseudoconsole(this: *Terminal) void {
     if (comptime !Environment.isWindows) return;
     if (this.hpcon) |hpcon| {
         this.hpcon = null;
-        closePseudoconsoleAsync(hpcon);
-    }
-}
-
-/// ClosePseudoConsole blocks until the output pipe is drained on older
-/// Windows. Our reader runs on the event-loop thread, so calling it from
-/// there deadlocks. Fire it from a detached thread so the event loop can
-/// keep draining; conhost then completes its flush and our reader sees EOF.
-fn closePseudoconsoleAsync(hpcon: bun.windows.HPCON) void {
-    if (comptime !Environment.isWindows) return;
-    const t = std.Thread.spawn(
-        .{ .stack_size = 64 * 1024 },
-        bun.windows.ClosePseudoConsole,
-        .{hpcon},
-    ) catch {
-        // Fallback: this may briefly block the event loop on older Windows.
         bun.windows.ClosePseudoConsole(hpcon);
-        return;
-    };
-    t.detach();
+    }
 }
 
 const PtyResult = struct {
@@ -978,11 +961,11 @@ pub fn closeInternal(this: *Terminal) void {
 
     if (comptime Environment.isWindows) {
         // ClosePseudoConsole on older Windows blocks until the output pipe is
-        // drained; with our reader already closed conhost sees broken-pipe and
-        // returns. Still dispatch async to avoid stalling the event loop.
+        // drained. With our reader already closed above, conhost sees
+        // broken-pipe on its next write and returns without blocking.
         if (this.hpcon) |hpcon| {
             this.hpcon = null;
-            closePseudoconsoleAsync(hpcon);
+            bun.windows.ClosePseudoConsole(hpcon);
         }
     }
 

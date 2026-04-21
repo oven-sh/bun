@@ -38,15 +38,10 @@
 import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import type { Config } from "./config.ts";
+import { assert } from "./error.ts";
 import { fileOverrides } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import { slash } from "./shell.ts";
-
-/**
- * Directories whose files all compile standalone. Reasons inline.
- * Matched as a prefix of `relative(cwd, abs)`.
- */
-const noUnifyDirs: readonly string[] = [];
 
 /**
  * Files that must compile standalone. Reasons inline.
@@ -141,7 +136,7 @@ export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[
   for (const abs of cxxSources) {
     // slash(): noUnify keys and the dir tag below are posix-style.
     const rel = slash(relative(cfg.cwd, abs));
-    if (noUnify.has(rel) || noUnifyDirs.some(d => rel.startsWith(d))) {
+    if (noUnify.has(rel)) {
       standalone.push(abs);
       continue;
     }
@@ -153,6 +148,7 @@ export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[
 
   const unified: string[] = [];
   const bundled: string[] = [];
+  const tagToDir = new Map<string, string>();
   // Stable iteration: sort directory keys and basenames by code unit (default
   // .sort()) so bundle composition is identical regardless of glob order or
   // host LC_COLLATE.
@@ -171,6 +167,13 @@ export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[
     }
 
     const tag = dir.replace(/[^A-Za-z0-9]+/g, "_");
+    // The tag is lossy (foo-bar and foo_bar both → foo_bar). Our directory
+    // set doesn't hit this today; fail loudly if it ever does so the second
+    // dir's bundles don't silently overwrite the first's.
+    const prior = tagToDir.get(tag);
+    assert(prior === undefined, `unified-source tag collision: '${dir}' and '${prior}' both sanitize to '${tag}'`);
+    tagToDir.set(tag, dir);
+
     for (let i = 0; i < files.length; i += bundleSize) {
       const chunk = files.slice(i, i + bundleSize);
       const n = i / bundleSize;

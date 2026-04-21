@@ -65,7 +65,7 @@ describe("Bun.Terminal subprocess integration", () => {
       terminal,
     });
 
-    await Promise.race([promise, proc.exited.then(() => resolve())]);
+    await promise;
     await proc.exited;
     terminal.close();
 
@@ -92,7 +92,7 @@ describe("Bun.Terminal subprocess integration", () => {
       terminal,
     });
 
-    await Promise.race([promise, proc.exited.then(() => resolve())]);
+    await promise;
     await proc.exited;
     terminal.close();
 
@@ -121,7 +121,7 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(proc.stdout).toBeNull();
     expect(proc.stderr).toBeNull();
 
-    await Promise.race([promise, proc.exited.then(() => resolve())]);
+    await promise;
     await proc.exited;
     proc.terminal?.close();
 
@@ -153,7 +153,7 @@ describe("Bun.Terminal subprocess integration", () => {
     });
 
     terminal.write("abc\r");
-    await Promise.race([promise, proc.exited.then(() => resolve())]);
+    await promise;
     await proc.exited;
     terminal.close();
 
@@ -179,7 +179,7 @@ describe("Bun.Terminal subprocess integration", () => {
       terminal,
     });
 
-    await Promise.race([promise, proc.exited.then(() => resolve())]);
+    await promise;
     await proc.exited;
     terminal.close();
 

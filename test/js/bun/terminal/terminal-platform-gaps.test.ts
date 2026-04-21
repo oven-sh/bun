@@ -25,6 +25,7 @@ async function runInTerminal(
   let output = "";
   const ready = Promise.withResolvers<void>();
   const finished = Promise.withResolvers<void>();
+  const eof = Promise.withResolvers<void>();
   const readyMarker = opts.readyMarker ?? "READY";
   const decoder = new TextDecoder();
 
@@ -41,15 +42,22 @@ async function runInTerminal(
         if (output.includes(readyMarker)) ready.resolve();
         if (opts.done(output)) finished.resolve();
       },
+      exit() {
+        eof.resolve();
+      },
     },
   });
 
   if (opts.afterReady) {
-    await Promise.race([ready.promise, proc.exited]);
+    await ready.promise;
     await opts.afterReady(proc.terminal!, () => output);
   }
 
-  await Promise.race([finished.promise, proc.exited.then(() => finished.resolve())]);
+  // Wait for the data condition or for the terminal to receive EOF (which
+  // fires after all buffered data has been delivered). Do not race on
+  // proc.exited: on Windows the exit IOCP and the final pipe-data IOCP are
+  // independent and closing the terminal after the former drops the latter.
+  await Promise.race([finished.promise, eof.promise]);
   proc.terminal?.close();
   await proc.exited;
   output += decoder.decode();
@@ -207,10 +215,11 @@ describe("Bun.Terminal platform behaviour", () => {
 
   test("SAME: output LF is translated to CRLF", async () => {
     // POSIX ONLCR and ConPTY both render \n as \r\n on the master/read side.
+    // Older ConPTY may pad to the cell boundary with spaces before \r\n.
     const { output } = await runInTerminal(`process.stdout.write('READY\\nLINE2')`, {
       done: o => o.includes("LINE2"),
     });
-    expect(output).toContain("READY\r\n");
+    expect(output).toMatch(/READY *\r\n/);
   });
 
   test("GAP: ANSI escape sequences", async () => {
@@ -227,11 +236,15 @@ describe("Bun.Terminal platform behaviour", () => {
     }
   });
 
-  test("SAME: UTF-8 passes through unchanged", async () => {
+  test("SAME: UTF-8 multibyte characters reach the data callback", async () => {
+    // ConPTY may alter spacing around wide-cell characters when re-rendering,
+    // so assert the codepoints individually rather than the exact run.
     const { output } = await runInTerminal(`process.stdout.write('READY héllo 🍔 世界')`, {
       done: o => o.includes("世界"),
     });
-    expect(output).toContain("héllo 🍔 世界");
+    expect(output).toContain("héllo");
+    expect(output).toContain("🍔");
+    expect(output).toContain("世界");
   });
 
   // ──────────────────────────────────────────────────────────────────────────

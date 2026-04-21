@@ -1,0 +1,168 @@
+diff --git a/include/uv.h b/include/uv.h
+index d1a77c74..b42d6be0 100644
+--- a/include/uv.h
++++ b/include/uv.h
+@@ -1107,6 +1107,12 @@ typedef struct uv_process_options_s {
+    */
+   uv_uid_t uid;
+   uv_gid_t gid;
++  /*
++   * Windows only: HPCON pseudoconsole handle from CreatePseudoConsole. When
++   * non-NULL, the child is attached to the pseudoconsole and stdio[] is not
++   * inherited (ConPTY provides stdin/stdout/stderr). Ignored on Unix.
++   */
++  void* pseudoconsole;
+ } uv_process_options_t;
+ 
+ /*
+diff --git a/src/win/process.c b/src/win/process.c
+index 45e85ed9..000dfb8a 100644
+--- a/src/win/process.c
++++ b/src/win/process.c
+@@ -886,6 +886,9 @@ void uv__process_endgame(uv_loop_t* loop, uv_process_t* handle) {
+   uv__handle_close(handle);
+ }
+ 
++#ifndef PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE
++#define PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE 0x00020016
++#endif
+ 
+ int uv_spawn(uv_loop_t* loop,
+              uv_process_t* process,
+@@ -896,10 +899,12 @@ int uv_spawn(uv_loop_t* loop,
+   BOOL result;
+   WCHAR* application_path = NULL, *application = NULL, *arguments = NULL,
+          *env = NULL, *cwd = NULL;
+-  STARTUPINFOW startup;
++  STARTUPINFOEXW startup;
+   PROCESS_INFORMATION info;
+   DWORD process_flags, cwd_len;
+   BYTE* child_stdio_buffer;
++  SIZE_T attr_list_size = 0;
++  LPPROC_THREAD_ATTRIBUTE_LIST attr_list = NULL;
+ 
+   uv__process_init(loop, process);
+   process->exit_cb = options->exit_cb;
+@@ -1002,9 +1007,11 @@ int uv_spawn(uv_loop_t* loop,
+     }
+   }
+ 
+-  err = uv__stdio_create(loop, options, &child_stdio_buffer);
+-  if (err)
+-    goto done;
++  if (options->pseudoconsole == NULL) {
++    err = uv__stdio_create(loop, options, &child_stdio_buffer);
++    if (err)
++      goto done;
++  }
+ 
+   application_path = search_path(application,
+                                  cwd,
+@@ -1016,22 +1023,58 @@ int uv_spawn(uv_loop_t* loop,
+     goto done;
+   }
+ 
+-  startup.cb = sizeof(startup);
+-  startup.lpReserved = NULL;
+-  startup.lpDesktop = NULL;
+-  startup.lpTitle = NULL;
+-  startup.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+-
+-  startup.cbReserved2 = uv__stdio_size(child_stdio_buffer);
+-  startup.lpReserved2 = (BYTE*) child_stdio_buffer;
++  ZeroMemory(&startup, sizeof(startup));
++  startup.StartupInfo.cb = sizeof(startup.StartupInfo);
++  startup.StartupInfo.lpReserved = NULL;
++  startup.StartupInfo.lpDesktop = NULL;
++  startup.StartupInfo.lpTitle = NULL;
++
++  if (options->pseudoconsole != NULL) {
++    startup.StartupInfo.cb = sizeof(startup);
++    /* STARTF_USESTDHANDLES with NULL handles: prevents Windows from
++     * duplicating the parent's redirected std handles into the child, which
++     * would otherwise override the pseudoconsole. See
++     * https://github.com/microsoft/terminal/discussions/15814 */
++    startup.StartupInfo.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
++
++    InitializeProcThreadAttributeList(NULL, 1, 0, &attr_list_size);
++    attr_list = uv__malloc(attr_list_size);
++    if (attr_list == NULL) {
++      err = ERROR_OUTOFMEMORY;
++      goto done;
++    }
++    if (!InitializeProcThreadAttributeList(attr_list, 1, 0, &attr_list_size)) {
++      err = GetLastError();
++      uv__free(attr_list);
++      attr_list = NULL;
++      goto done;
++    }
++    if (!UpdateProcThreadAttribute(attr_list,
++                                   0,
++                                   PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
++                                   options->pseudoconsole,
++                                   sizeof(options->pseudoconsole),
++                                   NULL,
++                                   NULL)) {
++      err = GetLastError();
++      goto done;
++    }
++    startup.lpAttributeList = attr_list;
++  } else {
++    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
++    startup.StartupInfo.cbReserved2 = uv__stdio_size(child_stdio_buffer);
++    startup.StartupInfo.lpReserved2 = (BYTE*) child_stdio_buffer;
+ 
+-  startup.hStdInput = uv__stdio_handle(child_stdio_buffer, 0);
+-  startup.hStdOutput = uv__stdio_handle(child_stdio_buffer, 1);
+-  startup.hStdError = uv__stdio_handle(child_stdio_buffer, 2);
++    startup.StartupInfo.hStdInput = uv__stdio_handle(child_stdio_buffer, 0);
++    startup.StartupInfo.hStdOutput = uv__stdio_handle(child_stdio_buffer, 1);
++    startup.StartupInfo.hStdError = uv__stdio_handle(child_stdio_buffer, 2);
++  }
+ 
+   process_flags = CREATE_UNICODE_ENVIRONMENT;
+ 
+-  if ((options->flags & UV_PROCESS_WINDOWS_HIDE_CONSOLE) ||
++  if (options->pseudoconsole != NULL) {
++    process_flags |= EXTENDED_STARTUPINFO_PRESENT;
++  } else if ((options->flags & UV_PROCESS_WINDOWS_HIDE_CONSOLE) ||
+       (options->flags & UV_PROCESS_WINDOWS_HIDE)) {
+     /* Avoid creating console window if stdio is not inherited. */
+     for (i = 0; i < options->stdio_count; i++) {
+@@ -1044,9 +1087,9 @@ int uv_spawn(uv_loop_t* loop,
+   if ((options->flags & UV_PROCESS_WINDOWS_HIDE_GUI) ||
+       (options->flags & UV_PROCESS_WINDOWS_HIDE)) {
+     /* Use SW_HIDE to avoid any potential process window. */
+-    startup.wShowWindow = SW_HIDE;
++    startup.StartupInfo.wShowWindow = SW_HIDE;
+   } else {
+-    startup.wShowWindow = SW_SHOWDEFAULT;
++    startup.StartupInfo.wShowWindow = SW_SHOWDEFAULT;
+   }
+ 
+   if (options->flags & UV_PROCESS_DETACHED) {
+@@ -1068,11 +1111,11 @@ int uv_spawn(uv_loop_t* loop,
+                      arguments,
+                      NULL,
+                      NULL,
+-                     1,
++                     options->pseudoconsole != NULL ? FALSE : TRUE,
+                      process_flags,
+                      env,
+                      cwd,
+-                     &startup,
++                     &startup.StartupInfo,
+                      &info)) {
+     /* CreateProcessW failed. */
+     err = GetLastError();
+@@ -1154,6 +1197,10 @@ int uv_spawn(uv_loop_t* loop,
+   uv__free(cwd);
+   uv__free(env);
+   uv__free(alloc_path);
++  if (attr_list != NULL) {
++    DeleteProcThreadAttributeList(attr_list);
++    uv__free(attr_list);
++  }
+ 
+   if (child_stdio_buffer != NULL) {
+     /* Clean up child stdio handles. */

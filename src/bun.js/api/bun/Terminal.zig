@@ -339,8 +339,26 @@ pub fn closePseudoconsole(this: *Terminal) void {
     if (comptime !Environment.isWindows) return;
     if (this.hpcon) |hpcon| {
         this.hpcon = null;
-        bun.windows.ClosePseudoConsole(hpcon);
+        closePseudoconsoleAsync(hpcon);
     }
+}
+
+/// ClosePseudoConsole blocks until the output pipe is drained on older
+/// Windows. Our reader runs on the event-loop thread, so calling it from
+/// there deadlocks. Fire it from a detached thread so the event loop can
+/// keep draining; conhost then completes its flush and our reader sees EOF.
+fn closePseudoconsoleAsync(hpcon: bun.windows.HPCON) void {
+    if (comptime !Environment.isWindows) return;
+    const t = std.Thread.spawn(
+        .{ .stack_size = 64 * 1024 },
+        bun.windows.ClosePseudoConsole,
+        .{hpcon},
+    ) catch {
+        // Fallback: this may briefly block the event loop on older Windows.
+        bun.windows.ClosePseudoConsole(hpcon);
+        return;
+    };
+    t.detach();
 }
 
 const PtyResult = struct {
@@ -948,16 +966,6 @@ pub fn closeInternal(this: *Terminal) void {
     if (this.flags.closed) return;
     this.flags.closed = true;
 
-    if (comptime Environment.isWindows) {
-        // Close ConPTY first so conhost stops writing to our read pipe; this
-        // lets the reader observe EOF instead of blocking on ClosePseudoConsole's
-        // final flush.
-        if (this.hpcon) |hpcon| {
-            this.hpcon = null;
-            bun.windows.ClosePseudoConsole(hpcon);
-        }
-    }
-
     // Close reader (closes read_fd)
     if (this.flags.reader_started) {
         this.reader.close();
@@ -967,6 +975,16 @@ pub fn closeInternal(this: *Terminal) void {
     // Close writer (closes write_fd)
     this.writer.close();
     this.write_fd = bun.invalid_fd;
+
+    if (comptime Environment.isWindows) {
+        // ClosePseudoConsole on older Windows blocks until the output pipe is
+        // drained; with our reader already closed conhost sees broken-pipe and
+        // returns. Still dispatch async to avoid stalling the event loop.
+        if (this.hpcon) |hpcon| {
+            this.hpcon = null;
+            closePseudoconsoleAsync(hpcon);
+        }
+    }
 
     // Close master fd
     if (this.master_fd != bun.invalid_fd) {

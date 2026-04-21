@@ -185,8 +185,6 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
     var test_id_for_debugger: i32 = 0;
     if (vm.debugger) |*debugger| {
         if (debugger.test_reporter_agent.isEnabled()) {
-            // Shared with the retroactive path in Debugger.Bun__TestReporterAgentEnable
-            // so that IDs assigned before and after a mid-collection enable don't collide.
             debugger.next_test_id_for_debugger += 1;
             var name = bun.String.init(description orelse "(unnamed)");
             const parent = bunTest.collection.active_scope;

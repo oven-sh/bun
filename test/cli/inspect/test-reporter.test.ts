@@ -156,19 +156,14 @@ class TestReporterSession extends InspectorSession {
   }
 }
 
-// Every test here spawns at least one `bun test` subprocess under
-// `--inspect-wait`; on ASAN/debug builds that subprocess's startup alone is
-// several seconds, and the drain test runs a batch of them. The project
-// default (5 s) isn't enough headroom.
+// Every test spawns `bun test` under --inspect-wait; ASAN/debug startup alone
+// is several seconds and the drain test runs a batch of them.
 setDefaultTimeout(60_000);
 
 describe.if(isPosix)("TestReporter inspector protocol", () => {
   let proc: Subprocess | undefined;
-  let socket: ReturnType<typeof connect> extends Promise<infer T> ? T : never;
-  // Every spawned inspector subprocess across the parallel drain attempts.
-  // afterEach() force-kills anything still here so a timed-out test can't
-  // leave --inspect-wait children spinning on the CI runner after the
-  // harness is torn down.
+  let socket: Awaited<ReturnType<typeof connect>>;
+  // Force-kill any leftover --inspect-wait children on timeout.
   const spawnedProcs = new Set<Subprocess>();
 
   afterEach(() => {
@@ -177,11 +172,7 @@ describe.if(isPosix)("TestReporter inspector protocol", () => {
     // @ts-ignore - close the socket if it exists
     socket?.end?.();
     socket = undefined as any;
-    for (const p of spawnedProcs) {
-      try {
-        p.kill("SIGKILL");
-      } catch {}
-    }
+    for (const p of spawnedProcs) p.kill("SIGKILL");
     spawnedProcs.clear();
   });
 
@@ -289,21 +280,15 @@ describe("suite B", () => {
   });
 
   test("assigns non-colliding IDs when TestReporter.enable lands mid-collection", async () => {
-    // Regression: retroactivelyReportDiscoveredTests used a local counter
-    // starting at 0, while live collection (ScopeFunctions.call) used a
-    // separate file-static counter also starting at 0. If TestReporter.enable
-    // was processed after top-level describe() calls had added their scope
-    // entries but before the describe *callbacks* ran, the two describes got
-    // IDs 1 and 2 from the retroactive path, and then the three inner tests
-    // got IDs 1, 2, 3 from the live path — colliding.
+    // Regression: the retroactive and live reporting paths used independent
+    // ID counters, so enabling mid-collection handed out colliding IDs.
     //
     // To hit that window deterministically the fixture hits a `debugger;`
-    // statement between the top-level describe() calls and the end of module
-    // evaluation. With the Debugger domain enabled the main thread parks in
-    // runWhilePaused, which continues to dispatch inspector commands on the
-    // main thread. That lets us send TestReporter.enable, await its ack
-    // (retroactive reporting runs against a tree that has the two describes
-    // but no tests yet), and then Debugger.resume — all as explicit
+    // statement after the top-level describe() calls. With the Debugger
+    // domain enabled the main thread parks in runWhilePaused, which keeps
+    // dispatching inspector commands, so we can send TestReporter.enable
+    // (retroactive reporting runs against a tree with the two describes but
+    // no tests yet) and then Debugger.resume — all as explicit
     // request/response pairs, no timing assumptions.
 
     using dir = tempDir("test-reporter-mid-collection", {
@@ -382,14 +367,10 @@ debugger;
 
     await session.sendAndWait("Debugger.resume");
 
-    // All three inner tests are synchronous, so once resumed the subprocess
-    // finishes quickly. Wait for it to exit *and* for the inspector socket
-    // to close — process exit and socket data are independent I/O sources
-    // in this event loop, and FIN-after-data on the unix stream socket is
-    // what guarantees every frame has been through onMessage before we
-    // snapshot the maps. No open-ended waitForFoundTests here because when
-    // IDs collide the map never reaches size 5 and that path just burns the
-    // full timeout.
+    // Wait for exit *and* socket close — FIN is ordered after data on a
+    // unix stream socket, so close guarantees every frame has been through
+    // onMessage before we snapshot the maps. (No waitForFoundTests: when
+    // IDs collide the map never reaches 5 and that just burns the timeout.)
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     await socketClosed.promise;
 
@@ -417,17 +398,10 @@ debugger;
   });
 
   test("flushes pending inspector messages to the frontend before process exit", async () => {
-    // Regression test for a race where the final TestReporter.start/end
-    // events were dropped. The main thread queues inspector events for the
-    // detached debugger thread, then reaches phase=.done and calls exit()
-    // in the same event-loop iteration — killing the debugger thread before
-    // it could write the queued messages to the socket. The frontend would
-    // see the subprocess exit cleanly but miss the last few events.
-    //
-    // The fixture runs a handful of fast synchronous tests so their
-    // start/end events are all emitted back-to-back immediately before
-    // exit. Without draining on exit some of those events never reach this
-    // socket.
+    // Regression: the main thread queued the final TestReporter events for
+    // the detached debugger thread and then called exit() in the same tick,
+    // killing it mid-delivery. Fixture: fast synchronous tests so all their
+    // events land back-to-back right before exit.
 
     const testCount = 3;
     const body = Array.from({ length: testCount }, (_, i) => `test("t${i}", () => { expect(${i}).toBe(${i}); });`).join(
@@ -449,7 +423,7 @@ ${body}
         session.onMessage(message);
       });
 
-      let localSocket: ReturnType<typeof connect> extends Promise<infer T> ? T : never;
+      let localSocket: Awaited<ReturnType<typeof connect>>;
       const socketClosed = Promise.withResolvers<void>();
       const socketPromise = connect(`unix://${socketPath}`, () => socketClosed.resolve()).then(s => {
         localSocket = s;
@@ -480,12 +454,7 @@ ${body}
 
       const [stderr, exitCode] = await Promise.all([localProc.stderr.text(), localProc.exited]);
       spawnedProcs.delete(localProc);
-      // process exit and inspector-socket data are independent I/O sources in
-      // this event loop; the subprocess writing everything to the socket (the
-      // invariant the drain fix provides) doesn't mean this side has finished
-      // reading it yet. FIN is ordered after data on a unix stream socket, so
-      // once the close handler fires every frame has already been through
-      // onMessage and the found/ended maps are final.
+      // Await FIN so every frame has been through onMessage before we snapshot.
       // @ts-ignore
       localSocket?.end?.();
       await socketClosed.promise;
@@ -498,19 +467,10 @@ ${body}
       };
     }
 
-    // The race is scheduler-dependent. Run several attempts in parallel so
-    // any one of them dropping events fails the test; keeping a few processes
-    // concurrent also keeps the box busy, which is the regime where the main
-    // thread wins the race to exit(). Two rounds with modest width keeps the
-    // failure-without-fix rate high without spraying dozens of --inspect-wait
-    // children across the runner.
-    //
-    // Under ASAN/debug the subprocess is slow enough that the main thread
-    // always loses the race (the debugger thread gets scheduled before
-    // exit()), so the bug doesn't reproduce without the fix anyway — a
-    // single small round is enough there to verify the drain path itself
-    // doesn't regress, without the 16 heavy subprocesses overrunning the
-    // timeout on a loaded ASAN lane.
+    // The race is scheduler-dependent; run several attempts in parallel so
+    // any one dropping events fails the test. Under ASAN/debug the
+    // subprocess is slow enough that the bug never reproduces anyway, so
+    // dial it down there to keep within the timeout.
     const slow = isASAN || isDebug;
     const width = slow ? 4 : 8;
     const rounds = slow ? 1 : 2;

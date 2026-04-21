@@ -941,11 +941,8 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
     //        causes like 50+ tests to break
     // this.eventLoop().tick();
 
-    // If an inspector frontend is attached, give the debugger thread a chance
-    // to flush any queued protocol messages to the socket before we exit().
-    // The debugger thread is detached, so exit() kills it mid-flight otherwise
-    // and the frontend misses the last events (e.g. TestReporter.end for the
-    // final tests in `bun test`).
+    // Flush queued inspector messages so exit() doesn't kill the detached
+    // debugger thread mid-delivery.
     if (this.debugger != null) {
         jsc.Debugger.drain();
     }

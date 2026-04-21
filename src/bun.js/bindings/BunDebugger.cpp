@@ -47,12 +47,8 @@ static PausedWait& pausedWait()
     return instance;
 }
 
-// Number of inspector protocol messages that have been queued from the main
-// (inspected) thread to the debugger thread via sendMessageToDebuggerThread()
-// but have not yet been handed to the JS onMessage callback (which writes them
-// to the frontend socket). Used by Bun__debugger__drain() so the process doesn't
-// exit() while the detached debugger thread still has events to deliver — e.g.
-// the final TestReporter.end events when `bun test` finishes.
+// Messages queued for the debugger thread via sendMessageToDebuggerThread()
+// that haven't reached the JS onMessage callback yet. See Bun__debugger__drain().
 static std::atomic<uint64_t> totalPendingDebuggerMessages { 0 };
 
 static bool waitingForConnection = false;
@@ -383,10 +379,7 @@ public:
 
         JSC::call(debuggerGlobalObject, onMessageFn, arguments, "BunInspectorConnection::receiveMessagesOnDebuggerThread - onMessageFn"_s);
 
-        // Publish that these messages have been handed off to the socket so
-        // Bun__debugger__drain() can observe completion. Do this after
-        // JSC::call returns so we know socket.write() has been invoked for
-        // each message.
+        // After JSC::call so socket.write() has been invoked for each message.
         if (messageCount > 0)
             totalPendingDebuggerMessages.fetch_sub(messageCount, std::memory_order_release);
     }
@@ -606,20 +599,16 @@ extern "C" void Bun__debugger__drain()
     if (totalPendingDebuggerMessages.load(std::memory_order_acquire) == 0)
         return;
 
-    // Post a sentinel task to the debugger thread. Concurrent tasks are FIFO,
-    // so by the time this runs, any receiveMessagesOnDebuggerThread task posted
-    // before it has already completed (i.e. onMessageFn has written everything
-    // to the socket). The semaphore is heap-allocated and intentionally leaked:
-    // this runs right before exit(), and if the wait times out the debugger
-    // thread may still dereference it.
+    // Post a sentinel: concurrent tasks are FIFO, so once this runs every
+    // earlier receiveMessagesOnDebuggerThread has completed. Heap-allocated
+    // and intentionally leaked — on timeout the debugger thread may still
+    // dereference it, and we're about to exit() anyway.
     auto* done = new WTF::BinarySemaphore();
     debuggerScriptExecutionContext->postTaskConcurrently([done](ScriptExecutionContext&) {
         done->signal();
     });
 
     // Cap the wait so a wedged debugger thread can't block process exit.
-    // 250ms is far more than a handful of small messages over a local socket
-    // ever need; hitting the cap means something is broken, not merely slow.
     done->waitFor(WTF::Seconds::fromMilliseconds(250));
 }
 

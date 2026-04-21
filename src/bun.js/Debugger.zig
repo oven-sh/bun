@@ -14,13 +14,10 @@ mode: enum {
 } = .listen,
 
 test_reporter_agent: TestReporterAgent = .{},
-/// Monotonically increasing ID assigned to each `describe`/`test` reported to
-/// the TestReporter frontend. Shared between the live-collection path
-/// (ScopeFunctions.call, when the agent is already enabled as tests are
-/// declared) and the retroactive path (Bun__TestReporterAgentEnable, when the
-/// agent is enabled after some tests have been declared). Keeping a single
-/// counter here prevents the two paths from handing out colliding IDs when
-/// enable lands mid-collection.
+/// Next ID to hand out for a `describe`/`test` reported to the TestReporter
+/// frontend. Shared between ScopeFunctions.call (live) and
+/// Bun__TestReporterAgentEnable (retroactive) so IDs don't collide when the
+/// agent is enabled mid-collection.
 next_test_id_for_debugger: i32 = 0,
 lifecycle_reporter_agent: LifecycleAgent = .{},
 frontend_dev_server_agent: BunFrontendDevServerAgent = .{},
@@ -383,11 +380,7 @@ pub const TestReporterAgent = struct {
 
         const before = debugger.next_test_id_for_debugger;
 
-        // Recursively report all discovered tests starting from root scope.
-        // IDs come from the shared Debugger.next_test_id_for_debugger counter
-        // so that any tests discovered *after* this (still in collection
-        // phase, agent now enabled) continue the same sequence instead of
-        // colliding.
+        // Recursively report all discovered tests starting from root scope
         const root_scope = active_file.collection.root_scope;
         retroactivelyReportScope(agent, root_scope, -1, &debugger.next_test_id_for_debugger, &source_url);
 

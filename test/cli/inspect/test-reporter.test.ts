@@ -327,7 +327,8 @@ debugger;
       session.onMessage(message);
     });
 
-    const socketPromise = connect(`unix://${socketPath}`).then(s => {
+    const socketClosed = Promise.withResolvers<void>();
+    const socketPromise = connect(`unix://${socketPath}`, () => socketClosed.resolve()).then(s => {
       socket = s;
       session.socket = s;
       session.framer = framer;
@@ -376,11 +377,15 @@ debugger;
     await session.sendAndWait("Debugger.resume");
 
     // All three inner tests are synchronous, so once resumed the subprocess
-    // finishes quickly. Wait for it to exit, then inspect everything we
-    // received — no open-ended waitForFoundTests here because when IDs
-    // collide the map never reaches size 5 and that path just burns the
+    // finishes quickly. Wait for it to exit *and* for the inspector socket
+    // to close — process exit and socket data are independent I/O sources
+    // in this event loop, and FIN-after-data on the unix stream socket is
+    // what guarantees every frame has been through onMessage before we
+    // snapshot the maps. No open-ended waitForFoundTests here because when
+    // IDs collide the map never reaches size 5 and that path just burns the
     // full timeout.
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    await socketClosed.promise;
 
     const foundTests = session.getFoundTests();
     const testsArray = [...foundTests.values()];
@@ -439,7 +444,8 @@ ${body}
       });
 
       let localSocket: ReturnType<typeof connect> extends Promise<infer T> ? T : never;
-      const socketPromise = connect(`unix://${socketPath}`).then(s => {
+      const socketClosed = Promise.withResolvers<void>();
+      const socketPromise = connect(`unix://${socketPath}`, () => socketClosed.resolve()).then(s => {
         localSocket = s;
         session.socket = s;
         session.framer = framer;
@@ -468,8 +474,15 @@ ${body}
 
       const [stderr, exitCode] = await Promise.all([localProc.stderr.text(), localProc.exited]);
       spawnedProcs.delete(localProc);
+      // process exit and inspector-socket data are independent I/O sources in
+      // this event loop; the subprocess writing everything to the socket (the
+      // invariant the drain fix provides) doesn't mean this side has finished
+      // reading it yet. FIN is ordered after data on a unix stream socket, so
+      // once the close handler fires every frame has already been through
+      // onMessage and the found/ended maps are final.
       // @ts-ignore
       localSocket?.end?.();
+      await socketClosed.promise;
 
       return {
         stderr,

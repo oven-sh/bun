@@ -575,11 +575,31 @@ pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
     }
 }
 
+/// Whether the event loop has any source of work that could still resolve a
+/// pending promise — active uv/uws handles, queued tasks, concurrent refs,
+/// or immediates.
+///
+/// This is intentionally NOT `VirtualMachine.isEventLoopAlive()`:
+/// `isEventLoopAlive()` short-circuits on `unhandled_error_counter != 0`
+/// (it is the "should the main event loop keep running" predicate, and a
+/// fatal error stops it). For the TLA wait path we only care about work
+/// that could still wake the loop — a side-path unhandled rejection must
+/// NOT abandon an in-flight fetch whose resolution will complete the TLA.
+pub fn hasAnyHandleWork(this: *const EventLoop) bool {
+    const vm = this.virtual_machine;
+    return vm.event_loop_handle.?.isActive() or
+        vm.active_tasks > 0 or
+        this.tasks.count > 0 or
+        this.hasPendingRefs() or
+        this.immediate_tasks.items.len > 0 or
+        this.next_immediate_tasks.items.len > 0;
+}
+
 /// Like `waitForPromise`, but returns early when the event loop has nothing
-/// left that could resolve the promise — no active uv/uws handles, no tasks,
-/// no concurrent refs, no immediates. Used by the top-level-await entry
-/// points where the promise may be "unsettled" (e.g. awaiting an abort event
-/// whose only source is an unref'd `AbortSignal.timeout()` timer).
+/// left that could resolve the promise (see `hasAnyHandleWork`). Used by the
+/// top-level-await entry points where the promise may be "unsettled" — e.g.
+/// awaiting an abort event whose only source is an unref'd
+/// `AbortSignal.timeout()` timer.
 ///
 /// Without this, POSIX busy-loops at 100% CPU until the unref'd timer fires
 /// and Windows hangs forever (`uv_run(UV_RUN_NOWAIT)` early-returns when
@@ -604,7 +624,7 @@ pub fn waitForPromiseOrLoopExit(this: *EventLoop, promise: jsc.AnyPromise) void 
                     this.autoTick();
                 }
 
-                if (promise.status() == .pending and !this.virtual_machine.isEventLoopAlive()) {
+                if (promise.status() == .pending and !this.hasAnyHandleWork()) {
                     break;
                 }
             }
@@ -622,15 +642,6 @@ pub fn waitForPromiseWithTermination(this: *EventLoop, promise: jsc.AnyPromise) 
 
                 if (!worker.hasRequestedTerminate() and promise.status() == .pending) {
                     this.autoTick();
-                }
-
-                // Same unsettled-TLA escape hatch as waitForPromiseOrLoopExit.
-                // Without this, a worker whose entry point has an unsettled
-                // top-level await (e.g. `await new Promise(() => {})`) would
-                // busy-loop forever on POSIX / hang on Windows instead of
-                // reaching the normal "worker done" path.
-                if (promise.status() == .pending and !this.virtual_machine.isEventLoopAlive()) {
-                    break;
                 }
             }
         },

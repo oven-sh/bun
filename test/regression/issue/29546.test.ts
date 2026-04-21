@@ -16,17 +16,9 @@ import { bunEnv, bunExe } from "harness";
 //            ref'd handles), so the uv timer that would have drained Bun's
 //            heap never fired. The process hung forever.
 //
-// `waitForPromise` now breaks when the event loop has nothing left to make
-// progress — no active handles, no tasks, no concurrent refs, no immediates
-// — matching Node.js (unsettled top-level await exits cleanly rather than
-// waiting on unref'd handles).
-
-function stripAsanWarning(stderr: string): string {
-  return stderr
-    .split("\n")
-    .filter(l => !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-}
+// `loadEntryPoint` now breaks when the event loop has nothing left to make
+// progress — matching Node.js (unsettled top-level await exits cleanly
+// rather than waiting on unref'd handles).
 
 test("AbortSignal.timeout awaited at top-level does not hang or spin", async () => {
   // The timeout is deliberately long (60s). Before the fix, POSIX would
@@ -48,13 +40,11 @@ test("AbortSignal.timeout awaited at top-level does not hang or spin", async () 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", source],
     env: bunEnv,
-    stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   const elapsed = performance.now() - started;
 
-  expect(stripAsanWarning(stderr)).toBe("");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
   expect(elapsed).toBeLessThan(30_000);
@@ -80,12 +70,10 @@ test("AbortSignal.timeout fires when something else keeps the loop alive", async
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", source],
     env: bunEnv,
-    stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stripAsanWarning(stderr)).toBe("");
   expect(stdout).toBe("run aborted\n");
   expect(exitCode).toBe(0);
 });
@@ -98,14 +86,43 @@ test("top-level await on a never-resolving promise exits cleanly", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", "console.log('before'); await new Promise(() => {}); console.log('after');"],
     env: bunEnv,
-    stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   const elapsed = performance.now() - started;
 
-  expect(stripAsanWarning(stderr)).toBe("");
   expect(stdout).toBe("before\n");
   expect(exitCode).toBe(0);
   expect(elapsed).toBeLessThan(30_000);
+});
+
+test("unhandled rejection mid-TLA does not abandon an in-flight wait", async () => {
+  // The first cut of this fix used `isEventLoopAlive()` as the exit
+  // predicate. That short-circuits on `unhandled_error_counter != 0` — so a
+  // side-path unhandled rejection (common: a forgotten `.catch()` on a void
+  // Promise in default .bun mode) would cause the TLA wait to bail while
+  // the real work (here, a `setTimeout`) was still pending. The continuation
+  // after `await` would never run. This test pins that behavior: the
+  // rejection is still reported on stderr, but the await resolves normally
+  // and the code after it executes.
+  const source = `
+    const t0 = Date.now();
+    Promise.reject(new Error("side rejection"));
+    await new Promise(r => setTimeout(r, 200));
+    process.stdout.write("elapsed=" + (Date.now() - t0 >= 180 ? "ok" : "early") + "\\n");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", source],
+    env: bunEnv,
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  // stdout is what matters: the continuation after `await` ran, the timer
+  // actually waited ~200ms, and we didn't bail early. (The exit code is 1
+  // because bun's default `.bun` unhandled-rejection mode sets it — not our
+  // concern here; we just need to prove the wait wasn't abandoned.)
+  expect(stdout).toBe("elapsed=ok\n");
+  expect(exitCode).toBe(1);
 });

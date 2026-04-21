@@ -2256,18 +2256,15 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
                         if (this.pending_internal_promise.?.status() == .pending) {
                             this.eventLoop().autoTick();
                         }
-
-                        // See loadEntryPoint — same unsettled-TLA escape hatch.
-                        if (this.pending_internal_promise.?.status() == .pending and !this.isEventLoopAlive()) {
-                            break;
-                        }
                     }
                 },
                 else => {},
             }
         } else {
             this.eventLoop().performGC();
-            this.eventLoop().waitForPromiseOrLoopExit(.{ .internal = promise });
+            this.waitForPromise(jsc.AnyPromise{
+                .internal = promise,
+            });
         }
 
         if (promise.status() == .rejected)
@@ -2438,11 +2435,6 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
                     if (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().autoTick();
                     }
-
-                    // See loadEntryPoint — same unsettled-TLA escape hatch.
-                    if (this.pending_internal_promise.?.status() == .pending and !this.isEventLoopAlive()) {
-                        break;
-                    }
                 }
             },
             else => {},
@@ -2453,7 +2445,7 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
         }
 
         this.eventLoop().performGC();
-        this.eventLoop().waitForPromiseOrLoopExit(.{ .internal = promise });
+        this.waitForPromise(.{ .internal = promise });
     }
 
     this.eventLoop().autoTick();
@@ -2479,8 +2471,10 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
                     // Top-level await with no ref'd handle to resolve it:
                     // bail so POSIX doesn't burn 100% CPU and Windows doesn't
                     // hang on `uv_run(NOWAIT)` skipping its loop body. See
-                    // EventLoop.waitForPromiseOrLoopExit for details.
-                    if (this.pending_internal_promise.?.status() == .pending and !this.isEventLoopAlive()) {
+                    // EventLoop.waitForPromiseOrLoopExit for the full rationale
+                    // (and for why this deliberately avoids `isEventLoopAlive`,
+                    // which short-circuits on `unhandled_error_counter != 0`).
+                    if (this.pending_internal_promise.?.status() == .pending and !this.eventLoop().hasAnyHandleWork()) {
                         break;
                     }
                 }

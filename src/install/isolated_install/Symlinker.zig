@@ -73,27 +73,14 @@ pub const Symlinker = struct {
                                     };
 
                                     FD.cwd().makePath(u8, dest_parent) catch {};
-                                    return switch (this.symlink()) {
-                                        .result => .success,
-                                        // EEXIST after NOENT means another writer
-                                        // (concurrent install into the same shared
-                                        // virtual-store entry) created the link in
-                                        // between; the caller asked for "ensure it
-                                        // exists", which it now does.
-                                        .err => |e| if (e.getErrno() == .EXIST) .success else .initErr(e),
-                                    };
+                                    return this.symlink();
                                 },
-                                // Same NOENT→EEXIST race without the makePath hop.
-                                .EXIST => .success,
                                 else => .initErr(symlink_err),
                             },
                         },
                         else => {
                             FD.cwd().deleteTree(this.dest.sliceZ()) catch {};
-                            return switch (this.symlink()) {
-                                .result => .success,
-                                .err => |e| if (e.getErrno() == .EXIST) .success else .initErr(e),
-                            };
+                            return this.symlink();
                         },
                     },
                 };
@@ -127,12 +114,7 @@ pub const Symlinker = struct {
                     _ = sys.unlink(this.dest.sliceZ());
                 }
 
-                return switch (this.symlink()) {
-                    .result => .success,
-                    // Another writer replaced the wrong-target link with the
-                    // right one between our unlink and this retry.
-                    .err => |e| if (e.getErrno() == .EXIST) .success else .initErr(e),
-                };
+                return this.symlink();
             },
         };
     }

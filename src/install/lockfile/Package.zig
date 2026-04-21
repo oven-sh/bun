@@ -1916,6 +1916,11 @@ pub fn Package(comptime SemverIntType: type) type {
                                         value.loc,
                                     )) |_dep| {
                                         var dep = _dep;
+                                        // swapRemove (not contains): drain names that
+                                        // have a real `peerDependencies` entry so the
+                                        // meta-only synthesis pass below only sees
+                                        // names that appear *only* in
+                                        // `peerDependenciesMeta`.
                                         if (group.behavior.isPeer() and optional_peer_dependencies.swapRemove(external_name.hash)) {
                                             dep.behavior.optional = true;
                                         }

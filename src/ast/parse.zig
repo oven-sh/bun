@@ -200,6 +200,26 @@ pub fn Parse(
             try p.lexer.expect(.t_close_brace);
 
             const has_any_decorators = has_decorators or class_opts.ts_decorators.len > 0;
+
+            // Auto-accessor fields always need the standard-decorator lowering
+            // (WeakMap + getter/setter) because JavaScriptCore doesn't parse
+            // `accessor` natively. When `standard_decorators` is off (i.e. the
+            // file is in `experimentalDecorators` mode), we still route a class
+            // with an auto-accessor through that path so the accessor gets
+            // lowered — see #29553.
+            //
+            // Mixing auto-accessors with TS legacy decorators in the same class
+            // would route the legacy decorators through the standard-proposal
+            // runtime, which is wrong semantically. Reject that combination
+            // explicitly rather than silently changing decorator semantics.
+            if (has_auto_accessor and !p.options.features.standard_decorators and has_any_decorators) {
+                try p.log.addError(
+                    p.source,
+                    class_keyword.loc,
+                    "Cannot mix the `accessor` keyword with `experimentalDecorators: true` decorators in the same class. Use standard decorators (leave `experimentalDecorators` unset or false) to combine them.",
+                );
+            }
+
             return G.Class{
                 .class_name = name,
                 .extends = extends,
@@ -209,7 +229,7 @@ pub fn Parse(
                 .body_loc = body_loc,
                 .properties = properties.items,
                 .has_decorators = has_any_decorators,
-                .should_lower_standard_decorators = p.options.features.standard_decorators and (has_any_decorators or has_auto_accessor),
+                .should_lower_standard_decorators = has_auto_accessor or (p.options.features.standard_decorators and has_any_decorators),
             };
         }
 

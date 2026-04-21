@@ -7,7 +7,7 @@
  *
  * Why: Bun has ~550 .cpp files, ~330 of them under 200 lines. Each compile
  * spends most of its time re-parsing the same JSC/WebCore headers. Bundling
- * 8 files into one TU means 1 header parse instead of 8 — same code, 1/8th
+ * N files into one TU means 1 header parse instead of N — same code, 1/Nth
  * the redundant frontend work. WebKit reports a 3–4× clean-build speedup
  * from this technique alone.
  *
@@ -16,7 +16,7 @@
  *     never share a bundle — keeps `using namespace WebCore` in webcore/
  *     from leaking into bindings/ etc.
  *   - Sort each group by basename for determinism.
- *   - Walk each group filling bundles of `bundleSize` (default 8).
+ *   - Walk each group filling bundles of `bundleSizeFor(cfg)`.
  *   - Files in `noUnify` compile standalone (large enough to saturate a
  *     core alone, or have per-file flag overrides, or are known to conflict).
  *
@@ -29,7 +29,7 @@
  *     header. When bundle composition shifts (file added/removed), the
  *     missing include surfaces. Fix the include; don't reorder bundles.
  *
- * Incremental builds: editing one .cpp recompiles its whole bundle (8 files).
+ * Incremental builds: editing one .cpp recompiles its whole bundle.
  * Acceptable — the bundle compile is still fast, and ccache handles the
  * common case of unchanged bundles. Set `cfg.unifiedSources = false` for
  * fine-grained incremental during heavy single-file iteration.

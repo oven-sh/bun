@@ -183,6 +183,7 @@ Split CI modes: `zig-only` (zstd+codegen+zig), `cpp-only` (deps+codegen+compile 
 | `ninja.ts`                     | `Ninja` class — the build-file writer                                              |
 | `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                    |
 | `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                            |
+| `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                   |
 | `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                 |
 | `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                           |
 | `zig.ts`                       | Zig download + `zig build`, `emitZig()`                                            |

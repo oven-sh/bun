@@ -372,12 +372,12 @@ fn closePseudoconsoleOffThread(this: *Terminal, hpcon: bun.windows.HPCON) void {
     };
     const t = std.Thread.spawn(.{ .stack_size = 64 * 1024 }, Runner.run, .{hpcon}) catch {
         // CreateThread failed — the process is in a bad state. Close the
-        // reader so onReaderDone fires (releasing the reader ref and firing
-        // the exit callback) instead of hanging on an EOF that will never
-        // come. Then call ClosePseudoConsole sync; with our pipe end closed
-        // conhost sees broken-pipe and returns without blocking.
+        // reader so onReaderDone fires next loop tick (releasing the reader
+        // ref) instead of hanging on an EOF that will never come. Leak hpcon;
+        // calling ClosePseudoConsole here would deadlock since reader.close()
+        // is async (uv_close) and the pipe HANDLE is still open. Conhost sees
+        // broken-pipe once libuv's deferred close runs.
         if (this.flags.reader_started and !this.flags.reader_done) this.reader.close();
-        bun.windows.ClosePseudoConsole(hpcon);
         return;
     };
     t.detach();

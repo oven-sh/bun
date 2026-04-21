@@ -469,7 +469,7 @@ declare module "bun:test" {
     (
       label: string,
 
-      fn: (
+      fn?: (
         ...args: __internal.IsTuple<T> extends true
           ? [...table: __internal.Flatten<T>, done: (err?: unknown) => void]
           : T

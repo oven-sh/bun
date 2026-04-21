@@ -423,7 +423,7 @@ This is useful for running multiple commands in sequence through the same termin
 - **ConPTY re-encodes output.** ConPTY renders the child's output to a virtual screen and emits whatever VT sequences describe the result, so the `data` callback receives semantically equivalent — but not byte-identical — escape sequences. Colours and text are preserved; cursor-positioning and reset sequences may be reordered or coalesced. ConPTY also emits a short VT init sequence (`\x1b[?9001h\x1b[?1004h…`) before any child output.
 - **Input `\r` is not translated to `\n` on Windows.** POSIX `ICRNL` maps carriage return to newline on input; ConPTY passes `\r` through unchanged.
 - **`process.on('SIGWINCH')` in the child does not fire under ConPTY** unless the child is reading stdin in raw mode. `process.stdout.columns`/`rows` do update after `resize()`. This is a libuv limitation that affects any libuv-based child (Node.js included).
-- On Windows before 11 24H2 (build 26100), `terminal.close()` may not terminate a still-running child promptly because [`ClosePseudoConsole`](https://learn.microsoft.com/en-us/windows/console/closepseudoconsole) waits for the client to disconnect on those versions. Kill the attached process first if you need to tear down with a running child.
+- On Windows before 11 24H2 (build 26100), `terminal.close()` may not terminate a still-running child promptly because [`ClosePseudoConsole`](https://learn.microsoft.com/en-us/windows/console/closepseudoconsole) blocks until conhost has flushed its output through the pipe on those versions. Kill the attached process first if you need to tear down with a running child.
 
 ---
 

@@ -397,6 +397,9 @@ pub fn spawnMaybeSync(
                         if (terminal.flags.closed) {
                             return globalThis.throwInvalidArguments("terminal is closed", .{});
                         }
+                        if (terminal.flags.inline_spawned) {
+                            return globalThis.throwInvalidArguments("terminal was created inline by a previous spawn and cannot be reused", .{});
+                        }
                         if (comptime Environment.isPosix) {
                             if (terminal.slave_fd == bun.invalid_fd) {
                                 return globalThis.throwInvalidArguments("terminal slave fd is no longer valid", .{});

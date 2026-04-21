@@ -82,7 +82,11 @@ pub const Flags = packed struct(u8) {
     connected: bool = false,
     reader_done: bool = false,
     writer_done: bool = false,
-    _: u1 = 0,
+    /// Set when an inline-created terminal has been attached to a subprocess
+    /// via spawn; prevents reusing the same inline terminal for a second
+    /// spawn (which on Windows would be silently killed by ClosePseudoConsole
+    /// when the first subprocess exits, and on POSIX has no slave_fd left).
+    inline_spawned: bool = false,
 };
 
 pub const IOWriter = bun.io.StreamingWriter(@This(), struct {
@@ -339,6 +343,7 @@ pub fn getPseudoconsole(this: *Terminal) ?bun.windows.HPCON {
 /// The child process has its own copy - closing the parent's ensures
 /// EOF is received on the master side when the child exits
 pub fn closeSlaveFd(this: *Terminal) void {
+    this.flags.inline_spawned = true;
     if (this.slave_fd != bun.invalid_fd) {
         this.slave_fd.close();
         this.slave_fd = bun.invalid_fd;

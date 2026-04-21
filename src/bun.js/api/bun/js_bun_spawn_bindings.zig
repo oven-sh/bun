@@ -50,23 +50,28 @@ fn getArgv0(globalThis: *jsc.JSGlobalObject, PATH: []const u8, cwd: []const u8, 
 
 /// `argv` for `Bun.spawn` & `Bun.spawnSync`
 fn getArgv(globalThis: *jsc.JSGlobalObject, args: JSValue, PATH: []const u8, cwd: []const u8, argv0: *?[*:0]const u8, allocator: std.mem.Allocator, argv: *std.array_list.Managed(?[*:0]const u8)) bun.JSError!void {
-    var cmds_array = try args.arrayIterator(globalThis);
-    // + 1 for argv0
-    // + 1 for null terminator
-    argv.* = try @TypeOf(argv.*).initCapacity(allocator, cmds_array.len + 2);
-
     if (args.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
     }
+
+    var cmds_array = try args.arrayIterator(globalThis);
 
     if (cmds_array.len == 0) {
         return globalThis.throwInvalidArguments("cmd must not be empty", .{});
     }
 
+    if (cmds_array.len > std.math.maxInt(u32) - 2) {
+        return globalThis.throwInvalidArguments("cmd array is too large", .{});
+    }
+
+    // + 1 for argv0
+    // + 1 for null terminator
+    argv.* = try @TypeOf(argv.*).initCapacity(allocator, @as(usize, cmds_array.len) + 2);
+
     const argv0_result = try getArgv0(globalThis, PATH, cwd, argv0.*, (try cmds_array.next()).?, allocator);
 
     argv0.* = argv0_result.argv0.ptr;
-    argv.appendAssumeCapacity(argv0_result.arg0.ptr);
+    try argv.append(argv0_result.arg0.ptr);
 
     var arg_index: usize = 1;
     while (try cmds_array.next()) |value| {
@@ -78,7 +83,7 @@ fn getArgv(globalThis: *jsc.JSGlobalObject, args: JSValue, PATH: []const u8, cwd
             return globalThis.ERR(.INVALID_ARG_VALUE, "The argument 'args[{d}]' must be a string without null bytes. Received \"{f}\"", .{ arg_index, arg.toZigString() }).throw();
         }
 
-        argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));
+        try argv.append(try arg.toOwnedSliceZ(allocator));
         arg_index += 1;
     }
 
@@ -161,10 +166,15 @@ pub fn spawnMaybeSync(
         if (abort_signal) |signal| {
             signal.unref();
         }
-        // If we created a new terminal but spawn failed, clean it up
+        // If we created a new terminal but spawn failed, close it. The
+        // writer/reader/finalize deref paths release the remaining refs.
+        // Downgrade the JSRef so the wrapper is GC-eligible, and mark
+        // finalized so onReaderDone skips the JS exit callback — the user
+        // never received this terminal (spawn threw).
         if (terminal_info) |info| {
+            info.terminal.this_value.downgrade();
+            info.terminal.flags.finalized = true;
             info.terminal.closeInternal();
-            info.terminal.deref();
         }
     }
 
@@ -382,24 +392,27 @@ pub fn spawnMaybeSync(
 
             if (comptime !is_sync) {
                 if (try args.getTruthy(globalThis, "terminal")) |terminal_val| {
-                    if (comptime !Environment.isPosix) {
-                        return globalThis.throwInvalidArguments("terminal option is not supported on this platform", .{});
-                    }
-
                     // Check if it's an existing Terminal object
                     if (Terminal.fromJS(terminal_val)) |terminal| {
                         if (terminal.flags.closed) {
                             return globalThis.throwInvalidArguments("terminal is closed", .{});
                         }
-                        if (terminal.slave_fd == bun.invalid_fd) {
-                            return globalThis.throwInvalidArguments("terminal slave fd is no longer valid", .{});
+                        if (terminal.flags.inline_spawned) {
+                            return globalThis.throwInvalidArguments("terminal was created inline by a previous spawn and cannot be reused", .{});
+                        }
+                        if (comptime Environment.isPosix) {
+                            if (terminal.slave_fd == bun.invalid_fd) {
+                                return globalThis.throwInvalidArguments("terminal slave fd is no longer valid", .{});
+                            }
+                        } else if (terminal.getPseudoconsole() == null) {
+                            return globalThis.throwInvalidArguments("terminal pseudoconsole is no longer valid", .{});
                         }
                         existing_terminal = terminal;
                         terminal_js_value = terminal_val;
                     } else if (terminal_val.isObject()) {
                         // Create a new terminal from options
                         var term_options = try Terminal.Options.parseFromJS(globalThis, terminal_val);
-                        terminal_info = Terminal.createFromSpawn(globalThis, term_options) catch |err| {
+                        terminal_info = Terminal.createFromSpawn(globalThis, &term_options) catch |err| {
                             term_options.deinit();
                             return switch (err) {
                                 error.OpenPtyFailed => globalThis.throw("Failed to open PTY", .{}),
@@ -413,11 +426,24 @@ pub fn spawnMaybeSync(
                         return globalThis.throwInvalidArguments("terminal must be a Terminal object or options object", .{});
                     }
 
-                    const terminal = existing_terminal orelse terminal_info.?.terminal;
-                    const slave_fd = terminal.getSlaveFd();
-                    stdio[0] = .{ .fd = slave_fd };
-                    stdio[1] = .{ .fd = slave_fd };
-                    stdio[2] = .{ .fd = slave_fd };
+                    if (comptime Environment.isPosix) {
+                        const terminal = existing_terminal orelse terminal_info.?.terminal;
+                        const slave_fd = terminal.getSlaveFd();
+                        stdio[0] = .{ .fd = slave_fd };
+                        stdio[1] = .{ .fd = slave_fd };
+                        stdio[2] = .{ .fd = slave_fd };
+                    } else {
+                        // On Windows, ConPTY supplies stdio via PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE.
+                        // Set stdio to .ignore so spawnProcessWindows doesn't allocate pipes.
+                        stdio[0] = .ignore;
+                        stdio[1] = .ignore;
+                        stdio[2] = .ignore;
+                        // ConPTY spawns with bInheritHandles=FALSE and no stdio buffer,
+                        // so extra fds and IPC pipes can't be passed to the child.
+                        if (maybe_ipc_mode != null or extra_fds.items.len > 0) {
+                            return globalThis.throwInvalidArguments("ipc and extra stdio are not supported with terminal on Windows", .{});
+                        }
+                    }
                 }
             }
         } else {
@@ -577,6 +603,11 @@ pub fn spawnMaybeSync(
             if (terminal_info) |ti| break :blk ti.terminal.getSlaveFd().native();
             break :blk -1;
         } else {},
+        .pseudoconsole = if (Environment.isWindows) blk: {
+            if (existing_terminal) |t| break :blk t.getPseudoconsole();
+            if (terminal_info) |ti| break :blk ti.terminal.getPseudoconsole();
+            break :blk null;
+        } else {},
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,
@@ -714,6 +745,7 @@ pub fn spawnMaybeSync(
     if (terminal_info) |info| {
         terminal_js_value = info.js_value;
         info.terminal.closeSlaveFd();
+        subprocess.flags.owns_terminal = true;
         terminal_info = null;
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
@@ -762,6 +794,8 @@ pub fn spawnMaybeSync(
                 ctx.* = &subprocess.ipc_data.?;
                 subprocess.ipc_data.?.socket = .{ .open = posix_ipc_info };
             }
+            // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
+            subprocess.stdio_pipes.items[@intCast(ipc_channel)] = bun.invalid_fd;
         } else {
             if (ipc_data.windowsConfigureServer(
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,

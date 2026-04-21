@@ -8,6 +8,7 @@
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionEvictIsolationSourceProviderCache);
 
 namespace Zig {
 class GlobalObject;

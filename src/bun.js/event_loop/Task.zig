@@ -44,6 +44,7 @@ pub const Task = TaggedPointerUnion(.{
     Mkdtemp,
     napi_async_work,
     NapiFinalizerTask,
+    NativePromiseContextDeferredDerefTask,
     NativeBrotli,
     NativeZlib,
     NativeZstd,
@@ -503,6 +504,9 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
                 var any: *NapiFinalizerTask = task.get(NapiFinalizerTask).?;
                 any.runOnJSThread();
             },
+            @field(Task.Tag, @typeName(NativePromiseContextDeferredDerefTask)) => {
+                NativePromiseContextDeferredDerefTask.runFromJSThread(@intCast(task.asUintptr()));
+            },
             @field(Task.Tag, @typeName(StatFS)) => {
                 var any: *StatFS = task.get(StatFS).?;
                 try any.runFromJSThread();
@@ -633,6 +637,7 @@ const StreamPending = jsc.WebCore.streams.Result.Pending;
 const NativeBrotli = jsc.API.NativeBrotli;
 const NativeZlib = jsc.API.NativeZlib;
 const NativeZstd = jsc.API.NativeZstd;
+const NativePromiseContextDeferredDerefTask = jsc.API.NativePromiseContext.DeferredDerefTask;
 const AsyncGlobWalkTask = jsc.API.Glob.WalkTask.AsyncGlobWalkTask;
 const AsyncTransformTask = jsc.API.JSTranspiler.TransformTask.AsyncTransformTask;
 

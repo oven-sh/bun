@@ -385,6 +385,7 @@ export function createRequireCache() {
       moduleMap.$delete(key);
       $requireMap.$delete(key);
       Loader.registry.$delete(key);
+      $evictIsolationSourceProviderCache(key);
       return true;
     },
 

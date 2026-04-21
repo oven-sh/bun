@@ -15,25 +15,12 @@ extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
 namespace Bun {
 using namespace WTF;
 
-// ============================================================================
-// UTF-16 Decoding Utilities (needed for hard wrap with surrogate pairs)
-// ============================================================================
-
-static char32_t decodeUTF16(const UChar* ptr, size_t available, size_t& outLen)
+// UTF-16 decoding and codepoint width are in ANSIHelpers.h (shared with
+// sliceAnsi.cpp). The local wrapper here just delegates to keep existing
+// call sites unchanged.
+static inline char32_t decodeUTF16(const UChar* ptr, size_t available, size_t& outLen)
 {
-    UChar c = ptr[0];
-
-    // Check for surrogate pair
-    if (c >= 0xD800 && c <= 0xDBFF && available >= 2) {
-        UChar c2 = ptr[1];
-        if (c2 >= 0xDC00 && c2 <= 0xDFFF) {
-            outLen = 2;
-            return 0x10000 + (((c - 0xD800) << 10) | (c2 - 0xDC00));
-        }
-    }
-
-    outLen = 1;
-    return static_cast<char32_t>(c);
+    return ANSI::decodeUTF16(ptr, available, outLen);
 }
 
 static inline uint8_t getVisibleWidth(char32_t cp, bool ambiguousIsWide)

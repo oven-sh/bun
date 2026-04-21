@@ -19,7 +19,7 @@ pub const access = bun.sys.access;
 
 // Note: `req = undefined; req.deinit()` has a safety-check in a debug build
 
-pub fn open(file_path: [:0]const u8, c_flags: i32, _perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn open(file_path: [:0]const u8, c_flags: i32, _perm: bun.Mode) Maybe(bun.FD) {
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
 
@@ -64,7 +64,7 @@ pub fn chmod(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
         .success;
 }
 
-pub fn fchmod(fd: FileDescriptor, flags: bun.Mode) Maybe(void) {
+pub fn fchmod(fd: FD, flags: bun.Mode) Maybe(void) {
     const uv_fd = fd.uv();
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
@@ -101,7 +101,7 @@ pub fn chown(file_path: [:0]const u8, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(
         .success;
 }
 
-pub fn fchown(fd: FileDescriptor, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void) {
+pub fn fchown(fd: FD, uid: uv.uv_uid_t, gid: uv.uv_uid_t) Maybe(void) {
     const uv_fd = fd.uv();
 
     var req: uv.fs_t = uv.fs_t.uninitialized;
@@ -151,7 +151,8 @@ pub fn readlink(file_path: [:0]const u8, buf: []u8) Maybe([:0]u8) {
     } else {
         // Seems like `rc` does not contain the size?
         bun.assert(rc.int() == 0);
-        const slice = bun.span(req.ptrAs([*:0]u8));
+        const result_ptr: ?[*:0]u8 = req.ptrAs(?[*:0]u8);
+        const slice = bun.span(result_ptr orelse return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NOENT), .syscall = .readlink, .path = file_path } });
         if (slice.len > buf.len) {
             log("uv readlink({s}) = {d}, {s} TRUNCATED", .{ file_path, rc.int(), slice });
             return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.NOMEM), .syscall = .readlink, .path = file_path } };
@@ -200,7 +201,7 @@ pub fn symlinkUV(target: [:0]const u8, new_path: [:0]const u8, flags: c_int) May
         .success;
 }
 
-pub fn ftruncate(fd: FileDescriptor, size: isize) Maybe(void) {
+pub fn ftruncate(fd: FD, size: isize) Maybe(void) {
     const uv_fd = fd.uv();
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
@@ -213,7 +214,7 @@ pub fn ftruncate(fd: FileDescriptor, size: isize) Maybe(void) {
         .success;
 }
 
-pub fn fstat(fd: FileDescriptor) Maybe(bun.Stat) {
+pub fn fstat(fd: FD) Maybe(bun.Stat) {
     const uv_fd = fd.uv();
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
@@ -226,7 +227,7 @@ pub fn fstat(fd: FileDescriptor) Maybe(bun.Stat) {
         .{ .result = req.statbuf };
 }
 
-pub fn fdatasync(fd: FileDescriptor) Maybe(void) {
+pub fn fdatasync(fd: FD) Maybe(void) {
     const uv_fd = fd.uv();
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
@@ -239,7 +240,7 @@ pub fn fdatasync(fd: FileDescriptor) Maybe(void) {
         .success;
 }
 
-pub fn fsync(fd: FileDescriptor) Maybe(void) {
+pub fn fsync(fd: FD) Maybe(void) {
     const uv_fd = fd.uv();
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
@@ -276,11 +277,11 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
         .{ .result = req.statbuf };
 }
 
-pub fn close(fd: FileDescriptor) ?bun.sys.Error {
+pub fn close(fd: FD) ?bun.sys.Error {
     return fd.closeAllowingBadFileDescriptor(@returnAddress());
 }
 
-pub fn closeAllowingStdoutAndStderr(fd: FileDescriptor) ?bun.sys.Error {
+pub fn closeAllowingStdoutAndStderr(fd: FD) ?bun.sys.Error {
     return fd.closeAllowingStandardIo(@returnAddress());
 }
 
@@ -301,7 +302,7 @@ fn sumBufsLen(bufs: []const bun.PlatformIOVec) usize {
     return total;
 }
 
-pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usize) {
+pub fn preadv(fd: FD, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usize) {
     const uv_fd = fd.uv();
     comptime bun.assert(bun.PlatformIOVec == uv.uv_buf_t);
 
@@ -318,7 +319,9 @@ pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64
         var req: uv.fs_t = uv.fs_t.uninitialized;
         defer req.deinit();
 
-        const rc = uv.uv_fs_read(
+        // The int return value of uv_fs_read truncates req.result (ssize_t) and
+        // wraps negative when bytes read > INT_MAX, so use req.result directly.
+        _ = uv.uv_fs_read(
             uv.Loop.get(),
             &req,
             uv_fd,
@@ -331,14 +334,14 @@ pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64
         const chunk_capacity = sumBufsLen(chunk_bufs);
 
         if (Environment.isDebug) {
-            log("uv read({}, {d} total bytes) = {d} ({f})", .{ uv_fd, chunk_capacity, rc.int(), debug_timer });
+            log("uv read({}, {d} total bytes) = {d} ({f})", .{ uv_fd, chunk_capacity, req.result.int(), debug_timer });
         }
 
-        if (rc.errno()) |errno| {
-            return .{ .err = .{ .errno = errno, .fd = fd, .syscall = .read } };
+        if (req.result.errEnum()) |e| {
+            return .{ .err = .{ .errno = @intFromEnum(e), .fd = fd, .syscall = .read } };
         }
 
-        const bytes_read: usize = @intCast(rc.int());
+        const bytes_read: usize = @intCast(req.result.int());
         total_read += bytes_read;
 
         // If we read less than requested, we're done (EOF or partial read)
@@ -357,7 +360,7 @@ pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64
     return .{ .result = total_read };
 }
 
-pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst, position: i64) Maybe(usize) {
+pub fn pwritev(fd: FD, bufs: []const bun.PlatformIOVecConst, position: i64) Maybe(usize) {
     const uv_fd = fd.uv();
     comptime bun.assert(bun.PlatformIOVec == uv.uv_buf_t);
 
@@ -374,7 +377,9 @@ pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst, positio
         var req: uv.fs_t = uv.fs_t.uninitialized;
         defer req.deinit();
 
-        const rc = uv.uv_fs_write(
+        // The int return value of uv_fs_write truncates req.result (ssize_t) and
+        // wraps negative when bytes written > INT_MAX, so use req.result directly.
+        _ = uv.uv_fs_write(
             uv.Loop.get(),
             &req,
             uv_fd,
@@ -387,14 +392,14 @@ pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst, positio
         const chunk_capacity = sumBufsLen(chunk_bufs);
 
         if (Environment.isDebug) {
-            log("uv write({}, {d} total bytes) = {d} ({f})", .{ uv_fd, chunk_capacity, rc.int(), debug_timer });
+            log("uv write({}, {d} total bytes) = {d} ({f})", .{ uv_fd, chunk_capacity, req.result.int(), debug_timer });
         }
 
-        if (rc.errno()) |errno| {
-            return .{ .err = .{ .errno = errno, .fd = fd, .syscall = .write } };
+        if (req.result.errEnum()) |e| {
+            return .{ .err = .{ .errno = @intFromEnum(e), .fd = fd, .syscall = .write } };
         }
 
-        const bytes_written: usize = @intCast(rc.int());
+        const bytes_written: usize = @intCast(req.result.int());
         total_written += bytes_written;
 
         // If we wrote less than requested, we're done (partial write)
@@ -413,11 +418,11 @@ pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst, positio
     return .{ .result = total_written };
 }
 
-pub inline fn readv(fd: FileDescriptor, bufs: []bun.PlatformIOVec) Maybe(usize) {
+pub inline fn readv(fd: FD, bufs: []bun.PlatformIOVec) Maybe(usize) {
     return preadv(fd, bufs, -1);
 }
 
-pub fn pread(fd: FileDescriptor, buf: []u8, position: i64) Maybe(usize) {
+pub fn pread(fd: FD, buf: []u8, position: i64) Maybe(usize) {
     // If buffer fits in a single uv_buf_t, use the simple path
     if (buf.len <= max_buf_len) {
         var bufs: [1]bun.PlatformIOVec = .{bun.platformIOVecCreate(buf)};
@@ -453,7 +458,7 @@ pub fn pread(fd: FileDescriptor, buf: []u8, position: i64) Maybe(usize) {
     return .{ .result = total_read };
 }
 
-pub fn read(fd: FileDescriptor, buf: []u8) Maybe(usize) {
+pub fn read(fd: FD, buf: []u8) Maybe(usize) {
     // If buffer fits in a single uv_buf_t, use the simple path
     if (buf.len <= max_buf_len) {
         var bufs: [1]bun.PlatformIOVec = .{bun.platformIOVecCreate(buf)};
@@ -485,11 +490,11 @@ pub fn read(fd: FileDescriptor, buf: []u8) Maybe(usize) {
     return .{ .result = total_read };
 }
 
-pub inline fn writev(fd: FileDescriptor, bufs: []bun.PlatformIOVec) Maybe(usize) {
+pub inline fn writev(fd: FD, bufs: []bun.PlatformIOVec) Maybe(usize) {
     return pwritev(fd, bufs, -1);
 }
 
-pub fn pwrite(fd: FileDescriptor, buf: []const u8, position: i64) Maybe(usize) {
+pub fn pwrite(fd: FD, buf: []const u8, position: i64) Maybe(usize) {
     // If buffer fits in a single uv_buf_t, use the simple path
     if (buf.len <= max_buf_len) {
         var bufs: [1]bun.PlatformIOVecConst = .{bun.platformIOVecConstCreate(buf)};
@@ -525,7 +530,7 @@ pub fn pwrite(fd: FileDescriptor, buf: []const u8, position: i64) Maybe(usize) {
     return .{ .result = total_written };
 }
 
-pub fn write(fd: FileDescriptor, buf: []const u8) Maybe(usize) {
+pub fn write(fd: FD, buf: []const u8) Maybe(usize) {
     // If buffer fits in a single uv_buf_t, use the simple path
     if (buf.len <= max_buf_len) {
         var bufs: [1]bun.PlatformIOVecConst = .{bun.platformIOVecConstCreate(buf)};
@@ -563,6 +568,6 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-const FileDescriptor = bun.FileDescriptor;
+const FD = bun.FD;
 const Maybe = bun.sys.Maybe;
 const uv = bun.windows.libuv;

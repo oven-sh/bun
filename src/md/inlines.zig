@@ -201,12 +201,15 @@ pub fn processInlineContent(self: *Parser, content: []const u8, base_off: OFF) P
 
         // Wiki links: [[destination]] or [[destination|label]]
         if (c == '[' and self.flags.wiki_links and i + 1 < content.len and content[i + 1] == '[') {
+            if (i > text_start) try self.emitText(.normal, content[text_start..i]);
             if (try self.processWikiLink(content, i)) |end_pos| {
-                if (i > text_start) try self.emitText(.normal, content[text_start..i]);
                 i = end_pos;
                 text_start = i;
                 continue;
             }
+            // No wikilink matched: restore text_start so preceding text
+            // isn't double-emitted by the next span branch.
+            text_start = i;
         }
 
         // Links: [text](url) or [text][ref]

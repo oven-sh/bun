@@ -91,11 +91,15 @@ pub const Features = struct {
     pub var yaml_parse: usize = 0;
     pub var cpu_profile: usize = 0;
     pub var heap_snapshot: usize = 0;
+    pub var webview_chrome: usize = 0;
+    pub var webview_webkit: usize = 0;
 
     comptime {
         @export(&napi_module_register, .{ .name = "Bun__napi_module_register_count" });
         @export(&process_dlopen, .{ .name = "Bun__process_dlopen_count" });
         @export(&heap_snapshot, .{ .name = "Bun__Feature__heap_snapshot" });
+        @export(&webview_chrome, .{ .name = "Bun__Feature__webview_chrome" });
+        @export(&webview_webkit, .{ .name = "Bun__Feature__webview_webkit" });
     }
 
     pub fn formatter() Formatter {

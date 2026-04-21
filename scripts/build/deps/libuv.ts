@@ -1,0 +1,54 @@
+/**
+ * libuv — cross-platform async I/O. Bun uses it on Windows ONLY, for the
+ * event loop and file I/O (Windows' IOCP model needs a proper abstraction
+ * layer). On unix, bun's event loop is custom (kqueue/epoll direct).
+ *
+ * Built everywhere despite being windows-only at runtime, because node-api
+ * addons may reference libuv symbols and expect them to link.
+ */
+
+import type { Dependency, NestedCmakeBuild } from "../source.ts";
+
+// Tip of oven-sh/libuv's `bun` branch — upstream f3ce527e + the win-pipe
+// CancelIoEx race fix + ConPTY support in uv_spawn. To bump upstream, rebase
+// the `bun` branch and update this SHA.
+const LIBUV_COMMIT = "4dcfac4780d394e0dc2d3fb30335ca01b553eb46";
+
+export const libuv: Dependency = {
+  name: "libuv",
+
+  source: () => ({
+    kind: "github-archive",
+    repo: "oven-sh/libuv",
+    commit: LIBUV_COMMIT,
+  }),
+
+  build: cfg => {
+    const spec: NestedCmakeBuild = {
+      kind: "nested-cmake",
+      targets: ["uv_a"],
+      args: {
+        LIBUV_BUILD_SHARED: "OFF",
+        LIBUV_BUILD_TESTS: "OFF",
+        LIBUV_BUILD_BENCH: "OFF",
+      },
+    };
+
+    if (cfg.windows) {
+      // libuv's windows code has a handful of int-conversion warnings that
+      // clang-cl elevates. /DWIN32 /D_WINDOWS are what MSVC's cmake preset
+      // would add automatically; libuv's headers gate win32 paths on them.
+      spec.extraCFlags = ["/DWIN32", "/D_WINDOWS", "-Wno-int-conversion"];
+    }
+
+    return spec;
+  },
+
+  provides: cfg => ({
+    // uv_a → libuv.lib on windows (the cmake target sets OUTPUT_NAME=libuv),
+    // libuv's cmake sets OUTPUT_NAME=libuv on Windows to avoid conflicts
+    // with system uv.lib. Unix uses the bare name.
+    libs: [cfg.windows ? "libuv" : "uv"],
+    includes: ["include"],
+  }),
+};

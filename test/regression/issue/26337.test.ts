@@ -67,10 +67,11 @@ describe("issue #26337 - missing file: dependency error should show dependency n
       failProc.exited,
     ]);
 
-    // The error output should mention the dependency name
+    // The error output should mention the dependency name and path
     const output = stdout + stderr;
     expect(output).toContain("@scope/dep");
-    expect(output).toContain("error occurred while resolving");
+    expect(output).toContain("file:./nonexistent/path");
+    expect(output).toContain("failed to resolve");
 
     // The install should fail
     expect(exitCode).toBe(1);

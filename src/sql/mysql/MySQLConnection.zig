@@ -374,8 +374,13 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
     // Store server info
     this.#server_version = try handshake.server_version.toOwned();
     this.#connection_id = handshake.connection_id;
-    // this.capabilities = handshake.capability_flags;
-    this.#capabilities = Capabilities.getDefaultCapabilities(this.#ssl_mode != .disable, this.#database.len > 0);
+    // Negotiate capabilities: only request capabilities that the server also supports.
+    // Per MySQL protocol, the client MUST intersect its desired capabilities with the
+    // server's advertised capabilities. This ensures features like CLIENT_DEPRECATE_EOF
+    // are only used when the server actually supports them (critical for MySQL-compatible
+    // databases like StarRocks, TiDB, SingleStore, etc.).
+    this.#capabilities = Capabilities.getDefaultCapabilities(this.#ssl_mode != .disable, this.#database.len > 0)
+        .intersect(handshake.capability_flags);
 
     // Override with utf8mb4 instead of using server's default
     this.#character_set = CharacterSet.default;
@@ -387,6 +392,7 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
         \\   Connection ID:  {d}
         \\   Character Set:  {d} ({s})
         \\   Server Capabilities:   [ {f} ] 0x{x:0>8}
+        \\   Negotiated Capabilities: [ {f} ] 0x{x:0>8}
         \\   Status Flags:   [ {f} ]
         \\
     , .{
@@ -394,6 +400,8 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
         this.#connection_id,
         this.#character_set,
         this.#character_set.label(),
+        handshake.capability_flags,
+        handshake.capability_flags.toInt(),
         this.#capabilities,
         this.#capabilities.toInt(),
         this.#status_flags,
@@ -442,7 +450,9 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
             .verify_ca, .verify_full => {
                 return error.AuthenticationFailed;
             },
-            // require is the same as prefer
+            // require behaves like prefer for postgres.js compatibility,
+            // allowing graceful fallback to non-SSL when the server
+            // doesn't support it.
             .require, .prefer, .disable => {},
         }
     }
@@ -859,6 +869,19 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
     statement.ref();
     defer statement.deref();
     if (statement.statement_id > 0) {
+        // In legacy protocol (CLIENT_DEPRECATE_EOF not negotiated), the server sends
+        // intermediate EOF packets between param definitions and column definitions,
+        // and after column definitions. We must consume these EOF packets and only
+        // finalize the prepared statement after the trailing EOF is consumed.
+        // Disambiguation from a 0xFE length-prefixed row: any 0xFE packet below
+        // the 16 MB max-packet marker (0xFFFFFF) is an EOF. See handleResultSet
+        // for the full rationale.
+        if (!this.#capabilities.CLIENT_DEPRECATE_EOF and header_length < 0xFFFFFF and @as(PacketType, @enumFromInt(first_byte)) == .EOF) {
+            var eof = EOFPacket{};
+            try eof.decode(reader);
+            this.checkIfPreparedStatementIsDone(statement);
+            return;
+        }
         if (statement.params_received < statement.params.len) {
             var column = ColumnDefinition41{};
             defer column.deinit();
@@ -872,7 +895,13 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             try statement.columns[statement.columns_received].decode(reader);
             statement.columns_received += 1;
         }
-        this.checkIfPreparedStatementIsDone(statement);
+        // In CLIENT_DEPRECATE_EOF mode, there are no trailing EOF packets, so
+        // we check completion after each column/param definition. In legacy mode,
+        // completion is deferred to the EOF handler above to avoid marking the
+        // statement as prepared before the trailing EOF is consumed.
+        if (this.#capabilities.CLIENT_DEPRECATE_EOF) {
+            this.checkIfPreparedStatementIsDone(statement);
+        }
         return;
     }
 
@@ -896,6 +925,7 @@ pub fn handlePreparedStatement(this: *MySQLConnection, comptime Context: type, r
             // Read column definitions if any
             if (ok.num_columns > 0) {
                 statement.columns = try bun.default_allocator.alloc(ColumnDefinition41, ok.num_columns);
+                for (statement.columns) |*col| col.* = .{};
                 statement.columns_received = 0;
             }
 
@@ -1027,6 +1057,7 @@ fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewRe
                         bun.default_allocator.free(statement.columns);
                     }
                     statement.columns = try bun.default_allocator.alloc(ColumnDefinition41, header.field_count);
+                    for (statement.columns) |*col| col.* = .{};
                     statement.columns_received = 0;
                 }
                 statement.execution_flags.needs_duplicate_check = true;
@@ -1036,16 +1067,43 @@ fn handleResultSet(this: *MySQLConnection, comptime Context: type, reader: NewRe
                 try statement.columns[statement.columns_received].decode(reader);
                 statement.columns_received += 1;
             } else {
-                if (packet_type == .OK or packet_type == .EOF) {
-                    if (request.isSimple() or packet_type == .EOF) {
-                        // if we are using the text protocol for sure this is a OK packet otherwise will be OK packet with 0xFE code
-                        // If is not simple and is EOF this is actually a OK packet but with the flag EOF
-                        try ok.decode(reader);
-                        defer ok.deinit();
-
-                        this.handleResultSetOK(request, statement, ok.status_flags, ok.last_insert_id, ok.affected_rows);
+                // A 0xFE-prefixed packet at this point is either the end-of-result
+                // terminator or a row whose first column is a length-encoded integer
+                // starting with 0xFE (values that don't fit in 3 bytes).
+                //
+                // Disambiguation per the MySQL protocol spec: a terminator packet's
+                // payload length is always below the 16 MB max-packet marker
+                // (0xFFFFFF); a 0xFE row prefix means the next 8 bytes are a u64
+                // length, pushing the row payload past that marker. We used to gate
+                // on `header_length < 9` here, but an OK terminator can carry a
+                // trailing human-readable `info` string (e.g. ManticoreSearch's
+                // `szMeta`) that pushes the payload past 9 bytes, causing the
+                // terminator to be misparsed as a row and the query to hang.
+                if (packet_type == .EOF and header_length < 0xFFFFFF) {
+                    if (!this.#capabilities.CLIENT_DEPRECATE_EOF) {
+                        // Legacy protocol: EOF packets delimit sections of the result set.
+                        // Handle the intermediate EOF (between column defs and rows) and
+                        // the final EOF (after all rows) differently.
+                        if (!statement.execution_flags.columns_eof_received) {
+                            // Intermediate EOF between column definitions and row data - skip it
+                            var eof = EOFPacket{};
+                            try eof.decode(reader);
+                            statement.execution_flags.columns_eof_received = true;
+                            return;
+                        }
+                        // Final EOF after all row data - terminates the result set
+                        var eof = EOFPacket{};
+                        try eof.decode(reader);
+                        this.handleResultSetOK(request, statement, eof.status_flags, 0, 0);
                         return;
                     }
+
+                    // CLIENT_DEPRECATE_EOF mode: OK packet with 0xFE header.
+                    try ok.decode(reader);
+                    defer ok.deinit();
+
+                    this.handleResultSetOK(request, statement, ok.status_flags, ok.last_insert_id, ok.affected_rows);
+                    return;
                 }
 
                 const connection = this.getJSConnection();
@@ -1070,6 +1128,7 @@ const AuthSwitchRequest = @import("./protocol/AuthSwitchRequest.zig");
 const AuthSwitchResponse = @import("./protocol/AuthSwitchResponse.zig");
 const Capabilities = @import("./Capabilities.zig");
 const ColumnDefinition41 = @import("./protocol/ColumnDefinition41.zig");
+const EOFPacket = @import("./protocol/EOFPacket.zig");
 const HandshakeResponse41 = @import("./protocol/HandshakeResponse41.zig");
 const HandshakeV10 = @import("./protocol/HandshakeV10.zig");
 const JSMySQLConnection = @import("./js/JSMySQLConnection.zig");

@@ -21,7 +21,22 @@ pub const Installer = struct {
 
     trusted_dependencies_from_update_requests: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
 
-    pub fn deinit(this: *const Installer) void {
+    /// Absolute path to the global virtual store (`<cache_dir>/links`). When
+    /// non-null, npm/git/tarball entries are materialized once into this
+    /// directory and `node_modules/.bun/<storepath>` becomes a symlink into
+    /// it, so warm installs are O(packages) symlinks instead of O(files)
+    /// clonefile work.
+    global_store_path: ?[:0]const u8,
+
+    /// Per-process suffix for staging global-store entries. Each entry is
+    /// built under `<cache>/links/<storepath>-<hash>.tmp-<this>/` (package
+    /// files, dep symlinks, bin links — all relative within the entry, so
+    /// they resolve identically after the rename) and renamed into place as
+    /// the final step. The directory existing at its final path is the only
+    /// completeness signal the warm-hit check needs.
+    global_store_tmp_suffix: u64,
+
+    pub fn deinit(this: *Installer) void {
         this.trusted_dependencies_from_update_requests.deinit(this.lockfile.allocator);
     }
 
@@ -145,9 +160,25 @@ pub const Installer = struct {
                 });
                 patch_log.print(Output.errorWriter()) catch {};
             },
+            .binaries => |bin_err| {
+                Output.err(bin_err, "failed to link binaries for package: {s}@{f}", .{
+                    pkg_name.slice(string_buf),
+                    pkg_res.fmt(string_buf, .auto),
+                });
+            },
             else => {},
         }
         Output.flush();
+
+        // Clean up the staging directory so a half-built global-store entry
+        // doesn't leak in the cache (it would never be reused — the suffix is
+        // random — but it's wasted disk).
+        if (this.entryUsesGlobalStore(entry_id)) {
+            var staging: bun.AbsPath(.{ .sep = .auto }) = .init();
+            defer staging.deinit();
+            this.appendGlobalStoreEntryPath(&staging, entry_id, .staging);
+            FD.cwd().deleteTree(staging.slice()) catch {};
+        }
 
         // attempt deleting the package so the next install will install it again
         switch (pkg_res.tag) {
@@ -507,7 +538,7 @@ pub const Installer = struct {
                                     defer src.deinit();
                                     src.appendJoin(pkg_res.value.folder.slice(string_buf));
 
-                                    var dest: bun.RelPath(.{ .unit = .os, .sep = .auto }) = .init();
+                                    var dest: bun.Path(.{ .unit = .os, .sep = .auto }) = .init();
                                     defer dest.deinit();
 
                                     installer.appendStorePath(&dest, this.entry_id);
@@ -560,9 +591,11 @@ pub const Installer = struct {
                                             0,
                                         );
 
-                                        if (src_path_len == 0) {
-                                            const e = bun.windows.Win32Error.get();
-                                            const err = e.toSystemErrno() orelse .EUNKNOWN;
+                                        if (src_path_len == 0 or src_path_len >= src_path.buf().len) {
+                                            const err: bun.sys.SystemErrno = if (src_path_len == 0)
+                                                (bun.windows.Win32Error.get().toSystemErrno() orelse .EUNKNOWN)
+                                            else
+                                                .ENAMETOOLONG;
                                             return .failure(
                                                 .{ .link_package = .{ .errno = @intFromEnum(err), .syscall = .copyfile } },
                                             );
@@ -571,7 +604,7 @@ pub const Installer = struct {
                                         src_path.setLength(src_path_len);
                                     }
 
-                                    var dest: bun.RelPath(.{ .unit = .os, .sep = .auto }) = .init();
+                                    var dest: bun.Path(.{ .unit = .os, .sep = .auto }) = .init();
                                     defer dest.deinit();
                                     installer.appendStorePath(&dest, this.entry_id);
 
@@ -618,9 +651,60 @@ pub const Installer = struct {
                     const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath();
                     defer cache_dir_path.deinit();
 
-                    var dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }) = .init();
+                    var dest_subpath: bun.Path(.{ .sep = .auto, .unit = .os }) = .init();
                     defer dest_subpath.deinit();
-                    installer.appendStorePath(&dest_subpath, this.entry_id);
+                    installer.appendRealStorePath(&dest_subpath, this.entry_id, .staging);
+
+                    const uses_global_store = installer.entryUsesGlobalStore(this.entry_id);
+
+                    if (!uses_global_store) {
+                        // An entry can lose global-store eligibility between
+                        // installs — newly patched, newly trusted, a dep that
+                        // became a workspace package. The previous install
+                        // left `node_modules/.bun/<storepath>` as a symlink
+                        // (or junction) into the shared `<cache>/links/`
+                        // directory. Writing the new project-local tree
+                        // *through* that link would mutate the shared entry
+                        // underneath every other consumer; on Windows the
+                        // `.expect_missing` dep-symlink rewrite then bakes a
+                        // project-absolute junction target into the shared
+                        // directory, which dangles after the next
+                        // `rm -rf node_modules`. Detach first so the build
+                        // lands in a real project-local directory.
+                        var local: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
+                        defer local.deinit();
+                        installer.appendLocalStoreEntryPath(&local, this.entry_id);
+                        const is_stale_link = if (comptime Environment.isWindows)
+                            if (sys.getFileAttributes(local.sliceZ())) |a| a.is_reparse_point else false
+                        else if (sys.lstat(local.sliceZ()).asValue()) |st|
+                            std.posix.S.ISLNK(@intCast(st.mode))
+                        else
+                            false;
+                        if (is_stale_link) {
+                            const remove_err: ?sys.Error = if (comptime Environment.isWindows) win: {
+                                if (sys.rmdir(local.sliceZ()).asErr()) |_| {
+                                    if (sys.unlink(local.sliceZ()).asErr()) |e| break :win e;
+                                }
+                                break :win null;
+                            } else sys.unlink(local.sliceZ()).asErr();
+                            if (remove_err) |e| if (e.getErrno() != .NOENT) {
+                                // Do NOT proceed: the backend below would
+                                // write *through* the still-live symlink
+                                // into the shared `<cache>/links/` entry.
+                                return .failure(.{ .link_package = e });
+                            };
+                        }
+                    }
+
+                    if (uses_global_store) {
+                        // Clear any leftover staging directory from a crashed
+                        // earlier run with the same suffix (vanishingly
+                        // unlikely with a 64-bit random suffix, but cheap).
+                        var staging: bun.AbsPath(.{ .sep = .auto }) = .init();
+                        defer staging.deinit();
+                        installer.appendGlobalStoreEntryPath(&staging, this.entry_id, .staging);
+                        FD.cwd().deleteTree(staging.slice()) catch {};
+                    }
 
                     var cached_package_dir: ?FD = null;
                     defer if (cached_package_dir) |dir| dir.close();
@@ -808,7 +892,7 @@ pub const Installer = struct {
                         var dest: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
                         defer dest.deinit();
 
-                        installer.appendStoreNodeModulesPath(&dest, this.entry_id);
+                        installer.appendRealStoreNodeModulesPath(&dest, this.entry_id, .staging);
 
                         dest.append(dep_name);
 
@@ -824,7 +908,29 @@ pub const Installer = struct {
                         var dep_store_path: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                         defer dep_store_path.deinit();
 
-                        installer.appendStorePath(&dep_store_path, dep.entry_id);
+                        // When this entry lives in the global virtual store, its
+                        // dep symlinks must point at sibling *global* entries
+                        // (relative `../../<dep>-<hash>/...`) so the entry stays
+                        // valid for any project. Non-global parents (root,
+                        // workspace) keep pointing at the project-local
+                        // `.bun/<storepath>` indirection so `node_modules/<pkg>`
+                        // remains a relative link into `node_modules/.bun/`.
+                        if (installer.entryUsesGlobalStore(this.entry_id)) {
+                            // The eligibility DFS + fixed-point pass guarantee
+                            // every dep of a global entry is itself global; if
+                            // that ever regressed the failure mode is a
+                            // dangling symlink with no install-time error.
+                            bun.debugAssert(installer.entryUsesGlobalStore(dep.entry_id));
+                            // Target the dep's *final* path: the relative
+                            // `../../<dep>/...` link is computed against our
+                            // staging directory but resolves identically once
+                            // we're renamed (same parent), and the dep will
+                            // have been (or will be) renamed into that final
+                            // path by its own task.
+                            installer.appendRealStorePath(&dep_store_path, dep.entry_id, .final);
+                        } else {
+                            installer.appendStorePath(&dep_store_path, dep.entry_id);
+                        }
 
                         const target = target: {
                             var dest_save = dest.save();
@@ -847,6 +953,9 @@ pub const Installer = struct {
                             // then create the symlink if necessary
                             .expect_existing
                         else
+                            // Global-store entries are built under a private
+                            // per-process staging directory, so nothing else
+                            // is touching this path.
                             .expect_missing;
 
                         switch (symlinker.ensureSymlink(link_strategy)) {
@@ -856,6 +965,21 @@ pub const Installer = struct {
                             },
                         }
                     }
+
+                    if (installer.entryUsesGlobalStore(this.entry_id)) {
+                        // The entry now exists in the shared global virtual store.
+                        // Project-local `node_modules/.bun/<storepath>` becomes a
+                        // symlink into it so that the relative `../../<dep>` links
+                        // created above (which live inside the global entry) remain
+                        // reachable from the project's node_modules.
+                        switch (installer.linkProjectToGlobalStore(this.entry_id)) {
+                            .result => {},
+                            .err => |err| {
+                                return .failure(.{ .symlink_dependencies = err });
+                            },
+                        }
+                    }
+
                     continue :next_step this.nextStep(current_step);
                 },
                 inline .check_if_blocked => |current_step| {
@@ -904,6 +1028,18 @@ pub const Installer = struct {
                 },
                 inline .run_preinstall => |current_step| {
                     if (!installer.manager.options.do.run_scripts or this.entry_id == .root) {
+                        continue :next_step this.nextStep(current_step);
+                    }
+
+                    // The eligibility check excludes any package whose
+                    // lifecycle scripts are trusted to run, so a global-store
+                    // entry should never reach script enqueueing. Guard it
+                    // anyway: `meta.hasInstallScript` can be a false negative
+                    // (yarn-migrated lockfiles force it to `.false`), and a
+                    // script running with cwd inside a shared content-
+                    // addressed directory would mutate every other project's
+                    // copy.
+                    if (installer.entryUsesGlobalStore(this.entry_id)) {
                         continue :next_step this.nextStep(current_step);
                     }
 
@@ -995,6 +1131,10 @@ pub const Installer = struct {
 
                     const bin = pkg_bins[pkg_id];
                     if (bin.tag == .none) {
+                        switch (installer.commitGlobalStoreEntry(this.entry_id)) {
+                            .result => {},
+                            .err => |e| return .failure(.{ .link_package = e }),
+                        }
                         continue :next_step this.nextStep(current_step);
                     }
 
@@ -1015,7 +1155,7 @@ pub const Installer = struct {
 
                     var node_modules_path: bun.AbsPath(.{}) = .initTopLevelDir();
                     defer node_modules_path.deinit();
-                    installer.appendStoreNodeModulesPath(&node_modules_path, this.entry_id);
+                    installer.appendRealStoreNodeModulesPath(&node_modules_path, this.entry_id, .staging);
 
                     var target_node_modules_path: ?bun.AbsPath(.{}) = null;
                     defer if (target_node_modules_path) |*path| path.deinit();
@@ -1032,7 +1172,7 @@ pub const Installer = struct {
                         pkg_id,
                     )) |replacement_entry_id| {
                         target_node_modules_path = bun.AbsPath(.{}).initTopLevelDir();
-                        installer.appendStoreNodeModulesPath(&target_node_modules_path.?, replacement_entry_id);
+                        installer.appendRealStoreNodeModulesPath(&target_node_modules_path.?, replacement_entry_id, .final);
 
                         const replacement_node_id = entry_node_ids[replacement_entry_id.get()];
                         const replacement_pkg_id = node_pkg_ids[replacement_node_id.get()];
@@ -1075,6 +1215,11 @@ pub const Installer = struct {
 
                     if (bin_linker.err) |err| {
                         return .failure(.{ .binaries = err });
+                    }
+
+                    switch (installer.commitGlobalStoreEntry(this.entry_id)) {
+                        .result => {},
+                        .err => |e| return .failure(.{ .link_package = e }),
                     }
 
                     continue :next_step this.nextStep(current_step);
@@ -1377,7 +1522,7 @@ pub const Installer = struct {
         var node_modules_path: bun.AbsPath(.{}) = .initTopLevelDir();
         defer node_modules_path.deinit();
 
-        this.appendStoreNodeModulesPath(&node_modules_path, parent_entry_id);
+        this.appendRealStoreNodeModulesPath(&node_modules_path, parent_entry_id, .staging);
 
         for (entry_deps[parent_entry_id.get()].slice()) |dep| {
             const node_id = entry_node_ids[dep.entry_id.get()];
@@ -1405,7 +1550,7 @@ pub const Installer = struct {
                 pkg_id,
             )) |replacement_entry_id| {
                 target_node_modules_path = bun.AbsPath(.{}).initTopLevelDir();
-                this.appendStoreNodeModulesPath(&target_node_modules_path.?, replacement_entry_id);
+                this.appendRealStoreNodeModulesPath(&target_node_modules_path.?, replacement_entry_id, .final);
 
                 const replacement_node_id = entry_node_ids[replacement_entry_id.get()];
                 const replacement_pkg_id = node_pkg_ids[replacement_node_id.get()];
@@ -1453,6 +1598,142 @@ pub const Installer = struct {
         }
     }
 
+    /// True when this entry should live in the shared global virtual store
+    /// instead of being materialized under the project's `node_modules/.bun/`.
+    /// Root, workspace, folder, symlink, and patched packages always stay
+    /// project-local because their contents are mutable / project-specific.
+    pub fn entryUsesGlobalStore(this: *const Installer, entry_id: Store.Entry.Id) bool {
+        if (this.global_store_path == null) return false;
+        return this.store.entries.items(.entry_hash)[entry_id.get()] != 0;
+    }
+
+    /// Absolute path to the global virtual-store directory for `entry_id`:
+    ///   <cache>/links/<storepath>-<entry_hash>
+    /// (no trailing `/node_modules`). Pass `.staging` to get the per-process
+    /// temp sibling that the build steps write into; the final `binaries`
+    /// step renames staging → final.
+    pub fn appendGlobalStoreEntryPath(this: *const Installer, buf: anytype, entry_id: Store.Entry.Id, which: Which) void {
+        bun.debugAssert(this.entryUsesGlobalStore(entry_id));
+        buf.clear();
+        buf.append(this.global_store_path.?);
+        switch (which) {
+            .final => buf.appendFmt("{f}", .{
+                Store.Entry.fmtGlobalStorePath(entry_id, this.store, this.lockfile),
+            }),
+            .staging => buf.appendFmt("{f}.tmp-{x}", .{
+                Store.Entry.fmtGlobalStorePath(entry_id, this.store, this.lockfile),
+                this.global_store_tmp_suffix,
+            }),
+        }
+    }
+
+    /// Atomically publish a staged global-store entry by renaming
+    /// `<entry>.tmp-<suffix>/` → `<entry>/`. The package tree, dep symlinks,
+    /// dependency-bin links and own-bin links were all written under the
+    /// staging path; every link inside is relative to the entry directory, so
+    /// they resolve identically after the rename. The final directory
+    /// existing is the only completeness signal — no separate stamp file.
+    pub fn commitGlobalStoreEntry(this: *const Installer, entry_id: Store.Entry.Id) sys.Maybe(void) {
+        if (!this.entryUsesGlobalStore(entry_id)) return .success;
+        var staging: bun.AbsPath(.{ .sep = .auto }) = .init();
+        defer staging.deinit();
+        this.appendGlobalStoreEntryPath(&staging, entry_id, .staging);
+        var final: bun.AbsPath(.{ .sep = .auto }) = .init();
+        defer final.deinit();
+        this.appendGlobalStoreEntryPath(&final, entry_id, .final);
+
+        switch (sys.renameat(FD.cwd(), staging.sliceZ(), FD.cwd(), final.sliceZ())) {
+            .result => return .success,
+            .err => |err| {
+                const collided = switch (err.getErrno()) {
+                    .EXIST, .NOTEMPTY => true,
+                    // Windows maps a rename onto an in-use directory to
+                    // ERROR_ACCESS_DENIED; on POSIX PERM/ACCES are real
+                    // permission failures and must propagate.
+                    .PERM, .ACCES => Environment.isWindows,
+                    else => false,
+                };
+                FD.cwd().deleteTree(staging.slice()) catch {};
+                // A concurrent install renamed first; both writers produced
+                // the same content-addressed bytes, so theirs is as good as
+                // ours.
+                return if (collided) .success else .initErr(err);
+            },
+        }
+    }
+
+    /// Project-local path `node_modules/.bun/<storepath>` (the symlink that
+    /// points at the global virtual-store entry). Relative to top-level dir.
+    pub fn appendLocalStoreEntryPath(this: *const Installer, buf: anytype, entry_id: Store.Entry.Id) void {
+        buf.appendFmt("node_modules/" ++ Store.modules_dir_name ++ "/{f}", .{
+            Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
+        });
+    }
+
+    /// Create the project-level symlink `node_modules/.bun/<storepath>` →
+    /// `<cache>/links/<storepath>-<hash>`. This is the only per-install
+    /// filesystem write for a warm global-store hit.
+    pub fn linkProjectToGlobalStore(this: *const Installer, entry_id: Store.Entry.Id) sys.Maybe(void) {
+        var dest: bun.Path(.{ .sep = .auto }) = .initTopLevelDir();
+        defer dest.deinit();
+        this.appendLocalStoreEntryPath(&dest, entry_id);
+
+        var target_abs: bun.AbsPath(.{ .sep = .auto }) = .init();
+        defer target_abs.deinit();
+        this.appendGlobalStoreEntryPath(&target_abs, entry_id, .final);
+
+        // Absolute target so the link is independent of where node_modules
+        // lives (project root may itself be behind a symlink). Symlinker's
+        // `target` field is RelPath-typed for the common in-tree case, so
+        // call sys.symlink/symlinkOrJunction directly here.
+        const do_symlink = struct {
+            fn call(d: [:0]const u8, t: [:0]const u8) sys.Maybe(void) {
+                if (comptime Environment.isWindows) {
+                    return sys.symlinkOrJunction(d, t, t);
+                }
+                return sys.symlink(t, d);
+            }
+        }.call;
+
+        switch (do_symlink(dest.sliceZ(), target_abs.sliceZ())) {
+            .result => return .success,
+            .err => |err| switch (err.getErrno()) {
+                .NOENT => {
+                    if (dest.dirname()) |parent| {
+                        FD.cwd().makePath(u8, parent) catch {};
+                    }
+                },
+                .EXIST => {
+                    // Existing entry from a previous install. If it's a
+                    // symlink, replace it (stale link from a different
+                    // hash). If it's a real directory, that's the
+                    // pre-global-store layout (`bun patch` detaches
+                    // `node_modules/<pkg>`, not this path).
+                    const is_symlink = if (comptime Environment.isWindows)
+                        if (sys.getFileAttributes(dest.sliceZ())) |a| a.is_reparse_point else true
+                    else if (sys.lstat(dest.sliceZ()).asValue()) |st|
+                        std.posix.S.ISLNK(@intCast(st.mode))
+                    else
+                        true;
+
+                    if (is_symlink) {
+                        if (comptime Environment.isWindows) {
+                            if (sys.rmdir(dest.sliceZ()).asErr()) |_| {
+                                _ = sys.unlink(dest.sliceZ());
+                            }
+                        } else {
+                            _ = sys.unlink(dest.sliceZ());
+                        }
+                    } else {
+                        FD.cwd().deleteTree(dest.slice()) catch {};
+                    }
+                },
+                else => return .initErr(err),
+            },
+        }
+        return do_symlink(dest.sliceZ(), target_abs.sliceZ());
+    }
+
     pub fn appendStoreNodeModulesPath(this: *const Installer, buf: anytype, entry_id: Store.Entry.Id) void {
         const string_buf = this.lockfile.buffers.string_bytes.items;
 
@@ -1483,6 +1764,45 @@ pub const Installer = struct {
                 });
             },
         }
+    }
+
+    pub const Which = enum {
+        /// The published location (`<cache>/links/<entry>`). Use for symlink
+        /// *targets* that point at other entries, and for the warm-hit check.
+        final,
+        /// The per-process temp sibling (`<entry>.tmp-<suffix>`) the build
+        /// steps write into. Use for *destinations* of clonefile/hardlink/
+        /// dep-symlink/bin-link when building this entry.
+        staging,
+    };
+
+    /// Like `appendStoreNodeModulesPath`, but resolves to the *physical*
+    /// location of the entry's `node_modules` directory: the global virtual
+    /// store for global-eligible entries, or the project-local `.bun/` path
+    /// otherwise. See `Which` for when to pass `.staging` vs `.final`.
+    pub fn appendRealStoreNodeModulesPath(this: *const Installer, buf: anytype, entry_id: Store.Entry.Id, which: Which) void {
+        if (this.entryUsesGlobalStore(entry_id)) {
+            this.appendGlobalStoreEntryPath(buf, entry_id, which);
+            buf.append("node_modules");
+            return;
+        }
+        this.appendStoreNodeModulesPath(buf, entry_id);
+    }
+
+    /// `appendStorePath` resolved to the entry's *physical* location. See
+    /// `Which` for when to pass `.staging` vs `.final`.
+    pub fn appendRealStorePath(this: *const Installer, buf: anytype, entry_id: Store.Entry.Id, which: Which) void {
+        if (this.entryUsesGlobalStore(entry_id)) {
+            const string_buf = this.lockfile.buffers.string_bytes.items;
+            const node_id = this.store.entries.items(.node_id)[entry_id.get()];
+            const pkg_id = this.store.nodes.items(.pkg_id)[node_id.get()];
+            const pkg_name = this.lockfile.packages.items(.name)[pkg_id];
+            this.appendGlobalStoreEntryPath(buf, entry_id, which);
+            buf.append("node_modules");
+            buf.append(pkg_name.slice(string_buf));
+            return;
+        }
+        this.appendStorePath(buf, entry_id);
     }
 
     pub fn appendStorePath(this: *const Installer, buf: anytype, entry_id: Store.Entry.Id) void {

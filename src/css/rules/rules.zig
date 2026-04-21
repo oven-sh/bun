@@ -452,6 +452,14 @@ pub fn CssRuleList(comptime AtRule: type) type {
                 }
 
                 bun.handleOom(rules.append(context.allocator, rule.*));
+                moved_rule = true;
+
+                // Non-style rules (e.g. @property, @keyframes) act as a barrier for
+                // style rule deduplication. We cannot safely merge identical style rules
+                // across such boundaries because the intervening at-rule may affect how
+                // the declarations are interpreted (e.g. @property defines a custom
+                // property that a :root rule above may set differently than one below).
+                style_rules.clearRetainingCapacity();
             }
 
             // MISSING SHIT HERE

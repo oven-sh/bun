@@ -150,6 +150,19 @@ depth = 3
 
 This controls how deeply nested objects are displayed in console output. Higher values show more nested properties but may produce verbose output for complex objects. This setting can be overridden by the `--console-depth` CLI flag.
 
+## Serve
+
+Options for `Bun.serve` and `bun run` when serving HTTP are configured under the `[serve]` section.
+
+### `serve.port`
+
+The default port for `Bun.serve` to listen on. Default `3000`. Can also be set via the `BUN_PORT` or `PORT` environment variables, or the `--port` flag.
+
+```toml title="bunfig.toml" icon="settings"
+[serve]
+port = 3000
+```
+
 ## Test runner
 
 The test runner is configured under the `[test]` section of your bunfig.toml.
@@ -176,6 +189,17 @@ Same as the top-level `preload` field, but only applies to `bun test`.
 [test]
 preload = ["./setup.ts"]
 ```
+
+### `test.pathIgnorePatterns`
+
+Exclude files and directories from test discovery using glob patterns. Matched directories are pruned during scanning, so their contents are never traversed. This is useful when your project contains submodules or vendored code with `*.test.ts` files that you don't want `bun test` to pick up.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+pathIgnorePatterns = ["vendor/**", "submodules/**", "fixtures/**"]
+```
+
+Equivalent CLI flag: `--path-ignore-patterns`. CLI flags override the `bunfig.toml` value entirely.
 
 ### `test.smol`
 
@@ -220,6 +244,15 @@ Whether to skip test files when computing coverage statistics. Default `false`.
 ```toml title="bunfig.toml" icon="settings"
 [test]
 coverageSkipTestFiles = false
+```
+
+### `test.coverageIgnoreSourcemaps`
+
+Whether to report coverage against transpiled output instead of remapping line numbers through sourcemaps back to the original source. Default `false`. Primarily useful for debugging.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageIgnoreSourcemaps = false
 ```
 
 ### `test.coveragePathIgnorePatterns`
@@ -419,6 +452,26 @@ By default Bun uses caret ranges; if the `latest` version of a package is `2.4.1
 exact = false
 ```
 
+### `install.ignoreScripts`
+
+Whether to skip lifecycle scripts during install. Default `false`. Equivalent to the `--ignore-scripts` flag.
+
+When `true`, Bun will not run any `preinstall` / `install` / `postinstall` / `prepare` scripts — both for your project and for packages in `trustedDependencies`. See [Lifecycle scripts](/pm/lifecycle) for more details.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+ignoreScripts = false
+```
+
+### `install.concurrentScripts`
+
+The maximum number of concurrent lifecycle scripts to run at once. Defaults to two times the number of CPU cores. Equivalent to the `--concurrent-scripts` flag.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+concurrentScripts = 5
+```
+
 ### `install.saveTextLockfile`
 
 If false, generate a binary `bun.lockb` instead of a text-based `bun.lock` file when running `bun install` and no lockfile is present.
@@ -447,6 +500,23 @@ Valid values are:
 | `"force"`    | Always auto-install dependencies, even if `node_modules` exists.                                                                    |
 | `"disable"`  | Never auto-install dependencies.                                                                                                    |
 | `"fallback"` | Check local `node_modules` first, then auto-install any packages that aren't found. You can enable this from the CLI with `bun -i`. |
+
+### `install.prefer`
+
+Configure how Bun resolves package versions against the npm registry when running scripts. Default `"online"`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+prefer = "online"
+```
+
+Valid values are:
+
+| Value       | Description                                                                                        |
+| ----------- | -------------------------------------------------------------------------------------------------- |
+| `"online"`  | Default. Check the registry for stale packages as needed.                                          |
+| `"offline"` | Skip staleness checks and resolve packages from the local cache. Equivalent to `--prefer-offline`. |
+| `"latest"`  | Always check npm for the latest matching versions. Equivalent to `--prefer-latest`.                |
 
 ### `install.frozenLockfile`
 
@@ -599,23 +669,42 @@ Valid values are:
 | `"hoisted"`  | Link dependencies in a shared `node_modules` directory. |
 | `"isolated"` | Link dependencies inside each package installation.     |
 
-```toml title="bunfig.toml" icon="settings"
-[debug]
-# When navigating to a blob: or src: link, open the file in your editor
-# If not, it tries $EDITOR or $VISUAL
-# If that still fails, it will try Visual Studio Code, then Sublime Text, then a few others
-# This is used by Bun.openInEditor()
-editor = "code"
+### `install.globalStore`
 
-# List of editors:
-# - "subl", "sublime"
-# - "vscode", "code"
-# - "textmate", "mate"
-# - "idea"
-# - "webstorm"
-# - "nvim", "neovim"
-# - "vim","vi"
-# - "emacs"
+When using the `"isolated"` linker, share package installations across projects in a global virtual store at `<cache>/links/` and link `node_modules/.bun/<pkg>@<ver>` into it instead of materializing each package into the project. Makes warm installs after `rm -rf node_modules` an order of magnitude faster. Default `true`. Can also be set with the `BUN_INSTALL_GLOBAL_STORE` environment variable.
+
+For complete documentation refer to [Package manager > Global virtual store](/pm/global-store).
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+globalStore = false
+```
+
+### `install.publicHoistPattern`
+
+When using the `"isolated"` linker, packages matching these glob patterns are hoisted to the root `node_modules` directory so they can be resolved by any package in the project. Default `[]`. Similar to pnpm's `public-hoist-pattern`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+publicHoistPattern = ["*eslint*", "*prettier*"]
+```
+
+### `install.hoistPattern`
+
+When using the `"isolated"` linker, packages matching these glob patterns are hoisted to the virtual store root (`node_modules/.bun`) so they can be resolved by other packages in the virtual store. Default `[]`. Similar to pnpm's `hoist-pattern`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+hoistPattern = ["*"]
+```
+
+### `install.logLevel`
+
+Set the log level for `bun install`. This can be one of `"debug"`, `"warn"`, or `"error"`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+logLevel = "warn"
 ```
 
 ### `install.security.scanner`
@@ -652,11 +741,20 @@ Configure a minimum age (in seconds) for npm package versions. Package versions 
 [install]
 # Only install package versions published at least 3 days ago
 minimumReleaseAge = 259200
-# These packages will bypass the 3-day minimum age requirement
-minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
 ```
 
 For more details see [Minimum release age](/pm/cli/install#minimum-release-age) in the install documentation.
+
+### `install.minimumReleaseAgeExcludes`
+
+An array of package names that are exempt from the `minimumReleaseAge` check. Default `[]`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+minimumReleaseAge = 259200
+# These packages will bypass the 3-day minimum age requirement
+minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
+```
 
 ## `bun run`
 
@@ -751,4 +849,13 @@ This is equivalent to passing `--silent` to all `bun run` commands:
 bun --silent run dev
 bun --silent dev
 bun run --silent dev
+```
+
+### `run.elide-lines` - truncate filtered output
+
+The number of lines of script output shown per script when using `--filter`. Default `10`. Set to `0` to show all lines. Equivalent to the `--elide-lines` flag.
+
+```toml title="bunfig.toml" icon="settings"
+[run]
+elide-lines = 10
 ```

@@ -1,9 +1,7 @@
-// MSVC doesn't support C11 stdatomic.h propertly yet.
-// so we use C++ std::atomic instead.
 #include "./root_certs.h"
 #include "./root_certs_header.h"
 #include "./internal/internal.h"
-#include <atomic>
+#include <mutex>
 #include <string.h>
 #include "./default_ciphers.h"
 
@@ -137,19 +135,22 @@ end:
 
 static void us_internal_init_root_certs(
     X509 *root_cert_instances[root_certs_size],
-    STACK_OF(X509) *&root_extra_cert_instances,
-    STACK_OF(X509) *&root_system_cert_instances) {
-  static std::atomic_flag root_cert_instances_lock = ATOMIC_FLAG_INIT;
-  static std::atomic_bool root_cert_instances_initialized = 0;
-
-  if (std::atomic_load(&root_cert_instances_initialized) == 1)
-    return;
-
-  while (atomic_flag_test_and_set_explicit(&root_cert_instances_lock,
-                                           std::memory_order_acquire))
-    ;
-
-  if (!atomic_exchange(&root_cert_instances_initialized, 1)) {
+    STACK_OF(X509) *&root_extra_cert_instances) {
+  // This used to use an atomic_flag spinlock together with an atomic_bool.
+  // The bool was set to true via atomic_exchange BEFORE the certificates were
+  // actually parsed, so concurrent callers (e.g. Workers calling
+  // tls.getCACertificates() or opening a TLS connection) observed
+  // "initialized" and returned early while the STACK_OF(X509) pointers were
+  // still being pushed to and realloc'd by this thread. That's a data race
+  // which at best yields truncated/stale certificate lists and at worst
+  // crashes inside BoringSSL (e.g. when a torn read hands a freed/garbage
+  // pointer to PEM encode, or heap corruption from the concurrent access
+  // lands in the middle of X509 parsing).
+  //
+  // std::call_once does exactly what we want: initialization runs exactly
+  // once and every other caller blocks until it has fully completed.
+  static std::once_flag root_cert_instances_once;
+  std::call_once(root_cert_instances_once, [&]() {
     for (size_t i = 0; i < root_certs_size; i++) {
       root_cert_instances[i] =
           us_ssl_ctx_get_X509_without_callback_from(root_certs[i]);
@@ -160,21 +161,7 @@ static void us_internal_init_root_certs(
     if (extra_certs && extra_certs[0]) {
       root_extra_cert_instances = us_ssl_ctx_load_all_certs_from_file(extra_certs);
     }
-
-    // load system certificates if NODE_USE_SYSTEM_CA=1
-    if (us_should_use_system_ca()) {
-#ifdef __APPLE__
-      us_load_system_certificates_macos(&root_system_cert_instances);
-#elif defined(_WIN32)
-      us_load_system_certificates_windows(&root_system_cert_instances);
-#else
-      us_load_system_certificates_linux(&root_system_cert_instances);
-#endif
-    }
-  }
-
-  atomic_flag_clear_explicit(&root_cert_instances_lock,
-                             std::memory_order_release);
+  });
 }
 
 extern "C" int us_internal_raw_root_certs(struct us_cert_string_t **out) {
@@ -185,15 +172,13 @@ extern "C" int us_internal_raw_root_certs(struct us_cert_string_t **out) {
 struct us_default_ca_certificates {
   X509 *root_cert_instances[root_certs_size];
   STACK_OF(X509) *root_extra_cert_instances;
-  STACK_OF(X509) *root_system_cert_instances;
 };
 
 us_default_ca_certificates* us_get_default_ca_certificates() {
-  static us_default_ca_certificates default_ca_certificates = {{NULL}, NULL, NULL};
+  static us_default_ca_certificates default_ca_certificates = {{NULL}, NULL};
 
-  us_internal_init_root_certs(default_ca_certificates.root_cert_instances, 
-                              default_ca_certificates.root_extra_cert_instances,
-                              default_ca_certificates.root_system_cert_instances);
+  us_internal_init_root_certs(default_ca_certificates.root_cert_instances,
+                              default_ca_certificates.root_extra_cert_instances);
 
   return &default_ca_certificates;
 }
@@ -202,10 +187,24 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
   return us_get_default_ca_certificates()->root_extra_cert_instances;
 }
 
+// Single source of truth for the OS trust store. Loaded on first demand,
+// independent of --use-system-ca / NODE_USE_SYSTEM_CA, so that
+// tls.getCACertificates('system') matches Node.js (which always reads the
+// system store for 'system'). The flag still gates whether these are merged
+// into the *default* store used for connections — see us_get_default_ca_store.
 STACK_OF(X509) *us_get_root_system_cert_instances() {
-  // Ensure single-path initialization via us_internal_init_root_certs
-  auto certs = us_get_default_ca_certificates();
-  return certs->root_system_cert_instances;
+  static STACK_OF(X509) *system_certs = nullptr;
+  static std::once_flag once;
+  std::call_once(once, []() {
+#ifdef __APPLE__
+    us_load_system_certificates_macos(&system_certs);
+#elif defined(_WIN32)
+    us_load_system_certificates_windows(&system_certs);
+#else
+    us_load_system_certificates_linux(&system_certs);
+#endif
+  });
+  return system_certs;
 }
 
 extern "C" X509_STORE *us_get_default_ca_store() {
@@ -222,7 +221,6 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();
   X509** root_cert_instances = default_ca_certificates->root_cert_instances;
   STACK_OF(X509) *root_extra_cert_instances = default_ca_certificates->root_extra_cert_instances;
-  STACK_OF(X509) *root_system_cert_instances = default_ca_certificates->root_system_cert_instances;
 
   // load all root_cert_instances on the default ca store
   for (size_t i = 0; i < root_certs_size; i++) {
@@ -241,11 +239,14 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     }
   }
 
-  if (us_should_use_system_ca() && root_system_cert_instances) {
-    for (int i = 0; i < sk_X509_num(root_system_cert_instances); i++) {
-      X509 *cert = sk_X509_value(root_system_cert_instances, i);
-      X509_up_ref(cert);
-      X509_STORE_add_cert(store, cert);
+  if (us_should_use_system_ca()) {
+    STACK_OF(X509) *root_system_cert_instances = us_get_root_system_cert_instances();
+    if (root_system_cert_instances) {
+      for (int i = 0; i < sk_X509_num(root_system_cert_instances); i++) {
+        X509 *cert = sk_X509_value(root_system_cert_instances, i);
+        X509_up_ref(cert);
+        X509_STORE_add_cert(store, cert);
+      }
     }
   }
 

@@ -1,8 +1,8 @@
 pub const Writable = union(enum) {
     pipe: *jsc.WebCore.FileSink,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     buffer: *StaticPipeWriter,
-    memfd: bun.FileDescriptor,
+    memfd: bun.FD,
     inherit: void,
     ignore: void,
 

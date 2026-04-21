@@ -32,12 +32,12 @@
 namespace WebCore {
 
 template<typename Visitor>
-void JSPerformanceObserver::visitAdditionalChildren(Visitor& visitor)
+void JSPerformanceObserver::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     wrapped().callback().visitJSFunction(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSPerformanceObserver);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSPerformanceObserver);
 
 bool JSPerformanceObserverOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor&, ASCIILiteral* reason)
 {

@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
+import { azure } from "./azure.mjs";
 import { docker } from "./docker.mjs";
 import { tart } from "./tart.mjs";
 import {
@@ -35,7 +37,6 @@ import {
   spawnSshSafe,
   spawnSyncSafe,
   startGroup,
-  tmpdir,
   waitForPort,
   which,
   writeFile,
@@ -1047,16 +1048,14 @@ function getRdpFile(hostname, username) {
  * @property {(options: MachineOptions) => Promise<Machine>} createMachine
  */
 
-/**
- * @param {string} name
- * @returns {Cloud}
- */
 function getCloud(name) {
   switch (name) {
     case "docker":
       return docker;
     case "aws":
       return aws;
+    case "azure":
+      return azure;
     case "tart":
       return tart;
   }
@@ -1126,6 +1125,173 @@ function getCloud(name) {
  * @property {string} [userData]
  * @property {SshKey[]} sshKeys
  */
+
+async function getAzureToken(tenantId, clientId, clientSecret) {
+  const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${encodeURIComponent(clientSecret)}&scope=https://management.azure.com/.default`,
+  });
+  if (!response.ok) throw new Error(`Azure auth failed: ${response.status}`);
+  const data = await response.json();
+  return data.access_token;
+}
+
+/**
+ * Build a Windows image using Packer (Azure only).
+ * Packer handles VM creation, bootstrap, sysprep, and gallery capture via WinRM.
+ * This eliminates all the Azure Run Command issues (output truncation, x64 emulation,
+ * PATH not refreshing, stderr false positives, quote escaping).
+ */
+async function buildWindowsImageWithPacker({ os, arch, release, command, ci, agentPath, bootstrapPath }) {
+  const { getSecret } = await import("./utils.mjs");
+
+  // Determine Packer template
+  const templateName = arch === "aarch64" ? "windows-arm64" : "windows-x64";
+  const templateDir = resolve(import.meta.dirname, "packer");
+  const templateFile = join(templateDir, `${templateName}.pkr.hcl`);
+
+  if (!existsSync(templateFile)) {
+    throw new Error(`Packer template not found: ${templateFile}`);
+  }
+
+  // Get Azure credentials from Buildkite secrets
+  const clientId = await getSecret("AZURE_CLIENT_ID");
+  const clientSecret = await getSecret("AZURE_CLIENT_SECRET");
+  const subscriptionId = await getSecret("AZURE_SUBSCRIPTION_ID");
+  const tenantId = await getSecret("AZURE_TENANT_ID");
+  const resourceGroup = await getSecret("AZURE_RESOURCE_GROUP");
+  const location = (await getSecret("AZURE_LOCATION")) || "eastus2";
+  const galleryName = (await getSecret("AZURE_GALLERY_NAME")) || "bunCIGallery2";
+
+  // Image naming must match getImageName() in ci.mjs:
+  //   [publish images] / normal CI: "windows-x64-2019-v13"
+  //   [build images]:               "windows-x64-2019-build-37194"
+  const imageKey = arch === "aarch64" ? "windows-aarch64-11" : "windows-x64-2019";
+  const imageDefName =
+    command === "publish-image"
+      ? `${imageKey}-v${getBootstrapVersion(os)}`
+      : ci
+        ? `${imageKey}-build-${getBuildNumber()}`
+        : `${imageKey}-build-draft-${Date.now()}`;
+  const galleryArch = arch === "aarch64" ? "Arm64" : "x64";
+  console.log(`[packer] Ensuring gallery image definition: ${imageDefName}`);
+  const galleryPath = `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}`;
+  const token = await getAzureToken(tenantId, clientId, clientSecret);
+  const defResponse = await fetch(`https://management.azure.com${galleryPath}?api-version=2024-03-03`, {
+    method: "PUT",
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      location: location,
+      properties: {
+        osType: "Windows",
+        osState: "Generalized",
+        hyperVGeneration: "V2",
+        architecture: galleryArch,
+        identifier: { publisher: "bun", offer: `${os}-${arch}-ci`, sku: imageDefName },
+        features: [
+          { name: "DiskControllerTypes", value: "SCSI, NVMe" },
+          { name: "SecurityType", value: "TrustedLaunch" },
+        ],
+      },
+    }),
+  });
+  if (!defResponse.ok && defResponse.status !== 409) {
+    throw new Error(`Failed to create gallery image definition: ${defResponse.status} ${await defResponse.text()}`);
+  }
+
+  // Install Packer if not available
+  const packerBin = await ensurePacker();
+
+  // Initialize plugins
+  console.log("[packer] Initializing plugins...");
+  await spawnSafe([packerBin, "init", templateDir], { stdio: "inherit" });
+
+  // Build the image
+  console.log(`[packer] Building ${templateName} image: ${imageDefName}`);
+  const packerArgs = [
+    packerBin,
+    "build",
+    "-only",
+    `azure-arm.${templateName}`,
+    "-var",
+    `client_id=${clientId}`,
+    "-var",
+    `client_secret=${clientSecret}`,
+    "-var",
+    `subscription_id=${subscriptionId}`,
+    "-var",
+    `tenant_id=${tenantId}`,
+    "-var",
+    `resource_group=${resourceGroup}-EASTUS2`,
+    "-var",
+    `gallery_resource_group=${resourceGroup}`,
+    "-var",
+    `location=${location}`,
+    "-var",
+    `gallery_name=${galleryName}`,
+    "-var",
+    `image_name=${imageDefName}`,
+    "-var",
+    `bootstrap_script=${bootstrapPath}`,
+    "-var",
+    `agent_script=${agentPath}`,
+    templateDir,
+  ];
+
+  await spawnSafe(packerArgs, {
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      // Packer also reads these env vars
+      ARM_CLIENT_ID: clientId,
+      ARM_CLIENT_SECRET: clientSecret,
+      ARM_SUBSCRIPTION_ID: subscriptionId,
+      ARM_TENANT_ID: tenantId,
+    },
+  });
+
+  console.log(`[packer] Image built successfully: ${imageDefName}`);
+}
+
+/**
+ * Download and install Packer if not already available.
+ */
+async function ensurePacker() {
+  // Check if packer is already in PATH
+  const packerPath = which("packer");
+  if (packerPath) {
+    console.log("[packer] Found:", packerPath);
+    return packerPath;
+  }
+
+  // Check if we have a local copy
+  const localPacker = join(tmpdir(), "packer");
+  if (existsSync(localPacker)) {
+    return localPacker;
+  }
+
+  // Download Packer
+  const version = "1.15.0";
+  const platform = process.platform === "win32" ? "windows" : process.platform;
+  const packerArch = process.arch === "arm64" ? "arm64" : "amd64";
+  const url = `https://releases.hashicorp.com/packer/${version}/packer_${version}_${platform}_${packerArch}.zip`;
+
+  console.log(`[packer] Downloading Packer ${version}...`);
+  const zipPath = join(tmpdir(), "packer.zip");
+
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to download Packer: ${response.status}`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  writeFileSync(zipPath, buffer);
+
+  // Extract
+  await spawnSafe(["unzip", "-o", zipPath, "-d", tmpdir()], { stdio: "inherit" });
+  chmodSync(localPacker, 0o755);
+
+  console.log(`[packer] Installed Packer ${version}`);
+  return localPacker;
+}
 
 async function main() {
   const { positionals } = parseArgs({
@@ -1269,6 +1435,13 @@ async function main() {
     }
   }
 
+  // Use Packer for Windows Azure image builds — it handles VM creation,
+  // bootstrap, sysprep, and gallery capture via WinRM (no Run Command hacks).
+  if (args["cloud"] === "azure" && os === "windows" && (command === "create-image" || command === "publish-image")) {
+    await buildWindowsImageWithPacker({ os, arch, release, command, ci, agentPath, bootstrapPath });
+    return;
+  }
+
   /** @type {Machine} */
   const machine = await startGroup("Creating machine...", async () => {
     console.log("Creating machine:");
@@ -1342,7 +1515,7 @@ async function main() {
       });
     }
 
-    await startGroup("Connecting with SSH...", async () => {
+    await startGroup(`Connecting${options.cloud === "azure" ? "" : " with SSH"}...`, async () => {
       const command = os === "windows" ? ["cmd", "/c", "ver"] : ["uname", "-a"];
       await machine.spawnSafe(command, { stdio: "inherit" });
     });
@@ -1392,7 +1565,12 @@ async function main() {
           if (cloud.name === "docker" || features?.includes("docker")) {
             return;
           }
-          await machine.spawnSafe(["node", remotePath, "install"], { stdio: "inherit" });
+          // Refresh PATH from registry before running agent.mjs — bootstrap added
+          // buildkite-agent to PATH but Azure Run Command sessions have stale PATH.
+          const cmd = `$env:PATH = [Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH', 'User'); C:\\Scoop\\apps\\nodejs\\current\\node.exe ${remotePath} install`;
+          await machine.spawnSafe(["powershell", "-NoProfile", "-Command", cmd], {
+            stdio: "inherit",
+          });
         });
       } else {
         const tmpPath = "/tmp/agent.mjs";

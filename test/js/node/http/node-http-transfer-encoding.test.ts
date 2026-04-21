@@ -1,10 +1,10 @@
-import { test } from "bun:test";
+import { expect, test } from "bun:test";
 import { once } from "events";
-import { request } from "http";
-import { AddressInfo, Server } from "net";
+import { createServer, request } from "http";
+import { AddressInfo, connect, Server } from "net";
 
 const fixture = "node-http-transfer-encoding-fixture.ts";
-test(`should not duplicate transfer-encoding header`, async () => {
+test(`should not duplicate transfer-encoding header in request`, async () => {
   const { resolve, promise } = Promise.withResolvers();
   const tcpServer = new Server();
   tcpServer.listen(0, "127.0.0.1");
@@ -53,4 +53,44 @@ test(`should not duplicate transfer-encoding header`, async () => {
   chunkedRequest.end("Goodbye, World!");
 
   return promise;
+});
+
+test("should not duplicate transfer-encoding header in response when explicitly set", async () => {
+  await using server = createServer((req, res) => {
+    res.writeHead(200, { "Transfer-Encoding": "chunked" });
+    res.write("Hello, World!");
+    res.end("Goodbye, World!");
+  });
+
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+  });
+
+  let rawResponse = "";
+  socket.on("data", (chunk: Buffer) => {
+    rawResponse += chunk.toString();
+  });
+  socket.on("end", () => resolve(rawResponse));
+  socket.on("error", reject);
+
+  const response = await promise;
+  const headerSection = response.split("\r\n\r\n")[0];
+  const headerLines = headerSection
+    .split("\r\n")
+    .slice(1) // Skip status line
+    .filter(line => line.length > 0);
+
+  const transferEncodingHeaders = headerLines.filter(line => line.toLowerCase().startsWith("transfer-encoding:"));
+
+  expect(transferEncodingHeaders).toHaveLength(1);
+
+  // Verify the body content is correctly delivered via chunked encoding
+  const bodySection = response.split("\r\n\r\n").slice(1).join("\r\n\r\n");
+  expect(bodySection).toContain("Hello, World!");
+  expect(bodySection).toContain("Goodbye, World!");
 });

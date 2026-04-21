@@ -20,6 +20,9 @@
 *.mjs text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 *.mts text eol=lf whitespace=blank-at-eol,-blank-at-eof,-space-before-tab,tab-in-indent,tabwidth=2
 
+# Patch files are line-ending-sensitive — `git apply` rejects CRLF as corrupt.
+*.patch text eol=lf
+
 *.lockb binary diff=lockb
 
 .vscode/launch.json linguist-generated

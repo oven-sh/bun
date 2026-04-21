@@ -27,14 +27,11 @@
 #include "URLPatternComponent.h"
 
 #include "ExceptionOr.h"
-#include "ScriptExecutionContext.h"
 #include "URLPatternCanonical.h"
 #include "URLPatternParser.h"
 #include "URLPatternResult.h"
-#include <JavaScriptCore/JSCJSValue.h>
-#include <JavaScriptCore/JSString.h>
-#include <JavaScriptCore/RegExpObject.h>
-#include <ranges>
+#include <JavaScriptCore/RegExp.h>
+#include <JavaScriptCore/YarrFlags.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -76,65 +73,41 @@ ExceptionOr<URLPatternComponent> URLPatternComponent::compile(Ref<JSC::VM> vm, S
 }
 
 // https://urlpattern.spec.whatwg.org/#protocol-component-matches-a-special-scheme
-bool URLPatternComponent::matchSpecialSchemeProtocol(ScriptExecutionContext& context) const
+bool URLPatternComponent::matchSpecialSchemeProtocol(JSC::JSGlobalObject* globalObject) const
 {
-    Ref vm = context.vm();
-    JSC::JSLockHolder lock(vm);
-
     static constexpr std::array specialSchemeList { "ftp"_s, "file"_s, "http"_s, "https"_s, "ws"_s, "wss"_s };
-    auto contextObject = context.globalObject();
-    if (!contextObject)
-        return false;
-    auto protocolRegex = JSC::RegExpObject::create(vm, contextObject->regExpStructure(), m_regularExpression.get(), true);
 
-    auto isSchemeMatch = std::ranges::find_if(specialSchemeList, [context = Ref { context }, &vm, &protocolRegex](const String& scheme) {
-        auto maybeMatch = protocolRegex->exec(context->globalObject(), JSC::jsString(vm, scheme));
-        return !maybeMatch.isNull();
-    });
-
-    return isSchemeMatch != specialSchemeList.end();
-}
-
-JSC::JSValue URLPatternComponent::componentExec(ScriptExecutionContext& context, StringView comparedString) const
-{
-    Ref vm = context.vm();
-    JSC::JSLockHolder lock(vm);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    auto contextObject = context.globalObject();
-    if (!contextObject) {
-        throwTypeError(contextObject, throwScope, "URLPattern execution requires a valid execution context"_s);
-        return {};
+    auto* regExp = m_regularExpression.get();
+    for (auto scheme : specialSchemeList) {
+        if (regExp->match(globalObject, scheme, 0))
+            return true;
     }
-    auto regex = JSC::RegExpObject::create(vm, contextObject->regExpStructure(), m_regularExpression.get(), true);
-    return regex->exec(contextObject, JSC::jsString(vm, comparedString));
+    return false;
 }
 
+// Implements both "regexp matching" and "create a component match result":
 // https://urlpattern.spec.whatwg.org/#create-a-component-match-result
-URLPatternComponentResult URLPatternComponent::createComponentMatchResult(JSC::JSGlobalObject* globalObject, String&& input, const JSC::JSValue& execResult) const
+std::optional<URLPatternComponentResult> URLPatternComponent::componentMatch(JSC::JSGlobalObject* globalObject, String&& input) const
 {
+    auto* regExp = m_regularExpression.get();
+    auto ovector = regExp->ovectorSpan();
+    int position = regExp->match(globalObject, input, 0, ovector);
+    if (position < 0)
+        return std::nullopt;
+
+    unsigned numSubpatterns = regExp->numSubpatterns();
+
     URLPatternComponentResult::GroupsRecord groups;
-
-    Ref vm = globalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    auto lengthValue = execResult.get(globalObject, vm->propertyNames->length);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    auto length = lengthValue.toIntegerOrInfinity(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    ASSERT(length >= 0 && std::isfinite(length));
-
-    for (unsigned index = 1; index < length; ++index) {
-        auto match = execResult.get(globalObject, index);
-        RETURN_IF_EXCEPTION(throwScope, {});
+    groups.reserveInitialCapacity(numSubpatterns);
+    for (unsigned i = 1; i <= numSubpatterns; ++i) {
+        int start = ovector[i * 2];
+        int end = ovector[i * 2 + 1];
 
         Variant<std::monostate, String> value;
-        if (!match.isNull() && !match.isUndefined()) {
-            value = match.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(throwScope, {});
-        }
+        if (start >= 0)
+            value = input.substring(start, end - start);
 
-        size_t groupIndex = index - 1;
+        size_t groupIndex = i - 1;
         String groupName = groupIndex < m_groupNameList.size() ? m_groupNameList[groupIndex] : emptyString();
         groups.append(URLPatternComponentResult::NameMatchPair { WTF::move(groupName), WTF::move(value) });
     }

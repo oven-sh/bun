@@ -24,7 +24,7 @@
  
 use strict;
 use warnings;
-use Math::BigInt;
+use bigint;
 use Getopt::Long qw(:config pass_through);
 
 my $file = shift @ARGV or die("Must provide source file as final argument.");
@@ -42,17 +42,17 @@ my $hasSetter = "false";
 my $includeBuiltin = 0;
 my $inside = 0;
 my $name;
-my $pefectHashSize;
+my $perfectHashSize;
 my $compactSize;
 my $compactHashSizeMask;
 my $banner = 0;
 my $mask64 = 2**64 - 1;
 my $mask32 = 2**32 - 1;
-sub calcPerfectHashSize($);
-sub calcCompactHashSize($);
+sub calcPerfectHashSize();
+sub calcCompactHashSize();
 sub output();
 sub jsc_ucfirst($);
-sub hashValue($$);
+sub hashValue($);
 
 while (<IN>) {
     chomp;
@@ -140,24 +140,26 @@ sub jsc_ucfirst($)
 
 sub ceilingToPowerOf2
 {
-    my ($pefectHashSize) = @_;
+    my ($perfectHashSize) = @_;
 
     my $powerOf2 = 1;
-    while ($pefectHashSize > $powerOf2) {
+    while ($perfectHashSize > $powerOf2) {
         $powerOf2 <<= 1;
     }
 
     return $powerOf2;
 }
 
-sub calcPerfectHashSize($)
+sub calcPerfectHashSize()
 {
-    my ($isMac) = @_;
 tableSizeLoop:
-    for ($pefectHashSize = ceilingToPowerOf2(scalar @keys); ; $pefectHashSize += $pefectHashSize) {
+    for ($perfectHashSize = ceilingToPowerOf2(scalar @keys); ; $perfectHashSize += $perfectHashSize) {
+        if ($perfectHashSize > 2**15) {
+            die "The hash size is far too big. This should not be reached.";
+        }
         my @table = ();
         foreach my $key (@keys) {
-            my $h = hashValue($key, $isMac) % $pefectHashSize;
+            my $h = hashValue($key) % $perfectHashSize;
             next tableSizeLoop if $table[$h];
             $table[$h] = 1;
         }
@@ -165,14 +167,8 @@ tableSizeLoop:
     }
 }
 
-sub leftShift($$) {
-    my ($value, $distance) = @_;
-    return (($value << $distance) & 0xFFFFFFFF);
-}
-
-sub calcCompactHashSize($)
+sub calcCompactHashSize()
 {
-    my ($isMac) = @_;
     my $compactHashSize = ceilingToPowerOf2(2 * @keys);
     $compactHashSizeMask = $compactHashSize - 1;
     $compactSize = $compactHashSize;
@@ -181,8 +177,14 @@ sub calcCompactHashSize($)
     my $i = 0;
     foreach my $key (@keys) {
         my $depth = 0;
-        my $h = hashValue($key, $isMac) % $compactHashSize;
+        my $h = hashValue($key) % $compactHashSize;
         while (defined($table[$h])) {
+            if ($compactSize > 1000) {
+                die "The hash size is far too big. This should not be reached.";
+            }
+            if ($depth > 100) {
+                die "The depth is far too big. This should not be reached.";
+            }
             if (defined($links[$h])) {
                 $h = $links[$h];
                 $depth++;
@@ -195,25 +197,8 @@ sub calcCompactHashSize($)
         }
         $table[$h] = $i;
         $i++;
-        $maxdepth = $depth if ( $depth > $maxdepth);
+        $maxdepth = $depth if ($depth > $maxdepth);
     }
-}
-
-sub avalancheBits($) {
-    my ($value) = @_;
-
-    $value &= $mask32;
-
-    # Force "avalanching" of lower 32 bits
-    $value ^= leftShift($value, 3);
-    $value += ($value >> 5);
-    $value = ($value & $mask32);
-    $value ^= (leftShift($value, 2) & $mask32);
-    $value += ($value >> 15);
-    $value = $value & $mask32;
-    $value ^= (leftShift($value, 10) & $mask32);
-
-    return $value;
 }
 
 sub maskTop8BitsAndAvoidZero($) {
@@ -231,43 +216,6 @@ sub maskTop8BitsAndAvoidZero($) {
     $value = (0x80000000 >> 8) if ($value == 0);
 
     return $value;
-}
-
-# Paul Hsieh's SuperFastHash
-# http://www.azillionmonkeys.com/qed/hash.html
-sub superFastHash {
-    my @chars = @_;
-
-    # This hash is designed to work on 16-bit chunks at a time. But since the normal case
-    # (above) is to hash UTF-16 characters, we just treat the 8-bit chars as if they
-    # were 16-bit chunks, which should give matching results
-
-    my $hash = 0x9e3779b9;
-    my $l    = scalar @chars; #I wish this was in Ruby --- Maks
-    my $rem  = $l & 1;
-    $l = $l >> 1;
-
-    my $s = 0;
-
-    # Main loop
-    for (; $l > 0; $l--) {
-        $hash   += ord($chars[$s]);
-        my $tmp = leftShift(ord($chars[$s+1]), 11) ^ $hash;
-        $hash   = (leftShift($hash, 16) & $mask32) ^ $tmp;
-        $s += 2;
-        $hash += $hash >> 11;
-        $hash &= $mask32;
-    }
-
-    # Handle end case
-    if ($rem != 0) {
-        $hash += ord($chars[$s]);
-        $hash ^= (leftShift($hash, 11) & $mask32);
-        $hash += $hash >> 17;
-    }
-
-    $hash = avalancheBits($hash);
-    return maskTop8BitsAndAvoidZero($hash);
 }
 
 sub uint64_add($$) {
@@ -403,18 +351,10 @@ sub wyhash {
     return maskTop8BitsAndAvoidZero($hash);
 }
 
-sub hashValue($$) {
-    my ($string, $isMac) = @_;
+sub hashValue($) {
+    my ($string) = @_;
     my @chars = split(/ */, $string);
-    my $charCount = scalar @chars;
-    if ($isMac) {
-        if ($charCount <= 48) {
-            return superFastHash(@chars);
-        }
-        return wyhash(@chars);
-    } else {
-        return superFastHash(@chars);
-    }
+    return wyhash(@chars);
 }
 
 sub output() {
@@ -436,16 +376,13 @@ sub output() {
     print "\n";
 
     local *generateHashTableHelper = sub {
-        my ($isMac, $setToOldValues) = @_;
-        my $oldCompactSize = $compactSize;
-        my $oldCompactHashSizeMask = $compactHashSizeMask;
-        calcPerfectHashSize($isMac);
-        calcCompactHashSize($isMac);
+        calcPerfectHashSize();
+        calcCompactHashSize();
 
         my $hashTableString = "";
 
         if ($compactSize != 0) {
-            $hashTableString .= "static const struct CompactHashIndex ${nameIndex}\[$compactSize\] = {\n";
+            $hashTableString .= "static constinit const struct CompactHashIndex ${nameIndex}\[$compactSize\] = {\n";
             for (my $i = 0; $i < $compactSize; $i++) {
                 my $T = -1;
                 if (defined($table[$i])) { $T = $table[$i]; }
@@ -455,7 +392,7 @@ sub output() {
             }
         } else {
             # MSVC dislikes empty arrays.
-            $hashTableString .= "static const struct CompactHashIndex ${nameIndex}\[1\] = {\n";
+            $hashTableString .= "static constinit const struct CompactHashIndex ${nameIndex}\[1\] = {\n";
             $hashTableString .= "    { 0, 0 }\n";
         }
         $hashTableString .= "};\n";
@@ -463,10 +400,10 @@ sub output() {
 
         my $packedSize = scalar @keys;
         if ($packedSize != 0) {
-            $hashTableString .= "static const struct HashTableValue ${nameEntries}\[$packedSize\] = {\n";
+            $hashTableString .= "static constinit const struct HashTableValue ${nameEntries}\[$packedSize\] = {\n";
         } else {
             # MSVC dislikes empty arrays.
-            $hashTableString .= "static const struct HashTableValue ${nameEntries}\[1\] = {\n";
+            $hashTableString .= "static constinit const struct HashTableValue ${nameEntries}\[1\] = {\n";
             $hashTableString .= "    { { }, 0, NoIntrinsic, { HashTableValue::End } }\n";
         }
 
@@ -526,26 +463,16 @@ sub output() {
         }
         $hashTableString .= "};\n";
         $hashTableString .= "\n";
-        $hashTableString .= "static const struct HashTable $name =\n";
+        $hashTableString .= "static constinit const struct HashTable $name =\n";
         $hashTableString .= "    \{ $packedSize, $compactHashSizeMask, $hasSetter, nullptr, $nameEntries, $nameIndex \};\n";
         $hashTableString .= "\n";
 
         @table = ();
         @links = ();
-        if ($setToOldValues) {
-            $compactSize = $oldCompactSize;
-            $compactHashSizeMask = $oldCompactHashSizeMask;
-        }
         return $hashTableString;
     };
 
-    my $hashTableForMacOS = generateHashTableHelper(1, 1);
-    my $hashTableForIOS = generateHashTableHelper(0, 0);
-    my $hashTableToWrite = $hashTableForMacOS;
-    if ($hashTableForMacOS ne $hashTableForIOS) {
-        $hashTableToWrite = "#if PLATFORM(MAC)\n" . $hashTableForMacOS . "#else\n" . $hashTableForIOS . "#endif\n";
-    }
-    print $hashTableToWrite;
+    print generateHashTableHelper();
 
     print "} // namespace JSC\n";
 }

@@ -1,9 +1,14 @@
 pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
-    const object = JSValue.createEmptyObject(globalThis, 3);
+    const object = JSValue.createEmptyObject(globalThis, 4);
     object.put(
         globalThis,
         ZigString.static("html"),
         jsc.JSFunction.create(globalThis, "html", renderToHTML, 1, .{}),
+    );
+    object.put(
+        globalThis,
+        ZigString.static("ansi"),
+        jsc.JSFunction.create(globalThis, "ansi", renderToAnsi, 2, .{}),
     );
     object.put(
         globalThis,
@@ -16,6 +21,62 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
         jsc.JSFunction.create(globalThis, "react", renderReact, 3, .{}),
     );
     return object;
+}
+
+/// `Bun.markdown.ansi(text, theme?)` — render markdown to an ANSI-colored
+/// terminal string. `theme` is an optional object: `{ colors?, hyperlinks?,
+/// light?, columns? }`. By default colors are enabled, hyperlinks are
+/// disabled (the caller doesn't know if stdout is a TTY), and columns is 80.
+pub fn renderToAnsi(
+    globalThis: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
+    const input_value, const theme_value = callframe.argumentsAsArray(2);
+
+    if (input_value.isEmptyOrUndefinedOrNull()) {
+        return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
+    }
+
+    var arena: bun.ArenaAllocator = .init(bun.default_allocator);
+    defer arena.deinit();
+
+    const buffer = try jsc.Node.StringOrBuffer.fromJS(globalThis, arena.allocator(), input_value) orelse {
+        return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
+    };
+
+    const input = buffer.slice();
+
+    var theme: md.AnsiTheme = .{
+        .colors = true,
+        .hyperlinks = false,
+        .kitty_graphics = false,
+        .light = md.detectLightBackground(),
+        .columns = 80,
+    };
+    if (theme_value.isObject()) {
+        if (try theme_value.getBooleanLoose(globalThis, "colors")) |v| theme.colors = v;
+        if (try theme_value.getBooleanLoose(globalThis, "hyperlinks")) |v| theme.hyperlinks = v;
+        if (try theme_value.getBooleanLoose(globalThis, "kittyGraphics")) |v| theme.kitty_graphics = v;
+        if (try theme_value.getBooleanLoose(globalThis, "light")) |v| theme.light = v;
+        if (try theme_value.get(globalThis, "columns")) |cols| {
+            if (cols.isNumber()) {
+                const n = cols.toInt32();
+                theme.columns = if (n <= 0) 0 else @intCast(@min(n, std.math.maxInt(u16)));
+            }
+        }
+    }
+
+    const result = md.renderToAnsi(input, arena.allocator(), .terminal, theme) catch |err| switch (err) {
+        error.OutOfMemory => return globalThis.throwOutOfMemory(),
+        error.StackOverflow => return globalThis.throwStackOverflow(),
+    } orelse {
+        // The parser can only return null via JSError / JSTerminated
+        // from a renderer callback; the ANSI renderer has none, so this
+        // path is unreachable but handle it safely.
+        return globalThis.throwOutOfMemory();
+    };
+
+    return bun.String.createUTF8ForJS(globalThis, result);
 }
 
 pub fn renderToHTML(
@@ -759,8 +820,12 @@ const JsCallbackRenderer = struct {
 
     const StackEntry = struct {
         buffer: std.ArrayListUnmanaged(u8) = .{},
+        block_type: md.BlockType = .doc,
         data: u32 = 0,
         flags: u32 = 0,
+        /// For ul/ol: number of li children seen so far (next li's index).
+        /// For li: this item's 0-based index within its parent list.
+        child_index: u32 = 0,
         detail: md.SpanDetail = .{},
     };
 
@@ -853,7 +918,22 @@ const JsCallbackRenderer = struct {
         if (block_type == .h) {
             self.#heading_tracker.enterHeading();
         }
-        try self.#stack.append(self.#allocator, .{ .data = data, .flags = flags });
+
+        // For li: record its 0-based index within the parent list, then
+        // increment the parent's counter so the next sibling gets index+1.
+        var child_index: u32 = 0;
+        if (block_type == .li and self.#stack.items.len > 0) {
+            const parent = &self.#stack.items[self.#stack.items.len - 1];
+            child_index = parent.child_index;
+            parent.child_index += 1;
+        }
+
+        try self.#stack.append(self.#allocator, .{
+            .block_type = block_type,
+            .data = data,
+            .flags = flags,
+            .child_index = child_index,
+        });
     }
 
     fn leaveBlockImpl(ptr: *anyopaque, block_type: md.BlockType, _: u32) bun.JSError!void {
@@ -986,6 +1066,30 @@ const JsCallbackRenderer = struct {
     // Metadata object creation
     // ========================================
 
+    /// Walks the stack to count enclosing ul/ol blocks. Called during leave,
+    /// so the top entry is the block itself (skip it for li, count it for ul/ol's
+    /// own depth which excludes self).
+    fn countListDepth(self: *JsCallbackRenderer) u32 {
+        var depth: u32 = 0;
+        // Skip the top entry (self) — we want enclosing lists only.
+        const len = self.#stack.items.len;
+        if (len < 2) return 0;
+        for (self.#stack.items[0 .. len - 1]) |entry| {
+            if (entry.block_type == .ul or entry.block_type == .ol) depth += 1;
+        }
+        return depth;
+    }
+
+    /// Returns the parent ul/ol entry for the current li (top of stack).
+    /// Returns null if the stack shape is unexpected.
+    fn parentList(self: *JsCallbackRenderer) ?*const StackEntry {
+        const len = self.#stack.items.len;
+        if (len < 2) return null;
+        const parent = &self.#stack.items[len - 2];
+        if (parent.block_type == .ul or parent.block_type == .ol) return parent;
+        return null;
+    }
+
     fn createBlockMeta(self: *JsCallbackRenderer, block_type: md.BlockType, data: u32, flags: u32) bun.JSError!?JSValue {
         const g = self.#globalObject;
         switch (block_type) {
@@ -1000,15 +1104,10 @@ const JsCallbackRenderer = struct {
                 return obj;
             },
             .ol => {
-                const obj = JSValue.createEmptyObject(g, 2);
-                obj.put(g, ZigString.static("ordered"), .true);
-                obj.put(g, ZigString.static("start"), JSValue.jsNumber(data));
-                return obj;
+                return BunMarkdownMeta__createList(g, true, JSValue.jsNumber(data), self.countListDepth());
             },
             .ul => {
-                const obj = JSValue.createEmptyObject(g, 1);
-                obj.put(g, ZigString.static("ordered"), .false);
-                return obj;
+                return BunMarkdownMeta__createList(g, false, .js_undefined, self.countListDepth());
             },
             .code => {
                 if (flags & md.BLOCK_FENCED_CODE != 0) {
@@ -1023,21 +1122,31 @@ const JsCallbackRenderer = struct {
             },
             .th, .td => {
                 const alignment = md.types.alignmentFromData(data);
-                if (md.types.alignmentName(alignment)) |align_str| {
-                    const obj = JSValue.createEmptyObject(g, 1);
-                    obj.put(g, ZigString.static("align"), try bun.String.createUTF8ForJS(g, align_str));
-                    return obj;
-                }
-                return null;
+                const align_js = if (md.types.alignmentName(alignment)) |align_str|
+                    try bun.String.createUTF8ForJS(g, align_str)
+                else
+                    JSValue.js_undefined;
+                return BunMarkdownMeta__createCell(g, align_js);
             },
             .li => {
+                // The li entry is still on top of the stack; parent ul/ol is at len-2.
+                const len = self.#stack.items.len;
+                const item_index = if (len > 1) self.#stack.items[len - 1].child_index else 0;
+                const parent = self.parentList();
+                const is_ordered = parent != null and parent.?.block_type == .ol;
+                // countListDepth() includes the immediate parent list; subtract it
+                // so that items in a top-level list report depth 0.
+                const enclosing = self.countListDepth();
+                const depth: u32 = if (enclosing > 0) enclosing - 1 else 0;
                 const task_mark = md.types.taskMarkFromData(data);
-                if (task_mark != 0) {
-                    const obj = JSValue.createEmptyObject(g, 1);
-                    obj.put(g, ZigString.static("checked"), JSValue.jsBoolean(md.types.isTaskChecked(task_mark)));
-                    return obj;
-                }
-                return null;
+
+                const start_js = if (is_ordered) JSValue.jsNumber(parent.?.data) else JSValue.js_undefined;
+                const checked_js = if (task_mark != 0)
+                    JSValue.jsBoolean(md.types.isTaskChecked(task_mark))
+                else
+                    JSValue.js_undefined;
+
+                return BunMarkdownMeta__createListItem(g, item_index, depth, is_ordered, start_js, checked_js);
             },
             else => return null,
         }
@@ -1047,14 +1156,18 @@ const JsCallbackRenderer = struct {
         const g = self.#globalObject;
         switch (span_type) {
             .a => {
-                const obj = JSValue.createEmptyObject(g, 2);
-                obj.put(g, ZigString.static("href"), try bun.String.createUTF8ForJS(g, detail.href));
-                if (detail.title.len > 0) {
-                    obj.put(g, ZigString.static("title"), try bun.String.createUTF8ForJS(g, detail.title));
-                }
-                return obj;
+                const href = try bun.String.createUTF8ForJS(g, detail.href);
+                const title = if (detail.title.len > 0)
+                    try bun.String.createUTF8ForJS(g, detail.title)
+                else
+                    JSValue.js_undefined;
+                return BunMarkdownMeta__createLink(g, href, title);
             },
             .img => {
+                // Image meta shares shape with link (src/href are both the first
+                // field). We use a separate cached structure would require a
+                // second slot, so just fall back to the generic path here —
+                // images are rare enough that it doesn't matter.
                 const obj = JSValue.createEmptyObject(g, 2);
                 obj.put(g, ZigString.static("src"), try bun.String.createUTF8ForJS(g, detail.href));
                 if (detail.title.len > 0) {
@@ -1113,6 +1226,14 @@ const TagIndex = enum(u8) {
 };
 
 extern fn BunMarkdownTagStrings__getTagString(*jsc.JSGlobalObject, u8) JSValue;
+
+// Fast-path meta-object constructors using cached Structures (see
+// BunMarkdownMeta.cpp). Each constructs via putDirectOffset so the
+// resulting objects share a single Structure and stay monomorphic.
+extern fn BunMarkdownMeta__createListItem(*jsc.JSGlobalObject, u32, u32, bool, JSValue, JSValue) JSValue;
+extern fn BunMarkdownMeta__createList(*jsc.JSGlobalObject, bool, JSValue, u32) JSValue;
+extern fn BunMarkdownMeta__createCell(*jsc.JSGlobalObject, JSValue) JSValue;
+extern fn BunMarkdownMeta__createLink(*jsc.JSGlobalObject, JSValue, JSValue) JSValue;
 
 fn getCachedTagString(globalObject: *jsc.JSGlobalObject, tag: TagIndex) JSValue {
     return BunMarkdownTagStrings__getTagString(globalObject, @intFromEnum(tag));

@@ -44,7 +44,7 @@ pub fn start(this: *@This()) Yield {
         break;
     }
 
-    const maybe1 = iter.next().?;
+    const maybe1 = iter.next() orelse return this.fail(Builtin.Kind.usageString(.seq));
     const int1 = std.fmt.parseFloat(f32, bun.sliceTo(maybe1, 0)) catch return this.fail("seq: invalid argument\n");
     if (!std.math.isFinite(int1)) return this.fail("seq: invalid argument\n");
     this._end = int1;

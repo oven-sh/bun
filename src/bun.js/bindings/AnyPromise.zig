@@ -42,6 +42,24 @@ pub const AnyPromise = union(enum) {
         }
     }
 
+    /// Like `reject` but first attaches async stack frames from this promise's
+    /// await chain to the error. Use when rejecting from native code at the
+    /// top of the event loop. JSInternalPromise subclasses JSPromise in C++,
+    /// so both variants are handled.
+    pub fn rejectWithAsyncStack(this: AnyPromise, globalThis: *JSGlobalObject, value: JSValue) bun.JSTerminated!void {
+        value.attachAsyncStackFromPromise(globalThis, this.asJSPromise());
+        try this.reject(globalThis, value);
+    }
+
+    /// JSInternalPromise subclasses JSPromise in C++ — this cast is safe for
+    /// any C++ function taking JSPromise*.
+    pub fn asJSPromise(this: AnyPromise) *JSPromise {
+        return switch (this) {
+            .normal => |p| p,
+            .internal => |p| @ptrCast(p),
+        };
+    }
+
     pub fn rejectAsHandled(this: AnyPromise, globalThis: *JSGlobalObject, value: JSValue) bun.JSTerminated!void {
         switch (this) {
             inline else => |promise| promise.rejectAsHandled(globalThis, value),

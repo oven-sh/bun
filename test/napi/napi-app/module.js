@@ -446,6 +446,22 @@ nativeTests.test_reflect_construct_no_prototype_crash = () => {
   console.log("✓ Success - no crash!");
 };
 
+nativeTests.test_napi_create_object_structured_clone = () => {
+  // https://github.com/oven-sh/bun/issues/25658
+  const obj = nativeTests.make_empty_object();
+  assert.deepStrictEqual(obj, {});
+  const cloned = structuredClone(obj);
+  assert.deepStrictEqual(cloned, {});
+
+  obj.foo = "bar";
+  obj.nested = { x: 1 };
+  const cloned2 = structuredClone(obj);
+  assert.deepStrictEqual(cloned2, { foo: "bar", nested: { x: 1 } });
+  assert(cloned2 !== obj);
+  assert(cloned2.nested !== obj.nested);
+  console.log("pass");
+};
+
 nativeTests.test_napi_wrap = () => {
   const values = [
     {},

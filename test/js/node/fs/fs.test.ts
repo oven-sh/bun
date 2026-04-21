@@ -8,6 +8,7 @@ import {
   isIntelMacOS,
   isPosix,
   isWindows,
+  tempDir,
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
@@ -1557,6 +1558,22 @@ it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
   mkfifo(path, 0o666);
   realpathSync(path);
   unlinkSync(path);
+});
+
+// Regression guard for realpathSync on POSIX hosts. On Linux, getFdPath has
+// a /dev/fd fallback for environments where /proc is broken (FreeBSD
+// Linuxulator) or absent (minimal containers).
+it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => {
+  expect(realpathSync("/")).toBe("/");
+
+  const self = realpathSync(import.meta.path);
+  expect(self).toStartWith("/");
+  expect(existsSync(self)).toBe(true);
+
+  using dir = tempDir("fs-realpath-getfdpath", {});
+  const linkPath = join(String(dir), "link");
+  symlinkSync(import.meta.path, linkPath);
+  expect(realpathSync(linkPath)).toBe(self);
 });
 
 it("readlink", () => {
@@ -3301,10 +3318,11 @@ it("new Stats", () => {
   expectclose(BigInt(Math.floor(withoutBigInt.ctimeMs)), withBigInt.ctimeMs);
   expectclose(BigInt(Math.floor(withoutBigInt.birthtimeMs)), withBigInt.birthtimeMs);
 
-  expect(withBigInt.atime.getTime()).toEqual(withoutBigInt.atime.getTime());
-  expect(withBigInt.mtime.getTime()).toEqual(withoutBigInt.mtime.getTime());
-  expect(withBigInt.ctime.getTime()).toEqual(withoutBigInt.ctime.getTime());
-  expect(withBigInt.birthtime.getTime()).toEqual(withoutBigInt.birthtime.getTime());
+  // Allow ±1ms leeway: the non-bigint path goes through a float and can round differently.
+  expect(Math.abs(withBigInt.atime.getTime() - withoutBigInt.atime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.mtime.getTime() - withoutBigInt.mtime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.ctime.getTime() - withoutBigInt.ctime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.birthtime.getTime() - withoutBigInt.birthtime.getTime())).toBeLessThanOrEqual(1);
 });
 
 it("test syscall errno, issue#4198", () => {
@@ -3679,4 +3697,152 @@ it("overflowing mode doesn't crash", () => {
       path: "./a.txt",
     }),
   );
+});
+
+describe("numeric flags produce same result as string flags", () => {
+  it("numeric O_CREAT|O_TRUNC|O_WRONLY is equivalent to 'w'", () => {
+    const { O_CREAT, O_TRUNC, O_WRONLY } = constants;
+    const numericFlag = O_CREAT | O_TRUNC | O_WRONLY;
+
+    using dir = tempDir("numeric-flags", {});
+    const fileStr = join(String(dir), "string.txt");
+    const fileNum = join(String(dir), "numeric.txt");
+
+    const fd1 = openSync(fileStr, "w", 0o666);
+    writeSync(fd1, "hello");
+    closeSync(fd1);
+
+    const fd2 = openSync(fileNum, numericFlag, 0o666);
+    writeSync(fd2, "hello");
+    closeSync(fd2);
+
+    expect(readFileSync(fileNum, "utf8")).toBe(readFileSync(fileStr, "utf8"));
+  });
+
+  it("numeric O_CREAT|O_WRONLY|O_APPEND is equivalent to 'a'", () => {
+    const { O_APPEND, O_CREAT, O_WRONLY } = constants;
+    const numericFlag = O_CREAT | O_WRONLY | O_APPEND;
+
+    using dir = tempDir("numeric-flags", {});
+    const fileStr = join(String(dir), "string.txt");
+    const fileNum = join(String(dir), "numeric.txt");
+
+    const fd1 = openSync(fileStr, "a", 0o666);
+    writeSync(fd1, "first");
+    closeSync(fd1);
+    const fd1b = openSync(fileStr, "a", 0o666);
+    writeSync(fd1b, "second");
+    closeSync(fd1b);
+
+    const fd2 = openSync(fileNum, numericFlag, 0o666);
+    writeSync(fd2, "first");
+    closeSync(fd2);
+    const fd2b = openSync(fileNum, numericFlag, 0o666);
+    writeSync(fd2b, "second");
+    closeSync(fd2b);
+
+    expect(readFileSync(fileNum, "utf8")).toBe(readFileSync(fileStr, "utf8"));
+    expect(readFileSync(fileNum, "utf8")).toBe("firstsecond");
+  });
+
+  it("numeric O_CREAT|O_RDWR|O_TRUNC is equivalent to 'w+'", () => {
+    const { O_CREAT, O_RDWR, O_TRUNC } = constants;
+    const numericFlag = O_CREAT | O_RDWR | O_TRUNC;
+
+    using dir = tempDir("numeric-flags", {});
+    const file = join(String(dir), "readwrite.txt");
+
+    const fd = openSync(file, numericFlag, 0o666);
+    writeSync(fd, "read-write");
+
+    // Read back from the same fd to verify O_RDWR actually grants read access.
+    const buf = Buffer.alloc(10);
+    const bytesRead = readSync(fd, buf, 0, 10, 0);
+    closeSync(fd);
+
+    expect(buf.toString("utf8", 0, bytesRead)).toBe("read-write");
+  });
+
+  it("numeric O_RDONLY reads existing file", () => {
+    const { O_RDONLY } = constants;
+    using dir = tempDir("numeric-flags", {});
+    const file = join(String(dir), "readonly.txt");
+
+    writeFileSync(file, "existing content");
+
+    const fd = openSync(file, O_RDONLY);
+    const buf = Buffer.alloc(50);
+    const bytesRead = readSync(fd, buf);
+    closeSync(fd);
+
+    expect(buf.slice(0, bytesRead).toString("utf8")).toBe("existing content");
+  });
+
+  it("numeric O_CREAT|O_EXCL|O_RDWR fails on existing file", () => {
+    const { O_CREAT, O_EXCL, O_RDWR } = constants;
+    const numericFlag = O_CREAT | O_EXCL | O_RDWR;
+
+    using dir = tempDir("numeric-flags", {});
+    const file = join(String(dir), "excl.txt");
+
+    // First open should succeed (creates the file).
+    const fd = openSync(file, numericFlag, 0o666);
+    closeSync(fd);
+
+    // Second open with O_EXCL should fail (file already exists).
+    expect(() => openSync(file, numericFlag, 0o666)).toThrow();
+  });
+});
+
+describe("synchronous I/O string flags", () => {
+  it("'rs' opens existing file for reading", () => {
+    using dir = tempDir("sync-flags", {
+      "existing.txt": "sync content",
+    });
+
+    const fd = openSync(join(String(dir), "existing.txt"), "rs");
+    const buf = Buffer.alloc(20);
+    const bytesRead = readSync(fd, buf);
+    closeSync(fd);
+
+    expect(buf.slice(0, bytesRead).toString("utf8")).toBe("sync content");
+  });
+
+  it("'rs+' opens existing file for read-write", () => {
+    using dir = tempDir("sync-flags", {
+      "existing.txt": "original",
+    });
+    const file = join(String(dir), "existing.txt");
+
+    const fd = openSync(file, "rs+");
+    writeSync(fd, "replaced");
+    closeSync(fd);
+
+    expect(readFileSync(file, "utf8")).toBe("replaced");
+  });
+
+  it("'as' creates and appends to file", () => {
+    using dir = tempDir("sync-flags", {});
+    const file = join(String(dir), "appended.txt");
+
+    const fd = openSync(file, "as");
+    writeSync(fd, "sync-append");
+    closeSync(fd);
+
+    expect(readFileSync(file, "utf8")).toBe("sync-append");
+  });
+
+  it("'as+' creates and appends with read access", () => {
+    using dir = tempDir("sync-flags", {});
+    const file = join(String(dir), "appended-rw.txt");
+
+    const fd = openSync(file, "as+");
+    writeSync(fd, "hello");
+
+    const buf = Buffer.alloc(10);
+    const bytesRead = readSync(fd, buf, 0, 10, 0);
+    closeSync(fd);
+
+    expect(buf.toString("utf8", 0, bytesRead)).toBe("hello");
+  });
 });

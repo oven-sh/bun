@@ -112,8 +112,10 @@ struct us_internal_ssl_socket_t {
 int passphrase_cb(char *buf, int size, int rwflag, void *u) {
   const char *passphrase = (const char *)u;
   size_t passphrase_length = strlen(passphrase);
+  // BoringSSL calls us with a stack buf[PEM_BUFSIZE]; copying past `size`
+  // overflows it. Match Node's PasswordCallback: fail rather than truncate.
+  if (passphrase_length > (size_t)size) return -1;
   memcpy(buf, passphrase, passphrase_length);
-  // put null at end? no?
   return (int)passphrase_length;
 }
 
@@ -894,6 +896,7 @@ int us_ssl_ctx_use_privatekey_content(SSL_CTX *ctx, const char *content,
   int reason_code, ret = 0;
   BIO *in;
   EVP_PKEY *pkey = NULL;
+  if (content == NULL) return 0;
   in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
@@ -930,6 +933,7 @@ int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content,
   X509 *x = NULL;
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
   int count = 0;
+  if (content == NULL) return 0;
   BIO *in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
@@ -963,6 +967,7 @@ int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
 
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
 
+  if (content == NULL) return 0;
   in = BIO_new_mem_buf(content, strlen(content));
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);

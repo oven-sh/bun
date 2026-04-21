@@ -7,6 +7,7 @@
 #include "HTTPParsers.h"
 #include "decodeURIComponentSIMD.h"
 #include "BunString.h"
+#include <wtf/HashSet.h>
 namespace WebCore {
 
 template<bool isSSL>
@@ -231,10 +232,13 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
     auto* object = JSC::constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    HashSet<String> seenKeys;
+
     // Add modified cookies to the object
     for (const auto& cookie : m_modifiedCookies) {
         if (!cookie->value().isEmpty()) {
-            object->putDirect(vm, JSC::Identifier::fromString(vm, cookie->name()), JSC::jsString(vm, cookie->value()));
+            seenKeys.add(cookie->name());
+            object->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, cookie->name()), JSC::jsString(vm, cookie->value()));
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -242,8 +246,8 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
     // Add original cookies to the object
     for (const auto& cookie : m_originalCookies) {
         // Skip if this cookie name was already added from modified cookies
-        if (!object->hasProperty(globalObject, JSC::Identifier::fromString(vm, cookie.key))) {
-            object->putDirect(vm, JSC::Identifier::fromString(vm, cookie.key), JSC::jsString(vm, cookie.value));
+        if (seenKeys.add(cookie.key).isNewEntry) {
+            object->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, cookie.key), JSC::jsString(vm, cookie.value));
             RETURN_IF_EXCEPTION(scope, {});
         }
     }

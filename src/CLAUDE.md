@@ -17,14 +17,15 @@ Conventions:
 
 | Instead of                                                   | Use                                  |
 | ------------------------------------------------------------ | ------------------------------------ |
-| `std.fs.File`                                                | `bun.sys.File`                       |
+| `std.base64`                                                 | `bun.base64`                         |
+| `std.crypto.sha{...}`                                        | `bun.sha.Hashers.{...}`              |
 | `std.fs.cwd()`                                               | `bun.FD.cwd()`                       |
-| `std.posix.open/read/write/stat/mkdir/unlink/rename/symlink` | `bun.sys.*` equivalents              |
+| `std.fs.File`                                                | `bun.sys.File`                       |
 | `std.fs.path.join/dirname/basename`                          | `bun.path.join/dirname/basename`     |
 | `std.mem.eql/indexOf/startsWith` (for strings)               | `bun.strings.eql/indexOf/startsWith` |
 | `std.posix.O` / `std.posix.mode_t` / `std.posix.fd_t`        | `bun.O` / `bun.Mode` / `bun.FD`      |
+| `std.posix.open/read/write/stat/mkdir/unlink/rename/symlink` | `bun.sys.*` equivalents              |
 | `std.process.Child`                                          | `bun.spawnSync`                      |
-| `catch bun.outOfMemory()`                                    | `bun.handleOom(...)`                 |
 
 ## `bun.sys` — System Calls (`src/sys.zig`)
 
@@ -38,9 +39,9 @@ const fd = switch (bun.sys.open(path, bun.O.RDONLY, 0)) {
 // Or: const fd = try bun.sys.open(path, bun.O.RDONLY, 0).unwrap();
 ```
 
-Key functions (all take `bun.FileDescriptor`, not `std.posix.fd_t`):
+Key functions (all take `bun.FD`, not `std.posix.fd_t`):
 
-- `open`, `openat`, `openA` (non-sentinel) → `Maybe(bun.FileDescriptor)`
+- `open`, `openat`, `openA` (non-sentinel) → `Maybe(bun.FD)`
 - `read`, `readAll`, `pread` → `Maybe(usize)`
 - `write`, `pwrite`, `writev` → `Maybe(usize)`
 - `stat`, `fstat`, `lstat` → `Maybe(bun.Stat)`
@@ -52,7 +53,7 @@ Use `bun.O.RDONLY`, `bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC`, etc. for open fl
 
 ### `bun.sys.File` (`src/sys/File.zig`)
 
-Higher-level file handle wrapping `bun.FileDescriptor`:
+Higher-level file handle wrapping `bun.FD`:
 
 ```zig
 // One-shot read: open + read + close

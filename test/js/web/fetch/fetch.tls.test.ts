@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -136,6 +136,68 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  // When checkServerIdentity is provided, the HTTP thread sends an intermediate
+  // progress update carrying the server certificate before response headers
+  // arrive. If the connection then fails (e.g. an mTLS server rejects a
+  // cert-less client and closes the socket after the handshake — issue #27275),
+  // the failure result must still reject the fetch promise instead of being
+  // swallowed by the "wait for metadata" early return.
+  for (const withAbortSignal of [false, true]) {
+    it(`fetch with checkServerIdentity rejects when connection closes before response headers${
+      withAbortSignal ? " (with AbortSignal)" : ""
+    }`, async () => {
+      // TLS server that completes the handshake, receives the request, and
+      // then immediately closes the socket without sending any HTTP response.
+      const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+        socket.once("data", () => socket.destroy());
+      });
+      try {
+        const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+        server.listen(0, onListening);
+        await listening;
+        const port = (server.address() as import("node:net").AddressInfo).port;
+
+        const controller = withAbortSignal ? new AbortController() : undefined;
+        let checkServerIdentityCalled = false;
+        let err: unknown;
+        try {
+          await fetch(`https://localhost:${port}/`, {
+            keepalive: false,
+            signal: controller?.signal,
+            tls: {
+              ca: validTls.cert,
+              checkServerIdentity() {
+                checkServerIdentityCalled = true;
+                return undefined;
+              },
+            },
+          });
+        } catch (e) {
+          err = e;
+        }
+
+        // Previously the `await fetch(...)` above never settled and this test
+        // timed out; with an AbortSignal attached, `controller.abort()` fired
+        // the DOM event but the promise still hung because the FetchTasklet
+        // had already been torn down. Node's `https.get` in the same scenario
+        // emits `error` with ECONNRESET ("socket hang up").
+        expect(checkServerIdentityCalled).toBe(true);
+        expect(err).toBeInstanceOf(Error);
+        expect((err as NodeJS.ErrnoException).code).toBe("ECONNRESET");
+
+        // Aborting after the promise settled is a no-op but must not throw.
+        controller?.abort();
+        if (controller) expect(controller.signal.aborted).toBe(true);
+      } finally {
+        // Not awaited: Bun's tls.Server currently doesn't decrement its
+        // connection count when the server-side socket is destroyed, so the
+        // close callback never fires here. The listening handle is released
+        // immediately regardless.
+        server.close();
+      }
+    });
+  }
+
   it("fetch with self-sign tls should throw", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       const urls = [`https://localhost:${port}`, `https://127.0.0.1:${port}`];
@@ -263,7 +325,7 @@ describe.concurrent("fetch-tls", () => {
     });
     const start = performance.now();
     const TIMEOUT = 200;
-    const THRESHOLD = 150;
+    const THRESHOLD = 150 * (isASAN ? 2 : 1); // ASAN can be very slow, so we need to increase the threshold for it
 
     try {
       await fetch(server.url, {

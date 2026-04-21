@@ -44,15 +44,8 @@ pub const requires_file_descriptors = switch (Environment.os) {
 /// equivalent, so the watch fd is a plain O_RDONLY.
 pub const watch_open_flags: i32 = if (Environment.isMac) bun.c.O_EVTONLY else bun.O.RDONLY;
 
-/// Vnode events monitored on macOS via kqueue. Matches the fflags libuv
-/// registers in vendor/node/deps/uv/src/unix/kqueue.c so file-watching
-/// behavior is consistent with Node.
-/// - WRITE: data contents changed
-/// - RENAME: vnode was renamed
-/// - DELETE: vnode was unlinked
-/// - ATTRIB: attributes changed (chmod, utimes, chown, xattr)
-/// - EXTEND: size increased (ftruncate-grow, write past EOF)
-/// - REVOKE: vnode access was revoked (revoke(2), unmount)
+/// kqueue vnode fflags matching libuv (vendor/node/deps/uv/src/unix/kqueue.c)
+/// so file-watching behavior is consistent with Node.
 const macos_vnode_fflags: u32 = if (Environment.isMac)
     std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE |
         std.c.NOTE.ATTRIB | std.c.NOTE.EXTEND | std.c.NOTE.REVOKE
@@ -488,35 +481,7 @@ fn appendDirectoryAssumeCapacity(
     };
 
     if (Environment.isKqueue) {
-        const KEvent = std.c.Kevent;
-
-        // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
-        var event = std.mem.zeroes(KEvent);
-
-        event.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
-        // we want to know about the vnode
-        event.filter = std.c.EVFILT.VNODE;
-        event.fflags = macos_vnode_fflags;
-
-        // id
-        event.ident = @intCast(fd.native());
-
-        // Store the index for fast filtering later
-        event.udata = @as(usize, @intCast(watchlist_id));
-        var events: [1]KEvent = .{event};
-
-        // This took a lot of work to figure out the right permutation
-        // Basically:
-        // - We register the event here.
-        // our while(true) loop above receives notification of changes to any of the events created here.
-        _ = std.posix.system.kevent(
-            this.platform.fd.unwrap().?.native(),
-            @as([]KEvent, events[0..1]).ptr,
-            1,
-            @as([]KEvent, events[0..1]).ptr,
-            0,
-            null,
-        );
+        this.addFileDescriptorToKQueueWithoutChecks(fd, watchlist_id);
     } else if (Environment.isLinux) {
         const buf = bun.path_buffer_pool.get();
         defer {

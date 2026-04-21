@@ -1,15 +1,13 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import {
-  closeSync,
   copyFileSync,
   cpSync,
-  ftruncateSync,
-  openSync,
   readFileSync,
   renameSync,
   rmSync,
   statSync,
+  truncateSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
@@ -791,16 +789,7 @@ it.skipIf(!isMacOS)(
       }
 
       if (any) {
-        // Extend the file via ftruncate. On macOS this fires NOTE_EXTEND only
-        // (not NOTE_WRITE), so this reload path requires NOTE_EXTEND to be in
-        // the kqueue fflags — otherwise the reload is silently dropped.
-        const fd = openSync(root, "r+");
-        try {
-          const size = statSync(root).size;
-          ftruncateSync(fd, size + 1);
-        } finally {
-          closeSync(fd);
-        }
+        truncateSync(root, statSync(root).size + 1);
       }
     }
 

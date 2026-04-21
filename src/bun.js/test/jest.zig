@@ -229,14 +229,16 @@ pub const Jest = struct {
         const restoreAllMocks = jsc.JSFunction.create(globalObject, "restoreAllMocks", JSMock__jsRestoreAllMocks, 2, .{});
         const clearAllMocks = jsc.JSFunction.create(globalObject, "clearAllMocks", JSMock__jsClearAllMocks, 2, .{});
         const mockModuleFn = jsc.JSFunction.create(globalObject, "module", JSMock__jsModuleMock, 2, .{});
+        const mockedFn = jsc.JSFunction.create(globalObject, "mocked", JSMock__jsMocked, 1, .{});
         module.put(globalObject, ZigString.static("mock"), mockFn);
         mockFn.put(globalObject, ZigString.static("module"), mockModuleFn);
         mockFn.put(globalObject, ZigString.static("restore"), restoreAllMocks);
         mockFn.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
 
-        const jest = JSValue.createEmptyObject(globalObject, 9 + bun_test.FakeTimers.timerFnsCount);
+        const jest = JSValue.createEmptyObject(globalObject, 10 + bun_test.FakeTimers.timerFnsCount);
         jest.put(globalObject, ZigString.static("fn"), mockFn);
         jest.put(globalObject, ZigString.static("mock"), mockModuleFn);
+        jest.put(globalObject, ZigString.static("mocked"), mockedFn);
         jest.put(globalObject, ZigString.static("spyOn"), spyOn);
         jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         jest.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
@@ -249,9 +251,10 @@ pub const Jest = struct {
         module.put(globalObject, ZigString.static("spyOn"), spyOn);
         module.put(globalObject, ZigString.static("expect"), Expect.js.getConstructor(globalObject));
 
-        const vi = JSValue.createEmptyObject(globalObject, 6 + bun_test.FakeTimers.timerFnsCount);
+        const vi = JSValue.createEmptyObject(globalObject, 7 + bun_test.FakeTimers.timerFnsCount);
         vi.put(globalObject, ZigString.static("fn"), mockFn);
         vi.put(globalObject, ZigString.static("mock"), mockModuleFn);
+        vi.put(globalObject, ZigString.static("mocked"), mockedFn);
         vi.put(globalObject, ZigString.static("spyOn"), spyOn);
         vi.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
         vi.put(globalObject, ZigString.static("resetAllMocks"), clearAllMocks);
@@ -269,6 +272,7 @@ pub const Jest = struct {
     extern fn JSMock__jsRestoreAllMocks(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsClearAllMocks(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
     extern fn JSMock__jsSpyOn(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
+    extern fn JSMock__jsMocked(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue;
 
     pub fn call(
         globalObject: *JSGlobalObject,

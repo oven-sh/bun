@@ -110,25 +110,36 @@ declare module "bun:test" {
     ): Mock<Extract<T[K], (...args: any[]) => any>>;
 
     /**
+     * Takes a function or object and returns it typed as deeply mocked.
+     * This is a type-only helper — at runtime it returns the input unchanged.
+     */
+    function mocked<T extends object>(source: T, options?: { shallow?: false }): JestMock.Mocked<T>;
+    /**
+     * Takes a function or object and returns it typed as shallowly mocked.
+     * This is a type-only helper — at runtime it returns the input unchanged.
+     */
+    function mocked<T extends object>(source: T, options: { shallow: true }): JestMock.MockedShallow<T>;
+
+    /**
      * Constructs the type of a mock function, e.g. the return type of `jest.fn()`.
      */
     type Mock<T extends (...args: any[]) => any = (...args: any[]) => any> = JestMock.Mock<T>;
     /**
      * Wraps a class, function or object type with Jest mock type definitions.
      */
-    // type Mocked<T extends object> = JestMock.Mocked<T>;
+    type Mocked<T extends object> = JestMock.Mocked<T>;
     /**
      * Wraps a class type with Jest mock type definitions.
      */
-    // type MockedClass<T extends JestMock.ClassLike> = JestMock.MockedClass<T>;
+    type MockedClass<T extends JestMock.ClassLike> = JestMock.MockedClass<T>;
     /**
      * Wraps a function type with Jest mock type definitions.
      */
-    // type MockedFunction<T extends (...args: any[]) => any> = JestMock.MockedFunction<T>;
+    type MockedFunction<T extends (...args: any[]) => any> = JestMock.MockedFunction<T>;
     /**
      * Wraps an object type with Jest mock type definitions.
      */
-    // type MockedObject<T extends object> = JestMock.MockedObject<T>;
+    type MockedObject<T extends object> = JestMock.MockedObject<T>;
     /**
      * Constructs the type of a replaced property.
      */
@@ -189,6 +200,11 @@ declare module "bun:test" {
      */
     clearAllMocks: typeof jest.clearAllMocks;
     resetAllMocks: typeof jest.resetAllMocks;
+    /**
+     * Takes a function or object and returns it typed as a mock.
+     * This is a type-only helper — at runtime it returns the input unchanged.
+     */
+    mocked: typeof jest.mocked;
     useFakeTimers: typeof jest.useFakeTimers;
     useRealTimers: typeof jest.useRealTimers;
     advanceTimersByTime: typeof jest.advanceTimersByTime;
@@ -2032,64 +2048,49 @@ declare module "bun:test" {
     //   (...args: Parameters<T>): ReturnType<T>;
     // }
 
-    // export type Mocked<T> = T extends ClassLike
-    //   ? MockedClass<T>
-    //   : T extends FunctionLike
-    //   ? MockedFunction<T>
-    //   : T extends object
-    //   ? MockedObject<T>
-    //   : T;
+    export type Mocked<T> = T extends ClassLike
+      ? MockedClass<T>
+      : T extends FunctionLike
+      ? MockedFunction<T>
+      : T extends object
+      ? MockedObject<T>
+      : T;
 
-    // export const mocked: {
-    //   <T extends object>(
-    //     source: T,
-    //     options?: {
-    //       shallow: false;
-    //     },
-    //   ): Mocked<T>;
-    //   <T_1 extends object>(
-    //     source: T_1,
-    //     options: {
-    //       shallow: true;
-    //     },
-    //   ): MockedShallow<T_1>;
-    // };
+    export type MockedClass<T extends ClassLike> = MockInstance<
+      (...args: ConstructorParameters<T>) => Mocked<InstanceType<T>>
+    > &
+      MockedObject<T>;
 
-    // export type MockedClass<T extends ClassLike> = MockInstance<
-    //   (...args: ConstructorParameters<T>) => Mocked<InstanceType<T>>
-    // > &
-    //   MockedObject<T>;
+    export type MockedFunction<T extends FunctionLike> = MockInstance<T> &
+      MockedObject<T>;
 
-    // export type MockedFunction<T extends FunctionLike> = MockInstance<T> &
-    //   MockedObject<T>;
+    type MockedFunctionShallow<T extends FunctionLike> = MockInstance<T> & T;
 
-    // type MockedFunctionShallow<T extends FunctionLike> = MockInstance<T> & T;
+    export type MockedObject<T extends object> = {
+      [K in keyof T]: T[K] extends ClassLike
+        ? MockedClass<T[K]>
+        : T[K] extends FunctionLike
+        ? MockedFunction<T[K]>
+        : T[K] extends object
+        ? MockedObject<T[K]>
+        : T[K];
+    } & T;
 
-    // export type MockedObject<T extends object> = {
-    //   [K in keyof T]: T[K] extends ClassLike
-    //     ? MockedClass<T[K]>
-    //     : T[K] extends FunctionLike
-    //     ? MockedFunction<T[K]>
-    //     : T[K] extends object
-    //     ? MockedObject<T[K]>
-    //     : T[K];
-    // } & T;
+    type MockedObjectShallow<T extends object> = {
+      [K in keyof T]: T[K] extends ClassLike
+        ? MockedClass<T[K]>
+        : T[K] extends FunctionLike
+        ? MockedFunctionShallow<T[K]>
+        : T[K];
+    } & T;
 
-    // type MockedObjectShallow<T extends object> = {
-    //   [K in keyof T]: T[K] extends ClassLike
-    //     ? MockedClass<T[K]>
-    //     : T[K] extends FunctionLike
-    //     ? MockedFunctionShallow<T[K]>
-    //     : T[K];
-    // } & T;
-
-    // export type MockedShallow<T> = T extends ClassLike
-    //   ? MockedClass<T>
-    //   : T extends FunctionLike
-    //   ? MockedFunctionShallow<T>
-    //   : T extends object
-    //   ? MockedObjectShallow<T>
-    //   : T;
+    export type MockedShallow<T> = T extends ClassLike
+      ? MockedClass<T>
+      : T extends FunctionLike
+      ? MockedFunctionShallow<T>
+      : T extends object
+      ? MockedObjectShallow<T>
+      : T;
 
     // export type MockFunctionMetadata<
     //   T = unknown,

@@ -198,7 +198,7 @@ fn asyncDeinit(this: *@This()) void {
     // BufferedReader is still iterating. If we never started reading, no callback can be
     // in flight, so close synchronously to avoid holding the fd until the next tick.
     const never_started = if (bun.Environment.isWindows)
-        this.reader.source == null
+        !this.is_reading and this.readers.len() == 0
     else
         this.reader.handle == .closed;
     if (never_started) {
@@ -216,10 +216,18 @@ fn asyncDeinitCallback(this: *@This()) void {
                 this.reader.closeImpl(false);
             }
         } else {
+            // We set reader.flags.close_handle=false in init(), so reader.deinit() will not
+            // return the FilePoll to its pool. Do it explicitly (without closing the fd —
+            // we own that and close it ourselves below).
+            if (this.reader.handle == .poll) {
+                this.reader.handle.closeImpl(null, {}, false);
+            }
             log("IOReader(0x{x}) __deinit fd={f}", .{ @intFromPtr(this), this.fd });
             this.fd.close();
         }
     }
+    if (this.err) |*e| e.deref();
+    this.readers.deinit();
     this.buf.deinit(bun.default_allocator);
     this.reader.disableKeepingProcessAlive({});
     this.reader.deinit();

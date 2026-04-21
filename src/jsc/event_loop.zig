@@ -632,6 +632,16 @@ pub fn waitForPromiseOrLoopExit(this: *EventLoop, promise: jsc.AnyPromise) void 
                     this.autoTick();
                 }
 
+                // `autoTick` ends with `handleRejectedPromises()`, which runs
+                // user JS (e.g. `process.on('unhandledRejection', …)`). In
+                // `.bun` mode with a registered handler, the path returns
+                // WITHOUT a `defer drainMicrotasks` — so a handler that
+                // resolves the awaited promise queues a continuation
+                // microtask that hasn't run yet. `hasAnyHandleWork()` can't
+                // see JSC microtasks, so without this drain we'd break on
+                // the next line and abandon the pending continuation.
+                this.drainMicrotasksWithGlobal(this.global, jsc_vm) catch return;
+
                 if (promise.status() == .pending and !this.hasAnyHandleWork()) {
                     break;
                 }

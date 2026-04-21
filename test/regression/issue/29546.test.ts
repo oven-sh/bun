@@ -135,3 +135,33 @@ test("unhandled rejection mid-TLA does not abandon an in-flight wait", async () 
   expect(stdout).toBe("elapsed=ok\n");
   expect(exitCode).toBe(1);
 });
+
+test("unhandledRejection handler that resolves the TLA runs to completion", async () => {
+  // The default `.bun` unhandled-rejection path calls
+  // `Bun__handleUnhandledRejection` and then returns WITHOUT draining
+  // microtasks (unlike `.none` / `.warn` / `.strict` which all `defer
+  // drainMicrotasks`). If a registered handler resolves the awaited promise,
+  // the continuation is queued as a JSC microtask that hasn't run yet when
+  // `autoTick` returns. `hasAnyHandleWork()` can't see JSC microtasks, so
+  // without a microtask drain between `autoTick` and the liveness check the
+  // loop would exit prematurely and the continuation would be silently
+  // dropped. This test pins the drain.
+  const source = `
+    let resolveIt;
+    const later = new Promise(r => resolveIt = r);
+    process.on("unhandledRejection", () => resolveIt("handled"));
+    Promise.reject(new Error("trigger"));
+    const r = await later;
+    process.stdout.write("got=" + r + "\\n");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", source],
+    env: bunEnv,
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toBe("got=handled\n");
+  expect(exitCode).toBe(0);
+});

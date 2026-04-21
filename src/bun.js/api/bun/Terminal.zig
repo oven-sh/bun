@@ -375,7 +375,7 @@ fn closePseudoconsoleOffThread(this: *Terminal, hpcon: bun.windows.HPCON) void {
             bun.windows.ClosePseudoConsole(h);
         }
     };
-    const t = std.Thread.spawn(.{ .stack_size = 64 * 1024 }, Runner.run, .{hpcon}) catch {
+    const t = std.Thread.spawn(.{}, Runner.run, .{hpcon}) catch {
         // CreateThread failed — the process is in a bad state. Close the
         // reader so onReaderDone fires next loop tick (releasing the reader
         // ref) instead of hanging on an EOF that will never come. Leak hpcon;

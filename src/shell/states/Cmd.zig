@@ -112,10 +112,11 @@ const BufferedIoClosed = struct {
             open,
             closed: bun.ByteList,
         } = .open,
-        owned: bool = false,
 
         pub fn deinit(this: *BufferedIoState) void {
-            if (this.state == .closed and this.owned) {
+            // The closed buffer was taken via PipeReader.takeBuffer(); we own it
+            // regardless of the original stdio variant.
+            if (this.state == .closed) {
                 this.state.closed.clearAndFree(bun.default_allocator);
             }
         }
@@ -186,8 +187,8 @@ const BufferedIoClosed = struct {
     fn fromStdio(io: *const [3]bun.shell.subproc.Stdio) BufferedIoClosed {
         return .{
             .stdin = if (io[stdin_no].isPiped()) false else null,
-            .stdout = if (io[stdout_no].isPiped()) .{ .owned = io[stdout_no] == .pipe } else null,
-            .stderr = if (io[stderr_no].isPiped()) .{ .owned = io[stderr_no] == .pipe } else null,
+            .stdout = if (io[stdout_no].isPiped()) .{} else null,
+            .stderr = if (io[stderr_no].isPiped()) .{} else null,
         };
     }
 };
@@ -522,6 +523,7 @@ fn initSubproc(this: *Cmd) Yield {
     const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child, &did_exit_immediately)) {
         .result => this.exec.subproc.child,
         .err => |*e| {
+            defer e.deinit(bun.default_allocator);
             this.exec = .none;
             return this.writeFailingError("{f}\n", .{e});
         },
@@ -605,7 +607,9 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?
                 const flags = this.node.redirect.toFlags();
                 const redirfd = switch (ShellSyscall.openat(this.base.shell.cwd_fd, path, flags, perm)) {
                     .err => |e| {
-                        return this.writeFailingError("bun: {f}: {s}", .{ e.toShellSystemError().message, path });
+                        const sys_err = e.toShellSystemError();
+                        defer sys_err.deref();
+                        return this.writeFailingError("bun: {f}: {s}", .{ sys_err.message, path });
                     },
                     .result => |f| f,
                 };
@@ -701,13 +705,11 @@ pub fn deinit(this: *Cmd) void {
     if (this.exec != .none) {
         if (this.exec == .subproc) {
             var cmd = this.exec.subproc.child;
-            if (cmd.hasExited()) {
-                cmd.unref(true);
-            } else {
+            if (!cmd.hasExited()) {
                 _ = cmd.tryKill(9);
-                cmd.unref(true);
-                cmd.deinit();
             }
+            cmd.unref(true);
+            cmd.deinit();
 
             this.exec.subproc.buffered_closed.deinit();
         } else {
@@ -765,6 +767,7 @@ pub fn bufferedOutputCloseStdout(this: *Cmd, err: ?jsc.SystemError) void {
     }
     log("cmd ({x}) close buffered stdout", .{@intFromPtr(this)});
     if (err) |e| {
+        defer e.deref();
         this.exit_code = @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
     }
     if (this.io.stdout == .fd and this.io.stdout.fd.captured != null and !this.node.redirect.redirectsElsewhere(.stdout)) {
@@ -782,6 +785,7 @@ pub fn bufferedOutputCloseStderr(this: *Cmd, err: ?jsc.SystemError) void {
     }
     log("cmd ({x}) close buffered stderr", .{@intFromPtr(this)});
     if (err) |e| {
+        defer e.deref();
         this.exit_code = @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
     }
     if (this.io.stderr == .fd and this.io.stderr.fd.captured != null and !this.node.redirect.redirectsElsewhere(.stderr)) {

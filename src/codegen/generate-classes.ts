@@ -1388,7 +1388,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     Object.keys(callbacks).length ||
     obj.hasPendingActivity ||
     [...Object.values(klass), ...Object.values(proto)].find(a => !!a.cache)
-      ? "DECLARE_VISIT_CHILDREN;\ntemplate<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);\nDECLARE_VISIT_OUTPUT_CONSTRAINTS;\n"
+      ? "DECLARE_VISIT_CHILDREN;\n"
       : "";
   const sizeEstimator = "static size_t estimatedSize(JSCell* cell, VM& vm);";
 
@@ -1608,6 +1608,28 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     })
     .join("\n");
   var DEFINE_VISIT_CHILDREN = "";
+  // Generated classes intentionally do NOT override visitOutputConstraints (and therefore
+  // do not get enrolled in BunGCOutputConstraint / m_outputConstraintSpaces).
+  //
+  // visitOutputConstraints exists so JSC's incremental GC can re-scan an already-black cell
+  // after the mutator runs, to pick up new outgoing edges that were added without firing a
+  // write barrier. WebCore needs this because edges like EventTarget's listener list or
+  // AbortSignal's algorithm vector live inside the wrapped RefCounted C++ object, not in
+  // WriteBarrier<> fields on the JSCell, so addEventListener() etc. can add an edge from a
+  // black wrapper to a white callback with no barrier firing.
+  //
+  // Generated classes don't have that problem. Every GC-visible edge below is either:
+  //   - a WriteBarrier<Unknown> field on the JSCell, mutated only via .set(vm, thisObject, v)
+  //     (see *SetCachedValue / cached getter paths), which calls vm.writeBarrier(thisObject, v)
+  //     and re-greys thisObject if it was already marked (Heap::addToRememberedSet pushes it
+  //     back onto m_mutatorMarkStack so visitChildren runs again), or
+  //   - jsvalueArray, a FixedVector<WriteBarrier<>> populated before allocateCell() and never
+  //     resized, or
+  //   - addOpaqueRoot(wrapped()), where wrapped() is m_ctx set once at construction.
+  //
+  // In all cases the write barrier (or immutability) guarantees correctness, so re-walking
+  // every live instance of every generated type after each mutator yield is pure overhead.
+  // Only visitChildren is needed.
   if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize || values.length || hasPendingActivity) {
     DEFINE_VISIT_CHILDREN = `
 template<typename Visitor>
@@ -1624,35 +1646,13 @@ visitor.reportExtraMemoryVisited(size);
 }`
         : ""
     }
-    thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
-}
-
-DEFINE_VISIT_CHILDREN(${name});
-
-
-
-template<typename Visitor>
-void ${name}::visitAdditionalChildrenInGCThread(Visitor& visitor)
-{
-  ${name}* thisObject = this;
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     ${values}
     ${DEFINE_VISIT_CHILDREN_LIST}
     ${obj.valuesArray ? "for (auto& value : thisObject->jsvalueArray) { visitor.append(value); }" : ""}
-    ${hasPendingActivity ? "visitor.addOpaqueRoot(this->wrapped());" : ""}
+    ${hasPendingActivity ? "visitor.addOpaqueRoot(thisObject->wrapped());" : ""}
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(${name});
-
-template<typename Visitor>
-void ${name}::visitOutputConstraintsImpl(JSCell *cell, Visitor& visitor)
-{
-    ${name}* thisObject = jsCast<${name}*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
-}
-
-DEFINE_VISIT_OUTPUT_CONSTRAINTS(${name});
+DEFINE_VISIT_CHILDREN(${name});
 
 ${renderCallbacksCppImpl(typeName, callbacks)}
 

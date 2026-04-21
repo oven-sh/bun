@@ -125,6 +125,10 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
                 return alg.isNull() || alg == ALG384;
             case CryptoAlgorithmIdentifier::SHA_512:
                 return alg.isNull() || alg == ALG512;
+            case CryptoAlgorithmIdentifier::SHA3_256:
+            case CryptoAlgorithmIdentifier::SHA3_384:
+            case CryptoAlgorithmIdentifier::SHA3_512:
+                return alg.isNull();
             default:
                 return false;
             }
@@ -177,6 +181,10 @@ void CryptoAlgorithmHMAC::exportKey(CryptoKeyFormat format, Ref<CryptoKey>&& key
             break;
         case CryptoAlgorithmIdentifier::SHA_512:
             jwk.alg = String(ALG512);
+            break;
+        case CryptoAlgorithmIdentifier::SHA3_256:
+        case CryptoAlgorithmIdentifier::SHA3_384:
+        case CryptoAlgorithmIdentifier::SHA3_512:
             break;
         default:
             ASSERT_NOT_REACHED();

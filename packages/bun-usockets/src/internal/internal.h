@@ -109,6 +109,7 @@ struct addrinfo_result {
 
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
+extern int Bun__addrinfo_cancel(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
 extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
 
@@ -223,6 +224,10 @@ struct us_udp_socket_t {
     void (*on_data)(struct us_udp_socket_t *, void *, int);
     void (*on_drain)(struct us_udp_socket_t *);
     void (*on_close)(struct us_udp_socket_t *);
+    /* Called when recvmmsg returns an error (other than EAGAIN). The socket
+     * is NOT closed — caller decides whether to close. Used to surface ICMP
+     * errors delivered via IP_RECVERR on Linux (ECONNREFUSED, etc.). */
+    void (*on_recv_error)(struct us_udp_socket_t *, int err);
     void *user;
     struct us_loop_t *loop;
     /* An UDP socket can only ever be bound to one single port regardless of how
@@ -272,6 +277,10 @@ int us_internal_raw_root_certs(struct us_cert_string_t **out);
 struct us_listen_socket_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_socket_t s;
   unsigned int socket_ext_size;
+  /* Set when TCP_DEFER_ACCEPT/SO_ACCEPTFILTER was successfully applied. Accepted sockets
+   * from this listener are guaranteed to have data ready, so the accept loop dispatches
+   * readable immediately instead of returning to epoll/kqueue. */
+  unsigned char deferred_accept;
 };
 
 /* Listen sockets are keps in their own list */

@@ -389,19 +389,19 @@ fn writeProxyRequest(
     request: picohttp.Request,
     client: *HTTPClient,
 ) !void {
-    var port: []const u8 = undefined;
-    if (client.url.getPort()) |_| {
-        port = client.url.port;
-    } else {
-        port = if (client.url.isHTTPS()) "443" else "80";
-    }
-
     _ = writer.write(request.method) catch 0;
     // will always be http:// here, https:// needs CONNECT tunnel
     _ = writer.write(" http://") catch 0;
     _ = writer.write(client.url.hostname) catch 0;
-    _ = writer.write(":") catch 0;
-    _ = writer.write(port) catch 0;
+    // Only include the port in the absolute-form request URI when the
+    // original URL had an explicit port. RFC 7230 §5.3.2 treats the default
+    // port as redundant, and writing `:80`/`:443` here breaks proxies that
+    // do strict Host/authority matching (e.g. Charles, mitmproxy). Matches
+    // curl and Node.js `http.request` behavior.
+    if (client.url.getPort()) |_| {
+        _ = writer.write(":") catch 0;
+        _ = writer.write(client.url.port) catch 0;
+    }
     _ = writer.write(request.path) catch 0;
     _ = writer.write(" HTTP/1.1\r\nProxy-Connection: Keep-Alive\r\n") catch 0;
 
@@ -547,6 +547,8 @@ pub fn deinit(this: *HTTPClient) void {
     // Release our strong ref on the interned SSLConfig
     if (this.tls_props) |*tls| tls.deinit();
     this.tls_props = null;
+    if (this.custom_ssl_ctx) |ctx| ctx.deref();
+    this.custom_ssl_ctx = null;
     this.unix_socket_path.deinit();
     this.unix_socket_path = jsc.ZigString.Slice.empty;
 }
@@ -556,16 +558,93 @@ pub fn isKeepAlivePossible(this: *HTTPClient) bool {
         // TODO keepalive for unix sockets
         if (this.unix_socket_path.length() > 0) return false;
 
-        // is not possible to reuse Proxy with TLS, so disable keepalive if url is tunneling HTTPS
-        if (this.proxy_tunnel != null or (this.http_proxy != null and this.url.isHTTPS())) {
-            log("Keep-Alive release (proxy tunneling https)", .{});
-            return false;
-        }
-
         // check state
         if (this.state.flags.allow_keepalive and !this.flags.disable_keepalive) return true;
     }
     return false;
+}
+
+/// Hash of the per-request tunnel discriminators beyond the (proxy, target
+/// url.hostname/port, ssl_config) tuple already covered by separate pool-key
+/// fields. Covers the Host-header SNI override (hostname) plus everything
+/// writeProxyConnect sends: all proxy_headers entries and the auto-generated
+/// Proxy-Authorization (if not overridden by a user header). Returns 0 if
+/// none apply.
+///
+/// target_hostname in the pool stores url.hostname (the CONNECT TCP target
+/// at writeProxyConnect line 346). But the inner TLS SNI/cert verification
+/// uses hostname orelse url.hostname (ProxyTunnel.zig:44). If a Host header
+/// override sets hostname != url.hostname, two requests to different IPs
+/// with the same Host header must NOT share a tunnel — they're physically
+/// connected to different servers. Hashing hostname here catches that.
+///
+/// Per-header hashes are combined with wrapping add so insertion order
+/// doesn't matter and duplicate headers don't cancel to zero.
+pub fn proxyAuthHash(this: *const HTTPClient) u64 {
+    var combined: u64 = 0;
+    var any = false;
+    var name_lower_buf: [256]u8 = undefined;
+
+    // SNI override — distinct from url.hostname which is stored separately
+    // as the CONNECT target. Normalize before hashing: strip port (Host
+    // header may include ":443"), lowercase (DNS is case-insensitive per
+    // RFC 1035), and skip if it matches url.hostname (no actual override —
+    // a request with an explicit but identical Host header should hit the
+    // same pool entry as one without).
+    if (this.hostname) |sni_raw| {
+        const sni = stripPortFromHost(sni_raw);
+        if (!strings.eqlCaseInsensitiveASCII(sni, this.url.hostname, true)) {
+            const sni_lower = if (sni.len <= name_lower_buf.len)
+                strings.copyLowercase(sni, name_lower_buf[0..sni.len])
+            else
+                sni;
+            combined +%= bun.hash(sni_lower);
+            any = true;
+        }
+    }
+
+    var user_provided_auth = false;
+    if (this.proxy_headers) |hdrs| {
+        const slice = hdrs.entries.slice();
+        const names = slice.items(.name);
+        const values = slice.items(.value);
+        for (names, 0..) |name_ptr, idx| {
+            const name = hdrs.asStr(name_ptr);
+            const value = hdrs.asStr(values[idx]);
+            // HTTP header names are case-insensitive (RFC 7230 §3.2) —
+            // lowercase so "X-Foo" and "x-foo" hash identically.
+            const name_lower = if (name.len <= name_lower_buf.len)
+                strings.copyLowercase(name, name_lower_buf[0..name.len])
+            else
+                name;
+            var h = std.hash.Wyhash.init(0);
+            h.update(name_lower);
+            h.update(":");
+            h.update(value);
+            // Wrapping add, not XOR — duplicate identical headers (via
+            // Headers.append) would cancel under XOR (H(x)^H(x)=0) and
+            // collide with the no-headers sentinel. Add is commutative
+            // (order-independent) without the cancellation.
+            combined +%= h.final();
+            any = true;
+            if (strings.eqlCaseInsensitiveASCII(name, "proxy-authorization", true)) {
+                user_provided_auth = true;
+            }
+        }
+    }
+    // writeProxyConnect only sends proxy_authorization if the user didn't
+    // already provide one in proxy_headers — match that precedence.
+    if (!user_provided_auth) {
+        if (this.proxy_authorization) |auth| {
+            var h = std.hash.Wyhash.init(0);
+            h.update("proxy-authorization:");
+            h.update(auth);
+            combined +%= h.final();
+            any = true;
+        }
+    }
+
+    return if (any) combined else 0;
 }
 
 /// Returns the SSL context for this client - either the custom context
@@ -576,6 +655,12 @@ pub fn getSslCtx(this: *HTTPClient, comptime is_ssl: bool) *NewHTTPContext(is_ss
     } else {
         return &http_thread.http_context;
     }
+}
+
+pub fn setCustomSslCtx(this: *HTTPClient, ctx: *NewHTTPContext(true)) void {
+    ctx.ref();
+    if (this.custom_ssl_ctx) |old| old.deref();
+    this.custom_ssl_ctx = ctx;
 }
 
 // lowercase hash header names so that we can be sure
@@ -852,26 +937,33 @@ pub fn doRedirect(
     assert(this.redirect_type == FetchRedirect.follow);
     this.unregisterAbortTracker();
 
+    // By the time doRedirect runs, handleResponseMetadata has already mutated
+    // this.url to the redirect destination. Pooling the tunnel here would
+    // store it under the WRONG target hostname — a follow-up request to the
+    // redirect destination could then reuse a TLS session negotiated with the
+    // original host. Close the tunnel on redirect; only pool the raw socket.
     if (this.proxy_tunnel) |tunnel| {
         log("close the tunnel in redirect", .{});
         this.proxy_tunnel = null;
+        tunnel.shutdown();
         tunnel.detachAndDeref();
         NewHTTPContext(is_ssl).closeSocket(socket);
+    } else if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
+        log("Keep-Alive release in redirect", .{});
+        assert(this.connected_url.hostname.len > 0);
+        ctx.releaseSocket(
+            socket,
+            this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
+            this.connected_url.hostname,
+            this.connected_url.getPortAuto(),
+            this.tls_props,
+            null,
+            "",
+            0,
+            0,
+        );
     } else {
-        // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
-        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
-            log("Keep-Alive release in redirect", .{});
-            assert(this.connected_url.hostname.len > 0);
-            ctx.releaseSocket(
-                socket,
-                this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
-                this.connected_url.hostname,
-                this.connected_url.getPortAuto(),
-                this.tls_props,
-            );
-        } else {
-            NewHTTPContext(is_ssl).closeSocket(socket);
-        }
+        NewHTTPContext(is_ssl).closeSocket(socket);
     }
     this.connected_url = URL{};
 
@@ -1012,6 +1104,10 @@ pub fn onPreconnect(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCon
         this.url.hostname,
         this.url.getPortAuto(),
         this.tls_props,
+        null,
+        "",
+        0,
+        0,
     );
 
     this.state.reset(this.allocator);
@@ -1524,8 +1620,8 @@ pub fn handleOnDataHeaders(
         // we reset the pending_response each time wich means that on parse error this will be always be empty
         this.state.pending_response = picohttp.Response{};
 
-        // minimal http/1.1 request size is 16 bytes without headers and 26 with Host header
-        // if is less than 16 will always be a ShortRead
+        // minimal http/1.1 response is 16 bytes ("HTTP/1.1 200\r\n\r\n")
+        // if less than 16 it will always be a ShortRead
         if (to_read.len < 16) {
             log("handleShortRead", .{});
             this.handleShortRead(is_ssl, incoming_data, socket, needs_move);
@@ -1858,25 +1954,53 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
 
     if (is_done) {
         this.unregisterAbortTracker();
-        if (this.proxy_tunnel) |tunnel| {
-            log("close the tunnel", .{});
+        // is_done is response-driven. A server can reply early (HTTP 413)
+        // with keep-alive while request_stage is still .proxy_body or the
+        // tunnel still has buffered encrypted writes. Pooling that tunnel
+        // would leave the connection mid-request on the inner TLS stream;
+        // adopt() resetting write_buffer doesn't restore a clean HTTP/1.1
+        // boundary. Only pool a tunnel whose request side is fully drained.
+        //
+        // Also check wrapper liveness: a close-delimited body (no
+        // Content-Length, no Transfer-Encoding — RFC 7230 §3.3.3 rule 7)
+        // ends on inner-TLS close; ProxyTunnel.onClose fires but the outer
+        // socket is still alive. Pooling that dead wrapper would hang the
+        // next request (proxy.write() → error.ConnectionClosed, swallowed).
+        const tunnel_poolable = if (this.proxy_tunnel) |t|
+            this.state.request_stage == .done and
+                t.write_buffer.isEmpty() and
+                if (t.wrapper) |*w| !w.isShutdown() else false
+        else
+            true;
+
+        if (this.isKeepAlivePossible() and !socket.isClosedOrHasError() and tunnel_poolable) {
+            log("release socket", .{});
+            const tunnel = this.proxy_tunnel;
             this.proxy_tunnel = null;
-            tunnel.shutdown();
-            tunnel.detachAndDeref();
-            NewHTTPContext(is_ssl).closeSocket(socket);
+            if (tunnel) |t| t.detachOwner(this);
+            // target_hostname = url.hostname (the CONNECT TCP target at
+            // writeProxyConnect line 346). The SNI override (hostname) is
+            // hashed into proxyAuthHash separately — both must match, but
+            // they're distinct values when a Host header override is set.
+            ctx.releaseSocket(
+                socket,
+                this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
+                this.connected_url.hostname,
+                this.connected_url.getPortAuto(),
+                this.tls_props,
+                tunnel,
+                if (tunnel != null) this.url.hostname else "",
+                if (tunnel != null) this.url.getPortAuto() else 0,
+                if (tunnel != null) this.proxyAuthHash() else 0,
+            );
         } else {
-            if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
-                log("release socket", .{});
-                ctx.releaseSocket(
-                    socket,
-                    this.flags.did_have_handshaking_error and !this.flags.reject_unauthorized,
-                    this.connected_url.hostname,
-                    this.connected_url.getPortAuto(),
-                    this.tls_props,
-                );
-            } else {
-                NewHTTPContext(is_ssl).closeSocket(socket);
+            if (this.proxy_tunnel) |tunnel| {
+                log("close the tunnel", .{});
+                this.proxy_tunnel = null;
+                tunnel.shutdown();
+                tunnel.detachAndDeref();
             }
+            NewHTTPContext(is_ssl).closeSocket(socket);
         }
 
         this.state.reset(this.allocator);
@@ -1926,7 +2050,7 @@ pub const HTTPClientResult = struct {
     metadata: ?HTTPResponseMetadata = null,
 
     /// For Http Client requests
-    /// when Content-Length is provided this represents the whole size of the request
+    /// when Content-Length is provided this represents the whole size of the response body
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
     /// If is not chunked encoded and Content-Length is not provided this will be unknown
     body_size: BodySize = .unknown,
@@ -2015,6 +2139,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
             .has_more = certificate_info != null or (this.state.fail == null and !this.state.isDone()),
             .body_size = body_size,
             .certificate_info = null,
+            .can_stream = (this.state.request_stage == .body or this.state.request_stage == .proxy_body) and this.flags.is_streaming_request_body,
         };
     }
     return HTTPClientResult{

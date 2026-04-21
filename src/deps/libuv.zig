@@ -478,7 +478,7 @@ fn HandleMixin(comptime Type: type) type {
             return uv_is_active(@ptrCast(this)) != 0;
         }
 
-        pub fn fd(this: *const Type) bun.FileDescriptor {
+        pub fn fd(this: *const Type) bun.FD {
             var fd_: uv_os_fd_t = windows.INVALID_HANDLE_VALUE;
             _ = uv_fileno(@ptrCast(this), &fd_);
             if (fd_ == windows.INVALID_HANDLE_VALUE)
@@ -1418,7 +1418,7 @@ pub const Pipe = extern struct {
         return .success;
     }
 
-    pub fn open(this: *Pipe, file: bun.FileDescriptor) Maybe(void) {
+    pub fn open(this: *Pipe, file: bun.FD) Maybe(void) {
         const uv_fd = file.uv();
         if (uv_pipe_open(this, uv_fd).toError(.open)) |err| return .{ .err = err };
 
@@ -2472,6 +2472,9 @@ pub const uv_process_options_t = extern struct {
     stdio: [*]uv_stdio_container_t,
     uid: uv_uid_t,
     gid: uv_gid_t,
+    /// Windows only: HPCON from CreatePseudoConsole. When non-null, the child
+    /// is attached to the pseudoconsole and stdio[] is not inherited.
+    pseudoconsole: ?*anyopaque = null,
 };
 pub const UV_PROCESS_SETUID: c_int = 1;
 pub const UV_PROCESS_SETGID: c_int = 2;
@@ -2840,6 +2843,7 @@ pub fn translateUVErrorToE(code_in: anytype) bun.sys.E {
         UV_ECANCELED => bun.sys.E.CANCELED,
         UV_ECHARSET => bun.sys.E.CHARSET,
         UV_EOF => bun.sys.E.EOF,
+        UV_UNKNOWN => bun.sys.E.UNKNOWN,
         else => @enumFromInt(-code),
     };
 }
@@ -3018,7 +3022,7 @@ pub const ReturnCodeI64 = enum(i64) {
         return @intFromEnum(this);
     }
 
-    pub fn toFD(this: ReturnCodeI64) bun.FileDescriptor {
+    pub fn toFD(this: ReturnCodeI64) bun.FD {
         return .fromUV(@truncate(this.int()));
     }
 };

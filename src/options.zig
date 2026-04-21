@@ -1156,6 +1156,8 @@ const default_loaders_posix = .{
     .{ ".html", .html },
     .{ ".jsonc", .jsonc },
     .{ ".json5", .json5 },
+    .{ ".md", .md },
+    .{ ".markdown", .md },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },

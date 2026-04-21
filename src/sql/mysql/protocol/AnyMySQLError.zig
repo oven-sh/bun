@@ -31,6 +31,7 @@ pub const Error = error{
 
     InvalidPrepareOKPacket,
     InvalidOKPacket,
+    InvalidEOFPacket,
     InvalidErrorPacket,
     UnexpectedPacket,
     ShortRead,
@@ -58,6 +59,7 @@ pub fn mysqlErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8, e
         error.InvalidEncodedLength => "ERR_MYSQL_INVALID_ENCODED_LENGTH",
         error.InvalidPrepareOKPacket => "ERR_MYSQL_INVALID_PREPARE_OK_PACKET",
         error.InvalidOKPacket => "ERR_MYSQL_INVALID_OK_PACKET",
+        error.InvalidEOFPacket => "ERR_MYSQL_INVALID_EOF_PACKET",
         error.InvalidErrorPacket => "ERR_MYSQL_INVALID_ERROR_PACKET",
         error.UnexpectedPacket => "ERR_MYSQL_UNEXPECTED_PACKET",
         error.ConnectionTimedOut => "ERR_MYSQL_CONNECTION_TIMEOUT",

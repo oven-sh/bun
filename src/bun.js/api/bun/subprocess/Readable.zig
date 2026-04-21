@@ -1,6 +1,6 @@
 pub const Readable = union(enum) {
-    fd: bun.FileDescriptor,
-    memfd: bun.FileDescriptor,
+    fd: bun.FD,
+    memfd: bun.FD,
     pipe: *PipeReader,
     inherit: void,
     ignore: void,

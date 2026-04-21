@@ -63,35 +63,31 @@ EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)
     return nullptr;
 }
 
-std::unique_ptr<JSEventTargetWrapper> jsEventTargetCast(VM& vm, JSValue thisValue)
+JSEventTargetWrapper jsEventTargetCast(VM& vm, JSValue thisValue)
 {
     if (auto* target = jsDynamicCast<JSEventTarget*>(thisValue))
-        return makeUnique<JSEventTargetWrapper>(target->wrapped(), *target);
+        return { target->wrapped(), *target };
     if (!thisValue.isObject())
-        return nullptr;
+        return {};
 
     JSObject* object = thisValue.getObject();
     if (object->type() == GlobalProxyType) {
         object = jsCast<JSGlobalProxy*>(object)->target();
         if (!object)
-            return nullptr;
+            return {};
     }
     if (auto* global = jsDynamicCast<Zig::GlobalObject*>(object))
-        return makeUnique<JSEventTargetWrapper>(global->eventTarget(), *global);
+        return { global->eventTarget(), *global };
 
-    // if (auto* window = toJSDOMGlobalObject<JSDOMGlobalObject>(vm, thisValue))
-    //     return makeUnique<JSEventTargetWrapper>(*window, *window);
-    // if (auto* scope = toJSDOMGlobalObject<JSWorkerGlobalScope>(vm, thisValue))
-    //     return makeUnique<JSEventTargetWrapper>(scope->wrapped(), *scope);
-    return nullptr;
+    return {};
 }
 
 template<typename Visitor>
-void JSEventTarget::visitAdditionalChildren(Visitor& visitor)
+void JSEventTarget::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     wrapped().visitJSEventListeners(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSEventTarget);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSEventTarget);
 
 } // namespace WebCore

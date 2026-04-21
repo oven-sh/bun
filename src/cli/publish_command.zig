@@ -1046,7 +1046,7 @@ pub const PublishCommand = struct {
         allocator: std.mem.Allocator,
         json: *Expr,
         package_name: string,
-        workspace_root: bun.FileDescriptor,
+        workspace_root: bun.FD,
     ) OOM!void {
         var path_buf: bun.PathBuffer = undefined;
         if (json.asProperty("bin")) |bin_query| {

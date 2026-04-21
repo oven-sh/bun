@@ -23,9 +23,9 @@ const GlobWalker = bun.glob.GlobWalker(null, true);
 pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue!";
 
 /// Using these instead of the file descriptor decl literals to make sure we use LivUV fds on Windows
-pub const STDIN_FD: bun.FileDescriptor = .fromUV(0);
-pub const STDOUT_FD: bun.FileDescriptor = .fromUV(1);
-pub const STDERR_FD: bun.FileDescriptor = .fromUV(2);
+pub const STDIN_FD: bun.FD = .fromUV(0);
+pub const STDOUT_FD: bun.FD = .fromUV(1);
+pub const STDERR_FD: bun.FD = .fromUV(2);
 
 pub const POSIX_DEV_NULL: [:0]const u8 = "/dev/null";
 pub const WINDOWS_DEV_NULL: [:0]const u8 = "NUL";
@@ -152,7 +152,7 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
 
 /// [0] => read end
 /// [1] => write end
-pub const Pipe = [2]bun.FileDescriptor;
+pub const Pipe = [2]bun.FD;
 
 const log = bun.Output.scoped(.SHELL, .hidden);
 
@@ -834,7 +834,7 @@ pub const AST = struct {
     /// - `2>>` = Redirect.Append | Redirect.Stderr
     /// - `&>>` = Redirect.Append | Redirect.Stdout | Redirect.Stderr
     ///
-    /// Multiple redirects and redirecting stdin is not supported yet.
+    /// Multiple redirects are not supported yet.
     pub const RedirectFlags = packed struct(u8) {
         stdin: bool = false,
         stdout: bool = false,
@@ -2988,7 +2988,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         /// Returns true if the operator is "double one": >> or <<
-        /// Returns null if it is invalid: <> ><
+        /// Returns false if not doubled or invalid (e.g. <> ><)
         fn eat_simple_redirect_operator(self: *@This(), dir: RedirectDirection) bool {
             if (self.peek()) |peeked| {
                 if (peeked.escaped) return false;
@@ -4266,7 +4266,7 @@ pub fn needsEscapeUtf8AsciiLatin1(str: []const u8) bool {
     return false;
 }
 
-/// A list that can store its items inlined, and promote itself to a heap allocated bun.ByteList
+/// A list that can store its items inlined, and promote itself to a heap allocated bun.BabyList(T)
 pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
     return union(enum) {
         inlined: Inlined,
@@ -4372,11 +4372,19 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             }
 
             pub fn pop(this: *Inlined) T {
-                const ret = this.items[this.items.len - 1];
+                const ret = this.items[this.len - 1];
                 this.len -= 1;
                 return ret;
             }
         };
+
+        pub fn deinit(this: *@This()) void {
+            switch (this.*) {
+                .inlined => {},
+                .heap => |*heap| heap.deinit(bun.default_allocator),
+            }
+            this.* = zeroes;
+        }
 
         pub inline fn len(this: *const @This()) usize {
             return switch (this.*) {

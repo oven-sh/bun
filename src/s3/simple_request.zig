@@ -74,6 +74,10 @@ pub const S3HttpSimpleTask = struct {
     result: bun.http.HTTPClientResult = .{},
     concurrent_task: jsc.ConcurrentTask = .{},
     range: ?[]const u8,
+    /// Owned dupe of the proxy URL. The env-derived proxy slice can be freed
+    /// by a concurrent process.env.HTTP_PROXY write while the HTTP thread is
+    /// in flight, so we must own our copy for the task's lifetime.
+    proxy_url: []const u8 = "",
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
 
     pub const new = bun.TrivialNew(@This());
@@ -131,6 +135,9 @@ pub const S3HttpSimpleTask = struct {
         this.http.clearData();
         if (this.range) |range| {
             bun.default_allocator.free(range);
+        }
+        if (this.proxy_url.len > 0) {
+            bun.default_allocator.free(this.proxy_url);
         }
         if (this.result.metadata) |*metadata| {
             metadata.deinit(bun.default_allocator);
@@ -413,6 +420,7 @@ pub fn executeSimpleS3Request(
 
     const url = bun.URL.parse(result.url);
     const proxy = options.proxy_url orelse "";
+    task.proxy_url = if (proxy.len > 0) bun.handleOom(bun.default_allocator.dupe(u8, proxy)) else "";
     task.http = bun.http.AsyncHTTP.init(
         bun.default_allocator,
         options.method,
@@ -427,7 +435,7 @@ pub fn executeSimpleS3Request(
         ).init(task),
         .follow,
         .{
-            .http_proxy = if (proxy.len > 0) bun.URL.parse(proxy) else null,
+            .http_proxy = if (task.proxy_url.len > 0) bun.URL.parse(task.proxy_url) else null,
             .verbose = task.vm.getVerboseFetch(),
             .reject_unauthorized = task.vm.getTLSRejectUnauthorized(),
         },

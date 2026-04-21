@@ -338,7 +338,7 @@ ExceptionOr<void> URLPattern::compileAllComponents(ScriptExecutionContext& conte
 
     URLPatternUtilities::URLPatternStringOptions compileOptions { .ignoreCase = options.ignoreCase };
 
-    auto maybePathnameComponent = m_protocolComponent.matchSpecialSchemeProtocol(context)
+    auto maybePathnameComponent = m_protocolComponent.matchSpecialSchemeProtocol(context.globalObject())
         ? URLPatternUtilities::URLPatternComponent::compile(vm, processedInit.pathname, EncodingCallbackType::Path, URLPatternUtilities::URLPatternStringOptions { "/"_s, "/"_s, options.ignoreCase })
         : URLPatternUtilities::URLPatternComponent::compile(vm, processedInit.pathname, EncodingCallbackType::OpaquePath, compileOptions);
     if (maybePathnameComponent.hasException())
@@ -427,51 +427,32 @@ ExceptionOr<std::optional<URLPatternResult>> URLPattern::match(ScriptExecutionCo
             return { std::nullopt };
     }
 
-    auto protocolExecResult = m_protocolComponent.componentExec(context, protocol);
-    if (protocolExecResult.isNull() || protocolExecResult.isUndefined())
-        return { std::nullopt };
-
     auto* globalObject = context.globalObject();
     if (!globalObject)
         return { std::nullopt };
-    result.protocol = m_protocolComponent.createComponentMatchResult(globalObject, WTF::move(protocol), protocolExecResult);
 
-    auto usernameExecResult = m_usernameComponent.componentExec(context, username);
-    if (usernameExecResult.isNull() || usernameExecResult.isUndefined())
+    Ref vm = context.vm();
+    JSC::JSLockHolder lock(vm);
+
+    auto tryMatch = [&](const URLPatternUtilities::URLPatternComponent& component, String&& input, URLPatternComponentResult& out) -> bool {
+        auto matched = component.componentMatch(globalObject, WTF::move(input));
+        if (!matched)
+            return false;
+        out = WTF::move(*matched);
+        return true;
+    };
+
+    if (!tryMatch(m_protocolComponent, WTF::move(protocol), result.protocol)
+        || !tryMatch(m_usernameComponent, WTF::move(username), result.username)
+        || !tryMatch(m_passwordComponent, WTF::move(password), result.password)
+        || !tryMatch(m_hostnameComponent, WTF::move(hostname), result.hostname)
+        || !tryMatch(m_pathnameComponent, WTF::move(pathname), result.pathname)
+        || !tryMatch(m_portComponent, WTF::move(port), result.port)
+        || !tryMatch(m_searchComponent, WTF::move(search), result.search)
+        || !tryMatch(m_hashComponent, WTF::move(hash), result.hash))
         return { std::nullopt };
-    result.username = m_usernameComponent.createComponentMatchResult(globalObject, WTF::move(username), usernameExecResult);
 
-    auto passwordExecResult = m_passwordComponent.componentExec(context, password);
-    if (passwordExecResult.isNull() || passwordExecResult.isUndefined())
-        return { std::nullopt };
-    result.password = m_passwordComponent.createComponentMatchResult(globalObject, WTF::move(password), passwordExecResult);
-
-    auto hostnameExecResult = m_hostnameComponent.componentExec(context, hostname);
-    if (hostnameExecResult.isNull() || hostnameExecResult.isUndefined())
-        return { std::nullopt };
-    result.hostname = m_hostnameComponent.createComponentMatchResult(globalObject, WTF::move(hostname), hostnameExecResult);
-
-    auto pathnameExecResult = m_pathnameComponent.componentExec(context, pathname);
-    if (pathnameExecResult.isNull() || pathnameExecResult.isUndefined())
-        return { std::nullopt };
-    result.pathname = m_pathnameComponent.createComponentMatchResult(globalObject, WTF::move(pathname), pathnameExecResult);
-
-    auto portExecResult = m_portComponent.componentExec(context, port);
-    if (portExecResult.isNull() || portExecResult.isUndefined())
-        return { std::nullopt };
-    result.port = m_portComponent.createComponentMatchResult(globalObject, WTF::move(port), portExecResult);
-
-    auto searchExecResult = m_searchComponent.componentExec(context, search);
-    if (searchExecResult.isNull() || searchExecResult.isUndefined())
-        return { std::nullopt };
-    result.search = m_searchComponent.createComponentMatchResult(globalObject, WTF::move(search), searchExecResult);
-
-    auto hashExecResult = m_hashComponent.componentExec(context, hash);
-    if (hashExecResult.isNull() || hashExecResult.isUndefined())
-        return { std::nullopt };
-    result.hash = m_hashComponent.createComponentMatchResult(globalObject, WTF::move(hash), hashExecResult);
-
-    return { result };
+    return { WTF::move(result) };
 }
 
 // https://urlpattern.spec.whatwg.org/#url-pattern-has-regexp-groups

@@ -432,7 +432,7 @@ This feature is not implemented on Windows yet. If you're interested in using th
 
 ### Connection pooling & HTTP keep-alive
 
-Bun automatically reuses connections to the same host. This is known as connection pooling. This can significantly reduce the time it takes to establish a connection. You don't need to do anything to enable this; it's automatic.
+Bun automatically reuses connections to the same host. This is known as connection pooling. This can significantly reduce the time it takes to establish a connection. Connection pooling is enabled automatically.
 
 #### Simultaneous connection limit
 

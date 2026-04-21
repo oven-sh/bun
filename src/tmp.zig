@@ -4,13 +4,13 @@ const allow_tmpfile = false;
 // To be used with files
 // not folders!
 pub const Tmpfile = struct {
-    destination_dir: bun.FileDescriptor = bun.invalid_fd,
+    destination_dir: bun.FD = bun.invalid_fd,
     tmpfilename: [:0]const u8 = "",
-    fd: bun.FileDescriptor = bun.invalid_fd,
+    fd: bun.FD = bun.invalid_fd,
     using_tmpfile: bool = allow_tmpfile,
 
     pub fn create(
-        destination_dir: bun.FileDescriptor,
+        destination_dir: bun.FD,
         tmpfilename: [:0]const u8,
     ) bun.sys.Maybe(Tmpfile) {
         const perm = 0o644;

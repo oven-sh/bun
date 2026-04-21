@@ -17,7 +17,7 @@ query.get();
 { message: "Hello world" }
 ```
 
-The API is simple, synchronous, and fast. Credit to [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3) and its contributors for inspiring the API of `bun:sqlite`.
+The API is synchronous and fast. Credit to [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3) and its contributors for inspiring the API of `bun:sqlite`.
 
 Features include:
 
@@ -207,9 +207,10 @@ db.run("PRAGMA journal_mode = WAL;");
 ```
 
 <Accordion title="What is WAL mode?">
-  In WAL mode, writes to the database are written directly to a separate file called the "WAL file" (`-wal`) and a
-  shared-memory file (`-shm`). These will be later integrated into the main database file. Think of it as a buffer for
-  pending writes. Refer to the [SQLite docs](https://www.sqlite.org/wal.html) for a more detailed overview.
+  In WAL mode, writes to the database are written directly to a separate file called the "WAL file" (`-wal`). A
+  shared-memory index file (`-shm`) is also created for read coordination. The WAL file will be later integrated into
+  the main database file. Think of it as a buffer for pending writes. Refer to the [SQLite
+  docs](https://www.sqlite.org/wal.html) for a more detailed overview.
 </Accordion>
 
 ### WAL sidecar file cleanup

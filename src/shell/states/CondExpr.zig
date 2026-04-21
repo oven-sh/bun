@@ -27,7 +27,7 @@ pub const ShellCondExprStatTask = struct {
     condexpr: *CondExpr,
     result: ?Maybe(bun.Stat) = null,
     path: [:0]const u8,
-    cwdfd: bun.FileDescriptor,
+    cwdfd: bun.FD,
 
     pub fn runFromThreadPool(this: *ShellCondExprStatTask) void {
         this.result = ShellSyscall.statat(this.cwdfd, this.path);

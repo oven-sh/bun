@@ -1263,7 +1263,14 @@ pub const JSValkeyClient = struct {
         // isDeletable may throw an exception, and if it does, we have to assume
         // that the object still has references. Best we can do is hope nothing
         // catastrophic happens.
-        const subs_deletable: bool = !(this._subscription_ctx.hasSubscriptions(this.globalObject) catch false);
+        //
+        // Once the JS wrapper has been finalized, the subscription callback map
+        // (stored on the JS object) is gone. Reading it would hit `unreachable`
+        // in `subscriptionCallbackMap()` because `this_value.tryGet()` returns
+        // null for a finalized ref. Short-circuit here: a finalized client has
+        // no subscriptions by definition.
+        const subs_deletable: bool = this.client.flags.finalized or
+            !(this._subscription_ctx.hasSubscriptions(this.globalObject) catch false);
 
         const has_activity = has_pending_commands or !subs_deletable or this.client.flags.is_reconnecting;
 

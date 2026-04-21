@@ -23,6 +23,7 @@
 
 import { readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
+import type { Sources } from "../glob-sources.ts";
 import { emitCodegen, zigFilesGeneratedIntoSrc, type CodegenOutputs } from "./codegen.ts";
 import { ar, cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
@@ -34,10 +35,10 @@ import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.t
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, slash } from "./shell.ts";
+import { emitShims } from "./shims.ts";
 import { computeDepLibs, depSourceStamp, resolveDep, type ResolvedDep } from "./source.ts";
-import type { Sources } from "./sources.ts";
 import { streamPath } from "./stream.ts";
-import { emitZig } from "./zig.ts";
+import { emitZig, emitZigCheck, zigObjectPaths } from "./zig.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Executable naming
@@ -157,9 +158,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.comment("─── Dependencies ───");
   n.blank();
   const deps: ResolvedDep[] = [];
+  const depsByName = new Map<string, ResolvedDep>();
   for (const dep of allDeps) {
-    const resolved = resolveDep(n, cfg, dep);
-    if (resolved !== null) deps.push(resolved);
+    const resolved = resolveDep(n, cfg, dep, depsByName);
+    if (resolved !== null) {
+      deps.push(resolved);
+      depsByName.set(dep.name, resolved);
+    }
   }
 
   // Collect all dep lib paths, include dirs, output stamps, and directly-
@@ -167,13 +172,17 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // instead of a .a — we compile those alongside bun's own sources).
   const depLibs: string[] = [];
   const depIncludes: string[] = [];
-  const depOutputs: string[] = []; // PCH order-only-deps on these
-  const depCSources: string[] = [];
+  // Outputs of deps that provide headers — used as implicit inputs on PCH/cc/
+  // no-PCH cxx so a dep rebuild invalidates compiles that #include its headers
+  // (the .a is the signal — see comment at the PCH step). Deps with no provided
+  // includes (tinycc, lolhtml) are skipped: nothing to invalidate, and a tinycc
+  // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
+  // rebuild. Link still gets every dep via depLibs.
+  const depHeaderSignal: string[] = [];
   for (const d of deps) {
     depLibs.push(...d.libs);
     depIncludes.push(...d.includes);
-    depOutputs.push(...d.outputs);
-    depCSources.push(...d.sources);
+    if (d.includes.length > 0) depHeaderSignal.push(...d.outputs);
   }
 
   // ─── Step 2: codegen ───
@@ -192,12 +201,20 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   if (cfg.mode !== "cpp-only") {
     const codegenZigSet = new Set(zigFilesGeneratedIntoSrc.map(p => resolve(cfg.cwd, p)));
     const zigSources = sources.zig.filter(f => !codegenZigSet.has(f));
-    zigObjects = emitZig(n, cfg, {
+    const zigInputs = {
       codegenInputs: codegen.zigInputs,
       codegenOrderOnly: codegen.zigOrderOnly,
       zigSources,
       zstdStamp: depSourceStamp(cfg, "zstd"),
-    });
+    };
+    zigObjects = emitZig(n, cfg, zigInputs);
+    // `zig build check[-*]` targets share the same inputs as the obj
+    // build. Not default — invoked explicitly via `--target=zig-check`.
+    // Skipped in CI (ci-* profiles do obj or cpp separately) to avoid
+    // accidentally firing.
+    if (!cfg.ci) {
+      emitZigCheck(n, cfg, zigInputs);
+    }
   }
 
   // ─── Step 4: configure-time generated header + assemble flags ───
@@ -247,7 +264,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // still run. cxx transitively waits: cxx → PCH → deps+cppAll.
     pchOut = pch(n, cfg, "src/bun.js/bindings/root.h", {
       flags: cxxFlagsFull,
-      implicitInputs: depOutputs,
+      implicitInputs: depHeaderSignal,
       orderOnlyInputs: codegen.cppAll,
     });
   }
@@ -268,27 +285,31 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     );
   }
 
-  // Sources provided directly by deps (picohttpparser.c). These are
-  // declared as implicit outputs of their fetch rules, so ninja knows
-  // where they come from; we compile them like any other .c file.
-  cSources.push(...depCSources);
+  // Deps with provides.sources compiled in the loop below so each dep's
+  // phony can point at its own .o files.
 
   // Codegen .cpp files — compiled like regular sources.
   cxxSources.push(...codegen.cppSources);
   cxxSources.push(...codegen.bindgenV2Cpp);
 
   // All deps must be ready (headers extracted, libs built) before compile.
-  // ORDER-ONLY, not implicit: the compiler's .d depfile tracks ACTUAL header
-  // dependencies on subsequent builds. Order-only ensures first-build ordering;
-  // after that, touching libJavaScriptCore.a doesn't recompile every .c file
-  // (.c files don't include JSC headers — depfile knows this).
   //
-  // PCH is different: it has IMPLICIT deps on depOutputs because root.h
-  // transitively includes WebKit headers, and the PCH encodes those. If
-  // WebKit headers change (lib rebuilt), PCH must invalidate. The depfile
-  // mechanism doesn't work for PCH-invalidation because the .cpp's depfile
-  // says "depends on root.h.pch", not on what root.h.pch was built from.
-  const depOrderOnly = [...depOutputs, ...codegen.cppAll];
+  // depHeaderSignal are IMPLICIT inputs, not order-only. A locally-built dep's
+  // sub-build (e.g. WebKit) rewrites forwarding headers as an undeclared side
+  // effect of the edge whose declared outputs are only lib*.a. Depfiles record
+  // those headers, but ninja stats them BEFORE the sub-build runs — so with
+  // order-only, any compile that #includes a dep header lags one build behind
+  // a dep rebuild (observed: asan-config.c / uv-posix-*.c → wtf/Compiler.h).
+  // Implicit deps on the libs make "dep rebuilt" itself the invalidation
+  // signal. Cost is negligible: if the libs changed you're relinking anyway.
+  //
+  // codegen.cppAll stays order-only: those headers ARE declared ninja outputs
+  // with restat, so depfile tracking is exact and doesn't lag.
+  //
+  // PCH also has implicit deps on depHeaderSignal (see above). When PCH is enabled,
+  // cxx inherits the dep transitively via its implicit dep on the PCH, so we
+  // don't add it again.
+  const codegenOrderOnly = codegen.cppAll;
 
   // Compile all .cpp with PCH.
   const cxxObjects: string[] = [];
@@ -299,27 +320,39 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       flags: [...cxxFlagsFull, ...extraFlags],
     };
     if (pchOut !== undefined) {
-      // PCH has implicit deps on depOutputs. cxx has implicit dep on PCH.
-      // Transitively: cxx waits for deps. No need for order-only here.
+      // PCH has implicit deps on depHeaderSignal. cxx has implicit dep on PCH.
+      // Transitively: cxx waits for deps. No need to repeat them here.
       opts.pch = pchOut.pch;
       opts.pchHeader = pchOut.wrapperHeader;
     } else {
-      // No PCH (windows) — each cxx needs direct ordering on deps.
-      // Order-only: depfile tracks actual headers after first build.
-      opts.orderOnlyInputs = depOrderOnly;
+      // No PCH (windows) — each cxx needs the dep signal directly.
+      opts.implicitInputs = depHeaderSignal;
+      opts.orderOnlyInputs = codegenOrderOnly;
     }
     cxxObjects.push(cxx(n, cfg, src, opts));
   }
 
-  // Compile all .c files. No PCH. Order-only on deps for first-build ordering.
+  // Compile all .c files. No PCH — dep signal applied directly.
   const cObjects: string[] = [];
-  for (const src of cSources) {
-    cObjects.push(
-      cc(n, cfg, src, {
-        flags: cFlagsFull,
-        orderOnlyInputs: depOrderOnly,
-      }),
-    );
+  const compileC = (src: string): string => {
+    const obj = cc(n, cfg, src, {
+      flags: cFlagsFull,
+      implicitInputs: depHeaderSignal,
+      orderOnlyInputs: codegenOrderOnly,
+    });
+    cObjects.push(obj);
+    return obj;
+  };
+  for (const src of cSources) compileC(src);
+
+  // Deps that contribute source files for bun to compile directly (via
+  // provides.sources) instead of building a lib. Compile them here with
+  // bun's full flag set and give each a phony so `--target <name>` builds
+  // its .o files. libs.length === 0 guard: deps with a build step already
+  // got a phony in resolveDep — don't emit a duplicate.
+  for (const d of deps) {
+    if (d.sources.length === 0 || d.libs.length > 0) continue;
+    n.phony(d.name, d.sources.map(compileC));
   }
 
   const allObjects = [...cxxObjects, ...cObjects];
@@ -334,7 +367,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     n.blank();
     const archiveName = `${cfg.libPrefix}${exeName}${cfg.libSuffix}`;
     const archive = ar(n, cfg, archiveName, allObjects);
-    n.phony("bun", [archive]);
+    // depLibs explicit in the phony: deps with no provided includes (tinycc,
+    // lolhtml) aren't in depHeaderSignal, so the archive doesn't pull them
+    // transitively — but link-only still needs them uploaded.
+    n.phony("bun", [archive, ...depLibs]);
     n.default(["bun"]);
     return { archive, deps, codegen, zigObjects, objects: allObjects };
   }
@@ -350,10 +386,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
   // Full link.
+  const shims = emitShims(n, cfg);
   const exe = link(n, cfg, exeName, [...allObjects, ...zigObjects, ...windowsRes], {
     libs: depLibs,
-    flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg)],
-    implicitInputs: linkImplicitInputs(cfg),
+    flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags],
+    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
   });
 
   // ─── Step 8: post-link (strip + dsymutil) ───
@@ -416,7 +453,7 @@ function emitZigOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // Only dep: zstd, for @cImport headers. resolveDep emits its
   // fetch/configure/build; emitZig only depends on the fetch stamp.
-  const zstdDep = resolveDep(n, cfg, zstd);
+  const zstdDep = resolveDep(n, cfg, zstd, new Map());
   assert(zstdDep !== null, "zstd resolveDep returned null — should never be skipped");
 
   // Codegen: emitted fully, but only zigInputs/zigOrderOnly are pulled.
@@ -447,7 +484,7 @@ function emitZigOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  *
  * Expected artifacts (same paths cpp-only/zig-only produced):
  *   - libbun-profile.a            — from cpp-only's ar()
- *   - bun-zig.o                   — from zig-only
+ *   - bun-zig.o (or bun-zig.{i}.o for ASAN — see zigObjectPaths)
  *   - deps/<name>/lib<name>.a     — from cpp-only's dep builds
  *   - cache/webkit-<hash>/lib/... — WebKit prebuilt (same cache path)
  */
@@ -472,11 +509,10 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   // prefix/suffix, e.g. libbun-profile.a).
   const archive = resolve(cfg.buildDir, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`);
 
-  // bun-zig.o from zig-only: same path emitZig writes to.
-  // Hardcoded filename — emitZig uses "bun-zig.o" regardless of platform
-  // (zig outputs ELF-like obj format by default; -Dobj_format=obj for
-  // windows → COFF, but filename stays the same).
-  const zigObj = resolve(cfg.buildDir, "bun-zig.o");
+  // bun-zig*.o from zig-only: same paths emitZig writes to. Shared
+  // helper so both sides of the CI split agree (single file at cg<=1,
+  // N shards for asan at cg=CI_ASAN_CODEGEN_THREADS).
+  const zigObjects = zigObjectPaths(cfg);
 
   // Only need ldflags + stripflags (no cflags/cxxflags — no compile).
   const flags = computeFlags(cfg);
@@ -489,10 +525,11 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   // knows. Matches cmake's BUN_LINK_ONLY adding WINDOWS_RESOURCES directly.
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
-  const exe = link(n, cfg, exeName, [archive, zigObj, ...windowsRes], {
+  const shims = emitShims(n, cfg);
+  const exe = link(n, cfg, exeName, [archive, ...zigObjects, ...windowsRes], {
     libs: depLibs,
-    flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg)],
-    implicitInputs: linkImplicitInputs(cfg),
+    flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags],
+    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
   });
 
   // Strip + smoke test — same as full mode.
@@ -510,7 +547,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
     strippedExe,
     dsym,
     deps: [], // no ResolvedDep — we only computed lib paths
-    zigObjects: [zigObj],
+    zigObjects,
     objects: [],
   };
 }
@@ -546,7 +583,7 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): voi
   // without grouping, `a || b && touch` parses as `a || (b && touch)` —
   // stamp wouldn't get written when setarch succeeds.
   const q = (p: string) => quote(p, cfg.windows);
-  const wrap = `${q(cfg.bun)} ${q(streamPath)} check --console`;
+  const wrap = `${cfg.jsRuntime} ${q(streamPath)} check --console`;
   n.rule("smoke_test", {
     command: cfg.windows
       ? `${wrap} cmd /c "${testCmd} && type nul > $out"`
@@ -626,7 +663,7 @@ function emitDsymutil(n: Ninja, cfg: Config, inputExe: string, exeName: string):
   //   a subshell.
   // stream.ts --console for pool:console consistency (no-op on darwin).
   const q = (p: string) => quote(p, false); // darwin-only → posix
-  const wrap = `${q(cfg.bun)} ${q(streamPath)} dsym --console`;
+  const wrap = `${cfg.jsRuntime} ${q(streamPath)} dsym --console`;
   n.rule("dsymutil", {
     command: `${wrap} sh -c '${cfg.dsymutil} $in --flat --keep-function-for-static --object-prefix-map .=${cfg.cwd} -o $out -j $$(sysctl -n hw.ncpu)'`,
     description: "dsymutil $out",

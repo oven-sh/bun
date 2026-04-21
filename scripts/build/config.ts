@@ -6,14 +6,16 @@
  * `if(RELEASE)` — the chain is resolved here and the result is a plain value.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { arch as hostArch, platform as hostPlatform } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { execSync } from "node:child_process";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { NODEJS_ABI_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { BuildError, assert } from "./error.ts";
 import { clangTargetArch } from "./tools.ts";
-import { ZIG_COMMIT } from "./zig.ts";
+import { cyan, dim, green } from "./tty.ts";
+import { defaultZigCommit } from "./zig.ts";
 
 export type OS = "linux" | "darwin" | "windows";
 export type Arch = "x64" | "aarch64";
@@ -37,6 +39,8 @@ export type WebKitMode = "prebuilt" | "local";
 export interface Host {
   os: OS;
   arch: Arch;
+  /** ".exe" on a Windows host, "" elsewhere. Mirrors Config.exeSuffix (target). */
+  exeSuffix: string;
 }
 
 /**
@@ -47,7 +51,7 @@ export interface Host {
 const versionDefaults = {
   nodejsVersion: NODEJS_VERSION,
   nodejsAbiVersion: NODEJS_ABI_VERSION,
-  zigCommit: ZIG_COMMIT,
+  // zigCommit's default varies by host OS — see defaultZigCommit() in zig.ts.
   webkitVersion: WEBKIT_VERSION,
 };
 
@@ -98,6 +102,10 @@ export interface Config {
 
   // ─── Features (all explicit booleans) ───
   lto: boolean;
+  /** IR PGO: directory for .profraw output (instrumented build). Mutually exclusive with pgoUse. */
+  pgoGenerate: string | undefined;
+  /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
+  pgoUse: string | undefined;
   asan: boolean;
   zigAsan: boolean;
   assertions: boolean;
@@ -135,6 +143,8 @@ export interface Config {
   // ─── Toolchain (resolved absolute paths) ───
   cc: string;
   cxx: string;
+  /** Parsed X.Y.Z from clang --version. Captured once at resolve time. */
+  clangVersion: string | undefined;
   ar: string;
   /** llvm-ranlib. undefined on windows (llvm-lib indexes itself). */
   ranlib: string | undefined;
@@ -144,8 +154,15 @@ export interface Config {
   /** darwin-only. */
   dsymutil: string | undefined;
   zig: string;
-  /** Self-host bun for codegen. */
+  /** Self-host bun for codegen (bun install, bun build). */
   bun: string;
+  /**
+   * Shell-ready command prefix for running .ts subprocesses (stream.ts,
+   * fetch-cli.ts, regen). Either the bun path or `node --experimental-strip-types`
+   * depending on what's running configure. Already quoted — splice directly
+   * into rule commands.
+   */
+  jsRuntime: string;
   esbuild: string;
   /** Optional — compiler launcher prefix. */
   ccache: string | undefined;
@@ -196,6 +213,8 @@ export interface PartialConfig {
   buildType?: BuildType;
   mode?: BuildMode;
   lto?: boolean;
+  pgoGenerate?: string;
+  pgoUse?: string;
   asan?: boolean;
   zigAsan?: boolean;
   assertions?: boolean;
@@ -226,6 +245,12 @@ export interface PartialConfig {
 export interface Toolchain {
   cc: string;
   cxx: string;
+  /**
+   * Parsed clang --version (X.Y.Z). Captured during toolchain resolution
+   * so downstream checks (workarounds.ts) don't re-spawn. undefined if
+   * version parsing failed — shouldn't happen since we version-gate cc.
+   */
+  clangVersion: string | undefined;
   ar: string;
   ranlib: string | undefined;
   ld: string;
@@ -233,6 +258,7 @@ export interface Toolchain {
   dsymutil: string | undefined;
   zig: string;
   bun: string;
+  jsRuntime: string;
   esbuild: string;
   ccache: string | undefined;
   cmake: string;
@@ -291,7 +317,7 @@ export function detectHost(): Host {
             throw new BuildError(`Unsupported host architecture: ${a}`, { hint: "Bun builds on x64 or arm64" });
           })();
 
-  return { os, arch };
+  return { os, arch, exeSuffix: os === "windows" ? ".exe" : "" };
 }
 
 /**
@@ -373,6 +399,13 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     lto = false;
   }
 
+  // PGO: paths resolved to absolute. generate/use are mutually exclusive.
+  const pgoGenerate = partial.pgoGenerate ? resolve(partial.pgoGenerate) : undefined;
+  const pgoUse = partial.pgoUse ? resolve(partial.pgoUse) : undefined;
+  if (pgoGenerate && pgoUse) {
+    throw new BuildError("--pgo-generate and --pgo-use are mutually exclusive");
+  }
+
   // Logs: on by default in debug non-test
   const logs = partial.logs ?? debug;
 
@@ -404,12 +437,20 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         : resolve(cwd, partial.buildDir)
       : resolve(cwd, "build", defaultBuildDirName);
   const codegenDir = resolve(buildDir, "codegen");
+  // Local builds share $BUN_INSTALL/build-cache across checkouts and profiles
+  // so ccache/zig/tarballs/webkit reuse one another's work. CI stays per-build
+  // so runners remain hermetic and `rm -rf build/` is a full reset.
+  // Relative BUN_INSTALL is anchored to repo root (not process.cwd()) so the
+  // ninja regen rule — which runs from buildDir — resolves the same path.
+  const bunInstall = process.env.BUN_INSTALL ? resolve(cwd, process.env.BUN_INSTALL) : join(homedir(), ".bun");
   const cacheDir =
     partial.cacheDir !== undefined
       ? isAbsolute(partial.cacheDir)
         ? partial.cacheDir
         : resolve(cwd, partial.cacheDir)
-      : resolve(buildDir, "cache");
+      : ci
+        ? resolve(buildDir, "cache")
+        : resolve(bunInstall, "build-cache");
   const vendorDir = resolve(cwd, "vendor");
 
   // ─── Validation ───
@@ -428,7 +469,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // to test a branch before bumping the pinned default.
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
-  const zigCommit = partial.zigCommit ?? versionDefaults.zigCommit;
+  const zigCommit = partial.zigCommit ?? defaultZigCommit(host.os);
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   // ─── macOS SDK ───
@@ -462,6 +503,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     release,
     mode: partial.mode ?? "full",
     lto,
+    pgoGenerate,
+    pgoUse,
     asan,
     zigAsan,
     assertions,
@@ -484,6 +527,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     vendorDir,
     cc: toolchain.cc,
     cxx: toolchain.cxx,
+    clangVersion: toolchain.clangVersion,
     ar: toolchain.ar,
     ranlib: toolchain.ranlib,
     ld: toolchain.ld,
@@ -491,6 +535,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     dsymutil: toolchain.dsymutil,
     zig: toolchain.zig,
     bun: toolchain.bun,
+    jsRuntime: toolchain.jsRuntime,
     esbuild: toolchain.esbuild,
     ccache: toolchain.ccache,
     cmake: toolchain.cmake,
@@ -528,9 +573,6 @@ const MIN_OSX_DEPLOYMENT_TARGET = "13.0";
  * the constructed path doesn't exist (exotic installs).
  */
 function detectMacosSdk(ci: boolean): { osxDeploymentTarget: string; osxSysroot: string } {
-  const { execSync } = require("node:child_process") as typeof import("node:child_process");
-  const { existsSync, realpathSync } = require("node:fs") as typeof import("node:fs");
-
   // xcode-select -p prints the active developer dir (respects
   // `xcode-select --switch` and DEVELOPER_DIR). It's a tiny C binary —
   // fast enough to be negligible, unlike xcrun which does a bunch of
@@ -668,7 +710,6 @@ function getGitRevision(cwd: string): string {
     return envSha;
   }
   try {
-    const { execSync } = require("node:child_process") as typeof import("node:child_process");
     return execSync("git rev-parse HEAD", { cwd, encoding: "utf8" }).trim();
   } catch {
     return "unknown";
@@ -717,13 +758,7 @@ export function shouldStrip(cfg: Config): boolean {
   return !cfg.debug && !cfg.asan && !cfg.valgrind && !cfg.assertions;
 }
 
-// ANSI helpers — no-op when output isn't a TTY (pipe, file, `bd` log).
-const useColor = Bun.enableANSIColors && process.stderr.isTTY;
-const c = {
-  dim: (s: string) => (useColor ? `\x1b[2m${s}\x1b[22m` : s),
-  cyan: (s: string) => (useColor ? `\x1b[36m${s}\x1b[39m` : s),
-  green: (s: string) => (useColor ? `\x1b[32m${s}\x1b[39m` : s),
-};
+const c = { dim, cyan, green };
 
 /**
  * Format a config for display (used at configure time).
@@ -732,8 +767,7 @@ const c = {
 export function formatConfig(cfg: Config, exe: string): string {
   const label = (s: string) => c.dim(s.padEnd(12));
   // Relative build dir with ./ prefix — shorter, copy-pastable.
-  const { relative: rel, sep } = require("node:path") as typeof import("node:path");
-  const relBuildDir = `.${sep}${rel(cfg.cwd, cfg.buildDir)}`;
+  const relBuildDir = `.${sep}${relative(cfg.cwd, cfg.buildDir)}`;
   const lines: string[] = [
     `[configured] ${c.green(exe)}`,
     `  ${label("target")} ${cfg.os}-${cfg.arch}${cfg.abi !== undefined ? "-" + cfg.abi : ""}`,
@@ -745,6 +779,8 @@ export function formatConfig(cfg: Config, exe: string): string {
   ];
   const features: string[] = [];
   if (cfg.lto) features.push("lto");
+  if (cfg.pgoGenerate) features.push("pgo-gen");
+  if (cfg.pgoUse) features.push("pgo-use");
   if (cfg.asan) features.push("asan");
   if (cfg.assertions) features.push("assertions");
   if (cfg.logs) features.push("logs");
@@ -759,7 +795,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   // revert my WebKit test branch" before the build goes weird.
   if (cfg.webkitVersion !== versionDefaults.webkitVersion)
     features.push(`webkit-version:${cfg.webkitVersion.slice(0, 10)}`);
-  if (cfg.zigCommit !== versionDefaults.zigCommit) features.push(`zig-commit:${cfg.zigCommit.slice(0, 10)}`);
+  if (cfg.zigCommit !== defaultZigCommit(cfg.host.os)) features.push(`zig-commit:${cfg.zigCommit.slice(0, 10)}`);
   if (cfg.nodejsVersion !== versionDefaults.nodejsVersion) features.push(`nodejs:${cfg.nodejsVersion}`);
   lines.push(`  ${label("features")} ${features.length > 0 ? c.cyan(features.join(", ")) : c.dim("(none)")}`);
   return lines.join("\n");

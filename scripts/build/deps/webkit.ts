@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "00e825523d549a556d75985f486e4954af6ab8c7";
+export const WEBKIT_VERSION = "4d5e75ebd84a14edbc7ae264245dcd77fe597c10";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -15,10 +15,12 @@ export const WEBKIT_VERSION = "00e825523d549a556d75985f486e4954af6ab8c7";
  *   ASAN MUST match bun's setting: WTF::Vector layout changes with ASAN
  *   (see WTF/Vector.h:682), so mixing → silent memory corruption.
  *
- * **local**: Source at `vendor/WebKit/`. User clones manually (clone takes
- *   10+ min — too slow for the build system to do). We cmake it like any
- *   other dep. Headers land in the BUILD dir (generated during configure),
- *   which is why `provides.includes` returns absolute paths.
+ * **local**: Source at `vendor/WebKit/`, or `$BUN_WEBKIT_PATH` if set. User
+ *   clones manually (clone takes 10+ min — too slow for the build system
+ *   to do). Set `BUN_WEBKIT_PATH` to share one clone across worktrees. We
+ *   cmake it like any other dep. Headers land in the BUILD dir (generated
+ *   during configure), which is why `provides.includes` returns absolute
+ *   paths.
  *
  * ## Implementation notes
  *
@@ -26,10 +28,10 @@ export const WEBKIT_VERSION = "00e825523d549a556d75985f486e4954af6ab8c7";
  *   `vendor/WebKit/WebKitBuild/`. Better: consistent, cleaned by `rm -rf
  *   build/`, separate per-profile.
  *
- * - Flags: WebKit's own cmake machinery sets compiler flags. We set
- *   `CMAKE_C_FLAGS: ""` in our args to clear the global dep flags
- *   (which would otherwise conflict). Dep args go LAST in source.ts,
- *   so they override.
+ * - Flags: WebKit's own cmake machinery sets -O/-g/sanitizer flags. We
+ *   override `CMAKE_C_FLAGS` to drop the global dep flags (which would
+ *   conflict) but DO forward -march/-mcpu + LTO/PGO, which WebKit never
+ *   sets. Dep args go LAST in source.ts, so they override.
  *
  * - Windows local mode: ICU built from source via preBuild hook
  *   (build-icu.ps1 → msbuild) before cmake configure. Output goes in
@@ -37,8 +39,10 @@ export const WEBKIT_VERSION = "00e825523d549a556d75985f486e4954af6ab8c7";
  *   like the old cmake — avoids debug/release mixing.
  */
 
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
+import { computeCpuTargetFlags } from "../flags.ts";
 import { slash } from "../shell.ts";
 import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir } from "../source.ts";
 
@@ -142,6 +146,20 @@ function localIcuLibs(cfg: Config): string[] {
   return [resolve(dir, "lib", "sicudt.lib"), resolve(dir, "lib", "icuin.lib"), resolve(dir, "lib", "icuuc.lib")];
 }
 
+/**
+ * WebKit source dir for local mode. Defaults to vendor/WebKit; override via
+ * $BUN_WEBKIT_PATH to share one clone across worktrees.
+ */
+function webkitSrcDir(cfg: Config): string {
+  const env = process.env.BUN_WEBKIT_PATH;
+  if (!env) return depSourceDir(cfg, "WebKit");
+  // Shells don't expand ~ inside quotes; handle it here so a quoted export works.
+  if (env === "~" || env.startsWith("~/") || env.startsWith("~\\")) return join(homedir(), env.slice(1));
+  // Anchor relative paths to the repo root so ninja's regen rule (which runs
+  // from buildDir) resolves the same path as the initial configure.
+  return resolve(cfg.cwd, env);
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // The Dependency
 // ───────────────────────────────────────────────────────────────────────────
@@ -168,11 +186,18 @@ export const webkit: Dependency = {
       return src;
     }
 
-    // Local: user clones vendor/WebKit/ manually (clone takes 10+ min — the
-    // one thing the build system doesn't automate). Once cloned, we cmake it
-    // like any other dep. resolveDep()'s local-mode assert gives a clear
-    // "clone it yourself" error if missing.
-    return { kind: "local" };
+    // Local: user clones manually (clone takes 10+ min — the one thing the
+    // build system doesn't automate). Once cloned, we cmake it like any
+    // other dep. resolveDep()'s local-mode assert gives a clear "clone it
+    // yourself" error if missing.
+    const env = process.env.BUN_WEBKIT_PATH;
+    return {
+      kind: "local",
+      path: webkitSrcDir(cfg),
+      hint: env
+        ? `$BUN_WEBKIT_PATH is set to '${env}' but that path does not contain a WebKit checkout`
+        : "Clone oven-sh/WebKit to vendor/WebKit/, or set $BUN_WEBKIT_PATH to an existing clone (useful for worktrees)",
+    };
   },
 
   build: cfg => {
@@ -182,17 +207,34 @@ export const webkit: Dependency = {
 
     // Local: nested cmake, target=jsc.
     //
-    // CMAKE_C_FLAGS/CMAKE_CXX_FLAGS set to empty: clears the global dep
-    // flags source.ts would otherwise pass. WebKit's cmake sets its own
-    // -O/-march/etc.; ours would conflict. Dep args go LAST so they override.
+    // CMAKE_C_FLAGS/CMAKE_CXX_FLAGS: overrides the global dep flags source.ts
+    // would otherwise pass — WebKit's cmake sets its own -O/-g/sanitizer
+    // flags; ours would conflict. Dep args go LAST so they override. We DO
+    // forward:
+    //   - CPU target (-march/-mcpu): WebKit never sets this — without it,
+    //     local builds target generic x86-64 while bun + prebuilt WebKit
+    //     target haswell/nehalem.
+    //   - LTO/PGO: WebKit's cmake doesn't set those itself.
     //
     // Windows: ICU built from source via preBuild before cmake configure.
     // WebKit's cmake finds it via ICU_ROOT. On posix, system ICU is used
     // (macOS: Homebrew headers + system libs; Linux: libicu-dev) — cmake
     // auto-detects.
+    const optFlags: string[] = computeCpuTargetFlags(cfg);
+    if (cfg.lto) optFlags.push("-flto=full");
+    if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
+    if (cfg.pgoUse) {
+      optFlags.push(
+        `-fprofile-use=${cfg.pgoUse}`,
+        "-Wno-profile-instr-out-of-date",
+        "-Wno-profile-instr-unprofiled",
+        "-Wno-backend-plugin",
+      );
+    }
+    const optFlagStr = optFlags.join(" ");
     const args: Record<string, string> = {
-      CMAKE_C_FLAGS: "",
-      CMAKE_CXX_FLAGS: "",
+      CMAKE_C_FLAGS: optFlagStr,
+      CMAKE_CXX_FLAGS: optFlagStr,
       PORT: "JSCOnly",
       ENABLE_STATIC_JSC: "ON",
       USE_THIN_ARCHIVES: "OFF",
@@ -209,19 +251,26 @@ export const webkit: Dependency = {
       ...(cfg.asan ? { ENABLE_SANITIZERS: "address" } : {}),
     };
 
-    const spec: NestedCmakeBuild = { kind: "nested-cmake", targets: ["jsc"], args };
+    const spec: NestedCmakeBuild = {
+      kind: "nested-cmake",
+      targets: ["jsc"],
+      args,
+      // Release local WebKit keeps debug info so JSC crashes symbolicate.
+      // LTO stays plain Release (debug info + LTO bloats significantly).
+      buildType: cfg.release && !cfg.lto ? "RelWithDebInfo" : cfg.buildType,
+    };
 
     if (cfg.windows) {
       const icu = icuDir(cfg);
-      const srcDir = depSourceDir(cfg, "WebKit");
+      const srcDir = webkitSrcDir(cfg);
       // slash(): cmake -D values — see shell.ts.
       args.ICU_ROOT = slash(icu);
       args.ICU_LIBRARY = slash(resolve(icu, "lib"));
       args.ICU_INCLUDE_DIR = slash(resolve(icu, "include"));
       // U_STATIC_IMPLEMENTATION: ICU headers default to dllimport; we
       // link statically. Matches what the old cmake's SetupWebKit did.
-      args.CMAKE_C_FLAGS = "/DU_STATIC_IMPLEMENTATION";
-      args.CMAKE_CXX_FLAGS = "/DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors";
+      args.CMAKE_C_FLAGS = `/DU_STATIC_IMPLEMENTATION ${optFlagStr}`.trim();
+      args.CMAKE_CXX_FLAGS = `/DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors ${optFlagStr}`.trim();
       // Static CRT to match bun + all other deps (we build everything
       // with /MTd or /MT). Without this, cmake defaults to /MDd →
       // RuntimeLibrary mismatch at link.

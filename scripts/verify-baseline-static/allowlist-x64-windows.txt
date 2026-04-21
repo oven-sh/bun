@@ -583,7 +583,7 @@ _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw6detect  [AVX, AVX
 
 # ----------------------------------------------------------------------------
 # MSVC STL vectorized algorithms. Gate: __isa_available.
-# (11 symbols)
+# (13 symbols)
 # ----------------------------------------------------------------------------
 __std_reverse_copy_trivially_copyable_1                                                                   [AVX, AVX2]
 __std_reverse_trivially_swappable_1                                                                       [AVX, AVX2]
@@ -596,6 +596,8 @@ __std_reverse_trivially_swappable_8                                             
 `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_4,unsigned int>        [AVX, AVX2]
 `anonymous namespace'::__std_find_trivial_impl<`anonymous namespace'::_Find_traits_8,unsigned __int64>    [AVX, AVX2]
 `anonymous namespace'::__std_minmax_impl<3,`anonymous namespace'::_Minmax_traits_8_avx,1>                 [AVX, AVX2]
+`anonymous namespace'::__std_minmax_disp<1,`anonymous namespace'::_Minmax_traits_8,0>                     [AVX512F, AVX512VL]
+`anonymous namespace'::__std_minmax_impl<1,`anonymous namespace'::_Minmax_traits_8_avx,0>                 [AVX, AVX2, AVX512F, AVX512VL]
 
 
 # ----------------------------------------------------------------------------
@@ -654,3 +656,48 @@ wcsnlen                     [AVX, AVX2]
 # ----------------------------------------------------------------------------
 _RINvYNtNt<rust-hash>9hashbrown6hasher18DefaultHashBuilderNtNt<rust-hash>4core4hash11BuildHasher8hash_oneRNtNtNt<rust-hash>8lol_html4html10local_name9LocalNameEB1R_  [AVX, AVX2]
 <lib:lolhtml.lib>                                                                                                                                                     [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# zlib-ng. Gate: init_functable() — cpu_check_features() CPUID at first call,
+# results cached in `functable` (vendor/zlib/functable.c, arch/x86/x86_features.c).
+# chunkcopy_safe is a static-inline in inflate_p.h that may outline from any of
+# the per-ISA inffast_tpl.h instantiations; the outlined copy is local to that
+# TU and only reachable from the gated inflate_fast_* of the same tier.
+# (31 symbols)
+# ----------------------------------------------------------------------------
+# has_pclmulqdq
+crc32_pclmulqdq             [PCLMULQDQ]
+crc32_fold_pclmulqdq        [PCLMULQDQ]
+crc32_fold_pclmulqdq_copy   [PCLMULQDQ]
+crc32_fold_pclmulqdq_final  [PCLMULQDQ]
+crc32_fold_pclmulqdq_reset  [PCLMULQDQ]
+# has_avx2 && has_bmi2
+adler32_avx2                [AVX, AVX2, BMI2]
+adler32_fold_copy_avx2      [AVX, AVX2, BMI2]
+chunkmemset_avx2            [AVX, AVX2, BMI2]
+chunkmemset_safe_avx2       [AVX, AVX2, BMI2]
+compare256_avx2             [AVX, AVX2, BMI2]
+inflate_fast_avx2           [AVX, AVX2, BMI2]
+longest_match_avx2          [AVX, AVX2, BMI2]
+longest_match_slow_avx2     [AVX, AVX2, BMI2]
+slide_hash_avx2             [AVX, AVX2, BMI2]
+# has_avx512_common (F+DQ+BW+VL+BMI2)
+adler32_avx512              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+adler32_fold_copy_avx512    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+chunkmemset_avx512          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+chunkmemset_safe_avx512     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+compare256_avx512           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+inflate_fast_avx512         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+longest_match_avx512        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+longest_match_slow_avx512   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+chunkcopy_safe              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+# has_avx512vnni
+adler32_avx512_vnni            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+adler32_fold_copy_avx512_vnni  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+# has_pclmulqdq && has_avx512_common && has_vpclmulqdq
+crc32_vpclmulqdq             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
+crc32_fold_vpclmulqdq        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
+crc32_fold_vpclmulqdq_copy   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
+crc32_fold_vpclmulqdq_final  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
+crc32_fold_vpclmulqdq_reset  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]

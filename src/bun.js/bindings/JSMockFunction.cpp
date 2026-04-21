@@ -251,7 +251,7 @@ public:
     DECLARE_INFO;
 
     DECLARE_VISIT_CHILDREN;
-    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     JSC::LazyProperty<JSMockFunction, JSObject> mock;
@@ -469,7 +469,7 @@ public:
 };
 
 template<typename Visitor>
-void JSMockFunction::visitAdditionalChildren(Visitor& visitor)
+void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     JSMockFunction* fn = this;
     ASSERT_GC_OBJECT_INHERITS(fn, info());
@@ -492,7 +492,7 @@ void JSMockFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSMockFunction* fn = jsCast<JSMockFunction*>(cell);
     ASSERT_GC_OBJECT_INHERITS(fn, info());
     Base::visitChildren(fn, visitor);
-    fn->visitAdditionalChildren<Visitor>(visitor);
+    fn->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
 template<typename Visitor>
@@ -500,11 +500,11 @@ void JSMockFunction::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 {
     JSMockFunction* thisObject = jsCast<JSMockFunction*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    thisObject->visitAdditionalChildren<Visitor>(visitor);
+    thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSMockFunction);
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSMockFunction);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSMockFunction);
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSMockFunction);
 
 static void pushImpl(JSMockFunction* fn, JSGlobalObject* jsGlobalObject, JSMockImplementation::Kind kind, JSValue value)

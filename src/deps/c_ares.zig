@@ -1694,7 +1694,7 @@ pub const Error = enum(i32) {
                 .hostname = this.hostname orelse bun.String.empty,
             };
 
-            const instance = system_error.toErrorInstance(globalThis);
+            const instance = system_error.toErrorInstanceWithAsyncStack(globalThis, this.promise.get());
             instance.put(globalThis, "name", try bun.String.static("DNSException").toJS(globalThis));
 
             defer this.deinit();

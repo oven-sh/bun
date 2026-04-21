@@ -81,6 +81,15 @@ pub const S3Error = struct {
         bun.assert(!globalObject.hasException());
         return value;
     }
+
+    /// Like `toJS` but populates the error's stack trace with async frames from
+    /// the given promise's await chain. Use when rejecting from an HTTP
+    /// callback at the top of the event loop.
+    pub fn toJSWithAsyncStack(err: *const @This(), globalObject: *jsc.JSGlobalObject, path: ?[]const u8, promise: *jsc.JSPromise) jsc.JSValue {
+        const value = err.toJS(globalObject, path);
+        value.attachAsyncStackFromPromise(globalObject, promise);
+        return value;
+    }
 };
 
 const bun = @import("bun");

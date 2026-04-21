@@ -7,7 +7,7 @@ Module resolution in JavaScript is a complex topic.
 
 The ecosystem is currently in the midst of a years-long transition from CommonJS modules to native ES modules. TypeScript enforces its own set of rules around import extensions that aren't compatible with ESM. Different build tools support path re-mapping via disparate non-compatible mechanisms.
 
-Bun aims to provide a consistent and predictable module resolution system that just works. Unfortunately it's still quite complex.
+Bun aims to provide a consistent and predictable module resolution system that works out of the box. Unfortunately it's still quite complex.
 
 ## Syntax
 

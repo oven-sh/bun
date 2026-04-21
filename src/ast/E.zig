@@ -187,8 +187,8 @@ pub const Special = union(enum) {
     hot_data,
     /// `import.meta.hot.accept` when HMR is enabled. Truthy.
     hot_accept,
-    /// Converted from `hot_accept` to this in js_parser.zig when it is
-    /// passed strings. Printed as `hmr.hot.acceptSpecifiers`
+    /// Converted from `hot_accept` in P.zig's handleImportMetaHotAcceptCall
+    /// when passed strings. Printed as `hmr.acceptSpecifiers`
     hot_accept_visited,
     /// Prints the resolved specifier string for an import record.
     resolved_specifier_string: ImportRecord.Index,

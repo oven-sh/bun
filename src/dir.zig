@@ -1,6 +1,6 @@
 pub const Dir = struct {
-    fd: FileDescriptor,
+    fd: FD,
 };
 
 const bun = @import("bun");
-const FileDescriptor = bun.FileDescriptor;
+const FD = bun.FD;

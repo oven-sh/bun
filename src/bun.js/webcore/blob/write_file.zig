@@ -6,7 +6,7 @@ pub const WriteFile = struct {
     file_blob: Blob,
     bytes_blob: Blob,
 
-    opened_fd: bun.FileDescriptor = invalid_fd,
+    opened_fd: bun.FD = invalid_fd,
     system_error: ?jsc.SystemError = null,
     errno: ?anyerror = null,
     task: bun.ThreadPool.Task = undefined,
@@ -210,7 +210,7 @@ pub const WriteFile = struct {
         }
     }
 
-    fn runWithFD(this: *WriteFile, fd_: bun.FileDescriptor) void {
+    fn runWithFD(this: *WriteFile, fd_: bun.FD) void {
         if (fd_ == invalid_fd or this.errno != null) {
             this.onFinish();
             return;
@@ -657,7 +657,7 @@ pub const WriteFilePromise = struct {
         value.ensureStillAlive();
         switch (count) {
             .err => |err| {
-                try promise.reject(globalThis, err.toErrorInstance(globalThis));
+                try promise.reject(globalThis, err.toErrorInstanceWithAsyncStack(globalThis, promise));
             },
             .result => |wrote| {
                 try promise.resolve(globalThis, .jsNumberFromUint64(wrote));
@@ -686,7 +686,7 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                 _ = value.use();
                 this.promise.deinit();
                 bun.destroy(this);
-                try promise.reject(globalThis, err_ref.toJS(globalThis));
+                try promise.rejectWithAsyncStack(globalThis, err_ref.toJS(globalThis));
             },
             .Used => {
                 file_blob.detach();

@@ -6,8 +6,8 @@
  * most codegen scripts use `writeIfNotChanged`, so downstream is pruned
  * when output content didn't change.
  *
- * Source lists come from `cmake/Sources.json` patterns, globbed once at
- * configure time via `globAllSources()` — see sources.ts. The expanded
+ * Source lists come from the patterns in glob-sources.ts, globbed once at
+ * configure time via `globAllSources()`. The expanded
  * paths are baked into build.ninja; adding a file picks up on next configure.
  *
  * bindgenv2 is special: its output set is dynamic (depends on which types
@@ -37,12 +37,12 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { basename, relative, resolve } from "node:path";
+import type { Sources } from "../glob-sources.ts";
 import type { Config } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
-import type { Sources } from "./sources.ts";
 
 /**
  * Codegen outputs that land in `src/` instead of `codegenDir`. The zig
@@ -578,7 +578,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const output = resolve(cfg.codegenDir, "cpp.zig");
 
   // Write the .cpp file list for cppbind to scan. Build system owns the
-  // glob (sources.ts reads Sources.json); we hand the result to cppbind
+  // glob (glob-sources.ts); we hand the result to cppbind
   // as an explicit input instead of it reading a magic hardcoded path.
   // Relative paths, forward slashes — same format cppbind expects.
   //

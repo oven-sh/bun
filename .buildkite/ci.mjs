@@ -107,8 +107,8 @@ const azureVmSizes = {
     test: "Standard_D4ds_v6", // 4 vCPU, 16 GiB — test shards
   },
   "windows-aarch64": {
-    build: "Standard_D16ps_v6", // 16 vCPU, 64 GiB — C++ build, link
-    test: "Standard_D4ps_v6", // 4 vCPU, 16 GiB — test shards
+    build: "Standard_D16pds_v6", // 16 vCPU, 64 GiB, local NVMe — C++ build, link
+    test: "Standard_D4pds_v6", // 4 vCPU, 16 GiB, local NVMe — test shards
   },
 };
 
@@ -224,12 +224,12 @@ function getImageLabel(platform) {
  * @returns {string}
  */
 function getImageName(platform, options) {
-  const { os } = platform;
-  const { buildImages, publishImages } = options;
+  const { os, distro } = platform;
+  const { buildImages, publishImages, imageFilter } = options;
 
   const name = getImageKey(platform);
 
-  if (buildImages && !publishImages) {
+  if (buildImages && !publishImages && (!imageFilter || os === imageFilter || distro === imageFilter)) {
     return `${name}-build-${getBuildNumber()}`;
   }
 
@@ -379,9 +379,11 @@ function getZigAgent(platform, options) {
     });
   }
 
-  // Everything else cross-compiles from Linux aarch64
+  // Everything else cross-compiles from Linux aarch64. ASAN gets a wider
+  // box: it builds with cg=CI_ASAN_CODEGEN_THREADS (8) so it can use the
+  // parallel backend; release stays at cg=1 (full IPO) so 2 vCPU suffice.
   return getEc2Agent(getZigPlatform(), options, {
-    instanceType: "r8g.large",
+    instanceType: platform.profile === "asan" ? "r8g.2xlarge" : "r8g.large",
   });
 }
 
@@ -491,7 +493,17 @@ function getBuildCommand(target, options, mode) {
   // Windows code signing is handled by a dedicated 'windows-sign' step after
   // all Windows builds complete — see getWindowsSignStep(). smctl is x64-only,
   // so signing on the build agent wouldn't work for ARM64 anyway.
-  return `bun scripts/build.ts ${getBuildArgs(target, options, mode)}`;
+  //
+  // Literal `node` — ci.mjs generates pipeline YAML that runs on a
+  // different agent later, so process.execPath (the generator's path)
+  // is wrong. PATH on the agent has node via bootstrap.sh.
+  // --experimental-strip-types for Node 24's .ts support (unflagged in
+  // 25+; drop once CI bumps past the ABI-141 blocker).
+  //
+  // Windows ARM64 node v24 intermittently fastfails (0xC0000409) in
+  // fetch-cli.ts; run build.ts under bun there instead.
+  const runtime = target.os === "windows" && target.arch === "aarch64" ? "bun" : "node --experimental-strip-types";
+  return `${runtime} scripts/build.ts ${getBuildArgs(target, options, mode)}`;
 }
 
 /**
@@ -803,6 +815,45 @@ function getWindowsSignStep(windowsPlatforms, options) {
 }
 
 /**
+ * Aggregates stripped-binary sizes from every release build, compares them
+ * against the latest main build's binary-sizes.json, and fails if any grew
+ * past the threshold. Runs on PR builds (comparison) and main (record-only,
+ * to produce the baseline artifact).
+ *
+ * @param {Platform[]} releasePlatforms
+ * @param {PipelineOptions} options
+ * @param {{ recordOnly: boolean }} [extra]
+ * @returns {Step}
+ */
+function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {}) {
+  const targets = releasePlatforms.map(p => ({ triplet: getTargetTriplet(p) }));
+  const args = [`--targets '${JSON.stringify(targets)}'`, `--threshold-mb ${BINARY_SIZE_THRESHOLD_MB}`];
+  if (recordOnly) args.push("--no-fail");
+  if (!options.canary) args.push("--release");
+
+  return {
+    key: "binary-size",
+    label: `${getBuildkiteEmoji("package")} binary-size`,
+    agents: getEc2Agent(
+      buildPlatforms.find(p => p.os === "linux" && p.arch === "aarch64" && p.distro === "amazonlinux"),
+      options,
+      { instanceType: "c8g.large" },
+    ),
+    depends_on: releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+    allow_dependency_failure: true,
+    soft_fail: !!options.skipSizeCheck,
+    retry: {
+      manual: { permit_on_passed: true },
+      automatic: [{ exit_status: "*", limit: 2 }],
+    },
+    cancel_on_build_failing: isMergeQueue(),
+    command: `bun scripts/binary-size.ts ${args.join(" ")}`,
+  };
+}
+
+const BINARY_SIZE_THRESHOLD_MB = 0.5;
+
+/**
  * @param {Platform[]} buildPlatforms
  * @param {PipelineOptions} options
  * @param {{ signed: boolean }} [extra]
@@ -916,6 +967,7 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
  * @property {string | boolean} [skipEverything]
  * @property {string | boolean} [skipBuilds]
  * @property {string | boolean} [skipTests]
+ * @property {string | boolean} [skipSizeCheck]
  * @property {string | boolean} [forceBuilds]
  * @property {string | boolean} [forceTests]
  * @property {string | boolean} [buildImages]
@@ -1195,6 +1247,7 @@ async function getPipelineOptions() {
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
+    skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
     buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
     dryRun: parseOption(/\[(dry run)\]/i),
@@ -1308,6 +1361,11 @@ async function getPipeline(options = {}) {
         })),
       );
     }
+  }
+
+  const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
+  if (!buildId && strippedPlatforms.length) {
+    steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: isMainBranch() }));
   }
 
   // Sign Windows builds on release (non-canary main) or when [sign windows]

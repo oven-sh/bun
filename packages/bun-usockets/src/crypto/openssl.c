@@ -112,8 +112,10 @@ struct us_internal_ssl_socket_t {
 int passphrase_cb(char *buf, int size, int rwflag, void *u) {
   const char *passphrase = (const char *)u;
   size_t passphrase_length = strlen(passphrase);
+  // BoringSSL calls us with a stack buf[PEM_BUFSIZE]; copying past `size`
+  // overflows it. Match Node's PasswordCallback: fail rather than truncate.
+  if (passphrase_length > (size_t)size) return -1;
   memcpy(buf, passphrase, passphrase_length);
-  // put null at end? no?
   return (int)passphrase_length;
 }
 

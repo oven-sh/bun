@@ -294,6 +294,58 @@ pub const Interpreter = struct {
     __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
     estimated_size_for_gc: usize = 0,
 
+    /// Side-channel for `try_()`: lets init/setup paths use `try`/`errdefer` for cleanup
+    /// while still surfacing the rich syscall error (errno+path+syscall) at the boundary.
+    last_err: ?Syscall.Error = null,
+
+    /// Unwrap a `Maybe(T)` into `error{Sys}!T`, stashing the syscall error on `last_err`.
+    /// Use with `try` so `errdefer` fires for resources acquired earlier in the function.
+    /// The boundary `catch`es and reads `takeErr()` to surface it.
+    ///
+    /// The stashed `Syscall.Error.path` is borrowed; the catch boundary must be inside the
+    /// scope that owns any path buffer passed to the failing syscall. In practice keep the
+    /// `try_` calls and the `catch` in the same function.
+    ///
+    /// Main-thread only — thread-pool task bodies must keep using `Maybe` directly.
+    pub fn try_(this: *ThisInterpreter, m: anytype) error{Sys}!@TypeOf(m).ReturnType {
+        return switch (m) {
+            .result => |r| r,
+            .err => |e| {
+                this.last_err = e;
+                return error.Sys;
+            },
+        };
+    }
+
+    pub fn takeErr(this: *ThisInterpreter) Syscall.Error {
+        const e = this.last_err.?;
+        this.last_err = null;
+        return e;
+    }
+
+    /// Standalone error sink for code paths where `*ThisInterpreter` isn't available yet
+    /// (e.g. `ThisInterpreter.init` before the struct is constructed). Same path-lifetime
+    /// caveat as `ThisInterpreter.try_`.
+    pub const Catch = struct {
+        err: ?Syscall.Error = null,
+
+        pub fn try_(this: *Catch, m: anytype) error{Sys}!@TypeOf(m).ReturnType {
+            return switch (m) {
+                .result => |r| r,
+                .err => |e| {
+                    this.err = e;
+                    return error.Sys;
+                },
+            };
+        }
+
+        pub fn take(this: *Catch) Syscall.Error {
+            const e = this.err.?;
+            this.err = null;
+            return e;
+        }
+    };
+
     // Here are all the state nodes:
     pub const State = @import("./states/Base.zig");
     pub const Script = @import("./states/Script.zig");
@@ -1088,20 +1140,20 @@ pub const Interpreter = struct {
     }
 
     fn setupIOBeforeRun(this: *ThisInterpreter) Maybe(void) {
+        return if (this.setupIOBeforeRunImpl()) |_| .success else |_| .{ .err = this.takeErr() };
+    }
+
+    fn setupIOBeforeRunImpl(this: *ThisInterpreter) error{Sys}!void {
         if (!this.flags.quiet) {
             const event_loop = this.event_loop;
 
             log("Duping stdout", .{});
-            const stdout_fd = switch (if (bun.Output.Source.Stdio.isStdoutNull()) bun.sys.openNullDevice() else ShellSyscall.dup(.stdout())) {
-                .result => |fd| fd,
-                .err => |err| return .{ .err = err },
-            };
+            const stdout_fd = try this.try_(if (bun.Output.Source.Stdio.isStdoutNull()) bun.sys.openNullDevice() else ShellSyscall.dup(.stdout()));
+            errdefer stdout_fd.close();
 
             log("Duping stderr", .{});
-            const stderr_fd = switch (if (bun.Output.Source.Stdio.isStderrNull()) bun.sys.openNullDevice() else ShellSyscall.dup(.stderr())) {
-                .result => |fd| fd,
-                .err => |err| return .{ .err = err },
-            };
+            const stderr_fd = try this.try_(if (bun.Output.Source.Stdio.isStderrNull()) bun.sys.openNullDevice() else ShellSyscall.dup(.stderr()));
+            errdefer stderr_fd.close();
 
             const stdout_writer = IOWriter.init(
                 stdout_fd,
@@ -1133,8 +1185,6 @@ pub const Interpreter = struct {
                 this.root_io.stderr.fd.captured = &this.root_shell._buffered_stderr.owned;
             }
         }
-
-        return .success;
     }
 
     pub fn run(this: *ThisInterpreter) !Maybe(void) {

@@ -383,45 +383,38 @@ test.concurrent("decorated accessor in a class expression is rejected with a cle
   expect(exitCode).not.toBe(0);
 });
 
-test.concurrent(
-  "anonymous `export default class` with an accessor does not panic (#29197)",
-  async () => {
-    // Regression: `export default class { static accessor x = 1 }` used
-    // to trip a null-ref panic in `lowerStandardDecoratorsStmt` because
-    // `class.class_name` was only injected from `default_name` when the
-    // class had decorators. Auto-accessors go through the same lowering,
-    // so the name injection now also runs when any property is an
-    // `auto_accessor`.
-    using dir = tempDir("bun-issue-29197-default-export", {
-      "tsconfig.json": JSON.stringify({
-        compilerOptions: {
-          experimentalDecorators: false,
-          target: "es2022",
-        },
-      }),
-      "base.ts": "export default class { static accessor x = 1; }\n",
-      "main.ts":
-        "import Base from './base';\n" +
-        "console.log('x=', Base.x);\n" +
-        "Base.x = 42;\n" +
-        "console.log('x=', Base.x);\n",
-    });
+test.concurrent("anonymous `export default class` with an accessor does not panic (#29197)", async () => {
+  // Regression: `export default class { static accessor x = 1 }` used
+  // to trip a null-ref panic in `lowerStandardDecoratorsStmt` because
+  // `class.class_name` was only injected from `default_name` when the
+  // class had decorators. Auto-accessors go through the same lowering,
+  // so the name injection now also runs when any property is an
+  // `auto_accessor`.
+  using dir = tempDir("bun-issue-29197-default-export", {
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        experimentalDecorators: false,
+        target: "es2022",
+      },
+    }),
+    "base.ts": "export default class { static accessor x = 1; }\n",
+    "main.ts":
+      "import Base from './base';\n" +
+      "console.log('x=', Base.x);\n" +
+      "Base.x = 42;\n" +
+      "console.log('x=', Base.x);\n",
+  });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "main.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("panic");
-    expect(stdout).toBe("x= 1\nx= 42\n");
-    expect(exitCode).toBe(0);
-  },
-);
+  expect(stderr).not.toContain("panic");
+  expect(stdout).toBe("x= 1\nx= 42\n");
+  expect(exitCode).toBe(0);
+});

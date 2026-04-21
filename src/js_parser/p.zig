@@ -4958,14 +4958,14 @@ pub fn NewParser_(
             class: *G.Class,
             prefix_stmts: ?*ListManaged(Stmt),
         ) void {
-            // One pass: detect any auto_accessor + bump `storage_counter` past
-            // any user-declared `#_accessor_storage_N` to avoid collisions.
+            // One pass: count auto_accessors + bump `storage_counter` past any
+            // user-declared `#_accessor_storage_N` to avoid collisions.
             const storage_prefix = "#_accessor_storage_";
-            var has_any = false;
+            var auto_accessor_count: usize = 0;
             var storage_counter: u64 = 0;
             var key_counter: u64 = 0;
             for (class.properties) |existing| {
-                if (existing.kind == .auto_accessor) has_any = true;
+                if (existing.kind == .auto_accessor) auto_accessor_count += 1;
                 if (existing.key) |k| if (k.data == .e_private_identifier) {
                     const name = p.symbols.items[k.data.e_private_identifier.ref.innerIndex()].original_name;
                     if (bun.strings.hasPrefixComptime(name, storage_prefix)) {
@@ -4975,11 +4975,13 @@ pub fn NewParser_(
                     }
                 };
             }
-            if (!has_any) return;
+            if (auto_accessor_count == 0) return;
 
+            // Each auto_accessor expands into 3 members (storage + getter + setter),
+            // so the rewritten list needs `len + 2 * auto_accessor_count` slots.
             var rewritten = bun.handleOom(ListManaged(Property).initCapacity(
                 p.allocator,
-                class.properties.len,
+                class.properties.len + 2 * auto_accessor_count,
             ));
 
             for (class.properties) |prop| {

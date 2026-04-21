@@ -232,6 +232,7 @@ pub fn next(this: *Mv) Yield {
                             },
                             else => {
                                 const sys_err = e.toShellSystemError();
+                                defer sys_err.deref();
                                 const buf = this.bltn().fmtErrorArena(.mv, "{s}: {s}\n", .{ sys_err.path.byteSlice(), sys_err.message.byteSlice() });
                                 return this.writeFailingError(buf, 1);
                             },
@@ -360,6 +361,7 @@ pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
     if (exec.tasks_done >= exec.task_count) {
         if (exec.err) |err| {
             const e = err.toShellSystemError();
+            defer e.deref();
             const buf = this.bltn().fmtErrorArena(.mv, "{f}: {f}\n", .{ e.path, e.message });
             _ = this.writeFailingError(buf, err.errno);
             return;

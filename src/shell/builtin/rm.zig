@@ -297,6 +297,7 @@ pub noinline fn next(this: *Rm) Yield {
 
 pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?jsc.SystemError) Yield {
     log("Rm(0x{x}).onIOWriterChunk()", .{@intFromPtr(this)});
+    defer if (e) |err| err.deref();
     if (comptime bun.Environment.allow_assert) {
         assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
             (this.state == .exec and this.state.exec.state == .waiting and this.state.exec.output_count.load(.seq_cst) > 0) or
@@ -314,7 +315,6 @@ pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?jsc.SystemError) Yield {
     }
 
     if (e != null) {
-        defer e.?.deref();
         this.state = .{ .err = @intFromEnum(e.?.getErrno()) };
         return this.bltn().done(e.?.getErrno());
     }
@@ -403,6 +403,9 @@ fn parseFlag(this: *Opts, _: *Builtin, flag: []const u8) ParseFlagsResult {
 }
 
 pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
+    // In verbose mode the embedded root_task may still be queued for writeVerbose on the main
+    // thread; freeing the ShellRmTask here would UAF it. Non-verbose has no such alias.
+    defer if (!task.opts.verbose) task.deinit();
     var exec = &this.state.exec;
     const tasks_done = switch (exec.state) {
         .idle => @panic("Invalid state"),
@@ -436,6 +439,11 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
 }
 
 fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) Yield {
+    defer {
+        // Root DirTask is embedded in ShellRmTask; freeing it is handled when the ShellRmTask
+        // itself is freed (which in verbose mode is currently leaked — see onShellRmTaskDone).
+        if (verbose.parent_task != null) verbose.deinit();
+    }
     if (this.bltn().stdout.needsIO()) |safeguard| {
         const buf = verbose.takeDeletedEntries();
         defer buf.deinit();
@@ -658,7 +666,10 @@ pub const ShellRmTask = struct {
 
         pub fn queueForWrite(this: *DirTask) void {
             log("DirTask(0x{x}, path={s}) queueForWrite to_write={d}", .{ @intFromPtr(this), this.path, this.deleted_entries.items.len });
-            if (this.deleted_entries.items.len == 0) return;
+            if (this.deleted_entries.items.len == 0) {
+                if (this.parent_task != null) this.deinit();
+                return;
+            }
             if (this.task_manager.event_loop == .js) {
                 this.task_manager.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
             } else {
@@ -721,10 +732,12 @@ pub const ShellRmTask = struct {
         this.enqueueNoJoin(parent_dir, new_path, kind_hint);
     }
 
+    /// Takes ownership of `path`; freed via the spawned DirTask's deinit (or here on early return).
     pub fn enqueueNoJoin(this: *ShellRmTask, parent_task: *DirTask, path: [:0]const u8, kind_hint: DirTask.EntryKindHint) void {
         defer debug("enqueue: {s} {s}", .{ path, @tagName(kind_hint) });
 
         if (this.error_signal.load(.seq_cst)) {
+            bun.default_allocator.free(path);
             return;
         }
 
@@ -814,7 +827,7 @@ pub const ShellRmTask = struct {
                             .NOTDIR => {
                                 delete_state.treat_as_dir = false;
                                 if (this.removeEntryFile(dir_task, dir_task.path, is_absolute, buf, &delete_state).asErr()) |err| {
-                                    return .{ .err = this.errorWithPath(err, path) };
+                                    return .{ .err = err };
                                 }
                                 if (!delete_state.treat_as_dir) return .success;
                                 if (delete_state.treat_as_dir) break :out_to_iter;
@@ -899,7 +912,7 @@ pub const ShellRmTask = struct {
                     };
 
                     switch (this.removeEntryFile(dir_task, file_path, is_absolute, buf, &remove_child_vtable)) {
-                        .err => |e| return .{ .err = this.errorWithPath(e, current.name.sliceAssumeZ()) },
+                        .err => |e| return .{ .err = e },
                         .result => {},
                     }
                 },
@@ -1012,7 +1025,7 @@ pub const ShellRmTask = struct {
 
             this.treat_as_dir = true;
             if (this.allow_enqueue) {
-                this.task.enqueueNoJoin(parent_dir_task, path, .dir);
+                this.task.enqueueNoJoin(parent_dir_task, bun.handleOom(bun.default_allocator.dupeZ(u8, path)), .dir);
                 this.enqueued = true;
             }
             return .success;
@@ -1170,6 +1183,12 @@ pub const ShellRmTask = struct {
     }
 
     pub fn deinit(this: *ShellRmTask) void {
+        if (bun.Environment.isWindows) {
+            if (this.cwd_path) |p| bun.default_allocator.free(p);
+        }
+        if (this.err) |*e| {
+            if (e.path.len > 0) bun.default_allocator.free(e.path);
+        }
         bun.default_allocator.destroy(this);
     }
 };

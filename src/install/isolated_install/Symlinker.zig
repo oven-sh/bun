@@ -134,8 +134,9 @@ pub const Symlinker = struct {
     }
 };
 
-const bun = @import("bun");
 const std = @import("std");
+
+const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
 const strings = bun.strings;

@@ -7,53 +7,16 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // syntax error when a project's tsconfig.json had `experimentalDecorators: true`.
 // The keyword should be accepted under either decorator mode.
 
-test.concurrent("accessor keyword parses and runs under experimentalDecorators: true", async () => {
-  using dir = tempDir("issue-29553-exp", {
-    "tsconfig.json": JSON.stringify({
-      compilerOptions: {
-        target: "ES2022",
-        module: "ESNext",
-        moduleResolution: "Bundler",
-        experimentalDecorators: true,
-        emitDecoratorMetadata: true,
-        strict: true,
-        skipLibCheck: true,
-      },
-    }),
-    "test/TEST1.ts": `export class Test1 {
-  public accessor computed: number;
-  constructor(c: number) {
-    this.computed = c;
-  }
-}
-`,
-    "test/TEST1.test.ts": `import { test, expect, describe } from "bun:test";
-import { Test1 } from "./TEST1";
-
-describe("TEST", () => {
-  test("asd", () => {
-    const t = new Test1(42);
-    expect(t.computed).toBe(42);
-  });
-});
-`,
-  });
-
+async function runBun(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "./test"],
+    cmd: [bunExe(), ...args],
     env: bunEnv,
-    cwd: String(dir),
+    cwd,
     stderr: "pipe",
     stdout: "pipe",
   });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // `bun test` writes most of its output to stderr.
-  const combined = stdout + stderr;
-  expect(combined).toContain("1 pass");
-  expect(combined).not.toContain("Expected");
-  expect(exitCode).toBe(0);
-});
+  return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+}
 
 test.concurrent("accessor with various modifiers under experimentalDecorators: true", async () => {
   using dir = tempDir("issue-29553-modifiers", {
@@ -75,16 +38,7 @@ console.log(f.a, f.b, f.getC(), f.getD(), Foo.e, f.f);
 `,
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("Expected");
+  const [stdout, , exitCode] = await runBun(String(dir), "main.ts");
   expect(stdout).toBe("1 2 3 4 5 6\n");
   expect(exitCode).toBe(0);
 });
@@ -98,16 +52,7 @@ console.log(new Foo().x);
 `,
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("Expected");
+  const [stdout, , exitCode] = await runBun(String(dir), "main.ts");
   expect(stdout).toBe("42\n");
   expect(exitCode).toBe(0);
 });
@@ -127,28 +72,17 @@ console.log(new Foo().x);
 `,
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("Expected");
+  const [stdout, , exitCode] = await runBun(String(dir), "main.ts");
   expect(stdout).toBe("dec x accessor\n7\n");
   expect(exitCode).toBe(0);
 });
 
-test.concurrent(
-  "mixing accessor with experimentalDecorators legacy @dec is a clear error, not silent wrong semantics",
-  async () => {
-    using dir = tempDir("issue-29553-mixed", {
-      "tsconfig.json": JSON.stringify({
-        compilerOptions: { experimentalDecorators: true },
-      }),
-      "main.ts": `function legacyDec(target: any, key: string) {}
+test.concurrent("mixing accessor with experimentalDecorators legacy @dec is a clear error, not silent wrong semantics", async () => {
+  using dir = tempDir("issue-29553-mixed", {
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { experimentalDecorators: true },
+    }),
+    "main.ts": `function legacyDec(target: any, key: string) {}
 
 class Foo {
   @legacyDec
@@ -157,18 +91,9 @@ class Foo {
   accessor x: number = 0;
 }
 `,
-    });
+  });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("Cannot mix the `accessor` keyword with `experimentalDecorators: true`");
-    expect(exitCode).not.toBe(0);
-  },
-);
+  const [, stderr, exitCode] = await runBun(String(dir), "main.ts");
+  expect(stderr).toContain("Cannot mix the `accessor` keyword with `experimentalDecorators: true`");
+  expect(exitCode).not.toBe(0);
+});

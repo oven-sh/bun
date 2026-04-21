@@ -2805,6 +2805,12 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
+CPP_DECL void JSC__VM__scheduleOpportunisticFullCollection(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(*vm);
+    vm->heap.scheduleOpportunisticFullCollection();
+}
+
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 {
     JSC::JSLockHolder locker(vm);

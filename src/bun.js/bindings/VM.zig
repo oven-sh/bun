@@ -201,6 +201,11 @@ pub const VM = opaque {
     pub fn performOpportunisticallyScheduledTasks(vm: *VM, until: f64) void {
         JSC__VM__performOpportunisticallyScheduledTasks(vm, until);
     }
+
+    extern fn JSC__VM__scheduleOpportunisticFullCollection(vm: *VM) void;
+    pub fn scheduleOpportunisticFullCollection(vm: *VM) void {
+        JSC__VM__scheduleOpportunisticFullCollection(vm);
+    }
 };
 
 const bun = @import("bun");

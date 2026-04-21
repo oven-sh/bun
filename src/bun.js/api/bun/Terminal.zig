@@ -371,7 +371,9 @@ fn closePseudoconsoleOffThread(hpcon: bun.windows.HPCON) void {
         }
     };
     const t = std.Thread.spawn(.{ .stack_size = 64 * 1024 }, Runner.run, .{hpcon}) catch {
-        bun.windows.ClosePseudoConsole(hpcon);
+        // Thread.spawn failure means CreateThread is failing — the process is
+        // already in a bad state. Leak hpcon rather than risk deadlocking the
+        // event loop; conhost is cleaned up by the job object on process exit.
         return;
     };
     t.detach();
@@ -994,9 +996,10 @@ pub fn closeInternal(this: *Terminal) void {
         if (this.hpcon) |hpcon| {
             this.hpcon = null;
             closePseudoconsoleOffThread(hpcon);
-            // Reader stays open; onReaderDone will close it on EOF.
-            return;
         }
+        // Reader stays open even if hpcon was already null (closePseudoconsole
+        // may have dispatched it earlier); onReaderDone closes on EOF.
+        if (this.flags.reader_started and !this.flags.reader_done) return;
     }
 
     // Close reader (closes read_fd)

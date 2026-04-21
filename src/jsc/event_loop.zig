@@ -576,8 +576,8 @@ pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
 }
 
 /// Whether the event loop has any source of work that could still resolve a
-/// pending promise — active uv/uws handles, queued tasks, concurrent refs,
-/// or immediates.
+/// pending promise — active uv/uws handles, queued tasks (main or
+/// concurrent), concurrent refs, or immediates.
 ///
 /// This is intentionally NOT `VirtualMachine.isEventLoopAlive()`:
 /// `isEventLoopAlive()` short-circuits on `unhandled_error_counter != 0`
@@ -585,12 +585,20 @@ pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
 /// fatal error stops it). For the TLA wait path we only care about work
 /// that could still wake the loop — a side-path unhandled rejection must
 /// NOT abandon an in-flight fetch whose resolution will complete the TLA.
-pub fn hasAnyHandleWork(this: *const EventLoop) bool {
+///
+/// `concurrent_tasks.isEmpty()` is a single atomic acquire-load; it's safe
+/// from the JS thread without locking. Including it closes a narrow race
+/// where a thread (e.g. the hot-reloader watcher at `hot_reloader.zig:278`)
+/// pushes to the concurrent queue without bumping `concurrent_ref` and the
+/// other liveness signals happen to be zero between the tick drain and the
+/// check.
+pub fn hasAnyHandleWork(this: *EventLoop) bool {
     const vm = this.virtual_machine;
     return vm.event_loop_handle.?.isActive() or
         vm.active_tasks > 0 or
         this.tasks.count > 0 or
         this.hasPendingRefs() or
+        !this.concurrent_tasks.isEmpty() or
         this.immediate_tasks.items.len > 0 or
         this.next_immediate_tasks.items.len > 0;
 }

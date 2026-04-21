@@ -157,7 +157,11 @@ export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[
   // .sort()) so bundle composition is identical regardless of glob order or
   // host LC_COLLATE.
   for (const dir of [...byDir.keys()].sort()) {
-    const files = byDir.get(dir)!.sort((a, b) => (basename(a) < basename(b) ? -1 : 1));
+    const files = byDir.get(dir)!.sort((a, b) => {
+      const x = basename(a);
+      const y = basename(b);
+      return x < y ? -1 : x > y ? 1 : 0;
+    });
 
     // Single file in a directory: no point wrapping it. Compile directly so
     // compiler diagnostics point at the real path.

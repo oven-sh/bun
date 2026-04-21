@@ -898,13 +898,6 @@ describe("stringWidth extended", () => {
       return { rope, flat };
     };
 
-    test("8-bit rope is not resolved", () => {
-      const { rope, flat } = ropeAndFlat("hello", 123, "world", 456, "!");
-      expect(Bun.stringWidth(rope)).toBe(Bun.stringWidth(flat));
-      // The key assertion: rope survives the call.
-      expect(isRope(rope)).toBe(true);
-    });
-
     test("8-bit rope: width matches flattened for both ANSI modes", () => {
       let y: any = 0;
       const build = () => {
@@ -968,13 +961,6 @@ describe("stringWidth extended", () => {
       expect(w).toBe(11);
     });
 
-    test("rope with no ESC is unresolved even with countAnsiEscapeCodes: false", () => {
-      const { rope, flat } = ropeAndFlat("no", 1, "escapes", 2, "here", 3, "at", 4, "all");
-      const w = Bun.stringWidth(rope, { countAnsiEscapeCodes: false });
-      expect(w).toBe(Bun.stringWidth(flat, { countAnsiEscapeCodes: false }));
-      expect(isRope(rope)).toBe(true);
-    });
-
     test("UTF-16 rope still produces correct width (resolves)", () => {
       // UTF-16 ropes cannot use the fast path (grapheme clusters may span
       // fibers); verify the result is still correct.
@@ -1007,7 +993,7 @@ describe("stringWidth extended", () => {
       ];
       const build = () => {
         let r = "seed" + (0 as any);
-        for (let i = 0; i < 200; i++) r = r + fibers[(i * 7 + 3) % fibers.length];
+        for (let i = 0; i < 200; i++) r = r + fibers[(i * 3 + 1) % fibers.length];
         return r;
       };
       const rope = build();

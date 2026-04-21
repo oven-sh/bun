@@ -1120,16 +1120,12 @@ pub const String = extern struct {
             }
         }
 
-        // Fast path: if the input is an 8-bit rope, walk its fibers in place
-        // instead of resolving (flattening) the rope into a new contiguous
-        // buffer. Latin-1 visible width is computed per byte with no
-        // cross-byte state, so summing per-fiber widths is exact regardless
-        // of fiber traversal order. The only Latin-1 state comes from ANSI
-        // escape sequences (ESC ...), which can straddle fiber boundaries; if
-        // we see an ESC byte and countAnsiEscapeCodes is false, fall back to
-        // resolving. UTF-16 ropes cannot take this path because grapheme
-        // clusters (ZWJ sequences, combining marks, regional indicators) may
-        // span fibers and the deep-rope iterator delivers fibers out of order.
+        // Fast path for 8-bit ropes: Latin-1 visible width is per-byte, so
+        // summing per-fiber widths is exact regardless of traversal order.
+        // The only stateful Latin-1 construct is an ANSI escape sequence,
+        // which may straddle fibers — bail to resolving if we see ESC and the
+        // caller wants escapes excluded. UTF-16 ropes can't use this: grapheme
+        // clusters may span fibers and deep ropes iterate out of order.
         if (js_str.isRope() and js_str.is8Bit()) {
             var state: RopeLatin1WidthIterator = .{ .bail_on_esc = !count_ansi };
             var it = state.iter();
@@ -1151,14 +1147,8 @@ pub const String = extern struct {
         return .jsNumber(width);
     }
 
-    /// Sums Latin-1 visible width across rope fibers without resolving the
-    /// rope. See the fast path in `jsGetStringWidth`.
     const RopeLatin1WidthIterator = struct {
         width: usize = 0,
-        /// If true, encountering ESC (0x1B) aborts the walk: the caller wants
-        /// ANSI sequences excluded, and those are the only multi-byte Latin-1
-        /// construct whose width depends on neighbouring bytes, so a sequence
-        /// split across fibers would be miscounted.
         bail_on_esc: bool,
         bailed: bool = false,
 
@@ -1182,8 +1172,7 @@ pub const String = extern struct {
         }
 
         fn append16(it: *jsc.JSString.Iterator, _: [*]const u16, _: u32) callconv(.c) void {
-            // is8Bit() on the rope is the AND of all fibers, so we should
-            // never get here. Bail out defensively.
+            // is8Bit() on a rope is the AND of all fibers, so this is unreachable in practice.
             const this: *RopeLatin1WidthIterator = @alignCast(@ptrCast(it.data.?));
             this.bailed = true;
             it.stop = 1;

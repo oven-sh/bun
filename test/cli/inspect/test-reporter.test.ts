@@ -38,6 +38,17 @@ class TestReporterSession extends InspectorSession {
     this.send("TestReporter.enable");
   }
 
+  /** Send a command and resolve with its result once the ack arrives. */
+  sendAndWait(method: string, params: any = {}): Promise<any> {
+    if (!this.framer) throw new Error("Socket not connected");
+    this.ref();
+    const id = this.nextId++;
+    return new Promise(resolve => {
+      this.messageCallbacks.set(id, resolve);
+      this.framer!.send(this.socket as any, JSON.stringify({ id, method, params }));
+    });
+  }
+
   enableAll() {
     this.send("Inspector.enable");
     this.send("TestReporter.enable");
@@ -280,18 +291,18 @@ describe("suite B", () => {
     // IDs 1 and 2 from the retroactive path, and then the three inner tests
     // got IDs 1, 2, 3 from the live path — colliding.
     //
-    // To hit that window deterministically the fixture blocks the main thread
-    // on a synchronous stdin read between the top-level describe() calls and
-    // the end of module evaluation. While it's blocked we send
-    // TestReporter.enable (which sits in the main thread's concurrent-task
-    // queue), then unblock by writing to stdin. The very next
-    // vm.eventLoop().tick() after module eval drains that queue and runs
-    // retroactive reporting against a tree that has describes but no tests.
+    // To hit that window deterministically the fixture hits a `debugger;`
+    // statement between the top-level describe() calls and the end of module
+    // evaluation. With the Debugger domain enabled the main thread parks in
+    // runWhilePaused, which continues to dispatch inspector commands on the
+    // main thread. That lets us send TestReporter.enable, await its ack
+    // (retroactive reporting runs against a tree that has the two describes
+    // but no tests yet), and then Debugger.resume — all as explicit
+    // request/response pairs, no timing assumptions.
 
     using dir = tempDir("test-reporter-mid-collection", {
       "mid.test.ts": `
 import { describe, test, expect } from "bun:test";
-import fs from "node:fs";
 
 describe("suite A", () => {
   test("test A1", () => { expect(1).toBe(1); });
@@ -303,10 +314,9 @@ describe("suite B", () => {
 
 // At this point both describes are in root_scope.entries with
 // test_id_for_debugger == 0, but their callbacks (which register the inner
-// test() calls) have not run yet. Tell the harness we've reached this point,
-// then block until it has queued TestReporter.enable.
-fs.writeSync(1, "READY\\n");
-fs.readSync(0, Buffer.alloc(1));
+// test() calls) have not run yet. Pause here so the harness can enable
+// TestReporter against exactly this partially-collected tree.
+debugger;
 `,
     });
 
@@ -333,45 +343,39 @@ fs.readSync(0, Buffer.alloc(1));
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
-      stdin: "pipe",
     });
 
     await socketPromise;
 
+    // Enable Inspector + Debugger (so `debugger;` actually pauses), but not
+    // TestReporter yet. JSC's debugger starts with breakpoints inactive and
+    // doesn't pause on `debugger;` unless both are opted in. Arm the paused
+    // listener before initialized so we can't miss the event.
+    const paused = session.waitForEvent("Debugger.paused", 30000);
     session.enableInspector();
+    session.send("Debugger.enable");
+    session.send("Debugger.setBreakpointsActive", { active: true });
+    session.send("Debugger.setPauseOnDebuggerStatements", { enabled: true });
     session.initialize();
 
-    // Wait until the fixture has registered both describes and parked on
-    // readSync(). It writes READY to stdout just before blocking.
-    {
-      const reader = proc.stdout.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      while (!buf.includes("READY")) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-      }
-      reader.releaseLock();
-    }
+    await paused;
 
-    // Subprocess main thread is now blocked in readSync, so TestReporter.enable
-    // will sit in its concurrent-task queue until we unblock it — at which
-    // point the first vm.eventLoop().tick() after module eval drains the queue
-    // and runs retroactive reporting against a tree that has the two describes
-    // but no tests yet. We can't await an inspector response to enable here
-    // (the main thread that would answer is the one we've blocked); a short
-    // fixed delay is enough for the bytes to reach the subprocess's debugger
-    // thread and be posted to the main thread's queue, since the debugger
-    // thread itself is not blocked.
-    session.enableTestReporter();
-    await Bun.sleep(100);
+    // Main thread is parked in runWhilePaused with phase == .collection and
+    // root_scope == [suite A, suite B]. runWhilePaused dispatches inspector
+    // commands on the main thread, so this enable runs retroactive reporting
+    // right here and the ack tells us it's done.
+    await session.sendAndWait("TestReporter.enable");
 
-    // Unblock the synchronous stdin read so collection can proceed.
-    proc.stdin.write("\n");
-    proc.stdin.end();
+    // The two describes should already have been reported retroactively.
+    const afterRetro = [...session.getFoundTests().values()].map(t => ({ type: t.type, name: t.name }));
+    expect(afterRetro).toEqual([
+      { type: "describe", name: "suite A" },
+      { type: "describe", name: "suite B" },
+    ]);
 
-    // All three inner tests are synchronous, so once unblocked the subprocess
+    await session.sendAndWait("Debugger.resume");
+
+    // All three inner tests are synchronous, so once resumed the subprocess
     // finishes quickly. Wait for it to exit, then inspect everything we
     // received — no open-ended waitForFoundTests here because when IDs
     // collide the map never reaches size 5 and that path just burns the

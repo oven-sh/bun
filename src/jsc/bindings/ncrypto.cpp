@@ -2477,8 +2477,13 @@ EVP_PKEY* D2iPubkeyWithLooseRsaFallback(const unsigned char* data, long len) // 
     if (EVP_PKEY* key = d2i_PUBKEY(nullptr, &p, len)) return key;
     const uint32_t err = ERR_peek_error();
     if (ERR_GET_LIB(err) == ERR_LIB_BN && ERR_GET_REASON(err) == BN_R_NEGATIVE_NUMBER) {
-        ERR_clear_error();
-        return ParseSpkiRsaLoose(data, len);
+        // Only clear on success — if the loose parser also rejects, preserve
+        // d2i_PUBKEY's error stack so throwCryptoError can surface it as
+        // `opensslErrorStack` on the thrown JS error.
+        if (EVP_PKEY* key = ParseSpkiRsaLoose(data, len)) {
+            ERR_clear_error();
+            return key;
+        }
     }
     return nullptr;
 }

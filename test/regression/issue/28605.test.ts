@@ -42,9 +42,10 @@ test.concurrent("jsxImportSource from nested tsconfig is used when running from 
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("Cannot find module");
   expect(stdout).toContain('"type":"div"');
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("jsxImportSource from deeply nested tsconfig overrides root tsconfig", async () => {
@@ -96,8 +97,9 @@ test.concurrent("jsxImportSource from deeply nested tsconfig overrides root tsco
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("Cannot find module");
   // Both the startup and post-startup paths must pick up the nested tsconfig.
   expect(stdout.match(/"source":"nested"/g)?.length).toBe(2);
+  expect(exitCode).toBe(0);
 });

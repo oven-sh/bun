@@ -1102,13 +1102,10 @@ pub const String = extern struct {
         }
 
         const js_str = try argument.toJSString(globalObject);
-        const view = js_str.view(globalObject);
 
-        if (view.isEmpty()) {
+        if (js_str.length() == 0) {
             return .jsNumber(@as(i32, 0));
         }
-
-        const str = bun.String.init(view);
 
         // Parse options: { countAnsiEscapeCodes?: bool, ambiguousIsNarrow?: bool }
         var count_ansi: bool = false;
@@ -1123,6 +1120,29 @@ pub const String = extern struct {
             }
         }
 
+        // Fast path: if the input is an 8-bit rope, walk its fibers in place
+        // instead of resolving (flattening) the rope into a new contiguous
+        // buffer. Latin-1 visible width is computed per byte with no
+        // cross-byte state, so summing per-fiber widths is exact regardless
+        // of fiber traversal order. The only Latin-1 state comes from ANSI
+        // escape sequences (ESC ...), which can straddle fiber boundaries; if
+        // we see an ESC byte and countAnsiEscapeCodes is false, fall back to
+        // resolving. UTF-16 ropes cannot take this path because grapheme
+        // clusters (ZWJ sequences, combining marks, regional indicators) may
+        // span fibers and the deep-rope iterator delivers fibers out of order.
+        if (js_str.isRope() and js_str.is8Bit()) {
+            var state: RopeLatin1WidthIterator = .{ .bail_on_esc = !count_ansi };
+            var it = state.iter();
+            js_str.iterator(globalObject, &it);
+            js_str.ensureStillAlive();
+            if (!state.bailed) {
+                return .jsNumber(state.width);
+            }
+        }
+
+        const view = js_str.view(globalObject);
+        const str = bun.String.init(view);
+
         const width = if (count_ansi)
             str.visibleWidth(!ambiguous_is_narrow)
         else
@@ -1130,6 +1150,62 @@ pub const String = extern struct {
 
         return .jsNumber(width);
     }
+
+    /// Sums Latin-1 visible width across rope fibers without resolving the
+    /// rope. See the fast path in `jsGetStringWidth`.
+    const RopeLatin1WidthIterator = struct {
+        width: usize = 0,
+        /// If true, encountering ESC (0x1B) aborts the walk: the caller wants
+        /// ANSI sequences excluded, and those are the only multi-byte Latin-1
+        /// construct whose width depends on neighbouring bytes, so a sequence
+        /// split across fibers would be miscounted.
+        bail_on_esc: bool,
+        bailed: bool = false,
+
+        fn on8(this: *RopeLatin1WidthIterator, it: *jsc.JSString.Iterator, slice: []const u8) void {
+            if (this.bail_on_esc and bun.strings.indexOfChar(slice, 0x1B) != null) {
+                this.bailed = true;
+                it.stop = 1;
+                return;
+            }
+            this.width += bun.strings.visible.width.latin1(slice);
+        }
+
+        fn append8(it: *jsc.JSString.Iterator, ptr: [*]const u8, len: u32) callconv(.c) void {
+            const this: *RopeLatin1WidthIterator = @alignCast(@ptrCast(it.data.?));
+            this.on8(it, ptr[0..len]);
+        }
+
+        fn write8(it: *jsc.JSString.Iterator, ptr: [*]const u8, len: u32, _: u32) callconv(.c) void {
+            const this: *RopeLatin1WidthIterator = @alignCast(@ptrCast(it.data.?));
+            this.on8(it, ptr[0..len]);
+        }
+
+        fn append16(it: *jsc.JSString.Iterator, _: [*]const u16, _: u32) callconv(.c) void {
+            // is8Bit() on the rope is the AND of all fibers, so we should
+            // never get here. Bail out defensively.
+            const this: *RopeLatin1WidthIterator = @alignCast(@ptrCast(it.data.?));
+            this.bailed = true;
+            it.stop = 1;
+        }
+
+        fn write16(it: *jsc.JSString.Iterator, _: [*]const u16, _: u32, _: u32) callconv(.c) void {
+            const this: *RopeLatin1WidthIterator = @alignCast(@ptrCast(it.data.?));
+            this.bailed = true;
+            it.stop = 1;
+        }
+
+        fn iter(this: *RopeLatin1WidthIterator) jsc.JSString.Iterator {
+            return .{
+                .data = this,
+                .stop = 0,
+                .append8 = append8,
+                .append16 = append16,
+                .write8 = write8,
+                .write16 = write16,
+            };
+        }
+    };
 
     /// Reports owned allocation size, not the actual size of the string.
     pub fn estimatedSize(this: *const String) usize {

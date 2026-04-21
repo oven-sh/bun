@@ -37,8 +37,8 @@ import type { Ninja } from "./ninja.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims } from "./shims.ts";
 import { computeDepLibs, depSourceStamp, resolveDep, type ResolvedDep } from "./source.ts";
-import { generateUnifiedSources } from "./unified.ts";
 import { streamPath } from "./stream.ts";
+import { generateUnifiedSources } from "./unified.ts";
 import { emitZig, emitZigCheck, zigObjectPaths } from "./zig.ts";
 
 // ───────────────────────────────────────────────────────────────────────────

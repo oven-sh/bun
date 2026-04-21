@@ -3626,6 +3626,25 @@ pub extern "kernel32" fn IsProcessInJob(process: HANDLE, job: HANDLE, result: *B
 
 pub const EXTENDED_STARTUPINFO_PRESENT = 0x80000;
 pub const PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x2000D;
+
+/// Handle to a Windows pseudoconsole (ConPTY).
+pub const HPCON = *anyopaque;
+
+pub extern "kernel32" fn CreatePseudoConsole(
+    size: COORD,
+    hInput: HANDLE,
+    hOutput: HANDLE,
+    dwFlags: DWORD,
+    phPC: *HPCON,
+) callconv(.winapi) std.os.windows.HRESULT;
+
+pub extern "kernel32" fn ResizePseudoConsole(
+    hPC: HPCON,
+    size: COORD,
+) callconv(.winapi) std.os.windows.HRESULT;
+
+pub extern "kernel32" fn ClosePseudoConsole(hPC: HPCON) callconv(.winapi) void;
+
 pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
 pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x400;
 pub const JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x800;

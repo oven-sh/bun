@@ -1030,6 +1030,8 @@ pub const PosixSpawnOptions = struct {
     new_process_group: bool = false,
     /// PTY slave fd for controlling terminal setup (-1 if not using PTY).
     pty_slave_fd: i32 = -1,
+    /// Windows-only ConPTY handle; void placeholder on POSIX.
+    pseudoconsole: void = {},
     /// Linux only. When non-null, the child sets PR_SET_PDEATHSIG to this
     /// signal between vfork and exec in posix_spawn_bun, so the kernel kills
     /// it when the spawning thread dies. When null, defaults to whatever this
@@ -1108,8 +1110,11 @@ pub const WindowsSpawnOptions = struct {
     linux_pdeathsig: ?u8 = null,
     /// POSIX-only; placeholder for struct compatibility.
     new_process_group: bool = false,
-    /// PTY not supported on Windows - this is a void placeholder for struct compatibility
+    /// POSIX-only PTY slave fd; void placeholder on Windows.
     pty_slave_fd: void = {},
+    /// Windows ConPTY handle. When set, the child is attached to the
+    /// pseudoconsole and stdin/stdout/stderr are provided by ConPTY.
+    pseudoconsole: ?bun.windows.HPCON = null,
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
         hide_window: bool = true,
@@ -1609,6 +1614,10 @@ pub fn spawnProcessWindows(
     }
 
     errdefer failed = true;
+
+    if (options.pseudoconsole) |hpcon| {
+        uv_process_options.pseudoconsole = hpcon;
+    }
 
     if (options.windows.hide_window) {
         uv_process_options.flags |= uv.UV_PROCESS_WINDOWS_HIDE;

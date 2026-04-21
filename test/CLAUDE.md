@@ -149,8 +149,8 @@ To create a repetitive string, use `Buffer.alloc(count, fill).toString()` instea
 ### Test Organization
 
 - Use `describe` blocks for grouping related tests
-- Regression tests for specific issues go in `/test/regression/issue/${issueNumber}.test.ts`. If there's no issue number, do not put them in the regression directory.
-- Unit tests for specific features are organized by module (e.g., `/test/js/bun/`, `/test/js/node/`)
+- **Add tests to the existing test file for the code you're changing** — do not create a new file. Tests are organized by module (e.g., `/test/js/bun/`, `/test/js/node/`, `/test/js/web/`).
+- `/test/regression/issue/${issueNumber}.test.ts` is **only** for bugs that have a GitHub issue number **and** are true regressions (worked in a previous release, then broke). An issue number alone does not qualify — if it was never correct, put the test in the module's existing test file instead.
 - Integration tests are in `/test/integration/`
 
 ### Nested/complex object equality

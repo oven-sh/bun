@@ -1,5 +1,5 @@
 import { Subprocess, spawn } from "bun";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isPosix, tempDir } from "harness";
 import { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
@@ -156,6 +156,12 @@ class TestReporterSession extends InspectorSession {
   }
 }
 
+// Every test here spawns at least one `bun test` subprocess under
+// `--inspect-wait`; on ASAN/debug builds that subprocess's startup alone is
+// several seconds, and the drain test runs a batch of them. The project
+// default (5 s) isn't enough headroom.
+setDefaultTimeout(60_000);
+
 describe.if(isPosix)("TestReporter inspector protocol", () => {
   let proc: Subprocess | undefined;
   let socket: ReturnType<typeof connect> extends Promise<infer T> ? T : never;
@@ -280,7 +286,7 @@ describe("suite B", () => {
 
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);
-  }, 30000);
+  });
 
   test("assigns non-colliding IDs when TestReporter.enable lands mid-collection", async () => {
     // Regression: retroactivelyReportDiscoveredTests used a local counter
@@ -408,7 +414,7 @@ debugger;
 
     expect(stderr).toContain("3 pass");
     expect(exitCode).toBe(0);
-  }, 30000);
+  });
 
   test("flushes pending inspector messages to the frontend before process exit", async () => {
     // Regression test for a race where the final TestReporter.start/end
@@ -520,5 +526,5 @@ ${body}
       expect(ended.size).toBe(testCount);
       expect(exitCode).toBe(0);
     }
-  }, 60000);
+  });
 });

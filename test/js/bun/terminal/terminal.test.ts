@@ -554,38 +554,36 @@ describe("Bun.Terminal", () => {
 
   describe("exit callback", () => {
     test("exit callback is called on close", async () => {
-      let exitCalled = false;
       let exitCode: number | null = null;
+      const { promise, resolve } = Promise.withResolvers<void>();
 
       const terminal = new Bun.Terminal({
         exit(term, code, signal) {
-          exitCalled = true;
           exitCode = code;
+          resolve();
         },
       });
 
       terminal.close();
+      await promise;
 
-      // Give time for callback to be called
-      await Bun.sleep(50);
-
-      expect(exitCalled).toBe(true);
       expect(exitCode).toBe(0);
     });
 
     test("exit callback receives terminal as first argument", async () => {
       let receivedTerminal: any = null;
+      const { promise, resolve } = Promise.withResolvers<void>();
 
       const terminal = new Bun.Terminal({
         exit(term, code, signal) {
           receivedTerminal = term;
+          resolve();
         },
       });
 
       terminal.close();
-      await Bun.sleep(50);
+      await promise;
 
-      // The terminal is closed but the callback should have received a valid reference
       expect(receivedTerminal).toBeDefined();
       expect(receivedTerminal.close).toBeFunction();
     });

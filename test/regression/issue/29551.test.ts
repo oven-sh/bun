@@ -120,6 +120,30 @@ function runTests(getSql: () => SQL) {
     expect(rows[0].t).toEqual(["a", null, "c", null]);
   });
 
+  test("null elements in int[] / float4[] round-trip via binary reader", async () => {
+    const sql = getSql();
+    // int4_array and float4_array are the only PG array types whose result
+    // reader uses the binary format path. Before this fix, the binary reader
+    // returned `error.NullsInArrayNotSupportedYet` for any array with a NULL
+    // element — so writing a null succeeded, but reading it back failed on
+    // the second and subsequent executions of a SELECT (when the prepared
+    // statement's cached RowDescription triggered binary-format requests).
+    const tableName = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql`CREATE TEMP TABLE ${sql(tableName)} (scores int[], weights float4[])`;
+    await sql`INSERT INTO ${sql(tableName)} ${sql({
+      scores: [10, null, 30],
+      weights: [1.5, null, 3.25],
+    })}`;
+
+    // Run twice so the prepared statement's cached fields force the binary
+    // reader path for the second call — that's where the bug surfaced.
+    for (let i = 0; i < 2; i++) {
+      const [row] = await sql`SELECT scores, weights FROM ${sql(tableName)}`;
+      expect(Array.from(row.scores)).toEqual([10, null, 30]);
+      expect(Array.from(row.weights)).toEqual([1.5, null, 3.25]);
+    }
+  });
+
   test("numeric[] keeps unquoted numeric precision", async () => {
     const sql = getSql();
     const tableName = "t_" + randomUUIDv7("hex").replaceAll("-", "");

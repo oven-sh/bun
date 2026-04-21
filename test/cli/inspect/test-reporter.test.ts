@@ -1,6 +1,6 @@
 import { Subprocess, spawn } from "bun";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isPosix, tempDir } from "harness";
 import { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
@@ -481,8 +481,16 @@ ${body}
     // thread wins the race to exit(). Two rounds with modest width keeps the
     // failure-without-fix rate high without spraying dozens of --inspect-wait
     // children across the runner.
-    const width = 8;
-    const rounds = 2;
+    //
+    // Under ASAN/debug the subprocess is slow enough that the main thread
+    // always loses the race (the debugger thread gets scheduled before
+    // exit()), so the bug doesn't reproduce without the fix anyway — a
+    // single small round is enough there to verify the drain path itself
+    // doesn't regress, without the 16 heavy subprocesses overrunning the
+    // timeout on a loaded ASAN lane.
+    const slow = isASAN || isDebug;
+    const width = slow ? 4 : 8;
+    const rounds = slow ? 1 : 2;
     const results: Awaited<ReturnType<typeof once>>[] = [];
     for (let r = 0; r < rounds; r++) {
       results.push(...(await Promise.all(Array.from({ length: width }, () => once()))));

@@ -278,6 +278,11 @@ pub fn flushEvictions(this: *Watcher) void {
     for (this.evict_list[0..this.evict_list_i]) |item| {
         // catch duplicates, since the list is sorted, duplicates will appear right after each other
         if (item == last_item) continue;
+        // `item` may be >= fds.len if a kqueue event with a stale `udata` (i.e.
+        // a watchlist index that has since been compacted away) fed
+        // `removeAtIndex` before the second pass got a chance to run. Match the
+        // bounds check the second pass already has so we don't OOB-read `fds`.
+        if (item >= fds.len) continue;
 
         if (!Environment.isWindows) {
             // on mac and linux we can just close the file descriptor

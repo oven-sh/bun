@@ -2635,6 +2635,7 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 
 #include "JSDOMConvertBufferSource.h"
 #include "ZigGeneratedClasses.h"
+#include "WebCoreJSBuiltins.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/HeapAnalyzer.h>

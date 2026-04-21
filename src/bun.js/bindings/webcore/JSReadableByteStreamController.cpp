@@ -38,6 +38,7 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
+#include "WebCoreJSBuiltins.h"
 
 namespace WebCore {
 using namespace JSC;

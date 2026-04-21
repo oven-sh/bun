@@ -31,10 +31,7 @@ fn killProcesses(this: *ProcessAutoKiller) u32 {
         defer process.key.deref();
         if (!process.key.hasExited()) {
             log("process.kill {d}", .{process.key.pid});
-            switch (process.key.kill(@intFromEnum(bun.SignalCode.default))) {
-                .result => |delivered| count += @intFromBool(delivered),
-                .err => {},
-            }
+            count += @intFromBool(process.key.kill(@intFromEnum(bun.SignalCode.default)).isTrue());
         }
     }
     return count;

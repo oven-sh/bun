@@ -119,10 +119,10 @@ function depromise<T>(_promise: Promise<T>): T {
   proc.killed; // boolean — was the process killed?
   proc.exitCode; // null | number
   proc.signalCode; // null | "SIGABRT" | "SIGALRM" | ...
-  proc.kill();
+  tsd.expectType(proc.kill()).is<boolean>();
   proc.killed; // true
 
-  proc.kill(); // specify an exit code
+  tsd.expectType(proc.kill(9)).is<boolean>(); // specify a signal
   proc.unref();
 }
 

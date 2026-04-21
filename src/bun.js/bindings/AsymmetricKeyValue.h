@@ -1,3 +1,5 @@
+#pragma once
+
 #include "root.h"
 
 #include "openssl/evp.h"

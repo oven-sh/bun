@@ -37,6 +37,7 @@ import type { Ninja } from "./ninja.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims } from "./shims.ts";
 import { computeDepLibs, depSourceStamp, resolveDep, type ResolvedDep } from "./source.ts";
+import { generateUnifiedSources } from "./unified.ts";
 import { streamPath } from "./stream.ts";
 import { emitZig, emitZigCheck, zigObjectPaths } from "./zig.ts";
 
@@ -274,7 +275,15 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.blank();
 
   // Source lists: from the pre-globbed snapshot + platform extras.
-  const cxxSources = [...sources.cxx];
+  // Unified sources: bundle the globbed .cpp into ~8-per-TU wrappers (see
+  // unified.ts). Generated at configure time; depfiles track the underlying
+  // .cpp files so editing one rebuilds its bundle. Codegen .cpp are kept
+  // separate — those are already large single TUs (ZigGeneratedClasses.cpp
+  // is 3.3 MB) and bundling them would serialize work.
+  const split = cfg.unifiedSources
+    ? generateUnifiedSources(cfg, sources.cxx)
+    : { unified: [], standalone: [...sources.cxx], bundled: [] };
+  const cxxSources = [...split.unified, ...split.standalone];
   const cSources = [...sources.c];
 
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
@@ -312,6 +321,18 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const codegenOrderOnly = codegen.cppAll;
 
   // Compile all .cpp with PCH.
+  // Emit compile_commands.json entries for the ORIGINAL bundled .cpp files
+  // too — clangd looks up flags by the file you opened, and a bundled source
+  // has no ninja edge of its own. Same flags as the bundle (no PCH listed —
+  // clangd parses standalone, and the PCH path is build-internal).
+  for (const src of split.bundled) {
+    n.addCompileCommand({
+      directory: cfg.buildDir,
+      file: src,
+      arguments: [cfg.cxx, ...cxxFlagsFull, "-c", src],
+    });
+  }
+
   const cxxObjects: string[] = [];
   for (const src of cxxSources) {
     const relSrc = relative(cfg.cwd, src);

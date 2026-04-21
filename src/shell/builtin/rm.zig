@@ -403,9 +403,9 @@ fn parseFlag(this: *Opts, _: *Builtin, flag: []const u8) ParseFlagsResult {
 }
 
 pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
-    // In verbose mode the embedded root_task may still be queued for writeVerbose on the main
-    // thread; freeing the ShellRmTask here would UAF it. Non-verbose has no such alias.
-    defer if (!task.opts.verbose) task.deinit();
+    // In verbose mode the root DirTask may also be queued for writeVerbose; both callbacks
+    // hold a pending count and the last one to run frees the ShellRmTask.
+    defer task.decrPendingAndMaybeDeinit();
     var exec = &this.state.exec;
     const tasks_done = switch (exec.state) {
         .idle => @panic("Invalid state"),
@@ -413,7 +413,11 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
             exec.state.waiting.tasks_done += 1;
             const amt = exec.state.waiting.tasks_done;
             if (task.err) |err| {
+                // Ownership of err.path stays with the task (freed in ShellRmTask.deinit);
+                // exec.err is only used as a did-anything-fail flag after this point, so
+                // drop the soon-to-be-dangling path slice from our copy.
                 exec.err = err;
+                exec.err.?.path = "";
                 const error_string = this.bltn().taskErrorToString(.rm, err);
                 if (this.bltn().stderr.needsIO()) |safeguard| {
                     log("Rm(0x{x}) task=0x{x} ERROR={s}", .{ @intFromPtr(this), @intFromPtr(task), error_string });
@@ -440,9 +444,11 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
 
 fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) Yield {
     defer {
-        // Root DirTask is embedded in ShellRmTask; freeing it is handled when the ShellRmTask
-        // itself is freed (which in verbose mode is currently leaked — see onShellRmTaskDone).
+        const tm = verbose.task_manager;
         if (verbose.parent_task != null) verbose.deinit();
+        // Release the pending count taken in postRun(); the ShellRmTask is freed once every
+        // queued writeVerbose and onShellRmTaskDone have run.
+        tm.decrPendingAndMaybeDeinit();
     }
     if (this.bltn().stdout.needsIO()) |safeguard| {
         const buf = verbose.takeDeletedEntries();
@@ -472,6 +478,10 @@ pub const ShellRmTask = struct {
 
     error_signal: *std.atomic.Value(bool),
     err_mutex: bun.Mutex = .{},
+    /// Main-thread callbacks that must complete before this task can be freed:
+    /// always one for onShellRmTaskDone (via finishConcurrently), plus one per DirTask whose
+    /// verbose output was queued. Decremented by decrPendingAndMaybeDeinit.
+    pending_main_callbacks: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
     err: ?Syscall.Error = null,
 
     event_loop: jsc.EventLoopHandle,
@@ -606,15 +616,22 @@ pub const ShellRmTask = struct {
 
             // We have executed all the children of this task
             if (this.subtask_count.fetchSub(1, .seq_cst) == 1) {
-                defer {
-                    if (this.task_manager.opts.verbose)
-                        this.queueForWrite()
-                    else
-                        this.deinit();
+                // If a verbose write will be queued, take a pending count on the ShellRmTask now —
+                // before decrementing the parent (children) or calling finishConcurrently (root) —
+                // so the main thread can't free it out from under writeVerbose.
+                const will_queue_verbose = this.task_manager.opts.verbose and this.deleted_entries.items.len > 0;
+                if (will_queue_verbose) {
+                    _ = this.task_manager.pending_main_callbacks.fetchAdd(1, .seq_cst);
                 }
 
                 // If we have a parent and we are the last child, now we can delete the parent
                 if (this.parent_task != null) {
+                    defer {
+                        if (will_queue_verbose)
+                            this.queueForWrite()
+                        else
+                            this.deinit();
+                    }
                     // It's possible that we queued this subdir task and it finished, while the parent
                     // was still in the `removeEntryDir` function
                     const tasks_left_before_decrement = this.parent_task.?.subtask_count.fetchSub(1, .seq_cst);
@@ -625,8 +642,13 @@ pub const ShellRmTask = struct {
                     return;
                 }
 
-                // Otherwise we are root task
+                // Root task. After finishConcurrently() the task may be freed at any time unless
+                // we hold a pending count, so don't touch `this`/task_manager afterwards unless
+                // will_queue_verbose kept it alive.
                 this.task_manager.finishConcurrently();
+                if (will_queue_verbose) {
+                    this.queueForWrite();
+                }
             }
 
             // Otherwise need to wait
@@ -1182,6 +1204,12 @@ pub const ShellRmTask = struct {
         this.rm.onShellRmTaskDone(this);
     }
 
+    pub fn decrPendingAndMaybeDeinit(this: *ShellRmTask) void {
+        if (this.pending_main_callbacks.fetchSub(1, .seq_cst) == 1) {
+            this.deinit();
+        }
+    }
+
     pub fn deinit(this: *ShellRmTask) void {
         if (bun.Environment.isWindows) {
             if (this.cwd_path) |p| bun.default_allocator.free(p);
@@ -1189,6 +1217,7 @@ pub const ShellRmTask = struct {
         if (this.err) |*e| {
             if (e.path.len > 0) bun.default_allocator.free(e.path);
         }
+        this.root_task.deleted_entries.deinit();
         bun.default_allocator.destroy(this);
     }
 };

@@ -21,6 +21,7 @@ state: union(enum) {
         error_signal: std.atomic.Value(bool),
         tasks: []ShellMvBatchedTask,
         err: ?Syscall.Error = null,
+        err_path_owned: bool = false,
     },
     done,
     waiting_write_err: struct {
@@ -76,6 +77,9 @@ pub const ShellMvBatchedTask = struct {
     error_signal: *std.atomic.Value(bool),
 
     err: ?Syscall.Error = null,
+    /// True iff err.?.path was heap-allocated by this task (moveInDir's dupeZ); false when
+    /// it borrows this.target / argv or is empty.
+    err_path_owned: bool = false,
 
     task: ShellTask(@This(), runFromThreadPool, runFromMainThread, debug),
     event_loop: jsc.EventLoopHandle,
@@ -121,6 +125,7 @@ pub const ShellMvBatchedTask = struct {
                 }, .auto);
 
                 this.err = e.withPath(bun.handleOom(bun.default_allocator.dupeZ(u8, target_path[0..])));
+                this.err_path_owned = true;
                 return false;
             },
             else => {},
@@ -352,8 +357,9 @@ pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
         exec.error_signal.store(true, .seq_cst);
         if (exec.err == null) {
             exec.err = err.*;
-        } else {
-            err.deinit();
+            exec.err_path_owned = task.err_path_owned;
+        } else if (task.err_path_owned) {
+            bun.default_allocator.free(err.path);
         }
     }
 
@@ -363,6 +369,8 @@ pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
             const e = err.toShellSystemError();
             defer e.deref();
             const buf = this.bltn().fmtErrorArena(.mv, "{f}: {f}\n", .{ e.path, e.message });
+            if (exec.err_path_owned) bun.default_allocator.free(err.path);
+            exec.err = null;
             _ = this.writeFailingError(buf, err.errno);
             return;
         }
@@ -374,6 +382,11 @@ pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
 
 pub fn deinit(this: *Mv) void {
     if (this.args.target_fd) |fd| fd.toOptional().close();
+    if (this.state == .executing) {
+        if (this.state.executing.err) |err| {
+            if (this.state.executing.err_path_owned) bun.default_allocator.free(err.path);
+        }
+    }
 }
 
 const Opts = struct {

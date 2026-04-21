@@ -29,10 +29,10 @@ gc_repeating_timer: *uws.Timer = undefined,
 gc_timer_interval: i32 = 0,
 gc_repeating_timer_fast: bool = true,
 disabled: bool = false,
-/// When > 0, replaces collectAsync() with JSC's deadline-aware
-/// VM::performOpportunisticallyScheduledTasks. The value is the deadline budget
-/// in seconds passed to JSC, which uses it to choose between sync Full / Eden
-/// collection and incremental sweeping. Set via BUN_GC_OPPORTUNISTIC_DEADLINE_MS.
+/// Mirrors VirtualMachine.Bun__opportunisticGCDeadlineSeconds. When > 0, the
+/// repeating-timer/heap-growth path also raises JSC's "opportunistic full GC"
+/// flag so that the next idle-time performOpportunisticallyScheduledTasks call
+/// (issued from Bun__JSC_onBeforeWait) is allowed to choose a Full collection.
 opportunistic_deadline_seconds: f64 = 0,
 
 pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
@@ -71,6 +71,7 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
         if (std.fmt.parseFloat(f64, deadline)) |parsed| {
             if (parsed > 0) {
                 this.opportunistic_deadline_seconds = parsed / 1000.0;
+                VirtualMachine.Bun__opportunisticGCDeadlineSeconds = this.opportunistic_deadline_seconds;
             }
         } else |_| {}
     }
@@ -157,11 +158,7 @@ fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *jsc.VM, t
             } else {
                 this.gc_timer_state = .pending;
             }
-            if (this.opportunistic_deadline_seconds > 0) {
-                vm.performOpportunisticallyScheduledTasks(this.opportunistic_deadline_seconds);
-            } else {
-                vm.collectAsync();
-            }
+            vm.collectAsync();
             this.gc_last_heap_size = this_heap_size;
         },
         .pending => {
@@ -190,12 +187,11 @@ pub fn performGC(this: *GarbageCollectionController) void {
     if (this.opportunistic_deadline_seconds > 0) {
         // performGC() fires from the repeating timer and from "heap doubled" — both
         // are coarse boundaries comparable to WebCore's navigation hint, so request
-        // a Full collection before letting JSC decide whether the deadline allows it.
+        // a Full collection. The actual opportunistic work runs later from
+        // Bun__JSC_onBeforeWait once the loop is about to block.
         vm.scheduleOpportunisticFullCollection();
-        vm.performOpportunisticallyScheduledTasks(this.opportunistic_deadline_seconds);
-    } else {
-        vm.collectAsync();
     }
+    vm.collectAsync();
     this.gc_last_heap_size = vm.blockBytesAllocated();
 }
 

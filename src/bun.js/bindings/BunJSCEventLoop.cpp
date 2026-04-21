@@ -3,8 +3,10 @@
 
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Heap.h>
+#include <wtf/MonotonicTime.h>
 
 extern "C" int Bun__defaultRemainingRunsUntilSkipReleaseAccess;
+extern "C" double Bun__opportunisticGCDeadlineSeconds;
 
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
 {
@@ -60,6 +62,15 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
         }
 
         if (remainingRunsUntilSkipReleaseAccess-- > 0) {
+            const double opportunisticDeadline = Bun__opportunisticGCDeadlineSeconds;
+            if (opportunisticDeadline > 0) {
+                // The event loop is about to block on epoll/kqueue with no immediate
+                // wakeups, so this is the closest analogue Bun has to WebCore's
+                // RunLoopObserver idle callback. JSC will pick sync Full / Eden GC if
+                // its estimate fits the deadline, and always advances the incremental
+                // sweeper which is what actually returns pages to the OS.
+                vm->performOpportunisticallyScheduledTasks(MonotonicTime::now() + Seconds(opportunisticDeadline), {});
+            }
             // Constellation:
             // > If you are not moving a VM to the different thread, then you can aquire the access and do not need to release
             vm->heap.stopIfNecessary();

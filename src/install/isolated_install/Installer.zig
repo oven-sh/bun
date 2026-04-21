@@ -21,7 +21,13 @@ pub const Installer = struct {
 
     trusted_dependencies_from_update_requests: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
 
-    pub fn deinit(this: *const Installer) void {
+    /// Tracks which entries are currently blocked, avoiding O(N) iteration over all entries
+    /// in resumeUnblockedTasks. Only modified from the main thread.
+    blocked_entries: std.AutoArrayHashMapUnmanaged(Store.Entry.Id, void) = .empty,
+
+    // Note: blocked_entries is freed via a targeted defer at the call site
+    // in isolated_install.zig, not here. See the defer ordering there.
+    pub fn deinit(this: *Installer) void {
         this.trusted_dependencies_from_update_requests.deinit(this.lockfile.allocator);
     }
 
@@ -215,6 +221,7 @@ pub const Installer = struct {
 
         // .monotonic is okay because the task isn't running right now.
         this.store.entries.items(.step)[entry_id.get()].store(.blocked, .monotonic);
+        bun.handleOom(this.blocked_entries.put(this.lockfile.allocator, entry_id, {}));
     }
 
     /// Called from both the main thread (via `onTaskBlocked` and `resumeUnblockedTasks`) and the
@@ -298,12 +305,10 @@ pub const Installer = struct {
         this.installed.set(pkg_id);
     }
 
-    // This function runs only on the main thread. The installer tasks threads
-    // will be changing values in `entry_step`, but the blocked state is only
-    // set on the main thread, allowing the code between
-    // `entry_steps[entry_id.get()].load(.monotonic)`
-    // and
-    // `entry_steps[entry_id.get()].store(.symlink_dependency_binaries, .monotonic)`
+    // This function runs only on the main thread. `blocked_entries` is only
+    // modified from the main thread (added in `onTaskBlocked`, removed here),
+    // so no concurrent modification can occur. The two-phase collect-then-remove
+    // pattern avoids mutating `blocked_entries` during iteration.
     pub fn resumeUnblockedTasks(this: *Installer) void {
         const entries = this.store.entries.slice();
         const entry_steps = entries.items(.step);
@@ -311,19 +316,19 @@ pub const Installer = struct {
         var parent_dedupe: std.AutoArrayHashMap(Store.Entry.Id, void) = .init(bun.default_allocator);
         defer parent_dedupe.deinit();
 
-        for (0..this.store.entries.len) |id_int| {
-            const entry_id: Store.Entry.Id = .from(@intCast(id_int));
+        // Collect entries to unblock first since we can't modify blocked_entries while iterating.
+        var to_unblock: std.ArrayListUnmanaged(Store.Entry.Id) = .empty;
+        defer to_unblock.deinit(bun.default_allocator);
 
-            // .monotonic is okay because only the main thread sets this to `.blocked`.
-            const entry_step = entry_steps[entry_id.get()].load(.monotonic);
-            if (entry_step != .blocked) {
-                continue;
-            }
-
+        for (this.blocked_entries.keys()) |entry_id| {
             if (this.isTaskBlocked(entry_id, &parent_dedupe)) {
                 continue;
             }
+            bun.handleOom(to_unblock.append(bun.default_allocator, entry_id));
+        }
 
+        for (to_unblock.items) |entry_id| {
+            _ = this.blocked_entries.swapRemove(entry_id);
             // .monotonic is okay because the task isn't running right now.
             entry_steps[entry_id.get()].store(.symlink_dependency_binaries, .monotonic);
             this.startTask(entry_id);

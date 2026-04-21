@@ -1063,6 +1063,8 @@ pub fn installIsolatedPackages(
             .supported_backend = .init(PackageInstall.supported_method),
             .is_new_bun_modules = is_new_bun_modules,
         };
+        defer installer.deinit();
+        defer installer.blocked_entries.deinit(lockfile.allocator);
 
         for (tasks, 0..) |*task, _entry_id| {
             const entry_id: Store.Entry.Id = .from(@intCast(_entry_id));

@@ -141,12 +141,14 @@ console.log(new Foo().x);
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("mixing accessor with experimentalDecorators legacy @dec is a clear error, not silent wrong semantics", async () => {
-  using dir = tempDir("issue-29553-mixed", {
-    "tsconfig.json": JSON.stringify({
-      compilerOptions: { experimentalDecorators: true },
-    }),
-    "main.ts": `function legacyDec(target: any, key: string) {}
+test.concurrent(
+  "mixing accessor with experimentalDecorators legacy @dec is a clear error, not silent wrong semantics",
+  async () => {
+    using dir = tempDir("issue-29553-mixed", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { experimentalDecorators: true },
+      }),
+      "main.ts": `function legacyDec(target: any, key: string) {}
 
 class Foo {
   @legacyDec
@@ -155,17 +157,18 @@ class Foo {
   accessor x: number = 0;
 }
 `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("Cannot mix the `accessor` keyword with `experimentalDecorators: true`");
-  expect(exitCode).not.toBe(0);
-});
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Cannot mix the `accessor` keyword with `experimentalDecorators: true`");
+    expect(exitCode).not.toBe(0);
+  },
+);

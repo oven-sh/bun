@@ -12,8 +12,7 @@ import { createPublicKey } from "node:crypto";
 
 // Minimal DER RSA SubjectPublicKeyInfo whose modulus omits the leading
 // 0x00 sign byte (first modulus byte is 0xDF).
-const SPKI_DER_BASE64 =
-  "MDswDQYJKoZIhvcNAQEBBQADKgAwJwIg3wUvyMOfq7G6dT5bIM6keoShd9YGwP7PIc2Tfa8Q99ECAwEAAQ==";
+const SPKI_DER_BASE64 = "MDswDQYJKoZIhvcNAQEBBQADKgAwJwIg3wUvyMOfq7G6dT5bIM6keoShd9YGwP7PIc2Tfa8Q99ECAwEAAQ==";
 
 test("createPublicKey accepts RSA SPKI DER whose modulus lacks the 0x00 sign byte", () => {
   const der = Buffer.from(SPKI_DER_BASE64, "base64");

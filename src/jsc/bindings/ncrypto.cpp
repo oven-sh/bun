@@ -2439,8 +2439,7 @@ EVP_PKEY* ParseSpkiRsaLoose(const unsigned char* data, size_t len)
 
     // AlgorithmIdentifier ::= SEQUENCE { algorithm OBJECT IDENTIFIER,
     //                                    parameters ANY OPTIONAL }
-    if (!CBS_get_asn1(&spki, &alg, CBS_ASN1_SEQUENCE) ||
-        !CBS_get_asn1(&alg, &oid, CBS_ASN1_OBJECT)) {
+    if (!CBS_get_asn1(&spki, &alg, CBS_ASN1_SEQUENCE) || !CBS_get_asn1(&alg, &oid, CBS_ASN1_OBJECT)) {
         return nullptr;
     }
     if (OBJ_cbs2nid(&oid) != NID_rsaEncryption) {
@@ -2458,15 +2457,12 @@ EVP_PKEY* ParseSpkiRsaLoose(const unsigned char* data, size_t len)
     }
 
     // RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent INTEGER }
-    if (!CBS_get_asn1(&bitstr, &rsa_pub_key, CBS_ASN1_SEQUENCE) ||
-        CBS_len(&bitstr) != 0) {
+    if (!CBS_get_asn1(&bitstr, &rsa_pub_key, CBS_ASN1_SEQUENCE) || CBS_len(&bitstr) != 0) {
         return nullptr;
     }
 
     BignumPointer n, e;
-    if (!ParseAsn1IntegerLooseUnsigned(&rsa_pub_key, &n) ||
-        !ParseAsn1IntegerLooseUnsigned(&rsa_pub_key, &e) ||
-        CBS_len(&rsa_pub_key) != 0) {
+    if (!ParseAsn1IntegerLooseUnsigned(&rsa_pub_key, &n) || !ParseAsn1IntegerLooseUnsigned(&rsa_pub_key, &e) || CBS_len(&rsa_pub_key) != 0) {
         return nullptr;
     }
 

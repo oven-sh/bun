@@ -177,7 +177,12 @@ fn getRuntimeSourceComptime(comptime target: options.Target) RuntimeSource {
         \\
     };
     const runtime_using_symbols = switch (target) {
-        // bun's webkit has Symbol.asyncDispose, Symbol.dispose, and SuppressedError, but not the syntax support
+        // JavaScriptCore supports `using` / `await using` natively (see
+        // `lower_using = !target.isBun()` below), so these helpers are unused
+        // when bundling for Bun and will be tree-shaken. They are still defined
+        // here so the runtime module exports a consistent shape across targets.
+        // Bun's WebKit also has Symbol.asyncDispose, Symbol.dispose, and
+        // SuppressedError, so no polyfills are needed.
         .bun =>
         \\export var __using = (stack, value, async) => {
         \\  if (value != null) {

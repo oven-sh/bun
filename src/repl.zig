@@ -1510,6 +1510,9 @@ fn transformForRepl(self: *Repl, code: []const u8) ?[]const u8 {
     opts.repl_mode = true;
     opts.features.dead_code_elimination = false; // REPL needs all code
     opts.features.top_level_await = true; // Enable top-level await in REPL
+    // JavaScriptCore implements `using` / `await using` natively; the REPL
+    // always runs in Bun so there is no need to lower them.
+    opts.features.lower_using = false;
 
     // Initialize macro context from transpiler (required for import processing)
     if (vm.transpiler.macro_context == null) {

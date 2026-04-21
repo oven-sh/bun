@@ -703,7 +703,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     args.push(`--build-id=${buildId}`);
   }
 
-  if (testFiles) {
+  if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
   } else {
     // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead

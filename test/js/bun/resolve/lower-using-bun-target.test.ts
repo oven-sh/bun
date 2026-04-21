@@ -28,6 +28,60 @@ const expectedStdout =
   "top-level disposed\n";
 
 describe("using / await using is not lowered when targeting bun", () => {
+  test("single-use using declaration is not inlined away", () => {
+    // When `using` was lowered, it was rewritten to `const` + try/finally before
+    // the single-use-symbol inlining optimization ran. Now that `using` survives,
+    // that optimization must not remove the declaration, since disposal is a side
+    // effect that happens on scope exit.
+    const t = new Bun.Transpiler({ target: "bun" });
+    const out = t.transformSync(
+      `function f() {
+  using server = open();
+  return server.url;
+}
+async function g() {
+  await using conn = connect();
+  return conn.id;
+}
+`,
+      "js",
+    );
+    expect(out).toContain("using server = open()");
+    expect(out).toContain("return server.url");
+    expect(out).toContain("await using conn = connect()");
+    expect(out).toContain("return conn.id");
+    expect(out).not.toContain("return open().url");
+    expect(out).not.toContain("return connect().id");
+  });
+
+  test("single-use using declaration disposes at runtime", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let disposed = false;
+function open() {
+  return {
+    url: "http://example",
+    [Symbol.dispose]() { disposed = true; },
+  };
+}
+function f() {
+  using server = open();
+  return server.url;
+}
+const url = f();
+console.log(url, disposed);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("http://example true\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("Bun.Transpiler passes using / await using through for target=bun", () => {
     const bunTranspiler = new Bun.Transpiler({ target: "bun" });
     const out = bunTranspiler.transformSync(source, "js");

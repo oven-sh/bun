@@ -1131,7 +1131,10 @@ pub fn Visit(
                         switch (prev_statement.data) {
                             .s_local => {
                                 var local = prev_statement.data.s_local;
-                                if (local.decls.len == 0 or local.kind == .k_var or local.is_export) {
+                                // "using" / "await using" declarations have disposal
+                                // side-effects on scope exit, so they must not be
+                                // removed by inlining their initializer into the use.
+                                if (local.decls.len == 0 or local.kind == .k_var or local.kind.isUsing() or local.is_export) {
                                     break;
                                 }
 

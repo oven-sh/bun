@@ -452,8 +452,22 @@ pub fn VisitStmt(
                                 data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
                             }
 
-                            // We only inject a name into classes when there is a decorator
-                            if (class.class.has_decorators) {
+                            // Inject the default name into the class when it has decorators,
+                            // or when it has any `accessor` field. The latter catches
+                            // `export default class { static accessor x = 1 }` — accessor
+                            // lowering (both standard and legacy) needs to reference the
+                            // class by name, so without injection `class.class_name` stays
+                            // null and the statement path panics at `class_name.?.ref.?`.
+                            var needs_default_name = class.class.has_decorators;
+                            if (!needs_default_name) {
+                                for (class.class.properties) |prop| {
+                                    if (prop.kind == .auto_accessor) {
+                                        needs_default_name = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (needs_default_name) {
                                 if (class.class.class_name == null or
                                     class.class.class_name.?.ref == null)
                                 {

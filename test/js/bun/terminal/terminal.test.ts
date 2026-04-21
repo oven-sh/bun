@@ -1050,8 +1050,9 @@ describe("Bun.spawn with terminal option", () => {
     proc.terminal!.write("hello from parent\n");
     await echoed.promise;
 
-    proc.terminal!.close();
+    proc.kill();
     await proc.exited;
+    proc.terminal!.close();
 
     expect(combinedOutput).toContain("hello from parent");
   });

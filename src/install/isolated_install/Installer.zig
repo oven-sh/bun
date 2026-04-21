@@ -1699,23 +1699,36 @@ pub const Installer = struct {
                     }
                 },
                 .EXIST => {
-                    // Existing entry from a previous install: replace if it's
-                    // a stale symlink, otherwise wipe the directory tree
-                    // (pre-global-store layout) before relinking.
-                    if (sys.unlink(dest.sliceZ()).asErr()) |_| {
+                    // Existing entry from a previous install. If it's a
+                    // symlink, replace it (stale link from a different
+                    // hash). If it's a *real directory* it's either a
+                    // pre-global-store layout (safe to wipe) or a detached
+                    // `bun patch` workspace the user is actively editing —
+                    // distinguished by the `.bun-patch` marker that
+                    // `detachModuleFolderFromSharedStore` writes.
+                    const is_symlink = if (comptime Environment.isWindows)
+                        if (sys.getFileAttributes(dest.sliceZ())) |a| a.is_reparse_point else true
+                    else if (sys.lstat(dest.sliceZ()).asValue()) |st|
+                        std.posix.S.ISLNK(@intCast(st.mode))
+                    else
+                        true;
+
+                    if (is_symlink) {
+                        if (comptime Environment.isWindows) {
+                            if (sys.rmdir(dest.sliceZ()).asErr()) |_| {
+                                _ = sys.unlink(dest.sliceZ());
+                            }
+                        } else {
+                            _ = sys.unlink(dest.sliceZ());
+                        }
+                    } else {
                         FD.cwd().deleteTree(dest.slice()) catch {};
                     }
                 },
                 else => return .initErr(err),
             },
         }
-        return switch (do_symlink(dest.sliceZ(), target_abs.sliceZ())) {
-            .result => .success,
-            // EEXIST after the recovery above means another writer won the
-            // race between our unlink/mkdir and this retry; the symlink it
-            // created points at the same content-addressed target.
-            .err => |e| if (e.getErrno() == .EXIST) .success else .initErr(e),
-        };
+        return do_symlink(dest.sliceZ(), target_abs.sliceZ());
     }
 
     pub fn appendStoreNodeModulesPath(this: *const Installer, buf: anytype, entry_id: Store.Entry.Id) void {

@@ -1838,4 +1838,53 @@ describe("global virtual store", () => {
     expect(lstatSync(entry).isSymbolicLink()).toBe(true);
     expect(existsSync(join(entry, "node_modules", "no-deps", "package.json"))).toBe(true);
   });
+
+  test("preserves bun patch workspace when install runs before --commit", async () => {
+    // Regression: `bun patch <pkg>` detaches the project store entry from the
+    // global virtual store (symlink → real directory) so the user can edit it.
+    // A subsequent `bun install` (e.g. to add another dep) before `--commit`
+    // must not see that real directory as a stale pre-GVS layout and
+    // `deleteTree` the user's in-progress edits.
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-patch-preserve",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+    const workspace = join(packageDir, "node_modules", "no-deps");
+    expect(lstatSync(workspace).isSymbolicLink()).toBe(true);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "patch", "no-deps"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error");
+    expect(stdout).toContain("To patch");
+    expect(exitCode).toBe(0);
+
+    // `bun patch` detached the top-level dep symlink into a real directory
+    // for the user to edit. The `.bun/<storepath>` GVS symlink is untouched.
+    expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
+    expect(lstatSync(workspace).isDirectory()).toBe(true);
+
+    const edited = join(workspace, "index.js");
+    await write(edited, "module.exports = 'USER_EDITS';\n");
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    // The real-directory workspace is preserved across the install; before
+    // this fix `.expect_existing` would `deleteTree` it on readlink EINVAL
+    // and re-symlink, wiping the edits.
+    expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
+    expect(await file(edited).text()).toBe("module.exports = 'USER_EDITS';\n");
+  });
 });

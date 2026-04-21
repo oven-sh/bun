@@ -78,8 +78,22 @@ pub const Symlinker = struct {
                                 else => .initErr(symlink_err),
                             },
                         },
+                        // readlink failed for a reason other than NOENT —
+                        // dest exists but isn't a symlink. If it's a real
+                        // directory, leave it: this is the `bun patch <pkg>`
+                        // workspace (a detached copy the user is editing
+                        // before `--commit`), and `deleteTree` here would
+                        // silently destroy their in-progress edits. If it's
+                        // a regular file, replace it.
                         else => {
-                            FD.cwd().deleteTree(this.dest.sliceZ()) catch {};
+                            const is_dir = if (comptime Environment.isWindows)
+                                if (sys.getFileAttributes(this.dest.sliceZ())) |a| a.is_directory and !a.is_reparse_point else false
+                            else if (sys.lstat(this.dest.sliceZ()).asValue()) |st|
+                                std.posix.S.ISDIR(@intCast(st.mode))
+                            else
+                                false;
+                            if (is_dir) return .success;
+                            _ = sys.unlink(this.dest.sliceZ());
                             return this.symlink();
                         },
                     },
@@ -121,6 +135,7 @@ pub const Symlinker = struct {
 };
 
 const bun = @import("bun");
+const std = @import("std");
 const Environment = bun.Environment;
 const FD = bun.FD;
 const strings = bun.strings;

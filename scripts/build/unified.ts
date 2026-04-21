@@ -2,8 +2,8 @@
  * Unified source bundling — WebKit-style.
  *
  * Concatenates N small .cpp files into one translation unit by writing
- * `UnifiedSource-<dir>-<n>.cpp` files that contain only `#include "abs.cpp"`
- * lines, then compiling those instead of the originals.
+ * `UnifiedSource-<dir>-<n>.cpp` files that contain only `#include` lines
+ * pointing at the originals, then compiling those instead.
  *
  * Why: Bun has ~550 .cpp files, ~330 of them under 200 lines. Each compile
  * spends most of its time re-parsing the same JSC/WebCore headers. Bundling

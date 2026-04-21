@@ -359,9 +359,9 @@ describe("Bun.Terminal platform behaviour", () => {
     expect(output).toContain("SECOND");
   });
 
-  // ClosePseudoConsole on Windows Server 2019's conhost blocks on the output
-  // pipe while the attached client is still running, deadlocking the event
-  // loop. Passes on newer Windows where ClosePseudoConsole returns promptly.
+  // ClosePseudoConsole on Windows < 11 24H2 (build 26100) blocks until the
+  // output pipe is drained, which deadlocks since our reader is on the same
+  // event-loop thread. https://learn.microsoft.com/en-us/windows/console/closepseudoconsole
   test.todoIf(isWindows)(
     "SAME: closing an inline terminal while a child is attached terminates the child",
     async () => {

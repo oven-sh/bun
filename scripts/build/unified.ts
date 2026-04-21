@@ -101,6 +101,13 @@ const noUnify: readonly string[] = [
   // which conditional branches fire.
   "src/bun.js/bindings/ProcessBindingUV.cpp",
 
+  // Defines extern "C" replacements for platform symbols (strncasecmp,
+  // fstat64, environ, ...). On Windows an earlier sibling can leak
+  // `#define strncasecmp _strnicmp`, turning the definition here into a
+  // duplicate of the CRT's _strnicmp. Independent of the flags-override
+  // exclusion, which is linux-lto-only.
+  "src/bun.js/bindings/workaround-missing-symbols.cpp",
+
   // Platform cert loaders include OS crypto headers (<wincrypt.h>,
   // <Security/Security.h>) and deliberately avoid OpenSSL. wincrypt
   // macro-defines X509_NAME etc., poisoning BoringSSL headers in any

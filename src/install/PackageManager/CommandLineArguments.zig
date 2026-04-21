@@ -78,6 +78,7 @@ pub const update_params: []const ParamType = &(shared_params ++ [_]ParamType{
 
 pub const pm_params: []const ParamType = &(shared_params ++ [_]ParamType{
     clap.parseParam("-a, --all") catch unreachable,
+    clap.parseParam("--link                              Show only linked packages") catch unreachable,
     clap.parseParam("--json                              Output in JSON format") catch unreachable,
     // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
     clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
@@ -198,6 +199,7 @@ trusted: bool = false,
 no_summary: bool = false,
 latest: bool = false,
 interactive: bool = false,
+link: bool = false,
 json_output: bool = false,
 recursive: bool = false,
 filters: []const string = &.{},
@@ -798,6 +800,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.no_progress = args.flag("--no-progress");
     cli.dry_run = args.flag("--dry-run");
     cli.global = args.flag("--global");
+    cli.link = args.flag("--link");
     cli.force = args.flag("--force");
     cli.no_verify = args.flag("--no-verify");
     cli.no_cache = args.flag("--no-cache");

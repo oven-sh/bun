@@ -567,7 +567,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     timeTrace: partial.timeTrace ?? false,
     ci,
     buildkite,
-    webkit: partial.webkit ?? "prebuilt",
+    webkit: partial.webkit ?? "direct",
     webkitPath: resolveWebkitPath(partial, cwd, vendorDir),
     cwd,
     buildDir,

@@ -1,10 +1,9 @@
 /**
  * WebKit DirectBuild — bmalloc layer.
  *
- * Source comes from the same user-managed clone as `--webkit=local`
- * (vendor/WebKit/ or $BUN_WEBKIT_PATH). No auto-fetch — the clone is too
- * large for the build system to manage. WTF and JSC point at the same
- * path; ordering between layers is via `fetchDeps`.
+ * Source: vendor/WebKit/ (auto-fetched as a github-archive at the pinned
+ * WEBKIT_VERSION if missing) or $BUN_WEBKIT_PATH if set. WTF and JSC point
+ * at the same tree; ordering between layers is via `fetchDeps`.
  *
  * bmalloc: 170 sources (12 .cpp from bmalloc proper, 158 .c from libpas),
  * no codegen. The hand-written feature header (which WebKit's source
@@ -12,26 +11,56 @@
  * WTF/JSC add it to their include path.
  */
 
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { Config } from "../../config.ts";
 import type { Dependency, Source } from "../../source.ts";
 import { depBuildDir } from "../../source.ts";
-import { webkitSrcDir } from "../webkit.ts";
 import { commonDefines, layerData, webkitCFlags, webkitCxxFlags } from "./common.ts";
 import { cmakeconfigH } from "./feature-defines.ts";
 
+let fetched = false;
+
 /**
- * Shared `source` for all three direct layers. Mirrors local mode (user
- * clones; we don't fetch). The hint nudges toward $BUN_WEBKIT_PATH so
- * worktrees share one clone.
+ * Shared `source` for all three direct layers.
+ *
+ * Unlike other deps, the fetch runs SYNCHRONOUSLY at configure time (not
+ * as a ninja edge). WTF/JSC need the tree on disk during configure —
+ * forwardHeaders globs the source, unifiedBundles() exec's a script over
+ * Sources.txt — so the source must exist before resolveDep() reaches
+ * those layers. cmake's local-mode equivalent has the same constraint
+ * (it execute_process's the bundle script).
+ *
+ * If $BUN_WEBKIT_PATH points at a real checkout, that wins (lets you
+ * iterate on JSC without re-downloading). Otherwise the oven-sh/WebKit
+ * archive at WEBKIT_VERSION lands in vendor/WebKit/ (~80 MB extracted).
  */
 export function webkitDirectSource(cfg: Config): Source {
-  return {
-    kind: "local",
-    path: webkitSrcDir(cfg),
-    hint: process.env.BUN_WEBKIT_PATH
-      ? `$BUN_WEBKIT_PATH='${process.env.BUN_WEBKIT_PATH}' does not contain a WebKit checkout`
-      : "Clone oven-sh/WebKit and set $BUN_WEBKIT_PATH (or place at vendor/WebKit/)",
-  };
+  const path = cfg.webkitPath;
+  if (!fetched && !existsSync(join(path, "Source", "JavaScriptCore"))) {
+    // Custom $BUN_WEBKIT_PATH that doesn't exist → user error, don't
+    // silently download somewhere unexpected.
+    if (path !== resolve(cfg.vendorDir, "WebKit")) {
+      throw new Error(
+        `$BUN_WEBKIT_PATH='${path}' does not contain a WebKit checkout. ` +
+          `Unset it to auto-fetch into vendor/WebKit/, or clone oven-sh/WebKit there.`,
+      );
+    }
+    // GitHub's /archive/ endpoint 422s on repos this size, so shallow-clone
+    // instead. ~500 MB on disk, fetch-by-commit needs the longer dance
+    // (init → remote add → fetch <sha> → checkout).
+    const sha = cfg.webkitVersion;
+    process.stderr.write(`[webkit-direct] shallow-cloning oven-sh/WebKit@${sha.slice(0, 12)} → ${path}\n`);
+    process.stderr.write(`[webkit-direct] (~500 MB; set $BUN_WEBKIT_PATH to reuse an existing clone)\n`);
+    const git = (args: string[]) => execFileSync("git", args, { stdio: "inherit" });
+    git(["init", "--quiet", path]);
+    git(["-C", path, "remote", "add", "origin", "https://github.com/oven-sh/WebKit.git"]);
+    git(["-C", path, "fetch", "--depth=1", "--quiet", "origin", sha]);
+    git(["-C", path, "checkout", "--quiet", "FETCH_HEAD"]);
+  }
+  fetched = true;
+  return { kind: "local", path };
 }
 
 const layer = layerData.bmalloc;

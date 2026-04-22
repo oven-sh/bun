@@ -980,12 +980,22 @@ describe("stringWidth extended", () => {
     test("rope with ANSI sequence straddling fibers falls back correctly", () => {
       // ESC in one fiber, "[31m" in the next — the fast path can't track the
       // CSI state across the boundary, so it must resolve and re-scan.
+      // Lead with enough filler to clear minLengthForRopeWalk so the fast
+      // path is actually entered; ESC and "[31m" stay adjacent so the flat
+      // string still contains a valid CSI. With <16 leaves the avg-fiber-size
+      // bail can't fire, so the only way out of the iterator is the ESC bail.
       const esc = String.fromCharCode(0x1b);
-      const { rope, flat } = ropeAndFlat(() => ropeOf("hello", 0, esc, "[31m", "world", esc, "[0m"));
+      const { rope, flat } = ropeAndFlat(() =>
+        ropeOf(fill64, fill64, fill64, fill64, fill64, "hello", 0, esc, "[31m", "world", esc, "[0m"),
+      );
+      expect(rope.length).toBeGreaterThanOrEqual(296);
       const w = Bun.stringWidth(rope, { countAnsiEscapeCodes: false });
       expect(w).toBe(Bun.stringWidth(flat, { countAnsiEscapeCodes: false }));
-      // "hello" + "0" + "world" = 11
-      expect(w).toBe(11);
+      // 5×fill64 + "hello" + "0" + "world" = 320 + 11
+      expect(w).toBe(5 * 64 + 11);
+      // Entered the fast path (length gate cleared above), then bailed on ESC
+      // and resolved via view().
+      expect(isRope(rope)).toBe(false);
     });
 
     test("UTF-16 rope still produces correct width (resolves)", () => {

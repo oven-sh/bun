@@ -219,9 +219,14 @@ export function getStdinStream(
     $debug("internalRead();");
     try {
       $assert(reader);
-      const { value } = await reader.read();
+      const { value, done } = await reader.read();
 
-      if (value) {
+      // Guard byteLength: an empty Uint8Array is truthy, so `if (value)` would
+      // push a zero-length chunk → Readable calls _read again → reader.read()
+      // resolves with another empty chunk → microtask spin in
+      // JSC::MicrotaskQueue::drainImpl. Observed when stdin is a half-closed
+      // unix-domain socket after the parent crashes.
+      if (!done && value?.byteLength) {
         stream.push(value);
 
         if (shouldDisown) disown();

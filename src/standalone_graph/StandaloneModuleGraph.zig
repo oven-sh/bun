@@ -185,6 +185,14 @@ pub const StandaloneModuleGraph = struct {
         bytecode_origin_path: []const u8 = "",
         module_format: ModuleFormat = .none,
         side: FileSide = .server,
+        /// Path to this file extracted to a real on-disk location so native code
+        /// (dlopen, .node loader) can open it. Populated lazily by
+        /// `ModuleLoader.resolveEmbeddedFile`; shared across workers because the
+        /// `StandaloneModuleGraph` pointer is shared. `null` means not yet
+        /// extracted. Owned by `bun.default_allocator`; never freed — the
+        /// extracted file lives for the lifetime of the process and the cache
+        /// entry does too.
+        extracted_path: ?[:0]const u8 = null,
 
         pub fn appearsInEmbeddedFilesArray(this: *const File) bool {
             return this.side == .client or !this.loader.isJavaScriptLike();

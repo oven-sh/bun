@@ -30,29 +30,64 @@ pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {
     }
 }
 
+/// Guards the lazy init of `File.extracted_path` against concurrent workers.
+/// A single process-wide lock is fine: extraction is rare (once per embedded
+/// native file) and never on a hot path.
+var extracted_path_lock: bun.Mutex = .{};
+
 pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input_path: []const u8, extname: []const u8) ?[]const u8 {
     if (input_path.len == 0) return null;
-    var graph = vm.standalone_module_graph orelse return null;
+    const graph = vm.standalone_module_graph orelse return null;
     const file = graph.find(input_path) orelse return null;
 
     if (comptime Environment.isLinux) {
         // TODO: use /proc/fd/12346 instead! Avoid the copy!
     }
 
-    // atomically write to a tmpfile and then move it to the final destination
-    const tmpname_buf = bun.path_buffer_pool.get();
-    defer bun.path_buffer_pool.put(tmpname_buf);
-    const tmpfilename = bun.fs.FileSystem.tmpname(extname, tmpname_buf, bun.hash(file.name)) catch return null;
+    extracted_path_lock.lock();
+    defer extracted_path_lock.unlock();
+
+    // Fast path: already extracted (this process or a previous Worker).
+    if (file.extracted_path) |cached| {
+        @memcpy(path_buf[0..cached.len], cached);
+        return path_buf[0..cached.len];
+    }
+
+    // Deterministic filename from content hash so repeated calls (and
+    // repeated runs of the same compiled binary) reuse one file instead of
+    // leaking a fresh copy per call. See #29585.
+    const content_hash = bun.hash(file.contents);
+    var name_buf: [64]u8 = undefined;
+    const tmpfilename = std.fmt.bufPrintZ(&name_buf, ".bun-{x}.{s}", .{ content_hash, extname }) catch return null;
 
     const tmpdir: bun.FD = .fromStdDir(bun.fs.FileSystem.instance.tmpdir() catch return null);
 
-    // First we open the tmpfile, to avoid any other work in the event of failure.
-    const tmpfile = bun.Tmpfile.create(tmpdir, tmpfilename).unwrap() catch return null;
+    // If an existing file has the exact expected size, reuse it. Same content
+    // hash + same size is a strong signal it's our file from an earlier run.
+    // Concurrent workers that raced to this point will also land here.
+    if (bun.sys.fstatat(tmpdir, tmpfilename).unwrap() catch null) |st| {
+        if (st.size == @as(@TypeOf(st.size), @intCast(file.contents.len))) {
+            const result = bun.path.joinAbsStringBuf(bun.fs.FileSystem.RealFS.tmpdirPath(), path_buf, &[_]string{tmpfilename}, .auto);
+            cacheExtractedPath(file, path_buf, result.len);
+            return result;
+        }
+        // Wrong size — stale or corrupt. Fall through and overwrite via rename.
+    }
+
+    // Write to a per-process scratch name, then rename(2) into the
+    // content-hashed destination. rename is atomic on POSIX and on Windows
+    // with MoveFileEx — whichever worker wins has a valid file; the losers'
+    // renames are no-ops semantically (same content). This also avoids
+    // other processes ever seeing a partially-written file.
+    const scratch_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(scratch_buf);
+    const scratch_name = bun.fs.FileSystem.tmpname(extname, scratch_buf, content_hash) catch return null;
+
+    const tmpfile = bun.Tmpfile.create(tmpdir, scratch_name).unwrap() catch return null;
     defer tmpfile.fd.close();
 
     switch (bun.api.node.fs.NodeFS.writeFileWithPathBuffer(
-        tmpname_buf, // not used
-
+        scratch_buf, // not used
         .{
             .data = .{
                 .encoded_slice = ZigString.Slice.fromUTF8NeverFree(file.contents),
@@ -63,11 +98,29 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input
         },
     )) {
         .err => {
+            _ = bun.sys.unlinkat(tmpdir, scratch_name);
             return null;
         },
         else => {},
     }
-    return bun.path.joinAbsStringBuf(bun.fs.FileSystem.RealFS.tmpdirPath(), path_buf, &[_]string{tmpfilename}, .auto);
+
+    bun.sys.moveFileZWithHandle(tmpfile.fd, tmpdir, scratch_name, tmpdir, tmpfilename) catch {
+        _ = bun.sys.unlinkat(tmpdir, scratch_name);
+        return null;
+    };
+
+    const result = bun.path.joinAbsStringBuf(bun.fs.FileSystem.RealFS.tmpdirPath(), path_buf, &[_]string{tmpfilename}, .auto);
+    cacheExtractedPath(file, path_buf, result.len);
+    return result;
+}
+
+/// Stores a null-terminated copy of `path_buf[0..len]` on the File so future
+/// `resolveEmbeddedFile` calls skip the filesystem entirely. Caller must hold
+/// `extracted_path_lock`.
+fn cacheExtractedPath(file: *bun.StandaloneModuleGraph.File, path_buf: *bun.PathBuffer, len: usize) void {
+    const copy = bun.default_allocator.allocSentinel(u8, len, 0) catch return;
+    @memcpy(copy, path_buf[0..len]);
+    file.extracted_path = copy;
 }
 
 pub export fn Bun__getDefaultLoader(global: *JSGlobalObject, str: *const bun.String) api.Loader {

@@ -1232,9 +1232,9 @@ declare module "bun" {
    *       throw new Error("Something went wrong");
    *     }
    *   },
-   *   error(error) {
+   *   error(error, request) {
    *     // Custom error handler
-   *     console.error(error);
+   *     console.error(`Error handling ${request?.url}:`, error);
    *     return new Response(`Error: ${error.message}`, {
    *       status: 500
    *     });

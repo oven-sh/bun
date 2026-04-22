@@ -22,12 +22,15 @@ In development mode, Bun will surface errors in-browser with a built-in error pa
 
 To handle server-side errors, implement an `error` handler. This function should return a `Response` to serve to the client when an error occurs. This response will supersede Bun's default error page in `development` mode.
 
+The handler receives the thrown error and the `Request` that was being processed, so you can tailor the error response to the specific request (for example, setting CORS headers based on the request's origin, or including the request path in logs). The `request` argument may be `undefined` if the error occurred before a `Request` was created.
+
 ```ts
 Bun.serve({
   fetch(req) {
     throw new Error("woops!");
   },
-  error(error) {
+  error(error, request) {
+    console.error(`Error handling ${request?.url}:`, error);
     return new Response(`<pre>${error}\n${error.stack}</pre>`, {
       headers: {
         "Content-Type": "text/html",

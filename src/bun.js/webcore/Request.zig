@@ -261,7 +261,6 @@ pub fn toJSForBake(this: *Request, globalObject: *JSGlobalObject) bun.JSError!JS
     // Track the wrapper so error handlers (and other callers) can retrieve it
     // later via `tryJSValue`.
     this.#js_ref = .initWeak(js_value);
-    this.checkBodyStreamRef(globalObject);
     return js_value;
 }
 

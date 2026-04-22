@@ -9,6 +9,7 @@
  */
 
 import type { Config } from "../../config.ts";
+import { depBuildDir } from "../../source.ts";
 import { webkitSrcDir } from "../webkit.ts";
 import data from "./data.json" with { type: "json" };
 
@@ -43,12 +44,16 @@ export function expand(p: string, cfg: Config, buildDir: string): string {
  * compile WITHOUT U_DISABLE_RENAMING (gated to webkit==prebuilt in
  * flags.ts) so they reference the same versioned names.
  *
- * Linux: distro ICU; default search paths, link -licu{uc,i18n,data}.
+ * Linux: built from source by deps/icu.ts (CI's containers don't ship
+ * icu-dev, and a vendored build keeps the symbol-version suffix
+ * consistent with the headers).
+ *
  * Windows: built from source via build-icu.ps1 (TODO: hook up).
  */
 export function icuPrefix(cfg: Config): string | undefined {
-  if (!cfg.darwin) return undefined;
-  return cfg.arm64 ? "/opt/homebrew/opt/icu4c" : "/usr/local/opt/icu4c";
+  if (cfg.darwin) return cfg.arm64 ? "/opt/homebrew/opt/icu4c" : "/usr/local/opt/icu4c";
+  if (cfg.linux) return depBuildDir(cfg, "icu");
+  return undefined;
 }
 
 function icuInclude(cfg: Config): string[] {
@@ -64,7 +69,8 @@ function icuInclude(cfg: Config): string[] {
 export function icuLinkFlags(cfg: Config): string[] {
   if (cfg.windows) return []; // built from source via build-icu.ps1, libs come from there
   const p = icuPrefix(cfg);
-  return [...(p !== undefined ? [`-L${p}/lib`] : []), "-licuuc", "-licui18n", "-licudata"];
+  // Static-lib order: i18n → uc → data (i18n depends on uc depends on data).
+  return [...(p !== undefined ? [`-L${p}/lib`] : []), "-licui18n", "-licuuc", "-licudata"];
 }
 
 /**

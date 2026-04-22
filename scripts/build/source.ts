@@ -19,7 +19,7 @@
  * re-extraction after a failed patch doesn't re-download.
  */
 
-import { existsSync, globSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, globSync, mkdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { ar, cc, cxx, nasm } from "./compile.ts";
 import type { BuildType, Config } from "./config.ts";
@@ -164,10 +164,31 @@ export type BuildSpec =
   | NestedCmakeBuild
   | CargoBuild
   | DirectBuild
+  | ScriptBuild
   | {
       /** No build step — headers-only or prebuilt binaries. */
       kind: "none";
     };
+
+/**
+ * Run an arbitrary build command (autotools, make, a shell script).
+ * For deps whose build system isn't cmake/cargo and whose source list
+ * isn't tractable for DirectBuild — ICU's autotools build compiles host
+ * tools mid-run to generate the data library.
+ *
+ * The command runs once with srcDir as cwd; it should write the declared
+ * `outputs` (relative to buildDir/deps/<name>/). restat=1 so a no-op
+ * rerun doesn't cascade.
+ */
+export interface ScriptBuild {
+  kind: "script";
+  /** Command argv. Runs with srcDir as cwd. */
+  command: string[];
+  /** Environment overrides. */
+  env?: Record<string, string>;
+  /** Output files relative to buildDir/deps/<name>/. Become provides.libs. */
+  outputs: string[];
+}
 
 /** A source file with extra per-file flags (e.g. SIMD `-mavx2`). */
 export interface DirectSource {
@@ -917,8 +938,11 @@ export function resolveDep(
   //   ninja's .d files. Restat prunes downstream when nothing changed.
   const fetchDepStamps = (dep.fetchDeps ?? []).flatMap(d => {
     const r = resolved.get(d);
-    assert(r, `${dep.name}: fetchDeps references '${d}' but it wasn't resolved first — fix allDeps ordering`);
-    return r.outputs;
+    // Missing means either (a) wrong allDeps order or (b) the named dep
+    // is disabled on this target. Only (a) is a bug — distinguish by
+    // checking allDeps, but in practice (b) is the common case (e.g.
+    // wtf → icu on darwin where icu is linux-only). Skip silently.
+    return r?.outputs ?? [];
   });
 
   // ─── Step 2+3: build ───
@@ -941,6 +965,10 @@ export function resolveDep(
     outputs = result.libs;
   } else if (buildSpec.kind === "cargo") {
     const result = emitCargo(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp });
+    libs = result.libs;
+    outputs = result.libs;
+  } else if (buildSpec.kind === "script") {
+    const result = emitScript(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp });
     libs = result.libs;
     outputs = result.libs;
   } else if (buildSpec.kind === "direct") {
@@ -1025,6 +1053,12 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
       libs.push(...buildSpec.preBuild.outputs);
     }
     return libs;
+  }
+
+  // script: outputs declared on the spec, relative to buildDir.
+  if (buildSpec.kind === "script") {
+    const buildDir = depBuildDir(cfg, dep.name);
+    return buildSpec.outputs.map(o => resolve(buildDir, o));
   }
 
   // cargo: single lib in targetDir/<triple?>/<profile>/.
@@ -1439,6 +1473,45 @@ interface EmitCargoInput {
  * everything. Its own incremental build is reliable, so restat=1 on the
  * rule keeps our downstream no-ops fast.
  */
+/**
+ * Emit a single ninja edge that runs an arbitrary build command.
+ *
+ * The command is responsible for its own incrementality (autotools'
+ * make, etc.); restat=1 means a no-op rerun doesn't cascade. Uses the
+ * existing dep_prebuild rule (stream.ts wrapper with --cwd/--env).
+ */
+function emitScript(
+  n: Ninja,
+  cfg: Config,
+  name: string,
+  spec: ScriptBuild,
+  input: { srcDir: string; sourceStamp: string },
+): { libs: string[] } {
+  const { srcDir, sourceStamp } = input;
+  const buildDir = depBuildDir(cfg, name);
+  const hostWin = cfg.host.os === "windows";
+  mkdirSync(buildDir, { recursive: true });
+
+  const libs = spec.outputs.map(o => resolve(buildDir, o));
+  const env = Object.entries(spec.env ?? {})
+    .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
+    .join(" ");
+
+  n.build({
+    outputs: libs,
+    rule: "dep_prebuild",
+    inputs: [],
+    implicitInputs: [sourceStamp],
+    vars: {
+      name,
+      cwd: srcDir,
+      cmd: `${env} ${quoteArgs(spec.command, hostWin)}`,
+    },
+  });
+  n.phony(name, libs);
+  return { libs };
+}
+
 function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input: EmitCargoInput): { libs: string[] } {
   const hostWin = cfg.host.os === "windows";
   assert(cfg.cargo !== undefined, `dep "${name}" requires cargo but no rust toolchain was found`, {
@@ -1613,9 +1686,14 @@ function emitDirect(
   }
 
   // ─── Forwarding headers (optional) ───
-  // One copy edge per matched file. Glob is configure-time (the source
-  // tree must exist — local-mode WebKit guarantees that). Outputs are
-  // implicit inputs to every cc/cxx so depfile tracking is exact.
+  // Symlink at CONFIGURE time, not via ninja edges. The set is
+  // deterministic (source-tree glob) and ~1800 entries for JSC alone —
+  // emitting a `dep_fwd` edge per file floods the build log. The .o
+  // depfiles already track the underlying source headers (clang follows
+  // the symlink), so ninja edges add no incrementality.
+  //
+  // `from`-style entries (build-time targets, e.g. DerivedSources headers)
+  // still go through ninja since their inputs don't exist yet.
   for (const fh of spec.forwardHeaders ?? []) {
     const destDir = resolve(buildDir, fh.dest);
     mkdirSync(destDir, { recursive: true });
@@ -1625,16 +1703,27 @@ function emitDirect(
         : fh.from.map(s => s.replaceAll("$BUILD/", buildDir + "/").replaceAll("$SRC/", srcDir + "/"));
     for (const abs of srcs) {
       const out = resolve(destDir, basename(abs));
-      n.build({
-        outputs: [out],
-        rule: "dep_fwd",
-        inputs: [abs],
-        orderOnlyInputs: orderOnly,
-        // Absolute target — symlink resolution is relative-to-link,
-        // and Windows wants forward slashes in the #include.
-        vars: { target: slash(abs) },
-      });
-      generated.push(out);
+      if ("glob" in fh) {
+        // Configure-time symlink. Re-create each run so a moved/removed
+        // source header invalidates correctly.
+        try {
+          rmSync(out, { force: true });
+          symlinkSync(abs, out);
+        } catch (e) {
+          // Windows without Dev Mode: fall back to a one-line #include
+          // wrapper. #pragma once still dedupes via the included file.
+          writeIfChanged(out, `#include "${slash(abs)}"\n`);
+        }
+      } else {
+        n.build({
+          outputs: [out],
+          rule: "dep_fwd",
+          inputs: [abs],
+          orderOnlyInputs: orderOnly,
+          vars: { target: slash(abs) },
+        });
+        generated.push(out);
+      }
     }
   }
 

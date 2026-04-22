@@ -351,7 +351,7 @@ export const webkit: Dependency = {
 
     // Local cmake on posix: cmake's find_package(ICU) found the system
     // libs but doesn't propagate them to bun's link — declare them here.
-    const linkFlags = cfg.windows ? [] : ["-licuuc", "-licui18n", "-licudata"];
+    const linkFlags = cfg.windows ? [] : ["-licui18n", "-licuuc", "-licudata"];
 
     return { libs, includes, linkFlags };
   },

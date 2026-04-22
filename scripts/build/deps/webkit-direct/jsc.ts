@@ -24,7 +24,6 @@ import { webkitDirectSource } from "./bmalloc.ts";
 import {
   commonDefines,
   icuLinkFlags,
-  icuPrefix,
   layerData,
   lutTables,
   webkitCFlags,
@@ -300,20 +299,11 @@ function jscCodegen(cfg: Config): DirectCodegen[] {
 function llintCodegen(cfg: Config): DirectCodegen[] {
   const arch = cfg.arm64 ? "ARM64" : "X86_64";
   const fmt = cfg.darwin ? "MachO" : cfg.windows ? "PE" : "ELF";
-  // System ICU + pthread; the extractors barely use them but WTF symbols
-  // pull them in. asan flag goes on the link line so the runtime is found.
-  const icu = icuPrefix(cfg);
+  // ICU + pthread; the extractors barely use them but WTF symbols pull
+  // them in. asan flag goes on the link line so the runtime is found.
   const sysLibs = cfg.windows
-    ? ["icuuc.lib", "icuin.lib", "icudt.lib"]
-    : [
-        ...(icu !== undefined ? [`-L${icu}/lib`] : []),
-        "-licuuc",
-        "-licui18n",
-        "-licudata",
-        "-lpthread",
-        "-ldl",
-        ...(cfg.asan ? ["-fsanitize=address"] : []),
-      ];
+    ? ["icuin.lib", "icuuc.lib", "icudt.lib"]
+    : [...icuLinkFlags(cfg), "-lpthread", "-ldl", ...(cfg.asan ? ["-fsanitize=address"] : [])];
   const toolDeps = ["wtf", "bmalloc"];
 
   return [

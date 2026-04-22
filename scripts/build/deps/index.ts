@@ -26,6 +26,7 @@ import { nodejsHeaders } from "./nodejs-headers.ts";
 import { picohttpparser } from "./picohttpparser.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
+import { icu } from "./icu.ts";
 import { webkitBmalloc } from "./webkit-direct/bmalloc.ts";
 import { webkitJSC } from "./webkit-direct/jsc.ts";
 import { webkitWTF } from "./webkit-direct/wtf.ts";
@@ -66,6 +67,7 @@ export const allDeps: readonly Dependency[] = [
   // exclusive via `enabled: cfg => cfg.webkit === ...`. JSC → WTF → bmalloc
   // is the symbol-provider order.
   webkit,
+  icu,
   webkitBmalloc,
   webkitWTF,
   webkitJSC,

@@ -69,7 +69,9 @@ const WINDOWS = [
 export const webkitWTF: Dependency = {
   name: "wtf",
   enabled: cfg => cfg.webkit === "direct",
-  fetchDeps: ["bmalloc"],
+  // icu only resolves on linux (skipped silently elsewhere); ensures the
+  // headers exist before WTF compiles.
+  fetchDeps: ["bmalloc", "icu"],
 
   source: webkitDirectSource,
 

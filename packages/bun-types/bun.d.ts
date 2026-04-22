@@ -7161,8 +7161,11 @@ declare module "bun" {
 
     /**
      * Access extra file descriptors passed to the `stdio` option in the options object.
+     *
+     * Entries beyond index 2 are `number` for `"pipe"` slots and `null` otherwise
+     * (including when a raw file descriptor was supplied — that fd remains owned by the caller).
      */
-    readonly stdio: [null, null, null, ...number[]];
+    readonly stdio: [null, null, null, ...(number | null)[]];
 
     /**
      * This returns the same value as {@link Subprocess.stdout}

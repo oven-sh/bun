@@ -622,7 +622,10 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     expect(install.exitCode).toBe(0);
 
     // The member's patch was not applied (root has no patchedDependencies).
-    const run = await $`${bunExe()} run index.ts`.env(env).cwd(join(filedir, "packages", "lib")).throws(false);
+    const run = await $`${bunExe()} run index.ts`
+      .env(env)
+      .cwd(join(filedir, "packages", "lib"))
+      .throws(false);
     expect(run.stderr.toString()).not.toContain("error:");
     expect(run.stdout.toString()).not.toContain("HI");
     expect(run.exitCode).toBe(0);

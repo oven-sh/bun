@@ -422,6 +422,10 @@ pub fn linkedPackagePath(
     if (pkg_name.len == 0) return null;
     const dir_path = this.globalLinkDirPath();
     const joined = bun.path.joinAbsStringBufZ(dir_path, buf, &.{pkg_name}, .auto);
+    if (comptime bun.Environment.isWindows) {
+        const attrs = bun.sys.getFileAttributes(joined) orelse return null;
+        return if (attrs.is_directory or attrs.is_reparse_point) joined else null;
+    }
     return switch (bun.sys.lstat(joined)) {
         .result => |st| brk: {
             const mode: u32 = @intCast(st.mode);

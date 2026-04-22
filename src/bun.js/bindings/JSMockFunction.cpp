@@ -1391,8 +1391,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
     thisObject->tail.clear();
 
     MarkedArgumentBuffer args;
-    NakedPtr<Exception> exception;
-    JSValue returnValue = call(globalObject, callback, callData, jsUndefined(), args, exception);
+    NakedPtr<JSC::Exception> exception;
+    JSValue returnValue = JSC::call(globalObject, callback, callData, jsUndefined(), args, exception);
 
     if (auto promise = tryJSDynamicCast<JSC::JSPromise*>(returnValue)) {
         auto capability = JSC::JSPromise::createNewPromiseCapability(globalObject, globalObject->promiseConstructor());

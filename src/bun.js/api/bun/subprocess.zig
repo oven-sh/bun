@@ -28,7 +28,6 @@ observable_getters: std.enums.EnumSet(enum {
     stdin,
     stdout,
     stderr,
-    stdio,
 }) = .{},
 closed: std.enums.EnumSet(StdioKind) = .{},
 this_value: jsc.JSRef = jsc.JSRef.empty(),
@@ -58,7 +57,11 @@ pub const Flags = packed struct(u8) {
     finalized: bool = false,
     deref_on_stdin_destroyed: bool = false,
     is_stdin_a_readable_stream: bool = false,
-    _: u2 = 0,
+    /// Terminal was created inline by spawn (vs. an existing Terminal passed
+    /// by the caller). Owned terminals are closed when the subprocess exits
+    /// so the exit callback fires; borrowed terminals are left open for reuse.
+    owns_terminal: bool = false,
+    _: u1 = 0,
 };
 
 pub const SignalCode = bun.SignalCode;
@@ -474,21 +477,18 @@ pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue 
     try array.push(global, .null); // TODO: align this with options
     try array.push(global, .null); // TODO: align this with options
 
-    this.observable_getters.insert(.stdio);
-    var pipes = this.stdio_pipes.items;
-    if (this.ipc_data != null) {
-        try array.push(global, .null);
-        pipes = pipes[@min(1, pipes.len)..];
-    }
-
-    for (pipes) |item| {
+    for (this.stdio_pipes.items) |item| {
         if (Environment.isWindows) {
             if (item == .buffer) {
                 const fdno: usize = @intFromPtr(item.buffer.fd().cast());
                 try array.push(global, JSValue.jsNumber(fdno));
+            } else {
+                try array.push(global, .null);
             }
-        } else {
+        } else if (item.isValid()) {
             try array.push(global, JSValue.jsNumber(item.cast()));
+        } else {
+            try array.push(global, .null);
         }
     }
     return array;
@@ -585,6 +585,14 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     this.setEventLoopTimerRefd(false);
 
     jsc_vm.onSubprocessExit(process);
+
+    if (Environment.isWindows and this.flags.owns_terminal) {
+        // POSIX gets EOF on the master when the child (last slave_fd holder)
+        // exits. ConPTY's conhost stays alive after the child exits, so close
+        // the pseudoconsole now to deliver EOF and fire the terminal's exit
+        // callback. Leaves the Terminal itself open to match POSIX.
+        if (this.terminal) |terminal| terminal.closePseudoconsole();
+    }
 
     var stdin: ?*jsc.WebCore.FileSink = if (this.stdin == .pipe and this.flags.is_stdin_a_readable_stream) this.stdin.pipe else this.weak_file_sink_stdin_ptr;
     var existing_stdin_value = jsc.JSValue.zero;
@@ -736,22 +744,16 @@ pub fn finalizeStreams(this: *Subprocess) void {
     this.closeIO(.stdout);
     this.closeIO(.stderr);
 
-    close_stdio_pipes: {
-        if (!this.observable_getters.contains(.stdio)) {
-            break :close_stdio_pipes;
-        }
-
-        for (this.stdio_pipes.items) |item| {
-            if (Environment.isWindows) {
-                if (item == .buffer) {
-                    item.buffer.close(onPipeClose);
-                }
-            } else {
-                item.close();
+    for (this.stdio_pipes.items) |item| {
+        if (Environment.isWindows) {
+            if (item == .buffer) {
+                item.buffer.close(onPipeClose);
             }
+        } else if (item.isValid()) {
+            item.close();
         }
-        this.stdio_pipes.clearAndFree(bun.default_allocator);
     }
+    this.stdio_pipes.clearAndFree(bun.default_allocator);
 }
 
 fn deinit(this: *Subprocess) void {

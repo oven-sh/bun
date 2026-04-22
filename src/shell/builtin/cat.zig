@@ -91,7 +91,10 @@ pub fn next(this: *Cat) Yield {
                 return this.bltn().done(0);
             }
 
-            if (exec.reader) |r| r.deref();
+            if (exec.reader) |r| {
+                r.deref();
+                exec.reader = null;
+            }
 
             const arg = std.mem.span(exec.args[exec.idx]);
             exec.idx += 1;
@@ -108,6 +111,8 @@ pub fn next(this: *Cat) Yield {
             const reader = IOReader.init(fd, this.bltn().eventLoop());
             exec.chunks_done = 0;
             exec.chunks_queued = 0;
+            exec.in_done = false;
+            exec.out_done = false;
             exec.reader = reader;
             exec.reader.?.addReader(this);
             return exec.reader.?.start();
@@ -119,13 +124,10 @@ pub fn next(this: *Cat) Yield {
 
 pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?jsc.SystemError) Yield {
     debug("onIOWriterChunk(0x{x}, {s}, had_err={})", .{ @intFromPtr(this), @tagName(this.state), err != null });
-    const errno: ExitCode = if (err) |e| brk: {
-        defer e.deref();
-        break :brk @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
-    } else 0;
     // Writing to stdout errored, cancel everything and write error
     if (err) |e| {
         defer e.deref();
+        const errno: ExitCode = @intCast(@intFromEnum(e.getErrno()));
         switch (this.state) {
             .exec_stdin => {
                 this.state.exec_stdin.errno = errno;

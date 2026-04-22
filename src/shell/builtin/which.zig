@@ -17,7 +17,6 @@ state: union(enum) {
         },
     },
     done,
-    err: jsc.SystemError,
 } = .idle,
 
 pub fn start(this: *Which) Yield {
@@ -35,6 +34,7 @@ pub fn start(this: *Which) Yield {
         const path_buf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(path_buf);
         const PATH = this.bltn().parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
+        defer PATH.deref();
         var had_not_found = false;
         for (args) |arg_raw| {
             const arg = arg_raw[0..std.mem.len(arg_raw)];
@@ -73,6 +73,7 @@ pub fn next(this: *Which) Yield {
     const path_buf = bun.path_buffer_pool.get();
     defer bun.path_buffer_pool.put(path_buf);
     const PATH = this.bltn().parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
+    defer PATH.deref();
 
     const resolved = which(path_buf, PATH.slice(), this.bltn().parentCmd().base.shell.cwdZ(), arg) orelse {
         multiargs.had_not_found = true;
@@ -112,9 +113,9 @@ pub fn onIOWriterChunk(this: *Which, _: usize, e: ?jsc.SystemError) Yield {
             (this.state == .multi_args and this.state.multi_args.state == .waiting_write));
     }
 
-    if (e != null) {
-        this.state = .{ .err = e.? };
-        return this.bltn().done(e.?.getErrno());
+    if (e) |err| {
+        defer err.deref();
+        return this.bltn().done(err.getErrno());
     }
 
     if (this.state == .one_arg) {

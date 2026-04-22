@@ -115,7 +115,7 @@ JSValue HTTPParser::execute(JSGlobalObject* globalObject, const char* data, size
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    BunBuiltinNames builtinNames(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
 
     m_currentBufferLen = len;
     m_currentBufferData = data;

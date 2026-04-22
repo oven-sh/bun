@@ -5,7 +5,7 @@
 
 import type { Dependency, NestedCmakeBuild, Provides } from "../source.ts";
 
-const MIMALLOC_COMMIT = "a29368ef60d5c90bd760ff42a36ad4ad919a9ad7";
+const MIMALLOC_COMMIT = "57029fb1f193e633462e76af745599e1dbfd4b58";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -35,6 +35,13 @@ export const mimalloc: Dependency = {
       // enough without mimalloc traversing every live allocation.
       MI_SKIP_COLLECT_ON_EXIT: "ON",
 
+      // Go further: skip mi_process_done entirely. It exists for the
+      // dlopen/dlclose-a-static-mimalloc case (issue #281); Bun is a static
+      // exe that exits via _exit, so the OS reclaims everything. Running it
+      // tears down locks/TLS while other static destructors may still call
+      // free(). MI_SKIP_COLLECT_ON_EXIT only skips the heap walk inside it.
+      MI_NO_PROCESS_DETACH: "ON",
+
       // Disable Transparent Huge Pages. Measured impact:
       //   bun --eval 1:  THP off = 30MB peak,  THP on = 52MB peak
       //   http-hello.js: THP off = 52MB peak,  THP on = 74MB peak
@@ -52,13 +59,16 @@ export const mimalloc: Dependency = {
 
     // ─── Override behavior (global malloc replacement) ───
     // The decision matrix:
-    //   ASAN:  always OFF — ASAN interceptors must see the real malloc.
-    //   macOS: OFF — macOS's malloc zones are sufficient and overriding
-    //          causes issues with system frameworks (SecureTransport, etc.)
-    //          that have their own allocator expectations.
-    //   Linux: ON — this is the main win. All malloc/free goes through
-    //          mimalloc, including WebKit's bmalloc when it falls back
-    //          to system malloc.
+    //   ASAN:    always OFF — ASAN interceptors must see the real malloc.
+    //   macOS:   OFF — macOS's malloc zones are sufficient and overriding
+    //            causes issues with system frameworks (SecureTransport, etc.)
+    //            that have their own allocator expectations.
+    //   Linux:   ON — this is the main win. All malloc/free goes through
+    //            mimalloc, including WebKit's bmalloc when it falls back
+    //            to system malloc.
+    //   Windows: OFF — Bun links the static CRT and calls mi_* directly;
+    //            dev3's alloc-override.c emits _expand/_msize/free which
+    //            duplicate against libucrt(d) at link time.
     if (cfg.asan) {
       args.MI_TRACK_ASAN = "ON";
       args.MI_OVERRIDE = "OFF";
@@ -76,9 +86,10 @@ export const mimalloc: Dependency = {
       args.MI_OVERRIDE = "ON";
       args.MI_OSX_ZONE = "OFF";
       args.MI_OSX_INTERPOSE = "OFF";
+    } else if (cfg.windows) {
+      // mimalloc's *default* is ON, so this must be explicit.
+      args.MI_OVERRIDE = "OFF";
     }
-    // Windows: use mimalloc's defaults (no override; Windows has its own
-    // mechanism via the static CRT we link).
 
     if (cfg.debug) {
       // Heavy debug checks: guard bytes, freed-memory poisoning, double-free

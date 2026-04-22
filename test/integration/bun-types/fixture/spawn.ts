@@ -221,11 +221,8 @@ tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.
 
 {
   // invalid: lazy is not supported in spawnSync (object overload)
-  // @ts-expect-error lazy applies only to async spawn
-  Bun.spawnSync({
-    cmd: ["echo", "hello"],
-    stdout: "pipe",
-    stderr: "pipe",
-    lazy: true,
+  // prettier-ignore
+  // @ts-expect-error lazy applies to async spawn
+  Bun.spawnSync({ cmd: ["echo", "hello"], stdout: "pipe", stderr: "pipe", lazy: true,
   });
 }

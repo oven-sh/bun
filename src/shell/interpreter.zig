@@ -294,6 +294,58 @@ pub const Interpreter = struct {
     __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
     estimated_size_for_gc: usize = 0,
 
+    /// Side-channel for `try_()`: lets init/setup paths use `try`/`errdefer` for cleanup
+    /// while still surfacing the rich syscall error (errno+path+syscall) at the boundary.
+    last_err: ?Syscall.Error = null,
+
+    /// Unwrap a `Maybe(T)` into `error{Sys}!T`, stashing the syscall error on `last_err`.
+    /// Use with `try` so `errdefer` fires for resources acquired earlier in the function.
+    /// The boundary `catch`es and reads `takeErr()` to surface it.
+    ///
+    /// The stashed `Syscall.Error.path` is borrowed; the catch boundary must be inside the
+    /// scope that owns any path buffer passed to the failing syscall. In practice keep the
+    /// `try_` calls and the `catch` in the same function.
+    ///
+    /// Main-thread only — thread-pool task bodies must keep using `Maybe` directly.
+    pub fn try_(this: *ThisInterpreter, m: anytype) error{Sys}!@TypeOf(m).ReturnType {
+        return switch (m) {
+            .result => |r| r,
+            .err => |e| {
+                this.last_err = e;
+                return error.Sys;
+            },
+        };
+    }
+
+    pub fn takeErr(this: *ThisInterpreter) Syscall.Error {
+        const e = this.last_err.?;
+        this.last_err = null;
+        return e;
+    }
+
+    /// Standalone error sink for code paths where `*ThisInterpreter` isn't available yet
+    /// (e.g. `ThisInterpreter.init` before the struct is constructed). Same path-lifetime
+    /// caveat as `ThisInterpreter.try_`.
+    pub const Catch = struct {
+        err: ?Syscall.Error = null,
+
+        pub fn try_(this: *Catch, m: anytype) error{Sys}!@TypeOf(m).ReturnType {
+            return switch (m) {
+                .result => |r| r,
+                .err => |e| {
+                    this.err = e;
+                    return error.Sys;
+                },
+            };
+        }
+
+        pub fn take(this: *Catch) Syscall.Error {
+            const e = this.err.?;
+            this.err = null;
+            return e;
+        }
+    };
+
     // Here are all the state nodes:
     pub const State = @import("./states/Base.zig");
     pub const Script = @import("./states/Script.zig");
@@ -482,7 +534,10 @@ pub const Interpreter = struct {
             const duped = bun.handleOom(alloc.create(ShellExecEnv));
 
             const dupedfd = switch (Syscall.dup(this.cwd_fd)) {
-                .err => |err| return .{ .err = err },
+                .err => |err| {
+                    alloc.destroy(duped);
+                    return .{ .err = err };
+                },
                 .result => |fd| fd,
             };
 
@@ -731,6 +786,7 @@ pub const Interpreter = struct {
             &export_env,
         );
 
+        defer if (cwd) |*cc| cc.deref();
         const cwd_string: ?bun.jsc.ZigString.Slice = if (cwd) |c| brk: {
             break :brk c.toUTF8(bun.default_allocator);
         } else null;
@@ -748,8 +804,7 @@ pub const Interpreter = struct {
             .result => |i| i,
             .err => |*e| {
                 jsobjs.deinit();
-                if (export_env) |*ee| ee.deinit();
-                if (cwd) |*cc| cc.deref();
+                // export_env is consumed by init() on both success and failure.
                 shargs.deinit();
                 return try throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
             },
@@ -757,8 +812,7 @@ pub const Interpreter = struct {
 
         if (globalThis.hasException()) {
             jsobjs.deinit();
-            if (export_env) |*ee| ee.deinit();
-            if (cwd) |*cc| cc.deref();
+            // Note: export_env is now owned by interpreter.root_shell; finalize() will deinit it.
             // Note: Don't call shargs.deinit() here - interpreter.finalize() will do it
             // since interpreter.args points to shargs after init() succeeds.
             interpreter.finalize();
@@ -840,7 +894,43 @@ pub const Interpreter = struct {
         export_env_: ?EnvMap,
         cwd_: ?[]const u8,
     ) shell.Result(*ThisInterpreter) {
-        const export_env = brk: {
+        // Hoisted so the catch boundary's toShellSystemError() can read err.path
+        // (which borrows from this buffer) before it's returned to the pool.
+        const pathbuf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(pathbuf);
+
+        var sys: Catch = .{};
+        const interpreter = initImpl(&sys, ctx, event_loop, allocator, shargs, jsobjs, export_env_, pathbuf) catch {
+            return .{ .err = .{ .sys = sys.take().toShellSystemError() } };
+        };
+
+        if (cwd_) |c| {
+            if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| {
+                const sys_err = e.toShellSystemError();
+                interpreter.root_io.deref();
+                interpreter.root_shell.deinitImpl(false, true);
+                if (comptime bun.Environment.enableAllocScopes) interpreter.__alloc_scope.deinit();
+                allocator.destroy(interpreter);
+                return .{ .err = .{ .sys = sys_err } };
+            }
+        }
+
+        interpreter.root_shell.__alloc_scope = if (bun.Environment.enableAllocScopes) &interpreter.__alloc_scope else {};
+
+        return .{ .result = interpreter };
+    }
+
+    fn initImpl(
+        sys: *Catch,
+        ctx: bun.cli.Command.Context,
+        event_loop: jsc.EventLoopHandle,
+        allocator: Allocator,
+        shargs: *ShellArgs,
+        jsobjs: []JSValue,
+        export_env_: ?EnvMap,
+        pathbuf: *bun.PathBuffer,
+    ) error{Sys}!*ThisInterpreter {
+        var export_env = brk: {
             if (event_loop == .js) break :brk if (export_env_) |e| e else EnvMap.init(allocator);
 
             var env_loader: *bun.DotEnv.Loader = env_loader: {
@@ -864,38 +954,27 @@ pub const Interpreter = struct {
 
             break :brk export_env;
         };
+        // init() consumes export_env_ regardless of outcome; callers must not free it.
+        errdefer export_env.deinit();
 
-        // Avoid the large stack allocation on Windows.
-        const pathbuf = bun.path_buffer_pool.get();
-        defer bun.path_buffer_pool.put(pathbuf);
-        const cwd: [:0]const u8 = switch (Syscall.getcwdZ(pathbuf)) {
-            .result => |cwd| cwd,
-            .err => |err| {
-                return .{ .err = .{ .sys = err.toShellSystemError() } };
-            },
-        };
+        const cwd: [:0]const u8 = try sys.try_(Syscall.getcwdZ(pathbuf));
 
-        const cwd_fd = switch (Syscall.open(cwd, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
-            .result => |fd| fd,
-            .err => |err| {
-                return .{ .err = .{ .sys = err.toShellSystemError() } };
-            },
-        };
+        const cwd_fd = try sys.try_(Syscall.open(cwd, bun.O.DIRECTORY | bun.O.RDONLY, 0));
+        errdefer cwd_fd.close();
 
         var cwd_arr = bun.handleOom(std.array_list.Managed(u8).initCapacity(bun.default_allocator, cwd.len + 1));
         bun.handleOom(cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]));
+        errdefer cwd_arr.deinit();
 
         if (comptime bun.Environment.isDebug) {
             assert(cwd_arr.items[cwd_arr.items.len -| 1] == 0);
         }
 
         log("Duping stdin", .{});
-        const stdin_fd = switch (if (bun.Output.Source.Stdio.isStdinNull()) bun.sys.openNullDevice() else ShellSyscall.dup(shell.STDIN_FD)) {
-            .result => |fd| fd,
-            .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
-        };
+        const stdin_fd = try sys.try_(if (bun.Output.Source.Stdio.isStdinNull()) bun.sys.openNullDevice() else ShellSyscall.dup(shell.STDIN_FD));
 
         const stdin_reader = IOReader.init(stdin_fd, event_loop);
+        errdefer stdin_reader.deref();
 
         const interpreter = bun.handleOom(allocator.create(ThisInterpreter));
         interpreter.* = .{
@@ -935,13 +1014,7 @@ pub const Interpreter = struct {
             .globalThis = undefined,
         };
 
-        if (cwd_) |c| {
-            if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| return .{ .err = .{ .sys = e.toShellSystemError() } };
-        }
-
-        interpreter.root_shell.__alloc_scope = if (bun.Environment.enableAllocScopes) &interpreter.__alloc_scope else {};
-
-        return .{ .result = interpreter };
+        return interpreter;
     }
 
     pub fn initAndRunFromFile(ctx: bun.cli.Command.Context, mini: *jsc.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
@@ -1088,20 +1161,20 @@ pub const Interpreter = struct {
     }
 
     fn setupIOBeforeRun(this: *ThisInterpreter) Maybe(void) {
+        return if (this.setupIOBeforeRunImpl()) |_| .success else |_| .{ .err = this.takeErr() };
+    }
+
+    fn setupIOBeforeRunImpl(this: *ThisInterpreter) error{Sys}!void {
         if (!this.flags.quiet) {
             const event_loop = this.event_loop;
 
             log("Duping stdout", .{});
-            const stdout_fd = switch (if (bun.Output.Source.Stdio.isStdoutNull()) bun.sys.openNullDevice() else ShellSyscall.dup(.stdout())) {
-                .result => |fd| fd,
-                .err => |err| return .{ .err = err },
-            };
+            const stdout_fd = try this.try_(if (bun.Output.Source.Stdio.isStdoutNull()) bun.sys.openNullDevice() else ShellSyscall.dup(.stdout()));
+            errdefer stdout_fd.close();
 
             log("Duping stderr", .{});
-            const stderr_fd = switch (if (bun.Output.Source.Stdio.isStderrNull()) bun.sys.openNullDevice() else ShellSyscall.dup(.stderr())) {
-                .result => |fd| fd,
-                .err => |err| return .{ .err = err },
-            };
+            const stderr_fd = try this.try_(if (bun.Output.Source.Stdio.isStderrNull()) bun.sys.openNullDevice() else ShellSyscall.dup(.stderr()));
+            errdefer stderr_fd.close();
 
             const stdout_writer = IOWriter.init(
                 stdout_fd,
@@ -1133,8 +1206,6 @@ pub const Interpreter = struct {
                 this.root_io.stderr.fd.captured = &this.root_shell._buffered_stderr.owned;
             }
         }
-
-        return .success;
     }
 
     pub fn run(this: *ThisInterpreter) !Maybe(void) {
@@ -1279,6 +1350,10 @@ pub const Interpreter = struct {
 
         this.keep_alive.disable();
         this.args.deinit();
+        for (this.vm_args_utf8.items[0..]) |str| {
+            str.deinit();
+        }
+        this.vm_args_utf8.deinit();
         this.allocator.destroy(this);
     }
 
@@ -1305,6 +1380,7 @@ pub const Interpreter = struct {
     pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const value = callframe.argument(0);
         const str = try bun.String.fromJS(value, globalThis);
+        defer str.deref();
 
         const slice = str.toUTF8(bun.default_allocator);
         defer slice.deinit();
@@ -1336,9 +1412,9 @@ pub const Interpreter = struct {
         // PATH = "";
 
         while (object_iter.next()) |key| {
-            const keyslice = bun.handleOom(key.toOwnedSlice(bun.default_allocator));
             var value = object_iter.value;
             if (value.isUndefined()) continue;
+            const keyslice = bun.handleOom(key.toOwnedSlice(bun.default_allocator));
 
             const value_str = value.getZigString(globalThis);
             const slice = bun.handleOom(value_str.toOwnedSlice(bun.default_allocator));
@@ -1778,7 +1854,7 @@ pub const ShellSyscall = struct {
             };
 
             return switch (Syscall.stat(path)) {
-                .err => |e| .{ .err = e.clone(bun.default_allocator) },
+                .err => |e| .{ .err = e.withPath(path_) },
                 .result => |s| .{ .result = s },
             };
         }

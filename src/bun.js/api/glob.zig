@@ -6,7 +6,6 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
 pattern: []const u8,
-pattern_codepoints: ?std.array_list.Managed(u32) = null,
 has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
 const ScanOpts = struct {
@@ -262,8 +261,6 @@ fn makeGlobWalker(
 }
 
 pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*Glob {
-    const alloc = bun.default_allocator;
-
     const arguments_ = callframe.arguments_old(1);
     var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
@@ -275,23 +272,16 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         return globalThis.throw("Glob.constructor: first argument is not a string", .{});
     }
 
-    const pat_str: []u8 = @constCast((try pat_arg.toSliceClone(globalThis)).slice());
+    const pat_str: []const u8 = (try pat_arg.toSliceClone(globalThis)).slice();
 
-    const glob = bun.handleOom(alloc.create(Glob));
-    glob.* = .{ .pattern = pat_str };
-
-    return glob;
+    return bun.new(Glob, .{ .pattern = pat_str });
 }
 
 pub fn finalize(
     this: *Glob,
 ) callconv(.c) void {
-    const alloc = jsc.VirtualMachine.get().allocator;
-    alloc.free(this.pattern);
-    if (this.pattern_codepoints) |*codepoints| {
-        codepoints.deinit();
-    }
-    alloc.destroy(this);
+    bun.default_allocator.free(this.pattern);
+    bun.destroy(this);
 }
 
 pub fn hasPendingActivity(this: *Glob) callconv(.c) bool {
@@ -388,14 +378,6 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame
     return jsc.JSValue.jsBoolean(bun.glob.match(this.pattern, str.slice()).matches());
 }
 
-pub fn convertUtf8(codepoints: *std.array_list.Managed(u32), pattern: []const u8) !void {
-    const iter = CodepointIterator.init(pattern);
-    var cursor = CodepointIterator.Cursor{};
-    while (iter.next(&cursor)) {
-        try codepoints.append(@intCast(cursor.c));
-    }
-}
-
 const string = []const u8;
 
 const ResolvePath = @import("../../resolver/resolve_path.zig");
@@ -406,7 +388,6 @@ const Arena = std.heap.ArenaAllocator;
 
 const bun = @import("bun");
 const BunString = bun.String;
-const CodepointIterator = bun.strings.UnsignedCodepointIterator;
 const GlobWalker = bun.glob.BunGlobWalker;
 
 const jsc = bun.jsc;

@@ -481,9 +481,11 @@ pub const RuntimeTranspilerStore = struct {
                     dumpSourceString(vm, specifier, entry.output_code.byteSlice());
                 }
 
-                // TODO: module_info is only needed for standalone ESM bytecode.
-                // For now, skip it entirely in the runtime transpiler.
-                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized = null;
+                const module_info: ?*analyze_transpiled_module.ModuleInfoDeserialized =
+                    if (vm.useIsolationSourceProviderCache() and entry.metadata.module_type != .cjs and entry.esm_record.len > 0)
+                        analyze_transpiled_module.ModuleInfoDeserialized.createFromCachedRecord(entry.esm_record, bun.default_allocator)
+                    else
+                        null;
 
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
@@ -557,9 +559,11 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             const is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
-            // TODO: module_info is only needed for standalone ESM bytecode.
-            // For now, skip it entirely in the runtime transpiler.
-            const module_info: ?*analyze_transpiled_module.ModuleInfo = null;
+            const module_info: ?*analyze_transpiled_module.ModuleInfo =
+                if (vm.useIsolationSourceProviderCache() and !is_commonjs_module and loader.isJavaScriptLike())
+                    analyze_transpiled_module.ModuleInfo.create(bun.default_allocator, loader.isTypeScript()) catch null
+                else
+                    null;
 
             {
                 var mapper = vm.sourceMapHandler(&printer);

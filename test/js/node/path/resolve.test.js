@@ -94,11 +94,18 @@ describe("path.resolve", () => {
     // }
   });
 
-  test.skipIf(!isWindows)("UNC path before drive-relative path does not corrupt resolvedDevice", () => {
+  test("UNC path before drive-relative path does not corrupt resolvedDevice", () => {
     // Parsing the UNC root reused the buffer backing the already-resolved `C:`
-    // device, which sent the i=-1 iteration down a broken slow path that read
-    // uninitialized memory and panicked. The UNC arg is on a different device
-    // so it should be ignored entirely.
+    // device, which corrupted it from `C:` to `\\`. The UNC arg is on a
+    // different device so it should be ignored entirely.
+    //
+    // With the corruption, the `C:/base` arg is wrongly skipped because its
+    // device no longer matches, and the i=-1 cwd fallback produces garbage (on
+    // Windows it panicked reading uninitialized memory).
+    expect(path.win32.resolve("C:/base", "//server/share", "C:relative")).toBe("C:\\base\\relative");
+    expect(path.win32.resolve("C:/base", "//a/b", "//c/d", "C:foo")).toBe("C:\\base\\foo");
+    // These depend on cwd / =C: env on the right-hand side, so just check that
+    // the UNC arg is a no-op.
     expect(path.win32.resolve("//server/share", "C:relative")).toBe(path.win32.resolve("C:relative"));
     expect(path.win32.resolve("//server/share", "C:")).toBe(path.win32.resolve("C:"));
     expect(path.win32.resolve("//a/b", "//c/d", "C:foo")).toBe(path.win32.resolve("C:foo"));

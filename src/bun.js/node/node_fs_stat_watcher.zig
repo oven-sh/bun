@@ -232,6 +232,7 @@ pub const StatWatcher = struct {
     pub fn deinit(this: *StatWatcher) void {
         log("deinit {x}", .{@intFromPtr(this)});
 
+        if (this.ctx.test_isolation_enabled) this.ctx.rareData().removeStatWatcherForIsolation(this);
         this.persistent = false;
         if (comptime bun.Environment.allow_assert) {
             if (this.poll_ref.isActive()) {
@@ -548,6 +549,7 @@ pub const StatWatcher = struct {
         const js_this = StatWatcher.toJS(this, this.globalThis);
         this.this_value = .initStrong(js_this, this.globalThis);
         js.listenerSetCached(js_this, this.globalThis, args.listener);
+        if (vm.test_isolation_enabled) vm.rareData().addStatWatcherForIsolation(this);
         InitialStatTask.createAndSchedule(this);
 
         return this;

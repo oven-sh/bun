@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix } from "harness";
 
 describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
-  test("handles fragmented chunk terminators", async () => {
+  test.concurrent("handles fragmented chunk terminators", async () => {
     const script = `
       const server = Bun.serve({
         port: 0,
@@ -56,7 +56,7 @@ describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("rejects invalid terminator in fragmented reads", async () => {
+  test.concurrent("rejects invalid terminator in fragmented reads", async () => {
     const script = `
       const server = Bun.serve({
         port: 0,
@@ -109,7 +109,7 @@ describe.if(isPosix)("HTTP server handles chunked transfer encoding", () => {
 });
 
 describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
-  test("handles lone CR at end of chunk-size line across TCP segments", async () => {
+  test.concurrent("handles lone CR at end of chunk-size line across TCP segments", async () => {
     // Regression test: when a TCP segment boundary falls between the \r and \n
     // of a chunk-size line (e.g. "5\r" in one segment, "\n..." in the next),
     // the server must buffer and resume correctly instead of spinning.
@@ -171,7 +171,7 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("handles lone CR in chunk-size with extensions", async () => {
+  test.concurrent("handles lone CR in chunk-size with extensions", async () => {
     // Same split but with a chunk extension before the CRLF
     const script = `
       const server = Bun.serve({
@@ -229,7 +229,7 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("rejects bare LF in chunk-size position (invalid byte not stranded)", async () => {
+  test.concurrent("rejects bare LF in chunk-size position (invalid byte not stranded)", async () => {
     // A byte <=32 that isn't \r in chunk-size position must error immediately.
     // Previously this could strand the byte in HttpParser's fallback buffer,
     // corrupting header parsing on the next request.
@@ -284,10 +284,163 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
     expect(stdout).toContain("400");
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent("rejects Content-Length values that would alias chunked-encoding state bits", async () => {
+    // remainingStreamingBytes is shared between CL and chunked state. CL >= 2^59 would
+    // set STATE_HAS_HEXDIG and route a fixed-length body into the chunked decoder.
+    const script = `
+      let urls = [];
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) { urls.push(new URL(req.url).pathname); return new Response("OK"); },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      let received = "";
+      const socket = await Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        socket: {
+          data(s, d) { received += d.toString(); },
+          async open(s) {
+            s.write("GET /first HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 576460752303423488\\r\\n\\r\\n");
+            s.flush();
+            await Bun.sleep(20);
+            s.write("\\r\\n\\r\\nGET /smuggled HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+            s.flush();
+          },
+          error() {},
+          close() { console.log(JSON.stringify({ received, urls })); resolve(); },
+        },
+      });
+      await promise;
+      server.stop();
+    `;
+
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { received, urls } = JSON.parse(stdout);
+    expect(received).toContain("400");
+    expect(urls).not.toContain("/smuggled");
+    expect(exitCode).toBe(0);
+  });
+
+  describe.each([
+    ["bare CRLF", "\\r\\n"],
+    ["extension only", ";a=b\\r\\n"],
+  ])("rejects chunk-size with zero hex digits (%s)", (_, chunkSizeLine) => {
+    // RFC 7230 4.1: chunk-size = 1*HEXDIG. A chunk-size line with no hex digit
+    // must be rejected. Previously this parsed as size 0 (last-chunk), allowing a
+    // pipelined request after the bogus terminator to be smuggled.
+    test.concurrent("rejects and does not process trailing pipelined request", async () => {
+      const script = `
+        let requests = 0;
+        const server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            requests++;
+            try {
+              await req.text();
+              return new Response("OK " + req.url);
+            } catch {
+              return new Response("Body error", { status: 400 });
+            }
+          },
+        });
+        const { promise, resolve } = Promise.withResolvers();
+        let received = "";
+        const socket = await Bun.connect({
+          hostname: "localhost",
+          port: server.port,
+          socket: {
+            data(socket, data) { received += data.toString(); },
+            open(socket) {
+              socket.write(
+                "PUT /first HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n" +
+                "${chunkSizeLine}\\r\\n" +
+                "GET /smuggled HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"
+              );
+              socket.flush();
+            },
+            error() {},
+            close() { console.log(JSON.stringify({ received, requests })); resolve(); },
+          },
+        });
+        await promise;
+        server.stop();
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      const { received, requests } = JSON.parse(stdout);
+      expect(received).toContain("400");
+      expect(received).not.toContain("/smuggled");
+      // The smuggled request must never reach the handler.
+      expect(requests).toBeLessThanOrEqual(1);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("rejects when chunk-size line is split across packets", async () => {
+      const script = `
+        const server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            try { await req.text(); return new Response("OK"); }
+            catch { return new Response("Body error", { status: 400 }); }
+          },
+        });
+        const { promise, resolve } = Promise.withResolvers();
+        let received = "";
+        const socket = await Bun.connect({
+          hostname: "localhost",
+          port: server.port,
+          socket: {
+            data(socket, data) { received += data.toString(); },
+            async open(socket) {
+              socket.write("PUT / HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
+              socket.flush();
+              await Bun.sleep(20);
+              socket.write("${chunkSizeLine}");
+              socket.flush();
+              await Bun.sleep(20);
+              socket.write("\\r\\n");
+              socket.flush();
+            },
+            error() {},
+            close() { console.log(received); resolve(); },
+          },
+        });
+        await promise;
+        server.stop();
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toContain("400");
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 describe.if(isPosix)("HTTP server handles fragmented requests", () => {
-  test("handles requests with tiny send buffer (regression test)", async () => {
+  test.concurrent("handles requests with tiny send buffer (regression test)", async () => {
     using server = Bun.serve({
       hostname: "localhost",
 

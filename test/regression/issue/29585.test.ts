@@ -1,66 +1,35 @@
 // https://github.com/oven-sh/bun/issues/29585
 //
-// `bun build --compile` binaries that `dlopen()` an embedded .so/.dylib
-// used to extract a fresh copy to `/tmp` for every single call — no dedup,
-// no cleanup. On long-running servers that recreate Workers this filled
-// the disk. The extraction path is now content-hash based and lives in a
-// per-user 0700 subdirectory of the tmpdir, so repeated dlopens and
-// repeated Workers share a single extracted file.
-//
-// Checks both dimensions:
-//   1. one process calling dlopen() many times leaks O(1) files, not O(N)
-//   2. many Workers each calling dlopen() once also leak O(1) files
-//
-// Skipped on non-Linux: repro needs a platform-native shared library and
-// we can't rely on cc being present on CI darwin runners. The underlying
-// fix applies on all POSIX platforms.
+// `bun build --compile` binaries that `dlopen()` an embedded .so used to
+// extract a fresh copy to /tmp for every call, with no dedup or cleanup.
+// Extraction is now content-hashed in a per-user 0700 subdir of tmpdir,
+// so repeated dlopens and repeated Workers share one file.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { readdirSync, rmSync, statSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 const cc = isLinux ? (Bun.which("cc") ?? Bun.which("gcc")) : null;
 
-// Returns paths inside `tmpdir` whose contents match `bytes` exactly. Matching
-// by content (not by name pattern) keeps the check robust against any future
-// naming scheme — what we care about is "how many copies of this .so live
-// here", not what they're called.
-async function findExtractedCopies(tmpdir: string, bytes: Uint8Array): Promise<string[]> {
-  const expected = Buffer.from(bytes);
-  const matches: string[] = [];
-  // Walk one level deep because the compiled binary extracts into
-  // `{tmpdir}/bun-{uid}/` rather than `{tmpdir}/` directly.
-  const roots = [tmpdir];
+// Paths under `root` whose bytes match `expected`. Content-match (not name
+// pattern) keeps the check robust against any future naming scheme.
+async function findExtractedCopies(root: string, expected: Buffer): Promise<string[]> {
+  let entries: string[];
   try {
-    for (const name of readdirSync(tmpdir)) {
-      const p = join(tmpdir, name);
-      try {
-        if (statSync(p).isDirectory()) roots.push(p);
-      } catch {}
-    }
+    entries = readdirSync(root, { recursive: true }) as string[];
   } catch {
-    return matches;
+    return [];
   }
-  for (const root of roots) {
-    let entries: string[];
+  const matches: string[] = [];
+  for (const rel of entries) {
+    if (!rel.endsWith(".so")) continue;
+    const p = join(root, rel);
     try {
-      entries = readdirSync(root);
-    } catch {
-      continue;
-    }
-    for (const name of entries) {
-      if (!name.endsWith(".so")) continue;
-      const p = join(root, name);
-      try {
-        const f = Bun.file(p);
-        if (f.size !== bytes.length) continue;
-        const buf = Buffer.from(await f.arrayBuffer());
-        if (expected.equals(buf)) matches.push(p);
-      } catch {
-        // raced with deletion / permission — ignore
-      }
-    }
+      const f = Bun.file(p);
+      if (f.size !== expected.length) continue;
+      if (expected.equals(Buffer.from(await f.arrayBuffer()))) matches.push(p);
+    } catch {} // raced with deletion / permission — ignore
   }
   return matches;
 }
@@ -71,9 +40,8 @@ test.skipIf(!isLinux || !cc)(
     using dir = tempDir("29585", {
       "libhello.c": "int hello(void) { return 42; }\n",
 
-      // Exercise both axes in one compiled binary: the main thread dlopens N
-      // times, then spawns M workers that each dlopen once. Pre-fix this
-      // produced N+M files; post-fix it's 1.
+      // Main thread dlopens N times, then spawns M workers that each dlopen
+      // once. Pre-fix produced N+M /tmp files; post-fix it's 1.
       "app.ts": `
         import { dlopen, FFIType } from "bun:ffi";
         import lib from "./libhello.so" with { type: "file" };
@@ -104,22 +72,18 @@ test.skipIf(!isLinux || !cc)(
     });
     const cwd = String(dir);
 
-    // Build the .so. Don't assert stderr is empty — gcc/clang/ld can emit
-    // benign notes on success depending on toolchain version (see e.g.
-    // binutils .note.GNU-stack warnings).
+    // Build the .so. gcc/clang/ld can emit benign notes on success, so we only
+    // assert the exit code.
     {
       await using proc = Bun.spawn({
         cmd: [cc!, "-shared", "-fPIC", "-o", "libhello.so", "libhello.c"],
         cwd,
         env: bunEnv,
-        stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      if (stderr) console.log("cc stderr:", stderr);
-      expect(exitCode).toBe(0);
+      expect(await proc.exited).toBe(0);
     }
 
-    const libBytes = new Uint8Array(await Bun.file(join(cwd, "libhello.so")).arrayBuffer());
+    const libBytes = Buffer.from(await Bun.file(join(cwd, "libhello.so")).arrayBuffer());
 
     // Build the compiled binary.
     const out = join(cwd, "app");
@@ -136,49 +100,34 @@ test.skipIf(!isLinux || !cc)(
       expect(exitCode).toBe(0);
     }
 
-    // Isolate extraction into a fresh directory so concurrent runs (or
-    // unrelated processes that happen to have a byte-identical `.so` in
-    // `/tmp`) can't interfere with us. `BUN_TMPDIR` is checked first by
-    // `FileSystem.RealFS.tmpdirPath()` and `TMPDIR` is honored by everything
-    // else.
+    // Isolate extraction so concurrent runs (or anything else in /tmp) can't
+    // interfere. BUN_TMPDIR wins inside bun; TMPDIR covers libc.
     using extractRoot = tempDir("29585-extract", {});
     const extractDir = String(extractRoot);
     const runEnv = { ...bunEnv, BUN_TMPDIR: extractDir, TMPDIR: extractDir };
 
-    // First run: 5 main-thread dlopens + 5 workers (each dlopen once).
-    // Pre-fix: 10 /tmp files. Post-fix: 1.
-    {
+    const runOnce = async () => {
       await using proc = Bun.spawn({ cmd: [out], env: runEnv, stdout: "pipe", stderr: "pipe" });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(stdout.trim()).toBe("ok");
       expect(exitCode).toBe(0);
-    }
+    };
+
+    // First run: 5 main-thread dlopens + 5 workers. Pre-fix: 10 files. Post-fix: 1.
+    await runOnce();
     expect((await findExtractedCopies(extractDir, libBytes)).length).toBe(1);
 
-    // Second run of the same binary: still one file. Filename is content-hash
-    // based, so the existing extraction is reused across process restarts.
-    {
-      await using proc = Bun.spawn({ cmd: [out], env: runEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout.trim()).toBe("ok");
-      expect(exitCode).toBe(0);
-    }
+    // Second run of the same binary: still one file (content-hashed filename is
+    // reused across process restarts).
+    await runOnce();
     expect((await findExtractedCopies(extractDir, libBytes)).length).toBe(1);
 
     // Third run: simulate systemd-tmpfiles sweeping the extracted file. The
-    // next invocation must re-extract instead of handing a deleted path to
-    // dlopen (cache self-heal).
+    // cache must self-heal and re-extract instead of passing a deleted path.
     for (const p of await findExtractedCopies(extractDir, libBytes)) rmSync(p, { force: true });
-    {
-      await using proc = Bun.spawn({ cmd: [out], env: runEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout.trim()).toBe("ok");
-      expect(exitCode).toBe(0);
-    }
+    await runOnce();
     expect((await findExtractedCopies(extractDir, libBytes)).length).toBe(1);
   },
-  // `bun build --compile` on a debug+ASAN host takes ~25s; the default 5s
-  // timeout is not enough. Matches the pattern in 24742.test.ts, 29290.test.ts,
-  // and 25628.test.ts for compile-heavy regression tests.
+  // `bun build --compile` on debug+ASAN takes ~25s; default 5s isn't enough.
   180_000,
 );

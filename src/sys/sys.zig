@@ -929,7 +929,7 @@ pub fn mkdirA(file_path: []const u8, flags: mode_t) Maybe(void) {
         const wpath = bun.strings.toKernel32Path(wbuf, file_path);
 
         return Maybe(void).errnoSysP(
-            kernel32.CreateDirectoryW(wpath.ptr, null),
+            bun.windows.CreateDirectoryW(wpath.ptr, null),
             .mkdir,
             file_path,
         ) orelse .success;

@@ -151,22 +151,14 @@ fn openExtractDir() ?ExtractDir {
     var abs_buf: bun.PathBuffer = undefined;
     const abs_z = bun.path.joinAbsStringBufZ(tmpdir_path, &abs_buf, &[_]string{subdir_name}, .auto);
 
-    // mkdir(0o700) first.
-    if (comptime Environment.isPosix) {
-        switch (bun.sys.mkdirA(abs_z, 0o700)) {
-            .result => {},
-            .err => |err| switch (err.getErrno()) {
-                .EXIST => {}, // verify ownership + mode below
-                else => return null,
-            },
-        }
-    } else {
-        // Windows: CreateDirectory via std.fs; ACL inherits from parent, which
-        // for %TEMP% is already per-user on modern installations.
-        std.fs.makeDirAbsolute(abs_z) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
+    // mkdir(0o700) first. On Windows the mode arg is ignored by
+    // CreateDirectory — that's fine, %TEMP% inherits a per-user ACL there.
+    switch (bun.sys.mkdirA(abs_z, 0o700)) {
+        .result => {},
+        .err => |err| switch (err.getErrno()) {
+            .EXIST => {}, // verify ownership + mode below (POSIX only)
             else => return null,
-        };
+        },
     }
 
     // Open the subdir with NOFOLLOW so an attacker can't redirect us by

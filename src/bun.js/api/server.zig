@@ -2064,6 +2064,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
+            prepared.request_object.setJSRef(prepared.js_request);
 
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
@@ -2332,6 +2333,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             prepared.ctx.upgrade_context = upgrade_ctx; // set the upgrade context
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
+            prepared.request_object.setJSRef(prepared.js_request);
 
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }

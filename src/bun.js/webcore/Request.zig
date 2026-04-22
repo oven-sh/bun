@@ -235,14 +235,31 @@ pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
     return js_value;
 }
 
+/// Returns the existing JS wrapper for this Request if one has been created
+/// and is still alive. Returns null otherwise. Unlike `toJS`, this never
+/// creates a new wrapper.
+pub fn tryJSValue(this: *const Request) ?JSValue {
+    return this.#js_ref.tryGet();
+}
+
+/// Record an externally-created JS wrapper (for example, a `JSBunRequest`
+/// allocated in C++ for the `routes:` code path) so that `tryJSValue` can
+/// find it later. Paired with `Bun__ServerRouteList__callRoute`.
+pub fn setJSRef(this: *Request, js_value: JSValue) void {
+    bun.debugAssert(js_value != .zero);
+    this.#js_ref = .initWeak(js_value);
+}
+
 extern "C" fn Bun__JSRequest__createForBake(globalObject: *jsc.JSGlobalObject, requestPtr: *Request) callconv(jsc.conv) jsc.JSValue;
 pub fn toJSForBake(this: *Request, globalObject: *JSGlobalObject) bun.JSError!JSValue {
-    return bun.jsc.fromJSHostCall(
+    const js_value = try bun.jsc.fromJSHostCall(
         globalObject,
         @src(),
         Bun__JSRequest__createForBake,
         .{ globalObject, this },
     );
+    this.#js_ref = .initWeak(js_value);
+    return js_value;
 }
 
 extern "JS" fn Bun__getParamsIfBunRequest(this_value: JSValue) JSValue;

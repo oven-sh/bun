@@ -1600,7 +1600,9 @@ class OutputLineStream extends EventEmitter {
 
   waitForLine(
     regex: RegExp,
-    timeout = interactive ? interactive_timeout : (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1),
+    timeout = interactive
+      ? interactive_timeout
+      : (isWindows ? 5000 : 1000) * (isDebugBuild ? 3 : 1) * ASAN_TIMEOUT_MULTIPLIER,
   ): Promise<RegExpMatchArray> {
     if (this.panicked) {
       return new Promise((_, reject) => {

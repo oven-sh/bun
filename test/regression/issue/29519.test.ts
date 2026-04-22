@@ -10,8 +10,8 @@
 //
 // This test stresses the swap by running several isolated test files back to
 // back under BUN_JSC_collectContinuously=1 (a dedicated thread that calls
-// Heap::collectSync in a loop) with each file populating global `var`
-// declarations (segmented variable storage) and forcing full GCs. The fix
+// Heap::collectSync in a loop). Each file grows the global's segmented
+// variable storage via sloppy-mode indirect eval and forces full GCs. The fix
 // defers GC across the global swap and null-guards the unique_ptr visitor
 // overload; without it this spawn segfaults intermittently.
 
@@ -28,17 +28,23 @@ test.skipIf(isWindows)(
     // Six files is enough to recycle the Zig::GlobalObject IsoSubspace slot
     // a few times even without the collector thread getting lucky on timing.
     for (let i = 0; i < 6; i++) {
+      // Build a sloppy-mode global eval that declares eight vars per file.
+      // Indirect eval (`(0, eval)(…)`) runs in the global scope, so these go
+      // through CreateGlobalVarBinding → JSSegmentedVariableObject::addVariables
+      // and actually land in the global's m_variables SegmentedVector — the
+      // storage JSSegmentedVariableObject::visitChildrenImpl iterates under
+      // cellLock(). Top-level `var` in an ES module would instead live in
+      // JSModuleEnvironment and never touch the segmented table.
+      const names = ["a", "b", "c", "d", "e", "f", "g", "h"].map(n => `${n}${i}`);
+      const decls = names.map((n, j) => `var ${n} = ${i + j};`).join(" ");
+      const sum = names.map(n => `globalThis.${n}`).join(" + ");
       files[`gc-${i}.test.js`] = `
         import { test, expect } from "bun:test";
-        // Top-level 'var' declarations land in JSSegmentedVariableObject::m_variables
-        // on the global, which is exactly the storage the crashing visitChildren
-        // walks.
-        var a${i} = ${i}, b${i} = ${i + 1}, c${i} = ${i + 2}, d${i} = ${i + 3};
-        var e${i} = ${i + 4}, f${i} = ${i + 5}, g${i} = ${i + 6}, h${i} = ${i + 7};
+        (0, eval)(${JSON.stringify(decls)});
         test("gc pressure ${i}", () => {
           globalThis.__isolateLeak${i} = { data: new Array(4000).fill(${i}) };
           for (let j = 0; j < 4; j++) Bun.gc(true);
-          expect(a${i} + b${i} + c${i} + d${i} + e${i} + f${i} + g${i} + h${i}).toBe(${8 * i + 28});
+          expect(${sum}).toBe(${8 * i + 28});
         });
       `;
     }

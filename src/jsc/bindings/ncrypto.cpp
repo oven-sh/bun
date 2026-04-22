@@ -2469,10 +2469,10 @@ EVP_PKEY* ParseSpkiRsaLoose(const unsigned char* data, size_t len)
 }
 
 // Calls d2i_PUBKEY, falling back to ParseSpkiRsaLoose on BN_R_NEGATIVE_NUMBER.
-// The caller must clear the error queue before invoking so ERR_peek_error
-// returns the root cause of this particular parse.
 EVP_PKEY* D2iPubkeyWithLooseRsaFallback(const unsigned char* data, long len) // NOLINT(runtime/int)
 {
+    // Clear so ERR_peek_error below sees this call's root cause, not a stale one.
+    ERR_clear_error();
     const unsigned char* p = data;
     if (EVP_PKEY* key = d2i_PUBKEY(nullptr, &p, len)) return key;
     const uint32_t err = ERR_peek_error();
@@ -2486,6 +2486,11 @@ EVP_PKEY* D2iPubkeyWithLooseRsaFallback(const unsigned char* data, long len) // 
         }
     }
     return nullptr;
+}
+#else
+EVP_PKEY* D2iPubkeyWithLooseRsaFallback(const unsigned char* data, long len) // NOLINT(runtime/int)
+{
+    return d2i_PUBKEY(nullptr, &data, len);
 }
 #endif // OPENSSL_IS_BORINGSSL
 
@@ -2516,12 +2521,7 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKeyPEM(
             bp,
             "PUBLIC KEY",
             [](const unsigned char** p, long l) { // NOLINT(runtime/int)
-#ifdef OPENSSL_IS_BORINGSSL
-                ERR_clear_error();
                 return D2iPubkeyWithLooseRsaFallback(*p, l);
-#else
-                return d2i_PUBKEY(nullptr, p, l);
-#endif
             })) {
         return ret;
     }
@@ -2570,17 +2570,8 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePublicKey(
         return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
     }
 
-    if (config.type == PKEncodingType::SPKI) {
-        // Clear the per-thread error queue so ERR_peek_error() in the
-        // BoringSSL fallback sees this call's root cause, not a stale one.
-        ERR_clear_error();
-#ifdef OPENSSL_IS_BORINGSSL
-        if ((key = D2iPubkeyWithLooseRsaFallback(buffer.data, buffer.len))) {
-#else
-        if ((key = d2i_PUBKEY(nullptr, &start, buffer.len))) {
-#endif
-            return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
-        }
+    if (config.type == PKEncodingType::SPKI && (key = D2iPubkeyWithLooseRsaFallback(buffer.data, buffer.len))) {
+        return EVPKeyPointer::ParseKeyResult(EVPKeyPointer(key));
     }
 
     return ParseKeyResult(PKParseError::FAILED);

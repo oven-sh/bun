@@ -1753,13 +1753,10 @@ test("ECDSA should work", async () => {
 // modulus starts with 0xDF — intentionally tiny, which is why such minimal
 // DER encodings show up in test fixtures.
 describe("GH-29558: RSA SPKI modulus without 0x00 sign byte", () => {
-  // Minimal DER RSA SubjectPublicKeyInfo whose modulus omits the leading
-  // 0x00 sign byte (first modulus byte is 0xDF).
   const SPKI_DER_BASE64 = "MDswDQYJKoZIhvcNAQEBBQADKgAwJwIg3wUvyMOfq7G6dT5bIM6keoShd9YGwP7PIc2Tfa8Q99ECAwEAAQ==";
+  const der = Buffer.from(SPKI_DER_BASE64, "base64");
 
   test("createPublicKey accepts RSA SPKI DER whose modulus lacks the 0x00 sign byte", () => {
-    const der = Buffer.from(SPKI_DER_BASE64, "base64");
-
     const key = createPublicKey({ key: der, format: "der", type: "spki" });
 
     expect(key.type).toBe("public");
@@ -1771,9 +1768,7 @@ describe("GH-29558: RSA SPKI modulus without 0x00 sign byte", () => {
   });
 
   test("createPublicKey accepts the same SPKI wrapped in a PEM block", () => {
-    const der = Buffer.from(SPKI_DER_BASE64, "base64");
-    const pem = `-----BEGIN PUBLIC KEY-----\n${der.toString("base64")}\n-----END PUBLIC KEY-----\n`;
-
+    const pem = `-----BEGIN PUBLIC KEY-----\n${SPKI_DER_BASE64}\n-----END PUBLIC KEY-----\n`;
     const key = createPublicKey(pem);
 
     expect(key.type).toBe("public");
@@ -1785,7 +1780,6 @@ describe("GH-29558: RSA SPKI modulus without 0x00 sign byte", () => {
   });
 
   test("re-exported SPKI is the canonical form with a leading 0x00 sign byte", () => {
-    const der = Buffer.from(SPKI_DER_BASE64, "base64");
     const key = createPublicKey({ key: der, format: "der", type: "spki" });
 
     // Re-exporting via BoringSSL's marshal code inserts the leading zero, so

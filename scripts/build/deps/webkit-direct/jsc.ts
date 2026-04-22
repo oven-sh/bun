@@ -21,7 +21,7 @@ import type { Dependency, DirectCodegen } from "../../source.ts";
 import { depBuildDir } from "../../source.ts";
 import { webkitSrcDir } from "../webkit.ts";
 import { webkitDirectSource } from "./bmalloc.ts";
-import { commonDefines, icuPrefix, layerData, lutTables, webkitCFlags, webkitCxxFlags } from "./common.ts";
+import { commonDefines, layerData, lutTables, webkitCFlags, webkitCxxFlags } from "./common.ts";
 
 const layer = layerData.JavaScriptCore;
 const SRC_INCLUDES = layer.includes.filter(i => i.startsWith("$SRC/")).map(i => i.replace("$SRC/", ""));
@@ -294,18 +294,10 @@ function llintCodegen(cfg: Config): DirectCodegen[] {
   const fmt = cfg.darwin ? "MachO" : cfg.windows ? "PE" : "ELF";
   // System ICU + pthread; the extractors barely use them but WTF symbols
   // pull them in. asan flag goes on the link line so the runtime is found.
-  const icu = icuPrefix(cfg);
+  const icu = cfg.darwin ? ["-licucore"] : ["-licuuc", "-licui18n", "-licudata"];
   const sysLibs = cfg.windows
     ? ["icuuc.lib", "icuin.lib", "icudt.lib"]
-    : [
-        ...(icu !== undefined ? [`-L${icu}/lib`] : []),
-        "-licuuc",
-        "-licui18n",
-        "-licudata",
-        "-lpthread",
-        "-ldl",
-        ...(cfg.asan ? ["-fsanitize=address"] : []),
-      ];
+    : [...icu, "-lpthread", "-ldl", ...(cfg.asan ? ["-fsanitize=address"] : [])];
   const toolDeps = ["webkit-wtf", "webkit-bmalloc"];
 
   return [
@@ -480,6 +472,8 @@ export const webkitJSC: Dependency = {
         `${jscBuild}/DerivedSources`,
         // <wtf/X.h> — Source/WTF mirrors it 1:1, no staging needed.
         "Source/WTF",
+        // Darwin: WebKit's bundled ICU headers (see icuInclude in common.ts).
+        ...(cfg.darwin ? ["Source/WTF/icu"] : []),
       ],
     };
   },

@@ -35,15 +35,23 @@ export function expand(p: string, cfg: Config, buildDir: string): string {
 }
 
 /**
- * ICU install prefix. Linux uses the distro package (default search paths
- * suffice). Darwin needs brew's icu4c — Apple ships libicucore.dylib but
- * not the headers, and the version skew between Apple's lib and brew's
- * headers makes mixing them unsafe, so use brew for both -I and -L.
- * Windows builds ICU from source via build-icu.ps1 (TODO: hook up).
+ * ICU header search path.
+ *
+ * Darwin: WebKit ships its own headers at Source/WTF/icu/ tuned for Apple's
+ * libicucore.dylib (Platform.h sets U_DISABLE_RENAMING under
+ * PLATFORM(COCOA), so symbols are unversioned to match icucore). Apple
+ * doesn't ship the headers, so this bundled copy is the only source that
+ * agrees with the lib.
+ *
+ * Linux: distro ICU; headers in default search paths, link
+ * -licu{uc,i18n,data}. PLATFORM(COCOA) is false so renaming stays on and
+ * symbols are versioned to match.
+ *
+ * Windows: built from source via build-icu.ps1 (TODO: hook up).
  */
-export function icuPrefix(cfg: Config): string | undefined {
-  if (!cfg.darwin) return undefined;
-  return cfg.arm64 ? "/opt/homebrew/opt/icu4c" : "/usr/local/opt/icu4c";
+export function icuInclude(cfg: Config): string[] {
+  if (cfg.darwin) return [`-I${cfg.webkitPath}/Source/WTF/icu`];
+  return [];
 }
 
 /**
@@ -59,9 +67,7 @@ export function webkitCFlags(cfg: Config): string[] {
     "-Wno-tautological-compare",
   ];
   if (!cfg.windows) flags.push("-DU_STATIC_IMPLEMENTATION=1");
-  const icu = icuPrefix(cfg);
-  if (icu !== undefined) flags.push(`-I${icu}/include`);
-  return flags;
+  return [...flags, ...icuInclude(cfg)];
 }
 
 /** C++-only flags. Applied via DirectBuild.cxxflags so libpas .c stays C. */

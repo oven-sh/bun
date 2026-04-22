@@ -1971,4 +1971,161 @@ describe("bun link integration", () => {
     void producer;
     void stdout;
   });
+
+  test("isolated: catalog-resolved dep honors active bun link", async () => {
+    const env = hermeticEnv();
+    using producer = await setupLinkedNoDeps(env);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "isolated-link-consumer-b",
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: { "no-deps": "1.0.0" },
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "app", "package.json"),
+        JSON.stringify({
+          name: "app",
+          dependencies: { "no-deps": "catalog:" },
+        }),
+      ),
+    ]);
+
+    await using installProc = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    expect(existsSync(join(bodyDir, "marker.js"))).toBe(true);
+    expect(await file(join(bodyDir, "marker.js")).text()).toContain("FROM_PRODUCER_MARKER");
+    void producer;
+    void stdout;
+  });
+
+  test("isolated: producer rebuild propagates on reinstall", async () => {
+    const env = hermeticEnv();
+    using producer = await setupLinkedNoDeps(env);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-c",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    const runInstall = async () => {
+      await using p = spawn({
+        cmd: [bunExe(), "install", "--backend=hardlink"],
+        cwd: packageDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    };
+
+    await runInstall();
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    expect(await file(join(bodyDir, "marker.js")).text()).toContain("FROM_PRODUCER_MARKER");
+
+    // Mutate producer; reinstall should see fresh content, not the
+    // content-addressed snapshot from the first install.
+    await write(join(String(producer), "marker.js"), "module.exports = 'FROM_PRODUCER_REBUILT';");
+
+    await runInstall();
+    expect(await file(join(bodyDir, "marker.js")).text()).toContain("FROM_PRODUCER_REBUILT");
+  });
+
+  test("isolated: no link registered → body sourced from registry tarball", async () => {
+    // Hermetic env with no `bun link` registered — the registry's
+    // `no-deps@1.0.0` tarball has no `marker.js`, so its absence in the body
+    // confirms the producer path was never consulted.
+    const env = hermeticEnv();
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-e",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await using p = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    expect(existsSync(join(bodyDir, "package.json"))).toBe(true);
+    expect(existsSync(join(bodyDir, "marker.js"))).toBe(false);
+  });
+
+  test("isolated: --backend=symlink bypasses the bun link override", async () => {
+    const env = hermeticEnv();
+    using producer = await setupLinkedNoDeps(env);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-f",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await using p = spawn({
+      cmd: [bunExe(), "install", "--backend=symlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    // With symlink backend the user opted into shared-writable semantics; our
+    // override deliberately does not fire, so the body must be the registry
+    // tarball (no marker.js).
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    expect(existsSync(join(bodyDir, "marker.js"))).toBe(false);
+    void producer;
+  });
 });

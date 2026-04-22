@@ -522,6 +522,19 @@ pub const Installer = struct {
                                         defer staging.deinit();
                                         installer.appendGlobalStoreEntryPath(&staging, this.entry_id, .staging);
                                         FD.cwd().deleteTree(staging.slice()) catch {};
+
+                                        // Producer content is mutable (the live `bun
+                                        // link` symlink points at an editor-owned
+                                        // dir), so the content-addressed assumption
+                                        // of the global store doesn't hold: the
+                                        // previous `<final>` is *not* byte-equivalent
+                                        // to the producer's current tree. Commit's
+                                        // collision-is-success path would otherwise
+                                        // keep serving the stale entry on reinstall.
+                                        var final: bun.AbsPath(.{ .sep = .auto }) = .init();
+                                        defer final.deinit();
+                                        installer.appendGlobalStoreEntryPath(&final, this.entry_id, .final);
+                                        FD.cwd().deleteTree(final.slice()) catch {};
                                     }
 
                                     backend: switch (PackageInstall.Method.hardlink) {

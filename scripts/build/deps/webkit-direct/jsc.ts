@@ -21,7 +21,15 @@ import type { Dependency, DirectCodegen } from "../../source.ts";
 import { depBuildDir } from "../../source.ts";
 import { webkitSrcDir } from "../webkit.ts";
 import { webkitDirectSource } from "./bmalloc.ts";
-import { commonDefines, icuLinkFlags, icuPrefix, layerData, lutTables, webkitCFlags, webkitCxxFlags } from "./common.ts";
+import {
+  commonDefines,
+  icuLinkFlags,
+  icuPrefix,
+  layerData,
+  lutTables,
+  webkitCFlags,
+  webkitCxxFlags,
+} from "./common.ts";
 
 const layer = layerData.JavaScriptCore;
 const SRC_INCLUDES = layer.includes.filter(i => i.startsWith("$SRC/")).map(i => i.replace("$SRC/", ""));

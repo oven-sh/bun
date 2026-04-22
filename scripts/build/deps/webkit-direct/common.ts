@@ -64,10 +64,7 @@ function icuInclude(cfg: Config): string[] {
 export function icuLinkFlags(cfg: Config): string[] {
   if (cfg.windows) return []; // built from source via build-icu.ps1, libs come from there
   const p = icuPrefix(cfg);
-  return [
-    ...(p !== undefined ? [`-L${p}/lib`] : []),
-    "-licuuc", "-licui18n", "-licudata",
-  ];
+  return [...(p !== undefined ? [`-L${p}/lib`] : []), "-licuuc", "-licui18n", "-licudata"];
 }
 
 /**

@@ -72,9 +72,22 @@ const ENABLE_ALWAYS = def({
   USE_JPEGXL: 1,
   USE_LCMS: 1,
   USE_WOFF2: 1,
-  BUSE_TZONE: 0,
   ENABLE_WKC_INDEXEDDB: 0,
+  // bmalloc backend selection — both must be 0 for bun (bmalloc + libpas).
+  // PlatformUse.h defaults USE_TZONE_MALLOC to 1 on darwin if unset, which
+  // then trips TZoneMalloc.h's "enabled in WTF, not in bmalloc" check.
+  BUSE_TZONE: 0,
+  USE_TZONE_MALLOC: 0,
   USE_SYSTEM_MALLOC: 0,
+  USE_MIMALLOC: 0,
+  // Backends/options cmake explicitly emits as 0 — most are WebCore-only,
+  // listed so PlatformUse.h fallbacks don't surprise.
+  USE_64KB_PAGE_BLOCK: 0,
+  USE_LIBBACKTRACE: 0,
+  USE_PGO_PROFILE: 0,
+  USE_SKIA: 0,
+  USE_SKIA_ENCODERS: 0,
+  USE_SYSTEM_UNIFDEF: 0,
 });
 
 // Explicit-0 ENABLE_* — PlatformEnable*.h supplies fallback defaults for

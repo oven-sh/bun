@@ -206,7 +206,7 @@ pub fn crashHandler(
     if (bun.Environment.isDebug)
         bun.Output.disableScopedDebugWriter();
 
-    var trace_str_buf = bun.BoundedArray(u8, 1024){};
+    var trace_str_buf = bun.BoundedArray(u8, 4096){};
 
     nosuspend switch (panic_stage) {
         0 => {
@@ -364,6 +364,17 @@ pub fn crashHandler(
                             trace_buf.index = trace_buf_libc.index;
                         }
                     }
+
+                    // Prepend the faulting instruction as frame 0. The unwinder
+                    // above walks from inside the signal handler, so without
+                    // this the trace begins at the libc trampoline and the
+                    // actual crash site is missing from the report.
+                    if (fault_registers) |fr| if (fr.pc != 0) {
+                        const n = @min(trace_buf.index, addr_buf.len - 1);
+                        std.mem.copyBackwards(usize, addr_buf[1 .. n + 1], addr_buf[0..n]);
+                        addr_buf[0] = fr.pc;
+                        trace_buf.index = n + 1;
+                    };
                     break :blk &trace_buf;
                 };
 
@@ -372,10 +383,15 @@ pub fn crashHandler(
 
                     dumpStackTrace(trace.*, .{});
 
+                    if (fault_registers) |fr| {
+                        writer.print("{f}", .{fr}) catch std.posix.abort();
+                    }
+
                     trace_str_buf.writer().print("{f}", .{TraceString{
                         .trace = trace,
                         .reason = reason,
                         .action = .view_trace,
+                        .fault_regs = fault_registers,
                     }}) catch std.posix.abort();
                 } else {
                     if (!has_printed_message) {
@@ -441,6 +457,7 @@ pub fn crashHandler(
                         .trace = trace,
                         .reason = reason,
                         .action = .open_issue,
+                        .fault_regs = fault_registers,
                     }}) catch std.posix.abort();
 
                     writer.writeAll(trace_str_buf.slice()) catch std.posix.abort();
@@ -852,6 +869,143 @@ const arch_display_string = if (bun.Environment.isAarch64)
 else
     "x64";
 
+/// CPU register state captured at the moment a fatal signal/exception was
+/// raised. The kernel passes this to the signal handler via `ucontext_t` (or
+/// `EXCEPTION_POINTERS.ContextRecord` on Windows), but historically Bun
+/// discarded it. Recording it gives us:
+///
+/// - The exact faulting instruction (`pc`). Without this, frame 0 of the
+///   captured stack trace is the libc signal trampoline (`_sigtramp` /
+///   `__restore_rt`), so the remapped trace points one or more frames above
+///   the real crash site.
+/// - General-purpose register values, which often hold `this`, iterators,
+///   and the dereferenced pointer at the moment of a null/stale-pointer
+///   crash.
+///
+/// `pc` is prepended to the captured stack trace as frame 0; the full
+/// register set is appended to the encoded trace string for the bun.report
+/// remapper to display.
+pub const FaultRegisters = struct {
+    pc: usize,
+    gp: [gp_count]usize,
+
+    pub const gp_count = gp_names.len;
+
+    pub const gp_names: []const [:0]const u8 = if (bun.Environment.isAarch64)
+        // x0-x30 (x29=fp, x30=lr) then sp.
+        &.{
+            "x0",  "x1",  "x2",  "x3",  "x4",  "x5",  "x6",  "x7",
+            "x8",  "x9",  "x10", "x11", "x12", "x13", "x14", "x15",
+            "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23",
+            "x24", "x25", "x26", "x27", "x28", "fp",  "lr",  "sp",
+        }
+    else
+        // x86_64: 16 GPRs then rip is stored separately as `pc`.
+        &.{
+            "rax", "rbx", "rcx", "rdx", "rdi", "rsi", "rbp", "rsp",
+            "r8",  "r9",  "r10", "r11", "r12", "r13", "r14", "r15",
+        };
+
+    /// Extract from the third argument of a `SA_SIGINFO` POSIX signal handler.
+    /// Returns null if the kernel passed a null context (defensive — should
+    /// not happen in practice when `SA_SIGINFO` is set).
+    pub fn fromPosixContext(ctx_ptr: ?*const anyopaque) ?FaultRegisters {
+        if (comptime !std.debug.have_ucontext) return null;
+        const raw = ctx_ptr orelse return null;
+
+        // Some kernels don't align `ctx_ptr` properly; load via align(1).
+        const unaligned: *align(1) const std.posix.ucontext_t = @ptrCast(raw);
+        var ctx: std.posix.ucontext_t = unaligned.*;
+        if (comptime bun.Environment.isMac and bun.Environment.isAarch64) {
+            // Darwin/arm64 kernel bug: `__mcontext_data` is written immediately
+            // after `mcontext` instead of after the 8 bytes of padding the C
+            // struct layout expects. Re-read it from the unpadded layout so
+            // that `relocateContext` (which sets `mcontext = &__mcontext_data`)
+            // points at valid data. See std.debug.dumpSegfaultInfoPosix.
+            ctx.__mcontext_data = @as(*align(1) const extern struct {
+                onstack: c_int,
+                sigmask: std.c.sigset_t,
+                stack: std.c.stack_t,
+                link: ?*std.c.ucontext_t,
+                mcsize: u64,
+                mcontext: *std.c.mcontext_t,
+                __mcontext_data: std.c.mcontext_t align(@sizeOf(usize)),
+            }, @ptrCast(raw)).__mcontext_data;
+        }
+        std.debug.relocateContext(&ctx);
+
+        var self: FaultRegisters = undefined;
+        switch (comptime bun.Environment.os) {
+            .mac => {
+                const ss = ctx.mcontext.ss;
+                if (comptime bun.Environment.isAarch64) {
+                    self.pc = ss.pc;
+                    inline for (0..29) |i| self.gp[i] = ss.regs[i];
+                    self.gp[29] = ss.fp;
+                    self.gp[30] = ss.lr;
+                    self.gp[31] = ss.sp;
+                } else {
+                    self.pc = ss.rip;
+                    self.gp = .{
+                        ss.rax, ss.rbx, ss.rcx, ss.rdx, ss.rdi, ss.rsi, ss.rbp, ss.rsp,
+                        ss.r8,  ss.r9,  ss.r10, ss.r11, ss.r12, ss.r13, ss.r14, ss.r15,
+                    };
+                }
+            },
+            .linux => {
+                const mc = ctx.mcontext;
+                if (comptime bun.Environment.isAarch64) {
+                    self.pc = mc.pc;
+                    inline for (0..31) |i| self.gp[i] = mc.regs[i];
+                    self.gp[31] = mc.sp;
+                } else {
+                    const REG = std.os.linux.REG;
+                    const r = mc.gregs;
+                    self.pc = r[REG.RIP];
+                    self.gp = .{
+                        r[REG.RAX], r[REG.RBX], r[REG.RCX], r[REG.RDX],
+                        r[REG.RDI], r[REG.RSI], r[REG.RBP], r[REG.RSP],
+                        r[REG.R8],  r[REG.R9],  r[REG.R10], r[REG.R11],
+                        r[REG.R12], r[REG.R13], r[REG.R14], r[REG.R15],
+                    };
+                }
+            },
+            .windows, .wasm => comptime unreachable,
+        }
+        return self;
+    }
+
+    pub fn fromWindowsContext(ctx: *const windows.CONTEXT) FaultRegisters {
+        var self: FaultRegisters = undefined;
+        if (comptime bun.Environment.isAarch64) {
+            self.pc = ctx.Pc;
+            inline for (0..31) |i| self.gp[i] = ctx.DUMMYUNIONNAME.X[i];
+            self.gp[31] = ctx.Sp;
+        } else {
+            self.pc = ctx.Rip;
+            self.gp = .{
+                ctx.Rax, ctx.Rbx, ctx.Rcx, ctx.Rdx, ctx.Rdi, ctx.Rsi, ctx.Rbp, ctx.Rsp,
+                ctx.R8,  ctx.R9,  ctx.R10, ctx.R11, ctx.R12, ctx.R13, ctx.R14, ctx.R15,
+            };
+        }
+        return self;
+    }
+
+    pub fn format(self: FaultRegisters, writer: *std.Io.Writer) !void {
+        const cols = if (bun.Environment.isAarch64) 3 else 2;
+        try writer.print("Registers (pc={x:0>16}):\n", .{self.pc});
+        inline for (gp_names, 0..) |name, i| {
+            try writer.print("  {s: >3}={x:0>16}", .{ name, self.gp[i] });
+            if (i % cols == cols - 1 or i == gp_names.len - 1) try writer.writeByte('\n');
+        }
+    }
+};
+
+/// Set by `handleSegfaultPosix` / `handleSegfaultWindows` immediately before
+/// calling `crashHandler`, then consumed there. Threadlocal so a crash on one
+/// thread doesn't see another thread's registers.
+threadlocal var fault_registers: ?FaultRegisters = null;
+
 const metadata_version_line = std.fmt.comptimePrint(
     "Bun {s}v{s} {s} {s}{s}\n",
     .{
@@ -863,12 +1017,14 @@ const metadata_version_line = std.fmt.comptimePrint(
     },
 );
 
-fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.c) noreturn {
+fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, ctx: ?*const anyopaque) callconv(.c) noreturn {
     const addr = switch (bun.Environment.os) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .mac, .freebsd => @intFromPtr(info.addr),
         .windows, .wasm => @compileError("unreachable"),
     };
+
+    fault_registers = FaultRegisters.fromPosixContext(ctx);
 
     crashHandler(
         switch (sig) {
@@ -958,24 +1114,23 @@ pub fn resetSegfaultHandler() void {
 }
 
 pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(.winapi) c_long {
-    crashHandler(
-        switch (info.ExceptionRecord.ExceptionCode) {
-            windows.EXCEPTION_DATATYPE_MISALIGNMENT => .{ .datatype_misalignment = {} },
-            windows.EXCEPTION_ACCESS_VIOLATION => .{ .segmentation_fault = info.ExceptionRecord.ExceptionInformation[1] },
-            windows.EXCEPTION_ILLEGAL_INSTRUCTION => .{ .illegal_instruction = info.ContextRecord.getRegs().ip },
-            windows.EXCEPTION_STACK_OVERFLOW => .{ .stack_overflow = {} },
+    const reason: CrashReason = switch (info.ExceptionRecord.ExceptionCode) {
+        windows.EXCEPTION_DATATYPE_MISALIGNMENT => .{ .datatype_misalignment = {} },
+        windows.EXCEPTION_ACCESS_VIOLATION => .{ .segmentation_fault = info.ExceptionRecord.ExceptionInformation[1] },
+        windows.EXCEPTION_ILLEGAL_INSTRUCTION => .{ .illegal_instruction = info.ContextRecord.getRegs().ip },
+        windows.EXCEPTION_STACK_OVERFLOW => .{ .stack_overflow = {} },
 
-            // exception used for thread naming
-            // https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2017/debugger/how-to-set-a-thread-name-in-native-code?view=vs-2017#set-a-thread-name-by-throwing-an-exception
-            // related commit
-            // https://github.com/go-delve/delve/pull/1384
-            bun.windows.MS_VC_EXCEPTION => return bun.windows.EXCEPTION_CONTINUE_EXECUTION,
+        // exception used for thread naming
+        // https://learn.microsoft.com/en-us/previous-versions/visualstudio/visual-studio-2017/debugger/how-to-set-a-thread-name-in-native-code?view=vs-2017#set-a-thread-name-by-throwing-an-exception
+        // related commit
+        // https://github.com/go-delve/delve/pull/1384
+        bun.windows.MS_VC_EXCEPTION => return bun.windows.EXCEPTION_CONTINUE_EXECUTION,
 
-            else => return windows.EXCEPTION_CONTINUE_SEARCH,
-        },
-        null,
-        @intFromPtr(info.ExceptionRecord.ExceptionAddress),
-    );
+        else => return windows.EXCEPTION_CONTINUE_SEARCH,
+    };
+
+    fault_registers = FaultRegisters.fromWindowsContext(info.ContextRecord);
+    crashHandler(reason, null, @intFromPtr(info.ExceptionRecord.ExceptionAddress));
 }
 
 extern "c" fn gnu_get_libc_version() ?[*:0]const u8;
@@ -1160,10 +1315,15 @@ const Platform = enum(u8) {
 ///
 /// '1' - original. uses 7 char hash with VLQ encoded stack-frames
 /// '2' - same as '1' but this build is known to be a canary build
+/// '3' - same as '1' but for fault reasons (segfault/SIGILL/SIGBUS/SIGFPE)
+///       a register block follows the fault address: one VLQ count `n`, then
+///       `n` u64 values each as two VLQs, in `FaultRegisters.gp_names` order
+///       followed by pc.
+/// '4' - same as '3' but this build is known to be a canary build
 const version_char = if (bun.Environment.is_canary)
-    "2"
+    "4"
 else
-    "1";
+    "3";
 
 const git_sha = if (bun.Environment.git_sha.len > 0) bun.Environment.git_sha[0..7] else "unknown";
 
@@ -1342,6 +1502,7 @@ const TraceString = struct {
     trace: *const std.builtin.StackTrace,
     reason: CrashReason,
     action: TraceString.Action,
+    fault_regs: ?FaultRegisters = null,
 
     const Action = enum {
         /// Open a pre-filled GitHub issue with the expanded trace
@@ -1411,21 +1572,26 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
 
         .@"unreachable" => try writer.writeByte('1'),
 
-        .segmentation_fault => |addr| {
-            try writer.writeByte('2');
+        inline .segmentation_fault,
+        .illegal_instruction,
+        .bus_error,
+        .floating_point_error,
+        => |addr, tag| {
+            try writer.writeByte(switch (tag) {
+                .segmentation_fault => '2',
+                .illegal_instruction => '3',
+                .bus_error => '4',
+                .floating_point_error => '5',
+                else => comptime unreachable,
+            });
             try writeU64AsTwoVLQs(writer, addr);
-        },
-        .illegal_instruction => |addr| {
-            try writer.writeByte('3');
-            try writeU64AsTwoVLQs(writer, addr);
-        },
-        .bus_error => |addr| {
-            try writer.writeByte('4');
-            try writeU64AsTwoVLQs(writer, addr);
-        },
-        .floating_point_error => |addr| {
-            try writer.writeByte('5');
-            try writeU64AsTwoVLQs(writer, addr);
+            if (opts.fault_regs) |fr| {
+                try VLQ.encode(@intCast(FaultRegisters.gp_count + 1)).writeTo(writer);
+                for (fr.gp) |reg| try writeU64AsTwoVLQs(writer, reg);
+                try writeU64AsTwoVLQs(writer, fr.pc);
+            } else {
+                try writer.writeAll(VLQ.zero.slice());
+            }
         },
 
         .datatype_misalignment => try writer.writeByte('6'),

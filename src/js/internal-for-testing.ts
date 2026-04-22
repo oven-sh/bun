@@ -241,9 +241,6 @@ export const hostedGitInfo = {
   fromUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsFromUrl", 1),
 };
 
-// Windows-only: map a libuv error code to a `bun.sys.E` tag name. Returns
-// `undefined` on other platforms. Used to verify out-of-range codes fall back
-// to UNKNOWN instead of panicking.
 export const translateUVErrorToE: (code: number) => string | undefined = $newZigFunction(
   "sys.zig",
   "TestingAPIs.translateUVErrorToE",

@@ -4477,9 +4477,8 @@ pub const umask = switch (Environment.os) {
 };
 
 pub const TestingAPIs = struct {
-    /// Exposes libuv -> `bun.sys.E` error-code translation for tests so we can
-    /// feed out-of-range negative values and verify it does not panic.
-    /// Windows-only because `translateUVErrorToE` lives in the libuv bindings.
+    /// Exposes libuv -> `bun.sys.E` translation so tests can feed out-of-range
+    /// negative values and verify it does not panic. Windows-only.
     pub fn translateUVErrorToE(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const arguments = callframe.arguments();
         if (arguments.len < 1 or !arguments[0].isNumber()) {

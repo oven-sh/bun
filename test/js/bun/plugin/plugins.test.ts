@@ -366,6 +366,28 @@ describe("errors", () => {
     }).toThrow("plugin target must be one of 'node', 'bun' or 'browser'");
   });
 
+  it("throws instead of crashing when 'target' is a Symbol", () => {
+    expect(() => {
+      plugin({
+        setup: () => {},
+        target: Symbol("foo"),
+      } as any);
+    }).toThrow(TypeError);
+  });
+
+  it("propagates errors thrown while coercing 'target' to a string", () => {
+    expect(() => {
+      plugin({
+        setup: () => {},
+        target: {
+          [Symbol.toPrimitive]() {
+            throw new Error("boom");
+          },
+        },
+      } as any);
+    }).toThrow("boom");
+  });
+
   it("invalid loaders throw", () => {
     const invalidLoaders = ["blah", "blah2", "blah3", "blah4"];
     const inputs = ["body { background: red; }", "<h1>hi</h1>", '{"hi": "there"}', "hi"];

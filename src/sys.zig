@@ -4487,7 +4487,7 @@ pub const TestingAPIs = struct {
         if (comptime !Environment.isWindows) {
             return .js_undefined;
         }
-        const code: c_int = @intFromFloat(arguments[0].asNumber());
+        const code: c_int = arguments[0].toInt32();
         const result = bun.windows.libuv.translateUVErrorToE(code);
         return bun.String.createUTF8ForJS(globalThis, @tagName(result));
     }

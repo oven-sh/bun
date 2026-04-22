@@ -26,8 +26,8 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { resolveConfig, type Config, type PartialConfig } from "./build/config.ts";
-import { allDeps } from "./build/deps/index.ts";
 import { resolveToolchain } from "./build/configure.ts";
+import { allDeps } from "./build/deps/index.ts";
 import { downloadWithRetry, extractTarGz, extractZip, prefetchPathForUrl } from "./build/download.ts";
 import { zigCompilerSafe, zigDownloadUrl } from "./build/zig.ts";
 

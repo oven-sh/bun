@@ -349,11 +349,7 @@ describe("TracingChannel", () => {
 
 describe("http server channels (#29586)", () => {
   test("publishes http.server.request.start, response.created, response.finish", async () => {
-    const channelNames = [
-      "http.server.response.created",
-      "http.server.request.start",
-      "http.server.response.finish",
-    ];
+    const channelNames = ["http.server.response.created", "http.server.request.start", "http.server.response.finish"];
     const events: { channel: string; payload: Record<string, unknown> }[] = [];
     const subs: [ReturnType<typeof channel>, (msg: unknown) => void][] = [];
 
@@ -605,9 +601,7 @@ describe("http server channels (#29586)", () => {
       const { port } = server.address();
       await new Promise<void>((resolve, reject) => {
         const client = net.connect(port, () => {
-          client.write(
-            "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
-          );
+          client.write("GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
         });
         client.on("close", () => resolve());
         // Swallow ECONNRESET etc. — we only care that the connection

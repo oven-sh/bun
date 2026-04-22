@@ -160,7 +160,9 @@ const fixtureEnv = {
 
 // These are JIT stress tests; under a debug build they are dramatically
 // slower and run concurrently, so give each fixture more headroom there.
-const fixtureTimeout = isDebug ? 180_000 : 5_000;
+// For non-debug builds, leave the timeout undefined so the runner-supplied
+// `--timeout` (90s in CI, 5s locally) stays in effect.
+const fixtureTimeout = isDebug ? 180_000 : undefined;
 
 // JSC's JSPI side-stack switching currently segfaults on Windows x64
 // (Win64 calling convention). Mark those fixtures as todo there so the

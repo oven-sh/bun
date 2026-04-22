@@ -146,12 +146,18 @@ async function fetchOne(item: Item): Promise<void> {
   } else {
     try {
       await downloadWithRetry(item.url, path, basename(new URL(item.url).pathname));
-    } catch {
-      // Some enumerated variants have no published artifact — that's expected,
-      // not an error. The build will just download that one if it ever needs it.
-      console.log(`  (skip — no artifact at ${item.url})`);
-      missing++;
-      return;
+    } catch (err) {
+      // 404 = the enumerated variant has no published artifact — expected,
+      // the build will just download that one if it ever needs it. Anything
+      // else (CDN outage, TLS, disk write) means a real failure that would
+      // leave the cache silently incomplete; fail loud so the bake operator
+      // sees it instead of shipping an empty image.
+      if (err instanceof Error && /\bHTTP 404\b/.test(err.message)) {
+        console.log(`  (skip — no artifact at ${item.url})`);
+        missing++;
+        return;
+      }
+      throw err;
     }
   }
   ok++;

@@ -1541,18 +1541,14 @@ async function main() {
         const args = ci ? ["-CI"] : [];
         await startGroup("Running bootstrap...", async () => {
           await machine.upload(bootstrapPath, remotePath);
-          // Set the env var as a separate Machine-scope write so the script
-          // invocation stays argv-style (no -Command string to interpolate
-          // into). The validated ref is safe in a single-quoted PS literal.
+          // Set $env: in the SAME process that runs the script — a separate
+          // Machine-scope registry write wouldn't reach this session's env.
+          // repoRef is already validated against /^[\w./-]+$/ above, so the
+          // single-quoted literal can't break out.
           await machine.spawnSafe(
-            [
-              "powershell",
-              "-Command",
-              `[Environment]::SetEnvironmentVariable('BUN_BOOTSTRAP_REPO_REF','${repoRef}','Machine')`,
-            ],
+            ["powershell", "-Command", `$env:BUN_BOOTSTRAP_REPO_REF='${repoRef}'; & '${remotePath}' ${args.join(" ")}`],
             { stdio: "inherit" },
           );
-          await machine.spawnSafe(["powershell", remotePath, ...args], { stdio: "inherit" });
         });
       } else {
         if (!features?.includes("docker")) {

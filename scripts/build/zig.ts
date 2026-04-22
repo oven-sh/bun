@@ -41,7 +41,7 @@ import { streamPath } from "./stream.ts";
  * one constant.
  */
 export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
-export const ZIG_COMMIT_PARALLEL = "0bcf4c3d998133e724d27e9fd783172ffed4c943";
+export const ZIG_COMMIT_PARALLEL = "04e7f6ac1e009525bc00934f20199c68f04e0a24";
 
 /**
  * The one place that picks which compiler to use. The parallel compiler
@@ -82,6 +82,10 @@ function usingParallelCompiler(cfg: Config): boolean {
 function codegenThreads(cfg: Config): number {
   if (!usingParallelCompiler(cfg)) return 0;
   if (cfg.windows) return 1;
+  // LTO emits a single bitcode file (zig_llvm.cpp gates SplitModule on
+  // !lto), so sharding would emit one .o instead of N — keep cg=1 here so
+  // the no_merge_shards path doesn't expect files that won't exist.
+  if (zigLto(cfg)) return 1;
   if (cfg.ci) {
     // ASAN is a test-only build (not shipped), so cross-shard IPO loss is
     // fine and the speedup is worth it. The count is FIXED so zig-only and
@@ -94,6 +98,17 @@ function codegenThreads(cfg: Config): number {
 
 /** Fixed shard count for CI ASAN builds. Matches getZigAgent's instance size. */
 export const CI_ASAN_CODEGEN_THREADS = 8;
+
+/**
+ * Whether bun-zig.o should be emitted as LLVM bitcode for LTO instead of a
+ * native object. Tracks the project-wide LTO flag, but only on the parallel
+ * compiler — the older ZIG_COMMIT predates the EnableSplitLTOUnit/summary
+ * fix in zig_llvm.cpp, so its bitcode would be rejected by lld's
+ * `-fwhole-program-vtables` consistency check.
+ */
+function zigLto(cfg: Config): boolean {
+  return cfg.lto && usingParallelCompiler(cfg);
+}
 
 /**
  * Output object file names for the zig step, matching what build.zig emits.
@@ -467,6 +482,7 @@ function zigBuildArgs(cfg: Config): string[] {
     `-Denable_fuzzilli=${bool(cfg.fuzzilli)}`,
     `-Denable_valgrind=${bool(cfg.valgrind)}`,
     `-Denable_tinycc=${bool(cfg.tinycc)}`,
+    `-Dlto=${bool(zigLto(cfg))}`,
     // Always ON — bun uses mimalloc as its default allocator. The flag
     // exists for experimentation; in practice it's never OFF.
     `-Duse_mimalloc=true`,

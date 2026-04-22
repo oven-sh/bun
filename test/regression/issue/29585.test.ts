@@ -15,10 +15,10 @@
 // on macOS too but we can't rely on cc being present on CI darwin runners.
 
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 
 const cc = isLinux ? (Bun.which("cc") ?? Bun.which("gcc")) : null;
 

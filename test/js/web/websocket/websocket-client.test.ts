@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, nodeExe } from "harness";
 import * as path from "node:path";
 function test(
@@ -62,20 +62,16 @@ const binaryTypes = [
   },
 ] as const;
 
-let servers: Subprocess[] = [];
-let clients: WebSocket[] = [];
+let server: Subprocess;
+let serverUrl: URL;
 
-function cleanUp() {
-  for (const client of clients) {
-    client.terminate();
-  }
-  for (const server of servers) {
-    server.kill();
-  }
-}
+beforeAll(async () => {
+  serverUrl = await listen();
+});
 
-beforeEach(cleanUp);
-afterEach(cleanUp);
+afterAll(() => {
+  server?.kill();
+});
 
 describe("WebSocket", () => {
   test("url", (ws, done) => {
@@ -251,23 +247,23 @@ function makeTest(
   timeout?: number,
   isOnly = false,
 ) {
-  return (isOnly ? it.only : it)(
+  return (isOnly ? it.only : it.concurrent)(
     label,
     testDone => {
       let isDone = false;
+      const ws = new WebSocket(serverUrl);
       const done = (err?: unknown) => {
         if (!isDone) {
           isDone = true;
+          ws.terminate();
           testDone(err);
         }
       };
-      listen()
-        .then(url => {
-          const ws = new WebSocket(url);
-          clients.push(ws);
-          fn(ws, done);
-        })
-        .catch(done);
+      try {
+        fn(ws, done);
+      } catch (err) {
+        done(err);
+      }
     },
     { timeout: timeout ?? 1000 },
   );
@@ -276,7 +272,7 @@ function makeTest(
 async function listen(): Promise<URL> {
   const pathname = path.join(import.meta.dir, "./websocket-server-echo.mjs");
   const { promise, resolve, reject } = Promise.withResolvers();
-  const server = spawn({
+  server = spawn({
     cmd: [nodeExe() ?? bunExe(), pathname],
     cwd: import.meta.dir,
     env: bunEnv,
@@ -294,8 +290,6 @@ async function listen(): Promise<URL> {
       }
     },
   });
-
-  servers.push(server);
 
   return await promise;
 }

@@ -45,7 +45,7 @@ function expectExited(stderr: string, label: string, code: number) {
 
 // ─── PARALLEL: BASIC ──────────────────────────────────────────────────────────
 
-describe("parallel: basic", () => {
+describe.concurrent("parallel: basic", () => {
   test("runs two scripts in parallel", async () => {
     using dir = tempDir("mr-par-basic", {
       "package.json": JSON.stringify({
@@ -109,7 +109,7 @@ describe("parallel: basic", () => {
 
 // ─── PARALLEL: FILE SCRIPTS ───────────────────────────────────────────────────
 
-describe("parallel: file scripts", () => {
+describe.concurrent("parallel: file scripts", () => {
   test("runs .ts files in parallel", async () => {
     using dir = tempDir("mr-par-ts", {
       "a.ts": "console.log('file-a')",
@@ -157,7 +157,7 @@ describe("parallel: file scripts", () => {
 
 // ─── PARALLEL: ERROR HANDLING ─────────────────────────────────────────────────
 
-describe("parallel: error handling", () => {
+describe.concurrent("parallel: error handling", () => {
   test("failure kills other scripts by default", async () => {
     using dir = tempDir("mr-par-fail", {
       "package.json": JSON.stringify({
@@ -242,7 +242,7 @@ describe("parallel: error handling", () => {
 
 // ─── PARALLEL: OUTPUT FORMATTING ──────────────────────────────────────────────
 
-describe("parallel: output formatting", () => {
+describe.concurrent("parallel: output formatting", () => {
   test("each line has prefix label", async () => {
     using dir = tempDir("mr-par-prefix", {
       "package.json": JSON.stringify({
@@ -405,7 +405,7 @@ describe("parallel: output formatting", () => {
 
 // ─── STDOUT / STDERR SEPARATION ──────────────────────────────────────────────
 
-describe("stdout/stderr separation", () => {
+describe.concurrent("stdout/stderr separation", () => {
   test("child stdout goes to parent stdout with prefix", async () => {
     using dir = tempDir("mr-sep-stdout", {
       "package.json": JSON.stringify({
@@ -466,7 +466,7 @@ describe("stdout/stderr separation", () => {
 
 // ─── SEQUENTIAL: BASIC ───────────────────────────────────────────────────────
 
-describe("sequential: basic", () => {
+describe.concurrent("sequential: basic", () => {
   test("runs scripts in order", async () => {
     using dir = tempDir("mr-seq-order", {
       "package.json": JSON.stringify({
@@ -565,7 +565,7 @@ describe("sequential: basic", () => {
 
 // ─── PRE/POST SCRIPTS ────────────────────────────────────────────────────────
 
-describe("pre/post scripts", () => {
+describe.concurrent("pre/post scripts", () => {
   test("runs pre, main, post in order", async () => {
     using dir = tempDir("mr-prepost-order", {
       "package.json": JSON.stringify({
@@ -741,7 +741,7 @@ describe("pre/post scripts", () => {
 
 // ─── VALIDATION & ERROR MESSAGES ──────────────────────────────────────────────
 
-describe("validation", () => {
+describe.concurrent("validation", () => {
   test("error when both --parallel and --sequential", async () => {
     using dir = tempDir("mr-val-both", {
       "package.json": JSON.stringify({ scripts: { a: "echo a" } }),
@@ -779,7 +779,7 @@ describe("validation", () => {
 
 // ─── MIXED STDOUT / STDERR ────────────────────────────────────────────────────
 
-describe("output streams", () => {
+describe.concurrent("output streams", () => {
   test("captures both stdout and stderr", async () => {
     using dir = tempDir("mr-streams", {
       "package.json": JSON.stringify({
@@ -812,7 +812,7 @@ describe("output streams", () => {
 
 // ─── SCRIPTS WITH SHELL FEATURES ──────────────────────────────────────────────
 
-describe("shell features", () => {
+describe.concurrent("shell features", () => {
   test("scripts with pipes work", async () => {
     using dir = tempDir("mr-shell-pipe", {
       "package.json": JSON.stringify({
@@ -870,7 +870,7 @@ describe("shell features", () => {
 
 // ─── SCRIPT NAMES WITH SPECIAL CHARACTERS ─────────────────────────────────────
 
-describe("script name edge cases", () => {
+describe.concurrent("script name edge cases", () => {
   test("script names with colons", async () => {
     using dir = tempDir("mr-colon", {
       "package.json": JSON.stringify({
@@ -919,7 +919,7 @@ describe("script name edge cases", () => {
 
 // ─── RAPID EXIT / TIMING ─────────────────────────────────────────────────────
 
-describe("timing edge cases", () => {
+describe.concurrent("timing edge cases", () => {
   test("scripts that exit immediately", async () => {
     using dir = tempDir("mr-instant", {
       "package.json": JSON.stringify({
@@ -962,7 +962,7 @@ describe("timing edge cases", () => {
 
 // ─── EXIT CODE PROPAGATION ───────────────────────────────────────────────────
 
-describe("exit code propagation", () => {
+describe.concurrent("exit code propagation", () => {
   test("parallel: first handle with non-zero code wins", async () => {
     using dir = tempDir("mr-exitprop", {
       "package.json": JSON.stringify({
@@ -1011,7 +1011,7 @@ describe("exit code propagation", () => {
 
 // ─── CWD / WORKING DIRECTORY ────────────────────────────────────────────────
 
-describe("working directory", () => {
+describe.concurrent("working directory", () => {
   test("scripts run in the package.json directory", async () => {
     using dir = tempDir("mr-cwd", {
       "package.json": JSON.stringify({
@@ -1033,7 +1033,7 @@ describe("working directory", () => {
 
 // ─── EXPLICIT RUN COMMAND ───────────────────────────────────────────────────
 
-describe("explicit run command", () => {
+describe.concurrent("explicit run command", () => {
   test("'bun run --parallel' with run keyword", async () => {
     using dir = tempDir("mr-run-explicit", {
       "package.json": JSON.stringify({
@@ -1052,7 +1052,7 @@ describe("explicit run command", () => {
 
 // ─── LARGE OUTPUT / STRESS ──────────────────────────────────────────────────
 
-describe("stress tests", () => {
+describe.concurrent("stress tests", () => {
   test("handles large number of output lines", async () => {
     using dir = tempDir("mr-stress-lines", {
       "package.json": JSON.stringify({
@@ -1086,7 +1086,7 @@ describe("stress tests", () => {
 
 // ─── RAW COMMANDS (NOT IN PACKAGE.JSON) ─────────────────────────────────────
 
-describe("raw shell commands", () => {
+describe.concurrent("raw shell commands", () => {
   test("runs raw command not in package.json", async () => {
     using dir = tempDir("mr-raw", {
       "package.json": JSON.stringify({ scripts: {} }),
@@ -1123,7 +1123,7 @@ describe("raw shell commands", () => {
 
 // ─── SEQUENTIAL: SIDE EFFECTS ORDERING ──────────────────────────────────────
 
-describe("sequential: side effects ordering", () => {
+describe.concurrent("sequential: side effects ordering", () => {
   test("later scripts can see files created by earlier scripts", async () => {
     using dir = tempDir("mr-seq-sideeffect", {
       "package.json": JSON.stringify({
@@ -1142,7 +1142,7 @@ describe("sequential: side effects ordering", () => {
 
 // ─── NO PACKAGE.JSON ────────────────────────────────────────────────────────
 
-describe("no package.json", () => {
+describe.concurrent("no package.json", () => {
   test("file scripts work without package.json", async () => {
     using dir = tempDir("mr-nopkg-files", {
       "hello.ts": "console.log('no-pkg-hello')",
@@ -1197,7 +1197,7 @@ describe("abort: failure kills long-running processes", () => {
 
 // ─── PARTIAL LINE BUFFERING ─────────────────────────────────────────────────
 
-describe("partial line buffering", () => {
+describe.concurrent("partial line buffering", () => {
   test("chunked writes are assembled into complete lines", async () => {
     using dir = tempDir("mr-chunk", {
       "package.json": JSON.stringify({
@@ -1286,7 +1286,7 @@ describe("partial line buffering", () => {
 
 // ─── MULTIPLE FAILURES WITH --no-exit-on-error ──────────────────────────────
 
-describe("--no-exit-on-error: multiple failures", () => {
+describe.concurrent("--no-exit-on-error: multiple failures", () => {
   test("parallel: first handle's non-zero code wins in finalize", async () => {
     using dir = tempDir("mr-noexit-multi", {
       "package.json": JSON.stringify({
@@ -1341,7 +1341,7 @@ describe("--no-exit-on-error: multiple failures", () => {
 
 // ─── PRE/POST + --no-exit-on-error INTERACTION ──────────────────────────────
 
-describe("pre/post + --no-exit-on-error interaction", () => {
+describe.concurrent("pre/post + --no-exit-on-error interaction", () => {
   test("pre failure blocks own group but other groups continue", async () => {
     using dir = tempDir("mr-pre-noexit", {
       "package.json": JSON.stringify({
@@ -1395,7 +1395,7 @@ describe("pre/post + --no-exit-on-error interaction", () => {
 
 // ─── EMPTY / EDGE-CASE SCRIPT CONTENT ───────────────────────────────────────
 
-describe("edge-case script content", () => {
+describe.concurrent("edge-case script content", () => {
   test("empty script string runs without crashing", async () => {
     using dir = tempDir("mr-empty-script", {
       "package.json": JSON.stringify({
@@ -1447,7 +1447,7 @@ describe("edge-case script content", () => {
 
 // ─── BINARY / UNUSUAL OUTPUT ────────────────────────────────────────────────
 
-describe("unusual output", () => {
+describe.concurrent("unusual output", () => {
   test("null bytes in output don't crash", async () => {
     using dir = tempDir("mr-nullbyte", {
       "package.json": JSON.stringify({
@@ -1494,7 +1494,7 @@ describe("unusual output", () => {
 
 // ─── SEQUENTIAL: DONE STATUS BETWEEN SCRIPTS ───────────────────────────────
 
-describe("sequential: status messages between scripts", () => {
+describe.concurrent("sequential: status messages between scripts", () => {
   test("Done message appears between sequential scripts", async () => {
     using dir = tempDir("mr-seq-done-between", {
       "package.json": JSON.stringify({
@@ -1535,7 +1535,7 @@ describe("sequential: status messages between scripts", () => {
 
 // ─── CONCURRENT STDOUT + STDERR FROM SAME SCRIPT ───────────────────────────
 
-describe("concurrent stdout + stderr from same script", () => {
+describe.concurrent("concurrent stdout + stderr from same script", () => {
   test("interleaved stdout and stderr are both prefixed", async () => {
     using dir = tempDir("mr-interleave-streams", {
       "package.json": JSON.stringify({
@@ -1561,7 +1561,7 @@ describe("concurrent stdout + stderr from same script", () => {
 
 // ─── DEEP DEPENDENCY CHAIN ──────────────────────────────────────────────────
 
-describe("dependency chains", () => {
+describe.concurrent("dependency chains", () => {
   test("sequential with pre/post creates deep chain that works", async () => {
     using dir = tempDir("mr-deep-chain", {
       "package.json": JSON.stringify({
@@ -1616,7 +1616,7 @@ describe("dependency chains", () => {
 
 // ─── COLOR CYCLING ──────────────────────────────────────────────────────────
 
-describe("color cycling", () => {
+describe.concurrent("color cycling", () => {
   test("more than 6 scripts cycle through colors", async () => {
     const scripts: Record<string, string> = {};
     for (let i = 0; i < 7; i++) {
@@ -1650,7 +1650,7 @@ describe("color cycling", () => {
 
 // ─── GLOB PATTERN MATCHING ──────────────────────────────────────────────────
 
-describe("glob pattern matching", () => {
+describe.concurrent("glob pattern matching", () => {
   test("build:* matches all build:xxx scripts", async () => {
     using dir = tempDir("mr-glob-basic", {
       "package.json": JSON.stringify({

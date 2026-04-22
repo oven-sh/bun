@@ -100,11 +100,11 @@ const noUnify: readonly string[] = [
   // which conditional branches fire.
   "src/bun.js/bindings/ProcessBindingUV.cpp",
 
-  // Uses `#ifdef S_IFBLK` / `#ifdef O_SYNC` etc. to detect which constants
-  // the platform headers provide and expose exactly those on fs.constants.
-  // On Windows, NodeFSStatBinding.cpp (an earlier sibling in the bundle)
-  // `#define`s S_IFBLK/S_IFSOCK for its own use, so the #ifdef here fires
-  // and Windows fs.constants gains entries Node.js doesn't expose there.
+  // Uses `#ifdef S_IFBLK` / `#ifdef S_IFSOCK` etc. to decide which constants
+  // to expose in `fs.constants` — Node.js omits these on Windows. When
+  // bundled after NodeFSStatBinding.cpp (which `#define`s them for its own
+  // S_IS*() helpers on Windows), the ifdefs fire and the constants leak into
+  // `fs.constants`, breaking Node.js parity and test/js/node/fs/fs.test.ts.
   "src/bun.js/bindings/ProcessBindingConstants.cpp",
 
   // Defines extern "C" replacements for platform symbols (strncasecmp,

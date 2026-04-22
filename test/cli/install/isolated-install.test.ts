@@ -488,6 +488,93 @@ describe("isolated workspaces", () => {
       { name: "pkg3", dependencies: { "different-name": "workspace:." } },
     ]);
   });
+
+  // https://github.com/oven-sh/bun/issues/29598
+  //
+  // When a workspace member is listed through a path that traverses a
+  // symlink, the member's `<workspace>/node_modules/<dep>` links are
+  // physically created at the resolved target directory — but their
+  // content (the relative `..`-prefix) used to be computed against the
+  // logical path, so they walked past the project root and pointed at
+  // nothing. Resolve the workspace dir's real path before computing the
+  // link target so require() works from inside the symlinked member.
+  test("symlinked workspace members get runnable dependency links", async () => {
+    using dir = tempDir("isolated-workspace-symlink-", {
+      "bunfig.toml": `[install]\nlinker = "isolated"\ncache = ".bun-cache"\n`,
+      "package.json": JSON.stringify({
+        name: "root",
+        private: true,
+        workspaces: ["app", "repos/ext/shared-lib"],
+      }),
+      "app/package.json": JSON.stringify({
+        name: "app",
+        private: true,
+        dependencies: { "shared-lib": "workspace:*" },
+      }),
+      "app/index.js": `import { check } from "shared-lib"; console.log(check("ok"));`,
+      // Published-style dep the symlinked workspace consumes via `file:`,
+      // so the link goes into `<project>/node_modules/.bun/<entry>/...`
+      // just like an npm dep — that's the shape the bug lived in.
+      // Placed next to the *real* workspace so the `file:` path resolves
+      // the same whether bun walks the logical or canonical workspace
+      // directory.
+      "real-workspaces/vendor/shared-dep/package.json": JSON.stringify({
+        name: "shared-dep",
+        version: "1.0.0",
+        main: "index.js",
+      }),
+      "real-workspaces/vendor/shared-dep/index.js": `module.exports = { id: "shared-dep" };`,
+      "real-workspaces/shared-lib/package.json": JSON.stringify({
+        name: "shared-lib",
+        private: true,
+        type: "module",
+        exports: { ".": "./index.js" },
+        dependencies: { "shared-dep": "file:../vendor/shared-dep" },
+      }),
+      "real-workspaces/shared-lib/index.js": `import pkg from "shared-dep"; export const check = v => pkg.id + ":" + v;`,
+    });
+    const root = String(dir);
+
+    // The workspace is listed as `repos/ext/shared-lib`, but `repos/ext`
+    // is a symlink to `../real-workspaces`, so the member's real path
+    // is `<project>/real-workspaces/shared-lib`.
+    await mkdir(join(root, "repos"), { recursive: true });
+    await symlink(join("..", "real-workspaces"), join(root, "repos", "ext"));
+
+    await using install = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: bunEnv,
+      cwd: root,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [installStderr, installExit] = await Promise.all([install.stderr.text(), install.exited]);
+    expect(installStderr).not.toContain("error:");
+    expect(installExit).toBe(0);
+
+    // The package-local dep link lives at the real member path. Its
+    // target must resolve up through `<project>/node_modules/.bun/...`.
+    const depLinkPath = join(root, "real-workspaces", "shared-lib", "node_modules", "shared-dep");
+    const depLinkTarget = await readlink(depLinkPath);
+    expect(depLinkTarget).toContain(".bun");
+    expect(existsSync(join(depLinkPath, "package.json"))).toBeTrue();
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "app/index.js"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // ASAN may write a warning to stderr in debug builds — the important
+    // signal is that the module resolved and the value printed.
+    expect(stderr).not.toContain("ENOENT");
+    expect(stderr).not.toContain("Cannot find");
+    expect(stdout).toBe("shared-dep:ok\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("optional peers", () => {

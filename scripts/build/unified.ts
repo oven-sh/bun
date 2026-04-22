@@ -55,7 +55,6 @@ const noUnify: readonly string[] = [
   "src/bun.js/bindings/bindings.cpp",
   "src/bun.js/bindings/BunProcess.cpp",
   "src/bun.js/bindings/JSBuffer.cpp",
-  "src/bun.js/bindings/KeyObject.cpp",
   "src/bun.js/bindings/napi.cpp",
   "src/bun.js/bindings/webcore/SerializedScriptValue.cpp",
   "src/bun.js/bindings/webcore/HTTPParsers.cpp",

@@ -2577,6 +2577,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return (this.resp orelse return null).getRemoteSocketInfo();
         }
 
+        pub fn getNativeHandle(this: *RequestContext) ?bun.FD {
+            const resp = this.resp orelse return null;
+            const fd = resp.getNativeHandle();
+            return if (fd.isValid()) fd else null;
+        }
+
         pub fn setTimeout(this: *RequestContext, seconds: c_uint) bool {
             if (this.resp) |resp| {
                 resp.timeout(@min(seconds, 255));

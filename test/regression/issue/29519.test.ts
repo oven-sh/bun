@@ -57,8 +57,7 @@ describe.skipIf(isWindows).concurrent("Zig::GlobalObject creation on a warm VM u
     expect(stderr).toContain("6 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
-  }, // collectContinuously + ASAN is slow; each isolated file takes ~5-10s on
-  // a debug build because the collector thread is constantly preempting the
+  }, // a debug build because the collector thread is constantly preempting the // collectContinuously + ASAN is slow; each isolated file takes ~5-10s on
   // mutator during JSGlobalObject::init().
   120_000);
 

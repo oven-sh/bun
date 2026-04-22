@@ -1154,8 +1154,10 @@ pub const String = extern struct {
         bail_on_esc: bool,
         bailed: bool = false,
 
-        fn on8(this: *RopeLatin1WidthIterator, it: *jsc.JSString.Iterator, slice: []const u8) void {
-            if (this.bail_on_esc and bun.strings.indexOfChar(slice, 0x1B) != null) {
+        fn append8(it: *jsc.JSString.Iterator, ptr: [*]const u8, len: u32) callconv(.c) void {
+            const this: *RopeLatin1WidthIterator = @alignCast(@ptrCast(it.data.?));
+            const slice = ptr[0..len];
+            if (this.bail_on_esc and bun.strings.containsChar(slice, 0x1B)) {
                 this.bailed = true;
                 it.stop = 1;
                 return;
@@ -1163,14 +1165,8 @@ pub const String = extern struct {
             this.width += bun.strings.visible.width.latin1(slice);
         }
 
-        fn append8(it: *jsc.JSString.Iterator, ptr: [*]const u8, len: u32) callconv(.c) void {
-            const this: *RopeLatin1WidthIterator = @alignCast(@ptrCast(it.data.?));
-            this.on8(it, ptr[0..len]);
-        }
-
         fn write8(it: *jsc.JSString.Iterator, ptr: [*]const u8, len: u32, _: u32) callconv(.c) void {
-            const this: *RopeLatin1WidthIterator = @alignCast(@ptrCast(it.data.?));
-            this.on8(it, ptr[0..len]);
+            append8(it, ptr, len);
         }
 
         fn append16(it: *jsc.JSString.Iterator, _: [*]const u16, _: u32) callconv(.c) void {
@@ -1181,9 +1177,7 @@ pub const String = extern struct {
         }
 
         fn write16(it: *jsc.JSString.Iterator, _: [*]const u16, _: u32, _: u32) callconv(.c) void {
-            const this: *RopeLatin1WidthIterator = @alignCast(@ptrCast(it.data.?));
-            this.bailed = true;
-            it.stop = 1;
+            append16(it, undefined, 0);
         }
 
         fn iter(this: *RopeLatin1WidthIterator) jsc.JSString.Iterator {

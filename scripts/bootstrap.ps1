@@ -674,12 +674,17 @@ function Prefetch-Build-Deps {
   $repoRef = if ($env:BUN_BOOTSTRAP_REPO_REF) { $env:BUN_BOOTSTRAP_REPO_REF } else { "main" }
   $cloneDir = Join-Path $env:TEMP "bun-prefetch-clone"
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $cloneDir
+  # Best-effort: a fork-PR branch that doesn't exist on the upstream remote,
+  # a deleted branch, or a transient network blip shouldn't abort the whole
+  # image bake — the build just falls through to the network with no warm
+  # cache. Same for a ref that predates the prefetch script.
   & git clone --depth=1 --branch $repoRef https://github.com/oven-sh/bun.git $cloneDir
-  if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
-
+  if ($LASTEXITCODE -ne 0) {
+    Write-Output "warning: clone of $repoRef failed; skipping warm cache"
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $cloneDir
+    return
+  }
   if (-not (Test-Path "$cloneDir\scripts\prefetch-deps.ts")) {
-    # The ref predates the prefetch script — skip rather than fail the
-    # whole image bake. The build just falls through to the network.
     Write-Output "prefetch-deps.ts not present at $repoRef; skipping warm cache"
     Remove-Item -Recurse -Force $cloneDir
     return

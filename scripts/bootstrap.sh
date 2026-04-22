@@ -1690,12 +1690,17 @@ prefetch_build_deps() {
 	# commit it was triggered from; default to main.
 	repo_ref="${BUN_BOOTSTRAP_REPO_REF:-main}"
 	clone_dir="$(create_tmp_directory)"
-	execute "$git_path" clone --depth=1 --branch "$repo_ref" \
-		https://github.com/oven-sh/bun.git "$clone_dir/bun"
-
+	# Best-effort: a fork-PR branch that doesn't exist on the upstream remote,
+	# a deleted branch, or a transient network blip shouldn't abort the whole
+	# image bake — the build just falls through to the network with no warm
+	# cache. Same for a ref that predates the prefetch script.
+	if ! "$git_path" clone --depth=1 --branch "$repo_ref" \
+		https://github.com/oven-sh/bun.git "$clone_dir/bun"; then
+		print "warning: clone of $repo_ref failed; skipping warm cache"
+		execute_sudo rm -rf "$clone_dir"
+		return
+	fi
 	if ! [ -f "$clone_dir/bun/scripts/prefetch-deps.ts" ]; then
-		# The ref predates the prefetch script — skip rather than fail the
-		# whole image bake. The build just falls through to the network.
 		print "prefetch-deps.ts not present at $repo_ref; skipping warm cache"
 		execute_sudo rm -rf "$clone_dir"
 		return
@@ -1708,6 +1713,10 @@ prefetch_build_deps() {
 	execute_sudo rm -rf "$clone_dir"
 
 	grant_to_user "$prefetch_dir"
+	# Buildkite jobs run via systemd / non-login shells that don't source
+	# .profile, so /etc/environment is the load-bearing one. Profiles are kept
+	# for interactive ssh debugging.
+	append_file /etc/environment "BUN_BUILD_PREFETCH_DIR=$prefetch_dir"
 	append_to_profile "export BUN_BUILD_PREFETCH_DIR=\"$prefetch_dir\""
 }
 

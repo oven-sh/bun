@@ -22,7 +22,7 @@
  * artifact are skipped — better to over-enumerate and 404 than to miss one.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { resolveConfig, type Config, type PartialConfig } from "./build/config.ts";
@@ -158,7 +158,11 @@ async function fetchOne(item: Item): Promise<void> {
 
   if (item.extract === undefined) return;
   const out = resolve(extractedDir, item.extract.name);
-  if (existsSync(resolve(out, item.extract.stamp))) return;
+  const stampPath = resolve(out, item.extract.stamp);
+  // Compare contents, not just presence — re-running after a version bump
+  // must replace the old tree, not skip it (the build's tryPrefetchExtracted
+  // would otherwise mismatch forever and never get the extracted speedup).
+  if (existsSync(stampPath) && readFileSync(stampPath, "utf8").trim() === item.extract.value) return;
 
   // Extract → hoist single top-level dir → apply rmAfterExtract → stamp.
   // Mirrors fetchPrebuilt/fetchZig so the resulting tree is byte-identical

@@ -1037,13 +1037,26 @@ pub const Installer = struct {
                                 // Symlinked workspace directory: compute the
                                 // link string relative to the physical dest
                                 // parent so the stored target resolves from
-                                // where the symlink lives on disk (not the
-                                // symlinked string path, which is shallower in
-                                // the tree). `entryStoreNodeModulesPackageName`
-                                // returns null for `.workspace`, so the nested
-                                // node_modules collision case above never
-                                // triggers here and the canonical parent needs
-                                // no extra segments.
+                                // where the symlink lives on disk, not from
+                                // the symlinked logical path (which is
+                                // shallower in the tree). Append the same
+                                // trailing segments as `dest` and then
+                                // `undo(1)` so the from-base matches the
+                                // symlink's real parent directory — critical
+                                // for scoped names like `@scope/pkg`, whose
+                                // parent is `<real_ws>/node_modules/@scope/`,
+                                // one level deeper than `<real_ws>/node_modules`.
+                                var save = canonical.save();
+                                defer save.restore();
+
+                                canonical.append(dep_name);
+                                if (installer.entryStoreNodeModulesPackageName(dep_id, pkg_id, &pkg_res, pkg_names)) |entry_node_modules_name| {
+                                    if (strings.eqlLong(dep_name, entry_node_modules_name, true)) {
+                                        canonical.append("node_modules");
+                                        canonical.append(dep_name);
+                                    }
+                                }
+                                canonical.undo(1);
                                 break :target canonical.relative(&dep_store_path);
                             }
 

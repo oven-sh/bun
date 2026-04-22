@@ -512,26 +512,40 @@ describe("isolated workspaces", () => {
         dependencies: { "shared-lib": "workspace:*" },
       }),
       "app/index.js": `import { check } from "shared-lib"; console.log(check("ok"));`,
-      // Published-style dep the symlinked workspace consumes via `file:`,
-      // so the link goes into `<project>/node_modules/.bun/<entry>/...`
-      // just like an npm dep — that's the shape the bug lived in.
-      // Placed next to the *real* workspace so the `file:` path resolves
-      // the same whether bun walks the logical or canonical workspace
-      // directory.
+      // Published-style deps the symlinked workspace consumes via
+      // `file:`, so the links go into `<project>/node_modules/.bun/<entry>/...`
+      // just like npm deps — that's the shape the bug lived in. Placed
+      // next to the *real* workspace so the `file:` path resolves the
+      // same whether bun walks the logical or canonical workspace dir.
+      // Covers both an unscoped dep (link parent is `node_modules`) and a
+      // scoped one (link parent is `node_modules/@scope`, one level deeper
+      // — the relative target has to account for it).
       "real-workspaces/vendor/shared-dep/package.json": JSON.stringify({
         name: "shared-dep",
         version: "1.0.0",
         main: "index.js",
       }),
       "real-workspaces/vendor/shared-dep/index.js": `module.exports = { id: "shared-dep" };`,
+      "real-workspaces/vendor/@myscope/helper/package.json": JSON.stringify({
+        name: "@myscope/helper",
+        version: "1.0.0",
+        main: "index.js",
+      }),
+      "real-workspaces/vendor/@myscope/helper/index.js": `module.exports = { id: "@myscope/helper" };`,
       "real-workspaces/shared-lib/package.json": JSON.stringify({
         name: "shared-lib",
         private: true,
         type: "module",
         exports: { ".": "./index.js" },
-        dependencies: { "shared-dep": "file:../vendor/shared-dep" },
+        dependencies: {
+          "shared-dep": "file:../vendor/shared-dep",
+          "@myscope/helper": "file:../vendor/@myscope/helper",
+        },
       }),
-      "real-workspaces/shared-lib/index.js": `import pkg from "shared-dep"; export const check = v => pkg.id + ":" + v;`,
+      "real-workspaces/shared-lib/index.js":
+        `import pkg from "shared-dep";` +
+        `import scoped from "@myscope/helper";` +
+        `export const check = v => pkg.id + "+" + scoped.id + ":" + v;`,
     });
     const root = String(dir);
 
@@ -553,12 +567,15 @@ describe("isolated workspaces", () => {
     expect(installStderr).not.toContain("error:");
     expect(installExit).toBe(0);
 
-    // The package-local dep link lives at the real member path. Its
-    // target must resolve up through `<project>/node_modules/.bun/...`.
-    const depLinkPath = join(root, "real-workspaces", "shared-lib", "node_modules", "shared-dep");
-    const depLinkTarget = await readlink(depLinkPath);
-    expect(depLinkTarget).toContain(".bun");
-    expect(existsSync(join(depLinkPath, "package.json"))).toBeTrue();
+    // Package-local dep links live at the real member path. Both the
+    // unscoped and the scoped target must resolve up through
+    // `<project>/node_modules/.bun/...`.
+    const sharedDepLink = join(root, "real-workspaces", "shared-lib", "node_modules", "shared-dep");
+    const scopedDepLink = join(root, "real-workspaces", "shared-lib", "node_modules", "@myscope", "helper");
+    expect((await readlink(sharedDepLink))).toContain(".bun");
+    expect((await readlink(scopedDepLink))).toContain(".bun");
+    expect(existsSync(join(sharedDepLink, "package.json"))).toBeTrue();
+    expect(existsSync(join(scopedDepLink, "package.json"))).toBeTrue();
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "app/index.js"],
@@ -572,7 +589,7 @@ describe("isolated workspaces", () => {
     // signal is that the module resolved and the value printed.
     expect(stderr).not.toContain("ENOENT");
     expect(stderr).not.toContain("Cannot find");
-    expect(stdout).toBe("shared-dep:ok\n");
+    expect(stdout).toBe("shared-dep+@myscope/helper:ok\n");
     expect(exitCode).toBe(0);
   });
 });

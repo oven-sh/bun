@@ -1,5 +1,5 @@
 // Tests which apply to both dev and prod. They are run twice.
-import { renameSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { devAndProductionTest, devTest, emptyHtmlFile } from "./bake-harness";
 
 const hmrSelfAcceptingModule = (label: string) => `
@@ -241,17 +241,19 @@ devTest("hmr handles rapid consecutive edits", {
     //
     // Writing IDENTICAL content N times forces same-sourceMapId duplicates on
     // every platform (previously this only happened on Windows by accident via
-    // watcher double-firing). Writing via temp + rename is atomic at the FS
-    // level, so the dev server never reads a truncated file — a 0-byte read
-    // would bundle an empty module that doesn't call accept(), leaving
-    // selfAccept = null and tripping the fullReload() fallback on the next
-    // update (the cause of the previous Windows flake).
+    // watcher double-firing). Use synchronous writeFileSync — open(O_TRUNC) +
+    // write + close happen back-to-back on the calling thread with no
+    // event-loop turn in between, so the empty-file window is microseconds
+    // (well under the watcher → bundler-thread dispatch latency). The previous
+    // Bun.write here is two separate async libuv ops on Windows with a
+    // JS-thread round-trip in between, giving the bundler a multi-millisecond
+    // window to read 0 bytes; the resulting empty module never calls accept(),
+    // leaving selfAccept = null and tripping the fullReload() fallback on the
+    // next update (the cause of the previous Windows flake).
     const target = dev.join("index.ts");
     const rapidContent = hmrSelfAcceptingModule("render rapid");
     for (let i = 0; i < 10; i++) {
-      const tmp = `${target}.${i}.tmp`;
-      writeFileSync(tmp, rapidContent);
-      renameSync(tmp, target);
+      writeFileSync(target, rapidContent);
     }
 
     // Wait until at least one rapid hot_update has been applied.
@@ -262,8 +264,13 @@ devTest("hmr handles rapid consecutive edits", {
     // WebSocket and applied in order (client-fixture.mjs evals each blob in a
     // FIFO microtask), so once the sentinel's console.log arrives, every prior
     // hot_update has already been applied — no stragglers can land later and
-    // leak into the disposal check.
-    await dev.write("index.ts", hmrSelfAcceptingModule("render sentinel"));
+    // leak into the disposal check. Use batchChanges + writeFileSync directly
+    // (rather than dev.write, which uses async Bun.write) so the sentinel
+    // write is also free of the truncated-read window.
+    {
+      await using _wait = await dev.batchChanges();
+      writeFileSync(target, hmrSelfAcceptingModule("render sentinel"));
+    }
     await waitForMessage("render sentinel");
 
     // Drain. The watcher may have coalesced or double-fired, so the exact

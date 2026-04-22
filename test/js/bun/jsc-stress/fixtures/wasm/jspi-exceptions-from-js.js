@@ -167,7 +167,6 @@ async function testCatchAndThrowAgain() {
   //       ;; not supposed to reach here
   //       drop
   //       i32.const 999
-  //       return
   //     catch $tag
   //       ;; exception payload (42) is on the stack
   //     end

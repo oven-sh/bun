@@ -60,6 +60,23 @@ export function webkitDirectSource(cfg: Config): Source {
     git(["-C", path, "checkout", "--quiet", "FETCH_HEAD"]);
   }
   fetched = true;
+  // Warn if the existing clone is on a different commit. data.json's source
+  // lists were extracted at WEBKIT_VERSION; a mismatched checkout will fail
+  // with "missing and no known rule" for any file that moved.
+  try {
+    const head = execFileSync("git", ["-C", path, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    if (head !== cfg.webkitVersion) {
+      process.stderr.write(
+        `[webkit-direct] WARNING: ${path} is at ${head.slice(0, 12)}, ` +
+          `expected ${cfg.webkitVersion.slice(0, 12)}.\n` +
+          `  Source lists in webkit-direct/data.json were extracted at the expected commit;\n` +
+          `  a mismatch will fail with "missing and no known rule to make it".\n` +
+          `  Fix: git -C ${path} fetch origin && git -C ${path} checkout ${cfg.webkitVersion}\n`,
+      );
+    }
+  } catch {
+    // Not a git repo (e.g. extracted tarball) — skip the check.
+  }
   return { kind: "local", path };
 }
 

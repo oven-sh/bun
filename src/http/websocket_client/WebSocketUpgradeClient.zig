@@ -58,6 +58,21 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         // This is base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")).
         expected_accept: [28]u8 = .{0} ** 28,
 
+        /// Non-.none while buffering the body of a non-101 response that spans
+        /// multiple TCP reads. The 'handshake' event is deferred until we have
+        /// the full body so the `unexpected-response` consumer sees the
+        /// complete payload instead of just the bytes colocated with the
+        /// header block in the first read.
+        ///
+        /// `.waiting_for_length` tracks the total expected buffer length
+        /// (head_len + Content-Length). `.waiting_for_eof` is used when the
+        /// response has no Content-Length — accumulate until the peer closes.
+        deferred_handshake: union(enum) {
+            none: void,
+            waiting_for_length: usize,
+            waiting_for_eof: void,
+        } = .none,
+
         const State = enum {
             initializing,
             reading,
@@ -470,6 +485,27 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn handleClose(this: *HTTPClient, _: Socket, _: c_int, _: ?*anyopaque) void {
             log("onClose", .{});
             jsc.markBinding(@src());
+
+            // If a non-101 response body was mid-accumulation when the peer
+            // reset the socket, flush whatever arrived before tearing down
+            // — the peer may RST instead of FIN, so `handleEnd` never fires
+            // and the `unexpected-response` consumer would otherwise see
+            // the close event with no body at all. Do this BEFORE
+            // `clearData()` frees `this.body`.
+            flush: {
+                switch (this.deferred_handshake) {
+                    .none => break :flush,
+                    .waiting_for_length, .waiting_for_eof => {},
+                }
+                this.deferred_handshake = .none;
+                if (this.body.items.len == 0) break :flush;
+                this.flushDeferredHandshakeAndProcess(this.body.items);
+                // flushDeferredHandshakeAndProcess → processResponse →
+                // terminate for the non-101 status: `outgoing_websocket`
+                // is null by the time we fall through, so
+                // `dispatchAbruptClose` below becomes a no-op.
+            }
+
             this.clearData();
             this.tcp.detach();
             this.dispatchAbruptClose(ErrorCode.ended);
@@ -478,6 +514,26 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         }
 
         pub fn terminate(this: *HTTPClient, code: ErrorCode) void {
+            // If a non-101 response body was being accumulated when the
+            // transport ended cleanly (peer close), flush the deferred
+            // handshake first so the `unexpected-response` listener sees
+            // what the server actually delivered. `handleEnd` does this
+            // for the plain-TCP path, but the TLS-tunnel path
+            // (`WebSocketProxyTunnel.onClose`) calls `terminate` directly
+            // without going through `handleEnd`, so the flush must live
+            // here too.
+            if (code == ErrorCode.ended) {
+                switch (this.deferred_handshake) {
+                    .none => {},
+                    .waiting_for_length, .waiting_for_eof => {
+                        this.deferred_handshake = .none;
+                        if (this.body.items.len > 0) {
+                            this.flushDeferredHandshakeAndProcess(this.body.items);
+                            return;
+                        }
+                    },
+                }
+            }
             this.fail(code);
 
             // We cannot access the pointer after fail is called.
@@ -597,20 +653,16 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             }
 
+            // If we're in the middle of buffering a non-101 response body
+            // (Content-Length > what arrived with the headers, or no
+            // Content-Length → read until EOF), keep appending and check
+            // for completion. See the deferred_handshake comment.
+            if (this.appendDeferredHandshakeBody(data)) return;
+
             var body = data;
             if (this.body.items.len > 0) {
                 bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
                 body = this.body.items;
-            }
-
-            const is_first = this.body.items.len == 0;
-            const http_101 = "HTTP/1.1 101 ";
-            if (is_first and body.len > http_101.len) {
-                // fail early if we receive a non-101 status code
-                if (!strings.hasPrefixComptime(body, http_101)) {
-                    this.terminate(ErrorCode.expected_101_status_code);
-                    return;
-                }
             }
 
             const response = PicoHTTP.Response.parse(body, &this.headers_buf) catch |err| {
@@ -628,7 +680,219 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             };
 
-            this.processResponse(response, body[@as(usize, @intCast(response.bytes_read))..]);
+            this.processWebSocketUpgradeResponse(response, body);
+        }
+
+        /// Maximum bytes we'll buffer for a non-101 response body before
+        /// bailing out. Real error pages (workerd restart text, JSON API
+        /// errors, HTML) fit comfortably under this; the cap exists so a
+        /// malicious or misbehaving server can't make us accumulate
+        /// unbounded data — either via a giant `Content-Length` header
+        /// (saturating the `+|` add and never satisfying the length
+        /// check) or a keep-alive connection that never closes after a
+        /// no-Content-Length response.
+        const MAX_NON_101_BODY: usize = 64 * 1024 * 1024;
+
+        /// Returns true if `data` was consumed as part of a deferred non-101
+        /// handshake body (and the caller should stop processing this read).
+        /// Enforces `MAX_NON_101_BODY` so neither a giant Content-Length
+        /// nor a never-closing no-Content-Length stream can grow `this.body`
+        /// without bound.
+        fn appendDeferredHandshakeBody(this: *HTTPClient, data: []const u8) bool {
+            switch (this.deferred_handshake) {
+                .none => return false,
+                .waiting_for_length => |target_len| {
+                    // `target_len` was bounded to `head_len +
+                    // MAX_NON_101_BODY` upstream in
+                    // `processWebSocketUpgradeResponse` (which rejects
+                    // Content-Length > MAX_NON_101_BODY), so the
+                    // accumulated buffer can never exceed that limit.
+                    //
+                    // If this read would carry us past `target_len`, take
+                    // only enough bytes to fill the declared body. The
+                    // rest belong to the next pipelined response or are
+                    // trailing garbage — same as the single-chunk fast
+                    // path in `processWebSocketUpgradeResponse` which
+                    // truncates via `body[0..target_len]` before
+                    // dispatching.
+                    const available = target_len - this.body.items.len;
+                    const take = @min(available, data.len);
+                    bun.handleOom(this.body.appendSlice(bun.default_allocator, data[0..take]));
+                    if (this.body.items.len >= target_len) {
+                        const truncated = this.body.items[0..target_len];
+                        this.deferred_handshake = .none;
+                        this.flushDeferredHandshakeAndProcess(truncated);
+                    }
+                    return true;
+                },
+                .waiting_for_eof => {
+                    if (this.body.items.len +| data.len > MAX_NON_101_BODY) {
+                        this.deferred_handshake = .none;
+                        this.terminate(ErrorCode.expected_101_status_code);
+                        return true;
+                    }
+                    bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
+                    return true;
+                },
+            }
+        }
+
+        // Scan the response headers for Content-Length. Returns the parsed
+        // value or null if the header is absent or unparseable.
+        fn findContentLength(response: PicoHTTP.Response) ?usize {
+            for (response.headers.list) |h| {
+                if (h.name.len == "Content-Length".len and strings.eqlCaseInsensitiveASCII(h.name, "Content-Length", false)) {
+                    return std.fmt.parseInt(usize, std.mem.trim(u8, h.value, " \t"), 10) catch null;
+                }
+            }
+            return null;
+        }
+
+        // Shared between the plain-TCP and proxy-tunnel paths.
+        //
+        // For non-101 responses whose body straddles multiple TCP reads, we
+        // defer the handshake dispatch until we have the complete body so
+        // the `unexpected-response` listener sees the full payload instead
+        // of a truncated prefix. See `deferred_handshake`.
+        //
+        // Once ready to dispatch: the 'handshake' event into JS is
+        // synchronous. JS in the listener can call `ws.close()` →
+        // `terminate()` → `clearData()`, which frees `this.body` out from
+        // under us — and `body` / `response.headers.list` point into that
+        // same allocation in the multi-chunk accumulation path. To keep
+        // the post-dispatch `processResponse` call safe without duplicating
+        // + re-parsing the response, move `this.body` out into a local so
+        // `clearData()` finds an empty ArrayList and the backing bytes
+        // outlive the dispatch.
+        //
+        // In the single-chunk fast path `body` points into `data` (owned by
+        // uSockets for the rest of `onData`) and `this.body` is already
+        // empty, so the transfer is a no-op.
+        fn processWebSocketUpgradeResponse(this: *HTTPClient, response: PicoHTTP.Response, body: []const u8) void {
+            const head_len: usize = @intCast(response.bytes_read);
+            const status_code = std.math.cast(u16, response.status_code) orelse 0;
+
+            const ws = this.outgoing_websocket orelse {
+                this.processResponse(response, body[head_len..]);
+                return;
+            };
+
+            if (status_code != 101) {
+                // Check if the full response body is present. If not, defer
+                // the dispatch until handleData / handleEnd flushes a
+                // complete buffer.
+                const content_length = findContentLength(response);
+                if (content_length) |cl| {
+                    // Cap the Content-Length we'll buffer — a malicious
+                    // server could otherwise send `Content-Length:
+                    // 18446744073709551615` and make us accumulate every
+                    // byte of every subsequent TCP read forever
+                    // (`body.items.len >= usize_max` never holds,
+                    // `bun.handleOom` panics on allocation failure).
+                    // Reject as an invalid response so we surface a
+                    // normal `expected_101_status_code` error instead of
+                    // crashing.
+                    if (cl > MAX_NON_101_BODY) {
+                        this.terminate(ErrorCode.expected_101_status_code);
+                        return;
+                    }
+                    const target_len = head_len + cl;
+                    if (body.len < target_len) {
+                        // Make sure `this.body` owns the accumulated bytes
+                        // so subsequent handleData calls can append to it.
+                        // In the single-chunk case body points at `data`;
+                        // copy it into this.body.
+                        if (body.ptr != this.body.items.ptr) {
+                            bun.handleOom(this.body.appendSlice(bun.default_allocator, body));
+                        }
+                        this.deferred_handshake = .{ .waiting_for_length = target_len };
+                        return;
+                    }
+                    // Truncate at head_len + Content-Length — discard any
+                    // bytes beyond the declared body length (they belong
+                    // to the next pipelined response, or are garbage).
+                    this.flushDeferredHandshakeAndProcess(body[0..target_len]);
+                    return;
+                } else {
+                    // No Content-Length — RFC 7230 §3.3.3: read until the
+                    // peer closes the connection. Defer to handleEnd.
+                    // handleData enforces MAX_NON_101_BODY so a keep-alive
+                    // server that never closes can't buffer forever.
+                    if (body.ptr != this.body.items.ptr) {
+                        bun.handleOom(this.body.appendSlice(bun.default_allocator, body));
+                    }
+                    this.deferred_handshake = .waiting_for_eof;
+                    return;
+                }
+            }
+
+            // 101 fast path — dispatch with whatever body bytes are on hand
+            // (post-header bytes are the first WebSocket frame, not HTTP
+            // body — the shim drops them from the 'upgrade' response).
+            this.dispatchHandshakeAndProcess(ws, response, body, head_len, status_code);
+        }
+
+        // Called from handleData / handleEnd once `buffer` holds the complete
+        // accumulated (truncated to Content-Length, or read-until-EOF) response.
+        // Re-parses the headers from the owned buffer, dispatches, then runs
+        // processResponse (which will terminate for non-101).
+        fn flushDeferredHandshakeAndProcess(this: *HTTPClient, buffer: []const u8) void {
+            const response = PicoHTTP.Response.parse(buffer, &this.headers_buf) catch {
+                this.terminate(ErrorCode.invalid_response);
+                return;
+            };
+            const head_len: usize = @intCast(response.bytes_read);
+            const status_code = std.math.cast(u16, response.status_code) orelse 0;
+            const ws = this.outgoing_websocket orelse {
+                this.processResponse(response, buffer[head_len..]);
+                return;
+            };
+            this.dispatchHandshakeAndProcess(ws, response, buffer, head_len, status_code);
+        }
+
+        fn dispatchHandshakeAndProcess(
+            this: *HTTPClient,
+            ws: *CppWebSocket,
+            response: PicoHTTP.Response,
+            body: []const u8,
+            head_len: usize,
+            status_code: u16,
+        ) void {
+            // Keep `this` alive across the synchronous JS dispatch. JS in
+            // the handshake listener can call `ws.terminate()` →
+            // didAbruptClose → HTTPClient.terminate() → deinit, which would
+            // free us mid-function. handleData / handleDecryptedData ref
+            // around the whole parse loop, but handleEnd flushes deferred
+            // bodies here directly — do an additional ref so the guard
+            // holds regardless of caller.
+            this.ref();
+            defer this.deref();
+
+            var owned_body = this.body;
+            this.body = .{};
+            defer owned_body.deinit(bun.default_allocator);
+
+            var raw_headers: [128]CppWebSocket.RawHeader = undefined;
+            for (response.headers.list, 0..) |h, i| {
+                raw_headers[i] = .{
+                    .name_ptr = h.name.ptr,
+                    .name_len = h.name.len,
+                    .value_ptr = h.value.ptr,
+                    .value_len = h.value.len,
+                };
+            }
+
+            // On 101 Switching Protocols, any bytes after the header block
+            // are the first WebSocket frame from the peer — not HTTP body.
+            // Node delivers them as the `head` buffer on its 'upgrade'
+            // event and ws.js passes them to the protocol reader via
+            // setSocket. Don't surface them to `'handshake'` listeners as
+            // if they were HTTP body; only `processResponse` (below) hands
+            // them to the connected WebSocket client as overflow.
+            const handshake_body: []const u8 = if (status_code == 101) &.{} else body[head_len..];
+            ws.didReceiveHandshakeResponse(status_code, response.status, raw_headers[0..response.headers.list.len], handshake_body);
+            if (this.outgoing_websocket == null) return;
+            this.processResponse(response, body[head_len..]);
         }
 
         fn handleProxyResponse(this: *HTTPClient, socket: Socket, data: []const u8) void {
@@ -804,21 +1068,20 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn handleDecryptedData(this: *HTTPClient, data: []const u8) void {
             log("handleDecryptedData: {} bytes", .{data.len});
 
+            // Keep `this` alive through the synchronous JS dispatch in
+            // processWebSocketUpgradeResponse — JS may drop the last ref on
+            // us during that call (ws.close()).
+            this.ref();
+            defer this.deref();
+
+            // Same deferred-body flushing as plain handleData.
+            if (this.appendDeferredHandshakeBody(data)) return;
+
             // Process as if it came directly from the socket
             var body = data;
             if (this.body.items.len > 0) {
                 bun.handleOom(this.body.appendSlice(bun.default_allocator, data));
                 body = this.body.items;
-            }
-
-            const is_first = this.body.items.len == 0;
-            const http_101 = "HTTP/1.1 101 ";
-            if (is_first and body.len > http_101.len) {
-                // fail early if we receive a non-101 status code
-                if (!strings.hasPrefixComptime(body, http_101)) {
-                    this.terminate(ErrorCode.expected_101_status_code);
-                    return;
-                }
             }
 
             const response = PicoHTTP.Response.parse(body, &this.headers_buf) catch |err| {
@@ -836,11 +1099,27 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             };
 
-            this.processResponse(response, body[@as(usize, @intCast(response.bytes_read))..]);
+            this.processWebSocketUpgradeResponse(response, body);
         }
 
         pub fn handleEnd(this: *HTTPClient, _: Socket) void {
             log("onEnd", .{});
+            // If we were waiting for the peer to close before dispatching a
+            // non-101 response body (Content-Length absent), flush now with
+            // whatever arrived. waiting_for_length also falls through here
+            // when the peer closes before sending Content-Length bytes —
+            // dispatch with the truncated body so the consumer sees what
+            // the server actually delivered.
+            switch (this.deferred_handshake) {
+                .none => {},
+                .waiting_for_length, .waiting_for_eof => {
+                    this.deferred_handshake = .none;
+                    if (this.body.items.len > 0) {
+                        this.flushDeferredHandshakeAndProcess(this.body.items);
+                        return;
+                    }
+                },
+            }
             this.terminate(ErrorCode.ended);
         }
 

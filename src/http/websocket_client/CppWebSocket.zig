@@ -25,9 +25,31 @@ pub const CppWebSocket = opaque {
     ) void;
     extern fn WebSocket__didAbruptClose(websocket_context: *CppWebSocket, reason: ErrorCode) void;
     extern fn WebSocket__didClose(websocket_context: *CppWebSocket, code: u16, reason: *const bun.String) void;
+    pub const RawHeader = extern struct {
+        name_ptr: [*]const u8,
+        name_len: usize,
+        value_ptr: [*]const u8,
+        value_len: usize,
+    };
+    extern fn WebSocket__didReceiveHandshakeResponse(
+        websocket_context: *CppWebSocket,
+        status_code: u16,
+        status_message: [*]const u8,
+        status_message_len: usize,
+        headers: [*]const RawHeader,
+        headers_len: usize,
+        body: [*]const u8,
+        body_len: usize,
+    ) void;
     extern fn WebSocket__didReceiveText(websocket_context: *CppWebSocket, clone: bool, text: *const jsc.ZigString) void;
     extern fn WebSocket__didReceiveBytes(websocket_context: *CppWebSocket, bytes: [*]const u8, byte_len: usize, opcode: u8) void;
     extern fn WebSocket__rejectUnauthorized(websocket_context: *CppWebSocket) bool;
+    pub fn didReceiveHandshakeResponse(this: *CppWebSocket, status_code: u16, status_message: []const u8, headers: []const RawHeader, body: []const u8) void {
+        const loop = jsc.VirtualMachine.get().eventLoop();
+        loop.enter();
+        defer loop.exit();
+        WebSocket__didReceiveHandshakeResponse(this, status_code, status_message.ptr, status_message.len, headers.ptr, headers.len, body.ptr, body.len);
+    }
     pub fn didAbruptClose(this: *CppWebSocket, reason: ErrorCode) void {
         const loop = jsc.VirtualMachine.get().eventLoop();
         loop.enter();

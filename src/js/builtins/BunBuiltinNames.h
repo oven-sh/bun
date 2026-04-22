@@ -157,6 +157,7 @@ using namespace JSC;
     macro(pullAlgorithm) \
     macro(pulling) \
     macro(queue) \
+    macro(rawHeaders) \
     macro(read) \
     macro(readIntoRequests) \
     macro(readRequests) \
@@ -186,6 +187,8 @@ using namespace JSC;
     macro(started) \
     macro(state) \
     macro(status) \
+    macro(statusCode) \
+    macro(statusMessage) \
     macro(statusText) \
     macro(storedError) \
     macro(strategy) \

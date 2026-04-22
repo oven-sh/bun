@@ -80,7 +80,42 @@ const eventIds = {
   error: 4,
   ping: 5,
   pong: 6,
+  upgrade: 7,
+  "unexpected-response": 8,
 };
+
+// Stable singleton used by `#armNativeBridge` to install the native-side
+// forwarder through `#onOrOnce` without pushing a user-visible listener. It
+// must be identity-stable so `super.off` can remove it later if needed.
+function noopBridgeListener() {}
+
+let lazyReadable;
+function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
+  lazyReadable ??= require("node:stream").Readable;
+  const res = new lazyReadable({ read() {} });
+  const headers = (res.headers = { __proto__: null });
+  res.rawHeaders = rawHeaders;
+  for (let i = 0; i < rawHeaders.length; i += 2) {
+    const lower = rawHeaders[i].toLowerCase();
+    const value = rawHeaders[i + 1];
+    const prev = headers[lower];
+    if (lower === "set-cookie") {
+      if (prev === undefined) headers[lower] = [value];
+      else prev.push(value);
+    } else {
+      headers[lower] = prev === undefined ? value : prev + ", " + value;
+    }
+  }
+  res.statusCode = statusCode;
+  res.statusMessage = statusMessage;
+  res.httpVersion = "1.1";
+  res.httpVersionMajor = 1;
+  res.httpVersionMinor = 1;
+  res.socket = res.connection = null;
+  if (body && body.length) res.push(body);
+  res.push(null);
+  return res;
+}
 
 const emittedWarnings = new Set();
 function emitWarning(type, message) {
@@ -124,6 +159,7 @@ class BunWebSocket extends EventEmitter {
   #paused = false;
   #fragments = false;
   #binaryType = "nodebuffer";
+  #unexpectedResponseEmitted = false;
   // Bitset to track whether event handlers are set.
   #eventId = 0;
 
@@ -256,13 +292,104 @@ class BunWebSocket extends EventEmitter {
     }
     let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
+    // NOTE: the native 'handshake' listener is registered lazily from
+    // #ensureHandshakeListener() when the user subscribes to 'upgrade' or
+    // 'unexpected-response'. Keeping it off by default means callers that
+    // only listen to 'open'/'message'/'close' never exercise the Zig
+    // handshake-dispatch path (which has historically been fragile under
+    // ASAN, e.g. ws-proxy.test.ts).
 
     return ws;
   }
 
+  #handshakeListenerRegistered = false;
+  #ensureHandshakeListener() {
+    if (this.#handshakeListenerRegistered) return;
+    this.#handshakeListenerRegistered = true;
+    this.#ws.addEventListener("handshake", event => this.#onHandshake(event.data), onceObject);
+  }
+
+  // ws emits `'upgrade'` / `'unexpected-response'` with an `http.ClientRequest`
+  // as the first argument. We bypass node:http and talk to the native
+  // WebSocket directly, so there is no real ClientRequest to expose. Pass a
+  // minimal stub — `method`, `path`, and the no-op header helpers — so user
+  // code that inspects the request object (e.g. `req.getHeader(...)`) does
+  // not crash. Build it lazily on first emission to keep the common open/
+  // close path zero-cost.
+  #syntheticRequest;
+  #getSyntheticRequest() {
+    let req = this.#syntheticRequest;
+    if (req) return req;
+    const url = this.#ws?.url;
+    let path = "/";
+    try {
+      if (url) {
+        const parsed = new URL(url);
+        // Node's http.ClientRequest.path is pathname + search (no fragment)
+        // per RFC 7230 §5.3. Preserve the query string so handlers that log
+        // or reconstruct the failing URL see the full request target.
+        path = (parsed.pathname || "/") + (parsed.search || "");
+      }
+    } catch {}
+    req = this.#syntheticRequest = {
+      __proto__: Object.create(EventEmitter.prototype),
+      method: "GET",
+      path,
+      url,
+      headers: { __proto__: null },
+      rawHeaders: [],
+      getHeader() {},
+      getHeaders() {
+        return { __proto__: null };
+      },
+      setHeader() {},
+      removeHeader() {},
+      hasHeader() {
+        return false;
+      },
+      abort() {},
+      end() {},
+      write() {},
+      writeHead() {},
+      headersSent: true,
+      finished: true,
+      socket: null,
+      [Symbol.toStringTag]: "ClientRequest",
+    };
+    return req;
+  }
+
+  #onHandshake(data) {
+    const { statusCode, statusMessage, rawHeaders, body } = data;
+    // On 101, any bytes arriving after the header block are the first
+    // WebSocket frame, not HTTP response body — node's http layer delivers
+    // them as the `head` buffer on the 'upgrade' event and the native
+    // WebSocket client forwards them to the protocol reader on didConnect.
+    // Don't leak them into the `upgrade` event's IncomingMessage stream.
+    const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders, statusCode === 101 ? null : body);
+    if (statusCode === 101) {
+      // `upgrade` emits `(response)` per ws docs.
+      this.emit("upgrade", res);
+      return;
+    }
+    this.#unexpectedResponseEmitted = true;
+    if (this.listenerCount("unexpected-response") > 0) {
+      // `unexpected-response` emits `(request, response)` per ws docs.
+      this.emit("unexpected-response", this.#getSyntheticRequest(), res);
+    } else {
+      this.emit("error", new Error("Unexpected server response: " + statusCode));
+    }
+  }
+
   #onOrOnce(event, listener, once) {
-    if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
+    if (event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
+    }
+    if (event === "upgrade" || event === "unexpected-response") {
+      // Lazy-register the native handshake listener so callers that never
+      // subscribe to these events don't exercise the Zig handshake dispatch.
+      this.#ensureHandshakeListener();
+      return once ? super.once(event, listener) : super.on(event, listener);
     }
     const mask = 1 << eventIds[event];
     const hasPersistentListener = mask && (this.#eventId & mask) === mask;
@@ -312,6 +439,7 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "error",
           err => {
+            if (this.#unexpectedResponseEmitted) return;
             this.emit("error", err);
           },
           once,
@@ -343,6 +471,53 @@ class BunWebSocket extends EventEmitter {
 
   once(event, listener) {
     return this.#onOrOnce(event, listener, onceObject);
+  }
+
+  // `on` is the conventional spelling, but ws / EventEmitter consumers also
+  // reach for `addListener` / `prependListener` / `prependOnceListener`. Each
+  // needs to arm the native bridge (the `#onOrOnce` path for standard events
+  // like 'open' / 'message', or `#ensureHandshakeListener()` for 'upgrade' /
+  // 'unexpected-response') — otherwise the handler sits on the EventEmitter
+  // list but the native event that would trigger `this.emit(...)` is never
+  // wired up, and the callback silently never fires.
+  addListener(event, listener) {
+    return this.#onOrOnce(event, listener, undefined);
+  }
+
+  prependListener(event, listener) {
+    this.#armNativeBridge(event);
+    return super.prependListener(event, listener);
+  }
+
+  prependOnceListener(event, listener) {
+    this.#armNativeBridge(event);
+    return super.prependOnceListener(event, listener);
+  }
+
+  // Install the native-side listener that eventually calls `this.emit(event,
+  // …)`, without pushing a new EventEmitter listener onto the list — that
+  // part is the caller's job (e.g. `super.prependListener`). Mirrors the
+  // bridge-installation branch of `#onOrOnce` for the cases where we need
+  // the side effect but not the `super.on`/`super.once` call.
+  #armNativeBridge(event) {
+    if (event === "upgrade" || event === "unexpected-response") {
+      this.#ensureHandshakeListener();
+      return;
+    }
+    // `1 << undefined` evaluates to `1` (ToInt32(undefined) = 0), so a
+    // naive `if (!mask) return` would silently fall through for unknown
+    // event names and install a spurious noopBridgeListener on bit 0.
+    // Guard explicitly against unknown events.
+    if (eventIds[event] === undefined) return;
+    const mask = 1 << eventIds[event];
+    const hasPersistentListener = (this.#eventId & mask) === mask;
+    if (hasPersistentListener) return;
+    // Register a persistent bridge listener once. A no-op noop callback
+    // goes into the EventEmitter list via `#onOrOnce` so the `#eventId` bit
+    // gets flipped and the native forwarder is installed; subsequent
+    // `prependListener` calls will then see `hasPersistentListener` and
+    // skip this branch.
+    this.#onOrOnce(event, noopBridgeListener, undefined);
   }
 
   send(data, opts, cb) {
@@ -412,10 +587,33 @@ class BunWebSocket extends EventEmitter {
 
   // deviation: this does not support `message` with `binaryType = "fragments"`
   addEventListener(type, listener, options) {
+    // 'upgrade' and 'unexpected-response' are Node-style events — they're
+    // emitted on the JS-side EventEmitter by `#onHandshake`, never by the
+    // native WebSocket. Register on `this` and arm the handshake listener.
+    // We deliberately don't wrap the handler in a DOM-style adapter: a
+    // wrapped closure would make `removeEventListener` fail to match the
+    // original listener, leaking the handler. Consumers that reach for
+    // `addEventListener` on a ws shim already accept a mixed API; for
+    // these two Node-only events they receive Node-style
+    // `(response)` / `(request, response)` args.
+    if (type === "upgrade" || type === "unexpected-response") {
+      this.#ensureHandshakeListener();
+      if (options && options.once) {
+        return super.once(type, listener);
+      }
+      return super.on(type, listener);
+    }
     this.#ws.addEventListener(type, listener, options);
   }
 
   removeEventListener(type, listener) {
+    // Symmetric with addEventListener: upgrade/unexpected-response
+    // listeners live on `this` (the EventEmitter), not on the native
+    // WebSocket, so removing them means calling `super.off`.
+    if (type === "upgrade" || type === "unexpected-response") {
+      super.off(type, listener);
+      return;
+    }
     this.#ws.removeEventListener(type, listener);
   }
 

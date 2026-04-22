@@ -74,6 +74,7 @@
 #include <wtf/text/StringBuilder.h>
 
 #include "JSBuffer.h"
+#include "BunClientData.h"
 #include "ErrorEvent.h"
 #include "WebSocketDeflate.h"
 
@@ -1488,6 +1489,59 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     // });
 }
 
+void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body)
+{
+    // The only consumer is the `ws` package shim, which always registers a listener
+    // before connecting. The browser-style `new WebSocket()` path skips this entirely.
+    if (!this->hasEventListeners(eventNames().handshakeEvent))
+        return;
+
+    auto* context = scriptExecutionContext();
+    if (!context)
+        return;
+    auto* globalObject = context->jsGlobalObject();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    auto* obj = JSC::constructEmptyObject(globalObject);
+    obj->putDirect(vm, builtinNames.statusCodePublicName(), JSC::jsNumber(statusCode));
+    obj->putDirect(vm, builtinNames.statusMessagePublicName(),
+        JSC::jsString(vm, WTF::String({ statusMessage.data(), statusMessage.size() })));
+
+    // PicoHTTP already parsed the response head, so surface its header list as
+    // a flat [name, value, name, value, ...] rawHeaders array.
+    auto* rawHeaders = JSC::constructEmptyArray(globalObject, nullptr, headers.size() * 2);
+    if (!rawHeaders || scope.exception()) [[unlikely]] {
+        scope.clearExceptionExceptTermination();
+        return;
+    }
+    for (size_t i = 0; i < headers.size(); i++) {
+        rawHeaders->putDirectIndex(globalObject, i * 2,
+            JSC::jsString(vm, WTF::String({ headers[i].name_ptr, headers[i].name_len })));
+        rawHeaders->putDirectIndex(globalObject, i * 2 + 1,
+            JSC::jsString(vm, WTF::String({ headers[i].value_ptr, headers[i].value_len })));
+    }
+    obj->putDirect(vm, builtinNames.rawHeadersPublicName(), rawHeaders);
+
+    JSC::JSUint8Array* bodyBuffer = createBuffer(globalObject, body);
+    if (!bodyBuffer || scope.exception()) [[unlikely]] {
+        scope.clearExceptionExceptTermination();
+        return;
+    }
+    obj->putDirect(vm, builtinNames.bodyPublicName(), bodyBuffer);
+
+    JSC::EnsureStillAliveScope ensureStillAlive(obj);
+
+    MessageEvent::Init init;
+    init.data = obj;
+    init.origin = m_url.string();
+
+    this->incPendingActivityCount();
+    dispatchEvent(MessageEvent::create(eventNames().handshakeEvent, WTF::move(init), EventIsTrusted::Yes));
+    this->decPendingActivityCount();
+}
+
 void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError)
 {
     // LOG(Network, "WebSocket %p didReceiveErrorMessage()", this);
@@ -1857,6 +1911,11 @@ extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t
 extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, void* tunnel, char* bufferedData, size_t len, const PerMessageDeflateParams* deflate_params)
 {
     webSocket->didConnectWithTunnel(tunnel, bufferedData, len, deflate_params);
+}
+
+extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, const uint8_t* statusMessage, size_t statusMessageLen, const WebCore::WebSocket::HandshakeRawHeader* headers, size_t headersLen, const uint8_t* body, size_t bodyLen)
+{
+    webSocket->didReceiveHandshakeResponse(statusCode, std::span(statusMessage, statusMessageLen), std::span(headers, headersLen), std::span(body, bodyLen));
 }
 
 extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)

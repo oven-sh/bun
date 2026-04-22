@@ -186,10 +186,6 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                     }
                 }
 
-                // When a user runs `bun remove -g <name>` and <name> is not a globally installed
-                // package, it's often because <name> is a binary name (e.g. `tsc`) rather than the
-                // package name (e.g. `typescript`), or the binary was installed by a different tool.
-                // Without a warning the command silently succeeds, which is confusing.
                 if (!found and manager.options.global and log_level != .silent and request.name.len > 0) {
                     warnGlobalPackageNotFound(request.name);
                 }
@@ -505,14 +501,12 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 /// If `<name>` resolves to a binary on $PATH, try to figure out the owning package name and
 /// suggest it. Otherwise just warn that the package is not installed globally.
 fn warnGlobalPackageNotFound(name: string) void {
+    defer Output.flush();
+
     const which_buf = bun.path_buffer_pool.get();
     defer bun.path_buffer_pool.put(which_buf);
-    const found_in_path: ?[:0]const u8 = if (bun.env_var.PATH.get()) |PATH|
-        bun.which(which_buf, PATH, FileSystem.instance.top_level_dir, name)
-    else
-        null;
 
-    if (found_in_path) |binary_path| {
+    if (bun.which(which_buf, bun.env_var.PATH.get() orelse "", FileSystem.instance.top_level_dir, name)) |binary_path| {
         const link_buf = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(link_buf);
         if (packageNameFromBinary(binary_path, link_buf)) |pkg| {
@@ -522,18 +516,15 @@ fn warnGlobalPackageNotFound(name: string) void {
                     .{ name, pkg },
                 );
                 Output.note("<b>{s}<r> is in $PATH at {s}", .{ name, binary_path });
-                Output.flush();
                 return;
             }
         }
 
         Output.warn("<b>{s}<r> is not in global package.json, but it is in $PATH at {s}", .{ name, binary_path });
-        Output.flush();
         return;
     }
 
     Output.warn("<b>{s}<r> is not in global package.json", .{name});
-    Output.flush();
 }
 
 /// Given an absolute path to a binary, try to derive the npm package name that provides it.
@@ -565,7 +556,7 @@ fn packageNameFromNodeModulesPath(path_: string) ?string {
     for (needles) |needle| {
         if (strings.lastIndexOf(path_, needle)) |i| {
             // Must sit on a segment boundary so e.g. `foo-node_modules/` doesn't match.
-            if (i > 0 and !isPathSep(path_[i - 1])) continue;
+            if (i > 0 and !bun.path.Platform.auto.isSeparator(path_[i - 1])) continue;
             const after = i + needle.len;
             if (best == null or after > best.?) best = after;
         }
@@ -578,31 +569,20 @@ fn packageNameFromNodeModulesPath(path_: string) ?string {
     var seen_sep: usize = 0;
     var end: usize = 0;
     while (end < remain.len) : (end += 1) {
-        if (isPathSep(remain[end])) {
+        if (bun.path.Platform.auto.isSeparator(remain[end])) {
             seen_sep += 1;
             if (!is_scoped or seen_sep == 2) break;
         }
     }
     remain = remain[0..end];
 
-    // Strip a trailing separator, e.g. `node_modules/@scope/` with no package name after it.
-    while (remain.len > 0 and isPathSep(remain[remain.len - 1])) {
-        remain = remain[0 .. remain.len - 1];
-    }
-
-    if (remain.len == 0 or strings.eqlComptime(remain, ".bin")) return null;
-
     // Only suggest names that pass bun's own package-name validator. This also rejects
-    // `@scope` with no `/name`, `@scope/` with an empty name, and on Windows `@scope\name`
-    // (we return a slice into the possibly-const input so we can't normalize the separator
-    // here; the caller falls back to the generic $PATH message).
+    // `.bin`, `@scope` with no `/name`, `@scope/` with an empty name, and on Windows
+    // `@scope\name` (we return a slice into the possibly-const input so we can't normalize
+    // the separator here; the caller falls back to the generic $PATH message).
     if (!strings.isNPMPackageName(remain)) return null;
 
     return remain;
-}
-
-inline fn isPathSep(c: u8) bool {
-    return c == '/' or (Environment.isWindows and c == '\\');
 }
 
 pub fn updatePackageJSONAndInstallCatchError(

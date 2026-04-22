@@ -1407,6 +1407,38 @@ describe("bundler", () => {
       `,
     },
   });
+  // Explicit --external wildcards must win over a tsconfig `paths` alias
+  // that resolves to a real local file. Without this guard the #29590 fix
+  // would silently bundle `@/src/*` when the user asked for it to stay
+  // external on top of `--packages=external`.
+  itBundled("edgecase/ExternalWildcardBeatsTSConfigPaths#29590", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { add } from "@/src/adder";
+        console.log(add(1, 2));
+      `,
+      "/src/adder.ts": /* ts */ `
+        export const add = (a: number, b: number) => a + b;
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": { "@/*": ["./*"] }
+          }
+        }
+      `,
+    },
+    packages: "external",
+    external: ["@/src/*"],
+    target: "bun",
+    onAfterBundle(api) {
+      // The import must stay external. If it regresses, `add` gets
+      // inlined from src/adder.ts into the output bundle.
+      api.expectFile("/out.js").toContain(`from "@/src/adder"`);
+      api.expectFile("/out.js").not.toContain(`= (a, b) => a + b`);
+    },
+  });
   itBundled("edgecase/EntrypointWithoutPrefixSlashOrDotIsNotConsideredExternal#12734", {
     files: {
       "/src/entry.ts": /* ts */ `

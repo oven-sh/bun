@@ -598,6 +598,13 @@ pub const Resolver = struct {
         if (r.opts.packages == .external and isPackagePath(import_path)) {
             return true;
         }
+        return r.matchesUserExternalPattern(import_path);
+    }
+
+    /// True iff `import_path` matches a user-supplied `--external` wildcard
+    /// pattern. Does NOT consider `packages = external`; use
+    /// `isExternalPattern` for the combined check.
+    pub fn matchesUserExternalPattern(r: *ThisResolver, import_path: string) bool {
         for (r.opts.external.patterns) |pattern| {
             if (import_path.len >= pattern.prefix.len + pattern.suffix.len and (strings.startsWith(
                 import_path,
@@ -731,8 +738,14 @@ pub const Resolver = struct {
         // happen to be covered by a catch-all paths entry (e.g.
         // `"*": ["./types/*"]` for ambient .d.ts stubs) still get marked
         // external (issue #29590).
+        //
+        // A user-supplied `--external` wildcard still wins: the block
+        // below only fires when the import would otherwise be externalised
+        // by `packages=external + isPackagePath`, never by an explicit
+        // user pattern.
         if (kind != .entry_point_build and kind != .entry_point_run and
-            r.opts.packages == .external and isPackagePath(import_path))
+            r.opts.packages == .external and isPackagePath(import_path) and
+            !r.matchesUserExternalPattern(import_path))
         {
             if (r.resolveViaTSConfigPaths(source_dir, import_path, kind)) |res| {
                 if (r.debug_logs) |*debug| {

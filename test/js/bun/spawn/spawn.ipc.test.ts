@@ -40,7 +40,7 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
 
   it("ipc works when preceded by a non-pipe extra stdio slot", async () => {
     const { promise, resolve, reject } = Promise.withResolvers<string>();
-    const child = spawn([bunExe(), path.join(__dirname, "bun-ipc-child.js")], {
+    await using child = spawn([bunExe(), path.join(__dirname, "bun-ipc-child.js")], {
       env: bunEnv,
       stdio: ["inherit", "inherit", "inherit", "ignore"],
       serialization: mode,
@@ -48,6 +48,5 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
     });
     child.exited.then(code => reject(new Error(`exited ${code} before message`)));
     expect(await promise).toBe("hello");
-    child.kill();
   });
 });

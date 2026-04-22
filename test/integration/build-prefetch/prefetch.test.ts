@@ -110,7 +110,9 @@ test.skipIf(process.platform === "win32")(
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("using prefetch cache");
       expect(exitCode).toBe(0);
 
       // The published tree must be removable by the next fetch (version bump).

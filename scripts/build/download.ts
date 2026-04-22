@@ -157,7 +157,7 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
   let lastError: unknown;
   let permanent = false;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts && !permanent; attempt++) {
     if (attempt > 1) {
       const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 30000);
       console.log(`retry ${attempt}/${maxAttempts} in ${backoffMs}ms`);
@@ -171,7 +171,7 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
         lastError = new BuildError(`HTTP ${res.status} ${res.statusText} for ${url}`);
         // 4xx is deterministic — a bad URL/missing artifact won't succeed on
         // retry. Only loop on 5xx/network where the CDN may recover.
-        if (res.status >= 400 && res.status < 500) permanent = true;
+        permanent = res.status >= 400 && res.status < 500;
         continue;
       }
 
@@ -187,7 +187,6 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
       // createWriteStream truncates anyway.
       await rm(tmpPath, { force: true }).catch(() => {});
     }
-    if (permanent) break;
   }
 
   // 4xx: throw the status error directly — wrapping it in "after N attempts"

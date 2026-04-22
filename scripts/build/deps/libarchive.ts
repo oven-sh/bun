@@ -192,7 +192,7 @@ const POSIX = def1([
   "HAVE_SYS_MOUNT_H", "HAVE_SYS_PARAM_H", "HAVE_SYS_POLL_H", "HAVE_SYS_SELECT_H",
   "HAVE_SYS_STATVFS_H", "HAVE_SYS_TIME_H", "HAVE_SYS_UTSNAME_H", "HAVE_SYS_WAIT_H",
   "HAVE_UNISTD_H", "HAVE_UTIME_H",
-  "HAVE_ARC4RANDOM_BUF", "HAVE_CHOWN", "HAVE_CHROOT", "HAVE_CTIME_R", "HAVE_DIRFD",
+  "HAVE_CHOWN", "HAVE_CHROOT", "HAVE_CTIME_R", "HAVE_DIRFD",
   "HAVE_FCHDIR", "HAVE_FCHMOD", "HAVE_FCHOWN", "HAVE_FCNTL", "HAVE_FDOPENDIR",
   "HAVE_FNMATCH", "HAVE_FORK", "HAVE_FSEEKO", "HAVE_FSTATAT", "HAVE_FSTATVFS",
   "HAVE_FTRUNCATE", "HAVE_FUTIMENS", "HAVE_FUTIMES", "HAVE_GETEGID", "HAVE_GETEUID",
@@ -214,7 +214,7 @@ const POSIX = def1([
 const LINUX = def1([
   "HAVE_LINUX_FIEMAP_H", "HAVE_LINUX_FS_H", "HAVE_LINUX_MAGIC_H", "HAVE_LINUX_TYPES_H",
   "HAVE_SYS_STATFS_H", "HAVE_SYS_SYSMACROS_H", "HAVE_SYS_VFS_H", "HAVE_SYS_XATTR_H",
-  "HAVE_STATFS", "HAVE_FSTATFS", "HAVE_FUTIMESAT", "HAVE_LCHMOD",
+  "HAVE_STATFS", "HAVE_FSTATFS", "HAVE_FUTIMESAT",
   "HAVE_FGETXATTR", "HAVE_FLISTXATTR", "HAVE_FSETXATTR", "HAVE_GETXATTR",
   "HAVE_LGETXATTR", "HAVE_LISTXATTR", "HAVE_LLISTXATTR", "HAVE_LSETXATTR",
   "HAVE_STRUCT_STAT_ST_MTIM_TV_NSEC",
@@ -224,6 +224,9 @@ const LINUX = def1([
 
 // prettier-ignore
 const DARWIN = def1([
+  // arc4random_buf: BSD libc + glibc≥2.36 only. Bun's Linux CI targets
+  // older glibc, so Linux falls back to /dev/urandom.
+  "HAVE_ARC4RANDOM_BUF",
   "HAVE_SYS_XATTR_H", "HAVE_COPYFILE_H",
   "HAVE_FSTATFS", "HAVE_STATFS", "HAVE_LCHMOD", "HAVE_LCHFLAGS", "HAVE_CHFLAGS",
   "HAVE_FCHFLAGS",
@@ -245,7 +248,16 @@ const WINDOWS = def1([
   "HAVE__CTIME64_S", "HAVE__FSEEKI64", "HAVE__GET_TIMEZONE", "HAVE__GMTIME64_S",
   "HAVE__LOCALTIME64_S", "HAVE__MKGMTIME64",
   "HAVE_STRNCPY_S", "HAVE_WCSCPY_S", "HAVE_WCSNCPY_S",
-]);
+]) + `
+/* POSIX type fallbacks — UCRT's <sys/types.h> doesn't define these.
+   Values match cmake's WIN32 branch (CMakeLists.txt CHECK_TYPE_SIZE block). */
+#define gid_t short
+#define uid_t short
+#define id_t short
+#define mode_t unsigned short
+#define pid_t int
+#define ssize_t int64_t
+`;
 
 function configH(cfg: Config): string {
   const longSize = cfg.windows ? 4 : 8;

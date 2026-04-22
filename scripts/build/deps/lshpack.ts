@@ -23,10 +23,18 @@ export const lshpack: Dependency = {
   }),
 
   build: cfg => {
+    // <sys/queue.h> ships with glibc and BSD libc but not musl or win32.
+    // lshpack vendors a copy under compat/queue/ for that case.
+    const needCompatQueue = cfg.windows || cfg.abi === "musl";
     const spec: DirectBuild = {
       kind: "direct",
       sources: ["lshpack.c", "deps/xxhash/xxhash.c"],
-      includes: cfg.windows ? [".", "deps/xxhash", "compat/queue", "compat/windows"] : [".", "deps/xxhash"],
+      includes: [
+        ".",
+        "deps/xxhash",
+        ...(needCompatQueue ? ["compat/queue"] : []),
+        ...(cfg.windows ? ["compat/windows"] : []),
+      ],
       defines: { XXH_HEADER_NAME: "xxhash.h" },
     };
     if (cfg.windows) spec.cflags = ["-w"];
@@ -35,8 +43,6 @@ export const lshpack: Dependency = {
 
   provides: cfg => ({
     libs: [],
-    // Windows needs compat/queue for <sys/queue.h> shim (LIST_HEAD/etc. macros
-    // that don't exist on win32). On unix the real sys/queue.h is used.
-    includes: cfg.windows ? [".", "compat/queue"] : ["."],
+    includes: cfg.windows || cfg.abi === "musl" ? [".", "compat/queue"] : ["."],
   }),
 };

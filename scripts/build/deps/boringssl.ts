@@ -21,6 +21,7 @@
  */
 
 import type { Dependency, DirectBuild } from "../source.ts";
+import { depSourceDir } from "../source.ts";
 
 const BORINGSSL_COMMIT = "0c5fce43b7ed5eb6001487ee48ac65766f5ddcd1";
 
@@ -63,8 +64,9 @@ export const boringssl: Dependency = {
         ...(cfg.windows ? [] : ["-fvisibility=hidden", "-Wa,--noexecstack"]),
       ],
       // nasm needs -I with a trailing slash and CodeView debug info to
-      // match cmake's `-gcv8`.
-      nasmflags: ["-fwin64", "-gcv8", `-I./vendor/boringssl/gen/`],
+      // match cmake's `-gcv8`. Absolute path — ninja runs with buildDir
+      // as cwd, so a repo-relative path wouldn't resolve.
+      nasmflags: ["-fwin64", "-gcv8", `-I${depSourceDir(cfg, "boringssl")}/gen/`],
     };
     return spec;
   },

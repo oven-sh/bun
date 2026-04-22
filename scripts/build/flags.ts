@@ -578,8 +578,8 @@ export const defines: Flag[] = [
   },
   {
     flag: "U_DISABLE_RENAMING=1",
-    when: c => c.darwin,
-    desc: "Disable ICU symbol renaming (using system ICU)",
+    when: c => c.darwin && c.webkit === "prebuilt",
+    desc: "Match Apple's libicucore (unversioned symbols). direct/local link brew icu4c which IS versioned.",
   },
 
   // ─── Feature toggles ───

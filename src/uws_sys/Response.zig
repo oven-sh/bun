@@ -132,6 +132,14 @@ pub fn NewResponse(ssl_flag: i32) type {
 
             return .fromNative(@intCast(@intFromPtr(c.uws_res_get_native_handle(ssl_flag, res.downcast()))));
         }
+        /// Returns the underlying OS file descriptor (or Windows SOCKET) for this
+        /// response's socket, regardless of SSL. Unlike `getNativeHandle`, which
+        /// returns the OpenSSL `SSL*` pointer for TLS connections, this always
+        /// goes straight to `us_socket_get_fd` so the value is a real descriptor
+        /// suitable for `getsockopt`/`setsockopt`.
+        pub fn getFd(res: *Response) bun.FD {
+            return res.downcastSocket().getFd();
+        }
         pub fn getRemoteAddressAsText(res: *Response) ?[]const u8 {
             var buf: [*]const u8 = undefined;
             const size = c.uws_res_get_remote_address_as_text(ssl_flag, res.downcast(), &buf);
@@ -529,6 +537,12 @@ pub const AnyResponse = union(enum) {
         return switch (this) {
             .H3 => bun.invalid_fd,
             inline else => |resp| resp.getNativeHandle(),
+        };
+    }
+
+    pub fn getFd(this: AnyResponse) bun.FD {
+        return switch (this) {
+            inline else => |resp| resp.getFd(),
         };
     }
 

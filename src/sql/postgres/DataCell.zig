@@ -514,9 +514,6 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
 
         return error.UnsupportedArrayFormat;
     }
-    // TODO: `free_value = 1` would release the backing array, but some
-    // child-cell branches above (e.g. unquoted-text) set `free_value = 0`
-    // on owned strings — audit those before flipping the parent.
     return SQLDataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };
 }
 

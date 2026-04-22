@@ -797,19 +797,23 @@ pub const FileSystem = struct {
                 Limit.handles_before = limit;
                 file_limit = limit.max;
                 Limit.handles = file_limit;
-                const max_to_use: @TypeOf(limit.max) = if (Environment.isMusl)
-                    // musl has extremely low defaults here, so we really want
-                    // to enable this on musl or tests will start failing.
-                    @max(limit.max, 163840)
-                else
-                    // apparently, requesting too high of a number can cause other processes to not start.
-                    // https://discord.com/channels/876711213126520882/1316342194176790609/1318175562367242271
-                    // https://github.com/postgres/postgres/blob/fee2b3ea2ecd0da0c88832b37ac0d9f6b3bfb9a9/src/backend/storage/file/fd.c#L1072
-                    limit.max;
+                // Cap at 1<<20 to match Node.js. On macOS the hard limit defaults to
+                // RLIM_INFINITY; raising soft anywhere near INT_MAX breaks some child
+                // processes
+                // https://github.com/nodejs/node/blob/v25.9.0/src/node.cc#L621-L627
+                // https://github.com/postgres/postgres/blob/fee2b3ea2ecd0da0c88832b37ac0d9f6b3bfb9a9/src/backend/storage/file/fd.c#L1072
+                // https://discord.com/channels/876711213126520882/1316342194176790609/1318175562367242271
+                const max_to_use: @TypeOf(limit.max) = @min(
+                    // musl has extremely low defaults, so ensure at least 163840 there.
+                    if (Environment.isMusl) @max(limit.max, 163840) else limit.max,
+                    1 << 20,
+                );
                 if (limit.cur < max_to_use) {
                     var new_limit = std.mem.zeroes(std.posix.rlimit);
                     new_limit.cur = max_to_use;
-                    new_limit.max = max_to_use;
+                    // Don't lower the hard limit (Node only touches rlim_cur). The @max
+                    // is for the musl branch above, which may raise past the current hard.
+                    new_limit.max = @max(limit.max, max_to_use);
 
                     std.posix.setrlimit(resource, new_limit) catch break :blk;
                     file_limit = new_limit.max;

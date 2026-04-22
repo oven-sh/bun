@@ -59,11 +59,7 @@ test.skipIf(isWindows)(
       stdout: "pipe",
     });
 
-    const [, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // On crash the runner never reaches the summary line and exits non-zero;
     // checking the pass count first gives a readable diff on failure.

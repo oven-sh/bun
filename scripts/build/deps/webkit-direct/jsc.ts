@@ -14,6 +14,7 @@
  * shell-quoted multi-word args and cmake's flat-staged Scripts/ copies.
  */
 
+import { execFileSync } from "node:child_process";
 import { globSync } from "node:fs";
 import type { Config } from "../../config.ts";
 import type { Dependency, DirectCodegen } from "../../source.ts";
@@ -24,6 +25,41 @@ import { commonDefines, layerData, lutTables, webkitCFlags, webkitCxxFlags } fro
 
 const layer = layerData.JavaScriptCore;
 const SRC_INCLUDES = layer.includes.filter(i => i.startsWith("$SRC/")).map(i => i.replace("$SRC/", ""));
+
+/**
+ * Run generate-unified-source-bundles.py at configure time to learn
+ * the bundle filenames it will emit. cmake does the same via
+ * execute_process. The script also writes the bundle .cpp files as a
+ * side effect, so the codegen step at build time is just a re-run for
+ * staleness (it's a no-op when Sources.txt is unchanged).
+ */
+function unifiedBundles(cfg: Config): { bundles: string[]; nonUnified: string[] } {
+  const src = webkitSrcDir(cfg);
+  const jscSrc = `${src}/Source/JavaScriptCore`;
+  const ds = `${depBuildDir(cfg, "webkit-jsc")}/DerivedSources`;
+  const out = execFileSync("python3", [
+    `${src}/Source/WTF/Scripts/generate-unified-source-bundles.py`,
+    "--derived-sources-path", ds,
+    "--source-tree-path", jscSrc,
+    `${jscSrc}/Sources.txt`,
+    `${jscSrc}/inspector/remote/SourcesSocket.txt`,
+  ], { encoding: "utf8" });
+  // Default mode prints a cmake-semicolon list interleaving bundle paths
+  // (absolute, under <ds>/unified-sources/) with the @no-unify standalone
+  // sources (relative to source-tree-path). Split them apart so the
+  // standalone list comes from the same source of truth.
+  const bundles: string[] = [];
+  const nonUnified: string[] = [];
+  for (const p of out.trim().split(";")) {
+    if (p.includes("/unified-sources/")) {
+      bundles.push(`$BUILD/DerivedSources/unified-sources/${p.split("/").pop()!}`);
+    } else if (p.endsWith(".cpp") || p.endsWith(".c")) {
+      // Relative source path; .h entries are header-only markers — skip.
+      nonUnified.push(`Source/JavaScriptCore/${p}`);
+    }
+  }
+  return { bundles, nonUnified };
+}
 
 const JSC = "$SRC/Source/JavaScriptCore";
 const DS = "$BUILD/DerivedSources";
@@ -319,11 +355,17 @@ export const webkitJSC: Dependency = {
 
   source: webkitDirectSource,
 
-  build: cfg => ({
+  build: cfg => {
+    const { bundles, nonUnified } = unifiedBundles(cfg);
+    // The remote-inspector backend's posix/win32 socket impl isn't in
+    // Sources.txt (Platform*.cmake adds it).
+    const remoteSocket = cfg.windows
+      ? "Source/JavaScriptCore/inspector/remote/socket/win/RemoteInspectorSocketWin.cpp"
+      : "Source/JavaScriptCore/inspector/remote/socket/posix/RemoteInspectorSocketPOSIX.cpp";
+    return {
     kind: "direct",
     pic: true,
-    // Compile nothing yet — first milestone is DerivedSources/ populated.
-    sources: [],
+    sources: [...bundles, ...nonUnified, remoteSocket, `${DS}/JSCBuiltins.cpp`],
     includes: [
       ...SRC_INCLUDES,
       // <wtf/X.h> resolves directly from Source/WTF (forwarding tree is a
@@ -341,6 +383,8 @@ export const webkitJSC: Dependency = {
       ...webkitCFlags(cfg),
       `-I${depBuildDir(cfg, "webkit-bmalloc")}`,
       `-I${depBuildDir(cfg, "webkit-jsc")}/DerivedSources`,
+      `-I${depBuildDir(cfg, "webkit-jsc")}/DerivedSources/inspector`,
+      `-I${depBuildDir(cfg, "webkit-jsc")}/DerivedSources/yarr`,
     ],
     cxxflags: webkitCxxFlags(cfg),
     forwardHeaders: [
@@ -364,8 +408,29 @@ export const webkitJSC: Dependency = {
         ],
       },
     ],
-    codegen: [...jscCodegen(cfg), ...llintCodegen(cfg), ...lutCodegen()],
-  }),
+    codegen: [
+      ...jscCodegen(cfg),
+      ...llintCodegen(cfg),
+      ...lutCodegen(),
+      // Unified-source bundles: 166 #include-rollup .cpp files. cmake runs
+      // this at configure time via execute_process; here it's a normal
+      // codegen step so the bundles regenerate when Sources.txt changes.
+      {
+        interpreter: "python3",
+        script: "$SRC/Source/WTF/Scripts/generate-unified-source-bundles.py",
+        args: [
+          "--derived-sources-path", DS,
+          "--source-tree-path", `${JSC}`,
+          `${JSC}/Sources.txt`,
+          `${JSC}/inspector/remote/SourcesSocket.txt`,
+        ],
+        outputs: bundles,
+        inputs: [`${JSC}/Sources.txt`, `${JSC}/inspector/remote/SourcesSocket.txt`],
+        cwd: DS,
+      },
+    ],
+    };
+  },
 
   provides: () => ({
     libs: [],

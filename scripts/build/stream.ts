@@ -208,7 +208,10 @@ function main(): void {
   // Gated on `interactive`: when piped, progress lines are log noise
   // (~35 Code Gen lines that clutter failure logs / LLM context). No
   // FD 3 setup → zig sees no ZIG_PROGRESS → just start + summary.
-  const stdio: import("node:child_process").StdioOptions = ["inherit", "pipe", "pipe"];
+  // --stdout=PATH: open the file and hand the fd straight to the child as
+  // stdio[1]. No JS-side pipe — process.exit() can't race a kernel write.
+  const stdoutFd = stdoutPath !== undefined ? openSync(stdoutPath, "w") : undefined;
+  const stdio: import("node:child_process").StdioOptions = ["inherit", stdoutFd ?? "pipe", "pipe"];
   if (zigProgress && interactive) {
     envOverrides.ZIG_PROGRESS = "3";
     stdio.push("pipe"); // index 3 = zig's IPC write end
@@ -242,15 +245,7 @@ function main(): void {
     const rl = createInterface({ input: stream, crlfDelay: Infinity });
     rl.on("line", line => write(prefix + line + "\n"));
   };
-  // --stdout=PATH: capture child stdout to a file instead of prefixing.
-  // For codegen scripts that write their result to stdout (Perl
-  // create_hash_table → *.lut.h). stderr still streams.
-  if (stdoutPath !== undefined) {
-    const sink = createWriteStream(stdoutPath);
-    child.stdout!.pipe(sink);
-  } else {
-    pump(child.stdout!);
-  }
+  if (stdoutFd === undefined) pump(child.stdout!);
   pump(child.stderr!);
 
   // stdio[3] only exists if we pushed it above (zigProgress && interactive).
@@ -276,6 +271,7 @@ function main(): void {
       process.exit(1);
     }
     if (code === 0) writeStamp();
+    if (stdoutFd !== undefined) closeSync(stdoutFd);
     process.exit(code ?? 1);
   });
 }

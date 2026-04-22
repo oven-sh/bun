@@ -823,7 +823,9 @@ export function resolveDep(
   const directSources: string[] = [];
   if (buildSpec.kind === "direct") {
     for (const s of buildSpec.sources) {
-      directSources.push(resolve(srcDir, typeof s === "string" ? s : s.path));
+      const p = typeof s === "string" ? s : s.path;
+      // $BUILD/ sources are codegen outputs, not fetch outputs.
+      if (!p.startsWith("$BUILD/")) directSources.push(resolve(srcDir, p));
     }
     for (const h of Object.values(buildSpec.headers ?? {})) {
       if (typeof h !== "string") directSources.push(resolve(srcDir, h.from));
@@ -1722,7 +1724,9 @@ function emitDirect(
   const objects = spec.sources.map(s => {
     const path = typeof s === "string" ? s : s.path;
     const extra = typeof s === "string" ? [] : s.cflags;
-    const abs = resolve(srcDir, path);
+    // $BUILD/-prefixed sources are codegen outputs (unified bundles,
+    // JSCBuiltins.cpp); everything else resolves against srcDir.
+    const abs = path.startsWith("$BUILD/") ? resolve(buildDir, path.slice(7)) : resolve(srcDir, path);
     // .asm → nasm() (NASM syntax, Windows-x64). .c/.S → cc() (clang's
     // integrated assembler handles .S), prepending `-x c++` when lang:"cxx"
     // forces a C source through the C++ frontend (mimalloc). Everything

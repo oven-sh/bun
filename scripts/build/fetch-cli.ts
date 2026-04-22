@@ -65,6 +65,7 @@ async function main(): Promise<void> {
       assert(pairs.length % 2 === 0, "subst: replacements must be <from> <to> pairs");
       let text = await readFile(inPath, "utf8");
       for (let i = 0; i + 1 < pairs.length; i += 2) {
+        assert(pairs[i]!.length > 0, `subst: empty <from> at index ${i}`);
         text = text.split(pairs[i]!).join(pairs[i + 1]!);
       }
       await writeFile(outPath, text);
@@ -106,6 +107,7 @@ Usage: bun fetch-cli.ts <kind> <args...>
 Kinds:
   dep      <name> <repo> <commit> <dest> <cache> [...patches]
   prebuilt <name> <url> <dest> <identity> [...rm_paths]
+  subst    <in> <out> [<from> <to>]...
   zig      <url> <dest> <commit>
 
 This is invoked by ninja build rules. You shouldn't need to call it

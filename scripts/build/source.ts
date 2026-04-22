@@ -169,17 +169,6 @@ export type BuildSpec =
       kind: "none";
     };
 
-/**
- * Compile sources directly into our ninja graph — no cmake/cargo sub-process.
- *
- * Each source becomes a `cc` build edge; outputs are archived into
- * `buildDir/deps/<name>/lib<name>.a`. Flags are the same globals that
- * nested-cmake deps get (computeDepFlags) so ASAN/optimization/target
- * stay consistent.
- *
- * Use this for deps simple enough that an overlay CMakeLists.txt is more
- * work than listing the files — tinycc, picohttpparser, libdeflate.
- */
 /** A source file with extra per-file flags (e.g. SIMD `-mavx2`). */
 export interface DirectSource {
   path: string;
@@ -198,6 +187,14 @@ export interface HeaderSubst {
   replace?: Array<[from: string, to: string]>;
 }
 
+/**
+ * Compile sources directly into our ninja graph — no cmake/cargo sub-process.
+ *
+ * Each source becomes a `cc`/`cxx`/`nasm` build edge; outputs are archived
+ * into `buildDir/deps/<name>/lib<name>.a`. Flags are the same globals that
+ * nested-cmake deps get (computeDepFlags) so ASAN/optimization/target stay
+ * consistent.
+ */
 export interface DirectBuild {
   kind: "direct";
   /**
@@ -1439,6 +1436,7 @@ function emitDirect(
           outputs: [out],
           rule: "dep_subst",
           inputs: [resolve(srcDir, body.from)],
+          implicitInputs: [fetchCliPath],
           orderOnlyInputs: orderOnly,
           vars: { pairs: quoteArgs((body.replace ?? []).flat(), hostWin) },
         });

@@ -63,7 +63,8 @@ export const boringssl: Dependency = {
             "-fno-strict-aliasing",
             "-fno-common",
             "-fvisibility=hidden",
-            "-Wa,--noexecstack",
+            // GNU_STACK note is ELF-only.
+            ...(cfg.linux ? ["-Wa,--noexecstack"] : []),
           ],
       // nasm needs -I with a trailing slash and CodeView debug info to
       // match cmake's `-gcv8`. Absolute path — ninja runs with buildDir

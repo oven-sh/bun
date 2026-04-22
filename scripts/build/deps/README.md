@@ -6,7 +6,7 @@ libraries/headers it provides.
 
 ## Adding a dependency
 
-1. Copy `boringssl.ts` (the simplest one) to `<name>.ts`
+1. Copy `hdrhistogram.ts` (the simplest direct dep) to `<name>.ts`
 2. Fill in `name`, `repo`, `commit`, `provides.libs`, `provides.includes`
 3. Add `import { <name> } from "./<name>.ts"` + entry in `allDeps` array in `index.ts`
 4. `bun run scripts/build/phase3-test.ts` to verify it builds
@@ -100,14 +100,16 @@ export const mydep: Dependency = {
 
 ## Worked examples
 
-- **boringssl.ts** (33 lines) — simplest possible cmake dep
-- **libdeflate.ts** — simplest possible direct dep
-- **zstd.ts** — `sourceSubdir` (CMakeLists.txt not at repo root)
-- **libarchive.ts** — direct build with hand-written config.h + `fetchDeps`
+- **hdrhistogram.ts** / **libdeflate.ts** — simplest direct deps
 - **mimalloc.ts** — direct build, single unity TU compiled as C++
 - **tinycc.ts** — direct build with a build-time codegen tool
+- **zlib.ts** — direct build with per-source SIMD `-m` flags + `.h.in` substitution
+- **libarchive.ts** / **cares.ts** — direct build with hand-written per-target config.h
+- **boringssl.ts** — direct build with NASM assembly (win-x64) and a large gen/ manifest
+- **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
+- **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags
-- **sqlite.ts** — in-tree source (lives in `src/`, not `vendor/`)
+- **webkit.ts** — `nested-cmake` (`sourceSubdir`, `preBuild`) and `prebuilt`
 
 ## How the three-step build works
 

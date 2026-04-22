@@ -460,7 +460,8 @@ export function resolveLlvmToolchain(
   if (os === "windows") {
     nasm = findTool({
       names: ["nasm"],
-      required: false,
+      // win-x64 always needs nasm (boringssl); win-aarch64 uses gas .S.
+      required: arch === "x64",
       hint: "Install from https://nasm.us or `winget install NASM.NASM`",
     })?.path;
   }

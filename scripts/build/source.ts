@@ -1247,8 +1247,9 @@ function emitNestedCmake(
     return resolve(libDir, `${cfg.libPrefix}${lib}${cfg.libSuffix}`);
   });
 
-  // Targets default to lib names — most deps name their cmake target
-  // the same as the output library (libuv's "uv_a" → libuv_a.a).
+  // Targets default to lib names — for deps where the cmake target and
+  // the output library share a name. Any dep that diverges sets
+  // `targets` explicitly.
   const targets = spec.targets ?? provides.libs.filter(l => !l.includes("."));
 
   // ─── Emit build node ───
@@ -1544,6 +1545,11 @@ function emitDirect(
   // (useful for bisecting duplicate-symbol issues, since a .a only
   // contributes members the linker actually pulls).
   if (cfg.archiveDeps) {
+    // ar's output dir + the per-source obj dirs both need pre-creating —
+    // configure.ts:mkdirAll only sees `output.objects`, which is empty
+    // in this branch.
+    mkdirSync(buildDir, { recursive: true });
+    for (const o of objects) mkdirSync(resolve(o, ".."), { recursive: true });
     const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects);
     n.phony(name, [lib]);
     return { libs: [lib], objects: [], headerOutputs: [lib] };

@@ -37,6 +37,16 @@ Change the `commit` field. That's it. The build system computes a source
 identity hash from `sha256(commit + patch_contents)` — changing the commit
 invalidates `.ref`, triggers re-fetch, and everything downstream rebuilds.
 
+The `.github/workflows/update-<name>.yml` jobs do this automatically by
+sed'ing the `const <NAME>_COMMIT = "..."` line. If you rename that
+constant, update the workflow too.
+
+**For `direct` deps:** the source list is hardcoded, so a bump that adds
+or removes a `.c`/`.cpp` upstream needs a matching list edit here. CI
+catches a missed addition (link error on the unresolved symbol); a
+removed file fails at compile. Either way the auto-bump PR goes red,
+which is the cue to diff the upstream `CMakeLists.txt`.
+
 ## Common fields
 
 ```ts

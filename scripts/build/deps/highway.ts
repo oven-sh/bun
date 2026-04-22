@@ -43,7 +43,9 @@ export const highway: Dependency = {
       ],
       includes: ["."],
       defines: { HWY_STATIC_DEFINE: true },
-      cflags: ["-fno-exceptions", "-fmath-errno"],
+      // -fmath-errno isn't a CLOption (clang-cl warns); highway's own
+      // cmake skips it in the MSVC branch.
+      cflags: cfg.windows ? ["-fno-exceptions"] : ["-fno-exceptions", "-fmath-errno"],
     };
 
     // clang-cl on arm64-windows doesn't define __ARM_NEON even though NEON

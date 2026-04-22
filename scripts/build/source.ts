@@ -811,7 +811,10 @@ export function resolveDep(
     const result = emitDirect(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp, fetchDepStamps });
     libs = result.libs;
     objects = result.objects;
-    outputs = [...result.libs, ...result.objects];
+    // outputs is the "downstream needs me built" signal — for direct deps
+    // that's the generated headers + source stamp, NOT the .o files (those
+    // are link inputs, not include-order dependencies).
+    outputs = result.headerOutputs;
   } else {
     // No build step. Source stamp is the only output. For deps with
     // provides.sources (picohttpparser), emitBun adds a phony pointing at
@@ -1398,7 +1401,7 @@ function emitDirect(
   name: string,
   spec: DirectBuild,
   input: EmitDirectInput,
-): { libs: string[]; objects: string[] } {
+): { libs: string[]; objects: string[]; headerOutputs: string[] } {
   const { srcDir, sourceStamp, fetchDepStamps } = input;
   const buildDir = depBuildDir(cfg, name);
   const hostWin = cfg.host.os === "windows";
@@ -1543,10 +1546,13 @@ function emitDirect(
   if (cfg.archiveDeps) {
     const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects);
     n.phony(name, [lib]);
-    return { libs: [lib], objects: [] };
+    return { libs: [lib], objects: [], headerOutputs: [lib] };
   }
   n.phony(name, objects);
-  return { libs: [], objects };
+  // headerOutputs: what downstream needs to wait on for HEADERS to be
+  // ready. For no-archive direct deps that's the generated header set
+  // (subst/literal/codegen) plus the source stamp — not the .o files.
+  return { libs: [], objects, headerOutputs: [...generated, sourceStamp] };
 }
 
 /**

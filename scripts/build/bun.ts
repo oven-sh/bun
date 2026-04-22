@@ -185,14 +185,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     depLibs.push(...d.libs);
     depObjects.push(...d.objects);
     depIncludes.push(...d.includes);
-    // Direct deps with no .a: their headers are first-class ninja outputs
-    // (subst/literal/codegen) so the PCH's depfile tracks them exactly —
-    // pulling 795 dep .o files in here would cascade-rebuild PCH on every
-    // dep touch. The coarse output signal stays for nested-cmake/prebuilt/
-    // archived deps where headers are undeclared side-effects of the
-    // sub-build (or of extraction, for header-only prebuilts like
-    // nodejs-headers — without this, bun's cxx would race the fetch).
-    if (d.includes.length > 0 && d.objects.length === 0) depHeaderSignal.push(...d.outputs);
+    // d.outputs is the "headers are ready" signal: for nested-cmake/
+    // prebuilt that's the .a/stamp (headers are undeclared side-effects),
+    // for direct deps it's the generated-header set + source stamp.
+    if (d.includes.length > 0) depHeaderSignal.push(...d.outputs);
   }
 
   // ─── Step 2: codegen ───

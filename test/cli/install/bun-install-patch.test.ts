@@ -623,6 +623,57 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     expect(lockfile).not.toContain("patchedDependencies");
   });
 
+  // https://github.com/oven-sh/bun/issues/13531 (workspace variant, see also #27894)
+  it("should ignore patchedDependencies from a workspace member's package.json", async () => {
+    // Only the install root's `patchedDependencies` is honored (matching
+    // `overrides`, `workspaces`, and `catalogs` behavior). Previously the
+    // member's patch paths were written to the root lockfile and resolved
+    // relative to the root directory, failing with "Couldn't find patch file".
+    const patchFilename = filepathEscape("is-even@1.0.0.patch");
+    const filedir = tempDirWithFiles("patch-workspace-member", {
+      "package.json": JSON.stringify({
+        name: "workspace-root",
+        workspaces: ["packages/*"],
+      }),
+      packages: {
+        lib: {
+          "package.json": JSON.stringify({
+            name: "lib",
+            dependencies: {
+              "is-even": "1.0.0",
+            },
+            // This only applies when `lib` itself is the install root.
+            patchedDependencies: {
+              "is-even@1.0.0": `patches/${patchFilename}`,
+            },
+          }),
+          patches: {
+            [patchFilename]: is_even_patch,
+          },
+        },
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: bunEnv,
+      cwd: filedir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Couldn't find patch file");
+    expect(stderr).not.toContain("patches/");
+    expect({ stdout, exitCode }).toMatchObject({ exitCode: 0 });
+
+    // The member's patchedDependencies did not leak into the root lockfile.
+    const lockfile = await Bun.file(join(filedir, "bun.lock")).text();
+    expect(lockfile).not.toContain("patchedDependencies");
+    expect(lockfile).toContain("is-even");
+  });
+
   describe("bun patch with --linker=isolated", () => {
     const patchEnv = bunEnv;
 

@@ -1,0 +1,1728 @@
+{
+  "layers": {
+    "bmalloc": {
+      "sources": [
+        "$SRC/Source/bmalloc/bmalloc/CryptoRandom.cpp",
+        "$SRC/Source/bmalloc/bmalloc/SystemHeap.cpp",
+        "$SRC/Source/bmalloc/bmalloc/Environment.cpp",
+        "$SRC/Source/bmalloc/bmalloc/Gigacage.cpp",
+        "$SRC/Source/bmalloc/bmalloc/HeapKind.cpp",
+        "$SRC/Source/bmalloc/bmalloc/Logging.cpp",
+        "$SRC/Source/bmalloc/bmalloc/Mutex.cpp",
+        "$SRC/Source/bmalloc/bmalloc/TZoneHeap.cpp",
+        "$SRC/Source/bmalloc/bmalloc/TZoneHeapManager.cpp",
+        "$SRC/Source/bmalloc/bmalloc/TZoneLog.cpp",
+        "$SRC/Source/bmalloc/bmalloc/bmalloc.cpp",
+        "$SRC/Source/bmalloc/bmalloc/VMAllocate.cpp",
+        "$SRC/Source/bmalloc/libpas/src/libpas/bmalloc_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/bmalloc_heap_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/jit_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_bitfit_page_config_kind.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_heap_config_kind.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_segregated_page_config_kind.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/bmalloc_type.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/hotbit_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/hotbit_heap_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/iso_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/iso_heap_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/iso_test_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/iso_test_heap_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/jit_heap_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/minalign32_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/minalign32_heap_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pagesize64k_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pagesize64k_heap_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_alignment.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_all_heaps.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_all_shared_page_directories.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_allocation_callbacks.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_allocation_result.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_baseline_allocator.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_baseline_allocator_table.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_basic_heap_config_enumerator_data.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_bitfit_allocator.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_bitfit_directory.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_bitfit_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_bitfit_page.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_bitfit_size_class.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_bitfit_view.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_bootstrap_free_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_bootstrap_heap_page_provider.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_coalign.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_commit_span.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_committed_pages_vector.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_compact_bootstrap_free_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_compact_expendable_memory.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_compact_heap_reservation.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_compact_large_utility_free_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_compute_summary_object_callbacks.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_create_basic_heap_page_caches_with_reserved_memory.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_deallocate.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_debug_spectrum.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_deferred_decommit_log.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_designated_intrinsic_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_dyld_state.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_dynamic_primitive_heap_map.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_ensure_heap_forced_into_reserved_memory.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_ensure_heap_with_page_caches.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_enumerable_page_malloc.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_enumerable_range_list.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_enumerate_bitfit_heaps.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_enumerate_initially_unaccounted_pages.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_enumerate_large_heaps.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_enumerate_segregated_heaps.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_enumerate_unaccounted_pages_as_meta.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_enumerator.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_enumerator_region.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_epoch.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_exclusive_view_template_memo_table.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_expendable_memory.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_extended_gcd.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_fast_large_free_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_fast_megapage_cache.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_fast_megapage_table.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_fd_stream.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_free_granules.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_heap_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_heap_config_utils.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_heap_for_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_heap_lock.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_heap_ref.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_heap_runtime_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_heap_summary.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_heap_table.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_immortal_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_large_expendable_memory.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_large_free_heap_deferred_commit_log.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_large_free_heap_helpers.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_large_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_large_heap_physical_page_sharing_cache.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_large_map.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_large_sharing_pool.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_large_utility_free_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_lenient_compact_unsigned_ptr.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_local_allocator.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_local_allocator_scavenger_data.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_local_view_cache.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_lock.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_lock_free_read_ptr_ptr_hashtable.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_log.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_malloc_stack_logging.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_mar_registry.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_mar_report_crash.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_medium_megapage_cache.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_megapage_cache.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_monotonic_time.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_mte.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_mte_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_page_base.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_page_base_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_page_header_table.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_page_malloc.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_page_sharing_participant.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_page_sharing_pool.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_payload_reservation_page_list.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_physical_memory_transaction.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_primitive_heap_ref.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_probabilistic_guard_malloc_allocator.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_ptr_worklist.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_race_test_hooks.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_random.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_red_black_tree.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_redundant_local_allocator_node.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_report_crash.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_reserved_memory_provider.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_root.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_runtime_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_scavenger.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_segregated_directory.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_segregated_exclusive_view.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_segregated_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_segregated_page.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_segregated_page_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_segregated_page_config_kind_and_role.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_segregated_partial_view.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_segregated_shared_handle.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_segregated_shared_page_directory.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_segregated_shared_view.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_segregated_size_directory.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_segregated_view.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_shared_page_directory_by_size.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_simple_free_heap_helpers.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_simple_large_free_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_simple_type.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_small_medium_bootstrap_free_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_small_medium_bootstrap_heap_page_provider.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_stats.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_status_reporter.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_stream.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_string_stream.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_thread.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_thread_local_cache.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_thread_local_cache_layout.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_thread_local_cache_layout_node.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_thread_local_cache_node.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_thread_suspend_lock.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_thread_suspender.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_utility_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_utility_heap_config.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_utils.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_versioned_field.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/pas_virtual_range.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/thingy_heap.c",
+        "$SRC/Source/bmalloc/libpas/src/libpas/thingy_heap_config.c"
+      ],
+      "includes": [
+        "$SRC/Source/bmalloc",
+        "$SRC/Source/bmalloc/bmalloc",
+        "$SRC/Source/bmalloc/libpas/src/libpas"
+      ],
+      "defines": [
+        "BUILDING_JSCONLY__",
+        "BUILDING_WEBKIT=1",
+        "BUILDING_WITH_CMAKE=1",
+        "BUILDING_bmalloc",
+        "HAVE_CONFIG_H=1",
+        "PAS_BMALLOC=1",
+        "_GLIBCXX_ASSERTIONS=1",
+        "_GNU_SOURCE"
+      ]
+    },
+    "WTF": {
+      "sources": [
+        "$SRC/Source/WTF/wtf/ASCIICType.cpp",
+        "$SRC/Source/WTF/wtf/ApproximateTime.cpp",
+        "$SRC/Source/WTF/wtf/Assertions.cpp",
+        "$SRC/Source/WTF/wtf/AutomaticThread.cpp",
+        "$SRC/Source/WTF/wtf/AvailableMemory.cpp",
+        "$SRC/Source/WTF/wtf/uv_get_constrained_memory.cpp",
+        "$SRC/Source/WTF/wtf/BitVector.cpp",
+        "$SRC/Source/WTF/wtf/BloomFilter.cpp",
+        "$SRC/Source/WTF/wtf/CPUTime.cpp",
+        "$SRC/Source/WTF/wtf/ClockType.cpp",
+        "$SRC/Source/WTF/wtf/CodePtr.cpp",
+        "$SRC/Source/WTF/wtf/CompactPtr.cpp",
+        "$SRC/Source/WTF/wtf/CompilationThread.cpp",
+        "$SRC/Source/WTF/wtf/ConcurrentBuffer.cpp",
+        "$SRC/Source/WTF/wtf/ConcurrentPtrHashSet.cpp",
+        "$SRC/Source/WTF/wtf/ContinuousApproximateTime.cpp",
+        "$SRC/Source/WTF/wtf/ContinuousTime.cpp",
+        "$SRC/Source/WTF/wtf/CountingLock.cpp",
+        "$SRC/Source/WTF/wtf/CrossThreadCopier.cpp",
+        "$SRC/Source/WTF/wtf/CrossThreadTaskHandler.cpp",
+        "$SRC/Source/WTF/wtf/CryptographicUtilities.cpp",
+        "$SRC/Source/WTF/wtf/CryptographicallyRandomNumber.cpp",
+        "$SRC/Source/WTF/wtf/CurrentTime.cpp",
+        "$SRC/Source/WTF/wtf/DataLog.cpp",
+        "$SRC/Source/WTF/wtf/DateMath.cpp",
+        "$SRC/Source/WTF/wtf/DebugHeap.cpp",
+        "$SRC/Source/WTF/wtf/EmbeddedFixedVector.cpp",
+        "$SRC/Source/WTF/wtf/FastBitVector.cpp",
+        "$SRC/Source/WTF/wtf/FastFloat.cpp",
+        "$SRC/Source/WTF/wtf/FastMalloc.cpp",
+        "$SRC/Source/WTF/wtf/FileHandle.cpp",
+        "$SRC/Source/WTF/wtf/FilePrintStream.cpp",
+        "$SRC/Source/WTF/wtf/FileSystem.cpp",
+        "$SRC/Source/WTF/wtf/FunctionDispatcher.cpp",
+        "$SRC/Source/WTF/wtf/Gigacage.cpp",
+        "$SRC/Source/WTF/wtf/GlobalVersion.cpp",
+        "$SRC/Source/WTF/wtf/GregorianDateTime.cpp",
+        "$SRC/Source/WTF/wtf/HashTable.cpp",
+        "$SRC/Source/WTF/wtf/HexNumber.cpp",
+        "$SRC/Source/WTF/wtf/Int128.cpp",
+        "$SRC/Source/WTF/wtf/JSONValues.cpp",
+        "$SRC/Source/WTF/wtf/Language.cpp",
+        "$SRC/Source/WTF/wtf/LikelyDenseUnsignedIntegerSet.cpp",
+        "$SRC/Source/WTF/wtf/Lock.cpp",
+        "$SRC/Source/WTF/wtf/LockedPrintStream.cpp",
+        "$SRC/Source/WTF/wtf/LogChannels.cpp",
+        "$SRC/Source/WTF/wtf/LogInitialization.cpp",
+        "$SRC/Source/WTF/wtf/Logger.cpp",
+        "$SRC/Source/WTF/wtf/Logging.cpp",
+        "$SRC/Source/WTF/wtf/MainThread.cpp",
+        "$SRC/Source/WTF/wtf/MainThreadDispatcher.cpp",
+        "$SRC/Source/WTF/wtf/MallocCommon.cpp",
+        "$SRC/Source/WTF/wtf/MediaTime.cpp",
+        "$SRC/Source/WTF/wtf/MemoryPressureHandler.cpp",
+        "$SRC/Source/WTF/wtf/MetaAllocator.cpp",
+        "$SRC/Source/WTF/wtf/MonotonicTime.cpp",
+        "$SRC/Source/WTF/wtf/NativePromise.cpp",
+        "$SRC/Source/WTF/wtf/NumberOfCores.cpp",
+        "$SRC/Source/WTF/wtf/OSRandomSource.cpp",
+        "$SRC/Source/WTF/wtf/ObjectIdentifier.cpp",
+        "$SRC/Source/WTF/wtf/PageBlock.cpp",
+        "$SRC/Source/WTF/wtf/ParallelHelperPool.cpp",
+        "$SRC/Source/WTF/wtf/ParallelJobsGeneric.cpp",
+        "$SRC/Source/WTF/wtf/ParkingLot.cpp",
+        "$SRC/Source/WTF/wtf/PreciseSum.cpp",
+        "$SRC/Source/WTF/wtf/PrintStream.cpp",
+        "$SRC/Source/WTF/wtf/ProcessPrivilege.cpp",
+        "$SRC/Source/WTF/wtf/RAMSize.cpp",
+        "$SRC/Source/WTF/wtf/RandomDevice.cpp",
+        "$SRC/Source/WTF/wtf/ReadWriteLock.cpp",
+        "$SRC/Source/WTF/wtf/RefCountDebugger.cpp",
+        "$SRC/Source/WTF/wtf/RefTrackerMixin.cpp",
+        "$SRC/Source/WTF/wtf/RunLoop.cpp",
+        "$SRC/Source/WTF/wtf/RuntimeApplicationChecks.cpp",
+        "$SRC/Source/WTF/wtf/SHA1.cpp",
+        "$SRC/Source/WTF/wtf/SIMDUTF.cpp",
+        "$SRC/Source/WTF/wtf/SafeStrerror.cpp",
+        "$SRC/Source/WTF/wtf/Seconds.cpp",
+        "$SRC/Source/WTF/wtf/SegmentedVector.cpp",
+        "$SRC/Source/WTF/wtf/SequesteredAllocator.cpp",
+        "$SRC/Source/WTF/wtf/SequesteredAutomaticThread.cpp",
+        "$SRC/Source/WTF/wtf/SequesteredImmortalHeap.cpp",
+        "$SRC/Source/WTF/wtf/SequesteredMalloc.cpp",
+        "$SRC/Source/WTF/wtf/SixCharacterHash.cpp",
+        "$SRC/Source/WTF/wtf/SmallSet.cpp",
+        "$SRC/Source/WTF/wtf/StackBounds.cpp",
+        "$SRC/Source/WTF/wtf/StackCheck.cpp",
+        "$SRC/Source/WTF/wtf/StackPointer.cpp",
+        "$SRC/Source/WTF/wtf/StackStats.cpp",
+        "$SRC/Source/WTF/wtf/StackTrace.cpp",
+        "$SRC/Source/WTF/wtf/StatisticsManager.cpp",
+        "$SRC/Source/WTF/wtf/StringPrintStream.cpp",
+        "$SRC/Source/WTF/wtf/SuspendableWorkQueue.cpp",
+        "$SRC/Source/WTF/wtf/ThreadGroup.cpp",
+        "$SRC/Source/WTF/wtf/ThreadMessage.cpp",
+        "$SRC/Source/WTF/wtf/Threading.cpp",
+        "$SRC/Source/WTF/wtf/TimeWithDynamicClockType.cpp",
+        "$SRC/Source/WTF/wtf/TimingScope.cpp",
+        "$SRC/Source/WTF/wtf/URL.cpp",
+        "$SRC/Source/WTF/wtf/URLHelpers.cpp",
+        "$SRC/Source/WTF/wtf/URLParser.cpp",
+        "$SRC/Source/WTF/wtf/UUID.cpp",
+        "$SRC/Source/WTF/wtf/UniqueArray.cpp",
+        "$SRC/Source/WTF/wtf/Vector.cpp",
+        "$SRC/Source/WTF/wtf/WTFAssertions.cpp",
+        "$SRC/Source/WTF/wtf/WTFConfig.cpp",
+        "$SRC/Source/WTF/wtf/WTFProcess.cpp",
+        "$SRC/Source/WTF/wtf/WallTime.cpp",
+        "$SRC/Source/WTF/wtf/WeakPtr.cpp",
+        "$SRC/Source/WTF/wtf/WeakRandomNumber.cpp",
+        "$SRC/Source/WTF/wtf/WordLock.cpp",
+        "$SRC/Source/WTF/wtf/WorkQueue.cpp",
+        "$SRC/Source/WTF/wtf/WorkerPool.cpp",
+        "$SRC/Source/WTF/wtf/dtoa.cpp",
+        "$SRC/Source/WTF/wtf/dragonbox/dragonbox_to_chars.cpp",
+        "$SRC/Source/WTF/wtf/dtoa/bignum-dtoa.cc",
+        "$SRC/Source/WTF/wtf/dtoa/bignum.cc",
+        "$SRC/Source/WTF/wtf/dtoa/cached-powers.cc",
+        "$SRC/Source/WTF/wtf/dtoa/diy-fp.cc",
+        "$SRC/Source/WTF/wtf/dtoa/double-conversion.cc",
+        "$SRC/Source/WTF/wtf/dtoa/fast-dtoa.cc",
+        "$SRC/Source/WTF/wtf/dtoa/fixed-dtoa.cc",
+        "$SRC/Source/WTF/wtf/dtoa/strtod.cc",
+        "$SRC/Source/WTF/wtf/persistence/PersistentCoders.cpp",
+        "$SRC/Source/WTF/wtf/persistence/PersistentDecoder.cpp",
+        "$SRC/Source/WTF/wtf/persistence/PersistentEncoder.cpp",
+        "$SRC/Source/WTF/wtf/text/ASCIILiteral.cpp",
+        "$SRC/Source/WTF/wtf/text/AtomString.cpp",
+        "$SRC/Source/WTF/wtf/text/AtomStringImpl.cpp",
+        "$SRC/Source/WTF/wtf/text/AtomStringTable.cpp",
+        "$SRC/Source/WTF/wtf/text/Base64.cpp",
+        "$SRC/Source/WTF/wtf/text/CString.cpp",
+        "$SRC/Source/WTF/wtf/text/CStringView.cpp",
+        "$SRC/Source/WTF/wtf/text/ExternalStringImpl.cpp",
+        "$SRC/Source/WTF/wtf/text/LineEnding.cpp",
+        "$SRC/Source/WTF/wtf/text/StringBuffer.cpp",
+        "$SRC/Source/WTF/wtf/text/StringBuilder.cpp",
+        "$SRC/Source/WTF/wtf/text/StringBuilderJSON.cpp",
+        "$SRC/Source/WTF/wtf/text/StringCommon.cpp",
+        "$SRC/Source/WTF/wtf/text/StringImpl.cpp",
+        "$SRC/Source/WTF/wtf/text/StringView.cpp",
+        "$SRC/Source/WTF/wtf/text/SymbolImpl.cpp",
+        "$SRC/Source/WTF/wtf/text/SymbolRegistry.cpp",
+        "$SRC/Source/WTF/wtf/text/TextBreakIterator.cpp",
+        "$SRC/Source/WTF/wtf/text/TextStream.cpp",
+        "$SRC/Source/WTF/wtf/text/WTFString.cpp",
+        "$SRC/Source/WTF/wtf/text/icu/UnicodeExtras.cpp",
+        "$SRC/Source/WTF/wtf/text/icu/UTextProvider.cpp",
+        "$SRC/Source/WTF/wtf/text/icu/UTextProviderLatin1.cpp",
+        "$SRC/Source/WTF/wtf/text/icu/UTextProviderUTF16.cpp",
+        "$SRC/Source/WTF/wtf/threads/BinarySemaphore.cpp",
+        "$SRC/Source/WTF/wtf/threads/Signals.cpp",
+        "$SRC/Source/WTF/wtf/unicode/CollatorDefault.cpp",
+        "$SRC/Source/WTF/wtf/unicode/UTF8Conversion.cpp",
+        "$SRC/Source/WTF/wtf/unicode/icu/CollatorICU.cpp",
+        "$SRC/Source/WTF/wtf/unicode/icu/ICUHelpers.cpp",
+        "$SRC/Source/WTF/wtf/generic/WorkQueueGeneric.cpp",
+        "$SRC/Source/WTF/wtf/generic/MainThreadGeneric.cpp",
+        "$SRC/Source/WTF/wtf/posix/OSAllocatorPOSIX.cpp",
+        "$SRC/Source/WTF/wtf/posix/ThreadingPOSIX.cpp",
+        "$SRC/Source/WTF/wtf/text/unix/TextBreakIteratorInternalICUUnix.cpp",
+        "$SRC/Source/WTF/wtf/unix/LanguageUnix.cpp",
+        "$SRC/Source/WTF/wtf/unix/LoggingUnix.cpp",
+        "$SRC/Source/WTF/wtf/posix/CPUTimePOSIX.cpp",
+        "$SRC/Source/WTF/wtf/posix/FileHandlePOSIX.cpp",
+        "$SRC/Source/WTF/wtf/posix/FileSystemPOSIX.cpp",
+        "$SRC/Source/WTF/wtf/posix/MappedFileDataPOSIX.cpp",
+        "$SRC/Source/WTF/wtf/unix/UniStdExtrasUnix.cpp",
+        "$SRC/Source/WTF/wtf/linux/CurrentProcessMemoryStatus.cpp",
+        "$SRC/Source/WTF/wtf/linux/MemoryFootprintLinux.cpp",
+        "$SRC/Source/WTF/wtf/linux/RealTimeThreads.cpp",
+        "$SRC/Source/WTF/wtf/unix/MemoryPressureHandlerUnix.cpp",
+        "$SRC/Source/WTF/wtf/bun/RunLoopBun.cpp"
+      ],
+      "includes": [
+        "/home/dylan/code/bun/.claude/worktrees/frosty-bose-463330/build/wklocal/deps/WebKit",
+        "$BUILD/WTF/DerivedSources",
+        "$SRC/Source/WTF",
+        "$SRC/Source/WTF/wtf",
+        "$SRC/Source/WTF/wtf/dtoa",
+        "$SRC/Source/WTF/wtf/fast_float",
+        "$SRC/Source/WTF/wtf/persistence",
+        "$SRC/Source/WTF/wtf/simdutf",
+        "$SRC/Source/WTF/wtf/text",
+        "$SRC/Source/WTF/wtf/text/icu",
+        "$SRC/Source/WTF/wtf/threads",
+        "$SRC/Source/WTF/wtf/unicode",
+        "$BUILD/bmalloc/Headers"
+      ],
+      "defines": [
+        "BUILDING_JSCONLY__",
+        "BUILDING_WEBKIT=1",
+        "BUILDING_WITH_CMAKE=1",
+        "BUILDING_WTF",
+        "HAVE_CONFIG_H=1",
+        "PAS_BMALLOC=1",
+        "STATICALLY_LINKED_WITH_bmalloc",
+        "_GLIBCXX_ASSERTIONS=1"
+      ]
+    },
+    "JavaScriptCore": {
+      "sources": [
+        "$BUILD/JavaScriptCore/DerivedSources/JSCBuiltins.cpp",
+        "$SRC/Source/JavaScriptCore/inspector/remote/socket/posix/RemoteInspectorSocketPOSIX.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-3a52ce78-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-d93d10ff-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-d93d10ff-2.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-d93d10ff-3.cpp",
+        "$SRC/Source/JavaScriptCore/assembler/MacroAssemblerARM64.cpp",
+        "$SRC/Source/JavaScriptCore/assembler/MacroAssemblerARMv7.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-cd2e8cfa-1.cpp",
+        "$SRC/Source/JavaScriptCore/assembler/MacroAssemblerRISCV64.cpp",
+        "$SRC/Source/JavaScriptCore/assembler/MacroAssemblerX86_64.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-cd2e8cfa-2.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-2.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-3.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-4.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-5.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-6.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-7.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-8.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-9.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-10.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-11.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-12.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-13.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-14.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-15.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-16.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-23a5fd0e-17.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bd1dc6f7-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f0a787a9-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f0a787a9-2.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f0a787a9-3.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f0a787a9-4.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f0a787a9-5.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f0a787a9-6.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f0a787a9-7.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f0a787a9-8.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f0a787a9-9.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f0a787a9-10.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f0a787a9-11.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f0a787a9-12.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f0a787a9-13.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f0a787a9-14.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-3bec6ef2-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-5fbd0224-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-2.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-3.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-4.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-5.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-6.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-7.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-8.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-9.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-10.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-11.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-12.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-13.cpp",
+        "$SRC/Source/JavaScriptCore/dfg/DFGSpeculativeJIT.cpp",
+        "$SRC/Source/JavaScriptCore/dfg/DFGSpeculativeJIT32_64.cpp",
+        "$SRC/Source/JavaScriptCore/dfg/DFGSpeculativeJIT64.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-14.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-15.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-16.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-bfc896e1-17.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-3c3e0d8c-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-48793971-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-02aa2997-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-02aa2997-2.cpp",
+        "$SRC/Source/JavaScriptCore/ftl/FTLLowerDFGToB3.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-02aa2997-3.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-02aa2997-4.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-ee8a7a7a-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-ee8a7a7a-2.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-ee8a7a7a-3.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-ee8a7a7a-4.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-ee8a7a7a-5.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-ee8a7a7a-6.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-ee8a7a7a-7.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-ee8a7a7a-8.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-ee8a7a7a-9.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-84c9f43f-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-84c9f43f-2.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-84c9f43f-3.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-84c9f43f-4.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-84c9f43f-5.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-84c9f43f-6.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-84c9f43f-7.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-0e543b66-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-3a3c4ec0-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-3a3c4ec0-2.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-3a3c4ec0-3.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-3a3c4ec0-4.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-3a3c4ec0-5.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-3a3c4ec0-6.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-3a3c4ec0-7.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-3a3c4ec0-8.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-3a3c4ec0-9.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-6e4525b9-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-40392603-1.cpp",
+        "$SRC/Source/JavaScriptCore/parser/Parser.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-95324de6-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-95324de6-2.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-32435e5c-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-32435e5c-2.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-2.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-3.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-4.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-5.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-6.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-7.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-8.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-9.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-10.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-11.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-12.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-13.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-14.cpp",
+        "$SRC/Source/JavaScriptCore/runtime/IntlDateTimeFormat.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-15.cpp",
+        "$SRC/Source/JavaScriptCore/runtime/IntlDurationFormat.cpp",
+        "$SRC/Source/JavaScriptCore/runtime/IntlListFormat.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-16.cpp",
+        "$SRC/Source/JavaScriptCore/runtime/IntlNumberFormat.cpp",
+        "$SRC/Source/JavaScriptCore/runtime/IntlPluralRules.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-17.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-18.cpp",
+        "$SRC/Source/JavaScriptCore/runtime/IntlWorkaround.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-19.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-20.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-21.cpp",
+        "$SRC/Source/JavaScriptCore/runtime/JSDateMath.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-22.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-23.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-24.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-25.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-26.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-27.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-28.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-29.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-30.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-31.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-32.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-33.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-34.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-35.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-36.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-37.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-38.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-39.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-40.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-41.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-42.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-43.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-44.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-45.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-46.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-47.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-48.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-49.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-50.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-f2e18ffc-51.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-0284c6ac-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-0284c6ac-2.cpp",
+        "$SRC/Source/JavaScriptCore/wasm/WasmBBQJIT.cpp",
+        "$SRC/Source/JavaScriptCore/wasm/WasmBBQJIT64.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-2.cpp",
+        "$SRC/Source/JavaScriptCore/wasm/WasmIPIntSlowPaths.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-3.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-4.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-5.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-6.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-7.cpp",
+        "$SRC/Source/JavaScriptCore/wasm/js/JSWebAssemblyArray.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-8.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-9.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-10.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-11.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-12.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-13.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-14.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-15db4ad9-15.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-6cbc989f-1.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-6cbc989f-2.cpp",
+        "$SRC/Source/JavaScriptCore/disassembler/ARM64/Binja.c",
+        "$BUILD/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-1f8188f8-1-c.c"
+      ],
+      "includes": [
+        "$BUILD/JavaScriptCore/Headers",
+        "$BUILD/JavaScriptCore/PrivateHeaders",
+        "/home/dylan/code/bun/.claude/worktrees/frosty-bose-463330/build/wklocal/deps/WebKit",
+        "$BUILD/JavaScriptCore/PrivateHeaders/JavaScriptCore",
+        "$SRC/Source/JavaScriptCore",
+        "$SRC/Source/JavaScriptCore/API",
+        "$SRC/Source/JavaScriptCore/assembler",
+        "$SRC/Source/JavaScriptCore/b3",
+        "$SRC/Source/JavaScriptCore/b3/air",
+        "$SRC/Source/JavaScriptCore/bindings",
+        "$SRC/Source/JavaScriptCore/builtins",
+        "$SRC/Source/JavaScriptCore/bytecode",
+        "$SRC/Source/JavaScriptCore/bytecompiler",
+        "$SRC/Source/JavaScriptCore/dfg",
+        "$SRC/Source/JavaScriptCore/disassembler",
+        "$SRC/Source/JavaScriptCore/disassembler/ARM64",
+        "$SRC/Source/JavaScriptCore/disassembler/zydis",
+        "$SRC/Source/JavaScriptCore/domjit",
+        "$SRC/Source/JavaScriptCore/ftl",
+        "$SRC/Source/JavaScriptCore/fuzzilli",
+        "$SRC/Source/JavaScriptCore/heap",
+        "$SRC/Source/JavaScriptCore/debugger",
+        "$SRC/Source/JavaScriptCore/inspector",
+        "$SRC/Source/JavaScriptCore/inspector/agents",
+        "$SRC/Source/JavaScriptCore/inspector/augmentable",
+        "$SRC/Source/JavaScriptCore/inspector/remote",
+        "$SRC/Source/JavaScriptCore/interpreter",
+        "$SRC/Source/JavaScriptCore/jit",
+        "$SRC/Source/JavaScriptCore/llint",
+        "$SRC/Source/JavaScriptCore/lol",
+        "$SRC/Source/JavaScriptCore/parser",
+        "$SRC/Source/JavaScriptCore/profiler",
+        "$SRC/Source/JavaScriptCore/runtime",
+        "$SRC/Source/JavaScriptCore/tools",
+        "$SRC/Source/JavaScriptCore/wasm",
+        "$SRC/Source/JavaScriptCore/wasm/debugger",
+        "$SRC/Source/JavaScriptCore/wasm/js",
+        "$SRC/Source/JavaScriptCore/yarr",
+        "$BUILD/JavaScriptCore/DerivedSources",
+        "$BUILD/JavaScriptCore/DerivedSources/inspector",
+        "$BUILD/JavaScriptCore/DerivedSources/runtime",
+        "$BUILD/JavaScriptCore/DerivedSources/yarr",
+        "$SRC/Source/JavaScriptCore/inspector/remote/socket",
+        "$BUILD/WTF/Headers",
+        "$BUILD/bmalloc/Headers"
+      ],
+      "defines": [
+        "BUILDING_JSCONLY__",
+        "BUILDING_JavaScriptCore",
+        "BUILDING_WEBKIT=1",
+        "BUILDING_WITH_CMAKE=1",
+        "HAVE_CONFIG_H=1",
+        "PAS_BMALLOC=1",
+        "STATICALLY_LINKED_WITH_WTF",
+        "STATICALLY_LINKED_WITH_bmalloc",
+        "_GLIBCXX_ASSERTIONS=1"
+      ]
+    },
+    "LowLevelInterpreterLib": {
+      "sources": [
+        "$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter.cpp"
+      ],
+      "includes": [
+        "$BUILD/JavaScriptCore/Headers",
+        "$BUILD/JavaScriptCore/PrivateHeaders",
+        "/home/dylan/code/bun/.claude/worktrees/frosty-bose-463330/build/wklocal/deps/WebKit",
+        "$BUILD/JavaScriptCore/PrivateHeaders/JavaScriptCore",
+        "$SRC/Source/JavaScriptCore",
+        "$SRC/Source/JavaScriptCore/API",
+        "$SRC/Source/JavaScriptCore/assembler",
+        "$SRC/Source/JavaScriptCore/b3",
+        "$SRC/Source/JavaScriptCore/b3/air",
+        "$SRC/Source/JavaScriptCore/bindings",
+        "$SRC/Source/JavaScriptCore/builtins",
+        "$SRC/Source/JavaScriptCore/bytecode",
+        "$SRC/Source/JavaScriptCore/bytecompiler",
+        "$SRC/Source/JavaScriptCore/dfg",
+        "$SRC/Source/JavaScriptCore/disassembler",
+        "$SRC/Source/JavaScriptCore/disassembler/ARM64",
+        "$SRC/Source/JavaScriptCore/disassembler/zydis",
+        "$SRC/Source/JavaScriptCore/domjit",
+        "$SRC/Source/JavaScriptCore/ftl",
+        "$SRC/Source/JavaScriptCore/fuzzilli",
+        "$SRC/Source/JavaScriptCore/heap",
+        "$SRC/Source/JavaScriptCore/debugger",
+        "$SRC/Source/JavaScriptCore/inspector",
+        "$SRC/Source/JavaScriptCore/inspector/agents",
+        "$SRC/Source/JavaScriptCore/inspector/augmentable",
+        "$SRC/Source/JavaScriptCore/inspector/remote",
+        "$SRC/Source/JavaScriptCore/interpreter",
+        "$SRC/Source/JavaScriptCore/jit",
+        "$SRC/Source/JavaScriptCore/llint",
+        "$SRC/Source/JavaScriptCore/lol",
+        "$SRC/Source/JavaScriptCore/parser",
+        "$SRC/Source/JavaScriptCore/profiler",
+        "$SRC/Source/JavaScriptCore/runtime",
+        "$SRC/Source/JavaScriptCore/tools",
+        "$SRC/Source/JavaScriptCore/wasm",
+        "$SRC/Source/JavaScriptCore/wasm/debugger",
+        "$SRC/Source/JavaScriptCore/wasm/js",
+        "$SRC/Source/JavaScriptCore/yarr",
+        "$BUILD/JavaScriptCore/DerivedSources",
+        "$BUILD/JavaScriptCore/DerivedSources/inspector",
+        "$BUILD/JavaScriptCore/DerivedSources/runtime",
+        "$BUILD/JavaScriptCore/DerivedSources/yarr",
+        "$SRC/Source/JavaScriptCore/inspector/remote/socket",
+        "$BUILD/WTF/Headers",
+        "$BUILD/bmalloc/Headers"
+      ],
+      "defines": [
+        "BUILDING_JSCONLY__",
+        "BUILDING_WEBKIT=1",
+        "BUILDING_WITH_CMAKE=1",
+        "HAVE_CONFIG_H=1",
+        "PAS_BMALLOC=1",
+        "_GLIBCXX_ASSERTIONS=1"
+      ]
+    }
+  },
+  "lutTables": [
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/ArrayConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/ArrayConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/AsyncFromSyncIteratorPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/AsyncFromSyncIteratorPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/AsyncGeneratorPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/AsyncGeneratorPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/BigIntConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/BigIntConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/BigIntPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/BigIntPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/BooleanPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/BooleanPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/DateConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/DateConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/DatePrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/DatePrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/ErrorPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/ErrorPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/GeneratorPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/GeneratorPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlCollatorConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlCollatorConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlCollatorPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlCollatorPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlDateTimeFormatConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlDateTimeFormatConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlDateTimeFormatPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlDateTimeFormatPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlDisplayNamesConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlDisplayNamesConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlDisplayNamesPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlDisplayNamesPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlDurationFormatConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlDurationFormatConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlDurationFormatPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlDurationFormatPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlListFormatConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlListFormatConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlListFormatPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlListFormatPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlLocalePrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlLocalePrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlNumberFormatConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlNumberFormatConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlNumberFormatPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlNumberFormatPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlObject.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlObject.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlPluralRulesConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlPluralRulesConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlPluralRulesPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlPluralRulesPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlRelativeTimeFormatConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlRelativeTimeFormatConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlRelativeTimeFormatPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlRelativeTimeFormatPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlSegmentIteratorPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlSegmentIteratorPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlSegmenterConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlSegmenterConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlSegmenterPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlSegmenterPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/IntlSegmentsPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/IntlSegmentsPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/JSDataViewPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/JSDataViewPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/JSGlobalObject.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/JSGlobalObject.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/JSInternalPromiseConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/JSInternalPromiseConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/JSIterator.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/JSIterator.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/JSIteratorConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/JSIteratorConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/JSIteratorHelperPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/JSIteratorHelperPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/JSONObject.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/JSONObject.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/JSPromiseConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/JSPromiseConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/JSPromisePrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/JSPromisePrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/MapConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/MapConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/MapPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/MapPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/NumberConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/NumberConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/NumberPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/NumberPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/ObjectConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/ObjectConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/ReflectObject.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/ReflectObject.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/RegExpConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/RegExpConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/RegExpPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/RegExpPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/RegExpStringIteratorPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/RegExpStringIteratorPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/SetPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/SetPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/ShadowRealmObject.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/ShadowRealmObject.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/ShadowRealmPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/ShadowRealmPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/StringConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/StringConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/StringPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/StringPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/SymbolConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/SymbolConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/SymbolPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/SymbolPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalCalendarConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalCalendarConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalCalendarPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalCalendarPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalDurationConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalDurationConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalDurationPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalDurationPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalInstantConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalInstantConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalInstantPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalInstantPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalNow.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalNow.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalObject.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalObject.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalPlainDateConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalPlainDateConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalPlainDatePrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalPlainDatePrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalPlainDateTimeConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalPlainDateTimeConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalPlainDateTimePrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalPlainDateTimePrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalPlainMonthDayConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalPlainMonthDayConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalPlainMonthDayPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalPlainMonthDayPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalPlainTimeConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalPlainTimeConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalPlainTimePrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalPlainTimePrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalPlainYearMonthConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalPlainYearMonthConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalPlainYearMonthPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalPlainYearMonthPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalTimeZoneConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalTimeZoneConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/TemporalTimeZonePrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/runtime/TemporalTimeZonePrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/JSWebAssembly.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/JSWebAssembly.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyArrayConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyArrayConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyArrayPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyArrayPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyCompileErrorConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyCompileErrorConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyCompileErrorPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyCompileErrorPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyExceptionConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyExceptionConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyExceptionPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyExceptionPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyGlobalConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyGlobalConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyGlobalPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyGlobalPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyInstanceConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyInstanceConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyInstancePrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyInstancePrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyLinkErrorConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyLinkErrorConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyLinkErrorPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyLinkErrorPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyMemoryConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyMemoryConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyMemoryPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyMemoryPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyModuleConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyModuleConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyModulePrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyModulePrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyRuntimeErrorConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyRuntimeErrorConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyRuntimeErrorPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyRuntimeErrorPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblySuspendErrorConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblySuspendErrorConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblySuspendErrorPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblySuspendErrorPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyStructConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyStructConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyStructPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyStructPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyTableConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyTableConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyTablePrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyTablePrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyTagConstructor.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyTagConstructor.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/WebAssemblyTagPrototype.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/wasm/js/WebAssemblyTagPrototype.cpp"
+    },
+    {
+      "out": "$BUILD/JavaScriptCore/DerivedSources/Lexer.lut.h",
+      "in": "$SRC/Source/JavaScriptCore/parser/Keywords.table"
+    }
+  ],
+  "codegen": [
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/Bytecodes.h",
+        "$BUILD/JavaScriptCore/DerivedSources/InitBytecodes.asm",
+        "$BUILD/JavaScriptCore/DerivedSources/BytecodeStructs.h",
+        "$BUILD/JavaScriptCore/DerivedSources/BytecodeIndices.h",
+        "$BUILD/JavaScriptCore/DerivedSources/BytecodeDumperGenerated.cpp"
+      ],
+      "inputs": [
+        "$SRC/Source/JavaScriptCore/generator/main.rb",
+        "$SRC/Source/JavaScriptCore/generator/Argument.rb",
+        "$SRC/Source/JavaScriptCore/generator/Assertion.rb",
+        "$SRC/Source/JavaScriptCore/generator/Checkpoints.rb",
+        "$SRC/Source/JavaScriptCore/generator/DSL.rb",
+        "$SRC/Source/JavaScriptCore/generator/Fits.rb",
+        "$SRC/Source/JavaScriptCore/generator/GeneratedFile.rb",
+        "$SRC/Source/JavaScriptCore/generator/Metadata.rb",
+        "$SRC/Source/JavaScriptCore/generator/Opcode.rb",
+        "$SRC/Source/JavaScriptCore/generator/OpcodeGroup.rb",
+        "$SRC/Source/JavaScriptCore/generator/Options.rb",
+        "$SRC/Source/JavaScriptCore/generator/Section.rb",
+        "$SRC/Source/JavaScriptCore/generator/Template.rb",
+        "$SRC/Source/JavaScriptCore/generator/Type.rb",
+        "$SRC/Source/JavaScriptCore/generator/Wasm.rb",
+        "$SRC/Source/JavaScriptCore/generator/main.rb",
+        "$SRC/Source/JavaScriptCore/bytecode/BytecodeList.rb",
+        "$SRC/Source/JavaScriptCore/wasm/wasm.json"
+      ],
+      "argv": [
+        "ruby",
+        "$SRC/Source/JavaScriptCore/generator/main.rb",
+        "--bytecodes_h",
+        "$BUILD/JavaScriptCore/DerivedSources/Bytecodes.h",
+        "--init_bytecodes_asm",
+        "$BUILD/JavaScriptCore/DerivedSources/InitBytecodes.asm",
+        "--bytecode_structs_h",
+        "$BUILD/JavaScriptCore/DerivedSources/BytecodeStructs.h",
+        "--bytecode_indices_h",
+        "$BUILD/JavaScriptCore/DerivedSources/BytecodeIndices.h",
+        "$SRC/Source/JavaScriptCore/bytecode/BytecodeList.rb",
+        "--wasm_json",
+        "$SRC/Source/JavaScriptCore/wasm/wasm.json",
+        "--bytecode_dumper",
+        "$BUILD/JavaScriptCore/DerivedSources/BytecodeDumperGenerated.cpp"
+      ],
+      "cwd": "$BUILD/Source/JavaScriptCore"
+    },
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/JSCBuiltins.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/JSCBuiltins.h"
+      ],
+      "inputs": [
+        "$BUILD/JavaScriptCore/Scripts/generate-js-builtins.py",
+        "$SRC/Source/JavaScriptCore/builtins/AsyncFromSyncIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/ArrayConstructor.js",
+        "$SRC/Source/JavaScriptCore/builtins/ArrayIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/ArrayPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/AsyncDisposableStackPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/AsyncGeneratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/AsyncIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/DisposableStackPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/FunctionPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/GeneratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/GlobalOperations.js",
+        "$SRC/Source/JavaScriptCore/builtins/IteratorHelpers.js",
+        "$SRC/Source/JavaScriptCore/builtins/JSIteratorConstructor.js",
+        "$SRC/Source/JavaScriptCore/builtins/JSIteratorHelperPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/JSIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/MapConstructor.js",
+        "$SRC/Source/JavaScriptCore/builtins/MapIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/MapPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/ModuleLoader.js",
+        "$SRC/Source/JavaScriptCore/builtins/ObjectConstructor.js",
+        "$SRC/Source/JavaScriptCore/builtins/PromiseConstructor.js",
+        "$SRC/Source/JavaScriptCore/builtins/PromiseOperations.js",
+        "$SRC/Source/JavaScriptCore/builtins/ProxyHelpers.js",
+        "$SRC/Source/JavaScriptCore/builtins/ReflectObject.js",
+        "$SRC/Source/JavaScriptCore/builtins/RegExpPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/RegExpStringIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/SetIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/SetPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/ShadowRealmPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/StringConstructor.js",
+        "$SRC/Source/JavaScriptCore/builtins/StringIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/StringPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/TypedArrayConstructor.js",
+        "$SRC/Source/JavaScriptCore/builtins/TypedArrayPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/WebAssembly.js",
+        "$SRC/Source/JavaScriptCore/builtins/WrapForValidIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/inspector/InjectedScriptSource.js",
+        "$BUILD/JavaScriptCore/Scripts/wkbuiltins.py",
+        "$BUILD/JavaScriptCore/Scripts/builtins_generator.py",
+        "$BUILD/JavaScriptCore/Scripts/builtins_model.py",
+        "$BUILD/JavaScriptCore/Scripts/builtins_templates.py",
+        "$BUILD/JavaScriptCore/Scripts/builtins_generate_combined_header.py",
+        "$BUILD/JavaScriptCore/Scripts/builtins_generate_combined_implementation.py",
+        "$BUILD/JavaScriptCore/Scripts/builtins_generate_separate_header.py",
+        "$BUILD/JavaScriptCore/Scripts/builtins_generate_separate_implementation.py",
+        "$BUILD/JavaScriptCore/Scripts/builtins_generate_wrapper_header.py",
+        "$BUILD/JavaScriptCore/Scripts/builtins_generate_wrapper_implementation.py",
+        "$BUILD/JavaScriptCore/Scripts/builtins_generate_internals_wrapper_header.py",
+        "$BUILD/JavaScriptCore/Scripts/builtins_generate_internals_wrapper_implementation.py",
+        "$BUILD/JavaScriptCore/Scripts/generate-js-builtins.py",
+        "$BUILD/JavaScriptCore/Scripts/lazywriter.py"
+      ],
+      "argv": [
+        "python3",
+        "$BUILD/JavaScriptCore/Scripts/generate-js-builtins.py",
+        "--framework",
+        "JavaScriptCore",
+        "--output-directory",
+        "$BUILD/JavaScriptCore/DerivedSources",
+        "--combined",
+        "$SRC/Source/JavaScriptCore/builtins/AsyncFromSyncIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/ArrayConstructor.js",
+        "$SRC/Source/JavaScriptCore/builtins/ArrayIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/ArrayPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/AsyncDisposableStackPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/AsyncGeneratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/AsyncIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/DisposableStackPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/FunctionPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/GeneratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/GlobalOperations.js",
+        "$SRC/Source/JavaScriptCore/builtins/IteratorHelpers.js",
+        "$SRC/Source/JavaScriptCore/builtins/JSIteratorConstructor.js",
+        "$SRC/Source/JavaScriptCore/builtins/JSIteratorHelperPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/JSIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/MapConstructor.js",
+        "$SRC/Source/JavaScriptCore/builtins/MapIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/MapPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/ModuleLoader.js",
+        "$SRC/Source/JavaScriptCore/builtins/ObjectConstructor.js",
+        "$SRC/Source/JavaScriptCore/builtins/PromiseConstructor.js",
+        "$SRC/Source/JavaScriptCore/builtins/PromiseOperations.js",
+        "$SRC/Source/JavaScriptCore/builtins/ProxyHelpers.js",
+        "$SRC/Source/JavaScriptCore/builtins/ReflectObject.js",
+        "$SRC/Source/JavaScriptCore/builtins/RegExpPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/RegExpStringIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/SetIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/SetPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/ShadowRealmPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/StringConstructor.js",
+        "$SRC/Source/JavaScriptCore/builtins/StringIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/StringPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/TypedArrayConstructor.js",
+        "$SRC/Source/JavaScriptCore/builtins/TypedArrayPrototype.js",
+        "$SRC/Source/JavaScriptCore/builtins/WebAssembly.js",
+        "$SRC/Source/JavaScriptCore/builtins/WrapForValidIteratorPrototype.js",
+        "$SRC/Source/JavaScriptCore/inspector/InjectedScriptSource.js"
+      ],
+      "cwd": "$BUILD/Source/JavaScriptCore"
+    },
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/LLIntDesiredSettings.h"
+      ],
+      "inputs": [
+        "$SRC/Source/JavaScriptCore/offlineasm/generate_settings_extractor.rb",
+        "$SRC/Source/JavaScriptCore/llint/InPlaceInterpreter.asm",
+        "$SRC/Source/JavaScriptCore/llint/InPlaceInterpreter64.asm",
+        "$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter.asm",
+        "$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter32_64.asm",
+        "$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter64.asm",
+        "$SRC/Source/JavaScriptCore/offlineasm/arm.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/arm64.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/arm64e.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/asm.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/ast.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/backends.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/cloop.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/config.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/instructions.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/offsets.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/opt.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/parser.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/registers.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/risc.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/riscv64.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/self_hash.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/settings.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/transform.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/x86.rb",
+        "$BUILD/JavaScriptCore/DerivedSources/InitBytecodes.asm"
+      ],
+      "argv": [
+        "ruby",
+        "$SRC/Source/JavaScriptCore/offlineasm/generate_settings_extractor.rb",
+        "-I/home/dylan/code/bun/.claude/worktrees/frosty-bose-463330/build/wklocal/deps/WebKit/JavaScriptCore/DerivedSources/",
+        "$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter.asm",
+        "$BUILD/JavaScriptCore/DerivedSources/LLIntDesiredSettings.h",
+        "X86_64"
+      ],
+      "cwd": "$BUILD/Source/JavaScriptCore"
+    },
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/LLIntDesiredOffsets.h"
+      ],
+      "inputs": [
+        "$SRC/Source/JavaScriptCore/offlineasm/generate_offset_extractor.rb",
+        "$BUILD/bin/LLIntSettingsExtractor",
+        "$SRC/Source/JavaScriptCore/llint/InPlaceInterpreter.asm",
+        "$SRC/Source/JavaScriptCore/llint/InPlaceInterpreter64.asm",
+        "$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter.asm",
+        "$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter32_64.asm",
+        "$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter64.asm",
+        "$SRC/Source/JavaScriptCore/offlineasm/arm.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/arm64.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/arm64e.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/asm.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/ast.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/backends.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/cloop.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/config.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/instructions.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/offsets.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/opt.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/parser.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/registers.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/risc.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/riscv64.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/self_hash.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/settings.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/transform.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/x86.rb",
+        "$BUILD/JavaScriptCore/DerivedSources/InitBytecodes.asm",
+        "$BUILD/JavaScriptCore/DerivedSources/AirOpcode.h",
+        "$BUILD/JavaScriptCore/DerivedSources/WasmOps.h"
+      ],
+      "argv": [
+        "ruby",
+        "$SRC/Source/JavaScriptCore/offlineasm/generate_offset_extractor.rb",
+        "-I/home/dylan/code/bun/.claude/worktrees/frosty-bose-463330/build/wklocal/deps/WebKit/JavaScriptCore/DerivedSources/",
+        "$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter.asm",
+        "$BUILD/bin/LLIntSettingsExtractor",
+        "$BUILD/JavaScriptCore/DerivedSources/LLIntDesiredOffsets.h",
+        "X86_64",
+        "normal"
+      ],
+      "cwd": "$BUILD/Source/JavaScriptCore"
+    },
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/AirOpcode.h",
+        "$BUILD/JavaScriptCore/DerivedSources/AirOpcodeGenerated.h"
+      ],
+      "inputs": [
+        "$SRC/Source/JavaScriptCore/b3/air/AirOpcode.opcodes",
+        "$SRC/Source/JavaScriptCore/b3/air/opcode_generator.rb"
+      ],
+      "argv": [
+        "ruby",
+        "$SRC/Source/JavaScriptCore/b3/air/opcode_generator.rb",
+        "$SRC/Source/JavaScriptCore/b3/air/AirOpcode.opcodes"
+      ],
+      "cwd": "$BUILD/JavaScriptCore/DerivedSources"
+    },
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/WasmOps.h"
+      ],
+      "inputs": [
+        "$SRC/Source/JavaScriptCore/wasm/generateWasmOpsHeader.py",
+        "$SRC/Source/JavaScriptCore/wasm/wasm.json",
+        "$SRC/Source/JavaScriptCore/wasm/generateWasm.py"
+      ],
+      "argv": [
+        "python3",
+        "$SRC/Source/JavaScriptCore/wasm/generateWasmOpsHeader.py",
+        "$SRC/Source/JavaScriptCore/wasm/wasm.json",
+        "$BUILD/JavaScriptCore/DerivedSources/WasmOps.h"
+      ],
+      "cwd": "$BUILD/Source/JavaScriptCore"
+    },
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/LLIntAssembly.h"
+      ],
+      "inputs": [
+        "$SRC/Source/JavaScriptCore/offlineasm/asm.rb",
+        "$BUILD/bin/LLIntOffsetsExtractor",
+        "$SRC/Source/JavaScriptCore/llint/InPlaceInterpreter.asm",
+        "$SRC/Source/JavaScriptCore/llint/InPlaceInterpreter64.asm",
+        "$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter.asm",
+        "$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter32_64.asm",
+        "$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter64.asm",
+        "$SRC/Source/JavaScriptCore/offlineasm/arm.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/arm64.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/arm64e.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/asm.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/ast.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/backends.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/cloop.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/config.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/instructions.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/offsets.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/opt.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/parser.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/registers.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/risc.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/riscv64.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/self_hash.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/settings.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/transform.rb",
+        "$SRC/Source/JavaScriptCore/offlineasm/x86.rb",
+        "$BUILD/JavaScriptCore/DerivedSources/InitBytecodes.asm"
+      ],
+      "argv": [
+        "/usr/bin/cmake",
+        "-E",
+        "env",
+        "CMAKE_CXX_COMPILER_ID=Clang",
+        "GCC_OFFLINEASM_SOURCE_MAP=ON",
+        "ruby",
+        "$SRC/Source/JavaScriptCore/offlineasm/asm.rb",
+        "-I/home/dylan/code/bun/.claude/worktrees/frosty-bose-463330/build/wklocal/deps/WebKit/JavaScriptCore/DerivedSources/",
+        "$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter.asm",
+        "$BUILD/bin/LLIntOffsetsExtractor",
+        "$BUILD/JavaScriptCore/DerivedSources/LLIntAssembly.h",
+        "normal",
+        "--binary-format=ELF",
+        "&&",
+        "/usr/bin/cmake",
+        "-E",
+        "touch_nocreate",
+        "$BUILD/JavaScriptCore/DerivedSources/LLIntAssembly.h"
+      ],
+      "cwd": "$BUILD/JavaScriptCore/DerivedSources"
+    },
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/WasmOMGIRGeneratorInlines.h"
+      ],
+      "inputs": [
+        "$SRC/Source/JavaScriptCore/wasm/generateWasmOMGIRGeneratorInlinesHeader.py",
+        "$SRC/Source/JavaScriptCore/wasm/wasm.json",
+        "$SRC/Source/JavaScriptCore/wasm/generateWasm.py"
+      ],
+      "argv": [
+        "python3",
+        "$SRC/Source/JavaScriptCore/wasm/generateWasmOMGIRGeneratorInlinesHeader.py",
+        "$SRC/Source/JavaScriptCore/wasm/wasm.json",
+        "$BUILD/JavaScriptCore/DerivedSources/WasmOMGIRGeneratorInlines.h"
+      ],
+      "cwd": "$BUILD/Source/JavaScriptCore"
+    },
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/yarr/RegExpJitTables.h"
+      ],
+      "inputs": [
+        "$SRC/Source/JavaScriptCore/yarr/create_regex_tables"
+      ],
+      "argv": [
+        "python3",
+        "$SRC/Source/JavaScriptCore/yarr/create_regex_tables",
+        "$BUILD/JavaScriptCore/DerivedSources/yarr/RegExpJitTables.h"
+      ],
+      "cwd": "$BUILD/Source/JavaScriptCore"
+    },
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/LexerUnicodePropertyTables.h"
+      ],
+      "inputs": [
+        "$SRC/Source/JavaScriptCore/parser/generateLexerUnicodePropertyTables.py",
+        "$SRC/Source/JavaScriptCore/ucd/UnicodeData.txt"
+      ],
+      "argv": [
+        "python3",
+        "$SRC/Source/JavaScriptCore/parser/generateLexerUnicodePropertyTables.py",
+        "$SRC/Source/JavaScriptCore/ucd/UnicodeData.txt",
+        "$BUILD/JavaScriptCore/DerivedSources/LexerUnicodePropertyTables.h"
+      ],
+      "cwd": "$BUILD/Source/JavaScriptCore"
+    },
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/yarr/UnicodePatternTables.h"
+      ],
+      "inputs": [
+        "$SRC/Source/JavaScriptCore/yarr/generateYarrUnicodePropertyTables.py",
+        "$SRC/Source/JavaScriptCore/yarr/hasher.py",
+        "$SRC/Source/JavaScriptCore/ucd/DerivedBinaryProperties.txt",
+        "$SRC/Source/JavaScriptCore/ucd/DerivedCoreProperties.txt",
+        "$SRC/Source/JavaScriptCore/ucd/DerivedNormalizationProps.txt",
+        "$SRC/Source/JavaScriptCore/ucd/PropList.txt",
+        "$SRC/Source/JavaScriptCore/ucd/PropertyAliases.txt",
+        "$SRC/Source/JavaScriptCore/ucd/PropertyValueAliases.txt",
+        "$SRC/Source/JavaScriptCore/ucd/ScriptExtensions.txt",
+        "$SRC/Source/JavaScriptCore/ucd/Scripts.txt",
+        "$SRC/Source/JavaScriptCore/ucd/UnicodeData.txt",
+        "$SRC/Source/JavaScriptCore/ucd/emoji-data.txt"
+      ],
+      "argv": [
+        "python3",
+        "$SRC/Source/JavaScriptCore/yarr/generateYarrUnicodePropertyTables.py",
+        "$SRC/Source/JavaScriptCore/ucd",
+        "$BUILD/JavaScriptCore/DerivedSources/yarr/UnicodePatternTables.h"
+      ],
+      "cwd": "$BUILD/Source/JavaScriptCore"
+    },
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/KeywordLookup.h"
+      ],
+      "inputs": [
+        "$SRC/Source/JavaScriptCore/KeywordLookupGenerator.py",
+        "$SRC/Source/JavaScriptCore/parser/Keywords.table"
+      ],
+      "argv": [
+        "python3",
+        "$SRC/Source/JavaScriptCore/KeywordLookupGenerator.py",
+        "$SRC/Source/JavaScriptCore/parser/Keywords.table",
+        ">",
+        "$BUILD/JavaScriptCore/DerivedSources/KeywordLookup.h"
+      ],
+      "cwd": "$BUILD/Source/JavaScriptCore"
+    },
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/inspector/InspectorAlternateBackendDispatchers.h",
+        "$BUILD/JavaScriptCore/DerivedSources/inspector/InspectorBackendDispatchers.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/inspector/InspectorBackendDispatchers.h",
+        "$BUILD/JavaScriptCore/DerivedSources/inspector/InspectorFrontendDispatchers.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/inspector/InspectorFrontendDispatchers.h",
+        "$BUILD/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.cpp",
+        "$BUILD/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h",
+        "$BUILD/JavaScriptCore/DerivedSources/inspector/InspectorBackendCommands.js"
+      ],
+      "inputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/CombinedDomains.json",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/generate-inspector-protocol-bindings.py",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/codegen/cpp_generator.py",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/codegen/cpp_generator_templates.py",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/codegen/generate_js_backend_commands.py",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/codegen/generate_cpp_backend_dispatcher_header.py",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/codegen/generate_cpp_backend_dispatcher_implementation.py",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/codegen/generate_cpp_frontend_dispatcher_header.py",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/codegen/generate_cpp_frontend_dispatcher_implementation.py",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/codegen/generate_cpp_protocol_types_header.py",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/codegen/generate_cpp_protocol_types_implementation.py",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/codegen/generator.py",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/codegen/generator_templates.py",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/codegen/__init__.py",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/codegen/models.py"
+      ],
+      "argv": [
+        "python3",
+        "$SRC/Source/JavaScriptCore/inspector/scripts/generate-inspector-protocol-bindings.py",
+        "--outputDir",
+        "$BUILD/JavaScriptCore/DerivedSources/inspector",
+        "--framework",
+        "JavaScriptCore",
+        "$BUILD/JavaScriptCore/DerivedSources/CombinedDomains.json"
+      ],
+      "cwd": "$BUILD/Source/JavaScriptCore"
+    },
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/yarr/YarrCanonicalizeUnicode.cpp"
+      ],
+      "inputs": [
+        "$SRC/Source/JavaScriptCore/yarr/generateYarrCanonicalizeUnicode",
+        "$SRC/Source/JavaScriptCore/ucd/CaseFolding.txt"
+      ],
+      "argv": [
+        "python3",
+        "$SRC/Source/JavaScriptCore/yarr/generateYarrCanonicalizeUnicode",
+        "$SRC/Source/JavaScriptCore/ucd/CaseFolding.txt",
+        "$BUILD/JavaScriptCore/DerivedSources/yarr/YarrCanonicalizeUnicode.cpp"
+      ],
+      "cwd": "$BUILD/Source/JavaScriptCore"
+    },
+    {
+      "outputs": [
+        "$BUILD/JavaScriptCore/DerivedSources/CombinedDomains.json"
+      ],
+      "inputs": [
+        "$BUILD/JavaScriptCore/Scripts/generate-combined-inspector-json.py",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Animation.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Audit.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Browser.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/CPUProfiler.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/CSS.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Canvas.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Console.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/DOM.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/DOMDebugger.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/DOMStorage.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Debugger.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/GenericTypes.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Heap.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/IndexedDB.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Inspector.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/LayerTree.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Memory.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Network.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Page.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Recording.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Runtime.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/ScriptProfiler.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Security.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/ServiceWorker.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Target.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Timeline.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Worker.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/LifecycleReporter.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/TestReporter.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/BunFrontendDevServer.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/HTTPServer.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/File.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Process.json"
+      ],
+      "argv": [
+        "python3",
+        "$BUILD/JavaScriptCore/Scripts/generate-combined-inspector-json.py",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Animation.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Audit.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Browser.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/CPUProfiler.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/CSS.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Canvas.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Console.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/DOM.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/DOMDebugger.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/DOMStorage.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Debugger.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/GenericTypes.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Heap.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/IndexedDB.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Inspector.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/LayerTree.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Memory.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Network.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Page.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Recording.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Runtime.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/ScriptProfiler.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Security.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/ServiceWorker.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Target.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Timeline.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Worker.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/LifecycleReporter.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/TestReporter.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/BunFrontendDevServer.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/HTTPServer.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/File.json",
+        "$SRC/Source/JavaScriptCore/inspector/protocol/Process.json",
+        "\"",
+        "ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS",
+        "ENABLE_BUN_SKIP_FAILING_ASSERTIONS",
+        "ENABLE_CONTEXT_MENUS",
+        "ENABLE_DFG_JIT",
+        "ENABLE_FTL_JIT",
+        "ENABLE_FTPDIR",
+        "ENABLE_FULLSCREEN_API",
+        "ENABLE_GEOLOCATION",
+        "ENABLE_IMAGE_DIFF",
+        "ENABLE_JAVASCRIPT_SHELL",
+        "ENABLE_JIT",
+        "ENABLE_MATHML",
+        "ENABLE_NOTIFICATIONS",
+        "ENABLE_REMOTE_INSPECTOR",
+        "ENABLE_REMOTE_INSPECTOR",
+        "ENABLE_SAMPLING_PROFILER",
+        "ENABLE_SMOOTH_SCROLLING",
+        "ENABLE_STATIC_JSC",
+        "ENABLE_UNIFIED_BUILDS",
+        "ENABLE_USER_MESSAGE_HANDLERS",
+        "ENABLE_VIDEO",
+        "ENABLE_VIDEO_USES_ELEMENT_FULLSCREEN",
+        "ENABLE_WEBASSEMBLY",
+        "ENABLE_WEBASSEMBLY_BBQJIT",
+        "ENABLE_WEBASSEMBLY_OMGJIT",
+        "ENABLE_WEBGL",
+        "ENABLE_WEB_AUDIO",
+        "ENABLE_XSLT",
+        "USE_AVIF",
+        "USE_BUN_JSC_ADDITIONS",
+        "USE_ISO_MALLOC",
+        "USE_JPEGXL",
+        "USE_LCMS",
+        "USE_WOFF2\"",
+        "$BUILD/JavaScriptCore/DerivedSources/CombinedDomains.json"
+      ],
+      "cwd": "$BUILD/Source/JavaScriptCore"
+    }
+  ],
+  "counts": {
+    "bmalloc": 170,
+    "WTF": 173,
+    "JavaScriptCore": 189,
+    "lutTables": 105,
+    "codegen": 15
+  }
+}

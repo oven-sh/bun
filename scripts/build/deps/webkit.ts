@@ -147,17 +147,12 @@ function localIcuLibs(cfg: Config): string[] {
 }
 
 /**
- * WebKit source dir for local mode. Defaults to vendor/WebKit; override via
- * $BUN_WEBKIT_PATH to share one clone across worktrees.
+ * WebKit source dir for local/direct mode. Resolution lives in config.ts
+ * (resolveWebkitPath) so it's persisted to configure.json — ninja's regen
+ * rule doesn't inherit $BUN_WEBKIT_PATH.
  */
-function webkitSrcDir(cfg: Config): string {
-  const env = process.env.BUN_WEBKIT_PATH;
-  if (!env) return depSourceDir(cfg, "WebKit");
-  // Shells don't expand ~ inside quotes; handle it here so a quoted export works.
-  if (env === "~" || env.startsWith("~/") || env.startsWith("~\\")) return join(homedir(), env.slice(1));
-  // Anchor relative paths to the repo root so ninja's regen rule (which runs
-  // from buildDir) resolves the same path as the initial configure.
-  return resolve(cfg.cwd, env);
+export function webkitSrcDir(cfg: Config): string {
+  return cfg.webkitPath;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -167,6 +162,8 @@ function webkitSrcDir(cfg: Config): string {
 export const webkit: Dependency = {
   name: "WebKit",
   versionMacro: "WEBKIT",
+
+  enabled: cfg => cfg.webkit !== "direct",
 
   source: cfg => {
     if (cfg.webkit === "prebuilt") {

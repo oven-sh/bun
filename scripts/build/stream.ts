@@ -102,6 +102,7 @@ function main(): void {
   let zigProgress = false;
   let consoleMode = false;
   let stampPath: string | undefined;
+  let stdoutPath: string | undefined;
   const envOverrides: Record<string, string> = {};
   while (argv[0]?.startsWith("--")) {
     const opt = argv.shift()!;
@@ -117,6 +118,8 @@ function main(): void {
       consoleMode = true;
     } else if (opt.startsWith("--stamp=")) {
       stampPath = opt.slice(8);
+    } else if (opt.startsWith("--stdout=")) {
+      stdoutPath = opt.slice(9);
     } else {
       process.stderr.write(`stream.ts: unknown option ${opt}\n`);
       process.exit(2);
@@ -239,7 +242,15 @@ function main(): void {
     const rl = createInterface({ input: stream, crlfDelay: Infinity });
     rl.on("line", line => write(prefix + line + "\n"));
   };
-  pump(child.stdout!);
+  // --stdout=PATH: capture child stdout to a file instead of prefixing.
+  // For codegen scripts that write their result to stdout (Perl
+  // create_hash_table → *.lut.h). stderr still streams.
+  if (stdoutPath !== undefined) {
+    const sink = createWriteStream(stdoutPath);
+    child.stdout!.pipe(sink);
+  } else {
+    pump(child.stdout!);
+  }
   pump(child.stderr!);
 
   // stdio[3] only exists if we pushed it above (zigProgress && interactive).

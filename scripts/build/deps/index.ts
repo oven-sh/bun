@@ -27,6 +27,9 @@ import { picohttpparser } from "./picohttpparser.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
 import { webkit } from "./webkit.ts";
+import { webkitBmalloc } from "./webkit-direct/bmalloc.ts";
+import { webkitWTF } from "./webkit-direct/wtf.ts";
+import { webkitJSC } from "./webkit-direct/jsc.ts";
 import { zlib } from "./zlib.ts";
 import { zstd } from "./zstd.ts";
 
@@ -59,7 +62,13 @@ export const allDeps: readonly Dependency[] = [
   boringssl,
   // WebKit LAST in link order — WTF/JSC provide symbols that everything
   // above might reference (via JavaScriptCore types in headers).
+  // `webkit` (prebuilt/local) and the webkit-direct layers are mutually
+  // exclusive via `enabled: cfg => cfg.webkit === ...`. JSC → WTF → bmalloc
+  // is the symbol-provider order.
   webkit,
+  webkitBmalloc,
+  webkitWTF,
+  webkitJSC,
 ];
 
 // Re-export individuals for direct import when needed.

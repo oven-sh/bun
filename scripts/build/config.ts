@@ -22,7 +22,7 @@ export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
 export type BuildMode = "full" | "cpp-only" | "zig-only" | "link-only";
-export type WebKitMode = "prebuilt" | "local";
+export type WebKitMode = "prebuilt" | "local" | "direct";
 
 /**
  * Host platform — what's running the build. Distinguish from target
@@ -48,6 +48,21 @@ export interface Host {
  * (deps/webkit.ts, zig.ts, deps/nodejs-headers.ts) — look there to bump.
  * Overridable via PartialConfig for testing (e.g. trying a WebKit branch).
  */
+/**
+ * WebKit clone path. Precedence: explicit partial → $BUN_WEBKIT_PATH →
+ * vendor/WebKit. Resolved here (not in webkit.ts) so the result is
+ * persisted to configure.json and ninja's regen rule sees the same path
+ * without inheriting the env.
+ */
+function resolveWebkitPath(partial: PartialConfig, cwd: string, vendorDir: string): string {
+  let p = partial.webkitPath ?? process.env.BUN_WEBKIT_PATH;
+  if (!p) return resolve(vendorDir, "WebKit");
+  // Shells don't expand ~ inside quotes; handle it so a quoted export works.
+  if (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) p = join(homedir(), p.slice(1));
+  // Anchor relative paths to repo root so regen (run from buildDir) agrees.
+  return resolve(cwd, p);
+}
+
 const versionDefaults = {
   nodejsVersion: NODEJS_VERSION,
   nodejsAbiVersion: NODEJS_ABI_VERSION,
@@ -138,6 +153,8 @@ export interface Config {
 
   // ─── Dependency modes ───
   webkit: WebKitMode;
+  /** Resolved WebKit clone path (local/direct modes). */
+  webkitPath: string;
 
   // ─── Paths (all absolute) ───
   /** Repository root. */
@@ -245,6 +262,12 @@ export interface PartialConfig {
   ci?: boolean;
   buildkite?: boolean;
   webkit?: WebKitMode;
+  /**
+   * WebKit source clone path. Defaults to $BUN_WEBKIT_PATH then
+   * vendor/WebKit/. Persisted to configure.json so ninja's regen rule
+   * (which doesn't inherit the env) resolves the same path.
+   */
+  webkitPath?: string;
   buildDir?: string;
   cacheDir?: string;
   // Version pins (defaults in versions.ts).
@@ -545,6 +568,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     ci,
     buildkite,
     webkit: partial.webkit ?? "prebuilt",
+    webkitPath: resolveWebkitPath(partial, cwd, vendorDir),
     cwd,
     buildDir,
     codegenDir,

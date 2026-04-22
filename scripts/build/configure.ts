@@ -132,8 +132,12 @@ function emitGeneratorRule(n: Ninja, cfg: Config, partial: PartialConfig): void 
   // Persist the partial config. writeIfChanged — same config → no mtime
   // bump → no unnecessary regen on identical reconfigures.
   // This runs before n.write() (which mkdir's), so ensure dir exists.
+  //
+  // webkitPath is added here (not in partial) because its default comes
+  // from $BUN_WEBKIT_PATH, which the regen subprocess won't inherit.
   mkdirSync(cfg.buildDir, { recursive: true });
-  writeIfChanged(configFile, JSON.stringify(partial, null, 2) + "\n");
+  const persisted: PartialConfig = { ...partial, webkitPath: cfg.webkitPath };
+  writeIfChanged(configFile, JSON.stringify(persisted, null, 2) + "\n");
 
   const hostWin = cfg.host.os === "windows";
   n.rule("regen", {

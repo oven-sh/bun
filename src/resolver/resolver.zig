@@ -598,6 +598,13 @@ pub const Resolver = struct {
         if (r.opts.packages == .external and isPackagePath(import_path)) {
             return true;
         }
+        return r.matchesUserExternalPattern(import_path);
+    }
+
+    /// True if `import_path` matches one of the user-supplied `--external`
+    /// patterns. Does NOT consider `packages = external`; use
+    /// `isExternalPattern` for the combined check.
+    pub fn matchesUserExternalPattern(r: *ThisResolver, import_path: string) bool {
         for (r.opts.external.patterns) |pattern| {
             if (import_path.len >= pattern.prefix.len + pattern.suffix.len and (strings.startsWith(
                 import_path,
@@ -606,6 +613,39 @@ pub const Resolver = struct {
                 import_path,
                 pattern.suffix,
             ))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// Cheap pattern-only check: would the enclosing tsconfig.json's `paths`
+    /// remap this import? Returns true if any `paths` key matches `import_path`
+    /// exactly or via a `*` glob.
+    ///
+    /// The full match inside `matchTSConfigPaths` also requires the target file
+    /// to exist on disk; this helper deliberately stops at the pattern so that
+    /// callers (notably the `packages=external` short-circuit) can hand off to
+    /// the normal resolver instead of marking a path-aliased local import as
+    /// an external package.
+    pub fn hasTSConfigPathsMatch(r: *ThisResolver, source_dir: string, import_path: string) bool {
+        const dir_info = (r.dirInfoCached(source_dir) catch null) orelse return false;
+        const tsconfig = dir_info.enclosing_tsconfig_json orelse return false;
+        if (tsconfig.paths.count() == 0) return false;
+
+        var iter = tsconfig.paths.iterator();
+        while (iter.next()) |entry| {
+            const key = entry.key_ptr.*;
+            if (strings.indexOfChar(key, '*')) |star| {
+                const prefix = if (star == 0) "" else key[0..star];
+                const suffix = if (star == key.len - 1) "" else key[star + 1 ..];
+                if (strings.startsWith(import_path, prefix) and
+                    strings.endsWith(import_path, suffix) and
+                    import_path.len >= prefix.len + suffix.len)
+                {
+                    return true;
+                }
+            } else if (strings.eqlLong(key, import_path, true)) {
                 return true;
             }
         }
@@ -701,8 +741,20 @@ pub const Resolver = struct {
 
         // Certain types of URLs default to being external for convenience,
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
+        //
+        // A tsconfig.json `paths` alias whose key looks bare (e.g. "@/*")
+        // would otherwise be caught by `packages = external + isPackagePath`
+        // even though it remaps to a local file. Consult tsconfig paths first
+        // so the resolver follows the alias into the project source instead
+        // of silently marking it external (issue #29590). User-supplied
+        // `--external` patterns and URL-style specifiers still win.
+        const is_packages_external_match =
+            r.opts.packages == .external and
+            isPackagePath(import_path) and
+            !r.hasTSConfigPathsMatch(source_dir, import_path);
         if (kind != .entry_point_build and kind != .entry_point_run and
-            (r.isExternalPattern(import_path) or
+            (is_packages_external_match or
+                r.matchesUserExternalPattern(import_path) or
                 // "fill: url(#filter);"
                 (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
 

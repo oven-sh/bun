@@ -1,5 +1,6 @@
+import { spawnSync } from "bun";
 import { heapStats } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import path from "node:path";
 
@@ -200,6 +201,51 @@ it("order of setTimeouts", done => {
   Promise.resolve().then(maybeDone(() => nums.push(1)));
 });
 
+it("setTimeout -> refresh", () => {
+  const { exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture.js")],
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString()).toBe("SUCCESS\n");
+});
+
+it("setTimeout -> unref -> ref works", () => {
+  const { exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-4.js")],
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString()).toBe("TEST PASSED!\n");
+});
+
+it("setTimeout -> ref -> unref works, even if there is another timer", () => {
+  const { exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-2.js")],
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString()).toBe("");
+});
+
+it("setTimeout -> ref -> unref works", () => {
+  const { exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-5.js")],
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString()).toBe("");
+});
+
+it("setTimeout -> unref doesn't keep event loop alive forever", () => {
+  const { exitCode, stdout } = spawnSync({
+    cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-3.js")],
+    env: bunEnv,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString()).toBe("");
+});
+
 it("setTimeout should refresh N times", done => {
   let count = 0;
   let timer = setTimeout(() => {
@@ -215,6 +261,51 @@ it("setTimeout should refresh N times", done => {
       done();
     }
   }, 300);
+});
+
+it("setTimeout if refreshed before run, should reschedule to run later", done => {
+  let start = Date.now();
+  let timer = setTimeout(() => {
+    let end = Date.now();
+    expect(end - start).toBeGreaterThan(120);
+    done();
+  }, 100);
+
+  setTimeout(() => {
+    timer.refresh();
+  }, 50);
+});
+
+it("setTimeout should refresh after already been run", done => {
+  let count = 0;
+  let timer = setTimeout(() => {
+    count++;
+  }, 50);
+
+  setTimeout(() => {
+    timer.refresh();
+  }, 100);
+
+  setTimeout(() => {
+    expect(count).toBe(2);
+    done();
+  }, 300);
+});
+
+it("setTimeout should not refresh after clearTimeout", done => {
+  let count = 0;
+  let timer = setTimeout(() => {
+    count++;
+  }, 50);
+
+  clearTimeout(timer);
+
+  timer.refresh();
+
+  setTimeout(() => {
+    expect(count).toBe(0);
+    done();
+  }, 100);
 });
 
 it("setTimeout Timeout objects are unprotected after called", async () => {
@@ -252,143 +343,26 @@ it("setTimeout Timeout objects are unprotected after called", async () => {
   expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual(initial.Timeout || 0);
 });
 
-describe.concurrent("subprocess fixtures", () => {
-  it("setTimeout -> refresh", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture.js")],
-      env: bunEnv,
-      stdout: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(exitCode).toBe(0);
-    expect(stdout).toBe("SUCCESS\n");
+it("setTimeout CPU usage #7790", async () => {
+  const process = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "setTimeout-cpu-fixture.js")],
+    env: bunEnv,
+    stdout: "inherit",
   });
+  const code = await process.exited;
+  expect(code).toBe(0);
+  const stats = process.resourceUsage();
+  expect(stats.cpuTime.total / BigInt(1e6)).toBeLessThan(1);
+});
 
-  it("setTimeout -> unref -> ref works", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-4.js")],
-      env: bunEnv,
-      stdout: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(exitCode).toBe(0);
-    expect(stdout).toBe("TEST PASSED!\n");
-  });
+it("Returning a Promise in setTimeout doesnt keep the event loop alive forever", async () => {
+  expect([path.join(import.meta.dir, "setTimeout-unref-fixture-6.js")]).toRun();
+});
 
-  it("setTimeout -> ref -> unref works, even if there is another timer", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-2.js")],
-      env: bunEnv,
-      stdout: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(exitCode).toBe(0);
-    expect(stdout).toBe("");
-  });
+it("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive forever", async () => {
+  expect([path.join(import.meta.dir, "setTimeout-unref-fixture-7.js")]).toRun();
+});
 
-  it("setTimeout -> ref -> unref works", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-5.js")],
-      env: bunEnv,
-      stdout: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(exitCode).toBe(0);
-    expect(stdout).toBe("");
-  });
-
-  it("setTimeout -> unref doesn't keep event loop alive forever", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-3.js")],
-      env: bunEnv,
-      stdout: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(exitCode).toBe(0);
-    expect(stdout).toBe("");
-  });
-
-  it("setTimeout CPU usage #7790", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", path.join(import.meta.dir, "setTimeout-cpu-fixture.js")],
-      env: bunEnv,
-      stdout: "inherit",
-    });
-    const code = await proc.exited;
-    expect(code).toBe(0);
-    const stats = proc.resourceUsage();
-    expect(stats.cpuTime.total / BigInt(1e6)).toBeLessThan(1);
-  });
-
-  it("Returning a Promise in setTimeout doesnt keep the event loop alive forever", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-6.js")],
-      env: bunEnv,
-      stdio: ["inherit", "pipe", "inherit"],
-    });
-    expect(await proc.exited).toBe(0);
-  });
-
-  it("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive forever", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "setTimeout-unref-fixture-7.js")],
-      env: bunEnv,
-      stdio: ["inherit", "pipe", "inherit"],
-    });
-    expect(await proc.exited).toBe(0);
-  });
-
-  it("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"],
-      env: bunEnv,
-      stdio: ["inherit", "pipe", "inherit"],
-    });
-    expect(await proc.exited).toBe(0);
-  });
-
-  it("setTimeout if refreshed before run, should reschedule to run later", done => {
-    let start = Date.now();
-    let timer = setTimeout(() => {
-      let end = Date.now();
-      expect(end - start).toBeGreaterThan(120);
-      done();
-    }, 100);
-
-    setTimeout(() => {
-      timer.refresh();
-    }, 50);
-  });
-
-  it("setTimeout should refresh after already been run", done => {
-    let count = 0;
-    let timer = setTimeout(() => {
-      count++;
-    }, 50);
-
-    setTimeout(() => {
-      timer.refresh();
-    }, 100);
-
-    setTimeout(() => {
-      expect(count).toBe(2);
-      done();
-    }, 300);
-  });
-
-  it("setTimeout should not refresh after clearTimeout", done => {
-    let count = 0;
-    let timer = setTimeout(() => {
-      count++;
-    }, 50);
-
-    clearTimeout(timer);
-
-    timer.refresh();
-
-    setTimeout(() => {
-      expect(count).toBe(0);
-      done();
-    }, 100);
-  });
+it("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", () => {
+  expect([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"]).toRun();
 });

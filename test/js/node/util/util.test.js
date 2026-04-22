@@ -407,6 +407,9 @@ describe("util", () => {
       ],
       stdio: ["ignore", "pipe", "pipe"],
     });
+    if (proc.exitCode !== 0) {
+      throw new Error(`node subprocess exited ${proc.exitCode}: ${proc.stderr.toString()}`);
+    }
     const nodeResults = JSON.parse(proc.stdout.toString());
     for (const [code, name] of nodeResults.map) {
       it(`getSystemErrorName(${code}) should be ${name}`, () => {

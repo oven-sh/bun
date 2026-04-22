@@ -1162,7 +1162,7 @@ describe.concurrent("no package.json", () => {
 
 // ─── ABORT / SIGNAL HANDLING ────────────────────────────────────────────────
 
-describe.concurrent("abort: failure kills long-running processes", () => {
+describe("abort: failure kills long-running processes", () => {
   test("parallel: fast failure kills a slow script", async () => {
     using dir = tempDir("mr-abort-slow", {
       "package.json": JSON.stringify({
@@ -1787,7 +1787,7 @@ function makeWorkspace(
   return tempDir(prefix, files);
 }
 
-describe.concurrent("workspace integration", () => {
+describe("workspace integration", () => {
   test("--parallel --filter='*' runs script in all packages", async () => {
     using dir = makeWorkspace("mr-ws-all", {
       "pkg-a": { build: `${bunExe()} -e "console.log('a-built')"` },

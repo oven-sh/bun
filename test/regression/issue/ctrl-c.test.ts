@@ -99,6 +99,7 @@ beforeAll(() => {
   viteInstallExitCode = Bun.spawnSync({
     cmd: [bunExe(), "install"],
     cwd: viteDir,
+    env: bunEnv,
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",

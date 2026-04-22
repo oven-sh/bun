@@ -432,7 +432,7 @@ describe("Bun.Terminal", () => {
 
   // ConPTY has no line discipline echo without a child process, so termios-echo
   // tests are POSIX-only.
-  describe.todoIf(isWindows)("data callback", () => {
+  describe.concurrent.todoIf(isWindows)("data callback", () => {
     test("receives echoed output", async () => {
       const received: Uint8Array[] = [];
 
@@ -612,7 +612,7 @@ describe("Bun.Terminal", () => {
     });
   });
 
-  describe("subprocess interaction", () => {
+  describe.concurrent("subprocess interaction", () => {
     test("spawns subprocess with PTY", async () => {
       await using terminal = new Bun.Terminal({
         cols: 80,
@@ -955,7 +955,7 @@ describe("Bun.Terminal", () => {
   });
 });
 
-describe("Bun.spawn with terminal option", () => {
+describe.concurrent("Bun.spawn with terminal option", () => {
   test("creates subprocess with terminal attached", async () => {
     const dataChunks: Uint8Array[] = [];
     const gotMarker = Promise.withResolvers<void>();

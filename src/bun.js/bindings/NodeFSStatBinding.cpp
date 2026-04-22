@@ -40,27 +40,6 @@ using namespace WebCore;
 #define mode_t int32_t
 #endif
 
-// Under unified sources this file shares a TU with ProcessBindingConstants.cpp,
-// which uses `#ifdef S_IFBLK` etc. to decide which fs.constants to expose on
-// Windows. The polyfills below must not leak — push/pop so the bundle-mate
-// sees the platform's original definitions (or lack thereof).
-#pragma push_macro("S_IFMT")
-#pragma push_macro("S_IFDIR")
-#pragma push_macro("S_IFCHR")
-#pragma push_macro("S_IFBLK")
-#pragma push_macro("S_IFREG")
-#pragma push_macro("S_IFIFO")
-#pragma push_macro("S_IFLNK")
-#pragma push_macro("S_IFSOCK")
-#pragma push_macro("S_ISBLK")
-#pragma push_macro("S_ISCHR")
-#pragma push_macro("S_ISDIR")
-#pragma push_macro("S_ISFIFO")
-#pragma push_macro("S_ISREG")
-#pragma push_macro("S_ISLNK")
-#pragma push_macro("S_ISSOCK")
-#define BUN_PUSHED_STAT_MACROS
-
 #ifndef S_IFMT
 #define S_IFMT 0170000
 #endif
@@ -967,25 +946,6 @@ void initJSBigIntStatsClassStructure(JSC::LazyClassStructure::Initializer& init)
 }
 
 } // namespace Bun
-
-#ifdef BUN_PUSHED_STAT_MACROS
-#pragma pop_macro("S_ISSOCK")
-#pragma pop_macro("S_ISLNK")
-#pragma pop_macro("S_ISREG")
-#pragma pop_macro("S_ISFIFO")
-#pragma pop_macro("S_ISDIR")
-#pragma pop_macro("S_ISCHR")
-#pragma pop_macro("S_ISBLK")
-#pragma pop_macro("S_IFSOCK")
-#pragma pop_macro("S_IFLNK")
-#pragma pop_macro("S_IFIFO")
-#pragma pop_macro("S_IFREG")
-#pragma pop_macro("S_IFBLK")
-#pragma pop_macro("S_IFCHR")
-#pragma pop_macro("S_IFDIR")
-#pragma pop_macro("S_IFMT")
-#undef BUN_PUSHED_STAT_MACROS
-#endif
 
 #ifdef BUN_PUSHED_MODE_T
 #pragma pop_macro("mode_t")

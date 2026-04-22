@@ -4476,6 +4476,24 @@ pub const umask = switch (Environment.os) {
     .windows => @extern(*const fn (mode: u16) callconv(.c) u16, .{ .name = "_umask" }),
 };
 
+pub const TestingAPIs = struct {
+    /// Exposes libuv -> `bun.sys.E` error-code translation for tests so we can
+    /// feed out-of-range negative values and verify it does not panic.
+    /// Windows-only because `translateUVErrorToE` lives in the libuv bindings.
+    pub fn translateUVErrorToE(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const arguments = callframe.arguments();
+        if (arguments.len < 1 or !arguments[0].isNumber()) {
+            return globalThis.throw("translateUVErrorToE: expected 1 number argument", .{});
+        }
+        if (comptime !Environment.isWindows) {
+            return .js_undefined;
+        }
+        const code: c_int = @intFromFloat(arguments[0].asNumber());
+        const result = bun.windows.libuv.translateUVErrorToE(code);
+        return bun.String.createUTF8ForJS(globalThis, @tagName(result));
+    }
+};
+
 pub const File = @import("./sys/File.zig");
 
 const builtin = @import("builtin");

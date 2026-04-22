@@ -68,8 +68,7 @@ docker compose pull --quiet 2>/dev/null || docker compose pull || true
 
 echo "🔨 Building images that need building..."
 
-# Build services that require building (mysql_tls, redis_unified)
-docker compose build mysql_tls redis_unified
+docker compose build postgres_tls mysql_tls redis_unified
 
 # List of specific images to verify
 echo "✅ Verifying images..."
@@ -79,6 +78,12 @@ pull_if_missing "mysql:8.0"
 pull_if_missing "redis:7-alpine"
 pull_if_missing "minio/minio:latest"
 pull_if_missing "crossbario/autobahn-testsuite"
+pull_if_missing "ubuntu/squid:5.2-22.04_beta"
+# Base images of the locally-built services above — pulled implicitly by
+# `compose build`, listed here so a missing-layer pull surfaces in this step
+# rather than as a slow first test.
+pull_if_missing "postgres:15.13"
+pull_if_missing "redis:8-alpine"
 
 echo "✅ Validating docker-compose configuration..."
 

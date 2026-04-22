@@ -386,7 +386,7 @@ class DockerComposeHelper {
   async buildServices(): Promise<void> {
     console.log("Building Docker services...");
     // Services that need building
-    const servicesToBuild = ["mysql_tls", "redis_unified"];
+    const servicesToBuild = ["postgres_tls", "mysql_tls", "redis_unified"];
 
     for (const service of servicesToBuild) {
       console.log(`Building ${service}...`);

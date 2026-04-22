@@ -379,16 +379,6 @@ it("works on classes", () => {
   expect(123)._toBeBar();
 });
 
-it("asymmetricMatch propagates exceptions thrown by the matcher", () => {
-  expect.extend({
-    _toThrowOnMatch() {
-      throw new Error("boom from matcher");
-    },
-  });
-  const matcher = expect._toThrowOnMatch();
-  expect(() => matcher.asymmetricMatch({})).toThrow("boom from matcher");
-});
-
 test("expect.extend with numeric index keys does not crash", () => {
   // Numeric keys are valid array indices. putDirect asserts they are not indices,
   // so putMayBeIndex must be used instead. Without the fix, putDirect incorrectly

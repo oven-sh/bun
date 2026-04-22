@@ -146,6 +146,7 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
 
   const maxAttempts = 5;
   let lastError: unknown;
+  let permanent = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (attempt > 1) {
@@ -160,9 +161,8 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
       if (!res.ok || res.body === null) {
         lastError = new BuildError(`HTTP ${res.status} ${res.statusText} for ${url}`);
         // 4xx is deterministic — a bad URL/missing artifact won't succeed on
-        // retry. Only loop on 5xx/network where the CDN may recover. Can't
-        // `throw` here — the catch below would swallow it and keep looping.
-        if (res.status >= 400 && res.status < 500) attempt = maxAttempts;
+        // retry. Only loop on 5xx/network where the CDN may recover.
+        if (res.status >= 400 && res.status < 500) permanent = true;
         continue;
       }
 
@@ -178,7 +178,13 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
       // createWriteStream truncates anyway.
       await rm(tmpPath, { force: true }).catch(() => {});
     }
+    if (permanent) break;
   }
+
+  // 4xx: throw the status error directly — wrapping it in "after N attempts"
+  // is misleading (we only made one), and callers (prefetch-deps.ts) need to
+  // distinguish 404 from transient failures by message.
+  if (permanent) throw lastError;
 
   throw new BuildError(`Failed to download after ${maxAttempts} attempts: ${url}`, {
     cause: lastError,

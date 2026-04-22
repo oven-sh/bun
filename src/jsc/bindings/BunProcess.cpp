@@ -471,7 +471,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             // delete-on-reboot for hygiene (NTFS can't unlink an in-use
             // file); POSIX leaves the content-hashed tmpfile alone.
 #if OS(WINDOWS)
-            deleteAfter = !filename.startsWith("/proc/"_s);
+            deleteAfter = true;
 #endif
         }
     }

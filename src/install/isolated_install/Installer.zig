@@ -577,6 +577,40 @@ pub const Installer = struct {
                                     };
                                     defer folder_dir.close();
 
+                                    // Producer root is a working repo, not a published
+                                    // tarball. Mirror `bun pm pack`'s exact-name default
+                                    // ignores (see `default_ignore_patterns` /
+                                    // `root_default_ignore_patterns` in
+                                    // `src/cli/pack_command.zig`) so the installed
+                                    // `.bun/<hash>/<pkg>/` matches what a publish of the
+                                    // producer would contain. Glob patterns (`.*.swp`,
+                                    // `._*`, `.wafpickle-*`) are not handled by the
+                                    // Walker's exact-name hash filter; acceptable
+                                    // for this fix — if a consumer hits one, follow-up
+                                    // work can plumb pack_command's filter directly.
+                                    const linked_skip_dirs: []const bun.OSPathSlice = &.{
+                                        comptime bun.OSPathLiteral("node_modules"),
+                                        comptime bun.OSPathLiteral(".git"),
+                                        comptime bun.OSPathLiteral(".hg"),
+                                        comptime bun.OSPathLiteral(".svn"),
+                                        comptime bun.OSPathLiteral("CVS"),
+                                    };
+                                    const linked_skip_files: []const bun.OSPathSlice = &.{
+                                        comptime bun.OSPathLiteral(".DS_Store"),
+                                        comptime bun.OSPathLiteral(".gitignore"),
+                                        comptime bun.OSPathLiteral(".npmignore"),
+                                        comptime bun.OSPathLiteral(".npmrc"),
+                                        comptime bun.OSPathLiteral(".lock-wscript"),
+                                        comptime bun.OSPathLiteral("npm-debug.log"),
+                                        comptime bun.OSPathLiteral("bunfig.toml"),
+                                        comptime bun.OSPathLiteral(".env.production"),
+                                        comptime bun.OSPathLiteral("package-lock.json"),
+                                        comptime bun.OSPathLiteral("yarn.lock"),
+                                        comptime bun.OSPathLiteral("pnpm-lock.yaml"),
+                                        comptime bun.OSPathLiteral("bun.lockb"),
+                                        comptime bun.OSPathLiteral("bun.lock"),
+                                    };
+
                                     const uses_global_store_link = installer.entryUsesGlobalStore(this.entry_id);
                                     if (uses_global_store_link) {
                                         // Previous staging from a crashed run would
@@ -614,7 +648,8 @@ pub const Installer = struct {
                                                 folder_dir,
                                                 src,
                                                 dest,
-                                                &.{comptime bun.OSPathLiteral("node_modules")},
+                                                linked_skip_files,
+                                                linked_skip_dirs,
                                             );
                                             defer hardlinker.deinit();
 
@@ -662,7 +697,8 @@ pub const Installer = struct {
                                                 folder_dir,
                                                 src_path,
                                                 dest,
-                                                &.{comptime bun.OSPathLiteral("node_modules")},
+                                                linked_skip_files,
+                                                linked_skip_dirs,
                                             );
                                             defer file_copier.deinit();
 
@@ -730,6 +766,7 @@ pub const Installer = struct {
                                         folder_dir,
                                         src,
                                         dest,
+                                        &.{},
                                         &.{comptime bun.OSPathLiteral("node_modules")},
                                     );
                                     defer hardlinker.deinit();
@@ -795,6 +832,7 @@ pub const Installer = struct {
                                         folder_dir,
                                         src_path,
                                         dest,
+                                        &.{},
                                         &.{comptime bun.OSPathLiteral("node_modules")},
                                     );
                                     defer file_copier.deinit();
@@ -968,6 +1006,7 @@ pub const Installer = struct {
                                 src,
                                 dest_subpath,
                                 &.{},
+                                &.{},
                             );
                             defer hardlinker.deinit();
 
@@ -1034,6 +1073,7 @@ pub const Installer = struct {
                                 cached_package_dir.?,
                                 src_path,
                                 dest_subpath,
+                                &.{},
                                 &.{},
                             );
                             defer file_copier.deinit();

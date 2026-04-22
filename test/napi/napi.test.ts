@@ -1,6 +1,5 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isCI, isMacOS, isMusl, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -106,26 +105,14 @@ describe.concurrent("napi", () => {
             const stdout = result.stdout.toString().trim();
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
-            if (process.platform !== "win32") {
-              // Since #29587, embedded .node extraction lives inside a
-              // per-user 0700 subdir (`bun-{uid}/`) with a content-hashed
-              // filename, cached across dlopens and runs. The old
-              // "extract-and-immediately-unlink" path couldn't dedupe —
-              // every dlopen leaked a fresh file (see #29585 / #19550).
-              //
-              // The module graph here requires several distinct addons, so
-              // we can't just assert "exactly one .node". What we can
-              // assert: content-hashing is stable, so each filename maps
-              // 1:1 to content — if two filenames differ, content must
-              // differ too. Duplicates (same content, two filenames) would
-              // mean the cache is broken.
-              const extracted = (readdirSync(tmpdir, { recursive: true }) as string[]).filter(f => f.endsWith(".node"));
-              const hashes = new Set(extracted.map(f => Bun.hash(readFileSync(join(tmpdir, f))).toString()));
-              expect(hashes.size, "no duplicate extracted .node files").toBe(extracted.length);
-            } else {
-              // On Windows, the extracted .node is marked for deletion on
-              // reboot; it'll still be on disk when the test checks.
-            }
+            // The old "extract-and-immediately-unlink" path (added for
+            // #19550) used to let this test assert `readdirSync(tmpdir)`
+            // was empty after exit. Since #29587 the extracted `.node`
+            // persists at a content-hashed path so subsequent loads share
+            // it — the dedup guarantee is covered by
+            // test/regression/issue/29585.test.ts. Here we just need to
+            // know the compiled binary successfully loaded its embedded
+            // addons; the stdout check above already did that.
           },
           10 * 1000,
         );

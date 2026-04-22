@@ -100,6 +100,13 @@ const noUnify: readonly string[] = [
   // which conditional branches fire.
   "src/bun.js/bindings/ProcessBindingUV.cpp",
 
+  // Uses `#ifdef S_IFBLK` / `#ifdef O_SYNC` etc. to detect which constants
+  // the platform headers provide and expose exactly those on fs.constants.
+  // On Windows, NodeFSStatBinding.cpp (an earlier sibling in the bundle)
+  // `#define`s S_IFBLK/S_IFSOCK for its own use, so the #ifdef here fires
+  // and Windows fs.constants gains entries Node.js doesn't expose there.
+  "src/bun.js/bindings/ProcessBindingConstants.cpp",
+
   // Defines extern "C" replacements for platform symbols (strncasecmp,
   // fstat64, environ, ...). On Windows an earlier sibling can leak
   // `#define strncasecmp _strnicmp`, turning the definition here into a

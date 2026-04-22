@@ -119,12 +119,8 @@ describe.concurrent("napi", () => {
               // 1:1 to content — if two filenames differ, content must
               // differ too. Duplicates (same content, two filenames) would
               // mean the cache is broken.
-              const extracted = (readdirSync(tmpdir, { recursive: true }) as string[]).filter(f =>
-                f.endsWith(".node"),
-              );
-              const hashes = new Set(
-                extracted.map(f => Bun.hash(readFileSync(join(tmpdir, f))).toString()),
-              );
+              const extracted = (readdirSync(tmpdir, { recursive: true }) as string[]).filter(f => f.endsWith(".node"));
+              const hashes = new Set(extracted.map(f => Bun.hash(readFileSync(join(tmpdir, f))).toString()));
               expect(hashes.size, "no duplicate extracted .node files").toBe(extracted.length);
             } else {
               // On Windows, the extracted .node is marked for deletion on

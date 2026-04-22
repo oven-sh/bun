@@ -290,7 +290,7 @@ export interface DirectBuild {
  */
 export type DirectCodegen =
   | (DirectCodegenBase & { tool: string; toolDefines?: Record<string, string | number | true> })
-  | (DirectCodegenBase & { interpreter: string; script: string })
+  | (DirectCodegenBase & { interpreter: string; script?: string })
   | DirectCodegenLinkedTool;
 
 /**
@@ -835,7 +835,7 @@ export function resolveDep(
     const srcTok = (s: string) => (s.startsWith("$SRC/") ? resolve(srcDir, s.slice(5)) : undefined);
     for (const cg of buildSpec.codegen ?? []) {
       const main = "tool" in cg ? cg.tool : "linkedTool" in cg ? cg.linkedTool : cg.script;
-      const t = srcTok(main);
+      const t = main !== undefined ? srcTok(main) : undefined;
       if (t) directSources.push(t);
       const args = "linkedTool" in cg ? [] : cg.args;
       for (const a of [...args, ...(cg.inputs ?? [])]) {
@@ -1685,11 +1685,13 @@ function emitDirect(
         vars: { flags: ["-w", ...toolDefs].join(" ") },
       });
     } else {
-      // Script: invoke an existing interpreter on a script in srcDir.
-      // dep_codegen's command is `$tool $args` — set $tool to
-      // `<interpreter> <script>` so the rule shape stays uniform.
-      toolInput = tok(cg.script, out0);
-      toolExe = `${q(cg.interpreter)} ${q(toolInput)}`;
+      // Script: invoke an interpreter, optionally with a script as the
+      // first positional arg. dep_codegen's command is `$tool $args` —
+      // pack the script into $tool so the rule shape stays uniform.
+      // script may be omitted for tools that take everything as flags
+      // (mig — `mig -D... -sheader X.h file.defs`).
+      toolInput = cg.script !== undefined ? tok(cg.script, out0) : "";
+      toolExe = cg.script !== undefined ? `${q(cg.interpreter)} ${q(toolInput)}` : q(cg.interpreter);
     }
 
     const argv = cg.args.map(a => tok(a, out0));
@@ -1701,7 +1703,7 @@ function emitDirect(
     n.build({
       outputs: outs,
       rule: "dep_codegen",
-      inputs: "tool" in cg ? [toolExe] : [toolInput],
+      inputs: "tool" in cg ? [toolExe] : toolInput ? [toolInput] : [],
       implicitInputs: extraInputs,
       orderOnlyInputs: orderOnly,
       vars: {

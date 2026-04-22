@@ -820,9 +820,10 @@ export function getDiskSize(options) {
     return 60;
   }
 
-  // 40 was enough before the prefetch cache; the ~5GB prefetch layer plus
-  // `docker buildx --load`'s export+import doubling pushed it over.
-  return 60;
+  // 40 was enough before the prefetch cache. x64 has ~2× the WebKit variants
+  // (baseline) so its prefetch layer is large enough that `docker buildx
+  // --load`'s export+import doubling needs real headroom.
+  return 100;
 }
 
 /**

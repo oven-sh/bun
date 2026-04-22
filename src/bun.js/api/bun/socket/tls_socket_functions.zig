@@ -105,20 +105,14 @@ pub fn setMaxSendFragment(this: *This, globalObject: *jsc.JSGlobalObject, callfr
 pub fn getPeerCertificate(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     jsc.markBinding(@src());
 
-    // Node.js API: getPeerCertificate([detailed])
-    // detailed=false (default): returns abbreviated cert (just the peer cert)
-    // detailed=true: returns cert with issuerCertificate chain
-    //
     // Node.js does not type-check the argument; it uses args[0]->IsTrue(),
-    // which only returns true for the boolean `true` value. Any other value
-    // (undefined, null, 1, 0, strings) yields the abbreviated cert.
+    // so only boolean `true` yields the detailed chain.
     const args = callframe.arguments_old(1);
     const detailed: bool = args.len > 0 and args.ptr[0] == .true;
 
     const ssl_ptr = this.socket.ssl() orelse return .js_undefined;
 
     if (!detailed) {
-        // Abbreviated: return just the peer certificate
         if (this.isServer()) {
             // SSL_get_peer_certificate increments the refcount; X509.toJS
             // creates a non-owning view, so we must free it ourselves.
@@ -134,12 +128,8 @@ pub fn getPeerCertificate(this: *This, globalObject: *jsc.JSGlobalObject, callfr
         return X509.toJS(cert, globalObject);
     }
 
-    // Detailed: return peer certificate with issuerCertificate chain.
-    // This mirrors Node.js's GetPeerCert/AddIssuerChainToObject/
-    // GetLastIssuedCert in src/crypto/crypto_common.cc.
-
-    // SSL_get_peer_certificate increments the refcount; balance it on every
-    // exit path. Only non-null on the server side.
+    // Detailed chain. Mirrors Node.js GetPeerCert in src/crypto/crypto_common.cc.
+    // SSL_get_peer_certificate bumps the refcount; balance it on every exit.
     const leaf: ?*BoringSSL.X509 = if (this.isServer()) BoringSSL.SSL_get_peer_certificate(ssl_ptr) else null;
     defer if (leaf) |l| BoringSSL.X509_free(l);
     // SSL_get_peer_cert_chain does NOT transfer ownership.
@@ -151,9 +141,7 @@ pub fn getPeerCertificate(this: *This, globalObject: *jsc.JSGlobalObject, callfr
     }
 
     // Collect all peer-sent certs into a flat borrowed array so we can
-    // search by issuer (not array position) and mark entries consumed,
-    // mirroring Node's sk_X509_delete-based iteration without needing
-    // the OPENSSL_sk_delete symbol.
+    // search by issuer (not position) and mark entries consumed.
     var sfa = std.heap.stackFallback(16 * @sizeOf(*BoringSSL.X509), bun.default_allocator);
     const allocator = sfa.get();
     const total = chain_len + @as(usize, if (leaf != null) 1 else 0);
@@ -185,9 +173,7 @@ pub fn getPeerCertificate(this: *This, globalObject: *jsc.JSGlobalObject, callfr
     const result = try X509.toJS(cert, globalObject);
     var tail_obj = result;
 
-    // AddIssuerChainToObject: repeatedly search the remaining peer certs for
-    // the issuer of `cert` via X509_check_issued (not array position), so
-    // misordered chains link correctly. Mark matches consumed to terminate.
+    // Link issuers from the peer-sent set (handles misordered chains).
     outer: while (true) {
         for (certs, 0..) |maybe_ca, i| {
             const ca = maybe_ca orelse continue;
@@ -201,11 +187,10 @@ pub fn getPeerCertificate(this: *This, globalObject: *jsc.JSGlobalObject, callfr
             certs[i] = null; // consumed
             continue :outer;
         }
-        break; // no issuer found among the remaining peer-sent certs
+        break;
     }
 
-    // GetLastIssuedCert: if the peer chain stopped short of the root, try to
-    // extend it from the local trust store (the SSL_CTX's X509_STORE).
+    // If still not at a root, try to extend from the local trust store.
     while (BoringSSL.X509_check_issued(cert, cert) != BoringSSL.X509_V_OK) {
         const ca = issuerFromStore(ssl_ptr, cert) orelse break;
         errdefer BoringSSL.X509_free(ca);
@@ -234,9 +219,8 @@ pub fn getPeerCertificate(this: *This, globalObject: *jsc.JSGlobalObject, callfr
     return result;
 }
 
-// Look up the issuer of `cert` in the SSL connection's configured trust
-// store. Returns an owned X509* (caller must X509_free), or null if not
-// found. Mirrors Node's SSL_CTX_get_issuer / ncrypto X509Pointer::IssuerFrom.
+// Look up the issuer of `cert` in the SSL connection's trust store.
+// Returns an owned X509* (caller must X509_free), or null if not found.
 fn issuerFromStore(ssl: *BoringSSL.SSL, cert: *BoringSSL.X509) ?*BoringSSL.X509 {
     const ssl_ctx = BoringSSL.SSL_get_SSL_CTX(ssl) orelse return null;
     const store = BoringSSL.SSL_CTX_get_cert_store(ssl_ctx) orelse return null;

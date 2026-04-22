@@ -102,7 +102,11 @@ for (let i = 0; i < lines.length; i++) {
   if (interp[2].includes("rewrite-compile-commands")) continue;
 
   // Outputs: drop the `| ${cmake_ninja_workdir}...` echo half.
-  const outs = m[1].split(" | ")[0].trim().split(/\s+/).map(o => rel(resolve(buildDir, o)));
+  const outs = m[1]
+    .split(" | ")[0]
+    .trim()
+    .split(/\s+/)
+    .map(o => rel(resolve(buildDir, o)));
   // Inputs: everything after CUSTOM_COMMAND up to `||` (order-only).
   const insRaw = m[2].split(" || ")[0].trim();
   const ins = insRaw ? insRaw.split(/\s+/).map(p => rel(resolve(buildDir, p))) : [];

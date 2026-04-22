@@ -15,12 +15,12 @@
  */
 
 import { globSync } from "node:fs";
+import type { Config } from "../../config.ts";
 import type { Dependency, DirectCodegen } from "../../source.ts";
 import { depBuildDir } from "../../source.ts";
+import { webkitSrcDir } from "../webkit.ts";
 import { webkitDirectSource } from "./bmalloc.ts";
 import { commonDefines, layerData, lutTables, webkitCFlags, webkitCxxFlags } from "./common.ts";
-import { webkitSrcDir } from "../webkit.ts";
-import type { Config } from "../../config.ts";
 
 const layer = layerData.JavaScriptCore;
 const SRC_INCLUDES = layer.includes.filter(i => i.startsWith("$SRC/")).map(i => i.replace("$SRC/", ""));
@@ -65,8 +65,13 @@ function srcGlob(cfg: Config, pattern: string): string[] {
 // this space-separated list. Matches what cmake passes from
 // FEATURE_DEFINES_WITH_SPACE_SEPARATOR.
 const inspectorFeatureDefines = [
-  "ENABLE_JIT", "ENABLE_DFG_JIT", "ENABLE_FTL_JIT", "ENABLE_WEBASSEMBLY",
-  "ENABLE_REMOTE_INSPECTOR", "ENABLE_SAMPLING_PROFILER", "ENABLE_RESOURCE_USAGE",
+  "ENABLE_JIT",
+  "ENABLE_DFG_JIT",
+  "ENABLE_FTL_JIT",
+  "ENABLE_WEBASSEMBLY",
+  "ENABLE_REMOTE_INSPECTOR",
+  "ENABLE_SAMPLING_PROFILER",
+  "ENABLE_RESOURCE_USAGE",
   "USE_BUN_JSC_ADDITIONS",
 ].join(" ");
 
@@ -81,17 +86,26 @@ function jscCodegen(cfg: Config): DirectCodegen[] {
       interpreter: "ruby",
       script: `${JSC}/generator/main.rb`,
       args: [
-        "--bytecodes_h", `${DS}/Bytecodes.h`,
-        "--init_bytecodes_asm", `${DS}/InitBytecodes.asm`,
-        "--bytecode_structs_h", `${DS}/BytecodeStructs.h`,
-        "--bytecode_indices_h", `${DS}/BytecodeIndices.h`,
+        "--bytecodes_h",
+        `${DS}/Bytecodes.h`,
+        "--init_bytecodes_asm",
+        `${DS}/InitBytecodes.asm`,
+        "--bytecode_structs_h",
+        `${DS}/BytecodeStructs.h`,
+        "--bytecode_indices_h",
+        `${DS}/BytecodeIndices.h`,
         `${JSC}/bytecode/BytecodeList.rb`,
-        "--wasm_json", `${JSC}/wasm/wasm.json`,
-        "--bytecode_dumper", `${DS}/BytecodeDumperGenerated.cpp`,
+        "--wasm_json",
+        `${JSC}/wasm/wasm.json`,
+        "--bytecode_dumper",
+        `${DS}/BytecodeDumperGenerated.cpp`,
       ],
       outputs: [
-        `${DS}/Bytecodes.h`, `${DS}/InitBytecodes.asm`, `${DS}/BytecodeStructs.h`,
-        `${DS}/BytecodeIndices.h`, `${DS}/BytecodeDumperGenerated.cpp`,
+        `${DS}/Bytecodes.h`,
+        `${DS}/InitBytecodes.asm`,
+        `${DS}/BytecodeStructs.h`,
+        `${DS}/BytecodeIndices.h`,
+        `${DS}/BytecodeDumperGenerated.cpp`,
       ],
       inputs: [`${JSC}/bytecode/BytecodeList.rb`, `${JSC}/wasm/wasm.json`],
     },
@@ -111,8 +125,13 @@ function jscCodegen(cfg: Config): DirectCodegen[] {
       interpreter: "python3",
       script: `${JSC}/Scripts/generate-js-builtins.py`,
       args: [
-        "--framework", "JavaScriptCore", "--output-directory", DS, "--combined",
-        ...builtinsJs, `${JSC}/inspector/InjectedScriptSource.js`,
+        "--framework",
+        "JavaScriptCore",
+        "--output-directory",
+        DS,
+        "--combined",
+        ...builtinsJs,
+        `${JSC}/inspector/InjectedScriptSource.js`,
       ],
       outputs: [`${DS}/JSCBuiltins.cpp`, `${DS}/JSCBuiltins.h`],
       inputs: builtinsJs,
@@ -183,9 +202,12 @@ function jscCodegen(cfg: Config): DirectCodegen[] {
       args: ["--framework", "JavaScriptCore", "--outputDir", `${DS}/inspector`, `${DS}/CombinedDomains.json`],
       outputs: [
         `${DS}/inspector/InspectorAlternateBackendDispatchers.h`,
-        `${DS}/inspector/InspectorBackendDispatchers.cpp`, `${DS}/inspector/InspectorBackendDispatchers.h`,
-        `${DS}/inspector/InspectorFrontendDispatchers.cpp`, `${DS}/inspector/InspectorFrontendDispatchers.h`,
-        `${DS}/inspector/InspectorProtocolObjects.cpp`, `${DS}/inspector/InspectorProtocolObjects.h`,
+        `${DS}/inspector/InspectorBackendDispatchers.cpp`,
+        `${DS}/inspector/InspectorBackendDispatchers.h`,
+        `${DS}/inspector/InspectorFrontendDispatchers.cpp`,
+        `${DS}/inspector/InspectorFrontendDispatchers.h`,
+        `${DS}/inspector/InspectorProtocolObjects.cpp`,
+        `${DS}/inspector/InspectorProtocolObjects.h`,
         `${DS}/inspector/InspectorBackendCommands.js`,
       ],
       inputs: [`${DS}/CombinedDomains.json`],
@@ -232,8 +254,7 @@ function llintCodegen(cfg: Config): DirectCodegen[] {
   // pull them in. asan flag goes on the link line so the runtime is found.
   const sysLibs = cfg.windows
     ? ["icuuc.lib", "icuin.lib", "icudt.lib"]
-    : ["-licuuc", "-licui18n", "-licudata", "-lpthread", "-ldl",
-       ...(cfg.asan ? ["-fsanitize=address"] : [])];
+    : ["-licuuc", "-licui18n", "-licudata", "-lpthread", "-ldl", ...(cfg.asan ? ["-fsanitize=address"] : [])];
   const toolDeps = ["webkit-wtf", "webkit-bmalloc"];
 
   return [
@@ -250,13 +271,19 @@ function llintCodegen(cfg: Config): DirectCodegen[] {
       interpreter: "ruby",
       script: `${JSC}/offlineasm/generate_offset_extractor.rb`,
       args: [
-        `-I${DS}/`, `${JSC}/llint/LowLevelInterpreter.asm`,
-        `$BUILD/LLIntSettingsExtractor${cfg.exeSuffix}`, "$out", arch, "normal",
+        `-I${DS}/`,
+        `${JSC}/llint/LowLevelInterpreter.asm`,
+        `$BUILD/LLIntSettingsExtractor${cfg.exeSuffix}`,
+        "$out",
+        arch,
+        "normal",
       ],
       outputs: [`${DS}/LLIntDesiredOffsets.h`],
       inputs: [
         `$BUILD/LLIntSettingsExtractor${cfg.exeSuffix}`,
-        `${DS}/InitBytecodes.asm`, `${DS}/WasmOps.h`, `${DS}/AirOpcode.h`,
+        `${DS}/InitBytecodes.asm`,
+        `${DS}/WasmOps.h`,
+        `${DS}/AirOpcode.h`,
       ],
     },
     // 4/5: compile+link OffsetsExtractor (reads LLIntDesiredOffsets.h).
@@ -271,8 +298,11 @@ function llintCodegen(cfg: Config): DirectCodegen[] {
       interpreter: "ruby",
       script: `${JSC}/offlineasm/asm.rb`,
       args: [
-        `-I${DS}/`, `${JSC}/llint/LowLevelInterpreter.asm`,
-        `$BUILD/LLIntOffsetsExtractor${cfg.exeSuffix}`, "$out", "normal",
+        `-I${DS}/`,
+        `${JSC}/llint/LowLevelInterpreter.asm`,
+        `$BUILD/LLIntOffsetsExtractor${cfg.exeSuffix}`,
+        "$out",
+        "normal",
         `--binary-format=${fmt}`,
       ],
       outputs: [`${DS}/LLIntAssembly.h`],
@@ -281,7 +311,6 @@ function llintCodegen(cfg: Config): DirectCodegen[] {
     },
   ];
 }
-
 
 export const webkitJSC: Dependency = {
   name: "webkit-jsc",
@@ -325,7 +354,9 @@ export const webkitJSC: Dependency = {
       {
         dest: "JavaScriptCore",
         from: [
-          `${DS}/Bytecodes.h`, `${DS}/JSCBuiltins.h`, `${DS}/WasmOps.h`,
+          `${DS}/Bytecodes.h`,
+          `${DS}/JSCBuiltins.h`,
+          `${DS}/WasmOps.h`,
           `${DS}/inspector/InspectorAlternateBackendDispatchers.h`,
           `${DS}/inspector/InspectorBackendDispatchers.h`,
           `${DS}/inspector/InspectorFrontendDispatchers.h`,

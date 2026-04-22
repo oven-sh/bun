@@ -39,12 +39,11 @@ export const WEBKIT_VERSION = "4d5e75ebd84a14edbc7ae264245dcd77fe597c10";
  *   like the old cmake — avoids debug/release mixing.
  */
 
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { Config } from "../config.ts";
 import { computeCpuTargetFlags } from "../flags.ts";
 import { slash } from "../shell.ts";
-import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir } from "../source.ts";
+import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir } from "../source.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Prebuilt URL computation

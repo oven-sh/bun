@@ -724,9 +724,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // one-line `#include "abs"` wrapper instead — clang's #pragma once
   // dedupes by content there, and the wrapper itself has no declarations.
   n.rule("dep_fwd", {
-    command: hostWin
-      ? `cmd /c (echo #include "$target") > $out`
-      : `ln -sfn $target $out`,
+    command: hostWin ? `cmd /c (echo #include "$target") > $out` : `ln -sfn $target $out`,
     description: "fwd $out",
     restat: true,
   });

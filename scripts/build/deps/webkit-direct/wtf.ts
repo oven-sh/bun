@@ -17,9 +17,7 @@ const layer = layerData.WTF;
 // Forwarding-header dirs cmake stages → the source dirs they mirror.
 // $BUILD (the cmake root) is where cmakeconfig.h lives; we put that in
 // webkit-bmalloc's buildDir instead.
-const SRC_INCLUDES = layer.includes
-  .filter(i => i.startsWith("$SRC/"))
-  .map(i => i.replace("$SRC/", ""));
+const SRC_INCLUDES = layer.includes.filter(i => i.startsWith("$SRC/")).map(i => i.replace("$SRC/", ""));
 
 export const webkitWTF: Dependency = {
   name: "webkit-wtf",

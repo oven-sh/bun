@@ -173,11 +173,7 @@
         "$SRC/Source/bmalloc/libpas/src/libpas/thingy_heap.c",
         "$SRC/Source/bmalloc/libpas/src/libpas/thingy_heap_config.c"
       ],
-      "includes": [
-        "$SRC/Source/bmalloc",
-        "$SRC/Source/bmalloc/bmalloc",
-        "$SRC/Source/bmalloc/libpas/src/libpas"
-      ],
+      "includes": ["$SRC/Source/bmalloc", "$SRC/Source/bmalloc/bmalloc", "$SRC/Source/bmalloc/libpas/src/libpas"],
       "defines": [
         "BUILDING_JSCONLY__",
         "BUILDING_WEBKIT=1",
@@ -643,9 +639,7 @@
       ]
     },
     "LowLevelInterpreterLib": {
-      "sources": [
-        "$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter.cpp"
-      ],
+      "sources": ["$SRC/Source/JavaScriptCore/llint/LowLevelInterpreter.cpp"],
       "includes": [
         "$BUILD/JavaScriptCore/Headers",
         "$BUILD/JavaScriptCore/PrivateHeaders",
@@ -1281,9 +1275,7 @@
       "cwd": "$BUILD/Source/JavaScriptCore"
     },
     {
-      "outputs": [
-        "$BUILD/JavaScriptCore/DerivedSources/LLIntDesiredSettings.h"
-      ],
+      "outputs": ["$BUILD/JavaScriptCore/DerivedSources/LLIntDesiredSettings.h"],
       "inputs": [
         "$SRC/Source/JavaScriptCore/offlineasm/generate_settings_extractor.rb",
         "$SRC/Source/JavaScriptCore/llint/InPlaceInterpreter.asm",
@@ -1323,9 +1315,7 @@
       "cwd": "$BUILD/Source/JavaScriptCore"
     },
     {
-      "outputs": [
-        "$BUILD/JavaScriptCore/DerivedSources/LLIntDesiredOffsets.h"
-      ],
+      "outputs": ["$BUILD/JavaScriptCore/DerivedSources/LLIntDesiredOffsets.h"],
       "inputs": [
         "$SRC/Source/JavaScriptCore/offlineasm/generate_offset_extractor.rb",
         "$BUILD/bin/LLIntSettingsExtractor",
@@ -1386,9 +1376,7 @@
       "cwd": "$BUILD/JavaScriptCore/DerivedSources"
     },
     {
-      "outputs": [
-        "$BUILD/JavaScriptCore/DerivedSources/WasmOps.h"
-      ],
+      "outputs": ["$BUILD/JavaScriptCore/DerivedSources/WasmOps.h"],
       "inputs": [
         "$SRC/Source/JavaScriptCore/wasm/generateWasmOpsHeader.py",
         "$SRC/Source/JavaScriptCore/wasm/wasm.json",
@@ -1403,9 +1391,7 @@
       "cwd": "$BUILD/Source/JavaScriptCore"
     },
     {
-      "outputs": [
-        "$BUILD/JavaScriptCore/DerivedSources/LLIntAssembly.h"
-      ],
+      "outputs": ["$BUILD/JavaScriptCore/DerivedSources/LLIntAssembly.h"],
       "inputs": [
         "$SRC/Source/JavaScriptCore/offlineasm/asm.rb",
         "$BUILD/bin/LLIntOffsetsExtractor",
@@ -1458,9 +1444,7 @@
       "cwd": "$BUILD/JavaScriptCore/DerivedSources"
     },
     {
-      "outputs": [
-        "$BUILD/JavaScriptCore/DerivedSources/WasmOMGIRGeneratorInlines.h"
-      ],
+      "outputs": ["$BUILD/JavaScriptCore/DerivedSources/WasmOMGIRGeneratorInlines.h"],
       "inputs": [
         "$SRC/Source/JavaScriptCore/wasm/generateWasmOMGIRGeneratorInlinesHeader.py",
         "$SRC/Source/JavaScriptCore/wasm/wasm.json",
@@ -1475,12 +1459,8 @@
       "cwd": "$BUILD/Source/JavaScriptCore"
     },
     {
-      "outputs": [
-        "$BUILD/JavaScriptCore/DerivedSources/yarr/RegExpJitTables.h"
-      ],
-      "inputs": [
-        "$SRC/Source/JavaScriptCore/yarr/create_regex_tables"
-      ],
+      "outputs": ["$BUILD/JavaScriptCore/DerivedSources/yarr/RegExpJitTables.h"],
+      "inputs": ["$SRC/Source/JavaScriptCore/yarr/create_regex_tables"],
       "argv": [
         "python3",
         "$SRC/Source/JavaScriptCore/yarr/create_regex_tables",
@@ -1489,9 +1469,7 @@
       "cwd": "$BUILD/Source/JavaScriptCore"
     },
     {
-      "outputs": [
-        "$BUILD/JavaScriptCore/DerivedSources/LexerUnicodePropertyTables.h"
-      ],
+      "outputs": ["$BUILD/JavaScriptCore/DerivedSources/LexerUnicodePropertyTables.h"],
       "inputs": [
         "$SRC/Source/JavaScriptCore/parser/generateLexerUnicodePropertyTables.py",
         "$SRC/Source/JavaScriptCore/ucd/UnicodeData.txt"
@@ -1505,9 +1483,7 @@
       "cwd": "$BUILD/Source/JavaScriptCore"
     },
     {
-      "outputs": [
-        "$BUILD/JavaScriptCore/DerivedSources/yarr/UnicodePatternTables.h"
-      ],
+      "outputs": ["$BUILD/JavaScriptCore/DerivedSources/yarr/UnicodePatternTables.h"],
       "inputs": [
         "$SRC/Source/JavaScriptCore/yarr/generateYarrUnicodePropertyTables.py",
         "$SRC/Source/JavaScriptCore/yarr/hasher.py",
@@ -1531,9 +1507,7 @@
       "cwd": "$BUILD/Source/JavaScriptCore"
     },
     {
-      "outputs": [
-        "$BUILD/JavaScriptCore/DerivedSources/KeywordLookup.h"
-      ],
+      "outputs": ["$BUILD/JavaScriptCore/DerivedSources/KeywordLookup.h"],
       "inputs": [
         "$SRC/Source/JavaScriptCore/KeywordLookupGenerator.py",
         "$SRC/Source/JavaScriptCore/parser/Keywords.table"
@@ -1587,9 +1561,7 @@
       "cwd": "$BUILD/Source/JavaScriptCore"
     },
     {
-      "outputs": [
-        "$BUILD/JavaScriptCore/DerivedSources/yarr/YarrCanonicalizeUnicode.cpp"
-      ],
+      "outputs": ["$BUILD/JavaScriptCore/DerivedSources/yarr/YarrCanonicalizeUnicode.cpp"],
       "inputs": [
         "$SRC/Source/JavaScriptCore/yarr/generateYarrCanonicalizeUnicode",
         "$SRC/Source/JavaScriptCore/ucd/CaseFolding.txt"
@@ -1603,9 +1575,7 @@
       "cwd": "$BUILD/Source/JavaScriptCore"
     },
     {
-      "outputs": [
-        "$BUILD/JavaScriptCore/DerivedSources/CombinedDomains.json"
-      ],
+      "outputs": ["$BUILD/JavaScriptCore/DerivedSources/CombinedDomains.json"],
       "inputs": [
         "$BUILD/JavaScriptCore/Scripts/generate-combined-inspector-json.py",
         "$SRC/Source/JavaScriptCore/inspector/protocol/Animation.json",

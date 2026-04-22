@@ -26,10 +26,10 @@ import { nodejsHeaders } from "./nodejs-headers.ts";
 import { picohttpparser } from "./picohttpparser.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
-import { webkit } from "./webkit.ts";
 import { webkitBmalloc } from "./webkit-direct/bmalloc.ts";
-import { webkitWTF } from "./webkit-direct/wtf.ts";
 import { webkitJSC } from "./webkit-direct/jsc.ts";
+import { webkitWTF } from "./webkit-direct/wtf.ts";
+import { webkit } from "./webkit.ts";
 import { zlib } from "./zlib.ts";
 import { zstd } from "./zstd.ts";
 

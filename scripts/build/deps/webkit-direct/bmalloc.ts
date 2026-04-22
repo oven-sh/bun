@@ -12,12 +12,12 @@
  * WTF/JSC add it to their include path.
  */
 
+import type { Config } from "../../config.ts";
 import type { Dependency, Source } from "../../source.ts";
 import { depBuildDir } from "../../source.ts";
 import { webkitSrcDir } from "../webkit.ts";
-import { cmakeconfigH } from "./feature-defines.ts";
 import { commonDefines, layerData, webkitCFlags, webkitCxxFlags } from "./common.ts";
-import type { Config } from "../../config.ts";
+import { cmakeconfigH } from "./feature-defines.ts";
 
 /**
  * Shared `source` for all three direct layers. Mirrors local mode (user

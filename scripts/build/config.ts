@@ -194,8 +194,8 @@ export interface Config {
   esbuild: string;
   /** Optional — compiler launcher prefix. */
   ccache: string | undefined;
-  /** cmake executable. Required for nested dep builds. */
-  cmake: string;
+  /** cmake executable. Only required when a nested-cmake dep resolves. */
+  cmake: string | undefined;
   /** cargo executable. undefined when no rust toolchain is available. */
   cargo: string | undefined;
   /** CARGO_HOME — passed to cargo invocations for reproducibility. */
@@ -300,7 +300,7 @@ export interface Toolchain {
   jsRuntime: string;
   esbuild: string;
   ccache: string | undefined;
-  cmake: string;
+  cmake: string | undefined;
   /** Cargo executable. Required only if a rust dep (lolhtml) is being built. */
   cargo: string | undefined;
   /** CARGO_HOME. Set alongside cargo; undefined when cargo is unavailable. */

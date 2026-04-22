@@ -580,8 +580,11 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // but use host.os for consistency with other modules).
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
-  const cmake = q(cfg.cmake);
   const fetchCli = q(fetchCliPath);
+  // cmake rules only registered when cmake is present. emitNestedCmake()
+  // asserts at the use site so the error is "this dep needs cmake", not
+  // a cryptic "unknown rule dep_configure" from ninja.
+  const cmake = cfg.cmake !== undefined ? q(cfg.cmake) : undefined;
 
   // stream.ts wraps commands to give live prefixed output while ninja runs
   // them in parallel. Ninja buffers non-console subprocess output (confirmed
@@ -626,22 +629,24 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // this one doesn't pass -DFOO at all, cmake keeps the cached ON. Since ninja
   // only reruns this rule when $args actually changed (tracked in .ninja_log),
   // we always want a clean slate when it does run.
-  n.rule("dep_configure", {
-    command: `${stream} --cwd=$srcdir ${cmake} --fresh -B$builddir $args`,
-    description: "cmake $name",
-    restat: true,
-    pool: "dep",
-  });
+  if (cmake !== undefined) {
+    n.rule("dep_configure", {
+      command: `${stream} --cwd=$srcdir ${cmake} --fresh -B$builddir $args`,
+      description: "cmake $name",
+      restat: true,
+      pool: "dep",
+    });
 
-  // Build: runs cmake --build. Restat is critical — if no source changed in
-  // the dep, cmake --build is a no-op (inner ninja re-stats), and our restat
-  // prunes everything downstream.
-  n.rule("dep_build", {
-    command: `${stream} ${cmake} --build $builddir --config $buildtype $targets`,
-    description: "build $name",
-    restat: true,
-    pool: "dep",
-  });
+    // Build: runs cmake --build. Restat is critical — if no source changed in
+    // the dep, cmake --build is a no-op (inner ninja re-stats), and our restat
+    // prunes everything downstream.
+    n.rule("dep_build", {
+      command: `${stream} ${cmake} --build $builddir --config $buildtype $targets`,
+      description: "build $name",
+      restat: true,
+      pool: "dep",
+    });
+  }
 
   // Cargo build: runs `cargo build` in the manifest dir. Only registered
   // if cargo is available — a missing rust toolchain makes ninja fail with
@@ -1188,6 +1193,9 @@ function emitNestedCmake(
   spec: NestedCmakeBuild,
   input: EmitNestedCmakeInput,
 ): { libs: string[] } {
+  assert(cfg.cmake !== undefined, `dep "${name}" needs cmake but it wasn't found`, {
+    hint: "Install cmake (>= 3.24), or use --webkit=direct/prebuilt to avoid the only nested-cmake deps",
+  });
   const { srcDir, sourceStamp, provides, fetchDepStamps, alwaysBuild } = input;
   const buildDir = depBuildDir(cfg, name);
   const cacheFile = resolve(buildDir, "CMakeCache.txt");

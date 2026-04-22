@@ -29,9 +29,10 @@ export function resolveToolchain(): Toolchain {
   const host = detectHost();
   const llvm = resolveLlvmToolchain(host.os, host.arch);
 
-  // cmake — required for nested dep builds.
-  const cmake = findSystemTool("cmake", { required: true, hint: "Install cmake (>= 3.24)" });
-  if (cmake === undefined) throw new BuildError("unreachable: findSystemTool required=true returned undefined");
+  // cmake — only needed when a nested-cmake dep resolves (libuv on
+  // Windows, --webkit=local). Everything else is DirectBuild now, so
+  // don't hard-fail here; emitNestedCmake() asserts at the use site.
+  const cmake = findSystemTool("cmake", { required: false });
 
   // cargo — required for lolhtml. Not found → build will fail at that dep
   // with a clear "install rust" hint. We don't hard-fail here because

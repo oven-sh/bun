@@ -617,13 +617,6 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         return globalThis.throw("Failed to construct 'Request': expected non-empty string or object, got undefined", .{});
     }
 
-    // Per the Fetch spec, `init` is a Web IDL dictionary. Dictionary conversion
-    // throws TypeError when the value is a primitive other than undefined or
-    // null. https://fetch.spec.whatwg.org/#dom-request
-    if (arguments.len > 1 and !arguments[1].isUndefinedOrNull() and !arguments[1].isObject()) {
-        return globalThis.ERR(.INVALID_ARG_TYPE, "Failed to construct 'Request': The \"init\" argument must be of type object, undefined, or null.", .{}).throw();
-    }
-
     const url_or_object = arguments[0];
     const url_or_object_type = url_or_object.jsType();
     var fields = std.EnumSet(Fields).initEmpty();
@@ -642,6 +635,13 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
             fields.insert(.url);
     } else if (!url_or_object_type.isObject()) {
         return globalThis.throw("Failed to construct 'Request': expected non-empty string or object", .{});
+    }
+
+    // https://fetch.spec.whatwg.org/#dom-request — init is a Web IDL dictionary.
+    // Checked after the url-string branch above so an invalid-URL error on
+    // a string `input` surfaces before this type check.
+    if (arguments.len > 1 and !arguments[1].isUndefinedOrNull() and !arguments[1].isObject()) {
+        return globalThis.ERR(.INVALID_ARG_TYPE, "Failed to construct 'Request': The \"init\" argument must be of type object, undefined, or null.", .{}).throw();
     }
 
     const values_to_try_ = [_]JSValue{

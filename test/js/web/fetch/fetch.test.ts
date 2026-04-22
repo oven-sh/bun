@@ -2462,3 +2462,89 @@ it("should allow to follow redirect if connection is closed, abort should work e
     }
   }
 });
+
+// https://github.com/oven-sh/bun/issues/29195
+//
+// `init` is a Web IDL dictionary per the WHATWG Fetch spec, so dictionary
+// conversion must throw TypeError for non-nullish primitives. Bun used to
+// silently ignore them.
+describe("fetch() init argument validation (#29195)", () => {
+  // data: URL so the "good init" cases resolve synchronously without any
+  // network I/O — keeps the test hermetic on every platform.
+  const hermetic_url = "data:text/plain,ok";
+
+  const bad_init: [string, unknown][] = [
+    ["number 0", 0],
+    ["non-zero number", 42],
+    ["bigint", 0n],
+    ["empty string", ""],
+    ["non-empty string", "hello"],
+    ["boolean false", false],
+    ["boolean true", true],
+  ];
+
+  const good_init: [string, unknown][] = [
+    ["undefined", undefined],
+    ["null", null],
+    ["a plain object", { method: "GET" }],
+  ];
+
+  it.each(bad_init)("rejects with TypeError when init is %s", async (_label, value) => {
+    await expect(fetch(hermetic_url, value as any)).rejects.toBeInstanceOf(TypeError);
+  });
+
+  it("rejects with TypeError when init is a symbol", async () => {
+    await expect(fetch(hermetic_url, Symbol("test") as any)).rejects.toBeInstanceOf(TypeError);
+  });
+
+  it.each(good_init)("resolves when init is %s", async (_label, value) => {
+    const res = await fetch(hermetic_url, value as any);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
+  });
+
+  // WebIDL converts arguments left-to-right. When `input` is an object whose
+  // `toString` throws, that error must surface before the init type check.
+  // (Bun invokes toString synchronously during URL conversion, so the error
+  //  arrives as a thrown exception rather than a rejected promise.)
+  it("surfaces first-argument conversion errors before the init TypeError", () => {
+    const first_arg = {
+      toString() {
+        throw new Error("boom from toString");
+      },
+    };
+    expect(() => fetch(first_arg as any, 0 as any)).toThrow("boom from toString");
+  });
+});
+
+describe("new Request() init argument validation (#29195)", () => {
+  const hermetic_url = "data:text/plain,ok";
+
+  const bad_init: [string, unknown][] = [
+    ["number 0", 0],
+    ["non-zero number", 42],
+    ["bigint", 0n],
+    ["empty string", ""],
+    ["non-empty string", "hello"],
+    ["boolean false", false],
+    ["boolean true", true],
+  ];
+
+  const good_init: [string, unknown][] = [
+    ["undefined", undefined],
+    ["null", null],
+    ["a plain object", { method: "GET" }],
+  ];
+
+  it.each(bad_init)("throws TypeError when init is %s", (_label, value) => {
+    expect(() => new Request(hermetic_url, value as any)).toThrow(TypeError);
+  });
+
+  it("throws TypeError when init is a symbol", () => {
+    expect(() => new Request(hermetic_url, Symbol("test") as any)).toThrow(TypeError);
+  });
+
+  it.each(good_init)("does not throw when init is %s", (_label, value) => {
+    expect(() => new Request(hermetic_url, value as any)).not.toThrow();
+  });
+});

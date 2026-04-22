@@ -7,6 +7,9 @@ globalThis.noInline = require("bun:jsc").noInline;
 // testLoopCount: iteration count to trigger JIT tier-up (Baseline -> DFG -> FTL).
 globalThis.testLoopCount = 10000;
 
+// wasmTestLoopCount: iteration count to trigger Wasm tier-up (IPInt -> BBQ -> OMG).
+globalThis.wasmTestLoopCount = 10000;
+
 // print: JSC's output function, mapped to console.log.
 globalThis.print = console.log;
 

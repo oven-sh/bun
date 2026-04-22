@@ -138,6 +138,12 @@ const wasmFixtures = [
   "omg-tail-call-to-function-with-less-arguments.js",
   "omg-tail-call-clobber-scratch-register.js",
   "omg-osr-stack-check-2.js",
+  // JSPI
+  "jspi-basic.js",
+  "jspi-rejection.js",
+  "jspi-resuspension.js",
+  "jspi-exceptions-from-wasm.js",
+  "jspi-exceptions-from-js.js",
 ];
 
 const preloadPath = path.join(import.meta.dir, "preload.js");

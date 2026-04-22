@@ -461,8 +461,18 @@ export interface Dependency {
  */
 export interface ResolvedDep {
   name: string;
-  /** Absolute paths to .a/.lib/.o files for link(). */
+  /**
+   * Absolute paths to .a/.lib files for link(). Populated by nested-cmake/
+   * cargo/prebuilt deps, and by `direct` deps when `cfg.archiveDeps` is on.
+   */
   libs: string[];
+  /**
+   * Absolute paths to .o/.obj files for link(). Populated by `direct` deps
+   * when `cfg.archiveDeps` is off (the default) — the dep's sources are
+   * compiled in our graph and the resulting objects go straight into bun's
+   * link line / cpp-only archive instead of an intermediate `.a`.
+   */
+  objects: string[];
   /** Absolute include paths for -I flags. */
   includes: string[];
   defines: string[];
@@ -777,6 +787,7 @@ export function resolveDep(
 
   // ─── Step 2+3: build ───
   let libs: string[];
+  let objects: string[] = [];
   let outputs: string[];
 
   if (buildSpec.kind === "nested-cmake") {
@@ -799,7 +810,8 @@ export function resolveDep(
   } else if (buildSpec.kind === "direct") {
     const result = emitDirect(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp, fetchDepStamps });
     libs = result.libs;
-    outputs = result.libs;
+    objects = result.objects;
+    outputs = [...result.libs, ...result.objects];
   } else {
     // No build step. Source stamp is the only output. For deps with
     // provides.sources (picohttpparser), emitBun adds a phony pointing at
@@ -824,6 +836,7 @@ export function resolveDep(
   return {
     name: dep.name,
     libs,
+    objects,
     includes,
     defines: provides.defines ?? [],
     sources: resolvedSources,
@@ -882,8 +895,11 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
     return [resolve(targetDir, outSubdir, `${cfg.libPrefix}${buildSpec.libName}${cfg.libSuffix}`)];
   }
 
-  // direct: single lib<name>.a in buildDir/deps/<name>/.
+  // direct: single lib<name>.a when archiveDeps; otherwise the dep's .o
+  // files are folded into libbun.a in cpp-only and there's no separate
+  // artifact for link-only to fetch.
   if (buildSpec.kind === "direct") {
+    if (!cfg.archiveDeps) return [];
     const buildDir = depBuildDir(cfg, dep.name);
     return [resolve(buildDir, `${cfg.libPrefix}${dep.name}${cfg.libSuffix}`)];
   }
@@ -1014,6 +1030,7 @@ function emitPrebuilt(
   return {
     name,
     libs,
+    objects: [],
     includes,
     defines: provides.defines ?? [],
     sources: [],
@@ -1381,7 +1398,7 @@ function emitDirect(
   name: string,
   spec: DirectBuild,
   input: EmitDirectInput,
-): { libs: string[] } {
+): { libs: string[]; objects: string[] } {
   const { srcDir, sourceStamp, fetchDepStamps } = input;
   const buildDir = depBuildDir(cfg, name);
   const hostWin = cfg.host.os === "windows";
@@ -1519,10 +1536,17 @@ function emitDirect(
     return isC || isAsm ? cc(n, cfg, abs, opts) : cxx(n, cfg, abs, opts);
   });
 
-  const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects);
-  n.phony(name, [lib]);
-
-  return { libs: [lib] };
+  // Default: hand the objects straight to bun's link line — no intermediate
+  // archive. With cfg.archiveDeps the old per-dep .a is produced instead
+  // (useful for bisecting duplicate-symbol issues, since a .a only
+  // contributes members the linker actually pulls).
+  if (cfg.archiveDeps) {
+    const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects);
+    n.phony(name, [lib]);
+    return { libs: [lib], objects: [] };
+  }
+  n.phony(name, objects);
+  return { libs: [], objects };
 }
 
 /**

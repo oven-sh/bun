@@ -172,18 +172,25 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // compiled source files (deps like picohttpparser that provide .c files
   // instead of a .a — we compile those alongside bun's own sources).
   const depLibs: string[] = [];
+  const depObjects: string[] = [];
   const depIncludes: string[] = [];
   // Outputs of deps that provide headers — used as implicit inputs on PCH/cc/
   // no-PCH cxx so a dep rebuild invalidates compiles that #include its headers
   // (the .a is the signal — see comment at the PCH step). Deps with no provided
   // includes (tinycc, lolhtml) are skipped: nothing to invalidate, and a tinycc
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
-  // rebuild. Link still gets every dep via depLibs.
+  // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
   for (const d of deps) {
     depLibs.push(...d.libs);
+    depObjects.push(...d.objects);
     depIncludes.push(...d.includes);
-    if (d.includes.length > 0) depHeaderSignal.push(...d.outputs);
+    // Direct deps with no .a: their headers are first-class ninja outputs
+    // (subst/literal/codegen) so the PCH's depfile tracks them exactly.
+    // The coarse .a signal exists for nested-cmake/prebuilt where headers
+    // are undeclared side-effects of the sub-build; pulling 795 dep .o
+    // files in here would cascade-rebuild PCH on every dep touch.
+    if (d.includes.length > 0 && d.libs.length > 0) depHeaderSignal.push(...d.outputs);
   }
 
   // ─── Step 2: codegen ───
@@ -380,7 +387,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     n.phony(d.name, d.sources.map(compileC));
   }
 
-  const allObjects = [...cxxObjects, ...cObjects];
+  // Dep objects (when !cfg.archiveDeps) are linked alongside bun's own
+  // objects — same response file, same archive in cpp-only mode. With
+  // cfg.archiveDeps they live in depLibs as .a files instead.
+  const allObjects = [...cxxObjects, ...cObjects, ...depObjects];
 
   // ─── Step 7: cpp-only → archive and return ───
   // CI's build-cpp step: archive all .o into libbun.a, stop. The sibling

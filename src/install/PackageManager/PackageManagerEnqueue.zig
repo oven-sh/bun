@@ -318,9 +318,13 @@ pub fn enqueueDependencyToRoot(
     }));
 
     if (this.lockfile.buffers.resolutions.items[dep_id] == invalid_package_id) {
+        // Copy to the stack: `enqueueDependencyWithMainAndSuccessFn` can call
+        // `Lockfile.Package.fromNPM`, which grows `buffers.dependencies` and
+        // would invalidate a pointer taken directly into it.
+        const dependency = this.lockfile.buffers.dependencies.items[dep_id];
         this.enqueueDependencyWithMainAndSuccessFn(
             dep_id,
-            &this.lockfile.buffers.dependencies.items[dep_id],
+            &dependency,
             invalid_package_id,
             false,
             assignRootResolution,
@@ -1517,7 +1521,7 @@ fn getOrPutResolvedPackageWithFindResult(
                     .network_task = try this.generateNetworkTaskForTarball(
                         task_id,
                         manifest.str(&find_result.package.tarball_url),
-                        dependency.behavior.isRequired(),
+                        behavior.isRequired(),
                         dependency_id,
                         package,
                         name_and_version_hash,

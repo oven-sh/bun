@@ -9,7 +9,7 @@ import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
 import { ChildProcess, execSync, fork } from "child_process";
-import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
+import { readdir, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
@@ -762,7 +762,7 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
   };
 }
 
-export async function toHaveBins(actual: string[], expectedBins: string[]) {
+export function toHaveBins(actual: string[], expectedBins: string[]) {
   const message = () => `Expected ${actual} to be package bins ${expectedBins}`;
 
   if (isWindows) {
@@ -777,19 +777,19 @@ export async function toHaveBins(actual: string[], expectedBins: string[]) {
   return { pass: actual.every((bin, i) => bin === expectedBins[i]), message };
 }
 
-export async function toBeValidBin(actual: string, expectedLinkPath: string) {
+export function toBeValidBin(actual: string, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
-    const contents = await readFile(actual + ".bunx", "utf16le");
+    const contents = fs.readFileSync(actual + ".bunx", "utf16le");
     const expected = expectedLinkPath.slice(3);
     return { pass: contents.includes(expected), message };
   }
 
-  return { pass: (await readlink(actual)) === expectedLinkPath, message };
+  return { pass: fs.readlinkSync(actual) === expectedLinkPath, message };
 }
 
-export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
+export function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {

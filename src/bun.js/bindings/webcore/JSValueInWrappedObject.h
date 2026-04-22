@@ -82,9 +82,6 @@ inline void JSValueInWrappedObject::visit(Visitor& visitor) const
     visitor.append(m_cell);
 }
 
-template void JSValueInWrappedObject::visit(JSC::AbstractSlotVisitor&) const;
-template void JSValueInWrappedObject::visit(JSC::SlotVisitor&) const;
-
 inline void JSValueInWrappedObject::setWeakly(JSC::JSValue value)
 {
     if (!value.isCell()) {

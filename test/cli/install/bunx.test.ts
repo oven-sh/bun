@@ -7,45 +7,48 @@ import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
 
+setDefaultTimeout(1000 * 60 * 5);
+
 let x_dir: string;
-let current_tmpdir: string;
-let install_cache_dir: string;
-let env = { ...bunEnv };
+let env: Record<string, string> = { ...bunEnv };
 
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
-});
+// Each test that hits the network gets its own isolated tmpdir + install cache
+// so the network-heavy tests can run concurrently without sharing bunx cache state.
+function setup() {
+  const install_cache_dir = tmpdirSync();
+  const current_tmpdir = tmpdirSync();
+  const x_dir = tmpdirSync();
+  return {
+    x_dir,
+    env: {
+      ...bunEnv,
+      TEMP: current_tmpdir,
+      BUN_TMPDIR: current_tmpdir,
+      TMPDIR: current_tmpdir,
+      BUN_INSTALL_CACHE_DIR: install_cache_dir,
+    } as Record<string, string>,
+  };
+}
 
-beforeEach(async () => {
-  const waiting: Promise<void>[] = [];
-  if (current_tmpdir) {
-    waiting.push(rm(current_tmpdir, { recursive: true, force: true }));
-  }
-
-  if (install_cache_dir) {
-    waiting.push(rm(install_cache_dir, { recursive: true, force: true }));
-  }
-
+beforeAll(async () => {
+  // Clean stale bunx cache dirs from previous runs once up front instead of before every test.
   const tmp = isWindows ? tmpdir() : "/tmp";
+  const waiting: Promise<void>[] = [];
   readdirSync(tmp).forEach(file => {
     if (file.startsWith("bunx-") || file.startsWith("bun-x.test")) {
       waiting.push(rm(join(tmp, file), { recursive: true, force: true }));
     }
   });
-
-  install_cache_dir = tmpdirSync();
-  current_tmpdir = tmpdirSync();
-  x_dir = tmpdirSync();
-
-  env.TEMP = current_tmpdir;
-  env.BUN_TMPDIR = env.TMPDIR = current_tmpdir;
-  env.TMPDIR = current_tmpdir;
-  env.BUN_INSTALL_CACHE_DIR = install_cache_dir;
-
   await Promise.all(waiting);
 });
 
-it("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
+beforeEach(() => {
+  // Sequential tests (the mock-registry suites below) still read these module-level vars.
+  ({ x_dir, env } = setup());
+});
+
+it.concurrent("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
+  const { x_dir, env } = setup();
   let semverVersions = [
     "7.0.0",
     "7.1.0",
@@ -101,7 +104,8 @@ it("should choose the tagged versions instead of the PATH versions when a tag is
   expect(outputs).toEqual(semverVersions.map(v => "SemVer " + v));
 });
 
-it("should install and run default (latest) version", async () => {
+it.concurrent("should install and run default (latest) version", async () => {
+  const { x_dir, env } = setup();
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "x", "uglify-js", "--compress"],
     cwd: x_dir,
@@ -117,7 +121,8 @@ it("should install and run default (latest) version", async () => {
   expect(await exited).toBe(0);
 });
 
-it("should install and run specified version", async () => {
+it.concurrent("should install and run specified version", async () => {
+  const { x_dir, env } = setup();
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "x", "uglify-js@3.14.1", "-v"],
     cwd: x_dir,
@@ -133,7 +138,8 @@ it("should install and run specified version", async () => {
   expect(await exited).toBe(0);
 });
 
-it("should output usage if no arguments are passed", async () => {
+it.concurrent("should output usage if no arguments are passed", async () => {
+  const { x_dir, env } = setup();
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "x"],
     cwd: x_dir,
@@ -151,7 +157,8 @@ it("should output usage if no arguments are passed", async () => {
   expect(await exited).toBe(1);
 });
 
-it("should work for @scoped packages", async () => {
+it.concurrent("should work for @scoped packages", async () => {
+  const { x_dir, env } = setup();
   let exited: number, err: string, out: string;
   // without cache
   const withoutCache = spawn({
@@ -192,7 +199,8 @@ it("should work for @scoped packages", async () => {
   expect(out.trim()).toContain("Usage: babel [options]");
 });
 
-it("should execute from current working directory", async () => {
+it.concurrent("should execute from current working directory", async () => {
+  const { x_dir, env } = setup();
   await writeFile(
     join(x_dir, "test.js"),
     `
@@ -217,7 +225,8 @@ console.log(
   expect(exitCode).toBe(0);
 });
 
-it("should work for github repository", async () => {
+it.concurrent("should work for github repository", async () => {
+  const { x_dir, env } = setup();
   // without cache
   const withoutCache = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay", "--help"],
@@ -259,7 +268,8 @@ it("should work for github repository", async () => {
   expect(exited).toBe(0);
 });
 
-it("should work for github repository with committish", async () => {
+it.concurrent("should work for github repository with committish", async () => {
+  const { x_dir, env } = setup();
   const withoutCache = spawn({
     cmd: [bunExe(), "x", "github:piuccio/cowsay#HEAD", "hello bun!"],
     cwd: x_dir,
@@ -300,7 +310,8 @@ it("should work for github repository with committish", async () => {
   expect(exited).toBe(0);
 });
 
-it.each(["--version", "-v"])("should print the version using %s and exit", async flag => {
+it.concurrent.each(["--version", "-v"])("should print the version using %s and exit", async flag => {
+  const { x_dir, env } = setup();
   const subprocess = spawn({
     cmd: [bunExe(), "x", flag],
     cwd: x_dir,
@@ -317,7 +328,8 @@ it.each(["--version", "-v"])("should print the version using %s and exit", async
   expect(exited).toBe(0);
 });
 
-it("should print the revision and exit", async () => {
+it.concurrent("should print the revision and exit", async () => {
+  const { x_dir, env } = setup();
   const subprocess = spawn({
     cmd: [bunExe(), "x", "--revision"],
     cwd: x_dir,
@@ -335,7 +347,8 @@ it("should print the revision and exit", async () => {
   expect(exited).toBe(0);
 });
 
-it("should pass --version to the package if specified", async () => {
+it.concurrent("should pass --version to the package if specified", async () => {
+  const { x_dir, env } = setup();
   const subprocess = spawn({
     cmd: [bunExe(), "x", "esbuild", "--version"],
     cwd: x_dir,
@@ -352,7 +365,8 @@ it("should pass --version to the package if specified", async () => {
   expect(exited).toBe(0);
 });
 
-it('should set "npm_config_user_agent" to bun', async () => {
+it.concurrent('should set "npm_config_user_agent" to bun', async () => {
+  const { x_dir, env } = setup();
   await writeFile(
     join(x_dir, "package.json"),
     JSON.stringify({
@@ -365,6 +379,7 @@ it('should set "npm_config_user_agent" to bun', async () => {
   const { exited: installFinished } = spawn({
     cmd: [bunExe(), "install"],
     cwd: x_dir,
+    env,
   });
   expect(await installFinished).toBe(0);
 
@@ -373,6 +388,7 @@ it('should set "npm_config_user_agent" to bun', async () => {
     cwd: x_dir,
     stdout: "pipe",
     stderr: "pipe",
+    env,
   });
 
   const [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
@@ -387,11 +403,14 @@ it('should set "npm_config_user_agent" to bun', async () => {
  * Please only use packages with small unpacked sizes for tests. It helps keep them fast.
  */
 describe("bunx --no-install", () => {
-  const run = (...args: string[]): Promise<[stderr: string, stdout: string, exitCode: number]> => {
+  const run = (
+    ctx: { x_dir: string; env: Record<string, string> },
+    ...args: string[]
+  ): Promise<[stderr: string, stdout: string, exitCode: number]> => {
     const subprocess = spawn({
       cmd: [bunExe(), "x", ...args],
-      cwd: x_dir,
-      env: bunEnv,
+      cwd: ctx.x_dir,
+      env: ctx.env,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -399,8 +418,9 @@ describe("bunx --no-install", () => {
     return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
   };
 
-  it("if the package is not installed, it should fail and print an error message", async () => {
-    const [err, out, exited] = await run("--no-install", "http-server", "--version");
+  it.concurrent("if the package is not installed, it should fail and print an error message", async () => {
+    const ctx = setup();
+    const [err, out, exited] = await run(ctx, "--no-install", "http-server", "--version");
 
     expect(err.trim()).toContain("Could not find an existing 'http-server' binary to run.");
     expect(out).toHaveLength(0);
@@ -413,10 +433,33 @@ describe("bunx --no-install", () => {
       2. http-server checks for non-alphanumeric edge cases. Plus it's small
       3. eslint is alphanumeric and extremely common
    */
-  it.each(["typescript", "http-server", "eslint"])("`bunx --no-install %s` should find cached packages", async pkg => {
+  it.concurrent.each(["typescript", "http-server", "eslint"])(
+    "`bunx --no-install %s` should find cached packages",
+    async pkg => {
+      const ctx = setup();
+      // not cached
+      {
+        const [err, out, code] = await run(ctx, pkg, "--version");
+        expect(err).not.toContain("error:");
+        expect(out).not.toBeEmpty();
+        expect(code).toBe(0);
+      }
+
+      // cached
+      {
+        const [err, out, code] = await run(ctx, "--no-install", pkg, "--version");
+        expect(err).not.toContain("error:");
+        expect(out).not.toBeEmpty();
+        expect(code).toBe(0);
+      }
+    },
+  );
+
+  it.concurrent("when an exact version match is found, should find cached packages", async () => {
+    const ctx = setup();
     // not cached
     {
-      const [err, out, code] = await run(pkg, "--version");
+      const [err, out, code] = await run(ctx, "http-server@14.0.0", "--version");
       expect(err).not.toContain("error:");
       expect(out).not.toBeEmpty();
       expect(code).toBe(0);
@@ -424,25 +467,7 @@ describe("bunx --no-install", () => {
 
     // cached
     {
-      const [err, out, code] = await run("--no-install", pkg, "--version");
-      expect(err).not.toContain("error:");
-      expect(out).not.toBeEmpty();
-      expect(code).toBe(0);
-    }
-  });
-
-  it("when an exact version match is found, should find cached packages", async () => {
-    // not cached
-    {
-      const [err, out, code] = await run("http-server@14.0.0", "--version");
-      expect(err).not.toContain("error:");
-      expect(out).not.toBeEmpty();
-      expect(code).toBe(0);
-    }
-
-    // cached
-    {
-      const [err, out, code] = await run("--no-install", "http-server@14.0.0", "--version");
+      const [err, out, code] = await run(ctx, "--no-install", "http-server@14.0.0", "--version");
       expect(err).not.toContain("error:");
       expect(out).not.toBeEmpty();
       expect(code).toBe(0);
@@ -450,7 +475,8 @@ describe("bunx --no-install", () => {
   });
 });
 
-it("should handle postinstall scripts correctly with symlinked bunx", async () => {
+it.concurrent("should handle postinstall scripts correctly with symlinked bunx", async () => {
+  const { x_dir, env } = setup();
   // Create a symlink to bun called "bunx"
   copyFileSync(bunExe(), join(x_dir, isWindows ? "bun.exe" : "bun"));
   copyFileSync(bunExe(), join(x_dir, isWindows ? "bunx.exe" : "bunx"));
@@ -475,7 +501,8 @@ it("should handle postinstall scripts correctly with symlinked bunx", async () =
   expect(exited).toBe(0);
 });
 
-it("should handle package that requires node 24", async () => {
+it.concurrent("should handle package that requires node 24", async () => {
+  const { x_dir, env } = setup();
   const subprocess = spawn({
     cmd: [bunExe(), "x", "--bun", "@angular/cli@latest", "--help"],
     cwd: x_dir,

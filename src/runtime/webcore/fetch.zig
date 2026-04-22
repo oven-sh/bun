@@ -288,10 +288,8 @@ fn fetchImpl(
         }
     }
 
-    // Grab the raw init argument but defer validation until after the first
-    // argument has been converted — Web IDL converts arguments left-to-right,
-    // so a throwing `toString` on an object `input` must surface before the
-    // init type check.
+    // Defer init validation until after first-arg conversion — WebIDL converts
+    // arguments left-to-right, so a throwing toString must surface first.
     const init_arg: ?JSValue = args.nextEat();
     const request: ?*Request = brk: {
         if (first_arg.isCell()) {
@@ -309,8 +307,7 @@ fn fetchImpl(
         return .zero;
     }
 
-    // Now validate init. https://fetch.spec.whatwg.org/#dom-request — init is a
-    // Web IDL dictionary; a non-nullish primitive rejects with TypeError.
+    // https://fetch.spec.whatwg.org/#dom-request — init is a Web IDL dictionary.
     const options_object: ?JSValue = brk: {
         const options = init_arg orelse break :brk null;
         if (options.isUndefinedOrNull()) break :brk null;

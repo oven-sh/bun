@@ -348,30 +348,29 @@ describe("TracingChannel", () => {
 });
 
 describe("http server channels (#29586)", () => {
-  test("publishes http.server.request.start, response.created, response.finish", async () => {
-    const channelNames = ["http.server.response.created", "http.server.request.start", "http.server.response.finish"];
-    const events: { channel: string; payload: Record<string, unknown> }[] = [];
-    const subs: [ReturnType<typeof channel>, (msg: unknown) => void][] = [];
+  const listen = (s: http.Server) =>
+    new Promise<number>(r => s.listen(0, () => r((s.address() as any).port)));
+  // Two ticks drains both the 'finish' nextTick and any tail events.
+  const drain = async () => {
+    await new Promise<void>(r => setImmediate(r));
+    await new Promise<void>(r => setImmediate(r));
+  };
 
-    // Hold direct channel refs so subscriptions can't be silently lost to GC,
-    // and also so we can cleanly unsubscribe in the finally.
-    for (const name of channelNames) {
-      const ch = channel(name);
-      const sub = (msg: unknown) => {
-        events.push({ channel: ch.name as string, payload: msg as Record<string, unknown> });
-      };
-      ch.subscribe(sub);
-      subs.push([ch, sub]);
-    }
+  test("publishes http.server.request.start, response.created, response.finish", async () => {
+    const events: { channel: string; payload: any }[] = [];
+    const push = (name: string) => (payload: any) => events.push({ channel: name, payload });
+    const onCreated = push("http.server.response.created");
+    const onStart = push("http.server.request.start");
+    const onFinish = push("http.server.response.finish");
+    channel("http.server.response.created").subscribe(onCreated);
+    channel("http.server.request.start").subscribe(onStart);
+    channel("http.server.response.finish").subscribe(onFinish);
 
     try {
       await using server = http.createServer((_req, res) => res.end("ok"));
-      await new Promise<void>(resolve => server.listen(0, resolve));
-      const { port } = server.address();
+      const port = await listen(server);
       await (await fetch(`http://127.0.0.1:${port}/`)).text();
-      // Wait for the "finish" nextTick and any tail events to drain.
-      await new Promise<void>(resolve => setImmediate(resolve));
-      await new Promise<void>(resolve => setImmediate(resolve));
+      await drain();
 
       expect(events.map(e => e.channel)).toEqual([
         "http.server.response.created",
@@ -401,7 +400,9 @@ describe("http server channels (#29586)", () => {
       expect(resFinish.server).toBe(server);
       expect(resFinish.socket).toBe(reqStart.socket);
     } finally {
-      for (const [ch, sub] of subs) ch.unsubscribe(sub);
+      channel("http.server.response.created").unsubscribe(onCreated);
+      channel("http.server.request.start").unsubscribe(onStart);
+      channel("http.server.response.finish").unsubscribe(onFinish);
     }
   });
 
@@ -426,11 +427,9 @@ describe("http server channels (#29586)", () => {
         res.setHeader("baz", "bar");
         res.end("done");
       });
-      await new Promise<void>(resolve => server.listen(0, resolve));
-      const { port } = server.address();
+      const port = await listen(server);
       await (await fetch(`http://127.0.0.1:${port}/`)).text();
-      await new Promise<void>(resolve => setImmediate(resolve));
-      await new Promise<void>(resolve => setImmediate(resolve));
+      await drain();
 
       expect(snapshots).toEqual([
         { event: "created", baz: undefined }, // fired before handler set the header
@@ -464,8 +463,7 @@ describe("http server channels (#29586)", () => {
         await mayFinish;
         res.end("done");
       });
-      await new Promise<void>(resolve => server.listen(0, resolve));
-      const { port } = server.address();
+      const port = await listen(server);
       const fetched = fetch(`http://127.0.0.1:${port}/`);
       await handlerEntered;
 
@@ -475,8 +473,7 @@ describe("http server channels (#29586)", () => {
       continueFinish();
 
       await (await fetched).text();
-      await new Promise<void>(resolve => setImmediate(resolve));
-      await new Promise<void>(resolve => setImmediate(resolve));
+      await drain();
 
       expect(received).toHaveLength(1);
       expect(Object.keys(received[0]).sort()).toEqual(["request", "response", "server", "socket"]);
@@ -525,8 +522,7 @@ describe("http server channels (#29586)", () => {
         res.writeContinue();
         res.end("cc");
       });
-      await new Promise<void>(resolve => server.listen(0, resolve));
-      const { port } = server.address();
+      const port = await listen(server);
       await new Promise<void>((resolve, reject) => {
         const req = http.request({ port, method: "POST", headers: { expect: "100-continue" } });
         req.on("response", res => {
@@ -536,7 +532,7 @@ describe("http server channels (#29586)", () => {
         req.on("error", reject);
         req.end();
       });
-      await new Promise<void>(resolve => setImmediate(resolve));
+      await drain();
       expect(received).toHaveLength(1);
       expect(Object.keys(received[0]).sort()).toEqual(["request", "response", "server", "socket"]);
       expect(received[0].server).toBe(server);
@@ -555,8 +551,7 @@ describe("http server channels (#29586)", () => {
     let client: any;
     try {
       await using server = http.createServer((_req, res) => res.end("x"));
-      await new Promise<void>(resolve => server.listen(0, resolve));
-      const { port } = server.address();
+      const port = await listen(server);
       // Raw socket — we want `Expect: weird` to reach the 417 branch.
       await new Promise<void>((resolve, reject) => {
         client = net.connect(port, () => {
@@ -573,7 +568,7 @@ describe("http server channels (#29586)", () => {
         });
         client.on("error", reject);
       });
-      await new Promise<void>(resolve => setImmediate(resolve));
+      await drain();
       expect(received).toHaveLength(1);
       expect(Object.keys(received[0]).sort()).toEqual(["request", "response", "server", "socket"]);
       expect(received[0].server).toBe(server);
@@ -597,8 +592,7 @@ describe("http server channels (#29586)", () => {
         // client side that could race the assertion.
         socket.end();
       });
-      await new Promise<void>(resolve => server.listen(0, resolve));
-      const { port } = server.address();
+      const port = await listen(server);
       await new Promise<void>((resolve, reject) => {
         const client = net.connect(port, () => {
           client.write("GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
@@ -608,7 +602,7 @@ describe("http server channels (#29586)", () => {
         // terminates, not how.
         client.on("error", () => {});
       });
-      await new Promise<void>(resolve => setImmediate(resolve));
+      await drain();
       // Node gates request.start on `!is_upgrade` (it returns early in
       // parserOnIncoming before constructing ServerResponse), and so do we.
       // Note: Bun currently *does* construct ServerResponse for upgrades
@@ -621,11 +615,9 @@ describe("http server channels (#29586)", () => {
   });
 
   test("server works normally when nobody subscribed", async () => {
-    // No subscribers means no publish payload is allocated — just prove the
-    // normal request/response path still works with the channel plumbing in.
+    // No subscribers: prove the channel plumbing doesn't break the hot path.
     await using server = http.createServer((_req, res) => res.end("ok"));
-    await new Promise<void>(resolve => server.listen(0, resolve));
-    const { port } = server.address();
+    const port = await listen(server);
     const body = await (await fetch(`http://127.0.0.1:${port}/`)).text();
     expect(body).toBe("ok");
   });

@@ -642,17 +642,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         setCloseCallback(http_res, onClose);
-        // Node publishes http.server.request.start once per non-upgrade
-        // request in parserOnIncoming, before any branching, so it fires on
-        // the dropRequest/503, checkContinue, checkExpectation, 417 and
-        // normal paths alike. Mirror that here.
+        // Match Node's parserOnIncoming: publish once, before branching, for
+        // non-upgrade requests (fires on 503/checkContinue/417/normal paths).
         if (!is_upgrade && onRequestStartChannel.hasSubscribers) {
-          onRequestStartChannel.publish({
-            request: http_req,
-            response: http_res,
-            socket,
-            server,
-          });
+          onRequestStartChannel.publish({ request: http_req, response: http_res, socket, server });
         }
         if (reachedRequestsLimit) {
           server.emit("dropRequest", http_req, socket);

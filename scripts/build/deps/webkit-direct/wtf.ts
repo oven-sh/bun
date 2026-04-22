@@ -25,9 +25,7 @@ const SRC_INCLUDES = layer.includes.filter(i => i.startsWith("$SRC/")).map(i => 
 
 // Base sources: data.json's Linux capture minus platform subdirs.
 const PLATFORM_SUBDIR = /\/wtf\/(posix|linux|unix|generic|win|cocoa|cf|mac|text\/unix|text\/win|bun)\//;
-const BASE_SOURCES = layer.sources
-  .map(s => s.replace("$SRC/", ""))
-  .filter(s => !PLATFORM_SUBDIR.test(s));
+const BASE_SOURCES = layer.sources.map(s => s.replace("$SRC/", "")).filter(s => !PLATFORM_SUBDIR.test(s));
 
 // ─── Platform additions — mirrors PlatformJSCOnly.cmake ───
 // All paths relative to Source/WTF/wtf/.
@@ -80,10 +78,7 @@ export const webkitWTF: Dependency = {
     const spec: DirectBuild = {
       kind: "direct",
       pic: true,
-      sources: [
-        ...BASE_SOURCES,
-        ...platform.map(s => (s.startsWith("$BUILD/") ? s : `Source/WTF/wtf/${s}`)),
-      ],
+      sources: [...BASE_SOURCES, ...platform.map(s => (s.startsWith("$BUILD/") ? s : `Source/WTF/wtf/${s}`))],
       includes: SRC_INCLUDES,
       defines: {
         ...commonDefines,
@@ -107,12 +102,15 @@ export const webkitWTF: Dependency = {
           interpreter: "mig",
           args: [
             "-DMACH_EXC_SERVER_TASKIDTOKEN_STATE",
-            "-sheader", "$BUILD/MachExceptionsServer.h",
+            "-sheader",
+            "$BUILD/MachExceptionsServer.h",
             "$SRC/Source/WTF/wtf/mac/MachExceptions.defs",
           ],
           outputs: [
-            "$BUILD/MachExceptionsServer.h", "$BUILD/mach_exc.h",
-            "$BUILD/mach_excServer.c", "$BUILD/mach_excUser.c",
+            "$BUILD/MachExceptionsServer.h",
+            "$BUILD/mach_exc.h",
+            "$BUILD/mach_excServer.c",
+            "$BUILD/mach_excUser.c",
           ],
           inputs: ["$SRC/Source/WTF/wtf/mac/MachExceptions.defs"],
           cwd: "$BUILD",

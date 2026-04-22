@@ -135,11 +135,6 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input
 
 const ExtractDir = struct { fd: bun.FD, path: []const u8 };
 
-/// Opens `{tmpdir}/bun-{uid}` (creating if needed, 0700 on POSIX) for
-/// cross-process dedup. If the canonical path is squatted (another uid owns
-/// it or it's mis-moded — DoS on shared hosts), falls back to an
-/// unpredictable `bun-{uid}-{rand}`. The absolute path is written into
-/// `abs_buf` and sliced into `.path`.
 fn extractOwnerUid() u32 {
     // geteuid (not getuid) on POSIX because mkdir(2) sets the owner to
     // euid — a setuid-compiled binary where euid != ruid would otherwise
@@ -147,6 +142,11 @@ fn extractOwnerUid() u32 {
     return if (comptime Environment.isPosix) bun.c.geteuid() else bun.windows.userUniqueId();
 }
 
+/// Opens `{tmpdir}/bun-{uid}` (creating if needed, 0700 on POSIX) for
+/// cross-process dedup. If the canonical path is squatted (another uid owns
+/// it or it's mis-moded — DoS on shared hosts), falls back to an
+/// unpredictable `bun-{uid}-{rand}`. The absolute path is written into
+/// `abs_buf` and sliced into `.path`.
 fn openExtractDir(abs_buf: *bun.PathBuffer) ?ExtractDir {
     const tmpdir_path = bun.fs.FileSystem.RealFS.tmpdirPath();
     const uid: u32 = extractOwnerUid();

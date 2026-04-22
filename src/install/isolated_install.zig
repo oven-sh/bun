@@ -10,6 +10,15 @@ pub fn installIsolatedPackages(
 ) OOM!PackageInstall.Summary {
     bun.analytics.Features.isolated_bun_install += 1;
 
+    // Populate the linked-names cache once, on the main thread, before
+    // any install worker calls `manager.linkedPackagePath()`. Replaces a
+    // per-dependency `lstat` with a single readdir of the global link
+    // dir; short-circuits every subsequent lookup when nothing is
+    // linked (the common case on CI and dev machines without active
+    // links). See populateLinkedNamesCache in
+    // PackageManager/PackageManagerDirectories.zig.
+    manager.populateLinkedNamesCache();
+
     const lockfile = manager.lockfile;
 
     const store: Store = store: {

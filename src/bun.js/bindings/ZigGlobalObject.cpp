@@ -295,7 +295,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useConcurrentJIT() = true;
             // JSC::Options::useSigillCrashAnalyzer() = true;
             JSC::Options::useSourceProviderCache() = true;
-            // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
+            JSC::Options::useUnlinkedCodeBlockJettisoning() = true;
             JSC::Options::useEagerCodeBlockJettisonTiming() = true;
             JSC::Options::exposeInternalModuleLoader() = true;
             JSC::Options::useSharedArrayBuffer() = true;

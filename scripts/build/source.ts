@@ -687,8 +687,15 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // bmalloc+WTF is ~350 .o paths. clang++ as linker driver so the C++
   // runtime and (when cfg.asan) the asan runtime are picked up
   // automatically.
+  //
+  // -undefined dynamic_lookup (darwin): WTF's RunLoopBun.cpp declares
+  // WTFTimer__* as weak externs implemented in bun's Zig side. lld
+  // resolves weak-undefined to null; darwin's ld errors unless told to
+  // defer. The extractors never call these — offlineasm only reads the
+  // binary's data sections.
+  const weakLink = cfg.darwin ? " -Wl,-undefined,dynamic_lookup" : "";
   n.rule("dep_link_tool", {
-    command: `${q(cfg.cxx)} @$out.rsp $ldflags -o $out`,
+    command: `${q(cfg.cxx)} @$out.rsp $ldflags${weakLink} -o $out`,
     description: "link-tool $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",

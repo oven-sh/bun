@@ -1917,8 +1917,6 @@ export function readableStreamFromAsyncIterator(target, fn) {
 }
 
 export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultController {
-  const closer = [false];
-
   function callClose(controller: ReadableStreamDefaultController) {
     try {
       var source = controller.$underlyingSource;
@@ -1955,6 +1953,8 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
   //
   // And those pendingPullIntos were often never actually drained.
   class NativeReadableStreamSource {
+    #closer = [false];
+
     constructor(handle, autoAllocateChunkSize, drainValue) {
       $putByIdDirectPrivate(this, "stream", handle);
       this.pull = this.#pull.bind(this);
@@ -2009,10 +2009,13 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
     #onClose() {
       this.#closed = true;
-      this.#controller = undefined;
       this.$data = undefined;
 
+      // Capture the WeakRef before clearing this.#controller — otherwise the
+      // deref below always returns undefined and the callClose job is never
+      // enqueued, leaving the ReadableStream stuck in the readable state.
       var controller = this.#controller?.deref?.();
+      this.#controller = undefined;
 
       $putByIdDirectPrivate(this, "stream", undefined);
       if (controller) {
@@ -2096,6 +2099,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
         this.#controller = new WeakRef(controller);
       }
 
+      const closer = this.#closer;
       closer[0] = false;
 
       if (this.$data) {

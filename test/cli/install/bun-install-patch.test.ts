@@ -572,6 +572,57 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     }
   });
 
+  // https://github.com/oven-sh/bun/issues/13531
+  it("should ignore patchedDependencies from a folder dependency's package.json", async () => {
+    const patchFilename = filepathEscape("is-even@1.0.0.patch");
+    const filedir = tempDirWithFiles("patch-folder-dep", {
+      "pkgA": {
+        "package.json": JSON.stringify({
+          "name": "pkg-a",
+          "version": "1.0.0",
+          "patchedDependencies": {
+            "is-even@1.0.0": `patches/${patchFilename}`,
+          },
+          "dependencies": {
+            "is-even": "1.0.0",
+          },
+        }),
+        "patches": {
+          [patchFilename]: is_even_patch,
+        },
+      },
+      "pkgB": {
+        "package.json": JSON.stringify({
+          "name": "pkg-b",
+          "version": "1.0.0",
+          "dependencies": {
+            "pkg-a": "../pkgA",
+          },
+        }),
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: bunEnv,
+      cwd: join(filedir, "pkgB"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // patchedDependencies from pkgA should be ignored, not resolved relative to pkgB
+    expect(stderr).not.toContain("Couldn't find patch file");
+    expect(stderr).not.toContain("patches/");
+    expect(stdout).toContain("pkg-a@");
+    expect(exitCode).toBe(0);
+
+    // lockfile should not contain pkgA's patchedDependencies
+    const lockfile = await Bun.file(join(filedir, "pkgB", "bun.lock")).text();
+    expect(lockfile).not.toContain("patchedDependencies");
+  });
+
   describe("bun patch with --linker=isolated", () => {
     const patchEnv = bunEnv;
 

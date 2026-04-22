@@ -394,8 +394,7 @@ describe.concurrent("bun test --changed", () => {
         `import { add } from "../src/adder";\n` +
         `test("relative", () => expect(add(1, 2)).toBe(3));\n`,
       "tests/unrelated.test.ts":
-        `import { test, expect } from "bun:test";\n` +
-        `test("unrelated", () => expect(1).toBe(1));\n`,
+        `import { test, expect } from "bun:test";\n` + `test("unrelated", () => expect(1).toBe(1));\n`,
     });
     initRepo(String(dir));
     appendFileSync(join(String(dir), "src", "adder.ts"), "// touched\n");

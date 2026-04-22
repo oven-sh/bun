@@ -392,15 +392,23 @@ describe("util", () => {
       });
     }
 
+    // Batch all node lookups into a single subprocess instead of one per code (was 74 spawns).
+    const negativeSpaceCodes = [];
+    for (let i = -4095; i <= -4023; i++) negativeSpaceCodes.push(i);
     const proc = Bun.spawnSync({
       cmd: [
         "node",
         "-e",
-        "console.log(JSON.stringify([...require('node:util').getSystemErrorMap().entries()].map((v) => [v[0], v[1][0]])));",
+        `const u = require('node:util');
+         const map = [...u.getSystemErrorMap().entries()].map((v) => [v[0], v[1][0]]);
+         const neg = {};
+         for (const i of ${JSON.stringify(negativeSpaceCodes)}) neg[i] = u.getSystemErrorName(i);
+         console.log(JSON.stringify({ map, neg }));`,
       ],
       stdio: ["ignore", "pipe", "pipe"],
     });
-    for (const [code, name] of JSON.parse(proc.stdout.toString())) {
+    const nodeResults = JSON.parse(proc.stdout.toString());
+    for (const [code, name] of nodeResults.map) {
       it(`getSystemErrorName(${code}) should be ${name}`, () => {
         expect(util.getSystemErrorName(code)).toBe(name);
       });
@@ -412,11 +420,9 @@ describe("util", () => {
 
     // these are the windows/fallback codes and they should match node in either returning the correct name or 'Unknown system error'.
     // eg on linux getSystemErrorName(-4034) should return unkown and not 'ERANGE' since errno defines it as -34 for that platform.
-    for (let i = -4095; i <= -4023; i++) {
+    for (const i of negativeSpaceCodes) {
       it(`negative space: getSystemErrorName(${i}) is correct`, () => {
-        const cmd = ["node", "-e", `console.log(JSON.stringify(util.getSystemErrorName(${i})));`];
-        const stdio = ["ignore", "pipe", "pipe"];
-        expect(util.getSystemErrorName(i)).toEqual(JSON.parse(Bun.spawnSync({ cmd, stdio }).stdout.toString()));
+        expect(util.getSystemErrorName(i)).toEqual(nodeResults.neg[i]);
       });
     }
   });

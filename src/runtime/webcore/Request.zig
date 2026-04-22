@@ -593,6 +593,77 @@ fn checkBodyStreamRef(this: *Request, globalObject: *JSGlobalObject) void {
         }
     }
 }
+
+// Throw a TypeError when a Request/Response value whose body is about to
+// feed the new Request's body is unusable. Applies both when the value is
+// the input (spec: "If initBody is null and inputBody is non-null, …, if
+// input is unusable, then throw a TypeError", §5.4 step 46.1) and when it
+// is passed as the init-dict body (spec: extract-a-body throws if the
+// stream is disturbed or locked). Unusable = body consumed (`.Used`) or
+// backing stream disturbed. The locked case is left to the JS `tee()`
+// builtin's natural throw — the `ReadableStream__isLocked` binding
+// silently returns false for streams built via Bun's JS builtin, so we
+// can't detect it cheaply here.
+fn throwIfSourceBodyUnusable(
+    source: anytype,
+    src_body: *const Body.Value,
+    globalThis: *JSGlobalObject,
+) bun.JSError!void {
+    if (src_body.* == .Used) {
+        return globalThis.throwTypeError("Failed to construct 'Request': The provided body is unusable.", .{});
+    }
+    if (source.getBodyReadableStream(globalThis)) |stream| {
+        if (stream.isDisturbed(globalThis)) {
+            return globalThis.throwTypeError("Failed to construct 'Request': The provided body is unusable.", .{});
+        }
+    }
+}
+
+// Tee the source Request/Response's body into `dst_body`, then mirror the
+// tail of `doClone` so the source stays readable: publish tee branch[0]
+// (parked in the source's `Locked.readable`) to the source's JSC body
+// cache and `js.gc.stream` slot so `source.body` keeps returning a live
+// stream. Without passing the stream explicitly, `clone` would tee a
+// drained `Locked` body (the stream having been moved off by
+// `checkBodyStreamRef`) and produce an empty `ByteStream` that hangs.
+//
+// Returns true when `dst_body` was set (caller marks `.body`).
+fn teeIntoFromSource(
+    comptime T: type,
+    source: *T,
+    source_value: jsc.JSValue,
+    src_body: *Body.Value,
+    dst_body: *Body.Value,
+    globalThis: *JSGlobalObject,
+) bun.JSError!bool {
+    const cloned: ?Body.Value = cloned: {
+        if (source.getBodyReadableStream(globalThis)) |stream| {
+            var readable = stream;
+            break :cloned try src_body.cloneWithReadableStream(globalThis, &readable);
+        }
+        switch (src_body.*) {
+            .Null, .Empty, .Used => break :cloned null,
+            else => break :cloned try src_body.clone(globalThis),
+        }
+    };
+    const body = cloned orelse return false;
+    dst_body.* = body;
+
+    if (src_body.* == .Locked) {
+        if (src_body.Locked.readable.get(globalThis)) |src_readable| {
+            T.js.bodySetCached(source_value, globalThis, src_readable.value);
+        }
+        source.checkBodyStreamRef(globalThis);
+    }
+    return true;
+}
+
+const PendingSourceBodyTee = union(enum) {
+    none,
+    request: struct { source: *Request, source_value: jsc.JSValue },
+    response: struct { source: *Response, source_value: jsc.JSValue },
+};
+
 pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSValue, this_value: jsc.JSValue) bun.JSError!Request {
     var success = false;
     const vm = globalThis.bunVM();
@@ -601,6 +672,13 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         .#body = body,
         .#js_ref = .initWeak(this_value),
     };
+    // The body tee touches the source (JS `tee()` locks the source stream,
+    // and the follow-on `bodySetCached` / `checkBodyStreamRef` rotate the
+    // source's JS body cache to branch[0]). We defer that mutation until
+    // after URL validation post-loop so a URL-parse failure doesn't leave
+    // the source object observably mutated by a constructor call that
+    // threw. At most one pending tee is recorded per call.
+    var pending_source_body_tee: PendingSourceBodyTee = .none;
     defer {
         if (!success) {
             req.finalizeWithoutDeinit();
@@ -653,6 +731,18 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         const explicit_check = values_to_try.len == 2 and value_type == .FinalObject and values_to_try[1].jsType() == .DOMWrapper;
         if (value_type == .DOMWrapper) {
             if (value.asDirect(Request)) |request| {
+                // Fetch spec §5.4 throws TypeError when a Request/Response
+                // whose body would feed the new Request is unusable.
+                // `!fields.contains(.body)` means neither an earlier init
+                // value nor an earlier iteration has already claimed the
+                // body slot — so this `value`'s body is what we'd use.
+                // Applies both when `value` is the input and when it's a
+                // Request-as-init (spec then routes through extract-a-body,
+                // which throws on a disturbed/locked stream).
+                if (!fields.contains(.body)) {
+                    try throwIfSourceBodyUnusable(request, &request.#body.value, globalThis);
+                }
+
                 if (values_to_try.len == 1) {
                     try request.cloneInto(&req, bun.default_allocator, globalThis, fields.contains(.url));
                     success = true;
@@ -689,7 +779,14 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                 }
 
                 if (!fields.contains(.body)) {
-                    switch (request.#body.value) {
+                    // Defer the actual tee until after URL validation.
+                    // Only stream bodies need deferral (tee locks the
+                    // source); for non-stream bodies, `clone` is
+                    // non-destructive and we can run it inline.
+                    if (request.getBodyReadableStream(globalThis) != null) {
+                        pending_source_body_tee = .{ .request = .{ .source = request, .source_value = value } };
+                        fields.insert(.body);
+                    } else switch (request.#body.value) {
                         .Null, .Empty, .Used => {},
                         else => {
                             req.#body.value = try request.#body.value.clone(globalThis);
@@ -700,6 +797,10 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
             }
 
             if (value.asDirect(Response)) |response| {
+                if (!fields.contains(.body)) {
+                    try throwIfSourceBodyUnusable(response, response.getBodyValue(), globalThis);
+                }
+
                 if (!fields.contains(.method)) {
                     req.method = response.getMethod();
                     fields.insert(.method);
@@ -721,11 +822,14 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
                 }
 
                 if (!fields.contains(.body)) {
-                    const bodyValue = response.getBodyValue();
-                    switch (bodyValue.*) {
+                    // Same deferral as the Request branch above.
+                    if (response.getBodyReadableStream(globalThis) != null) {
+                        pending_source_body_tee = .{ .response = .{ .source = response, .source_value = value } };
+                        fields.insert(.body);
+                    } else switch (response.getBodyValue().*) {
                         .Null, .Empty, .Used => {},
                         else => {
-                            req.#body.value = try bodyValue.clone(globalThis);
+                            req.#body.value = try response.getBodyValue().clone(globalThis);
                             fields.insert(.body);
                         },
                     }
@@ -737,8 +841,13 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
 
         if (!fields.contains(.body)) {
             if (try value.fastGet(globalThis, .body)) |body_| {
-                fields.insert(.body);
-                req.#body.value = try Body.Value.fromJS(globalThis, body_);
+                // Per Fetch spec init.body must "exist and be non-null" to
+                // override — explicit `null` falls back to the input body.
+                // fastGet already normalises missing/undefined to null.
+                if (!body_.isNull()) {
+                    fields.insert(.body);
+                    req.#body.value = try Body.Value.fromJS(globalThis, body_);
+                }
             }
 
             if (globalThis.hasException()) return error.JSError;
@@ -860,6 +969,15 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
     req.url.deref();
 
     req.url = href;
+
+    // URL is now validated — run any deferred source-body tee. Doing this
+    // here (rather than inline in the loop) means a URL-parse failure
+    // above leaves the source object untouched.
+    switch (pending_source_body_tee) {
+        .none => {},
+        .request => |p| _ = try teeIntoFromSource(Request, p.source, p.source_value, &p.source.#body.value, &req.#body.value, globalThis),
+        .response => |p| _ = try teeIntoFromSource(Response, p.source, p.source_value, p.source.getBodyValue(), &req.#body.value, globalThis),
+    }
 
     if (req.#body.value == .Blob and
         req.#headers != null and

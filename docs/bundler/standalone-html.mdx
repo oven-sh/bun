@@ -243,6 +243,8 @@ For iterative development, use `bun run --parallel` to run the Tailwind watcher 
 
 `bun run --parallel` was added in Bun v1.3.9.
 
+If you're building via [`Bun.build()`](#javascript-api) instead of the `bun build` CLI, run `@tailwindcss/cli` as a separate prebuild step before calling `Bun.build()` — the `<link rel="stylesheet">` then resolves to the generated file during bundling.
+
 ## How it works
 
 When you pass `--compile --target=browser` with an HTML entrypoint, Bun:

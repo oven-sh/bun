@@ -814,6 +814,39 @@ describe("close handling", () => {
       }
     }
   }
+
+  it.skipIf(isWindows)("does not close caller-owned fds passed as extra stdio", async () => {
+    const fd = openSync(import.meta.path, "r");
+    try {
+      await (async function () {
+        const procs = Array.from({ length: 8 }, () =>
+          spawn({
+            cmd: [bunExe(), "-e", ""],
+            env: bunEnv,
+            stdio: ["ignore", "ignore", "ignore", fd],
+          }),
+        );
+        await Promise.all(procs.map(p => p.exited));
+      })();
+
+      Bun.gc(true);
+      await Bun.sleep(0);
+      Bun.gc(true);
+
+      expect(() => fstatSync(fd)).not.toThrow();
+
+      const { exited } = spawn({
+        cmd: [bunExe(), "-e", `require("fs").fstatSync(3)`],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "inherit", fd],
+      });
+      expect(await exited).toBe(0);
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  });
 });
 
 it("dispose keyword works", async () => {

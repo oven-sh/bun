@@ -24,6 +24,7 @@ import { webkitDirectSource } from "./bmalloc.ts";
 import {
   commonDefines,
   icuLinkFlags,
+  icuPrefix,
   layerData,
   lutTables,
   webkitCFlags,

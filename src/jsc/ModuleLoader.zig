@@ -75,8 +75,9 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input
     // Per-user 0700 subdir defends CWE-377: without it, another user on a
     // shared box could pre-create the deterministic tmpfile name and the
     // size-only reuse check below would hand their library to dlopen.
-    var dir_abs_buf: bun.PathBuffer = undefined;
-    const dir = openExtractDir(&dir_abs_buf) orelse return null;
+    const dir_abs_buf = bun.path_buffer_pool.get();
+    defer bun.path_buffer_pool.put(dir_abs_buf);
+    const dir = openExtractDir(dir_abs_buf) orelse return null;
     defer dir.fd.close();
 
     // Content-hashed filename so repeated dlopens and runs share one tmpfile

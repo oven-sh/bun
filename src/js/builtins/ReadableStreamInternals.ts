@@ -2009,10 +2009,9 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
     #onClose() {
       this.#closed = true;
+      var controller = this.#controller?.deref?.();
       this.#controller = undefined;
       this.$data = undefined;
-
-      var controller = this.#controller?.deref?.();
 
       $putByIdDirectPrivate(this, "stream", undefined);
       if (controller) {

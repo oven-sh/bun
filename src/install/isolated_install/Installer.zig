@@ -955,12 +955,6 @@ pub const Installer = struct {
                     // which would walk past the project root. Null when the
                     // path is already canonical so the hot path stays
                     // syscall-free.
-                    //
-                    // Open/realpath failing means we can't tell whether we'd
-                    // be writing a dangling link, so surface the sys error
-                    // instead of silently falling back to the logical-path
-                    // computation (which is exactly what produced the broken
-                    // link this branch exists to fix).
                     var canonical_entry_node_modules: ?bun.AbsPath(.{ .sep = .auto }) = null;
                     defer if (canonical_entry_node_modules) |*p| p.deinit();
                     if (pkg_res.tag == .workspace) {
@@ -1035,12 +1029,10 @@ pub const Installer = struct {
 
                         const target = target: {
                             if (canonical_entry_node_modules) |*canonical| {
-                                // Mirror `dest`'s trailing `dep_name` + `undo(1)`
-                                // so the from-base is the symlink's real parent
-                                // — one level deeper for scoped names like
-                                // `@scope/pkg`. `entryStoreNodeModulesPackageName`
-                                // is null for `.workspace`, so the collision
-                                // case above can't fire here.
+                                // Append `dep_name` then `undo(1)` so the
+                                // from-base is the symlink's real parent —
+                                // for scoped names like `@scope/pkg` that's
+                                // one level deeper than `node_modules`.
                                 var save = canonical.save();
                                 defer save.restore();
 

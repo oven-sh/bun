@@ -28,11 +28,6 @@ fn writeArrayLiteral(
     bun.assert(value.isArray());
 
     var iter = try jsc.JSArrayIterator.init(value, globalObject);
-    if (iter.len == 0) {
-        try writer.write("{}");
-        return;
-    }
-
     try writer.write("{");
     // `box[]` is the sole PG array type whose element delimiter is `;`.
     const delimiter: []const u8 = if (element_tag == .box) ";" else ",";
@@ -74,7 +69,6 @@ fn writeElement(
         return;
     }
 
-    // Nested array -> recurse (multi-dimensional arrays share one element type).
     if (value.isArray()) {
         try writeArrayLiteral(globalObject, value, element_tag, Context, writer);
         return;
@@ -94,7 +88,6 @@ fn writeElement(
         }
     }
 
-    // bool[] -> canonical `t`/`f` for booleans.
     if (element_tag == .bool and value.isBoolean()) {
         try writer.write(if (value.toBoolean()) "t" else "f");
         return;
@@ -117,10 +110,6 @@ fn writeElement(
         return;
     }
 
-    // Default: stringify via `String.fromJS` (uses `Array.prototype.toString`
-    // for nested JS arrays, but we handled those above). Quote and
-    // backslash-escape — universally safe for text[], int[], numeric[],
-    // date[], etc.
     var str = try bun.String.fromJS(value, globalObject);
     if (str.tag == .Dead) return error.OutOfMemory;
     defer str.deref();

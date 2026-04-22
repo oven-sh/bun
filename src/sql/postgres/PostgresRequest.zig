@@ -38,9 +38,7 @@ pub fn writeBind(
         const force_text = is_custom_type or (tag.isBinaryFormatSupported() and brk: {
             iter.to(@truncate(i));
             if (try iter.next()) |value| {
-                // If the user passed a JS array for an array-typed parameter,
-                // we'll emit a PostgreSQL array literal in text format below,
-                // so request format 0 here too.
+                // JS array bound to a PG array param → text-format literal below.
                 if (value.isArray() and tag.isArray()) break :brk true;
                 break :brk value.isString();
             }
@@ -99,11 +97,9 @@ pub fn writeBind(
             debug("  -> {s}", .{tag.tagName() orelse "(unknown)"});
         }
 
-        // When the server-inferred parameter type is a PG array and the user
-        // passed a plain JS array (e.g. from `sql({ col: [1, 2] })`), emit a
-        // text-format PG array literal instead of falling through to the
-        // generic `String.fromJS` path — which would produce the comma-joined
-        // `Array.prototype.toString` result and get rejected as malformed.
+        // JS array bound to a PG array param → emit a text-format array
+        // literal. Falling through to `String.fromJS` would produce the
+        // comma-joined `Array.prototype.toString` result, which PG rejects.
         if (value.isArray() and tag.isArray()) {
             try types.array_serializer.writeTo(globalObject, value, tag.arrayElementTag(), Context, writer);
             continue;

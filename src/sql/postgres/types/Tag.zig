@@ -188,61 +188,14 @@ pub const Tag = enum(short) {
     /// Returns true for `*_array` type OIDs (e.g. `text_array`, `int4_array`).
     pub fn isArray(this: Tag) bool {
         return switch (this) {
-            .bool_array,
-            .bytea_array,
-            .char_array,
-            .name_array,
-            .int8_array,
-            .int2_array,
-            .int2vector_array,
-            .int4_array,
-            .text_array,
-            .oid_array,
-            .tid_array,
-            .xid_array,
-            .cid_array,
-            .json_array,
-            .xml_array,
-            .point_array,
-            .lseg_array,
-            .path_array,
-            .box_array,
-            .polygon_array,
-            .line_array,
-            .cidr_array,
-            .float4_array,
-            .float8_array,
-            .circle_array,
-            .macaddr8_array,
-            .money_array,
-            .macaddr_array,
-            .inet_array,
-            .aclitem_array,
-            .bpchar_array,
-            .varchar_array,
-            .date_array,
-            .time_array,
-            .timestamp_array,
-            .timestamptz_array,
-            .interval_array,
-            .pg_database_array,
-            .timetz_array,
-            .bit_array,
-            .varbit_array,
-            .numeric_array,
-            .jsonb_array,
-            .jsonpath_array,
-            .pg_database_array2,
-            .uuid_array,
-            => true,
-            else => false,
+            .pg_database_array2 => true,
+            _ => false,
+            inline else => |t| comptime std.mem.endsWith(u8, @tagName(t), "_array"),
         };
     }
 
-    /// For array type OIDs, returns the element tag that the array serializer
-    /// treats specially (bool/bytea/json/jsonb for element formatting, box for
-    /// the `;` delimiter). Every other array — and every non-array tag —
-    /// maps to `.text`, which is the `String.fromJS` fallback path.
+    /// Element tag the array serializer needs to special-case; everything
+    /// else falls through to the `.text` → `String.fromJS` path.
     pub fn arrayElementTag(this: Tag) Tag {
         return switch (this) {
             .bool_array => .bool,

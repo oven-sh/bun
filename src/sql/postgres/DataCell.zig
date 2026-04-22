@@ -89,11 +89,10 @@ fn decodeBinaryNumericArrayWithNulls(bytes: []const u8, comptime tag: types.Tag)
     while (i < dim_size) : (i += 1) {
         if (cursor + 4 > bytes.len) return error.InvalidBinaryData;
         const len_raw: i32 = @bitCast(bytes[cursor..][0..4].*);
-        const len: i32 = @bitCast(@byteSwap(@as(u32, @bitCast(len_raw))));
+        const len: i32 = @byteSwap(len_raw);
         cursor += 4;
 
         if (len < 0) {
-            // NULL element (length = -1).
             array.appendAssumeCapacity(SQLDataCell{ .tag = .null, .value = .{ .null = 0 } });
             continue;
         }
@@ -117,10 +116,6 @@ fn decodeBinaryNumericArrayWithNulls(bytes: []const u8, comptime tag: types.Tag)
         }
     }
 
-    // `free_value = 1` so `SQLDataCell.deinit` reaches the `.array` branch
-    // and frees the backing allocation from `ensureTotalCapacityPrecise`
-    // above. Without this, every binary int4[]/float4[] result row with a
-    // NULL element leaks `cap * @sizeOf(SQLDataCell)` bytes.
     return SQLDataCell{
         .tag = .array,
         .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } },
@@ -519,16 +514,9 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
 
         return error.UnsupportedArrayFormat;
     }
-    // NOTE: Returns with `free_value = 0` (the default). Setting it to 1
-    // here to release the backing store WOULD avoid the per-row leak, but
-    // it exposes a pre-existing inconsistency where some element branches
-    // in this same function produce child cells with `free_value = 0`
-    // (e.g. the unquoted text path at line ~309). Once the parent starts
-    // calling `deinit()` on children, those inconsistent children leak
-    // their `WTFStringImpl` refcounts — CI ASAN surfaced the mismatch in
-    // `sql.test.ts`. Auditing every child branch is outside the scope of
-    // #29551; keeping the default here matches main's behavior for every
-    // other text-format array type routed through this path.
+    // TODO: `free_value = 1` would release the backing array, but some
+    // child-cell branches above (e.g. unquoted-text) set `free_value = 0`
+    // on owned strings — audit those before flipping the parent.
     return SQLDataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };
 }
 
@@ -564,9 +552,6 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
                 }
 
                 if (contains_nulls != 0) {
-                    // Binary 1-D array with NULL elements: can't use the
-                    // typed-array fast path (holes have no in-place slot).
-                    // Decode element-by-element into a regular JS array.
                     return try decodeBinaryNumericArrayWithNulls(bytes, tag);
                 }
 

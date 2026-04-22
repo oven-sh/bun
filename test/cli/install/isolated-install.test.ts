@@ -2128,4 +2128,124 @@ describe("bun link integration", () => {
     expect(existsSync(join(bodyDir, "marker.js"))).toBe(false);
     void producer;
   });
+
+  // Capability: the installed entry must reflect what a published package
+  // would contain — NOT the producer's working tree.
+  //
+  // The source of truth is `bun pm pack --dry-run`: whatever that reports
+  // as the published file set IS the set we must materialize in the
+  // consumer's `.bun/<hash>/<pkg>/`. Expressing the contract this way
+  // binds the linker's behavior to bun's own publish semantics (which
+  // already handle `package.json#files`, `.npmignore`, default excludes,
+  // etc.), so the test doesn't go stale when those rules evolve.
+  test("isolated: .bun entry contains exactly what `bun pm pack` would publish", async () => {
+    const env = hermeticEnv();
+
+    // Producer shaped like a real repo: publishable content at top level
+    // plus a pile of things `bun publish` would strip.
+    const producer = tempDir("linkpkg-realrepo-", {
+      "package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+      "README.md": "# content\n",
+      "index.js": "module.exports = 'FROM_PRODUCER';",
+      "dist/lib.js": "module.exports = 'BUILT_OUTPUT';",
+      ".git/HEAD": "ref: refs/heads/main\n",
+      ".git/config": "[core]\n",
+      ".github/workflows/ci.yml": "name: ci\n",
+      ".vscode/settings.json": "{}",
+      ".idea/workspace.xml": "<xml/>",
+      ".DS_Store": "\x00",
+      "src/index.ts": "export const x = 1;",
+      "node_modules/leaked-dep/package.json": JSON.stringify({ name: "leaked-dep", version: "1.0.0" }),
+    });
+
+    // Ask bun what it considers the published file set.
+    await using packProc = spawn({
+      cmd: [bunExe(), "pm", "pack", "--dry-run"],
+      cwd: String(producer),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [packStdout, packStderr, packExit] = await Promise.all([
+      packProc.stdout.text(),
+      packProc.stderr.text(),
+      packProc.exited,
+    ]);
+    if (packExit !== 0) throw new Error(`bun pm pack failed:\n${packStderr}`);
+    const publishedFiles = new Set<string>();
+    for (const line of packStdout.split("\n")) {
+      // `bun pm pack --dry-run` lists entries as: "packed <size> <relpath>"
+      const m = line.match(/^packed\s+\S+\s+(.+?)\s*$/);
+      if (m) publishedFiles.add(m[1]);
+    }
+    // Sanity: pack MUST report package.json, otherwise the test's source
+    // of truth is broken and the comparison below is meaningless.
+    expect(publishedFiles.has("package.json")).toBe(true);
+
+    await using linkProc = spawn({
+      cmd: [bunExe(), "link"],
+      cwd: String(producer),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, linkStderr, linkExit] = await Promise.all([
+      linkProc.stdout.text(),
+      linkProc.stderr.text(),
+      linkProc.exited,
+    ]);
+    if (linkExit !== 0) throw new Error(`bun link failed: ${linkStderr}`);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-filter",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await using installProc = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+
+    // Walk the installed entry and gather every file relative to bodyDir.
+    const { readdir, stat } = await import("fs/promises");
+    async function walk(dir: string, prefix = ""): Promise<string[]> {
+      const out: string[] = [];
+      for (const name of await readdir(dir)) {
+        const abs = join(dir, name);
+        const rel = prefix ? `${prefix}/${name}` : name;
+        const s = await stat(abs);
+        if (s.isDirectory()) {
+          out.push(...(await walk(abs, rel)));
+        } else {
+          out.push(rel);
+        }
+      }
+      return out;
+    }
+    const installedFiles = new Set(await walk(bodyDir));
+
+    // Capability assertion: installed contents === publishable contents.
+    // Sort for a readable diff on failure.
+    const sortedInstalled = [...installedFiles].sort();
+    const sortedPublished = [...publishedFiles].sort();
+    expect(sortedInstalled).toEqual(sortedPublished);
+  });
 });

@@ -57,8 +57,7 @@ describe.skipIf(isWindows).concurrent("Zig::GlobalObject creation on a warm VM u
     expect(stderr).toContain("6 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
-  }, // mutator during JSGlobalObject::init(). // a debug build because the collector thread is constantly preempting the // collectContinuously + ASAN is slow; each isolated file takes ~5-10s on
-  120_000);
+  }, 120_000);
 
   // deriveShadowRealmGlobalObject() is the other path that constructs a
   // Zig::GlobalObject on a warm VM; cover it under the same GC pressure so the

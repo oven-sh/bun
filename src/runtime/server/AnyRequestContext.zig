@@ -87,23 +87,23 @@ pub fn getRemoteSocketInfo(self: AnyRequestContext) ?uws.SocketAddress {
     }.f, .{});
 }
 
-pub fn getNativeHandle(self: AnyRequestContext) ?bun.FD {
+pub fn getFd(self: AnyRequestContext) ?bun.FD {
     if (self.tagged_pointer.isNull()) {
         return null;
     }
 
     switch (self.tagged_pointer.tag()) {
         @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
-            return self.tagged_pointer.as(HTTPServer.RequestContext).getNativeHandle();
+            return self.tagged_pointer.as(HTTPServer.RequestContext).getFd();
         },
         @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
-            return self.tagged_pointer.as(HTTPSServer.RequestContext).getNativeHandle();
+            return self.tagged_pointer.as(HTTPSServer.RequestContext).getFd();
         },
         @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
-            return self.tagged_pointer.as(DebugHTTPServer.RequestContext).getNativeHandle();
+            return self.tagged_pointer.as(DebugHTTPServer.RequestContext).getFd();
         },
         @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
-            return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).getNativeHandle();
+            return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).getFd();
         },
         else => @panic("Unexpected AnyRequestContext tag"),
     }

@@ -1462,11 +1462,16 @@ describe.concurrent("node:http socket.fd (Bun extension)", () => {
     await once(server, "listening");
     try {
       const address = server.address() as { port: number };
-      const res = await fetch(`http://127.0.0.1:${address.port}/`, { headers: { Connection: "close" } });
+      const res = await fetch(`http://127.0.0.1:${address.port}/`);
       await res.text();
-      // Explicitly destroy the socket and wait for the close event so kHandle is cleared.
-      savedSocket.destroy();
-      await once(savedSocket, "close");
+      // Destroy the socket and wait for the close event so kHandle is cleared.
+      // Guard the destroy + `once` against the socket already being torn down,
+      // which can race under heavy load.
+      if (!savedSocket.destroyed) {
+        const closed = once(savedSocket, "close");
+        savedSocket.destroy();
+        await closed;
+      }
       expect(savedSocket.fd).toBe(-1);
     } finally {
       server.close();

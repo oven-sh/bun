@@ -2577,9 +2577,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             return (this.resp orelse return null).getRemoteSocketInfo();
         }
 
-        pub fn getNativeHandle(this: *RequestContext) ?bun.FD {
+        pub fn getFd(this: *RequestContext) ?bun.FD {
             const resp = this.resp orelse return null;
-            const fd = resp.getNativeHandle();
+            const fd = resp.getFd();
             return if (fd.isValid()) fd else null;
         }
 

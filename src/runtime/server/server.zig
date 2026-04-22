@@ -658,7 +658,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn requestFD(_: *ThisServer, request: *jsc.WebCore.Request) bun.JSError!jsc.JSValue {
-            const fd = request.request_context.getNativeHandle() orelse return JSValue.jsNull();
+            const fd = request.request_context.getFd() orelse return JSValue.jsNull();
             return fd.toJSWithoutMakingLibUVOwned();
         }
 

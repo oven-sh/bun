@@ -2,7 +2,19 @@ import { file, gc, Serve, serve, Server } from "bun";
 import { dlopen, FFIType, ptr, suffix } from "bun:ffi";
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, dumpStats, isBroken, isIntelMacOS, isIPv4, isIPv6, isPosix, tls, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  dumpStats,
+  isBroken,
+  isIntelMacOS,
+  isIPv4,
+  isIPv6,
+  isPosix,
+  tempDir,
+  tls,
+  tmpdirSync,
+} from "harness";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
@@ -1549,9 +1561,12 @@ describe("server.requestFD", () => {
     });
 
     await fetch(server.url.origin).then(x => x.text());
-    // Wait a tick so the request context can fully detach its response.
-    await Bun.sleep(50);
     expect(savedRequest).toBeDefined();
+    // Poll the observable condition instead of sleeping a fixed time:
+    // the request context detaches asynchronously once the response is fully sent.
+    for (let i = 0; i < 200 && server.requestFD(savedRequest!) !== null; i++) {
+      await Bun.sleep(0);
+    }
     expect(server.requestFD(savedRequest!)).toBeNull();
   });
 
@@ -1584,34 +1599,70 @@ describe("server.requestFD", () => {
     expect(response.addrLen).toBeGreaterThan(0);
   });
 
+  it.if(isPosix)("returns an OS fd for an HTTPS (TLS) request, not the SSL pointer", async () => {
+    const libc = dlopen(`libc.${suffix}${process.platform === "darwin" ? "" : ".6"}`, {
+      getsockname: {
+        args: [FFIType.i32, FFIType.ptr, FFIType.ptr],
+        returns: FFIType.i32,
+      },
+    });
+
+    using server = Bun.serve({
+      port: 0,
+      tls,
+      fetch(req, server) {
+        const fd = server.requestFD(req);
+        if (typeof fd !== "number" || fd < 0) {
+          return Response.json({ ok: false, fd });
+        }
+        const addr = new ArrayBuffer(128);
+        const addrLen = new Uint32Array(1);
+        addrLen[0] = 128;
+        const rc = libc.symbols.getsockname(fd, ptr(addr), ptr(addrLen));
+        return Response.json({ ok: true, fd, rc, addrLen: addrLen[0] });
+      },
+    });
+
+    const response = await fetch(server.url.origin, { tls: { rejectUnauthorized: false } }).then(x => x.json());
+    expect(response.ok).toBe(true);
+    // If requestFD had returned the SSL* heap pointer (the regression this test
+    // guards against), getsockname would fail with EBADF / rc !== 0.
+    expect(response.rc).toBe(0);
+    expect(response.addrLen).toBeGreaterThan(0);
+    // A real fd is a small non-negative integer; an SSL* cast would be huge.
+    expect(response.fd).toBeLessThan(1 << 20);
+  });
+
   it.if(isPosix)("returns an fd for a unix socket request", async () => {
-    const unix = join(tmpdirSync(), "serve-fd.sock");
+    using dir = tempDir("serve-request-fd-unix", {});
+    const unix = join(String(dir), "serve-fd.sock");
     using server = Bun.serve({
       unix,
       fetch(req, server) {
         return Response.json({ fd: server.requestFD(req) });
       },
     });
-    const requestText = `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`;
+    const requestText = `GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`;
     const received: Buffer[] = [];
-    const { resolve, promise } = Promise.withResolvers<void>();
+    const { resolve: resolveClose, promise: closed } = Promise.withResolvers<void>();
     const connection = await Bun.connect({
       unix,
       socket: {
         data(_socket, data) {
           received.push(data);
-          resolve();
+        },
+        close() {
+          resolveClose();
         },
       },
     });
     connection.write(requestText);
     connection.flush();
-    await promise;
+    await closed;
     const body = Buffer.concat(received).toString().split("\r\n\r\n")[1];
     const parsed = JSON.parse(body);
     expect(typeof parsed.fd).toBe("number");
     expect(parsed.fd).toBeGreaterThan(0);
-    connection.end();
   });
 });
 

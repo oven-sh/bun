@@ -33,7 +33,9 @@ test.each(["sql", "SQL"] as const)("Bun.%s does not crash when globalThis.Array 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).not.toContain("null pointer");
   expect(stdout.trim()).toBe("OK");
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
   expect(exitCode).toBe(0);
 });

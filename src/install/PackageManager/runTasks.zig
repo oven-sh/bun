@@ -387,15 +387,26 @@ pub fn runTasks(
                     const err = task.response.fail orelse error.TarballFailedToDownload;
 
                     if (@TypeOf(callbacks.onPackageDownloadError) != void) {
-                        const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
-                        callbacks.onPackageDownloadError(
-                            extract_ctx,
-                            package_id,
-                            extract.name.slice(),
-                            &extract.resolution,
-                            err,
-                            task.url_buf,
-                        );
+                        if (Ctx == *Store.Installer) {
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                task.task_id,
+                                extract.name.slice(),
+                                &extract.resolution,
+                                err,
+                                task.url_buf,
+                            );
+                        } else {
+                            const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                package_id,
+                                extract.name.slice(),
+                                &extract.resolution,
+                                err,
+                                task.url_buf,
+                            );
+                        }
                         continue;
                     }
 
@@ -436,6 +447,12 @@ pub fn runTasks(
                         }
                     }
 
+                    if (manager.task_queue.fetchRemove(task.task_id)) |removed| {
+                        var list = removed.value;
+                        list.deinit(manager.allocator);
+                    }
+                    _ = manager.network_dedupe_map.remove(task.task_id);
+
                     continue;
                 };
 
@@ -452,16 +469,27 @@ pub fn runTasks(
                             405...499 => error.TarballHTTP4xx,
                             else => error.TarballHTTP5xx,
                         };
-                        const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
 
-                        callbacks.onPackageDownloadError(
-                            extract_ctx,
-                            package_id,
-                            extract.name.slice(),
-                            &extract.resolution,
-                            err,
-                            task.url_buf,
-                        );
+                        if (Ctx == *Store.Installer) {
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                task.task_id,
+                                extract.name.slice(),
+                                &extract.resolution,
+                                err,
+                                task.url_buf,
+                            );
+                        } else {
+                            const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                package_id,
+                                extract.name.slice(),
+                                &extract.resolution,
+                                err,
+                                task.url_buf,
+                            );
+                        }
                         continue;
                     }
 
@@ -498,6 +526,17 @@ pub fn runTasks(
                             }
                         }
                     }
+
+                    // The download will not be retried for this task_id, so
+                    // drop the dedupe state. Otherwise the install phase's
+                    // `enqueuePackageForDownload` sees `found_existing`, never
+                    // schedules a network task, and waits forever for a
+                    // callback that will not arrive.
+                    if (manager.task_queue.fetchRemove(task.task_id)) |removed| {
+                        var list = removed.value;
+                        list.deinit(manager.allocator);
+                    }
+                    _ = manager.network_dedupe_map.remove(task.task_id);
 
                     continue;
                 }
@@ -609,18 +648,30 @@ pub fn runTasks(
                     const err = task.err orelse error.TarballFailedToExtract;
 
                     if (@TypeOf(callbacks.onPackageDownloadError) != void) {
-                        callbacks.onPackageDownloadError(
-                            extract_ctx,
-                            package_id,
-                            alias,
-                            resolution,
-                            err,
-                            switch (task.tag) {
-                                .extract => task.request.extract.network.url_buf,
-                                .local_tarball => task.request.local_tarball.tarball.url.slice(),
-                                else => unreachable,
-                            },
-                        );
+                        const fail_url = switch (task.tag) {
+                            .extract => task.request.extract.network.url_buf,
+                            .local_tarball => task.request.local_tarball.tarball.url.slice(),
+                            else => unreachable,
+                        };
+                        if (Ctx == *Store.Installer) {
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                task.id,
+                                alias,
+                                resolution,
+                                err,
+                                fail_url,
+                            );
+                        } else {
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                package_id,
+                                alias,
+                                resolution,
+                                err,
+                                fail_url,
+                            );
+                        }
                     } else {
                         manager.log.addErrorFmt(
                             null,
@@ -816,16 +867,27 @@ pub fn runTasks(
                 if (task.status == .fail) {
                     const err = task.err orelse error.Failed;
 
-                    manager.log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        manager.allocator,
-                        "{s} checking out repository for <b>{s}<r>",
-                        .{
-                            @errorName(err),
+                    if (@TypeOf(callbacks.onPackageDownloadError) != void and Ctx == *Store.Installer) {
+                        callbacks.onPackageDownloadError(
+                            extract_ctx,
+                            task.id,
                             alias.slice(),
-                        },
-                    ) catch |e| bun.handleOom(e);
+                            resolution,
+                            err,
+                            manager.lockfile.str(&resolution.value.git.repo),
+                        );
+                    } else {
+                        manager.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            manager.allocator,
+                            "{s} checking out repository for <b>{s}<r>",
+                            .{
+                                @errorName(err),
+                                alias.slice(),
+                            },
+                        ) catch |e| bun.handleOom(e);
+                    }
 
                     continue;
                 }

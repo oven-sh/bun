@@ -310,7 +310,15 @@ export const webkit: Dependency = {
       // postExtract.
       if (!cfg.darwin) includes.push("include/wtf/unicode");
 
-      return { libs, includes };
+      return {
+        libs,
+        includes,
+        // The darwin prebuilt was built against an unversioned ICU
+        // (Apple's icucore) — bun's bindings must match, and the link
+        // line needs -licucore. Linux/windows prebuilts bundle their ICU
+        // in `libs` above.
+        ...(cfg.darwin && { defines: ["U_DISABLE_RENAMING=1"], linkFlags: ["-licucore"] }),
+      };
     }
 
     // Local: paths relative to BUILD dir (headers generated during build).
@@ -341,6 +349,10 @@ export const webkit: Dependency = {
     // Windows: ICU headers from preBuild output.
     if (cfg.windows) includes.push(resolve(icuDir(cfg), "include"));
 
-    return { libs, includes };
+    // Local cmake on posix: cmake's find_package(ICU) found the system
+    // libs but doesn't propagate them to bun's link — declare them here.
+    const linkFlags = cfg.windows ? [] : ["-licuuc", "-licui18n", "-licudata"];
+
+    return { libs, includes, linkFlags };
   },
 };

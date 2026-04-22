@@ -459,6 +459,12 @@ export interface Provides {
   /** Preprocessor defines to add to bun's compilation. */
   defines?: string[];
   /**
+   * Extra flags for bun's final link line — system libs the dep pulls in
+   * (e.g. WebKit → ICU). Keeps that knowledge in the dep file instead of
+   * branching on cfg.webkit in bun.ts.
+   */
+  linkFlags?: string[];
+  /**
    * Source files (relative to the SOURCE dir) that bun compiles directly
    * into its own binary — no nested build producing a `.a`. Declared as
    * implicit outputs of the fetch rule so ninja knows where they come from;
@@ -551,6 +557,8 @@ export interface ResolvedDep {
   /** Absolute include paths for -I flags. */
   includes: string[];
   defines: string[];
+  /** Extra link flags from Provides.linkFlags (system libs the dep needs). */
+  linkFlags: string[];
   /**
    * Absolute paths to .c/.cpp files bun compiles directly (from
    * Provides.sources). Empty for most deps — they provide .a files.
@@ -970,6 +978,7 @@ export function resolveDep(
     objects,
     includes,
     defines: provides.defines ?? [],
+    linkFlags: provides.linkFlags ?? [],
     sources: resolvedSources,
     outputs,
   };
@@ -1164,6 +1173,7 @@ function emitPrebuilt(
     objects: [],
     includes,
     defines: provides.defines ?? [],
+    linkFlags: provides.linkFlags ?? [],
     sources: [],
     outputs,
   };

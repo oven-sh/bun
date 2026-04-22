@@ -839,7 +839,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.fuzzilli) features.push("fuzzilli");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
-  if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
+  if (cfg.webkit !== "direct") features.push(`webkit:${cfg.webkit}`);
   if (cfg.mode !== "full") features.push(`mode:${cfg.mode}`);
   // Version pin overrides — show a short hash so you catch "forgot to
   // revert my WebKit test branch" before the build goes weird.

@@ -66,27 +66,11 @@ function systemLibs(cfg: Config): string[] {
     } else {
       libs.push("-latomic");
     }
-    // Linux local/direct WebKit: link system ICU (prebuilt bundles its
-    // own). Assumes system ICU is in default lib paths — true on most
-    // distros.
-    if (cfg.webkit !== "prebuilt") {
-      libs.push("-licudata", "-licui18n", "-licuuc");
-    }
   }
 
   if (cfg.darwin) {
     // resolv: DNS resolution (getaddrinfo et al).
     libs.push("-lresolv");
-    // ICU: prebuilt was built unversioned against Apple's icucore.
-    // direct/local compile against brew icu4c headers (versioned _NN
-    // suffixes) so must link brew's lib too — see icuPrefix() in
-    // webkit-direct/common.ts for the full reasoning.
-    if (cfg.webkit === "prebuilt") {
-      libs.push("-licucore");
-    } else {
-      const prefix = cfg.arm64 ? "/opt/homebrew/opt/icu4c" : "/usr/local/opt/icu4c";
-      libs.push(`-L${prefix}/lib`, "-licuuc", "-licui18n", "-licudata");
-    }
   }
 
   if (cfg.windows) {
@@ -184,6 +168,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const depLibs: string[] = [];
   const depObjects: string[] = [];
   const depIncludes: string[] = [];
+  const depDefines: string[] = [];
+  const depLinkFlags: string[] = [];
   // Outputs of deps that provide headers — used as implicit inputs on PCH/cc/
   // no-PCH cxx so a dep rebuild invalidates compiles that #include its headers
   // (the .a is the signal — see comment at the PCH step). Deps with no provided
@@ -195,6 +181,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     depLibs.push(...d.libs);
     depObjects.push(...d.objects);
     depIncludes.push(...d.includes);
+    depDefines.push(...d.defines);
+    depLinkFlags.push(...d.linkFlags);
     // d.outputs is the "headers are ready" signal: for nested-cmake/
     // prebuilt that's the .a/stamp (headers are undeclared side-effects),
     // for direct deps it's the generated-header set + source stamp.
@@ -245,7 +233,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // generated versions header).
   const allIncludes = [...bunIncludes(cfg), cfg.buildDir, ...depIncludes];
   const includeFlags = allIncludes.map(inc => `-I${inc}`);
-  const defineFlags = flags.defines.map(d => `-D${d}`);
+  const defineFlags = [...flags.defines, ...depDefines].map(d => `-D${d}`);
 
   // Final flag arrays for compile.
   const cxxFlagsFull = [...flags.cxxflags, ...includeFlags, ...defineFlags];
@@ -432,7 +420,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const shims = emitShims(n, cfg);
   const exe = link(n, cfg, exeName, [...allObjects, ...zigObjects, ...windowsRes], {
     libs: depLibs,
-    flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags],
+    flags: [...flags.ldflags, ...systemLibs(cfg), ...depLinkFlags, ...manifestLinkFlags(cfg), ...shims.ldflags],
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
   });
 
@@ -544,8 +532,12 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   // share the same formula. If they drift, link fails with "file not
   // found" — loud enough to catch in CI.
   const depLibs: string[] = [];
+  const depLinkFlags: string[] = [];
   for (const dep of allDeps) {
     depLibs.push(...computeDepLibs(cfg, dep));
+    if (dep.enabled === undefined || dep.enabled(cfg)) {
+      depLinkFlags.push(...(dep.provides(cfg).linkFlags ?? []));
+    }
   }
 
   // Archive from cpp-only: same name cpp-only emits (exe name + lib
@@ -571,7 +563,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   const shims = emitShims(n, cfg);
   const exe = link(n, cfg, exeName, [archive, ...zigObjects, ...windowsRes], {
     libs: depLibs,
-    flags: [...flags.ldflags, ...systemLibs(cfg), ...manifestLinkFlags(cfg), ...shims.ldflags],
+    flags: [...flags.ldflags, ...systemLibs(cfg), ...depLinkFlags, ...manifestLinkFlags(cfg), ...shims.ldflags],
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
   });
 

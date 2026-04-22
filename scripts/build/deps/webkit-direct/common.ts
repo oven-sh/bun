@@ -57,6 +57,20 @@ function icuInclude(cfg: Config): string[] {
 }
 
 /**
+ * ICU link flags for bun's final link line. Returned via Provides.linkFlags
+ * so bun.ts doesn't branch on cfg.webkit. The local-cmake dep (webkit.ts)
+ * has its own equivalent.
+ */
+export function icuLinkFlags(cfg: Config): string[] {
+  if (cfg.windows) return []; // built from source via build-icu.ps1, libs come from there
+  const p = icuPrefix(cfg);
+  return [
+    ...(p !== undefined ? [`-L${p}/lib`] : []),
+    "-licuuc", "-licui18n", "-licudata",
+  ];
+}
+
+/**
  * Language-agnostic flags WebKit applies to every TU (cmake's
  * WebKitCompilerFlags.cmake). Goes to both .c and .cpp.
  */

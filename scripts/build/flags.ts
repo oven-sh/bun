@@ -576,14 +576,8 @@ export const defines: Flag[] = [
     when: c => c.windows,
     desc: "ICU static linkage (without this: ABI mismatch → STATUS_STACK_BUFFER_OVERRUN)",
   },
-  {
-    flag: "U_DISABLE_RENAMING=1",
-    when: c => c.darwin && c.webkit === "prebuilt",
-    desc:
-      "Match the prebuilt's ICU (built unversioned for Apple's icucore). " +
-      "direct/local link brew icu4c which exports versioned symbols, so " +
-      "renaming stays on.",
-  },
+  // (U_DISABLE_RENAMING moved to deps/webkit.ts provides() — it's a
+  // property of which ICU the WebKit dep was built against, not a global.)
 
   // ─── Feature toggles ───
   {

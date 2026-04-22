@@ -496,6 +496,113 @@ pub const Installer = struct {
 
                     var pkg_cache_dir_subpath: bun.AutoRelPath = .from(switch (pkg_res.tag) {
                         else => |tag| pkg_cache_dir_subpath: {
+                            // If an active `bun link` is registered for this
+                            // package name and the user did not opt into the
+                            // symlink backend, source the body from the
+                            // producer dir instead of the registry tarball
+                            // cache. Under isolated linking the top-level
+                            // symlink-only contract isn't available, so
+                            // without this the `.bun/<storepath>` body stays
+                            // pinned to the (stale) tarball cache while the
+                            // top-level symlink points at the producer.
+                            if (installer.supported_backend.load(.monotonic) != .symlink) {
+                                var linked_buf: bun.PathBuffer = undefined;
+                                if (manager.linkedPackagePath(pkg_name.slice(string_buf), &linked_buf)) |producer_path| {
+                                    const folder_dir = switch (bun.openDirForIteration(FD.cwd(), producer_path)) {
+                                        .result => |fd| fd,
+                                        .err => |err| return .failure(.{ .link_package = err }),
+                                    };
+                                    defer folder_dir.close();
+
+                                    const uses_global_store_link = installer.entryUsesGlobalStore(this.entry_id);
+                                    if (uses_global_store_link) {
+                                        // Previous staging from a crashed run would
+                                        // otherwise collide with our fresh writes.
+                                        var staging: bun.AbsPath(.{ .sep = .auto }) = .init();
+                                        defer staging.deinit();
+                                        installer.appendGlobalStoreEntryPath(&staging, this.entry_id, .staging);
+                                        FD.cwd().deleteTree(staging.slice()) catch {};
+                                    }
+
+                                    backend: switch (PackageInstall.Method.hardlink) {
+                                        .hardlink => {
+                                            var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDirLongPath();
+                                            defer src.deinit();
+                                            src.appendJoin(@as([]const u8, producer_path));
+
+                                            var dest: bun.Path(.{ .unit = .os, .sep = .auto }) = .init();
+                                            defer dest.deinit();
+                                            installer.appendRealStorePath(&dest, this.entry_id, .staging);
+
+                                            var hardlinker: Hardlinker = try .init(
+                                                folder_dir,
+                                                src,
+                                                dest,
+                                                &.{comptime bun.OSPathLiteral("node_modules")},
+                                            );
+                                            defer hardlinker.deinit();
+
+                                            switch (try hardlinker.link()) {
+                                                .result => {},
+                                                .err => |err| {
+                                                    if (err.getErrno() == .XDEV) {
+                                                        continue :backend .copyfile;
+                                                    }
+                                                    return .failure(.{ .link_package = err });
+                                                },
+                                            }
+                                        },
+
+                                        .copyfile => {
+                                            var src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = .init();
+                                            defer src_path.deinit();
+
+                                            if (comptime Environment.isWindows) {
+                                                const src_path_len = bun.windows.GetFinalPathNameByHandleW(
+                                                    folder_dir.cast(),
+                                                    src_path.buf().ptr,
+                                                    @intCast(src_path.buf().len),
+                                                    0,
+                                                );
+
+                                                if (src_path_len == 0 or src_path_len >= src_path.buf().len) {
+                                                    const err: bun.sys.SystemErrno = if (src_path_len == 0)
+                                                        (bun.windows.Win32Error.get().toSystemErrno() orelse .EUNKNOWN)
+                                                    else
+                                                        .ENAMETOOLONG;
+                                                    return .failure(
+                                                        .{ .link_package = .{ .errno = @intFromEnum(err), .syscall = .copyfile } },
+                                                    );
+                                                }
+
+                                                src_path.setLength(src_path_len);
+                                            }
+
+                                            var dest: bun.Path(.{ .unit = .os, .sep = .auto }) = .init();
+                                            defer dest.deinit();
+                                            installer.appendRealStorePath(&dest, this.entry_id, .staging);
+
+                                            var file_copier: FileCopier = try .init(
+                                                folder_dir,
+                                                src_path,
+                                                dest,
+                                                &.{comptime bun.OSPathLiteral("node_modules")},
+                                            );
+                                            defer file_copier.deinit();
+
+                                            switch (file_copier.copy()) {
+                                                .result => {},
+                                                .err => |err| return .failure(.{ .link_package = err }),
+                                            }
+                                        },
+
+                                        else => unreachable,
+                                    }
+
+                                    continue :next_step this.nextStep(current_step);
+                                }
+                            }
+
                             const patch_info = try installer.packagePatchInfo(
                                 pkg_name,
                                 pkg_name_hash,

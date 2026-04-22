@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -1886,5 +1886,89 @@ describe("global virtual store", () => {
     // and re-symlink, wiping the edits.
     expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
     expect(await file(edited).text()).toBe("module.exports = 'USER_EDITS';\n");
+  });
+});
+
+describe("bun link integration", () => {
+  // `bun link` writes into the global link dir under BUN_INSTALL. Give each
+  // test its own to keep the user's real `~/.bun` clean and avoid collisions
+  // between parallel tests that register the same package name.
+  function hermeticEnv() {
+    const home = tmpdirSync();
+    return {
+      ...bunEnv,
+      BUN_INSTALL: home,
+      HOME: home,
+      XDG_CONFIG_HOME: home,
+      USERPROFILE: home,
+    };
+  }
+
+  // The registry's `no-deps@1.0.0` tarball contains only `package.json` and
+  // `index.js`. Producer adds `marker.js` — presence of that file in
+  // `node_modules/.bun/no-deps@1.0.0/node_modules/no-deps/` is proof the
+  // body was sourced from the producer dir, not the registry tarball cache.
+  async function setupLinkedNoDeps(env: NodeJS.ProcessEnv) {
+    const producer = tempDir("linkpkg-producer-", {
+      "package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+      "index.js": "module.exports = 'FROM_PRODUCER';",
+      "marker.js": "module.exports = 'FROM_PRODUCER_MARKER';",
+    });
+
+    await using linkProc = spawn({
+      cmd: [bunExe(), "link"],
+      cwd: String(producer),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [linkStdout, linkStderr, linkExit] = await Promise.all([
+      linkProc.stdout.text(),
+      linkProc.stderr.text(),
+      linkProc.exited,
+    ]);
+    if (linkExit !== 0) {
+      throw new Error(`bun link failed:\nstdout: ${linkStdout}\nstderr: ${linkStderr}`);
+    }
+    return producer;
+  }
+
+  test("isolated: npm-resolved dep honors active bun link", async () => {
+    const env = hermeticEnv();
+    using producer = await setupLinkedNoDeps(env);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-a",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await using installProc = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    expect(existsSync(join(bodyDir, "marker.js"))).toBe(true);
+    expect(await file(join(bodyDir, "marker.js")).text()).toContain("FROM_PRODUCER_MARKER");
+    expect(await file(join(bodyDir, "index.js")).text()).toContain("FROM_PRODUCER");
+    // Silence unused-warnings via a harmless reference:
+    void producer;
+    void stdout;
   });
 });

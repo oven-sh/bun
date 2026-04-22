@@ -410,6 +410,30 @@ pub fn globalLinkDirAndPath(this: *PackageManager) struct { std.fs.Dir, []const 
     return .{ dir, this.global_link_dir_path };
 }
 
+/// If `<globalLinkDir>/<pkg_name>` exists (typically a symlink created by
+/// `bun link` from the producer dir), write its absolute path into `buf` and
+/// return it. Otherwise `null`. Scoped names (`@scope/name`) are handled
+/// because `joinAbsStringBufZ` preserves the `/`. One `lstat` per call.
+pub fn linkedPackagePath(
+    this: *PackageManager,
+    pkg_name: []const u8,
+    buf: *bun.PathBuffer,
+) ?[:0]const u8 {
+    if (pkg_name.len == 0) return null;
+    const dir_path = this.globalLinkDirPath();
+    const joined = bun.path.joinAbsStringBufZ(dir_path, buf, &.{pkg_name}, .auto);
+    return switch (bun.sys.lstat(joined)) {
+        .result => |st| brk: {
+            const mode: u32 = @intCast(st.mode);
+            if (std.posix.S.ISDIR(mode) or std.posix.S.ISLNK(mode)) {
+                break :brk joined;
+            }
+            break :brk null;
+        },
+        .err => null,
+    };
+}
+
 pub fn pathForCachedNPMPath(
     this: *PackageManager,
     buf: *bun.PathBuffer,

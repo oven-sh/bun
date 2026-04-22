@@ -1177,6 +1177,7 @@ pub const getTemporaryDirectory = directories.getTemporaryDirectory;
 pub const globalLinkDir = directories.globalLinkDir;
 pub const globalLinkDirAndPath = directories.globalLinkDirAndPath;
 pub const globalLinkDirPath = directories.globalLinkDirPath;
+pub const linkedPackagePath = directories.linkedPackagePath;
 pub const isFolderInCache = directories.isFolderInCache;
 pub const pathForCachedNPMPath = directories.pathForCachedNPMPath;
 pub const pathForResolution = directories.pathForResolution;

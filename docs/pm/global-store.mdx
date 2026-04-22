@@ -11,30 +11,19 @@ The result: warm installs are roughly **7× faster** (one symlink per package in
 
 ## Enabling
 
-The global virtual store is **on by default** with the isolated linker on every platform. It is not used by the hoisted linker.
-
-```bash terminal icon="terminal"
-bun install --linker isolated
-```
-
-To make isolated the default for a project:
+The global virtual store is **opt-in**. It is only used by the isolated linker.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
 linker = "isolated"
-```
-
-To opt out and fall back to per-project package copies:
-
-```toml title="bunfig.toml" icon="settings"
-[install]
-linker = "isolated"
-globalStore = false
+globalStore = true
 ```
 
 ```bash terminal icon="terminal"
-BUN_INSTALL_GLOBAL_STORE=0 bun install --linker isolated
+BUN_INSTALL_GLOBAL_STORE=1 bun install --linker isolated
 ```
+
+With `globalStore = false` (the default), the isolated linker materializes each package into `<project>/node_modules/.bun/` the way pnpm does — canonical paths stay inside the project and bundlers, resolvers, and scripts that canonicalize symlinks continue to see a familiar layout.
 
 ## Why it's fast
 

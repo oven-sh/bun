@@ -399,7 +399,9 @@ pub fn load(
     }
 
     if (env.get("BUN_INSTALL_GLOBAL_STORE")) |val| {
-        this.enable.global_virtual_store = !strings.eqlComptime(val, "0");
+        // Treat any non-empty value other than "0" as opt-in. Default is off;
+        // BUN_INSTALL_GLOBAL_STORE=1 enables it, =0 (or unset) keeps it off.
+        this.enable.global_virtual_store = val.len > 0 and !strings.eqlComptime(val, "0");
     }
 
     const default_disable_progress_bar: bool = brk: {
@@ -744,8 +746,14 @@ pub const Enable = packed struct(u16) {
     /// Isolated linker only: materialize package entries once into a shared
     /// `<cache>/links/` directory and symlink `node_modules/.bun/<pkg>` into
     /// it, instead of clonefiling every package into every project on every
-    /// install. Set BUN_INSTALL_GLOBAL_STORE=0 to disable.
-    global_virtual_store: bool = true,
+    /// install. Opt in via `install.globalStore = true` in bunfig.toml or
+    /// `BUN_INSTALL_GLOBAL_STORE=1`.
+    ///
+    /// Default `false` — the shared store's canonical paths live outside
+    /// `<project>/node_modules/`, which breaks bundlers (rspack, webpack)
+    /// and tools that canonicalize symlinks before walking ancestors for
+    /// `node_modules/` directories. See #29614.
+    global_virtual_store: bool = false,
     _: u6 = 0,
 };
 

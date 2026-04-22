@@ -46,12 +46,25 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input
     extracted_path_lock.lock();
     defer extracted_path_lock.unlock();
 
-    // Fast path: already extracted (possibly by a prior Worker). Still stat
-    // the cached path — systemd-tmpfiles periodically sweeps /tmp, and the
-    // cache must self-heal or long-running servers fail every dlopen
-    // thereafter.
+    // Fast path: already extracted (possibly by a prior Worker). Validate
+    // the cached path still points at a file we own with the expected size.
+    // Plain stat-for-existence isn't enough: if systemd-tmpfiles sweeps
+    // both the extracted `.so` and the `bun-{uid}/` subdir, another user
+    // on a shared host can recreate the subdir (as themselves, 0755) and
+    // plant a malicious .so at the predictable name. Without the
+    // owner+size check below the fast path would hand that file to
+    // dlopen, sidestepping the per-user-subdir defence of the slow path.
+    //
+    // Using lstat rejects an attacker-planted symlink too. Size covers
+    // the file being replaced in place.
     if (file.extracted_path) |cached| {
-        if (bun.sys.stat(cached).unwrap() catch null) |_| {
+        const ok: bool = if (bun.sys.lstat(cached).unwrap() catch null) |st| blk: {
+            if (comptime Environment.isWindows) break :blk st.size == @as(@TypeOf(st.size), @intCast(file.contents.len));
+            break :blk st.uid == extractOwnerUid() and
+                (st.mode & bun.S.IFMT) == bun.S.IFREG and
+                st.size == @as(@TypeOf(st.size), @intCast(file.contents.len));
+        } else false;
+        if (ok) {
             @memcpy(path_buf[0..cached.len], cached);
             return path_buf[0..cached.len];
         }
@@ -127,9 +140,16 @@ const ExtractDir = struct { fd: bun.FD, path: []const u8 };
 /// it or it's mis-moded — DoS on shared hosts), falls back to an
 /// unpredictable `bun-{uid}-{rand}`. The absolute path is written into
 /// `abs_buf` and sliced into `.path`.
+fn extractOwnerUid() u32 {
+    // geteuid (not getuid) on POSIX because mkdir(2) sets the owner to
+    // euid — a setuid-compiled binary where euid != ruid would otherwise
+    // create a dir whose owner != getuid() and fail the ownership check.
+    return if (comptime Environment.isPosix) bun.c.geteuid() else bun.windows.userUniqueId();
+}
+
 fn openExtractDir(abs_buf: *bun.PathBuffer) ?ExtractDir {
     const tmpdir_path = bun.fs.FileSystem.RealFS.tmpdirPath();
-    const uid: u32 = if (comptime Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId();
+    const uid: u32 = extractOwnerUid();
 
     var name_buf: [96]u8 = undefined;
     const canonical = std.fmt.bufPrint(&name_buf, "bun-{d}", .{uid}) catch return null;

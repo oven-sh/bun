@@ -1228,7 +1228,9 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
     "-var",
     `tenant_id=${tenantId}`,
     "-var",
-    `resource_group=${resourceGroup}-EASTUS2`,
+    // Dedicated build RG in southcentralus so Packer's 4-core bake VMs don't
+    // contend with robobun CI runners for the eastus2 Ddsv6/Dpdsv6 quota.
+    `resource_group=${resourceGroup}-PACKER`,
     "-var",
     `gallery_resource_group=${resourceGroup}`,
     "-var",
@@ -1249,7 +1251,7 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
   // Packer's azure-arm builder cleans up its temp pkr* resources on SIGINT/SIGTERM, but only
   // if the signal actually reaches the packer process and it is given time to finish the Azure
   // deletes. spawnSafe() does not forward signals, so a Buildkite cancel would orphan the whole
-  // VM/NIC/IP/disk/vnet/NSG/keyvault stack in BUN-CI-EASTUS2. Spawn directly and forward.
+  // VM/NIC/IP/disk/vnet/NSG/keyvault stack in the build RG. Spawn directly and forward.
   const child = nodeSpawn(packerArgs[0], packerArgs.slice(1), {
     stdio: "inherit",
     env: {

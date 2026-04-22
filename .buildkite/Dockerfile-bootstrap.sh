@@ -87,11 +87,13 @@ cd /tmp/fakebun || {
     exit 1
 }
 
-# Build the Buildkite image
+# Build the Buildkite image. BUN_REPO_REF tells the prefetch step which ref's
+# dep versions to bake — passed through from machine.mjs via BUN_BOOTSTRAP_REPO_REF.
 docker buildx build \
     --platform $(uname -m | sed 's/aarch64/linux\/arm64/;s/x86_64/linux\/amd64/') \
     --tag buildkite:latest \
     --target buildkite \
+    --build-arg BUN_REPO_REF="${BUN_BOOTSTRAP_REPO_REF:-main}" \
     -f .buildkite/Dockerfile \
     --load \
     . || {

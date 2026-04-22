@@ -22,6 +22,7 @@ import {
   homedir,
   isCI,
   isMacOS,
+  getBranch,
   isWindows,
   mkdir,
   mkdtemp,
@@ -1521,11 +1522,34 @@ async function main() {
     });
 
     if (bootstrapPath) {
+      // Tell bootstrap which ref of the repo to shallow-clone for
+      // prefetch_build_deps — the dep version pins live in scripts/build/deps/
+      // and aren't uploaded with bootstrap. Pinning to the triggering branch
+      // means a PR that bumps a dep also bakes the new tarball into the image
+      // it builds.
+      //
+      // The value reaches a remote shell, so reject anything outside the
+      // git-ref character set rather than try to quote it. A non-matching
+      // branch (or no branch detected) just falls back to main; the prefetch
+      // cache becomes a partial hit, which is fine.
+      const branch = getBranch();
+      const repoRef = branch && /^[\w./-]+$/.test(branch) ? branch : "main";
       if (os === "windows") {
         const remotePath = "C:\\Windows\\Temp\\bootstrap.ps1";
         const args = ci ? ["-CI"] : [];
         await startGroup("Running bootstrap...", async () => {
           await machine.upload(bootstrapPath, remotePath);
+          // Set the env var as a separate Machine-scope write so the script
+          // invocation stays argv-style (no -Command string to interpolate
+          // into). The validated ref is safe in a single-quoted PS literal.
+          await machine.spawnSafe(
+            [
+              "powershell",
+              "-Command",
+              `[Environment]::SetEnvironmentVariable('BUN_BOOTSTRAP_REPO_REF','${repoRef}','Machine')`,
+            ],
+            { stdio: "inherit" },
+          );
           await machine.spawnSafe(["powershell", remotePath, ...args], { stdio: "inherit" });
         });
       } else {
@@ -1537,7 +1561,9 @@ async function main() {
           }
           await startGroup("Running bootstrap...", async () => {
             await machine.upload(bootstrapPath, remotePath);
-            await machine.spawnSafe(["sh", remotePath, ...args], { stdio: "inherit" });
+            await machine.spawnSafe(["env", `BUN_BOOTSTRAP_REPO_REF=${repoRef}`, "sh", remotePath, ...args], {
+              stdio: "inherit",
+            });
           });
         } else if (dockerfilePath) {
           const remotePath = "/tmp/bootstrap.sh";
@@ -1551,7 +1577,10 @@ async function main() {
             console.log("Uploaded agent.mjs");
             agentPath = "";
             bootstrapPath = "";
-            await machine.spawnSafe(["sudo", "bash", remotePath], { stdio: "inherit", cwd: "/tmp" });
+            await machine.spawnSafe(["sudo", "env", `BUN_BOOTSTRAP_REPO_REF=${repoRef}`, "bash", remotePath], {
+              stdio: "inherit",
+              cwd: "/tmp",
+            });
           });
         }
       }

@@ -1,4 +1,4 @@
-# Version: 16
+# Version: 17
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.
@@ -660,7 +660,47 @@ Install-Rust
 Install-Visual-Studio
 Install-PdbAddr2line
 
+function Prefetch-Build-Deps {
+  # Bake a read-only download cache for scripts/build/download.ts
+  # (BUN_BUILD_PREFETCH_DIR). Content-addressed by URL/identity, so a dep
+  # version bump in scripts/build/deps/ just misses the cache for that one
+  # dep — no image rebuild needed.
+  $prefetchDir = "C:\bun-prefetch"
+  New-Item -ItemType Directory -Force -Path $prefetchDir | Out-Null
+
+  # Only bootstrap.ps1 is uploaded to the bake VM, so the repo (and the
+  # prefetch script + scripts/build/deps/*.ts version pins) has to be cloned.
+  # BUN_BOOTSTRAP_REPO_REF lets the orchestrator pin to its triggering commit.
+  $repoRef = if ($env:BUN_BOOTSTRAP_REPO_REF) { $env:BUN_BOOTSTRAP_REPO_REF } else { "main" }
+  $cloneDir = Join-Path $env:TEMP "bun-prefetch-clone"
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $cloneDir
+  & git clone --depth=1 --branch $repoRef https://github.com/oven-sh/bun.git $cloneDir
+  if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
+
+  if (-not (Test-Path "$cloneDir\scripts\prefetch-deps.ts")) {
+    # The ref predates the prefetch script — skip rather than fail the
+    # whole image bake. The build just falls through to the network.
+    Write-Output "prefetch-deps.ts not present at $repoRef; skipping warm cache"
+    Remove-Item -Recurse -Force $cloneDir
+    return
+  }
+
+  # resolveConfig() walks up from cwd to find package.json — run from inside
+  # the clone.
+  Push-Location $cloneDir
+  try {
+    & bun scripts\prefetch-deps.ts $prefetchDir
+    if ($LASTEXITCODE -ne 0) { throw "prefetch-deps.ts failed" }
+  } finally {
+    Pop-Location
+  }
+  Remove-Item -Recurse -Force $cloneDir
+
+  Set-Env "BUN_BUILD_PREFETCH_DIR" $prefetchDir
+}
+
 if ($CI) {
+  Prefetch-Build-Deps
   Install-Buildkite
 }
 

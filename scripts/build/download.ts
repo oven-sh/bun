@@ -30,9 +30,10 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, readFileSync } from "node:fs";
-import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { copyFile, cp, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { basename, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadable } from "node:stream/web";
@@ -48,11 +49,70 @@ const tarExe =
     : "tar";
 
 /**
+ * Read-only prefetch cache baked into CI images by `scripts/prefetch-deps.ts`
+ * (run from bootstrap.{sh,ps1} at image-bake time). When set, downloads check
+ * here first and copy on hit instead of hitting the network.
+ *
+ * Layout:
+ *   <prefetchDir>/by-url/<sha256(url)[:32]>   raw downloaded bytes (any URL)
+ *   <prefetchDir>/extracted/<basename(dest)>/ pre-extracted prebuilt trees
+ *                                             (.identity / .zig-commit inside)
+ *
+ * Both are content-addressed — a dep version bump changes the URL/identity, so
+ * stale prefetch entries are simply not found and the build falls through to
+ * the network. No image rebuild needed when versions change; the baked cache
+ * just becomes a partial hit until the image is next refreshed.
+ */
+export const prefetchDir: string | undefined = process.env.BUN_BUILD_PREFETCH_DIR;
+
+/**
+ * Path under `<dir>/by-url/` for a given download URL. The optional `dir`
+ * lets the warm-cache producer (prefetch-deps.ts) compute the same key
+ * without relying on the module-level env snapshot above.
+ */
+export function prefetchPathForUrl(url: string, dir = prefetchDir): string | undefined {
+  if (dir === undefined) return undefined;
+  const key = createHash("sha256").update(url).digest("hex").slice(0, 32);
+  return resolve(dir, "by-url", key);
+}
+
+/**
+ * If `prefetchDir/extracted/<basename(dest)>/<stampFile>` matches `expected`,
+ * copy that tree to `dest` and return true. Used by fetchPrebuilt/fetchZig to
+ * skip download+extract entirely when the image has the right version baked.
+ *
+ * Recursive copy (not symlink) so the per-build cacheDir stays self-contained
+ * and writable; the prefetch tree may be read-only.
+ */
+export async function tryPrefetchExtracted(dest: string, stampFile: string, expected: string): Promise<boolean> {
+  if (prefetchDir === undefined) return false;
+  const src = resolve(prefetchDir, "extracted", basename(dest));
+  const stamp = resolve(src, stampFile);
+  if (!existsSync(stamp) || readFileSync(stamp, "utf8").trim() !== expected) return false;
+  console.log(`using prefetch cache: ${src}`);
+  await rm(dest, { recursive: true, force: true });
+  await mkdir(resolve(dest, ".."), { recursive: true });
+  await cp(src, dest, { recursive: true });
+  return true;
+}
+
+/**
  * Download a URL to a file with retry. Atomic: temp file → rename on success.
+ *
+ * Checks `prefetchDir/by-url/` first — on a CI image with a warm prefetch
+ * cache the network is never touched for matching URLs.
  *
  * @param logPrefix Shown in progress/retry messages: `[<logPrefix>] retry 2/5`
  */
 export async function downloadWithRetry(url: string, dest: string, logPrefix: string): Promise<void> {
+  const prefetched = prefetchPathForUrl(url);
+  if (prefetched !== undefined && existsSync(prefetched)) {
+    console.log(`using prefetch cache: ${prefetched}`);
+    await mkdir(resolve(dest, ".."), { recursive: true });
+    await copyFile(prefetched, dest);
+    return;
+  }
+
   const maxAttempts = 5;
   let lastError: unknown;
 
@@ -68,6 +128,10 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
       const res = await fetch(url, { headers: { "User-Agent": "bun-build-system" } });
       if (!res.ok || res.body === null) {
         lastError = new BuildError(`HTTP ${res.status} ${res.statusText} for ${url}`);
+        // 4xx is deterministic — a bad URL/missing artifact won't succeed on
+        // retry. Only loop on 5xx/network where the CDN may recover. Can't
+        // `throw` here — the catch below would swallow it and keep looping.
+        if (res.status >= 400 && res.status < 500) attempt = maxAttempts;
         continue;
       }
 
@@ -200,6 +264,9 @@ export async function fetchPrebuilt(
     }
     console.log(`identity changed (was ${existing.slice(0, 16)}, now ${identity.slice(0, 16)}), re-fetching`);
   }
+
+  // ─── Prefetch cache: pre-extracted tree with matching identity? ───
+  if (await tryPrefetchExtracted(dest, ".identity", identity)) return;
 
   console.log(`fetching ${url}`);
 

@@ -136,6 +136,21 @@ RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64";
 
 RUN mkdir -p /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /etc/buildkite-agent /var/lib/buildkite-agent/cache/bun
 
+# Warm BUN_BUILD_PREFETCH_DIR (consulted by scripts/build/download.ts before
+# any network fetch). Content-addressed by URL/identity, so a dep version bump
+# in scripts/build/deps/ just misses the cache for that one dep — no image
+# rebuild needed. The clone is only for scripts/prefetch-deps.ts + its
+# scripts/build/ imports, which aren't in the docker context.
+ARG BUN_REPO_REF=main
+RUN git clone --depth=1 --branch ${BUN_REPO_REF} https://github.com/oven-sh/bun.git /tmp/bun-clone \
+    && if [ -f /tmp/bun-clone/scripts/prefetch-deps.ts ]; then \
+         (cd /tmp/bun-clone && bun scripts/prefetch-deps.ts /opt/bun-prefetch); \
+       else \
+         echo "prefetch-deps.ts not present at ${BUN_REPO_REF}; skipping warm cache"; \
+       fi \
+    && rm -rf /tmp/bun-clone
+ENV BUN_BUILD_PREFETCH_DIR=/opt/bun-prefetch
+
 # The following is necessary to configure buildkite to use a stable
 # checkout directory for ccache to be effective.
 RUN mkdir -p -m 755 /var/lib/buildkite-agent/hooks && \
@@ -144,6 +159,7 @@ RUN mkdir -p -m 755 /var/lib/buildkite-agent/hooks && \
 set -efu
 
 export BUILDKITE_BUILD_CHECKOUT_PATH=/var/lib/buildkite-agent/build
+export BUN_BUILD_PREFETCH_DIR=/opt/bun-prefetch
 EOF
 
 RUN chmod 744 /var/lib/buildkite-agent/hooks/environment

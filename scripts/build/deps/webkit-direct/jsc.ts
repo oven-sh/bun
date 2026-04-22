@@ -371,7 +371,13 @@ export const webkitJSC: Dependency = {
     return {
       kind: "direct",
       pic: true,
-      sources: [...bundles, ...nonUnified, remoteSocket, `${DS}/JSCBuiltins.cpp`],
+      sources: [
+        ...bundles, ...nonUnified, remoteSocket, `${DS}/JSCBuiltins.cpp`,
+        // cmake builds this as a separate LowLevelInterpreterLib OBJECT
+        // target — it #includes LLIntAssembly.h to emit the interpreter's
+        // native assembly (vmEntry*, jsc_llint_*, wasm trampolines).
+        "Source/JavaScriptCore/llint/LowLevelInterpreter.cpp",
+      ],
       includes: [
         ...SRC_INCLUDES,
         // <wtf/X.h> resolves directly from Source/WTF (forwarding tree is a
@@ -440,8 +446,25 @@ export const webkitJSC: Dependency = {
     };
   },
 
-  provides: () => ({
-    libs: [],
-    includes: [],
-  }),
+  // What bun's own bindings need: the flattened <JavaScriptCore/X.h> tree,
+  // <wtf/X.h> via Source/WTF, <bmalloc/X.h> via webkit-bmalloc's forwarding,
+  // and the buildDir holding cmakeconfig.h. Mirrors webkit.ts's local-mode
+  // provides() but with our per-layer buildDirs.
+  provides: cfg => {
+    const jscBuild = depBuildDir(cfg, "webkit-jsc");
+    return {
+      libs: [],
+      includes: [
+        // cmakeconfig.h + the bmalloc/ forwarding tree.
+        depBuildDir(cfg, "webkit-bmalloc"),
+        // <JavaScriptCore/X.h> (flattened forwarding) + the bare X.h some
+        // bun headers use.
+        jscBuild,
+        `${jscBuild}/JavaScriptCore`,
+        `${jscBuild}/DerivedSources`,
+        // <wtf/X.h> — Source/WTF mirrors it 1:1, no staging needed.
+        "Source/WTF",
+      ],
+    };
+  },
 };

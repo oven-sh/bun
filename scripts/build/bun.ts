@@ -66,9 +66,10 @@ function systemLibs(cfg: Config): string[] {
     } else {
       libs.push("-latomic");
     }
-    // Linux local WebKit: link system ICU (prebuilt bundles its own).
-    // Assumes system ICU is in default lib paths — true on most distros.
-    if (cfg.webkit === "local") {
+    // Linux local/direct WebKit: link system ICU (prebuilt bundles its
+    // own). Assumes system ICU is in default lib paths — true on most
+    // distros.
+    if (cfg.webkit !== "prebuilt") {
       libs.push("-licudata", "-licui18n", "-licuuc");
     }
   }

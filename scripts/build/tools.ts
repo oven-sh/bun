@@ -460,8 +460,11 @@ export function resolveLlvmToolchain(
   if (os === "windows") {
     nasm = findTool({
       names: ["nasm"],
-      // win-x64 always needs nasm (boringssl); win-aarch64 uses gas .S.
-      required: arch === "x64",
+      // boringssl's win-x64 .asm needs nasm; win-aarch64 uses gas .S.
+      // `arch` here is the HOST arch — the target isn't known yet inside
+      // resolveToolchain(). compile.ts:nasm() asserts at the use site
+      // with the same hint, so a missing nasm still fails clearly.
+      required: false,
       hint: "Install from https://nasm.us or `winget install NASM.NASM`",
     })?.path;
   }

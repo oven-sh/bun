@@ -25,6 +25,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { writeIfChanged } from "./fs.ts";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { fetchZig } from "./zig.ts";
@@ -68,7 +69,10 @@ async function main(): Promise<void> {
         assert(pairs[i]!.length > 0, `subst: empty <from> at index ${i}`);
         text = text.split(pairs[i]!).join(pairs[i + 1]!);
       }
-      await writeFile(outPath, text);
+      // dep_subst is restat=1 — preserve mtime when the rendered text is
+      // unchanged so depfile-tracked .o files (libarchive ← zlib.h) don't
+      // recompile after a no-op re-fetch.
+      writeIfChanged(outPath, text);
       return;
     }
 

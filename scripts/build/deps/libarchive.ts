@@ -118,7 +118,9 @@ export const libarchive: Dependency = {
   build: cfg => ({
     kind: "direct",
     sources: [...SOURCES, ...(cfg.windows ? SOURCES_WIN : [])].map(s => `libarchive/${s}.c`),
-    includes: ["libarchive"],
+    // zlib's build dir holds the generated zlib.h (subst'd from .in) that
+    // the gzip filter includes. Absolute path → emitDirect quotes it.
+    includes: ["libarchive", depBuildDir(cfg, "zlib")],
     pic: true,
     defines: {
       HAVE_CONFIG_H: 1,
@@ -128,7 +130,6 @@ export const libarchive: Dependency = {
     },
     cflags: [
       ...(cfg.windows ? [] : ["-fvisibility=hidden"]),
-      `-I${depBuildDir(cfg, "zlib")}`,
       // Vendored C; const-discard casts in archive_options/_pack_dev/etc.
       "-Wno-incompatible-pointer-types-discards-qualifiers",
     ],

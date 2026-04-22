@@ -27,7 +27,9 @@ const SOURCES = [
   "decompress/zstd_decompress", "decompress/zstd_decompress_block",
   "dictBuilder/cover", "dictBuilder/divsufsort", "dictBuilder/fastcover",
   "dictBuilder/zdict",
-  "legacy/zstd_v01", "legacy/zstd_v02", "legacy/zstd_v03", "legacy/zstd_v04",
+  // ZSTD_LEGACY_SUPPORT=5 → zstd_legacy.h only dispatches to v05+;
+  // v01–v04 would compile but never be reached. cmake's build does the
+  // same (it loops `RANGE ZSTD_LEGACY_LEVEL 7`).
   "legacy/zstd_v05", "legacy/zstd_v06", "legacy/zstd_v07",
 ].map(s => `lib/${s}.c`);
 

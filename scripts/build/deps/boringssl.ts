@@ -20,6 +20,7 @@
  *           console.log("nasm\n",f([...j.bcm.nasm,...j.crypto.nasm]))'
  */
 
+import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
 import { depSourceDir } from "../source.ts";
 
@@ -67,9 +68,9 @@ export const boringssl: Dependency = {
             ...(cfg.linux ? ["-Wa,--noexecstack"] : []),
           ],
       // nasm needs -I with a trailing slash and CodeView debug info to
-      // match cmake's `-gcv8`. Absolute path — ninja runs with buildDir
-      // as cwd, so a repo-relative path wouldn't resolve.
-      nasmflags: ["-fwin64", "-gcv8", `-I${depSourceDir(cfg, "boringssl")}/gen/`],
+      // match cmake's `-gcv8`. Absolute path quoted — a checkout root
+      // with a space (C:\Users\John Doe\bun) would otherwise split argv.
+      nasmflags: ["-fwin64", "-gcv8", `-I${quote(depSourceDir(cfg, "boringssl") + "/gen/", true)}`],
     };
     return spec;
   },

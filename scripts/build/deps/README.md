@@ -7,11 +7,14 @@ libraries/headers it provides.
 ## Adding a dependency
 
 1. Copy `hdrhistogram.ts` (the simplest direct dep) to `<name>.ts`
-2. Fill in `name`, `repo`, `commit`, `provides.libs`, `provides.includes`
+2. Fill in `name`, `repo`, `commit`, `sources`, `includes`, `provides.includes`
 3. Add `import { <name> } from "./<name>.ts"` + entry in `allDeps` array in `index.ts`
 4. `bun run scripts/build/phase3-test.ts` to verify it builds
 
-That's it. For most deps you're done.
+That's it. For most deps you're done. If the dep's build is too entangled
+to list sources by hand (zlib-ng's per-file SIMD flags are about the
+limit), use `kind: "nested-cmake"` instead — see `NestedCmakeBuild` in
+`../source.ts` for the fields.
 
 **`name` must match the directory on disk** (`vendor/<name>/`). If your repo
 is `oven-sh/WebKit`, name it `"WebKit"` — that's what `git clone` creates.
@@ -60,22 +63,24 @@ export const mydep: Dependency = {
   // (for -I cross-dep headers). See libarchive for an example.
   fetchDeps: ["zlib"],
 
-  // How to build.
+  // How to build. `direct` lists sources explicitly; emitDirect compiles
+  // each as a first-class cc/cxx edge and the resulting .o's go straight
+  // into bun's link line. See `DirectBuild` in ../source.ts for all
+  // optional fields (lang/pic/defines/headers/codegen).
   build: cfg => ({
-    kind: "nested-cmake",
-    args: { MY_OPTION: "ON" },
-    // targets: [...],       // cmake --build --target X. Defaults to lib names.
-    // extraCFlags: [...],   // Appended to CMAKE_C_FLAGS.
-    // libSubdir: "lib",     // If libs land in a subdir of the build dir.
-    // sourceSubdir: "...",  // If CMakeLists.txt isn't at the source root.
-    // pic: true,            // Add -fPIC (and suppress apple -fno-pic).
-    // buildType: "Release", // Force build type (e.g. lshpack).
+    kind: "direct",
+    sources: ["src/foo.c", "src/bar.c"],
+    includes: [".", "include"],
+    // defines: { MYDEP_STATIC: 1 },
+    // cflags: ["-std=c11"],
+    // headers: { "config.h": "..." },   // Hand-written config.h.
   }),
 
-  // What this dep provides. Paths relative to BUILD dir (libs) or
-  // SOURCE dir (includes).
+  // What this dep exposes to bun's own compile. `libs` is ignored for
+  // direct builds (the .o's are already on the link line); `includes`
+  // are relative to the SOURCE dir.
   provides: cfg => ({
-    libs: ["mydep"], // bare name → libmydep.a; path with '.' → used as-is
+    libs: [],
     includes: ["include"],
     // defines: ["MY_DEP_STATIC=1"],  // Preprocessor defines for bun's compile.
   }),

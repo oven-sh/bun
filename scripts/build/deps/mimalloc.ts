@@ -94,8 +94,12 @@ export const mimalloc: Dependency = {
     // TLS model: initial-exec for the static link into bun's executable
     // (one DTV slot, no __tls_get_addr indirection). musl static needs
     // local-dynamic — initial-exec there can SIGSEGV on dlopen of native
-    // addons because musl's static TLS block is fixed-size.
-    cflags.push(cfg.abi === "musl" ? "-ftls-model=local-dynamic" : "-ftls-model=initial-exec");
+    // addons because musl's static TLS block is fixed-size. ELF/Mach-O
+    // only — clang-cl doesn't recognize -ftls-model (COFF has no TLS
+    // models; mimalloc's cmake gates it behind NOT WIN32 too).
+    if (!cfg.windows) {
+      cflags.push(cfg.abi === "musl" ? "-ftls-model=local-dynamic" : "-ftls-model=initial-exec");
+    }
 
     if (override) cflags.push("-fno-builtin-malloc");
 

@@ -112,11 +112,7 @@ test.skipIf(!isLinux || !cc)(
 
     const runOnce = async () => {
       await using proc = Bun.spawn({ cmd: [out], env: runEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       // On regression, diagnostics go to stderr — surface them in the failure
       // message rather than letting the pipe swallow them. Debug+ASAN builds
       // print benign "ASAN interferes..." and "debug warn:" lines we ignore.

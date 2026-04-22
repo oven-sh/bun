@@ -35,6 +35,18 @@ export function expand(p: string, cfg: Config, buildDir: string): string {
 }
 
 /**
+ * ICU install prefix. Linux uses the distro package (default search paths
+ * suffice). Darwin needs brew's icu4c — Apple ships libicucore.dylib but
+ * not the headers, and the version skew between Apple's lib and brew's
+ * headers makes mixing them unsafe, so use brew for both -I and -L.
+ * Windows builds ICU from source via build-icu.ps1 (TODO: hook up).
+ */
+export function icuPrefix(cfg: Config): string | undefined {
+  if (!cfg.darwin) return undefined;
+  return cfg.arm64 ? "/opt/homebrew/opt/icu4c" : "/usr/local/opt/icu4c";
+}
+
+/**
  * Language-agnostic flags WebKit applies to every TU (cmake's
  * WebKitCompilerFlags.cmake). Goes to both .c and .cpp.
  */
@@ -47,6 +59,8 @@ export function webkitCFlags(cfg: Config): string[] {
     "-Wno-tautological-compare",
   ];
   if (!cfg.windows) flags.push("-DU_STATIC_IMPLEMENTATION=1");
+  const icu = icuPrefix(cfg);
+  if (icu !== undefined) flags.push(`-I${icu}/include`);
   return flags;
 }
 

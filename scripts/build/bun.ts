@@ -75,9 +75,18 @@ function systemLibs(cfg: Config): string[] {
   }
 
   if (cfg.darwin) {
-    // icucore: system ICU framework.
     // resolv: DNS resolution (getaddrinfo et al).
-    libs.push("-licucore", "-lresolv");
+    libs.push("-lresolv");
+    // ICU: prebuilt mode links Apple's icucore (no headers shipped, but
+    // the prebuilt was built against matching ones). direct/local link
+    // brew's icu4c — that's where the headers came from, and Apple's lib
+    // is a different major version.
+    if (cfg.webkit === "prebuilt") {
+      libs.push("-licucore");
+    } else {
+      const prefix = cfg.arm64 ? "/opt/homebrew/opt/icu4c" : "/usr/local/opt/icu4c";
+      libs.push(`-L${prefix}/lib`, "-licuuc", "-licui18n", "-licudata");
+    }
   }
 
   if (cfg.windows) {

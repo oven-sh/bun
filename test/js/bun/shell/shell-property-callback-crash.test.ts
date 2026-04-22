@@ -25,6 +25,7 @@ try {
 }
 const v20 = {};
 Bun.gc(true);
+console.log("ok");
 `,
     ],
     env: bunEnv,
@@ -34,5 +35,6 @@ Bun.gc(true);
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);
 });

@@ -703,7 +703,7 @@ declare module "bun" {
       error?: (
         this: Server<WebSocketData>,
         error: ErrorLike,
-        request: Request,
+        request: Request | undefined,
       ) => Response | Promise<Response> | void | Promise<void>;
 
       /**

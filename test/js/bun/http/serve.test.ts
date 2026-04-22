@@ -790,6 +790,60 @@ describe("streaming", () => {
       );
     });
 
+    it("passes the Request when a routes: handler throws synchronously", async () => {
+      let requestFromRoute: Request | undefined;
+      let requestFromError: Request | undefined;
+      await using srv = Bun.serve({
+        port: 0,
+        routes: {
+          "/boom/:id": req => {
+            requestFromRoute = req;
+            throw new Error("route boom");
+          },
+        },
+        error(_e, request) {
+          requestFromError = request;
+          return new Response(`route:${request?.url}|${request?.method}|${request?.headers.get("x-tag")}`, {
+            status: 500,
+          });
+        },
+      });
+      const url = new URL("/boom/abc", srv.url).toString();
+      const response = await fetch(url, { headers: { "x-tag": "route-sync" } });
+      expect(response.status).toBe(500);
+      expect(await response.text()).toBe(`route:${url}|GET|route-sync`);
+      expect(requestFromError).toBeInstanceOf(Request);
+      expect(requestFromError!.url).toBe(url);
+      // Same JS wrapper as the one the route handler received.
+      expect(requestFromError).toBe(requestFromRoute);
+    });
+
+    it("passes the Request when a routes: handler rejects asynchronously", async () => {
+      let requestFromRoute: Request | undefined;
+      let requestFromError: Request | undefined;
+      await using srv = Bun.serve({
+        port: 0,
+        routes: {
+          "/boom": async req => {
+            requestFromRoute = req;
+            await Bun.sleep(1);
+            throw new Error("route async boom");
+          },
+        },
+        error(_e, request) {
+          requestFromError = request;
+          return new Response(`route-async:${request?.url}`, { status: 500 });
+        },
+      });
+      const url = new URL("/boom", srv.url).toString();
+      const response = await fetch(url, { method: "POST", body: "hi" });
+      expect(response.status).toBe(500);
+      expect(await response.text()).toBe(`route-async:${url}`);
+      expect(requestFromError).toBeInstanceOf(Request);
+      expect(requestFromError!.method).toBe("POST");
+      expect(requestFromError).toBe(requestFromRoute);
+    });
+
     it("is backwards-compatible with single-argument error handlers", async () => {
       let receivedError: Error | undefined;
       await runTest(

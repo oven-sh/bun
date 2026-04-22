@@ -242,6 +242,14 @@ pub fn tryJSValue(this: *const Request) ?JSValue {
     return this.#js_ref.tryGet();
 }
 
+/// Record an externally-created JS wrapper (for example, a `JSBunRequest`
+/// allocated in C++ for the `routes:` code path) so that `tryJSValue` can
+/// find it later. Paired with `Bun__ServerRouteList__callRoute`.
+pub fn setJSRef(this: *Request, js_value: JSValue) void {
+    bun.debugAssert(js_value != .zero);
+    this.#js_ref = .initWeak(js_value);
+}
+
 extern "C" fn Bun__JSRequest__createForBake(globalObject: *jsc.JSGlobalObject, requestPtr: *Request) callconv(jsc.conv) jsc.JSValue;
 pub fn toJSForBake(this: *Request, globalObject: *JSGlobalObject) bun.JSError!JSValue {
     const js_value = try bun.jsc.fromJSHostCall(

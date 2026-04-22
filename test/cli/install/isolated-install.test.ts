@@ -512,14 +512,10 @@ describe("isolated workspaces", () => {
         dependencies: { "shared-lib": "workspace:*" },
       }),
       "app/index.js": `import { check } from "shared-lib"; console.log(check("ok"));`,
-      // Published-style deps the symlinked workspace consumes via
-      // `file:`, so the links go into `<project>/node_modules/.bun/<entry>/...`
-      // just like npm deps — that's the shape the bug lived in. Placed
-      // next to the *real* workspace so the `file:` path resolves the
-      // same whether bun walks the logical or canonical workspace dir.
-      // Covers both an unscoped dep (link parent is `node_modules`) and a
-      // scoped one (link parent is `node_modules/@scope`, one level deeper
-      // — the relative target has to account for it).
+      // Vendor deps live next to the *real* workspace so `file:` resolves
+      // the same through logical or canonical paths. Unscoped + scoped
+      // both covered — the scoped link parent is one level deeper, which
+      // the relative target has to account for.
       "real-workspaces/vendor/shared-dep/package.json": JSON.stringify({
         name: "shared-dep",
         version: "1.0.0",
@@ -555,17 +551,7 @@ describe("isolated workspaces", () => {
     await mkdir(join(root, "repos"), { recursive: true });
     await symlink(join("..", "real-workspaces"), join(root, "repos", "ext"));
 
-    await using install = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      env: bunEnv,
-      cwd: root,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [installStderr, installExit] = await Promise.all([install.stderr.text(), install.exited]);
-    expect(installStderr).not.toContain("error:");
-    expect(installExit).toBe(0);
+    await runBunInstall(bunEnv, root);
 
     // Package-local dep links live at the real member path. Both the
     // unscoped and the scoped target must resolve up through
@@ -584,11 +570,7 @@ describe("isolated workspaces", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // ASAN may write a warning to stderr in debug builds — the important
-    // signal is that the module resolved and the value printed.
-    expect(stderr).not.toContain("ENOENT");
-    expect(stderr).not.toContain("Cannot find");
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout).toBe("shared-dep+@myscope/helper:ok\n");
     expect(exitCode).toBe(0);
   });

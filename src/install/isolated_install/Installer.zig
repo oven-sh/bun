@@ -949,41 +949,42 @@ pub const Installer = struct {
                     const string_buf = lockfile.buffers.string_bytes.items;
                     const dependencies = lockfile.buffers.dependencies.items;
 
-                    // For a workspace entry whose declared `<workspace_path>`
-                    // traverses a symlink, the string-built staging node_modules
-                    // path resolves *physically* to a different directory than
-                    // the stored string suggests. Resolve that directory's real
-                    // path once so every dep symlink's relative target is
-                    // anchored at the location where the symlink is actually
-                    // written, not at the symlinked string path. If the path
-                    // is already canonical, leave this null so the existing
-                    // hot path runs with no extra syscalls.
+                    // If the workspace path traverses a symlink, dep symlinks
+                    // live under the realpath, so their relative targets must
+                    // be computed from there — not from the logical string,
+                    // which would walk past the project root. Null when the
+                    // path is already canonical so the hot path stays
+                    // syscall-free.
+                    //
+                    // Open/realpath failing means we can't tell whether we'd
+                    // be writing a dangling link, so surface the sys error
+                    // instead of silently falling back to the logical-path
+                    // computation (which is exactly what produced the broken
+                    // link this branch exists to fix).
                     var canonical_entry_node_modules: ?bun.AbsPath(.{ .sep = .auto }) = null;
                     defer if (canonical_entry_node_modules) |*p| p.deinit();
-                    if (pkg_res.tag == .workspace) resolve_canonical: {
+                    if (pkg_res.tag == .workspace) {
                         var workspace_abs: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
                         defer workspace_abs.deinit();
                         workspace_abs.append(pkg_res.value.workspace.slice(string_buf));
 
                         const dir_fd = switch (bun.sys.open(workspace_abs.sliceZ(), bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                             .result => |fd| fd,
-                            .err => break :resolve_canonical,
+                            .err => |err| return .failure(.{ .symlink_dependencies = err }),
                         };
                         defer dir_fd.close();
 
                         var real_buf: bun.PathBuffer = undefined;
                         const real = switch (bun.sys.getFdPath(dir_fd, &real_buf)) {
                             .result => |r| r,
-                            .err => break :resolve_canonical,
+                            .err => |err| return .failure(.{ .symlink_dependencies = err }),
                         };
 
-                        if (strings.eqlLong(real, workspace_abs.slice(), true)) {
-                            break :resolve_canonical;
+                        if (!strings.eqlLong(real, workspace_abs.slice(), true)) {
+                            var canonical: bun.AbsPath(.{ .sep = .auto }) = .from(real);
+                            canonical.append("node_modules");
+                            canonical_entry_node_modules = canonical;
                         }
-
-                        var canonical: bun.AbsPath(.{ .sep = .auto }) = .from(real);
-                        canonical.append("node_modules");
-                        canonical_entry_node_modules = canonical;
                     }
 
                     for (entry_dependencies[this.entry_id.get()].slice()) |dep| {
@@ -1034,28 +1035,16 @@ pub const Installer = struct {
 
                         const target = target: {
                             if (canonical_entry_node_modules) |*canonical| {
-                                // Symlinked workspace directory: compute the
-                                // link string relative to the physical dest
-                                // parent so the stored target resolves from
-                                // where the symlink lives on disk, not from
-                                // the symlinked logical path (which is
-                                // shallower in the tree). Append the same
-                                // trailing segments as `dest` and then
-                                // `undo(1)` so the from-base matches the
-                                // symlink's real parent directory — critical
-                                // for scoped names like `@scope/pkg`, whose
-                                // parent is `<real_ws>/node_modules/@scope/`,
-                                // one level deeper than `<real_ws>/node_modules`.
+                                // Mirror `dest`'s trailing `dep_name` + `undo(1)`
+                                // so the from-base is the symlink's real parent
+                                // — one level deeper for scoped names like
+                                // `@scope/pkg`. `entryStoreNodeModulesPackageName`
+                                // is null for `.workspace`, so the collision
+                                // case above can't fire here.
                                 var save = canonical.save();
                                 defer save.restore();
 
                                 canonical.append(dep_name);
-                                if (installer.entryStoreNodeModulesPackageName(dep_id, pkg_id, &pkg_res, pkg_names)) |entry_node_modules_name| {
-                                    if (strings.eqlLong(dep_name, entry_node_modules_name, true)) {
-                                        canonical.append("node_modules");
-                                        canonical.append(dep_name);
-                                    }
-                                }
                                 canonical.undo(1);
                                 break :target canonical.relative(&dep_store_path);
                             }

@@ -1134,6 +1134,9 @@ pub const Transpiler = struct {
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = transpiler.options.auto_import_jsx;
                 opts.warn_about_unbundled_modules = !target.isBun();
+                // JavaScriptCore implements `using` / `await using` natively, so
+                // when targeting Bun there is no need to lower them.
+                opts.features.lower_using = !target.isBun();
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 opts.features.minify_syntax = transpiler.options.minify_syntax;

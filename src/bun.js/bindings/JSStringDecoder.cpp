@@ -8,6 +8,7 @@
 #include "JSDOMAttribute.h"
 #include "headers.h"
 #include "JSDOMConvertEnumeration.h"
+#include "JSBufferEncodingType.h"
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include "BunClientData.h"
 #include "wtf/text/ASCIILiteral.h"

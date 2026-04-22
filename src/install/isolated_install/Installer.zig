@@ -548,6 +548,122 @@ pub const Installer = struct {
                                         comptime bun.OSPathLiteral("bun.lock"),
                                     };
 
+                                    // If the producer's package.json has a `files`
+                                    // array, `bun pm pack` treats it as a root-level
+                                    // whitelist: anything not named there (and not
+                                    // auto-included like package.json / README* /
+                                    // LICENSE* / CHANGELOG*) is stripped from the
+                                    // tarball. Mirror that here by pre-scanning the
+                                    // producer's root and appending non-whitelisted
+                                    // names to the Walker skip lists.
+                                    //
+                                    // Limitation: the Walker matches by basename at
+                                    // any depth, so a root-only exclusion also skips
+                                    // same-named entries nested under a whitelisted
+                                    // dir. Uncommon in practice (producers don't
+                                    // nest a second `src/` inside `dist/`); a
+                                    // follow-up can replace this with path-based
+                                    // filtering or reuse pack_command directly.
+                                    //
+                                    // Also unhandled here: `main`/`bin`/`module` is
+                                    // outside the `files` whitelist — npm would
+                                    // still publish the referenced file.
+                                    var extra_skip_arena = std.heap.ArenaAllocator.init(manager.allocator);
+                                    defer extra_skip_arena.deinit();
+                                    const extra_alloc = extra_skip_arena.allocator();
+                                    var extra_skip_dirs: std.ArrayListUnmanaged(bun.OSPathSlice) = .{};
+                                    var extra_skip_files: std.ArrayListUnmanaged(bun.OSPathSlice) = .{};
+                                    // Windows `DirIterator` yields WTF-16 basenames,
+                                    // which don't fit the ASCII-u8 comparators used
+                                    // below. Treat the `files` whitelist as a
+                                    // POSIX-only enhancement for now; Windows linked
+                                    // installs still apply the base default-excludes.
+                                    if (comptime !Environment.isWindows) {
+                                        var pkg_path_buf: bun.PathBuffer = undefined;
+                                        const pkg_path = bun.path.joinAbsStringBufZ(
+                                            producer_path,
+                                            &pkg_path_buf,
+                                            &.{"package.json"},
+                                            .auto,
+                                        );
+                                        switch (manager.workspace_package_json_cache.getWithPath(
+                                            manager.allocator,
+                                            manager.log,
+                                            pkg_path,
+                                            .{},
+                                        )) {
+                                            .entry => |json_entry| blk: {
+                                                var files_iter = json_entry.root.getArray("files") orelse break :blk;
+
+                                                var whitelist: std.StringHashMapUnmanaged(void) = .{};
+                                                // Only ASCII exact-match entries plus a
+                                                // separate always-include check below.
+                                                while (files_iter.next()) |item| {
+                                                    const s = item.asString(manager.allocator) orelse continue;
+                                                    if (s.len == 0) continue;
+                                                    // Collapse "dist/bundle.js" → "dist":
+                                                    // whitelist the top-level segment so
+                                                    // we keep enough of the tree for the
+                                                    // nested entry to land.
+                                                    const slash = std.mem.indexOfAny(u8, s, "/\\") orelse s.len;
+                                                    const top = s[0..slash];
+                                                    if (top.len == 0) continue;
+                                                    whitelist.put(extra_alloc, top, {}) catch continue;
+                                                }
+
+                                                // Iterate on a *separate* fd so we don't
+                                                // consume `folder_dir`'s dir stream —
+                                                // Hardlinker's Walker will `getdents`
+                                                // that same fd and rely on it being at
+                                                // the start.
+                                                const scan_fd = switch (bun.openDirForIteration(FD.cwd(), producer_path)) {
+                                                    .result => |fd| fd,
+                                                    .err => break :blk,
+                                                };
+                                                defer scan_fd.close();
+
+                                                var root_iter = bun.DirIterator.iterate(scan_fd, if (Environment.isWindows) .u16 else .u8);
+                                                root_loop: while (root_iter.next().unwrap() catch null) |root_entry| {
+                                                    const name_slice = root_entry.name.slice();
+                                                    // Auto-included regardless of `files`:
+                                                    if (bun.strings.eqlComptime(name_slice, "package.json")) continue;
+                                                    inline for (.{ "README", "CHANGELOG", "LICENSE", "LICENCE" }) |prefix| {
+                                                        if (name_slice.len >= prefix.len and
+                                                            bun.strings.eqlCaseInsensitiveASCII(name_slice[0..prefix.len], prefix, true) and
+                                                            (name_slice.len == prefix.len or name_slice[prefix.len] == '.'))
+                                                        {
+                                                            continue :root_loop;
+                                                        }
+                                                    }
+                                                    if (whitelist.contains(name_slice)) continue;
+                                                    const stored = extra_alloc.dupe(bun.OSPathChar, name_slice) catch continue;
+                                                    const stored_slice: bun.OSPathSlice = stored;
+                                                    switch (root_entry.kind) {
+                                                        .directory => extra_skip_dirs.append(extra_alloc, stored_slice) catch {},
+                                                        else => extra_skip_files.append(extra_alloc, stored_slice) catch {},
+                                                    }
+                                                }
+                                            },
+                                            else => {},
+                                        }
+                                    }
+
+                                    // Concat base skip lists with per-producer extras.
+                                    const final_skip_dirs: []const bun.OSPathSlice = dirs: {
+                                        if (extra_skip_dirs.items.len == 0) break :dirs linked_skip_dirs;
+                                        const combined = extra_alloc.alloc(bun.OSPathSlice, linked_skip_dirs.len + extra_skip_dirs.items.len) catch break :dirs linked_skip_dirs;
+                                        @memcpy(combined[0..linked_skip_dirs.len], linked_skip_dirs);
+                                        @memcpy(combined[linked_skip_dirs.len..], extra_skip_dirs.items);
+                                        break :dirs combined;
+                                    };
+                                    const final_skip_files: []const bun.OSPathSlice = files: {
+                                        if (extra_skip_files.items.len == 0) break :files linked_skip_files;
+                                        const combined = extra_alloc.alloc(bun.OSPathSlice, linked_skip_files.len + extra_skip_files.items.len) catch break :files linked_skip_files;
+                                        @memcpy(combined[0..linked_skip_files.len], linked_skip_files);
+                                        @memcpy(combined[linked_skip_files.len..], extra_skip_files.items);
+                                        break :files combined;
+                                    };
+
                                     const uses_global_store_link = installer.entryUsesGlobalStore(this.entry_id);
                                     if (uses_global_store_link) {
                                         // Previous staging from a crashed run would
@@ -585,8 +701,8 @@ pub const Installer = struct {
                                                 folder_dir,
                                                 src,
                                                 dest,
-                                                linked_skip_files,
-                                                linked_skip_dirs,
+                                                final_skip_files,
+                                                final_skip_dirs,
                                             );
                                             defer hardlinker.deinit();
 
@@ -634,8 +750,8 @@ pub const Installer = struct {
                                                 folder_dir,
                                                 src_path,
                                                 dest,
-                                                linked_skip_files,
-                                                linked_skip_dirs,
+                                                final_skip_files,
+                                                final_skip_dirs,
                                             );
                                             defer file_copier.deinit();
 

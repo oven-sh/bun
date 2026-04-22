@@ -2248,4 +2248,110 @@ describe("bun link integration", () => {
     const sortedPublished = [...publishedFiles].sort();
     expect(sortedInstalled).toEqual(sortedPublished);
   });
+
+  // Real producers restrict the published tree with `package.json#files`.
+  // Content-ui (the motivating repo) uses `"files": ["dist"]` — everything
+  // else (src/, docs/, .storybook/, config files) is dev-only and must not
+  // end up inside a consumer's `.bun/<hash>/<pkg>/`. Same capability
+  // assertion as the prior test; the producer shape is what changes.
+  test("isolated: .bun entry honors producer's package.json#files whitelist", async () => {
+    const env = hermeticEnv();
+
+    const producer = tempDir("linkpkg-fileswl-", {
+      "package.json": JSON.stringify({ name: "no-deps", version: "1.0.0", files: ["dist"] }),
+      "README.md": "# content\n",
+      "dist/bundle.js": "module.exports = 'BUILT';",
+      "src/index.ts": "export {}",
+      "docs/guide.md": "# docs\n",
+      ".storybook/main.js": "module.exports = {};",
+      ".github/workflows/ci.yml": "name: ci\n",
+      "tsconfig.json": "{}",
+      "vite.config.ts": "export default {};",
+    });
+
+    await using packProc = spawn({
+      cmd: [bunExe(), "pm", "pack", "--dry-run"],
+      cwd: String(producer),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [packStdout, packStderr, packExit] = await Promise.all([
+      packProc.stdout.text(),
+      packProc.stderr.text(),
+      packProc.exited,
+    ]);
+    if (packExit !== 0) throw new Error(`bun pm pack failed:\n${packStderr}`);
+    const publishedFiles = new Set<string>();
+    for (const line of packStdout.split("\n")) {
+      const m = line.match(/^packed\s+\S+\s+(.+?)\s*$/);
+      if (m) publishedFiles.add(m[1]);
+    }
+    // Sanity: `files: ["dist"]` should restrict to package.json + README +
+    // dist/*. If bun pm pack reports more than that, either the test's
+    // producer shape drifted or publish semantics changed — either way
+    // the capability assertion below is no longer a useful test.
+    expect([...publishedFiles].sort()).toEqual(["README.md", "dist/bundle.js", "package.json"]);
+
+    await using linkProc = spawn({
+      cmd: [bunExe(), "link"],
+      cwd: String(producer),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, linkStderr, linkExit] = await Promise.all([
+      linkProc.stdout.text(),
+      linkProc.stderr.text(),
+      linkProc.exited,
+    ]);
+    if (linkExit !== 0) throw new Error(`bun link failed: ${linkStderr}`);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-consumer-files",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await using installProc = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+
+    const { readdir, stat } = await import("fs/promises");
+    async function walk(dir: string, prefix = ""): Promise<string[]> {
+      const out: string[] = [];
+      for (const name of await readdir(dir)) {
+        const abs = join(dir, name);
+        const rel = prefix ? `${prefix}/${name}` : name;
+        const s = await stat(abs);
+        if (s.isDirectory()) {
+          out.push(...(await walk(abs, rel)));
+        } else {
+          out.push(rel);
+        }
+      }
+      return out;
+    }
+    const installedFiles = new Set(await walk(bodyDir));
+
+    expect([...installedFiles].sort()).toEqual([...publishedFiles].sort());
+  });
 });

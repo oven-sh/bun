@@ -75,12 +75,18 @@ function systemLibs(cfg: Config): string[] {
   }
 
   if (cfg.darwin) {
-    // icucore: Apple's bundled ICU. WebKit's Platform.h sets
-    // U_DISABLE_RENAMING under PLATFORM(COCOA) so all ICU references are
-    // unversioned, which only icucore satisfies. Headers come from
-    // Source/WTF/icu/ (Apple doesn't ship them).
     // resolv: DNS resolution (getaddrinfo et al).
-    libs.push("-licucore", "-lresolv");
+    libs.push("-lresolv");
+    // ICU: prebuilt was built unversioned against Apple's icucore.
+    // direct/local compile against brew icu4c headers (versioned _NN
+    // suffixes) so must link brew's lib too — see icuPrefix() in
+    // webkit-direct/common.ts for the full reasoning.
+    if (cfg.webkit === "prebuilt") {
+      libs.push("-licucore");
+    } else {
+      const prefix = cfg.arm64 ? "/opt/homebrew/opt/icu4c" : "/usr/local/opt/icu4c";
+      libs.push(`-L${prefix}/lib`, "-licuuc", "-licui18n", "-licudata");
+    }
   }
 
   if (cfg.windows) {

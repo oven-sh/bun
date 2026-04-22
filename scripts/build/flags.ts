@@ -578,8 +578,11 @@ export const defines: Flag[] = [
   },
   {
     flag: "U_DISABLE_RENAMING=1",
-    when: c => c.darwin,
-    desc: "Match Apple's libicucore (unversioned symbols). WebKit's Platform.h sets the same under PLATFORM(COCOA).",
+    when: c => c.darwin && c.webkit === "prebuilt",
+    desc:
+      "Match the prebuilt's ICU (built unversioned for Apple's icucore). " +
+      "direct/local link brew icu4c which exports versioned symbols, so " +
+      "renaming stays on.",
   },
 
   // ─── Feature toggles ───

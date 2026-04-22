@@ -35,23 +35,25 @@ export function expand(p: string, cfg: Config, buildDir: string): string {
 }
 
 /**
- * ICU header search path.
+ * ICU install prefix on darwin (brew's icu4c). Apple ships
+ * libicucore.dylib but no headers; the only way to get a matching
+ * header+lib pair is brew. JSCOnly suppresses PLATFORM(COCOA) so
+ * Platform.h's U_DISABLE_RENAMING never fires — symbols stay versioned
+ * (_77), which is what brew's lib exports. bun's own bindings must also
+ * compile WITHOUT U_DISABLE_RENAMING (gated to webkit==prebuilt in
+ * flags.ts) so they reference the same versioned names.
  *
- * Darwin: WebKit ships its own headers at Source/WTF/icu/ tuned for Apple's
- * libicucore.dylib (Platform.h sets U_DISABLE_RENAMING under
- * PLATFORM(COCOA), so symbols are unversioned to match icucore). Apple
- * doesn't ship the headers, so this bundled copy is the only source that
- * agrees with the lib.
- *
- * Linux: distro ICU; headers in default search paths, link
- * -licu{uc,i18n,data}. PLATFORM(COCOA) is false so renaming stays on and
- * symbols are versioned to match.
- *
+ * Linux: distro ICU; default search paths, link -licu{uc,i18n,data}.
  * Windows: built from source via build-icu.ps1 (TODO: hook up).
  */
-export function icuInclude(cfg: Config): string[] {
-  if (cfg.darwin) return [`-I${cfg.webkitPath}/Source/WTF/icu`];
-  return [];
+export function icuPrefix(cfg: Config): string | undefined {
+  if (!cfg.darwin) return undefined;
+  return cfg.arm64 ? "/opt/homebrew/opt/icu4c" : "/usr/local/opt/icu4c";
+}
+
+function icuInclude(cfg: Config): string[] {
+  const p = icuPrefix(cfg);
+  return p !== undefined ? [`-I${p}/include`] : [];
 }
 
 /**

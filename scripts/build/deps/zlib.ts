@@ -155,13 +155,15 @@ export const zlib: Dependency = {
       HAVE_BUILTIN_ASSUME_ALIGNED: true,
       HAVE_BUILTIN_CTZ: true,
       HAVE_BUILTIN_CTZLL: true,
-      ...(!cfg.windows && {
-        HAVE_VISIBILITY_HIDDEN: true,
-        HAVE_VISIBILITY_INTERNAL: true,
-        HAVE_POSIX_MEMALIGN: true,
-        _LARGEFILE64_SOURCE: 1,
-        __USE_LARGEFILE64: true,
-      }),
+      ...(cfg.windows
+        ? { _CRT_SECURE_NO_WARNINGS: true, _CRT_NONSTDC_NO_WARNINGS: true }
+        : {
+            HAVE_VISIBILITY_HIDDEN: true,
+            HAVE_VISIBILITY_INTERNAL: true,
+            HAVE_POSIX_MEMALIGN: true,
+            _LARGEFILE64_SOURCE: 1,
+            __USE_LARGEFILE64: true,
+          }),
       ...(cfg.linux && { HAVE_SYS_AUXV_H: true }),
     };
 

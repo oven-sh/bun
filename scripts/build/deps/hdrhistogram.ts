@@ -32,7 +32,7 @@ export const hdrhistogram: Dependency = {
       "src/hdr_writer_reader_phaser.c",
     ],
     includes: ["include"],
-    ...(!cfg.windows && { defines: { _GNU_SOURCE: true } }),
+    defines: cfg.windows ? { _CRT_SECURE_NO_WARNINGS: true } : { _GNU_SOURCE: true },
   }),
 
   provides: () => ({

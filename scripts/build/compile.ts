@@ -481,15 +481,6 @@ function objectPath(cfg: Config, src: string): string {
     relSrc = relative(cfg.cwd, absSrc);
   }
 
-  // Out-of-tree sources (e.g. $BUN_WEBKIT_PATH outside the repo) yield a
-  // `../..` relative path that would escape obj/ and write into the source
-  // tree. Pin those under obj/external/ with the `..` segments dropped —
-  // the only out-of-tree root is the WebKit clone, and its internal layout
-  // is preserved below external/.
-  if (relSrc.startsWith("..")) {
-    relSrc = "external/" + relSrc.replace(/^(\.\.[\\/])+/, "");
-  }
-
   return resolve(cfg.buildDir, "obj", relSrc + cfg.objSuffix);
 }
 

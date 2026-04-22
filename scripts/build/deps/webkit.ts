@@ -39,11 +39,12 @@ export const WEBKIT_VERSION = "4d5e75ebd84a14edbc7ae264245dcd77fe597c10";
  *   like the old cmake — avoids debug/release mixing.
  */
 
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
 import { computeCpuTargetFlags } from "../flags.ts";
 import { slash } from "../shell.ts";
-import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir } from "../source.ts";
+import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir } from "../source.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Prebuilt URL computation
@@ -146,12 +147,17 @@ function localIcuLibs(cfg: Config): string[] {
 }
 
 /**
- * WebKit source dir for local/direct mode. Resolution lives in config.ts
- * (resolveWebkitPath) so it's persisted to configure.json — ninja's regen
- * rule doesn't inherit $BUN_WEBKIT_PATH.
+ * WebKit source dir for local mode. Defaults to vendor/WebKit; override via
+ * $BUN_WEBKIT_PATH to share one clone across worktrees.
  */
-export function webkitSrcDir(cfg: Config): string {
-  return cfg.webkitPath;
+function webkitSrcDir(cfg: Config): string {
+  const env = process.env.BUN_WEBKIT_PATH;
+  if (!env) return depSourceDir(cfg, "WebKit");
+  // Shells don't expand ~ inside quotes; handle it here so a quoted export works.
+  if (env === "~" || env.startsWith("~/") || env.startsWith("~\\")) return join(homedir(), env.slice(1));
+  // Anchor relative paths to the repo root so ninja's regen rule (which runs
+  // from buildDir) resolves the same path as the initial configure.
+  return resolve(cfg.cwd, env);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -161,8 +167,6 @@ export function webkitSrcDir(cfg: Config): string {
 export const webkit: Dependency = {
   name: "WebKit",
   versionMacro: "WEBKIT",
-
-  enabled: cfg => cfg.webkit !== "direct",
 
   source: cfg => {
     if (cfg.webkit === "prebuilt") {
@@ -310,15 +314,7 @@ export const webkit: Dependency = {
       // postExtract.
       if (!cfg.darwin) includes.push("include/wtf/unicode");
 
-      return {
-        libs,
-        includes,
-        // The darwin prebuilt was built against an unversioned ICU
-        // (Apple's icucore) — bun's bindings must match, and the link
-        // line needs -licucore. Linux/windows prebuilts bundle their ICU
-        // in `libs` above.
-        ...(cfg.darwin && { defines: ["U_DISABLE_RENAMING=1"], linkFlags: ["-licucore"] }),
-      };
+      return { libs, includes };
     }
 
     // Local: paths relative to BUILD dir (headers generated during build).
@@ -349,10 +345,6 @@ export const webkit: Dependency = {
     // Windows: ICU headers from preBuild output.
     if (cfg.windows) includes.push(resolve(icuDir(cfg), "include"));
 
-    // Local cmake on posix: cmake's find_package(ICU) found the system
-    // libs but doesn't propagate them to bun's link — declare them here.
-    const linkFlags = cfg.windows ? [] : ["-licui18n", "-licuuc", "-licudata"];
-
-    return { libs, includes, linkFlags };
+    return { libs, includes };
   },
 };

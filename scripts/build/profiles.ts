@@ -31,6 +31,7 @@ export const profiles = {
   /** Default local dev: debug + prebuilt WebKit. ASAN defaults on for supported platforms. */
   debug: {
     buildType: "Debug",
+    webkit: "prebuilt",
   },
 
   /** Debug with local WebKit (user clones vendor/WebKit/). */
@@ -42,12 +43,14 @@ export const profiles = {
   /** Debug without ASAN — faster builds, less safety. */
   "debug-no-asan": {
     buildType: "Debug",
+    webkit: "prebuilt",
     asan: false,
   },
 
   /** Release build for local testing. No LTO (that's CI-only). */
   release: {
     buildType: "Release",
+    webkit: "prebuilt",
     lto: false,
   },
 
@@ -64,6 +67,7 @@ export const profiles = {
    */
   "release-assertions": {
     buildType: "RelWithDebInfo",
+    webkit: "prebuilt",
     assertions: true,
     logs: true,
     lto: false,
@@ -77,6 +81,7 @@ export const profiles = {
    */
   "release-asan": {
     buildType: "Release",
+    webkit: "prebuilt",
     asan: true,
     assertions: true,
   },
@@ -87,6 +92,7 @@ export const profiles = {
     mode: "cpp-only",
     ci: true,
     buildkite: true,
+    webkit: "prebuilt",
   },
 
   /**
@@ -98,6 +104,7 @@ export const profiles = {
     mode: "zig-only",
     ci: true,
     buildkite: true,
+    webkit: "prebuilt",
   },
 
   /** CI: link prebuilt objects downloaded from sibling BuildKite jobs. */
@@ -106,6 +113,7 @@ export const profiles = {
     mode: "link-only",
     ci: true,
     buildkite: true,
+    webkit: "prebuilt",
   },
 
   /** CI full build with LTO. */
@@ -113,6 +121,7 @@ export const profiles = {
     buildType: "Release",
     ci: true,
     buildkite: true,
+    webkit: "prebuilt",
     // lto default resolves to ON (ci + release + linux + !asan + !assertions)
   },
 } as const satisfies Record<string, PartialConfig>;

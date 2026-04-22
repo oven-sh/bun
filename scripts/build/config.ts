@@ -22,7 +22,7 @@ export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
 export type BuildMode = "full" | "cpp-only" | "zig-only" | "link-only";
-export type WebKitMode = "prebuilt" | "local" | "direct";
+export type WebKitMode = "prebuilt" | "local";
 
 /**
  * Host platform — what's running the build. Distinguish from target
@@ -48,21 +48,6 @@ export interface Host {
  * (deps/webkit.ts, zig.ts, deps/nodejs-headers.ts) — look there to bump.
  * Overridable via PartialConfig for testing (e.g. trying a WebKit branch).
  */
-/**
- * WebKit clone path. Precedence: explicit partial → $BUN_WEBKIT_PATH →
- * vendor/WebKit. Resolved here (not in webkit.ts) so the result is
- * persisted to configure.json and ninja's regen rule sees the same path
- * without inheriting the env.
- */
-function resolveWebkitPath(partial: PartialConfig, cwd: string, vendorDir: string): string {
-  let p = partial.webkitPath ?? process.env.BUN_WEBKIT_PATH;
-  if (!p) return resolve(vendorDir, "WebKit");
-  // Shells don't expand ~ inside quotes; handle it so a quoted export works.
-  if (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) p = join(homedir(), p.slice(1));
-  // Anchor relative paths to repo root so regen (run from buildDir) agrees.
-  return resolve(cwd, p);
-}
-
 const versionDefaults = {
   nodejsVersion: NODEJS_VERSION,
   nodejsAbiVersion: NODEJS_ABI_VERSION,
@@ -153,8 +138,6 @@ export interface Config {
 
   // ─── Dependency modes ───
   webkit: WebKitMode;
-  /** Resolved WebKit clone path (local/direct modes). */
-  webkitPath: string;
 
   // ─── Paths (all absolute) ───
   /** Repository root. */
@@ -194,8 +177,8 @@ export interface Config {
   esbuild: string;
   /** Optional — compiler launcher prefix. */
   ccache: string | undefined;
-  /** cmake executable. Only required when a nested-cmake dep resolves. */
-  cmake: string | undefined;
+  /** cmake executable. Required for nested dep builds. */
+  cmake: string;
   /** cargo executable. undefined when no rust toolchain is available. */
   cargo: string | undefined;
   /** CARGO_HOME — passed to cargo invocations for reproducibility. */
@@ -262,12 +245,6 @@ export interface PartialConfig {
   ci?: boolean;
   buildkite?: boolean;
   webkit?: WebKitMode;
-  /**
-   * WebKit source clone path. Defaults to $BUN_WEBKIT_PATH then
-   * vendor/WebKit/. Persisted to configure.json so ninja's regen rule
-   * (which doesn't inherit the env) resolves the same path.
-   */
-  webkitPath?: string;
   buildDir?: string;
   cacheDir?: string;
   // Version pins (defaults in versions.ts).
@@ -300,7 +277,7 @@ export interface Toolchain {
   jsRuntime: string;
   esbuild: string;
   ccache: string | undefined;
-  cmake: string | undefined;
+  cmake: string;
   /** Cargo executable. Required only if a rust dep (lolhtml) is being built. */
   cargo: string | undefined;
   /** CARGO_HOME. Set alongside cargo; undefined when cargo is unavailable. */
@@ -567,8 +544,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     timeTrace: partial.timeTrace ?? false,
     ci,
     buildkite,
-    webkit: partial.webkit ?? "direct",
-    webkitPath: resolveWebkitPath(partial, cwd, vendorDir),
+    webkit: partial.webkit ?? "prebuilt",
     cwd,
     buildDir,
     codegenDir,
@@ -839,7 +815,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.fuzzilli) features.push("fuzzilli");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
-  if (cfg.webkit !== "direct") features.push(`webkit:${cfg.webkit}`);
+  if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
   if (cfg.mode !== "full") features.push(`mode:${cfg.mode}`);
   // Version pin overrides — show a short hash so you catch "forgot to
   // revert my WebKit test branch" before the build goes weird.

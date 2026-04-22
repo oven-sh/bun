@@ -29,10 +29,9 @@ export function resolveToolchain(): Toolchain {
   const host = detectHost();
   const llvm = resolveLlvmToolchain(host.os, host.arch);
 
-  // cmake — only needed when a nested-cmake dep resolves (libuv on
-  // Windows, --webkit=local). Everything else is DirectBuild now, so
-  // don't hard-fail here; emitNestedCmake() asserts at the use site.
-  const cmake = findSystemTool("cmake", { required: false });
+  // cmake — required for nested dep builds.
+  const cmake = findSystemTool("cmake", { required: true, hint: "Install cmake (>= 3.24)" });
+  if (cmake === undefined) throw new BuildError("unreachable: findSystemTool required=true returned undefined");
 
   // cargo — required for lolhtml. Not found → build will fail at that dep
   // with a clear "install rust" hint. We don't hard-fail here because
@@ -133,12 +132,8 @@ function emitGeneratorRule(n: Ninja, cfg: Config, partial: PartialConfig): void 
   // Persist the partial config. writeIfChanged — same config → no mtime
   // bump → no unnecessary regen on identical reconfigures.
   // This runs before n.write() (which mkdir's), so ensure dir exists.
-  //
-  // webkitPath is added here (not in partial) because its default comes
-  // from $BUN_WEBKIT_PATH, which the regen subprocess won't inherit.
   mkdirSync(cfg.buildDir, { recursive: true });
-  const persisted: PartialConfig = { ...partial, webkitPath: cfg.webkitPath };
-  writeIfChanged(configFile, JSON.stringify(persisted, null, 2) + "\n");
+  writeIfChanged(configFile, JSON.stringify(partial, null, 2) + "\n");
 
   const hostWin = cfg.host.os === "windows";
   n.rule("regen", {

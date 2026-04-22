@@ -71,14 +71,12 @@ export const tinycc: Dependency = {
       // conftest.c with -DC2STR compiles to a tool that turns tccdefs.h
       // (C macros) into tccdefs_.h (C string literal for embedding).
       // tccpp.c includes the generated file.
-      codegen: [
-        {
-          tool: "$SRC/conftest.c",
-          toolDefines: { C2STR: true },
-          args: ["$SRC/include/tccdefs.h", "$out"],
-          outputs: ["$BUILD/tccdefs_.h"],
-        },
-      ],
+      codegen: {
+        tool: "conftest.c",
+        toolDefines: { C2STR: true },
+        args: ["include/tccdefs.h", "$out"],
+        output: "tccdefs_.h",
+      },
     };
 
     // clang-cl is noisy about tinycc's old-C idioms.

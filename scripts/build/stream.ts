@@ -102,7 +102,6 @@ function main(): void {
   let zigProgress = false;
   let consoleMode = false;
   let stampPath: string | undefined;
-  let stdoutPath: string | undefined;
   const envOverrides: Record<string, string> = {};
   while (argv[0]?.startsWith("--")) {
     const opt = argv.shift()!;
@@ -118,8 +117,6 @@ function main(): void {
       consoleMode = true;
     } else if (opt.startsWith("--stamp=")) {
       stampPath = opt.slice(8);
-    } else if (opt.startsWith("--stdout=")) {
-      stdoutPath = opt.slice(9);
     } else {
       process.stderr.write(`stream.ts: unknown option ${opt}\n`);
       process.exit(2);
@@ -208,10 +205,7 @@ function main(): void {
   // Gated on `interactive`: when piped, progress lines are log noise
   // (~35 Code Gen lines that clutter failure logs / LLM context). No
   // FD 3 setup → zig sees no ZIG_PROGRESS → just start + summary.
-  // --stdout=PATH: open the file and hand the fd straight to the child as
-  // stdio[1]. No JS-side pipe — process.exit() can't race a kernel write.
-  const stdoutFd = stdoutPath !== undefined ? openSync(stdoutPath, "w") : undefined;
-  const stdio: import("node:child_process").StdioOptions = ["inherit", stdoutFd ?? "pipe", "pipe"];
+  const stdio: import("node:child_process").StdioOptions = ["inherit", "pipe", "pipe"];
   if (zigProgress && interactive) {
     envOverrides.ZIG_PROGRESS = "3";
     stdio.push("pipe"); // index 3 = zig's IPC write end
@@ -245,7 +239,7 @@ function main(): void {
     const rl = createInterface({ input: stream, crlfDelay: Infinity });
     rl.on("line", line => write(prefix + line + "\n"));
   };
-  if (stdoutFd === undefined) pump(child.stdout!);
+  pump(child.stdout!);
   pump(child.stderr!);
 
   // stdio[3] only exists if we pushed it above (zigProgress && interactive).
@@ -271,7 +265,6 @@ function main(): void {
       process.exit(1);
     }
     if (code === 0) writeStamp();
-    if (stdoutFd !== undefined) closeSync(stdoutFd);
     process.exit(code ?? 1);
   });
 }

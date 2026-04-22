@@ -576,8 +576,11 @@ export const defines: Flag[] = [
     when: c => c.windows,
     desc: "ICU static linkage (without this: ABI mismatch → STATUS_STACK_BUFFER_OVERRUN)",
   },
-  // (U_DISABLE_RENAMING moved to deps/webkit.ts provides() — it's a
-  // property of which ICU the WebKit dep was built against, not a global.)
+  {
+    flag: "U_DISABLE_RENAMING=1",
+    when: c => c.darwin,
+    desc: "Disable ICU symbol renaming (using system ICU)",
+  },
 
   // ─── Feature toggles ───
   {

@@ -436,8 +436,7 @@ function makeZip(cfg: Config, name: string, files: string[]): string {
   console.log(`Creating ${zip} (${copied} files)...`);
   // Relative path `name` puts `name/` prefix inside the zip — what test
   // steps expect: they extract → `chmod +x ${triplet}/bun`.
-  // CI runners always have cmake; this is the cross-platform zip we have.
-  run([cfg.cmake ?? "cmake", "-E", "tar", "cfv", zip, "--format=zip", name], buildDir);
+  run([cfg.cmake, "-E", "tar", "cfv", zip, "--format=zip", name], buildDir);
 
   // Clean up the staging dir.
   rmSync(stageDir, { recursive: true, force: true });

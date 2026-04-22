@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import path from "path";
 
 const fixturesDir = path.join(import.meta.dir, "fixtures");
@@ -148,6 +148,20 @@ const wasmFixtures = [
 
 const preloadPath = path.join(import.meta.dir, "preload.js");
 
+// Under ASAN, JSC disables the wasm fault signal handler (and therefore wasm
+// shared memory) unless ASAN is told to let the process handle SIGSEGV. CI's
+// release-ASAN binary is named `bun-asan` so `bunEnv` sets this automatically,
+// but the debug build (`bun bd` -> `bun-debug`) is also ASAN-instrumented and
+// needs it too. Harmless when ASAN isn't active.
+const fixtureEnv = {
+  ...bunEnv,
+  ASAN_OPTIONS: bunEnv.ASAN_OPTIONS ?? "allow_user_segv_handler=1:disable_coredump=0",
+};
+
+// These are JIT stress tests; under a debug build they are dramatically
+// slower and run concurrently, so give each fixture more headroom there.
+const fixtureTimeout = isDebug ? 180_000 : 5_000;
+
 describe.concurrent("JSC JIT Stress Tests", () => {
   describe("JS (Baseline/DFG/FTL)", () => {
     for (const fixture of jsFixtures) {
@@ -157,7 +171,7 @@ describe.concurrent("JSC JIT Stress Tests", () => {
 
         await using proc = Bun.spawn({
           cmd: [bunExe(), "--preload", preloadPath, fixturePath],
-          env: { ...bunEnv, ...jscEnv },
+          env: { ...fixtureEnv, ...jscEnv },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -173,7 +187,7 @@ describe.concurrent("JSC JIT Stress Tests", () => {
           console.log("stderr:", stderr);
         }
         expect(exitCode).toBe(0);
-      });
+      }, fixtureTimeout);
     }
   });
 
@@ -185,7 +199,7 @@ describe.concurrent("JSC JIT Stress Tests", () => {
 
         await using proc = Bun.spawn({
           cmd: [bunExe(), "--preload", preloadPath, fixturePath],
-          env: { ...bunEnv, ...jscEnv },
+          env: { ...fixtureEnv, ...jscEnv },
           cwd: wasmFixturesDir,
           stdout: "pipe",
           stderr: "pipe",
@@ -202,7 +216,7 @@ describe.concurrent("JSC JIT Stress Tests", () => {
           console.log("stderr:", stderr);
         }
         expect(exitCode).toBe(0);
-      });
+      }, fixtureTimeout);
     }
   });
 });

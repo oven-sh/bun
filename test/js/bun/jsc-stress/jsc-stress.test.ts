@@ -165,58 +165,66 @@ const fixtureTimeout = isDebug ? 180_000 : 5_000;
 describe.concurrent("JSC JIT Stress Tests", () => {
   describe("JS (Baseline/DFG/FTL)", () => {
     for (const fixture of jsFixtures) {
-      test(fixture, async () => {
-        const fixturePath = path.join(fixturesDir, fixture);
-        const jscEnv = parseJSCFlags(fixturePath);
+      test(
+        fixture,
+        async () => {
+          const fixturePath = path.join(fixturesDir, fixture);
+          const jscEnv = parseJSCFlags(fixturePath);
 
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "--preload", preloadPath, fixturePath],
-          env: { ...fixtureEnv, ...jscEnv },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "--preload", preloadPath, fixturePath],
+            env: { ...fixtureEnv, ...jscEnv },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
 
-        const [stdout, stderr, exitCode] = await Promise.all([
-          new Response(proc.stdout).text(),
-          new Response(proc.stderr).text(),
-          proc.exited,
-        ]);
+          const [stdout, stderr, exitCode] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+          ]);
 
-        if (exitCode !== 0) {
-          console.log("stdout:", stdout);
-          console.log("stderr:", stderr);
-        }
-        expect(exitCode).toBe(0);
-      }, fixtureTimeout);
+          if (exitCode !== 0) {
+            console.log("stdout:", stdout);
+            console.log("stderr:", stderr);
+          }
+          expect(exitCode).toBe(0);
+        },
+        fixtureTimeout,
+      );
     }
   });
 
   describe("Wasm (BBQ/OMG)", () => {
     for (const fixture of wasmFixtures) {
-      test(fixture, async () => {
-        const fixturePath = path.join(wasmFixturesDir, fixture);
-        const jscEnv = parseJSCFlags(fixturePath);
+      test(
+        fixture,
+        async () => {
+          const fixturePath = path.join(wasmFixturesDir, fixture);
+          const jscEnv = parseJSCFlags(fixturePath);
 
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "--preload", preloadPath, fixturePath],
-          env: { ...fixtureEnv, ...jscEnv },
-          cwd: wasmFixturesDir,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "--preload", preloadPath, fixturePath],
+            env: { ...fixtureEnv, ...jscEnv },
+            cwd: wasmFixturesDir,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
 
-        const [stdout, stderr, exitCode] = await Promise.all([
-          new Response(proc.stdout).text(),
-          new Response(proc.stderr).text(),
-          proc.exited,
-        ]);
+          const [stdout, stderr, exitCode] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+          ]);
 
-        if (exitCode !== 0) {
-          console.log("stdout:", stdout);
-          console.log("stderr:", stderr);
-        }
-        expect(exitCode).toBe(0);
-      }, fixtureTimeout);
+          if (exitCode !== 0) {
+            console.log("stdout:", stdout);
+            console.log("stderr:", stderr);
+          }
+          expect(exitCode).toBe(0);
+        },
+        fixtureTimeout,
+      );
     }
   });
 });

@@ -653,6 +653,11 @@ static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
     return zigGlobalObject->JSSourceMapConstructor();
 }
 
+// PropertyCallbacks reified by reifyAllStaticProperties run back-to-back with
+// no exception check between them, so they must not call helpers that open a
+// ThrowScope (constructArray / constructEmptyArray). Use JSArray::tryCreate*
+// instead. See test/integration/bun-types/bun-types.test.ts (tsgo case) which
+// ESM-imports node:module under the JSC exception-scope validator.
 static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());

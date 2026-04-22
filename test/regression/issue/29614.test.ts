@@ -24,9 +24,9 @@
 // exercises the eligibility path end-to-end without needing a network
 // registry.
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { join, sep } from "node:path";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 async function spawnInstall(cwd: string, env: Record<string, string | undefined>) {
   await using proc = Bun.spawn({

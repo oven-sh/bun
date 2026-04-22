@@ -1885,12 +1885,13 @@ pub fn resolveMaybeNeedsTrailingSlash(
         defer specifier_utf8.deinit();
         const source_utf8 = source.toUTF8(bun.default_allocator);
         defer source_utf8.deinit();
+        const import_kind: bun.ImportKind = if (is_esm) .stmt else if (is_user_require_resolve) .require_resolve else .require;
         const printed = bun.api.ResolveMessage.fmt(
             bun.default_allocator,
             specifier_utf8.slice(),
             source_utf8.slice(),
             error.NameTooLong,
-            if (is_esm) .stmt else if (is_user_require_resolve) .require_resolve else .require,
+            import_kind,
         ) catch |err| bun.handleOom(err);
         const msg = logger.Msg{
             .data = logger.rangeData(
@@ -1898,6 +1899,19 @@ pub fn resolveMaybeNeedsTrailingSlash(
                 logger.Range.None,
                 printed,
             ),
+            // This Msg is wrapped in a ResolveMessage JS object below; without
+            // `.resolve` metadata here, accessing `err.specifier` / `err.importKind`
+            // or calling `JSON.stringify(err)` from JS would read the inactive
+            // union field and panic in safe builds. The specifier itself is left
+            // empty because it is longer than `BabyString` (u16 offset/len) can
+            // encode on this path.
+            .metadata = .{
+                .resolve = .{
+                    .specifier = .{ .offset = 0, .len = 0 },
+                    .import_kind = import_kind,
+                    .err = error.NameTooLong,
+                },
+            },
         };
         res.* = ErrorableString.err(error.NameTooLong, (try bun.api.ResolveMessage.create(global, VirtualMachine.get().allocator, msg, source_utf8.slice())));
         return;

@@ -109,6 +109,40 @@ describe("ResolveMessage", () => {
     }
     expect().pass();
   });
+
+  // The NameTooLong fast-path in the resolver previously constructed a
+  // ResolveMessage backed by a logger.Msg with `.build` metadata. Reading
+  // `.specifier` / `.importKind` (or JSON.stringify, which reads both via
+  // toJSON) then accessed the inactive `.resolve` union field — garbage in
+  // release, a hard panic in safe/debug builds. Run in a subprocess so the
+  // panic (if it regresses) doesn't take down the test runner.
+  it("NameTooLong error has .resolve metadata (specifier/importKind/toJSON are safe)", async () => {
+    const src = `
+      // Exceeds MAX_PATH_BYTES * 1.5 on every platform (Windows' is largest at ~98302).
+      const long = Buffer.alloc(150000, "a").toString();
+      try {
+        await import("./" + long + ".js");
+        console.log("FAIL: import unexpectedly succeeded");
+      } catch (e) {
+        console.log(e.name);
+        console.log(typeof e.specifier);
+        console.log(e.importKind);
+        JSON.stringify(e);
+        console.log("ok");
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stderrLines = stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
+    expect(stderrLines).toEqual([]);
+    expect(stdout.trim().split("\n")).toEqual(["ResolveMessage", "string", "import-statement", "ok"]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // These tests reproduce panics where the module resolver wrote past fixed-size

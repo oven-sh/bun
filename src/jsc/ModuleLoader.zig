@@ -146,13 +146,13 @@ fn openExtractDir(abs_buf: *bun.PathBuffer) ?ExtractDir {
 fn tryOpenExtractDir(abs_buf: *bun.PathBuffer, tmpdir_path: []const u8, subdir_name: []const u8, uid: u32) ?ExtractDir {
     const abs_z = bun.path.joinAbsStringBufZ(tmpdir_path, abs_buf, &[_]string{subdir_name}, .auto);
 
-    switch (bun.sys.mkdirA(abs_z, 0o700)) {
-        .result => {},
+    const just_created = switch (bun.sys.mkdirA(abs_z, 0o700)) {
+        .result => true,
         .err => |err| switch (err.getErrno()) {
-            .EXIST => {}, // ownership/mode verified below on POSIX
+            .EXIST => false, // ownership/mode verified below on POSIX
             else => return null,
         },
-    }
+    };
 
     // NOFOLLOW prevents symlink-race redirection between mkdir and open.
     // Windows `bun.sys.open` strips NOFOLLOW/DIRECTORY via sys_uv, so call
@@ -168,6 +168,12 @@ fn tryOpenExtractDir(abs_buf: *bun.PathBuffer, tmpdir_path: []const u8, subdir_n
     // On POSIX verify the dir is ours and private. Windows relies on
     // %TEMP%'s per-user ACL, which CreateDirectory inherits.
     if (comptime Environment.isPosix) {
+        // mkdir's mode arg is masked by the caller's umask, so a restrictive
+        // umask (e.g. 0o277) could leave the dir unwritable by us. Force the
+        // exact mode we need on the dir we just created; EXIST dirs we don't
+        // own mustn't be touched, they're checked below instead.
+        if (just_created) _ = bun.sys.fchmod(fd, 0o700);
+
         const st = switch (bun.sys.fstat(fd)) {
             .result => |s| s,
             .err => {
@@ -175,7 +181,7 @@ fn tryOpenExtractDir(abs_buf: *bun.PathBuffer, tmpdir_path: []const u8, subdir_n
                 return null;
             },
         };
-        if (!bun.S.ISDIR(st.mode) or st.uid != uid or st.mode & 0o077 != 0) {
+        if (!bun.S.ISDIR(st.mode) or st.uid != uid or (st.mode & 0o777) != 0o700) {
             fd.close();
             return null;
         }

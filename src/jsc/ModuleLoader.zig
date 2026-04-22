@@ -46,15 +46,6 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input
     extracted_path_lock.lock();
     defer extracted_path_lock.unlock();
 
-    // Open a per-user extraction directory first. Using a private subdir
-    // (0700 on POSIX) prevents the CWE-377 attack where another user on a
-    // shared box pre-creates the deterministic tmpfile at a known name —
-    // without the subdir, the size-only reuse check below would hand the
-    // attacker's library to dlopen. In the subdir only our uid can write,
-    // so whatever the size check accepts is something we wrote ourselves.
-    var extract_dir: ExtractDir = openExtractDir() orelse return null;
-    defer extract_dir.close();
-
     // Fast path: already extracted in this process (or by a prior Worker
     // sharing the same StandaloneModuleGraph pointer). Still stat the path —
     // systemd-tmpfiles and friends periodically sweep /tmp and the cache
@@ -68,6 +59,15 @@ pub fn resolveEmbeddedFile(vm: *VirtualMachine, path_buf: *bun.PathBuffer, input
         bun.default_allocator.free(cached);
         file.extracted_path = null;
     }
+
+    // Open a per-user extraction directory. Using a private subdir (0700
+    // on POSIX) prevents the CWE-377 attack where another user on a shared
+    // box pre-creates the deterministic tmpfile at a known name — without
+    // the subdir, the size-only reuse check below would hand the attacker's
+    // library to dlopen. In the subdir only our uid can write, so whatever
+    // the size check accepts is something we wrote ourselves.
+    var extract_dir: ExtractDir = openExtractDir() orelse return null;
+    defer extract_dir.close();
 
     // Content-hashed filename so repeated dlopens and repeated runs of the
     // same compiled binary share one tmpfile instead of leaking per-call
@@ -137,22 +137,42 @@ const ExtractDir = struct {
     }
 };
 
-/// Opens (creating if needed) a per-user subdirectory of the system tmpdir
-/// that only the current user can write to. Returns null if the subdir
-/// can't be trusted (exists but is owned by someone else, is not a
-/// directory, or is group/other-writable on POSIX).
+/// Opens (creating if needed) a private per-user subdirectory of the system
+/// tmpdir. First tries `{tmpdir}/bun-{uid}` for cross-process dedup;
+/// if that path can't be trusted (someone else owns it, not a dir, wrong
+/// mode) — a DoS vector on shared hosts where any user can `mkdir` the
+/// predictable name — falls back to an unpredictable `bun-{uid}-{rand}`
+/// so an attacker can't pre-squat it. The per-process fallback loses
+/// dedup across processes but preserves availability; the per-File cache
+/// still dedupes within the process. Returns null only if even the
+/// unpredictable fallback fails.
 fn openExtractDir() ?ExtractDir {
     const tmpdir_path = bun.fs.FileSystem.RealFS.tmpdirPath();
     const uid: u32 = if (comptime Environment.isPosix) bun.c.getuid() else bun.windows.userUniqueId();
 
-    var subdir_name_buf: [64]u8 = undefined;
-    const subdir_name = std.fmt.bufPrint(&subdir_name_buf, "bun-{d}", .{uid}) catch return null;
+    // Canonical per-user subdir — succeeds on normal hosts, dedupes across
+    // processes and restarts.
+    var canonical_name_buf: [64]u8 = undefined;
+    const canonical_name = std.fmt.bufPrint(&canonical_name_buf, "bun-{d}", .{uid}) catch return null;
+    if (tryOpenExtractDir(tmpdir_path, canonical_name, uid)) |dir| return dir;
 
+    // Under-attack fallback: unpredictable name the attacker can't
+    // pre-create. Try a handful of times in case of random collisions.
+    var rand_name_buf: [96]u8 = undefined;
+    for (0..8) |_| {
+        const rand_name = std.fmt.bufPrint(&rand_name_buf, "bun-{d}-{x}", .{ uid, bun.fastRandom() }) catch return null;
+        if (tryOpenExtractDir(tmpdir_path, rand_name, uid)) |dir| return dir;
+    }
+
+    return null;
+}
+
+fn tryOpenExtractDir(tmpdir_path: []const u8, subdir_name: []const u8, uid: u32) ?ExtractDir {
     var abs_buf: bun.PathBuffer = undefined;
     const abs_z = bun.path.joinAbsStringBufZ(tmpdir_path, &abs_buf, &[_]string{subdir_name}, .auto);
 
-    // mkdir(0o700) first. On Windows the mode arg is ignored by
-    // CreateDirectory — that's fine, %TEMP% inherits a per-user ACL there.
+    // mkdir(0o700). On Windows the mode arg is ignored by CreateDirectory
+    // — that's fine, %TEMP% inherits a per-user ACL there.
     switch (bun.sys.mkdirA(abs_z, 0o700)) {
         .result => {},
         .err => |err| switch (err.getErrno()) {
@@ -161,14 +181,18 @@ fn openExtractDir() ?ExtractDir {
         },
     }
 
-    // Open the subdir with NOFOLLOW so an attacker can't redirect us by
-    // racing a symlink into place between mkdir and open. After this we
-    // operate via the fd, so further renames can't mislead us.
-    const subdir_fd = switch (bun.sys.open(
-        abs_z,
-        bun.O.DIRECTORY | bun.O.RDONLY | bun.O.CLOEXEC | bun.O.NOFOLLOW,
-        0,
-    )) {
+    // Open with NOFOLLOW so an attacker can't redirect us by racing a
+    // symlink into place between mkdir and open. After this we operate
+    // via the fd, so further renames can't mislead us.
+    //
+    // On Windows, bun.sys.open() routes through sys_uv which maps
+    // O.NOFOLLOW and O.DIRECTORY to zero (no-op) — so go through
+    // openDirAtWindowsA directly, which honors .no_follow via
+    // FILE_OPEN_REPARSE_POINT.
+    const subdir_fd = switch (if (comptime Environment.isWindows)
+        bun.sys.openDirAtWindowsA(bun.FD.cwd(), abs_z, .{ .no_follow = true, .read_only = true })
+    else
+        bun.sys.open(abs_z, bun.O.DIRECTORY | bun.O.RDONLY | bun.O.CLOEXEC | bun.O.NOFOLLOW, 0)) {
         .result => |fd| fd,
         .err => return null,
     };

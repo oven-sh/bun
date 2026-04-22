@@ -52,14 +52,18 @@ test.skipIf(!isLinux || !cc)(
             if (symbols.hello() !== 42) { console.error("bad result on main"); process.exit(1); }
             close();
           }
+          // Spawn all workers first, then await — concurrent dlopens exercise
+          // the atomic write+rename convergence path.
           const workers: Worker[] = [];
+          const done: Promise<void>[] = [];
           for (let i = 0; i < 5; i++) {
             const w = new Worker(import.meta.url);
             workers.push(w);
             const { promise, resolve } = Promise.withResolvers<void>();
             w.addEventListener("message", () => resolve(), { once: true });
-            await promise;
+            done.push(promise);
           }
+          await Promise.all(done);
           for (const w of workers) w.terminate();
           console.log("ok");
         } else {

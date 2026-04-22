@@ -572,8 +572,8 @@ describe("isolated workspaces", () => {
     // `<project>/node_modules/.bun/...`.
     const sharedDepLink = join(root, "real-workspaces", "shared-lib", "node_modules", "shared-dep");
     const scopedDepLink = join(root, "real-workspaces", "shared-lib", "node_modules", "@myscope", "helper");
-    expect((await readlink(sharedDepLink))).toContain(".bun");
-    expect((await readlink(scopedDepLink))).toContain(".bun");
+    expect(await readlink(sharedDepLink)).toContain(".bun");
+    expect(await readlink(scopedDepLink)).toContain(".bun");
     expect(existsSync(join(sharedDepLink, "package.json"))).toBeTrue();
     expect(existsSync(join(scopedDepLink, "package.json"))).toBeTrue();
 

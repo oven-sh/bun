@@ -372,7 +372,10 @@ export const webkitJSC: Dependency = {
       kind: "direct",
       pic: true,
       sources: [
-        ...bundles, ...nonUnified, remoteSocket, `${DS}/JSCBuiltins.cpp`,
+        ...bundles,
+        ...nonUnified,
+        remoteSocket,
+        `${DS}/JSCBuiltins.cpp`,
         // cmake builds this as a separate LowLevelInterpreterLib OBJECT
         // target — it #includes LLIntAssembly.h to emit the interpreter's
         // native assembly (vmEntry*, jsc_llint_*, wasm trampolines).

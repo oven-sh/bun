@@ -125,7 +125,9 @@ describe.skipIf(isASAN)("ucontext-aware fault handler", () => {
     await reported.promise;
 
     // Trace URL path: /<bun-version>/<platform><cmd><version_char><7-char-sha><body>/ack
-    const m = reportedPath!.match(/^\/[\w.+-]+\/[a-zA-Z][a-zA-Z_](?<ver>[0-9])(?:[0-9a-f]{7}|unknown)(?<body>.*)\/ack$/);
+    const m = reportedPath!.match(
+      /^\/[\w.+-]+\/[a-zA-Z][a-zA-Z_](?<ver>[0-9])(?:[0-9a-f]{7}|unknown)(?<body>.*)\/ack$/,
+    );
     expect(stderr).toContain(reportedPath!.replace(/\/ack$/, ""));
     expect(m, `unexpected trace URL: ${reportedPath}`).not.toBeNull();
     return { ver: m!.groups!.ver, body: m!.groups!.body };

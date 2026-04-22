@@ -453,6 +453,10 @@ export const webkitJSC: Dependency = {
           outputs: bundles,
           inputs: [`${JSC}/Sources.txt`, `${JSC}/inspector/remote/SourcesSocket.txt`],
           cwd: DS,
+          // Script prints its file list to stdout; we only need that at
+          // configure (unifiedBundles() parses it). Sink the build-time
+          // re-run's output instead of streaming it as [webkit-jsc] noise.
+          stdout: "$BUILD/.unified-sources-list",
         },
       ],
     };

@@ -4752,6 +4752,7 @@ pub fn sk_X509_VERIFY_PARAM_deep_copy(arg_sk: ?*const struct_stack_st_X509_VERIF
     return @as(?*struct_stack_st_X509_VERIFY_PARAM, @ptrCast(sk_deep_copy(@as([*c]const _STACK, @ptrCast(@alignCast(sk))), &sk_X509_VERIFY_PARAM_call_copy_func, @as(OPENSSL_sk_copy_func, @ptrCast(@alignCast(copy_func))), &sk_X509_VERIFY_PARAM_call_free_func, @as(OPENSSL_sk_free_func, @ptrCast(@alignCast(free_func))))));
 }
 pub extern fn X509_check_ca(x: ?*X509) c_int;
+pub extern fn X509_check_issued(issuer: ?*X509, subject: ?*X509) c_int;
 pub const X509_STORE_CTX_verify_cb = ?*const fn (c_int, ?*X509_STORE_CTX) callconv(.c) c_int;
 pub const X509_STORE_CTX_verify_fn = ?*const fn (?*X509_STORE_CTX) callconv(.c) c_int;
 pub const X509_STORE_CTX_get_issuer_fn = ?*const fn ([*c]?*X509, ?*X509_STORE_CTX, ?*X509) callconv(.c) c_int;

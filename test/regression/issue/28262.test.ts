@@ -126,6 +126,9 @@ test("getPeerCertificate(true) returns detailed cert with issuerCertificate", as
           expect(cert.issuerCertificate).toBeDefined();
           expect(typeof cert.issuerCertificate).toBe("object");
           expect(cert.issuerCertificate.subject.CN).toBe("ca1");
+          // ca1 is self-signed, so its issuerCertificate should point to itself.
+          // This is the Node.js convention for detecting the root of the chain.
+          expect(cert.issuerCertificate.issuerCertificate).toBe(cert.issuerCertificate);
           resolve();
         } catch (e) {
           reject(e);
@@ -188,6 +191,95 @@ test("getPeerCertificate(false) works with socket upgrade pattern (mariadb)", as
       tlsSocket.on("error", reject);
     });
     tcpSocket.on("error", reject);
+  });
+
+  await promise;
+});
+
+test("getPeerCertificate(true) does not self-reference non-self-signed leaf", async () => {
+  // Server sends only the leaf cert (no CA in the chain). The leaf is NOT
+  // self-signed, so per Node.js semantics issuerCertificate must be left
+  // unset rather than fabricated as a self-reference. This matters because
+  // code commonly walks the chain via `while (c !== c.issuerCertificate)`.
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+  const server = tls.createServer({ key: serverKey, cert: serverCert }, socket => {
+    socket.end();
+  });
+
+  server.listen(0, "127.0.0.1", () => {
+    const addr = server.address() as { port: number };
+    const socket = tls.connect(
+      {
+        host: "127.0.0.1",
+        port: addr.port,
+        ca: [caCert],
+        servername: "agent1",
+        checkServerIdentity: () => undefined,
+      },
+      () => {
+        try {
+          const cert = socket.getPeerCertificate(true);
+          expect(cert).toBeDefined();
+          expect(cert.subject.CN).toBe("agent1");
+          // agent1 is issued by ca1, not self-signed. Since ca1 wasn't sent
+          // in the chain, issuerCertificate should be undefined — never a
+          // self-reference on a non-self-signed cert.
+          expect(cert.issuerCertificate).not.toBe(cert);
+          resolve();
+        } catch (e) {
+          reject(e);
+        } finally {
+          socket.destroy();
+          server.close();
+        }
+      },
+    );
+    socket.on("error", reject);
+  });
+
+  await promise;
+});
+
+test("getPeerCertificate coerces non-boolean argument instead of throwing", async () => {
+  // Node.js never type-checks the `detailed` argument; it uses
+  // args[0]->IsTrue(). Passing undefined/null/0/1 must not throw.
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+  const server = tls.createServer({ key: serverKey, cert: serverCert }, socket => {
+    socket.end();
+  });
+
+  server.listen(0, "127.0.0.1", () => {
+    const addr = server.address() as { port: number };
+    const socket = tls.connect(
+      {
+        host: "127.0.0.1",
+        port: addr.port,
+        ca: [caCert],
+        servername: "agent1",
+        checkServerIdentity: () => undefined,
+      },
+      () => {
+        try {
+          for (const arg of [undefined, null, 0, 1, "", "true"]) {
+            // @ts-expect-error — intentionally passing wrong types
+            const cert = socket.getPeerCertificate(arg);
+            expect(cert).toBeDefined();
+            expect(cert.subject.CN).toBe("agent1");
+            // All non-`true` values yield the abbreviated cert (no chain).
+            expect(cert.issuerCertificate).toBeUndefined();
+          }
+          resolve();
+        } catch (e) {
+          reject(e);
+        } finally {
+          socket.destroy();
+          server.close();
+        }
+      },
+    );
+    socket.on("error", reject);
   });
 
   await promise;

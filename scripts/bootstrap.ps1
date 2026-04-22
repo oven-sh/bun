@@ -701,6 +701,11 @@ function Prefetch-Build-Deps {
   }
   Remove-Item -Recurse -Force $cloneDir
 
+  # Read-only: download.ts only ever copies FROM here, and a writable baked
+  # input is something a misbehaving job could corrupt for later jobs on the
+  # same runner.
+  & attrib +R "$prefetchDir\*" /S /D
+
   Set-Env "BUN_BUILD_PREFETCH_DIR" $prefetchDir
 }
 

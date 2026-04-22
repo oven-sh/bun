@@ -1712,10 +1712,12 @@ prefetch_build_deps() {
 	( cd "$clone_dir/bun" && execute "$bun_path" scripts/prefetch-deps.ts "$prefetch_dir" )
 	execute_sudo rm -rf "$clone_dir"
 
-	grant_to_user "$prefetch_dir"
-	# Buildkite jobs run via systemd / non-login shells that don't source
-	# .profile, so /etc/environment is the load-bearing one. Profiles are kept
-	# for interactive ssh debugging.
+	# Read-only: download.ts only ever copies FROM here, and a writable baked
+	# input is something a misbehaving job could corrupt for later jobs on the
+	# same runner. download.ts also falls back to this path when the env var
+	# isn't set, so the exports below are belt-and-braces for interactive
+	# debugging rather than the load-bearing mechanism.
+	execute_sudo chmod -R a-w "$prefetch_dir"
 	append_file /etc/environment "BUN_BUILD_PREFETCH_DIR=$prefetch_dir"
 	append_to_profile "export BUN_BUILD_PREFETCH_DIR=\"$prefetch_dir\""
 }

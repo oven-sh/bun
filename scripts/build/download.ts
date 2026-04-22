@@ -62,8 +62,19 @@ const tarExe =
  * stale prefetch entries are simply not found and the build falls through to
  * the network. No image rebuild needed when versions change; the baked cache
  * just becomes a partial hit until the image is next refreshed.
+ *
+ * Resolved from `BUN_BUILD_PREFETCH_DIR` if set, else the platform's
+ * well-known bake path. The fallback is what makes this robust on CI: getting
+ * an env var from image-bake time into a Buildkite job's shell crosses
+ * systemd / non-login-shell / agent-hook boundaries that vary per platform,
+ * whereas "look at the path bootstrap writes to" doesn't.
  */
-export const prefetchDir: string | undefined = process.env.BUN_BUILD_PREFETCH_DIR;
+export const prefetchDir: string | undefined = (() => {
+  const env = process.env.BUN_BUILD_PREFETCH_DIR;
+  if (env) return env;
+  const wellKnown = process.platform === "win32" ? "C:\\bun-prefetch" : "/opt/bun-prefetch";
+  return existsSync(wellKnown) ? wellKnown : undefined;
+})();
 
 /**
  * Path under `<dir>/by-url/` for a given download URL. The optional `dir`

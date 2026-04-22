@@ -1348,6 +1348,38 @@ pub const StandaloneModuleGraph = struct {
         comptime unreachable;
     }
 
+    /// Hint to the kernel that the embedded `__BUN`/`.bun` source pages are
+    /// unlikely to be accessed again after the entrypoint has been parsed.
+    /// The pages are clean file-backed COW, so any later read (lazy require,
+    /// stack-trace source lookup) faults back in transparently from the
+    /// executable on disk. Only applies when running as a compiled
+    /// standalone binary.
+    pub fn hintSourcePagesDontNeed() void {
+        if (comptime Environment.isWindows) return;
+
+        const bytes: []const u8 = if (comptime Environment.isMac)
+            Macho.getData() orelse return
+        else if (comptime Environment.isLinux)
+            ELF.getData() orelse return
+        else
+            return;
+
+        if (bytes.len == 0) return;
+
+        const page: usize = std.heap.pageSize();
+        const start = std.mem.alignBackward(usize, @intFromPtr(bytes.ptr), page);
+        const end = std.mem.alignForward(usize, @intFromPtr(bytes.ptr) + bytes.len, page);
+
+        // std.posix.madvise hits `unreachable` on unexpected errnos; this is a
+        // best-effort hint, so call libc directly and just log on failure.
+        const rc = std.c.madvise(@ptrFromInt(start), end - start, std.posix.MADV.DONTNEED);
+        if (rc != 0) {
+            Output.debugWarn("hintSourcePagesDontNeed: madvise failed errno={d}", .{std.c._errno().*});
+            return;
+        }
+        Output.debugWarn("hintSourcePagesDontNeed: MADV_DONTNEED {d} bytes", .{end - start});
+    }
+
     /// Allocates a StandaloneModuleGraph on the heap, populates it from bytes, sets it globally, and returns the pointer.
     fn fromBytesAlloc(allocator: std.mem.Allocator, raw_bytes: []u8, offsets: Offsets) !*StandaloneModuleGraph {
         const graph_ptr = try allocator.create(StandaloneModuleGraph);

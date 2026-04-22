@@ -11,18 +11,18 @@ extern "C" void Bun__tickWhilePaused(bool*);
 namespace Bun {
 using namespace JSC;
 template<bool isSSL>
-class BunInspectorConnection : public Inspector::FrontendChannel {
+class WebSocketInspectorConnection : public Inspector::FrontendChannel {
 public:
-    using BunInspectorSocket = uWS::WebSocket<isSSL, true, BunInspectorConnection*>;
+    using BunInspectorSocket = uWS::WebSocket<isSSL, true, WebSocketInspectorConnection*>;
 
-    BunInspectorConnection(BunInspectorSocket* ws, JSC::JSGlobalObject* globalObject)
+    WebSocketInspectorConnection(BunInspectorSocket* ws, JSC::JSGlobalObject* globalObject)
         : ws(ws)
         , globalObject(globalObject)
         , pendingMessages()
     {
     }
 
-    ~BunInspectorConnection()
+    ~WebSocketInspectorConnection()
     {
     }
 
@@ -98,14 +98,14 @@ public:
     BunInspectorSocket* ws;
 };
 
-using BunInspectorConnectionNoSSL = BunInspectorConnection<false>;
-using SSLBunInspectorConnection = BunInspectorConnection<true>;
+using WebSocketInspectorConnectionNoSSL = WebSocketInspectorConnection<false>;
+using SSLWebSocketInspectorConnection = WebSocketInspectorConnection<true>;
 
 template<bool isSSL>
 static void addInspector(void* app, JSC::JSGlobalObject* globalObject)
 {
     if constexpr (isSSL) {
-        auto handler = uWS::SSLApp::WebSocketBehavior<SSLBunInspectorConnection*> {
+        auto handler = uWS::SSLApp::WebSocketBehavior<SSLWebSocketInspectorConnection*> {
             /* Settings */
             .compression = uWS::DISABLED,
             .maxPayloadLength = 16 * 1024 * 1024,
@@ -118,14 +118,14 @@ static void addInspector(void* app, JSC::JSGlobalObject* globalObject)
             .upgrade = nullptr,
             .open = [globalObject](auto* ws) {
                 globalObject->setInspectable(true);
-                *ws->getUserData() = new SSLBunInspectorConnection(ws, globalObject);
-                SSLBunInspectorConnection* inspector = *ws->getUserData();
+                *ws->getUserData() = new SSLWebSocketInspectorConnection(ws, globalObject);
+                SSLWebSocketInspectorConnection* inspector = *ws->getUserData();
                 inspector->onOpen(globalObject); },
             .message = [](auto* ws, std::string_view message, uWS::OpCode opCode) {
-                SSLBunInspectorConnection* inspector = *(SSLBunInspectorConnection**)ws->getUserData();
+                SSLWebSocketInspectorConnection* inspector = *(SSLWebSocketInspectorConnection**)ws->getUserData();
                 inspector->onMessage(message); },
             .drain = [](auto* ws) {
-                SSLBunInspectorConnection* inspector = *(SSLBunInspectorConnection**)ws->getUserData();
+                SSLWebSocketInspectorConnection* inspector = *(SSLWebSocketInspectorConnection**)ws->getUserData();
                 inspector->drain(); },
             .ping = [](auto* /*ws*/, std::string_view) {
         /* Not implemented yet */ },
@@ -133,15 +133,15 @@ static void addInspector(void* app, JSC::JSGlobalObject* globalObject)
         /* Not implemented yet */ },
 
             .close = [](auto* ws, int /*code*/, std::string_view /*message*/) {
-            SSLBunInspectorConnection* inspector = *(SSLBunInspectorConnection**)ws->getUserData();
+            SSLWebSocketInspectorConnection* inspector = *(SSLWebSocketInspectorConnection**)ws->getUserData();
             inspector->onClose();
             delete inspector; }
         };
 
-        ((uWS::SSLApp*)app)->ws<SSLBunInspectorConnection*>("/bun:inspect", WTF::move(handler));
+        ((uWS::SSLApp*)app)->ws<SSLWebSocketInspectorConnection*>("/bun:inspect", WTF::move(handler));
     } else {
 
-        auto handler = uWS::App::WebSocketBehavior<BunInspectorConnectionNoSSL*> {
+        auto handler = uWS::App::WebSocketBehavior<WebSocketInspectorConnectionNoSSL*> {
             /* Settings */
             .compression = uWS::DISABLED,
             .maxPayloadLength = 16 * 1024 * 1024,
@@ -154,14 +154,14 @@ static void addInspector(void* app, JSC::JSGlobalObject* globalObject)
             .upgrade = nullptr,
             .open = [globalObject](auto* ws) {
                 globalObject->setInspectable(true);
-                *ws->getUserData() = new BunInspectorConnectionNoSSL(ws, globalObject);
-                BunInspectorConnectionNoSSL* inspector = *ws->getUserData();
+                *ws->getUserData() = new WebSocketInspectorConnectionNoSSL(ws, globalObject);
+                WebSocketInspectorConnectionNoSSL* inspector = *ws->getUserData();
                 inspector->onOpen(globalObject); },
             .message = [](auto* ws, std::string_view message, uWS::OpCode opCode) {
-                    BunInspectorConnectionNoSSL* inspector = *(BunInspectorConnectionNoSSL**)ws->getUserData();
+                    WebSocketInspectorConnectionNoSSL* inspector = *(WebSocketInspectorConnectionNoSSL**)ws->getUserData();
                     inspector->onMessage(message); },
             .drain = [](auto* ws) {
-                        BunInspectorConnectionNoSSL* inspector = *(BunInspectorConnectionNoSSL**)ws->getUserData();
+                        WebSocketInspectorConnectionNoSSL* inspector = *(WebSocketInspectorConnectionNoSSL**)ws->getUserData();
                         inspector->drain(); },
             .ping = [](auto* /*ws*/, std::string_view) {
         /* Not implemented yet */ },
@@ -169,12 +169,12 @@ static void addInspector(void* app, JSC::JSGlobalObject* globalObject)
         /* Not implemented yet */ },
 
             .close = [](auto* ws, int /*code*/, std::string_view /*message*/) {
-            BunInspectorConnectionNoSSL* inspector = *(BunInspectorConnectionNoSSL**)ws->getUserData();
+            WebSocketInspectorConnectionNoSSL* inspector = *(WebSocketInspectorConnectionNoSSL**)ws->getUserData();
             inspector->onClose();
             delete inspector; }
         };
 
-        ((uWS::App*)app)->ws<BunInspectorConnectionNoSSL*>("/bun:inspect", WTF::move(handler));
+        ((uWS::App*)app)->ws<WebSocketInspectorConnectionNoSSL*>("/bun:inspect", WTF::move(handler));
     }
 }
 

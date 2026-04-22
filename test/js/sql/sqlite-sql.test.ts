@@ -2214,13 +2214,13 @@ describe("BLOB Edge Cases and Binary Data", () => {
     await sql`CREATE TABLE large_blob (id INTEGER, data BLOB)`;
 
     const sizes = [1024 * 1024, 10 * 1024 * 1024];
+    // 256-byte repeating pattern (0..255). Buffer.alloc(size, pattern) tiles it,
+    // producing bytes identical to `largeBuffer[i] = i % 256` without an 11M-iteration JS loop.
+    const pattern = Buffer.alloc(256);
+    for (let i = 0; i < 256; i++) pattern[i] = i;
 
     for (const size of sizes) {
-      const largeBuffer = Buffer.alloc(size);
-
-      for (let i = 0; i < size; i++) {
-        largeBuffer[i] = i % 256;
-      }
+      const largeBuffer = Buffer.alloc(size, pattern);
 
       await sql`INSERT INTO large_blob VALUES (${size}, ${largeBuffer})`;
 
@@ -2497,16 +2497,18 @@ describe("Indexes and Query Optimization", () => {
 
     await sql`CREATE INDEX idx_name_lower ON products(LOWER(name))`;
 
-    for (let i = 1; i <= 100; i++) {
-      await sql`INSERT INTO products VALUES (
-        ${i}, 
-        ${"Product " + i}, 
-        ${"Category " + (i % 10)},
-        ${i * 10.5},
-        ${"SKU-" + i.toString().padStart(5, "0")},
-        ${"Description for product " + i}
-      )`;
-    }
+    await sql.begin(async tx => {
+      for (let i = 1; i <= 100; i++) {
+        await tx`INSERT INTO products VALUES (
+          ${i},
+          ${"Product " + i},
+          ${"Category " + (i % 10)},
+          ${i * 10.5},
+          ${"SKU-" + i.toString().padStart(5, "0")},
+          ${"Description for product " + i}
+        )`;
+      }
+    });
 
     try {
       await sql`INSERT INTO products VALUES (101, 'Test', 'Test', 10, 'SKU-00001', 'Duplicate SKU')`;
@@ -2532,10 +2534,12 @@ describe("Indexes and Query Optimization", () => {
 
     await sql`CREATE INDEX idx_type ON stats_test(type)`;
 
-    for (let i = 1; i <= 1000; i++) {
-      const type = i <= 900 ? "common" : i <= 990 ? "uncommon" : "rare";
-      await sql`INSERT INTO stats_test VALUES (${i}, ${type}, ${i})`;
-    }
+    await sql.begin(async tx => {
+      for (let i = 1; i <= 1000; i++) {
+        const type = i <= 900 ? "common" : i <= 990 ? "uncommon" : "rare";
+        await tx`INSERT INTO stats_test VALUES (${i}, ${type}, ${i})`;
+      }
+    });
 
     await sql`ANALYZE`;
 
@@ -2553,14 +2557,16 @@ describe("Indexes and Query Optimization", () => {
 
     await sql`CREATE INDEX idx_email_username ON users(email, username)`;
 
-    for (let i = 1; i <= 100; i++) {
-      await sql`INSERT INTO users VALUES (
-        ${i},
-        ${"user" + i + "@example.com"},
-        ${"user" + i},
-        ${new Date().toISOString()}
-      )`;
-    }
+    await sql.begin(async tx => {
+      for (let i = 1; i <= 100; i++) {
+        await tx`INSERT INTO users VALUES (
+          ${i},
+          ${"user" + i + "@example.com"},
+          ${"user" + i},
+          ${new Date().toISOString()}
+        )`;
+      }
+    });
 
     const result = await sql`SELECT email, username FROM users WHERE email LIKE 'user1%'`;
     expect(result.length).toBeGreaterThan(0);
@@ -2575,9 +2581,11 @@ describe("VACUUM and Database Maintenance", () => {
 
     await sql`CREATE TABLE vacuum_test (id INTEGER, data TEXT)`;
 
-    for (let i = 0; i < 1000; i++) {
-      await sql`INSERT INTO vacuum_test VALUES (${i}, ${Buffer.alloc(100, "x").toString()})`;
-    }
+    await sql.begin(async tx => {
+      for (let i = 0; i < 1000; i++) {
+        await tx`INSERT INTO vacuum_test VALUES (${i}, ${Buffer.alloc(100, "x").toString()})`;
+      }
+    });
 
     await sql`DELETE FROM vacuum_test WHERE id % 2 = 0`;
 
@@ -2604,9 +2612,11 @@ describe("VACUUM and Database Maintenance", () => {
 
     await sql`CREATE TABLE test (id INTEGER, data TEXT)`;
 
-    for (let i = 0; i < 100; i++) {
-      await sql`INSERT INTO test VALUES (${i}, ${Buffer.alloc(1000, "x").toString()})`;
-    }
+    await sql.begin(async tx => {
+      for (let i = 0; i < 100; i++) {
+        await tx`INSERT INTO test VALUES (${i}, ${Buffer.alloc(1000, "x").toString()})`;
+      }
+    });
 
     await sql`DELETE FROM test WHERE id < 50`;
 
@@ -3098,9 +3108,11 @@ describe("Concurrency and Locking", () => {
     const sql1 = new SQL(`sqlite://${dbPath}`);
     await sql1`CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    for (let i = 1; i <= 100; i++) {
-      await sql1`INSERT INTO test VALUES (${i}, ${"value" + i})`;
-    }
+    await sql1.begin(async tx => {
+      for (let i = 1; i <= 100; i++) {
+        await tx`INSERT INTO test VALUES (${i}, ${"value" + i})`;
+      }
+    });
 
     const sql2 = new SQL(`sqlite://${dbPath}`);
     const sql3 = new SQL(`sqlite://${dbPath}`);
@@ -3885,14 +3897,16 @@ describe("Query Explain and Optimization", () => {
       description TEXT
     )`;
 
-    for (let i = 1; i <= 1000; i++) {
-      await sql`INSERT INTO large_table VALUES (
-        ${i},
-        ${"category" + (i % 10)},
-        ${i * 10},
-        ${"description for item " + i}
-      )`;
-    }
+    await sql.begin(async tx => {
+      for (let i = 1; i <= 1000; i++) {
+        await tx`INSERT INTO large_table VALUES (
+          ${i},
+          ${"category" + (i % 10)},
+          ${i * 10},
+          ${"description for item " + i}
+        )`;
+      }
+    });
   });
 
   afterAll(async () => {

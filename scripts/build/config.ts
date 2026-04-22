@@ -120,6 +120,10 @@ export interface Config {
   tinycc: boolean;
   valgrind: boolean;
   fuzzilli: boolean;
+  /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
+  unifiedSources: boolean;
+  /** Emit clang -ftime-trace .json next to each .o for build profiling. */
+  timeTrace: boolean;
 
   // ─── Environment ───
   ci: boolean;
@@ -226,6 +230,8 @@ export interface PartialConfig {
   tinycc?: boolean;
   valgrind?: boolean;
   fuzzilli?: boolean;
+  unifiedSources?: boolean;
+  timeTrace?: boolean;
   ci?: boolean;
   buildkite?: boolean;
   webkit?: WebKitMode;
@@ -517,6 +523,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     tinycc,
     valgrind,
     fuzzilli,
+    unifiedSources: partial.unifiedSources ?? true,
+    timeTrace: partial.timeTrace ?? false,
     ci,
     buildkite,
     webkit: partial.webkit ?? "prebuilt",

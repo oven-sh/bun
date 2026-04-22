@@ -14,6 +14,7 @@
 #include "ZigGlobalObject.h"
 #include "InternalModuleRegistry.h"
 
+#pragma push_macro("assert")
 #undef assert
 
 #define FOREACH_EXPOSED_BUILTIN_IMR(v)     \
@@ -131,3 +132,5 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
     globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
     globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
 }
+
+#pragma pop_macro("assert")

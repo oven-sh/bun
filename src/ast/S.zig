@@ -179,6 +179,11 @@ pub const Local = struct {
     was_commonjs_export: bool = false,
 
     pub fn canMergeWith(this: *const Local, other: *const Local) bool {
+        // Don't merge "using" / "await using" declarations. Merging them is
+        // spec-compliant but matches esbuild's behavior of keeping them
+        // separate, and avoids any downstream pass assuming one decl per
+        // `using` statement.
+        if (this.kind.isUsing()) return false;
         return this.kind == other.kind and this.is_export == other.is_export and
             this.was_commonjs_export == other.was_commonjs_export;
     }

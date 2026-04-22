@@ -198,9 +198,10 @@ test("getPeerCertificate(false) works with socket upgrade pattern (mariadb)", as
 
 test("getPeerCertificate(true) does not self-reference non-self-signed leaf", async () => {
   // Server sends only the leaf cert (no CA in the chain). The leaf is NOT
-  // self-signed, so per Node.js semantics issuerCertificate must be left
-  // unset rather than fabricated as a self-reference. This matters because
-  // code commonly walks the chain via `while (c !== c.issuerCertificate)`.
+  // self-signed, so per Node.js semantics issuerCertificate must never be
+  // a self-reference here. Node.js additionally looks the issuer up in the
+  // client's local trust store and appends it. This matters because code
+  // commonly walks the chain via `while (c !== c.issuerCertificate)`.
   const { promise, resolve, reject } = Promise.withResolvers<void>();
 
   const server = tls.createServer({ key: serverKey, cert: serverCert }, socket => {
@@ -222,10 +223,14 @@ test("getPeerCertificate(true) does not self-reference non-self-signed leaf", as
           const cert = socket.getPeerCertificate(true);
           expect(cert).toBeDefined();
           expect(cert.subject.CN).toBe("agent1");
-          // agent1 is issued by ca1, not self-signed. Since ca1 wasn't sent
-          // in the chain, issuerCertificate should be undefined — never a
-          // self-reference on a non-self-signed cert.
+          // agent1 is issued by ca1, not self-signed — must never self-ref.
           expect(cert.issuerCertificate).not.toBe(cert);
+          // ca1 wasn't sent in the chain, but it IS in the client's trust
+          // store (via `ca: [caCert]`), so Node.js looks it up and links it.
+          expect(cert.issuerCertificate).toBeDefined();
+          expect(cert.issuerCertificate.subject.CN).toBe("ca1");
+          // ca1 is self-signed → its issuerCertificate points to itself.
+          expect(cert.issuerCertificate.issuerCertificate).toBe(cert.issuerCertificate);
           resolve();
         } catch (e) {
           reject(e);

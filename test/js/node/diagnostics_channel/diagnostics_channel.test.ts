@@ -348,8 +348,7 @@ describe("TracingChannel", () => {
 });
 
 describe("http server channels (#29586)", () => {
-  const listen = (s: http.Server) =>
-    new Promise<number>(r => s.listen(0, () => r((s.address() as any).port)));
+  const listen = (s: http.Server) => new Promise<number>(r => s.listen(0, () => r((s.address() as any).port)));
   // Two ticks drains both the 'finish' nextTick and any tail events.
   const drain = async () => {
     await new Promise<void>(r => setImmediate(r));

@@ -826,6 +826,7 @@ describe("close handling", () => {
             stdio: ["ignore", "ignore", "ignore", fd],
           }),
         );
+        expect(procs[0].stdio[3]).toBe(null);
         await Promise.all(procs.map(p => p.exited));
       })();
 

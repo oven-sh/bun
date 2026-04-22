@@ -1480,13 +1480,16 @@ pub fn spawnProcessPosix(
             .dup2 => @panic("TODO dup2 extra fd"),
             .inherit => {
                 try actions.inherit(fileno);
+                try extra_fds.append(bun.invalid_fd);
             },
             .ignore => {
                 try actions.openZ(fileno, "/dev/null", bun.O.RDWR, 0o664);
+                try extra_fds.append(bun.invalid_fd);
             },
 
             .path => |path| {
                 try actions.open(fileno, path, bun.O.RDWR | bun.O.CREAT, 0o664);
+                try extra_fds.append(bun.invalid_fd);
             },
             .ipc, .buffer => {
                 const fds: [2]bun.FD = try bun.sys.socketpair(

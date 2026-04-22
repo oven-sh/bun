@@ -1,9 +1,9 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readlinkSync } from "fs";
+import { existsSync, lstatSync, readlinkSync, realpathSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
-import { dirname, join } from "path";
+import { dirname, join, sep } from "path";
 
 const registry = new VerdaccioRegistry();
 
@@ -1533,11 +1533,9 @@ describe("global virtual store", () => {
   });
 
   test("off by default — isolated linker stays project-local unless opted in (#29614)", async () => {
-    // Regression pin for #29614: the canonical path of an isolated-linker
-    // dependency must stay inside the project when `install.globalStore`
-    // isn't explicitly enabled. Bundlers (rspack, webpack) and tools that
-    // canonicalize symlinks before walking ancestors for `node_modules/`
-    // depend on this pnpm-compatible layout.
+    // Bundlers (rspack, webpack) and tools that canonicalize symlinks before
+    // walking ancestors for `node_modules/` depend on the canonical path of
+    // an isolated-linker dep staying inside the project.
     const { packageJson, packageDir } = await registry.createTestDir({
       // Deliberately no `globalStore` — this test proves the built-in default.
       bunfigOpts: { linker: "isolated" },
@@ -1556,6 +1554,31 @@ describe("global virtual store", () => {
     const entry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
     expect(lstatSync(entry).isSymbolicLink()).toBe(false);
     expect(lstatSync(entry).isDirectory()).toBe(true);
+
+    // The canonical path of `node_modules/no-deps` is what bundlers resolve
+    // against when walking ancestors for `node_modules/`. Before the fix it
+    // escaped into `<cache>/links/`.
+    const canonical = realpathSync(join(packageDir, "node_modules", "no-deps"));
+    const projectRoot = realpathSync(packageDir);
+    expect(canonical.startsWith(projectRoot + sep)).toBe(true);
+  });
+
+  test("can be enabled via BUN_INSTALL_GLOBAL_STORE=1", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-on-env",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall({ ...bunEnv, BUN_INSTALL_GLOBAL_STORE: "1" }, packageDir);
+
+    const entry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
+    expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(entry)).toContain(`${sep}links${sep}`);
   });
 
   test("entry hash is deterministic across fresh installs", async () => {

@@ -615,11 +615,11 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     // patchedDependencies from pkgA should be ignored, not resolved relative to pkgB
     expect(stderr).not.toContain("Couldn't find patch file");
     expect(stderr).not.toContain("patches/");
-    expect(stdout).toContain("pkg-a@");
-    expect(exitCode).toBe(0);
+    expect({ stdout, exitCode }).toMatchObject({ exitCode: 0 });
 
     // lockfile should not contain pkgA's patchedDependencies
     const lockfile = await Bun.file(join(filedir, "pkgB", "bun.lock")).text();
+    expect(lockfile).toContain("pkg-a");
     expect(lockfile).not.toContain("patchedDependencies");
   });
 

@@ -25,9 +25,9 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { writeIfChanged } from "./fs.ts";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
+import { writeIfChanged } from "./fs.ts";
 import { fetchZig } from "./zig.ts";
 
 /**

@@ -1708,8 +1708,14 @@ prefetch_build_deps() {
 
 	create_directory "$prefetch_dir"
 	# resolveConfig() walks up from cwd to find package.json — run from inside
-	# the clone.
-	( cd "$clone_dir/bun" && execute "$bun_path" scripts/prefetch-deps.ts "$prefetch_dir" )
+	# the clone. Direct invocation (not `execute`) so a non-zero is observable
+	# here rather than swallowed by the subshell — the parent shell has no
+	# `set -e`, and `error()` inside a subshell can't kill the parent.
+	if ! ( cd "$clone_dir/bun" && "$bun_path" scripts/prefetch-deps.ts "$prefetch_dir" ); then
+		print "warning: prefetch-deps.ts failed; baking without warm cache"
+		execute_sudo rm -rf "$clone_dir" "$prefetch_dir"
+		return
+	fi
 	execute_sudo rm -rf "$clone_dir"
 
 	# Read-only: download.ts only ever copies FROM here, and a writable baked

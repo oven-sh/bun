@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 const repoRoot = join(import.meta.dirname, "..", "..", "..");
 
@@ -106,8 +106,8 @@ test("fetchPrebuilt: stale extracted/ identity falls through to by-url/", async 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(stdout).not.toContain("extracted/thing-v2");
-  expect(stdout).toContain("by-url/");
+  expect(stdout).not.toContain(`extracted${sep}thing-v2`);
+  expect(stdout).toContain(`by-url${sep}`);
   expect(await Bun.file(join(dest, "fresh.a")).text()).toBe("new");
   expect(await Bun.file(join(dest, ".identity")).text()).toBe("v2\n");
   expect(await Bun.file(join(dest, "stale.a")).exists()).toBe(false);

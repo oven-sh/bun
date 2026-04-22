@@ -299,7 +299,11 @@ function llintCodegen(cfg: Config): DirectCodegen[] {
     ? ["icuuc.lib", "icuin.lib", "icudt.lib"]
     : [
         ...(icu !== undefined ? [`-L${icu}/lib`] : []),
-        "-licuuc", "-licui18n", "-licudata", "-lpthread", "-ldl",
+        "-licuuc",
+        "-licui18n",
+        "-licudata",
+        "-lpthread",
+        "-ldl",
         ...(cfg.asan ? ["-fsanitize=address"] : []),
       ];
   const toolDeps = ["webkit-wtf", "webkit-bmalloc"];

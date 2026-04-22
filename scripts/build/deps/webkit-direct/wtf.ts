@@ -67,9 +67,9 @@ const WINDOWS = [
 ];
 
 export const webkitWTF: Dependency = {
-  name: "webkit-wtf",
+  name: "wtf",
   enabled: cfg => cfg.webkit === "direct",
-  fetchDeps: ["webkit-bmalloc"],
+  fetchDeps: ["bmalloc"],
 
   source: webkitDirectSource,
 
@@ -87,7 +87,7 @@ export const webkitWTF: Dependency = {
         STATICALLY_LINKED_WITH_bmalloc: true,
         ...(cfg.linux && { _GNU_SOURCE: true, _GLIBCXX_ASSERTIONS: 1 }),
       },
-      cflags: [...webkitCFlags(cfg), `-I${depBuildDir(cfg, "webkit-bmalloc")}`],
+      cflags: [...webkitCFlags(cfg), `-I${depBuildDir(cfg, "bmalloc")}`],
       cxxflags: webkitCxxFlags(cfg),
     };
 

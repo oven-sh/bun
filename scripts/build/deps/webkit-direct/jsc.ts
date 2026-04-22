@@ -44,7 +44,7 @@ const SRC_INCLUDES = layer.includes.filter(i => i.startsWith("$SRC/")).map(i => 
 function unifiedBundles(cfg: Config): { bundles: string[]; nonUnified: string[] } {
   const src = webkitSrcDir(cfg);
   const jscSrc = `${src}/Source/JavaScriptCore`;
-  const ds = `${depBuildDir(cfg, "webkit-jsc")}/DerivedSources`;
+  const ds = `${depBuildDir(cfg, "jsc")}/DerivedSources`;
   const out = execFileSync(
     "python3",
     [
@@ -314,7 +314,7 @@ function llintCodegen(cfg: Config): DirectCodegen[] {
         "-ldl",
         ...(cfg.asan ? ["-fsanitize=address"] : []),
       ];
-  const toolDeps = ["webkit-wtf", "webkit-bmalloc"];
+  const toolDeps = ["wtf", "bmalloc"];
 
   return [
     // 2/5: compile+link SettingsExtractor (reads LLIntDesiredSettings.h
@@ -372,9 +372,9 @@ function llintCodegen(cfg: Config): DirectCodegen[] {
 }
 
 export const webkitJSC: Dependency = {
-  name: "webkit-jsc",
+  name: "jsc",
   enabled: cfg => cfg.webkit === "direct",
-  fetchDeps: ["webkit-bmalloc", "webkit-wtf"],
+  fetchDeps: ["bmalloc", "wtf"],
 
   source: webkitDirectSource,
 
@@ -413,10 +413,10 @@ export const webkitJSC: Dependency = {
       },
       cflags: [
         ...webkitCFlags(cfg),
-        `-I${depBuildDir(cfg, "webkit-bmalloc")}`,
-        `-I${depBuildDir(cfg, "webkit-jsc")}/DerivedSources`,
-        `-I${depBuildDir(cfg, "webkit-jsc")}/DerivedSources/inspector`,
-        `-I${depBuildDir(cfg, "webkit-jsc")}/DerivedSources/yarr`,
+        `-I${depBuildDir(cfg, "bmalloc")}`,
+        `-I${depBuildDir(cfg, "jsc")}/DerivedSources`,
+        `-I${depBuildDir(cfg, "jsc")}/DerivedSources/inspector`,
+        `-I${depBuildDir(cfg, "jsc")}/DerivedSources/yarr`,
       ],
       cxxflags: webkitCxxFlags(cfg),
       forwardHeaders: [
@@ -475,12 +475,12 @@ export const webkitJSC: Dependency = {
   // and the buildDir holding cmakeconfig.h. Mirrors webkit.ts's local-mode
   // provides() but with our per-layer buildDirs.
   provides: cfg => {
-    const jscBuild = depBuildDir(cfg, "webkit-jsc");
+    const jscBuild = depBuildDir(cfg, "jsc");
     return {
       libs: [],
       includes: [
         // cmakeconfig.h + the bmalloc/ forwarding tree.
-        depBuildDir(cfg, "webkit-bmalloc"),
+        depBuildDir(cfg, "bmalloc"),
         // <JavaScriptCore/X.h> (flattened forwarding) + the bare X.h some
         // bun headers use.
         jscBuild,

@@ -83,7 +83,7 @@ export function webkitDirectSource(cfg: Config): Source {
 const layer = layerData.bmalloc;
 
 export const webkitBmalloc: Dependency = {
-  name: "webkit-bmalloc",
+  name: "bmalloc",
   enabled: cfg => cfg.webkit === "direct",
 
   source: webkitDirectSource,
@@ -116,6 +116,6 @@ export const webkitBmalloc: Dependency = {
   // WTF/JSC need the feature header from this layer's buildDir.
   provides: cfg => ({
     libs: [],
-    includes: ["Source/bmalloc", depBuildDir(cfg, "webkit-bmalloc")],
+    includes: ["Source/bmalloc", depBuildDir(cfg, "bmalloc")],
   }),
 };

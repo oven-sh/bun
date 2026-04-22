@@ -95,28 +95,30 @@ test.skipIf(process.platform === "win32")(
     chmodSync(join(src, "lib.a"), 0o444);
     chmodSync(src, 0o555);
 
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        join(repoRoot, "scripts", "build", "fetch-cli.ts"),
-        "prebuilt",
-        "thing",
-        "http://192.0.2.1/thing-ro.tar.gz",
-        dest,
-        "v1",
-      ],
-      env: { ...bunEnv, BUN_BUILD_PREFETCH_DIR: prefetch },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(exitCode).toBe(0);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          join(repoRoot, "scripts", "build", "fetch-cli.ts"),
+          "prebuilt",
+          "thing",
+          "http://192.0.2.1/thing-ro.tar.gz",
+          dest,
+          "v1",
+        ],
+        env: { ...bunEnv, BUN_BUILD_PREFETCH_DIR: prefetch },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(exitCode).toBe(0);
 
-    // The published tree must be removable by the next fetch (version bump).
-    expect(() => rmSync(dest, { recursive: true })).not.toThrow();
-
-    // Let tempDir's own cleanup succeed.
-    chmodSync(src, 0o755);
+      // The published tree must be removable by the next fetch (version bump).
+      expect(() => rmSync(dest, { recursive: true })).not.toThrow();
+    } finally {
+      // Restore so tempDir's dispose doesn't EACCES and bury the real failure.
+      chmodSync(src, 0o755);
+    }
   },
 );
 

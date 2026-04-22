@@ -76,8 +76,19 @@ interface Item {
 }
 
 const items = new Map<string, Item>();
+const extractNames = new Set<string>();
 function add(item: Item): void {
-  if (!items.has(item.url)) items.set(item.url, item);
+  if (items.has(item.url)) return;
+  // Only one item may claim a given extracted/<name>/ — with parallel workers
+  // two would race on the same staging dir. First-wins is fine: today no two
+  // distinct URLs map to the same name (each WebKit suffix produces a unique
+  // destDir basename), so this is a guard against future drift, not a tie-
+  // break that matters.
+  if (item.extract !== undefined) {
+    if (extractNames.has(item.extract.name)) item = { url: item.url };
+    else extractNames.add(item.extract.name);
+  }
+  items.set(item.url, item);
 }
 
 for (const partial of variants) {

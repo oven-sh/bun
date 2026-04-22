@@ -101,9 +101,14 @@ export async function tryPrefetchExtracted(dest: string, stampFile: string, expe
   const stamp = resolve(src, stampFile);
   if (!existsSync(stamp) || readFileSync(stamp, "utf8").trim() !== expected) return false;
   console.log(`using prefetch cache: ${src}`);
-  await rm(dest, { recursive: true, force: true });
+  // Stage-then-rename so an interrupted copy doesn't leave a stamped-but-
+  // incomplete tree at dest (same publish discipline as fetchPrebuilt).
+  const staging = `${dest}.${process.pid}.prefetch`;
+  await rm(staging, { recursive: true, force: true });
   await mkdir(resolve(dest, ".."), { recursive: true });
-  await cp(src, dest, { recursive: true });
+  await cp(src, staging, { recursive: true });
+  await rm(dest, { recursive: true, force: true });
+  await rename(staging, dest);
   return true;
 }
 
@@ -120,7 +125,11 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
   if (prefetched !== undefined && existsSync(prefetched)) {
     console.log(`using prefetch cache: ${prefetched}`);
     await mkdir(resolve(dest, ".."), { recursive: true });
-    await copyFile(prefetched, dest);
+    // Same temp-then-rename atomicity as the network path below — an
+    // interrupted copy must not leave a partial file claiming to be complete.
+    const tmp = `${dest}.${process.pid}.partial`;
+    await copyFile(prefetched, tmp);
+    await rename(tmp, dest);
     return;
   }
 

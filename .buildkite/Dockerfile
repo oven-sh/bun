@@ -142,7 +142,8 @@ RUN mkdir -p /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildk
 # rebuild needed. The clone is only for scripts/prefetch-deps.ts + its
 # scripts/build/ imports, which aren't in the docker context.
 ARG BUN_REPO_REF=main
-RUN if git clone --depth=1 --branch ${BUN_REPO_REF} https://github.com/oven-sh/bun.git /tmp/bun-clone \
+RUN set -e; \
+    if git clone --depth=1 --branch ${BUN_REPO_REF} https://github.com/oven-sh/bun.git /tmp/bun-clone \
        && [ -f /tmp/bun-clone/scripts/prefetch-deps.ts ]; then \
          (cd /tmp/bun-clone && bun scripts/prefetch-deps.ts /opt/bun-prefetch); \
        else \

@@ -462,15 +462,22 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         BunString bunStr = Bun::toString(filename);
         if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
             filename = bunStr.transferToWTFString();
+            // Pre-#29587, extraction wrote a fresh /tmp file per dlopen (see
+            // #19550), so we unlinked immediately after dlopen to avoid
+            // leaks. `resolveEmbeddedFile` now dedupes via a content-hashed
+            // path the VM caches on the shared StandaloneModuleGraph.File;
+            // deleting the file out from under that cache forces a re-extract
+            // on the next dlopen, defeating the fix. Keep Windows'
+            // delete-on-reboot for hygiene (NTFS can't unlink an in-use
+            // file); POSIX leaves the content-hashed tmpfile alone.
+#if OS(WINDOWS)
             deleteAfter = !filename.startsWith("/proc/"_s);
+#endif
         }
     }
 
     RETURN_IF_EXCEPTION(scope, {});
 
-    // For bun build --compile, we copy the .node file to a temp directory.
-    // It's best to delete it as soon as we can.
-    // https://github.com/oven-sh/bun/issues/19550
     const auto tryToDeleteIfNecessary = [&]() {
 #if OS(WINDOWS)
         if (deleteAfter) {
@@ -497,10 +504,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             }
         }
 #else
-        if (deleteAfter) {
-            deleteAfter = false;
-            Bun__unlink(utf8.data(), utf8.length());
-        }
+        (void)deleteAfter;
 #endif
     };
 

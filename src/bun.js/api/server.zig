@@ -2064,13 +2064,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
-            // `Bun__ServerRouteList__callRoute` creates the `JSBunRequest`
-            // wrapper in C++ without going through `Request.toJS`, so the
-            // wrapper is not yet recorded on the Zig-side `Request`. Record
-            // it now so the error handler can be passed the same object.
-            if (prepared.js_request != .zero) {
-                prepared.request_object.setJSRef(prepared.js_request);
-            }
+            prepared.request_object.setJSRef(prepared.js_request);
 
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
@@ -2339,10 +2333,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             prepared.ctx.upgrade_context = upgrade_ctx; // set the upgrade context
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
-            // See `onUserRouteRequest` — record the C++-created wrapper.
-            if (prepared.js_request != .zero) {
-                prepared.request_object.setJSRef(prepared.js_request);
-            }
+            prepared.request_object.setJSRef(prepared.js_request);
 
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }

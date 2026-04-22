@@ -258,8 +258,6 @@ pub fn toJSForBake(this: *Request, globalObject: *JSGlobalObject) bun.JSError!JS
         Bun__JSRequest__createForBake,
         .{ globalObject, this },
     );
-    // Track the wrapper so error handlers (and other callers) can retrieve it
-    // later via `tryJSValue`.
     this.#js_ref = .initWeak(js_value);
     return js_value;
 }

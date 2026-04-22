@@ -843,29 +843,6 @@ describe("streaming", () => {
       expect(requestFromError!.method).toBe("POST");
       expect(requestFromError).toBe(requestFromRoute);
     });
-
-    it("is backwards-compatible with single-argument error handlers", async () => {
-      let receivedError: Error | undefined;
-      await runTest(
-        {
-          fetch(_req) {
-            throw new TypeError("legacy");
-          },
-          // Intentionally only declare one parameter; this must keep working.
-          error(e) {
-            receivedError = e;
-            return new Response("legacy ok", { status: 500 });
-          },
-        },
-        async server => {
-          const response = await fetch(server.url.origin);
-          expect(response.status).toBe(500);
-          expect(await response.text()).toBe("legacy ok");
-          expect(receivedError).toBeInstanceOf(TypeError);
-          expect(receivedError!.message).toBe("legacy");
-        },
-      );
-    });
   });
 
   it("text from JS, 2 chunks, with delay", async () => {

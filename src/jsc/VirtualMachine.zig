@@ -1902,9 +1902,10 @@ pub fn resolveMaybeNeedsTrailingSlash(
             // This Msg is wrapped in a ResolveMessage JS object below; without
             // `.resolve` metadata here, accessing `err.specifier` / `err.importKind`
             // or calling `JSON.stringify(err)` from JS would read the inactive
-            // union field and panic in safe builds. The specifier itself is left
-            // empty because it is longer than `BabyString` (u16 offset/len) can
-            // encode on this path.
+            // union field and panic in safe builds. The specifier is left empty:
+            // on Windows it always exceeds what `BabyString` (u16 offset/len) can
+            // encode here, and on other platforms it may — the full specifier is
+            // in the message text regardless.
             .metadata = .{
                 .resolve = .{
                     .specifier = .{ .offset = 0, .len = 0 },

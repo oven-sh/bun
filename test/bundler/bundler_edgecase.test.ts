@@ -1364,10 +1364,8 @@ describe("bundler", () => {
       `,
     },
   });
-  // A catch-all tsconfig `paths` entry (common for ambient .d.ts stubs)
-  // must not defeat `packages=external`: if the alias doesn't resolve to a
-  // real file, the bare specifier still gets marked external. Related to
-  // the follow-up fix for #29590.
+  // #29590: a catch-all `paths` entry (common for ambient .d.ts stubs)
+  // whose target doesn't exist must not defeat `packages=external`.
   itBundled("edgecase/PackageExternalStarPathsDoesNotBundleNodeModules#29590", {
     files: {
       "/entry.ts": /* ts */ `
@@ -1396,9 +1394,7 @@ describe("bundler", () => {
       `,
     },
     onAfterBundle(api) {
-      // `foo` must stay external — a catch-all paths entry whose target
-      // does not exist on disk cannot claim the import. If this regresses,
-      // `foo` gets inlined via `require_foo = __commonJS(...)` instead.
+      // If this regresses, `foo` gets inlined via __commonJS(...) instead.
       api.expectFile("/out.js").toContain(`from "foo"`);
     },
     run: {
@@ -1407,10 +1403,8 @@ describe("bundler", () => {
       `,
     },
   });
-  // Explicit --external wildcards must win over a tsconfig `paths` alias
-  // that resolves to a real local file. Without this guard the #29590 fix
-  // would silently bundle `@/src/*` when the user asked for it to stay
-  // external on top of `--packages=external`.
+  // #29590: an explicit --external wildcard must win over a tsconfig `paths`
+  // alias, even when the alias resolves to a real local file.
   itBundled("edgecase/ExternalWildcardBeatsTSConfigPaths#29590", {
     files: {
       "/entry.ts": /* ts */ `
@@ -1433,8 +1427,7 @@ describe("bundler", () => {
     external: ["@/src/*"],
     target: "bun",
     onAfterBundle(api) {
-      // The import must stay external. If it regresses, `add` gets
-      // inlined from src/adder.ts into the output bundle.
+      // If this regresses, `add` gets inlined from src/adder.ts.
       api.expectFile("/out.js").toContain(`from "@/src/adder"`);
       api.expectFile("/out.js").not.toContain(`= (a, b) => a + b`);
     },

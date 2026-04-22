@@ -372,12 +372,8 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Regression for https://github.com/oven-sh/bun/issues/29590: a test that
-  // reaches a shared source file via a tsconfig `paths` alias whose key
-  // looks bare (e.g. "@/*") must still be selected when that source file
-  // changes. The scan bundler runs with packages=external so bare
-  // specifiers aren't followed into node_modules; the path-alias key
-  // must not be mistaken for one of those bare specifiers.
+  // https://github.com/oven-sh/bun/issues/29590: a tsconfig `paths` alias
+  // like "@/*" must be followed when building the module graph.
   test("tsconfig paths alias is followed when computing the module graph", async () => {
     using dir = tempDir("test-changed-tsconfig-paths", {
       "package.json": JSON.stringify({ name: "aliasrepro", type: "module" }),
@@ -385,24 +381,15 @@ describe.concurrent("bun test --changed", () => {
         compilerOptions: { baseUrl: ".", paths: { "@/*": ["./*"] } },
       }),
       "src/adder.ts": `export const add = (a: number, b: number) => a + b;\n`,
-      "tests/alias.test.ts":
-        `import { test, expect } from "bun:test";\n` +
-        `import { add } from "@/src/adder";\n` +
-        `test("alias", () => expect(add(1, 2)).toBe(3));\n`,
-      "tests/relative.test.ts":
-        `import { test, expect } from "bun:test";\n` +
-        `import { add } from "../src/adder";\n` +
-        `test("relative", () => expect(add(1, 2)).toBe(3));\n`,
-      "tests/unrelated.test.ts":
-        `import { test, expect } from "bun:test";\n` + `test("unrelated", () => expect(1).toBe(1));\n`,
+      "tests/alias.test.ts": `import { test, expect } from "bun:test";\nimport { add } from "@/src/adder";\ntest("alias", () => expect(add(1, 2)).toBe(3));\n`,
+      "tests/relative.test.ts": `import { test, expect } from "bun:test";\nimport { add } from "../src/adder";\ntest("relative", () => expect(add(1, 2)).toBe(3));\n`,
+      "tests/unrelated.test.ts": `import { test, expect } from "bun:test";\ntest("unrelated", () => expect(1).toBe(1));\n`,
     });
     initRepo(String(dir));
     appendFileSync(join(String(dir), "src", "adder.ts"), "// touched\n");
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
     const testNames = ["alias.test.ts", "relative.test.ts", "unrelated.test.ts"];
-    // Both importers of src/adder.ts are selected — the aliased one must
-    // not be silently dropped. The unrelated test stays filtered out.
     expect(ranFiles(stderr, testNames)).toEqual(["alias.test.ts", "relative.test.ts"]);
     expect(exitCode).toBe(0);
   });

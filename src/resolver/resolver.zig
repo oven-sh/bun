@@ -619,15 +619,11 @@ pub const Resolver = struct {
         return false;
     }
 
-    /// Full tsconfig.json `paths` resolution for the enclosing tsconfig of
-    /// `source_dir`. Returns the resolved `MatchResult` iff a key matches
-    /// AND the mapped target exists on disk; returns null otherwise.
-    ///
-    /// Used by the `packages=external` short-circuit so that a path-aliased
-    /// local file is followed into the project source instead of being
-    /// mistaken for a bare package specifier, while a bare specifier whose
-    /// alias target does not exist (e.g. a catch-all `"*"` paths entry used
-    /// for ambient type stubs) still falls through to the external path.
+    /// Resolves `import_path` via the enclosing tsconfig's `paths`. Returns
+    /// the `MatchResult` iff a key matches AND the mapped target exists on
+    /// disk. Used to let path-aliased local files win over `packages=external`
+    /// without breaking catch-all `"*"` paths entries that only cover ambient
+    /// type stubs.
     pub fn resolveViaTSConfigPaths(
         r: *ThisResolver,
         source_dir: string,
@@ -729,20 +725,11 @@ pub const Resolver = struct {
             }
         }
 
-        // A tsconfig.json `paths` alias whose key looks bare (e.g. "@/*")
-        // would otherwise be caught by `packages = external + isPackagePath`
-        // even though it remaps to a local file. Try the alias first, and
-        // only when it actually resolves to a file on disk do we follow it
-        // into the project source; otherwise fall through to the normal
-        // `packages = external` short-circuit so bare specifiers that
-        // happen to be covered by a catch-all paths entry (e.g.
-        // `"*": ["./types/*"]` for ambient .d.ts stubs) still get marked
-        // external (issue #29590).
-        //
-        // A user-supplied `--external` wildcard still wins: the block
-        // below only fires when the import would otherwise be externalised
-        // by `packages=external + isPackagePath`, never by an explicit
-        // user pattern.
+        // #29590: a tsconfig `paths` key can look bare (e.g. "@/*") and
+        // otherwise collide with `packages=external + isPackagePath`. Try
+        // the alias first, but only follow it when it actually resolves to
+        // a file on disk — a catch-all `"*": ["./types/*"]` for ambient
+        // .d.ts stubs must still let real bare imports stay external.
         if (kind != .entry_point_build and kind != .entry_point_run and
             r.opts.packages == .external and isPackagePath(import_path) and
             !r.matchesUserExternalPattern(import_path))

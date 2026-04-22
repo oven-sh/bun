@@ -215,17 +215,40 @@ export function getStdinStream(
     return originalResume.$call(this);
   };
 
+  let internalReadSpinCount = 0;
+  let internalReadSpinDumped = false;
   async function internalRead(stream) {
     $debug("internalRead();");
     try {
       $assert(reader);
-      const { value } = await reader.read();
+      const { value, done } = await reader.read();
 
-      if (value) {
+      if (!done && value && value.byteLength > 0) {
+        internalReadSpinCount = 0;
         stream.push(value);
 
         if (shouldDisown) disown();
-      } else {
+      } else if (done || value === undefined) {
+        internalReadSpinCount = 0;
+        if (!stream_endEmitted) {
+          stream_endEmitted = true;
+          stream.emit("end");
+        }
+        if (!stream_destroyed) {
+          stream_destroyed = true;
+          stream.destroy();
+          disown();
+        }
+      } else if (++internalReadSpinCount > 10000 && !internalReadSpinDumped) {
+        internalReadSpinDumped = true;
+        process.stderr.write(
+          `\n[bun-stdin-spin-diagnostic] internalRead resolved ${internalReadSpinCount}x without progress: ` +
+            `done=${done} value=${value?.constructor?.name} byteLength=${value?.byteLength} ` +
+            `streamDestroyed=${stream_destroyed} endEmitted=${stream_endEmitted} ` +
+            `shouldDisown=${shouldDisown} hasReader=${!!reader}\n` +
+            new Error().stack +
+            "\n",
+        );
         if (!stream_endEmitted) {
           stream_endEmitted = true;
           stream.emit("end");
@@ -238,6 +261,18 @@ export function getStdinStream(
       }
     } catch (err) {
       if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
+        if (++internalReadSpinCount > 10000 && !internalReadSpinDumped) {
+          internalReadSpinDumped = true;
+          process.stderr.write(
+            `\n[bun-stdin-spin-diagnostic] internalRead caught ERR_STREAM_RELEASE_LOCK ${internalReadSpinCount}x ` +
+              `streamDestroyed=${stream_destroyed} endEmitted=${stream_endEmitted} ` +
+              `shouldDisown=${shouldDisown} hasReader=${!!reader}\n` +
+              new Error().stack +
+              "\n",
+          );
+          stream.destroy(err);
+          return;
+        }
         // The stream was unref()ed. It may be ref()ed again in the future,
         // or maybe it has already been ref()ed again and we just need to
         // restart the internalRead() function. triggerRead() will figure that out.

@@ -1231,7 +1231,7 @@ function emitNestedCmake(
   });
 
   // Targets default to lib names — most deps name their cmake target
-  // the same as the output library (boringssl's "crypto" → libcrypto.a).
+  // the same as the output library (libuv's "uv_a" → libuv_a.a).
   const targets = spec.targets ?? provides.libs.filter(l => !l.includes("."));
 
   // ─── Emit build node ───

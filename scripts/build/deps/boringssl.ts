@@ -47,7 +47,6 @@ export const boringssl: Dependency = {
       includes: ["include"],
       defines: {
         BORINGSSL_IMPLEMENTATION: true,
-        ...(cfg.linux && { _XOPEN_SOURCE: 700 }),
         ...(cfg.windows && {
           _HAS_EXCEPTIONS: 0,
           WIN32_LEAN_AND_MEAN: true,

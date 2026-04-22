@@ -166,6 +166,8 @@ export const zlib: Dependency = {
     };
 
     // ─── Per-arch SIMD kernels ───
+    // Exhaustive on Arch — if a new arch is added to Config, this fails
+    // loudly at configure time instead of silently using arm sources.
     let kernels: SimdKernel[];
     let archDir: string;
     if (cfg.x64) {
@@ -179,7 +181,7 @@ export const zlib: Dependency = {
       else defines.HAVE_CPUID_GNU = true;
       sources.push(...x64Generic().map(s => `arch/generic/${s}.c`));
       sources.push({ path: "arch/x86/x86_features.c", cflags: ["-mxsave"] });
-    } else {
+    } else if (cfg.arm64) {
       kernels = ARM;
       archDir = "arm";
       defines.ARM_FEATURES = true;
@@ -194,6 +196,8 @@ export const zlib: Dependency = {
       }
       sources.push(...GENERIC.map(s => `arch/generic/${s}.c`));
       sources.push("arch/arm/arm_features.c");
+    } else {
+      throw new Error(`zlib: no SIMD kernel table for arch ${cfg.arch}`);
     }
 
     for (const k of kernels) {

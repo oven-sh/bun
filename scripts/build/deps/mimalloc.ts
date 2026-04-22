@@ -51,9 +51,6 @@ export const mimalloc: Dependency = {
       // free(). MI_SKIP_COLLECT_ON_EXIT only skips the heap walk inside it.
       MI_NO_PROCESS_DETACH: 1,
 
-      // Mirrors what cmake sets from CMAKE_BUILD_TYPE. Read by stats.c for
-      // its banner string and by options.c to pick defaults.
-      MI_CMAKE_BUILD_TYPE: cfg.buildType.toLowerCase(),
       ...(cfg.release && { MI_BUILD_RELEASE: true }),
     };
 
@@ -85,7 +82,14 @@ export const mimalloc: Dependency = {
     // (without this, every mimalloc alloc looks like a leak).
     if (cfg.valgrind) defines.MI_TRACK_VALGRIND = 1;
 
-    const cflags = ["-fvisibility=hidden", "-Wno-deprecated", "-Wno-static-in-inline"];
+    const cflags = [
+      "-fvisibility=hidden",
+      "-Wno-deprecated",
+      "-Wno-static-in-inline",
+      // Bare token (mi_stringify() pastes it into the banner string), so
+      // it can't go through DirectBuild.defines which would quote it.
+      `-DMI_CMAKE_BUILD_TYPE=${cfg.buildType.toLowerCase()}`,
+    ];
 
     // TLS model: initial-exec for the static link into bun's executable
     // (one DTV slot, no __tls_get_addr indirection). musl static needs

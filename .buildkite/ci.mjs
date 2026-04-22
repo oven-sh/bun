@@ -775,6 +775,9 @@ function getBuildImageStep(platform, options) {
     cancel_on_build_failing: isMergeQueue(),
     command: command.filter(Boolean).join(" "),
     timeout_in_minutes: 3 * 60,
+    // Packer needs several minutes to delete its temp Azure resources after a cancel; the
+    // default 10s grace SIGKILLs it mid-cleanup and leaks a full VM/NIC/IP stack per retry.
+    cancel_grace_period: 10 * 60,
   };
 }
 

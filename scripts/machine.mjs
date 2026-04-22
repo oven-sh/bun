@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { spawn as nodeSpawn } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join, relative, resolve } from "node:path";
@@ -1244,17 +1245,38 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
     templateDir,
   ];
 
-  await spawnSafe(packerArgs, {
+  // Packer's azure-arm builder cleans up its temp pkr* resources on SIGINT/SIGTERM, but only
+  // if the signal actually reaches the packer process and it is given time to finish the Azure
+  // deletes. spawnSafe() does not forward signals, so a Buildkite cancel would orphan the whole
+  // VM/NIC/IP/disk/vnet/NSG/keyvault stack in BUN-CI-EASTUS2. Spawn directly and forward.
+  const child = nodeSpawn(packerArgs[0], packerArgs.slice(1), {
     stdio: "inherit",
     env: {
       ...process.env,
-      // Packer also reads these env vars
       ARM_CLIENT_ID: clientId,
       ARM_CLIENT_SECRET: clientSecret,
       ARM_SUBSCRIPTION_ID: subscriptionId,
       ARM_TENANT_ID: tenantId,
     },
   });
+  let cancelled = false;
+  const forward = signal => {
+    cancelled = true;
+    console.log(`[packer] received ${signal}, forwarding to packer for Azure cleanup...`);
+    child.kill(signal);
+  };
+  process.on("SIGINT", forward);
+  process.on("SIGTERM", forward);
+  const [code, signal] = await new Promise(done => child.on("close", (c, s) => done([c, s])));
+  process.off("SIGINT", forward);
+  process.off("SIGTERM", forward);
+  if (cancelled) {
+    console.log("[packer] cleanup after cancel finished");
+    process.exit(1);
+  }
+  if (code !== 0) {
+    throw new Error(`packer build exited with ${signal ? `signal ${signal}` : `code ${code}`}`);
+  }
 
   console.log(`[packer] Image built successfully: ${imageDefName}`);
 }

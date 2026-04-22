@@ -37,13 +37,19 @@ function unifiedBundles(cfg: Config): { bundles: string[]; nonUnified: string[] 
   const src = webkitSrcDir(cfg);
   const jscSrc = `${src}/Source/JavaScriptCore`;
   const ds = `${depBuildDir(cfg, "webkit-jsc")}/DerivedSources`;
-  const out = execFileSync("python3", [
-    `${src}/Source/WTF/Scripts/generate-unified-source-bundles.py`,
-    "--derived-sources-path", ds,
-    "--source-tree-path", jscSrc,
-    `${jscSrc}/Sources.txt`,
-    `${jscSrc}/inspector/remote/SourcesSocket.txt`,
-  ], { encoding: "utf8" });
+  const out = execFileSync(
+    "python3",
+    [
+      `${src}/Source/WTF/Scripts/generate-unified-source-bundles.py`,
+      "--derived-sources-path",
+      ds,
+      "--source-tree-path",
+      jscSrc,
+      `${jscSrc}/Sources.txt`,
+      `${jscSrc}/inspector/remote/SourcesSocket.txt`,
+    ],
+    { encoding: "utf8" },
+  );
   // Default mode prints a cmake-semicolon list interleaving bundle paths
   // (absolute, under <ds>/unified-sources/) with the @no-unify standalone
   // sources (relative to source-tree-path). Split them apart so the
@@ -363,72 +369,74 @@ export const webkitJSC: Dependency = {
       ? "Source/JavaScriptCore/inspector/remote/socket/win/RemoteInspectorSocketWin.cpp"
       : "Source/JavaScriptCore/inspector/remote/socket/posix/RemoteInspectorSocketPOSIX.cpp";
     return {
-    kind: "direct",
-    pic: true,
-    sources: [...bundles, ...nonUnified, remoteSocket, `${DS}/JSCBuiltins.cpp`],
-    includes: [
-      ...SRC_INCLUDES,
-      // <wtf/X.h> resolves directly from Source/WTF (forwarding tree is a
-      // 1:1 mirror).
-      "Source/WTF",
-    ],
-    defines: {
-      ...commonDefines,
-      BUILDING_JavaScriptCore: true,
-      STATICALLY_LINKED_WITH_WTF: true,
-      STATICALLY_LINKED_WITH_bmalloc: true,
-      ...(cfg.linux && { _GNU_SOURCE: true, _GLIBCXX_ASSERTIONS: 1 }),
-    },
-    cflags: [
-      ...webkitCFlags(cfg),
-      `-I${depBuildDir(cfg, "webkit-bmalloc")}`,
-      `-I${depBuildDir(cfg, "webkit-jsc")}/DerivedSources`,
-      `-I${depBuildDir(cfg, "webkit-jsc")}/DerivedSources/inspector`,
-      `-I${depBuildDir(cfg, "webkit-jsc")}/DerivedSources/yarr`,
-    ],
-    cxxflags: webkitCxxFlags(cfg),
-    forwardHeaders: [
-      ...FORWARD_SUBDIRS.map(d => ({
-        glob: `Source/JavaScriptCore/${d}/*.h`,
-        dest: "JavaScriptCore",
-      })),
-      // A handful of DerivedSources headers are also reached via the
-      // <JavaScriptCore/X.h> prefix. Explicit list — they don't exist
-      // at configure time so glob can't find them.
-      {
-        dest: "JavaScriptCore",
-        from: [
-          `${DS}/Bytecodes.h`,
-          `${DS}/JSCBuiltins.h`,
-          `${DS}/WasmOps.h`,
-          `${DS}/inspector/InspectorAlternateBackendDispatchers.h`,
-          `${DS}/inspector/InspectorBackendDispatchers.h`,
-          `${DS}/inspector/InspectorFrontendDispatchers.h`,
-          `${DS}/inspector/InspectorProtocolObjects.h`,
-        ],
+      kind: "direct",
+      pic: true,
+      sources: [...bundles, ...nonUnified, remoteSocket, `${DS}/JSCBuiltins.cpp`],
+      includes: [
+        ...SRC_INCLUDES,
+        // <wtf/X.h> resolves directly from Source/WTF (forwarding tree is a
+        // 1:1 mirror).
+        "Source/WTF",
+      ],
+      defines: {
+        ...commonDefines,
+        BUILDING_JavaScriptCore: true,
+        STATICALLY_LINKED_WITH_WTF: true,
+        STATICALLY_LINKED_WITH_bmalloc: true,
+        ...(cfg.linux && { _GNU_SOURCE: true, _GLIBCXX_ASSERTIONS: 1 }),
       },
-    ],
-    codegen: [
-      ...jscCodegen(cfg),
-      ...llintCodegen(cfg),
-      ...lutCodegen(),
-      // Unified-source bundles: 166 #include-rollup .cpp files. cmake runs
-      // this at configure time via execute_process; here it's a normal
-      // codegen step so the bundles regenerate when Sources.txt changes.
-      {
-        interpreter: "python3",
-        script: "$SRC/Source/WTF/Scripts/generate-unified-source-bundles.py",
-        args: [
-          "--derived-sources-path", DS,
-          "--source-tree-path", `${JSC}`,
-          `${JSC}/Sources.txt`,
-          `${JSC}/inspector/remote/SourcesSocket.txt`,
-        ],
-        outputs: bundles,
-        inputs: [`${JSC}/Sources.txt`, `${JSC}/inspector/remote/SourcesSocket.txt`],
-        cwd: DS,
-      },
-    ],
+      cflags: [
+        ...webkitCFlags(cfg),
+        `-I${depBuildDir(cfg, "webkit-bmalloc")}`,
+        `-I${depBuildDir(cfg, "webkit-jsc")}/DerivedSources`,
+        `-I${depBuildDir(cfg, "webkit-jsc")}/DerivedSources/inspector`,
+        `-I${depBuildDir(cfg, "webkit-jsc")}/DerivedSources/yarr`,
+      ],
+      cxxflags: webkitCxxFlags(cfg),
+      forwardHeaders: [
+        ...FORWARD_SUBDIRS.map(d => ({
+          glob: `Source/JavaScriptCore/${d}/*.h`,
+          dest: "JavaScriptCore",
+        })),
+        // A handful of DerivedSources headers are also reached via the
+        // <JavaScriptCore/X.h> prefix. Explicit list — they don't exist
+        // at configure time so glob can't find them.
+        {
+          dest: "JavaScriptCore",
+          from: [
+            `${DS}/Bytecodes.h`,
+            `${DS}/JSCBuiltins.h`,
+            `${DS}/WasmOps.h`,
+            `${DS}/inspector/InspectorAlternateBackendDispatchers.h`,
+            `${DS}/inspector/InspectorBackendDispatchers.h`,
+            `${DS}/inspector/InspectorFrontendDispatchers.h`,
+            `${DS}/inspector/InspectorProtocolObjects.h`,
+          ],
+        },
+      ],
+      codegen: [
+        ...jscCodegen(cfg),
+        ...llintCodegen(cfg),
+        ...lutCodegen(),
+        // Unified-source bundles: 166 #include-rollup .cpp files. cmake runs
+        // this at configure time via execute_process; here it's a normal
+        // codegen step so the bundles regenerate when Sources.txt changes.
+        {
+          interpreter: "python3",
+          script: "$SRC/Source/WTF/Scripts/generate-unified-source-bundles.py",
+          args: [
+            "--derived-sources-path",
+            DS,
+            "--source-tree-path",
+            `${JSC}`,
+            `${JSC}/Sources.txt`,
+            `${JSC}/inspector/remote/SourcesSocket.txt`,
+          ],
+          outputs: bundles,
+          inputs: [`${JSC}/Sources.txt`, `${JSC}/inspector/remote/SourcesSocket.txt`],
+          cwd: DS,
+        },
+      ],
     };
   },
 

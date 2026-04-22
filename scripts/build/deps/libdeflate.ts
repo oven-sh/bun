@@ -39,7 +39,6 @@ export const libdeflate: Dependency = {
     // libdeflate.h + common_defs.h live at the repo root; sources reach
     // lib/*.h by relative include from their own directory.
     includes: ["."],
-    cflags: ["-std=c99"],
   }),
 
   provides: () => ({

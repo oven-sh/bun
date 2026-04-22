@@ -56,8 +56,15 @@ export const boringssl: Dependency = {
       },
       cflags: cfg.windows
         ? ["/std:c++17", "/GR-", "/clang:-fno-strict-aliasing"]
-        : ["-std=c++17", "-fno-exceptions", "-fno-rtti", "-fno-strict-aliasing", "-fno-common",
-           "-fvisibility=hidden", "-Wa,--noexecstack"],
+        : [
+            "-std=c++17",
+            "-fno-exceptions",
+            "-fno-rtti",
+            "-fno-strict-aliasing",
+            "-fno-common",
+            "-fvisibility=hidden",
+            "-Wa,--noexecstack",
+          ],
       // nasm needs -I with a trailing slash and CodeView debug info to
       // match cmake's `-gcv8`. Absolute path — ninja runs with buildDir
       // as cwd, so a repo-relative path wouldn't resolve.

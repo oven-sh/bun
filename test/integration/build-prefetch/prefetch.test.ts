@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
 
 const repoRoot = join(import.meta.dirname, "..", "..", "..");
@@ -78,6 +78,47 @@ test("fetchPrebuilt: extracted/ hit with matching .identity copies tree", async 
   expect(await Bun.file(join(dest, ".identity")).text()).toBe("v1\n");
   expect(exitCode).toBe(0);
 });
+
+test.skipIf(process.platform === "win32")(
+  "fetchPrebuilt: read-only prefetch source produces a writable dest",
+  async () => {
+    using dir = tempDir("prefetch-ro", {});
+    const prefetch = join(String(dir), "prefetch");
+    const src = join(prefetch, "extracted", "thing-ro");
+    const dest = join(String(dir), "out", "thing-ro");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(join(src, ".identity"), "v1\n");
+    writeFileSync(join(src, "lib.a"), "x");
+    // Mirror bootstrap.sh's `chmod -R a-w` — cp would otherwise propagate 555
+    // dirs to dest and a future version-bump rm would EACCES.
+    chmodSync(join(src, ".identity"), 0o444);
+    chmodSync(join(src, "lib.a"), 0o444);
+    chmodSync(src, 0o555);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(repoRoot, "scripts", "build", "fetch-cli.ts"),
+        "prebuilt",
+        "thing",
+        "http://192.0.2.1/thing-ro.tar.gz",
+        dest,
+        "v1",
+      ],
+      env: { ...bunEnv, BUN_BUILD_PREFETCH_DIR: prefetch },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+
+    // The published tree must be removable by the next fetch (version bump).
+    expect(() => rmSync(dest, { recursive: true })).not.toThrow();
+
+    // Let tempDir's own cleanup succeed.
+    chmodSync(src, 0o755);
+  },
+);
 
 test("fetchPrebuilt: stale extracted/ identity falls through to by-url/", async () => {
   using dir = tempDir("prefetch-miss", {});

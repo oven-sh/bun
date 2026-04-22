@@ -32,7 +32,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, readFileSync } from "node:fs";
-import { copyFile, cp, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -107,9 +107,20 @@ export async function tryPrefetchExtracted(dest: string, stampFile: string, expe
   await rm(staging, { recursive: true, force: true });
   await mkdir(resolve(dest, ".."), { recursive: true });
   await cp(src, staging, { recursive: true });
+  // cp preserves source modes, and bootstrap chmod's the prefetch dir
+  // read-only. Restore u+w on the copy so a future version bump can
+  // `rm -rf dest` (force only suppresses ENOENT, not EACCES on a 555 dir).
+  await chmodRecursiveWritable(staging);
   await rm(dest, { recursive: true, force: true });
   await rename(staging, dest);
   return true;
+}
+
+async function chmodRecursiveWritable(root: string): Promise<void> {
+  const st = await stat(root);
+  await chmod(root, st.mode | 0o200);
+  if (!st.isDirectory()) return;
+  for (const e of await readdir(root)) await chmodRecursiveWritable(resolve(root, e));
 }
 
 /**

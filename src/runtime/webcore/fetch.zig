@@ -288,24 +288,11 @@ fn fetchImpl(
         }
     }
 
-    const options_object: ?JSValue = brk: {
-        if (args.nextEat()) |options| {
-            if (options.isUndefinedOrNull()) {
-                break :brk null;
-            }
-            if (options.isObject() or options.jsType() == .DOMWrapper) {
-                break :brk options;
-            }
-            // Per the Fetch spec, `init` is a dictionary type. Web IDL dictionary
-            // conversion throws TypeError when the value is a primitive other than
-            // undefined or null. https://fetch.spec.whatwg.org/#dom-request
-            is_error = true;
-            const err = ctx.toTypeError(.INVALID_ARG_TYPE, "The \"init\" argument must be of type object, undefined, or null.", .{});
-            return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
-        }
-
-        break :brk null;
-    };
+    // Grab the raw init argument but defer validation until after the first
+    // argument has been converted — Web IDL converts arguments left-to-right,
+    // so a throwing `toString` on an object `input` must surface before the
+    // init type check.
+    const init_arg: ?JSValue = args.nextEat();
     const request: ?*Request = brk: {
         if (first_arg.isCell()) {
             if (first_arg.asDirect(Request)) |request_| {
@@ -321,6 +308,17 @@ fn fetchImpl(
         is_error = true;
         return .zero;
     }
+
+    // Now validate init. https://fetch.spec.whatwg.org/#dom-request — init is a
+    // Web IDL dictionary; a non-nullish primitive rejects with TypeError.
+    const options_object: ?JSValue = brk: {
+        const options = init_arg orelse break :brk null;
+        if (options.isUndefinedOrNull()) break :brk null;
+        if (options.isObject() or options.jsType() == .DOMWrapper) break :brk options;
+        is_error = true;
+        const err = ctx.toTypeError(.INVALID_ARG_TYPE, "The \"init\" argument must be of type object, undefined, or null.", .{});
+        return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
+    };
 
     const request_init_object: ?JSValue = brk: {
         if (request != null) break :brk null;

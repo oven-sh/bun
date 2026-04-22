@@ -1026,7 +1026,10 @@ declare module "bun" {
 
     /**
      * Returns the OS file descriptor (or Windows SOCKET handle) for the underlying
-     * socket of the given Request, or `null` if the socket was already closed.
+     * socket of the given Request. Returns `null` once the request has completed
+     * (the response has been fully sent and the request context released), even
+     * if the underlying TCP connection is kept alive for a subsequent request.
+     * Call this from inside the `fetch` handler to get a usable fd.
      *
      * Useful for per-connection low-level socket operations via FFI, such as
      * `getsockopt(TCP_INFO)`, `setsockopt(TCP_CORK)`, `SO_RCVBUF`, etc.

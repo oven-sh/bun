@@ -1,7 +1,17 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
-import { dlopen, FFIType, ptr, suffix } from "bun:ffi";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isPosix, isWindows, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isPosix,
+  isWindows,
+  libcPathForDlopen,
+  rejectUnauthorizedScope,
+  tempDirWithFiles,
+  tls,
+} from "harness";
 import http from "http";
 import { once } from "node:events";
 import path from "path";
@@ -1394,7 +1404,7 @@ test("should be able to redirect when using empty streams #15320", async () => {
 });
 
 describe.concurrent("node:http socket.fd (Bun extension)", () => {
-  test("request.socket.fd is a positive integer", async () => {
+  test("request.socket.fd is a non-negative integer", async () => {
     let observedFromFetch: number | undefined;
     let observedFromConnection: number | undefined;
     const server = http.createServer((req, res) => {
@@ -1411,9 +1421,9 @@ describe.concurrent("node:http socket.fd (Bun extension)", () => {
       const res = await fetch(`http://127.0.0.1:${address.port}/`);
       await res.text();
       expect(typeof observedFromFetch).toBe("number");
-      expect(observedFromFetch).toBeGreaterThan(0);
+      expect(observedFromFetch).toBeGreaterThanOrEqual(0);
       expect(typeof observedFromConnection).toBe("number");
-      expect(observedFromConnection).toBeGreaterThan(0);
+      expect(observedFromConnection).toBeGreaterThanOrEqual(0);
       expect(observedFromFetch).toBe(observedFromConnection);
     } finally {
       server.close();
@@ -1421,8 +1431,7 @@ describe.concurrent("node:http socket.fd (Bun extension)", () => {
   });
 
   test.if(isPosix)("socket.fd works with getsockname() via FFI", async () => {
-    const libName = process.platform === "darwin" ? `libc.${suffix}` : `libc.${suffix}.6`;
-    const libc = dlopen(libName, {
+    const libc = dlopen(libcPathForDlopen(), {
       getsockname: {
         args: [FFIType.i32, FFIType.ptr, FFIType.ptr],
         returns: FFIType.i32,

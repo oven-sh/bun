@@ -1,5 +1,5 @@
 import { file, gc, Serve, serve, Server } from "bun";
-import { dlopen, FFIType, ptr, suffix } from "bun:ffi";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import {
@@ -11,6 +11,7 @@ import {
   isIPv4,
   isIPv6,
   isPosix,
+  libcPathForDlopen,
   tempDir,
   tls,
   tmpdirSync,
@@ -1534,8 +1535,8 @@ describe("server.requestIP", () => {
 });
 
 describe("server.requestFD", () => {
-  it("returns a positive integer fd for an active TCP request", async () => {
-    let observedFd: number | null = -1;
+  it("returns a non-negative integer fd for an active TCP request", async () => {
+    let observedFd: number | null = null;
     using server = Bun.serve({
       port: 0,
       fetch(req, server) {
@@ -1546,7 +1547,7 @@ describe("server.requestFD", () => {
 
     const response = await fetch(server.url.origin).then(x => x.json());
     expect(typeof response.fd).toBe("number");
-    expect(response.fd).toBeGreaterThan(0);
+    expect(response.fd).toBeGreaterThanOrEqual(0);
     expect(observedFd).toBe(response.fd);
   });
 
@@ -1571,7 +1572,7 @@ describe("server.requestFD", () => {
   });
 
   it.if(isPosix)("returns an fd usable with getsockname() via FFI", async () => {
-    const libc = dlopen(`libc.${suffix}${process.platform === "darwin" ? "" : ".6"}`, {
+    const libc = dlopen(libcPathForDlopen(), {
       getsockname: {
         args: [FFIType.i32, FFIType.ptr, FFIType.ptr],
         returns: FFIType.i32,
@@ -1581,26 +1582,23 @@ describe("server.requestFD", () => {
     using server = Bun.serve({
       port: 0,
       fetch(req, server) {
-        const fd = server.requestFD(req);
-        if (typeof fd !== "number" || fd < 0) {
-          return Response.json({ ok: false, reason: "no fd", fd });
-        }
+        const fd = server.requestFD(req) as number;
         const addr = new ArrayBuffer(128);
         const addrLen = new Uint32Array(1);
         addrLen[0] = 128;
         const rc = libc.symbols.getsockname(fd, ptr(addr), ptr(addrLen));
-        return Response.json({ ok: true, fd, rc, addrLen: addrLen[0] });
+        return Response.json({ fd, rc, addrLen: addrLen[0] });
       },
     });
 
     const response = await fetch(server.url.origin).then(x => x.json());
-    expect(response.ok).toBe(true);
+    expect(response.fd).toBeGreaterThanOrEqual(0);
     expect(response.rc).toBe(0);
     expect(response.addrLen).toBeGreaterThan(0);
   });
 
   it.if(isPosix)("returns an OS fd for an HTTPS (TLS) request, not the SSL pointer", async () => {
-    const libc = dlopen(`libc.${suffix}${process.platform === "darwin" ? "" : ".6"}`, {
+    const libc = dlopen(libcPathForDlopen(), {
       getsockname: {
         args: [FFIType.i32, FFIType.ptr, FFIType.ptr],
         returns: FFIType.i32,
@@ -1611,23 +1609,20 @@ describe("server.requestFD", () => {
       port: 0,
       tls,
       fetch(req, server) {
-        const fd = server.requestFD(req);
-        if (typeof fd !== "number" || fd < 0) {
-          return Response.json({ ok: false, fd });
-        }
+        const fd = server.requestFD(req) as number;
         const addr = new ArrayBuffer(128);
         const addrLen = new Uint32Array(1);
         addrLen[0] = 128;
         const rc = libc.symbols.getsockname(fd, ptr(addr), ptr(addrLen));
-        return Response.json({ ok: true, fd, rc, addrLen: addrLen[0] });
+        return Response.json({ fd, rc, addrLen: addrLen[0] });
       },
     });
 
     const response = await fetch(server.url.origin, { tls: { rejectUnauthorized: false } }).then(x => x.json());
-    expect(response.ok).toBe(true);
     // If requestFD had returned the SSL* heap pointer (the regression this test
     // guards against), getsockname would fail with EBADF / rc !== 0.
     expect(response.rc).toBe(0);
+    expect(response.fd).toBeGreaterThanOrEqual(0);
     expect(response.addrLen).toBeGreaterThan(0);
     // A real fd is a small non-negative integer; an SSL* cast would be huge.
     expect(response.fd).toBeLessThan(1 << 20);
@@ -1662,7 +1657,7 @@ describe("server.requestFD", () => {
     const body = Buffer.concat(received).toString().split("\r\n\r\n")[1];
     const parsed = JSON.parse(body);
     expect(typeof parsed.fd).toBe("number");
-    expect(parsed.fd).toBeGreaterThan(0);
+    expect(parsed.fd).toBeGreaterThanOrEqual(0);
   });
 });
 

@@ -20,6 +20,7 @@ test.skipIf(!isWindows)("translateUVErrorToE falls back to UNKNOWN for unmapped 
   expect(translateUVErrorToE(-4097)).toBe("UNKNOWN"); // one past UV_ERRNO_MAX (-4096)
   expect(translateUVErrorToE(-4000)).toBe("UNKNOWN"); // gap no UV_E* constant occupies
   expect(translateUVErrorToE(-123456)).toBe("UNKNOWN"); // negation outside u16 range
+  expect(translateUVErrorToE(-2147483648)).toBe("UNKNOWN"); // INT_MIN: wrapping negation, no overflow
 });
 
 test.skipIf(isWindows)("translateUVErrorToE is a no-op off Windows", () => {

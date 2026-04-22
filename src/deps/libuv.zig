@@ -2847,7 +2847,8 @@ pub fn translateUVErrorToE(code_in: anytype) bun.sys.E {
         // libuv can return codes not explicitly mapped above (e.g. Windows-specific
         // codes in the -4000s). `bun.sys.E` is exhaustive, so a strict @enumFromInt
         // on an unmapped value panics in safe builds. Fall back to UNKNOWN instead.
-        else => std.meta.intToEnum(bun.sys.E, -code) catch bun.sys.E.UNKNOWN,
+        // Wrapping negation so minInt(c_int) maps to UNKNOWN instead of overflowing.
+        else => std.meta.intToEnum(bun.sys.E, -%code) catch bun.sys.E.UNKNOWN,
     };
 }
 

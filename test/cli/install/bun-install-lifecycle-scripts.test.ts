@@ -2994,7 +2994,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     describe.if(!forceWaiterThread || process.platform === "linux")("does not use 100% cpu", async () => {
-      test("install", async () => {
+      // Serial: this asserts on the subprocess's cpuTime budget, which the
+      // surrounding describe.concurrent's 12 parallel `bun install`s (all
+      // hitting the same verdaccio) push over the threshold on Windows.
+      test.serial("install", async () => {
         using ctx = await setupTest();
         const { packageDir, packageJson, env } = ctx;
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;

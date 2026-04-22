@@ -238,12 +238,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // ─── Step 5: PCH ───
   // In CI, only the cpp-only job uses PCH — full mode skips it since the
   // cpp-only artifacts are what actually get used downstream.
-  //
-  // Not on Windows: matches cmake (BuildBun.cmake:868 gated on NOT WIN32).
-  // clang-cl's /Yc//Yu flags exist but the wrapper+stub mechanism here
-  // is built around clang's -emit-pch model. If Windows PCH is wanted
-  // later, see compile.ts TODO(windows) for what needs wiring.
-  const usePch = !cfg.windows && (!cfg.ci || cfg.mode === "cpp-only");
+  const usePch = !cfg.ci || cfg.mode === "cpp-only";
   let pchOut: { pch: string; wrapperHeader: string } | undefined;
 
   if (usePch) {
@@ -277,12 +272,21 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const cxxSources = [...sources.cxx];
   const cSources = [...sources.c];
 
+  // Sources that must NOT use the PCH. Anything that needs to set defines
+  // before <Windows.h> (UNICODE, WIN32_LEAN_AND_MEAN opt-outs, etc.) goes
+  // here — root.h transitively includes Windows.h via WTF, so the
+  // force-include would lock those in before the source can speak.
+  const noPchSources = new Set<string>();
+
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
   if (cfg.windows) {
-    cxxSources.push(
-      resolve(cfg.cwd, "src/bun.js/bindings/windows/rescle.cpp"),
-      resolve(cfg.cwd, "src/bun.js/bindings/windows/rescle-binding.cpp"),
-    );
+    // rescle.h does `#define UNICODE` before including ATL; with PCH the
+    // headers are already past in MBCS mode and ATL's TCHAR mismatches.
+    const rescle = resolve(cfg.cwd, "src/bun.js/bindings/windows/rescle.cpp");
+    const rescleBinding = resolve(cfg.cwd, "src/bun.js/bindings/windows/rescle-binding.cpp");
+    cxxSources.push(rescle, rescleBinding);
+    noPchSources.add(rescle);
+    noPchSources.add(rescleBinding);
   }
 
   // Deps with provides.sources compiled in the loop below so each dep's
@@ -319,13 +323,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     const opts: Parameters<typeof cxx>[3] = {
       flags: [...cxxFlagsFull, ...extraFlags],
     };
-    if (pchOut !== undefined) {
+    if (pchOut !== undefined && !noPchSources.has(src)) {
       // PCH has implicit deps on depHeaderSignal. cxx has implicit dep on PCH.
       // Transitively: cxx waits for deps. No need to repeat them here.
       opts.pch = pchOut.pch;
       opts.pchHeader = pchOut.wrapperHeader;
     } else {
-      // No PCH (windows) — each cxx needs the dep signal directly.
+      // No PCH (CI full mode, or per-file opt-out) — each cxx needs the dep
+      // signal directly.
       opts.implicitInputs = depHeaderSignal;
       opts.orderOnlyInputs = codegenOrderOnly;
     }

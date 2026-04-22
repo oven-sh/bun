@@ -819,7 +819,9 @@ export function getDiskSize(options) {
     return 60;
   }
 
-  return 40;
+  // 40 was enough before the prefetch cache; the ~5GB prefetch layer plus
+  // `docker buildx --load`'s export+import doubling pushed it over.
+  return 60;
 }
 
 /**

@@ -9,6 +9,7 @@ pub fn init(
     folder_dir: FD,
     src: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
     dest: bun.Path(.{ .sep = .auto, .unit = .os }),
+    skip_filenames: []const bun.OSPathSlice,
     skip_dirnames: []const bun.OSPathSlice,
 ) OOM!Hardlinker {
     return .{
@@ -19,7 +20,7 @@ pub fn init(
             var w = try Walker.walk(
                 folder_dir,
                 bun.default_allocator,
-                &.{},
+                skip_filenames,
                 skip_dirnames,
             );
             w.resolve_unknown_entry_types = true;

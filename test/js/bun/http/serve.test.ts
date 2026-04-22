@@ -1571,26 +1571,21 @@ describe("server.requestFD", () => {
     expect(server.requestFD(savedRequest!)).toBeNull();
   });
 
-  it.if(isPosix)("returns an fd usable with getsockname() via FFI", async () => {
+  // Handler shared by the two getsockname() FFI tests below; calls
+  // getsockname(fd) on whatever `requestFD` returns and echoes rc/addrLen.
+  const getsocknameHandler = (req: Request, server: Server) => {
     const libc = dlopen(libcPathForDlopen(), {
-      getsockname: {
-        args: [FFIType.i32, FFIType.ptr, FFIType.ptr],
-        returns: FFIType.i32,
-      },
+      getsockname: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
     });
+    const fd = server.requestFD(req) as number;
+    const addr = new ArrayBuffer(128);
+    const addrLen = new Uint32Array([128]);
+    const rc = libc.symbols.getsockname(fd, ptr(addr), ptr(addrLen));
+    return Response.json({ fd, rc, addrLen: addrLen[0] });
+  };
 
-    using server = Bun.serve({
-      port: 0,
-      fetch(req, server) {
-        const fd = server.requestFD(req) as number;
-        const addr = new ArrayBuffer(128);
-        const addrLen = new Uint32Array(1);
-        addrLen[0] = 128;
-        const rc = libc.symbols.getsockname(fd, ptr(addr), ptr(addrLen));
-        return Response.json({ fd, rc, addrLen: addrLen[0] });
-      },
-    });
-
+  it.if(isPosix)("returns an fd usable with getsockname() via FFI", async () => {
+    using server = Bun.serve({ port: 0, fetch: getsocknameHandler });
     const response = await fetch(server.url.origin).then(x => x.json());
     expect(response.fd).toBeGreaterThanOrEqual(0);
     expect(response.rc).toBe(0);
@@ -1598,26 +1593,7 @@ describe("server.requestFD", () => {
   });
 
   it.if(isPosix)("returns an OS fd for an HTTPS (TLS) request, not the SSL pointer", async () => {
-    const libc = dlopen(libcPathForDlopen(), {
-      getsockname: {
-        args: [FFIType.i32, FFIType.ptr, FFIType.ptr],
-        returns: FFIType.i32,
-      },
-    });
-
-    using server = Bun.serve({
-      port: 0,
-      tls,
-      fetch(req, server) {
-        const fd = server.requestFD(req) as number;
-        const addr = new ArrayBuffer(128);
-        const addrLen = new Uint32Array(1);
-        addrLen[0] = 128;
-        const rc = libc.symbols.getsockname(fd, ptr(addr), ptr(addrLen));
-        return Response.json({ fd, rc, addrLen: addrLen[0] });
-      },
-    });
-
+    using server = Bun.serve({ port: 0, tls, fetch: getsocknameHandler });
     const response = await fetch(server.url.origin, { tls: { rejectUnauthorized: false } }).then(x => x.json());
     // If requestFD had returned the SSL* heap pointer (the regression this test
     // guards against), getsockname would fail with EBADF / rc !== 0.
@@ -1631,33 +1607,15 @@ describe("server.requestFD", () => {
   it.if(isPosix)("returns an fd for a unix socket request", async () => {
     using dir = tempDir("serve-request-fd-unix", {});
     const unix = join(String(dir), "serve-fd.sock");
-    using server = Bun.serve({
+    using _server = Bun.serve({
       unix,
       fetch(req, server) {
         return Response.json({ fd: server.requestFD(req) });
       },
     });
-    const requestText = `GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`;
-    const received: Buffer[] = [];
-    const { resolve: resolveClose, promise: closed } = Promise.withResolvers<void>();
-    const connection = await Bun.connect({
-      unix,
-      socket: {
-        data(_socket, data) {
-          received.push(data);
-        },
-        close() {
-          resolveClose();
-        },
-      },
-    });
-    connection.write(requestText);
-    connection.flush();
-    await closed;
-    const body = Buffer.concat(received).toString().split("\r\n\r\n")[1];
-    const parsed = JSON.parse(body);
-    expect(typeof parsed.fd).toBe("number");
-    expect(parsed.fd).toBeGreaterThanOrEqual(0);
+    const response = await fetch("http://localhost/", { unix }).then(r => r.json());
+    expect(typeof response.fd).toBe("number");
+    expect(response.fd).toBeGreaterThanOrEqual(0);
   });
 });
 

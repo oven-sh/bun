@@ -1404,86 +1404,71 @@ test("should be able to redirect when using empty streams #15320", async () => {
 });
 
 describe.concurrent("node:http socket.fd (Bun extension)", () => {
-  test("request.socket.fd is a non-negative integer", async () => {
-    let observedFromFetch: number | undefined;
-    let observedFromConnection: number | undefined;
-    const server = http.createServer((req, res) => {
-      observedFromFetch = (req.socket as any).fd;
-      res.end("ok");
-    });
-    server.on("connection", socket => {
-      observedFromConnection = (socket as any).fd;
-    });
+  // Start `server` on an ephemeral port, hit it once with fetch, then close —
+  // used by all three tests below. `onConnection` runs before the request.
+  async function runFetchOnce(server: http.Server, onConnection?: (s: any) => void) {
+    if (onConnection) server.on("connection", onConnection);
     server.listen(0);
     await once(server, "listening");
     try {
-      const address = server.address() as { port: number };
-      const res = await fetch(`http://127.0.0.1:${address.port}/`);
-      await res.text();
-      expect(typeof observedFromFetch).toBe("number");
-      expect(observedFromFetch).toBeGreaterThanOrEqual(0);
-      expect(typeof observedFromConnection).toBe("number");
-      expect(observedFromConnection).toBeGreaterThanOrEqual(0);
-      expect(observedFromFetch).toBe(observedFromConnection);
+      const { port } = server.address() as { port: number };
+      await (await fetch(`http://127.0.0.1:${port}/`)).text();
     } finally {
       server.close();
     }
+  }
+
+  test("request.socket.fd is a non-negative integer", async () => {
+    let observedFromFetch: number | undefined;
+    let observedFromConnection: number | undefined;
+    await runFetchOnce(
+      http.createServer((req, res) => {
+        observedFromFetch = (req.socket as any).fd;
+        res.end("ok");
+      }),
+      socket => {
+        observedFromConnection = socket.fd;
+      },
+    );
+    expect(typeof observedFromFetch).toBe("number");
+    expect(observedFromFetch).toBeGreaterThanOrEqual(0);
+    expect(observedFromConnection).toBe(observedFromFetch);
   });
 
   test.if(isPosix)("socket.fd works with getsockname() via FFI", async () => {
     const libc = dlopen(libcPathForDlopen(), {
-      getsockname: {
-        args: [FFIType.i32, FFIType.ptr, FFIType.ptr],
-        returns: FFIType.i32,
-      },
+      getsockname: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
     });
-
     let result: { rc: number; addrLen: number } | undefined;
-    const server = http.createServer((req, res) => {
-      const fd = (req.socket as any).fd;
-      const addr = new ArrayBuffer(128);
-      const addrLen = new Uint32Array(1);
-      addrLen[0] = 128;
-      const rc = libc.symbols.getsockname(fd, ptr(addr), ptr(addrLen));
-      result = { rc, addrLen: addrLen[0] };
-      res.end("ok");
-    });
-    server.listen(0);
-    await once(server, "listening");
-    try {
-      const address = server.address() as { port: number };
-      const res = await fetch(`http://127.0.0.1:${address.port}/`);
-      await res.text();
-      expect(result).toEqual({ rc: 0, addrLen: expect.any(Number) });
-      expect(result!.addrLen).toBeGreaterThan(0);
-    } finally {
-      server.close();
-    }
+    await runFetchOnce(
+      http.createServer((req, res) => {
+        const fd = (req.socket as any).fd;
+        const addr = new ArrayBuffer(128);
+        const addrLen = new Uint32Array([128]);
+        const rc = libc.symbols.getsockname(fd, ptr(addr), ptr(addrLen));
+        result = { rc, addrLen: addrLen[0] };
+        res.end("ok");
+      }),
+    );
+    expect(result).toEqual({ rc: 0, addrLen: expect.any(Number) });
+    expect(result!.addrLen).toBeGreaterThan(0);
   });
 
   test("socket.fd becomes -1 after the socket is destroyed", async () => {
     let savedSocket: any;
-    const server = http.createServer((req, res) => {
-      savedSocket = req.socket;
-      res.end("ok");
-    });
-    server.listen(0);
-    await once(server, "listening");
-    try {
-      const address = server.address() as { port: number };
-      const res = await fetch(`http://127.0.0.1:${address.port}/`);
-      await res.text();
-      // Destroy the socket and wait for the close event so kHandle is cleared.
-      // Guard the destroy + `once` against the socket already being torn down,
-      // which can race under heavy load.
-      if (!savedSocket.destroyed) {
-        const closed = once(savedSocket, "close");
-        savedSocket.destroy();
-        await closed;
-      }
-      expect(savedSocket.fd).toBe(-1);
-    } finally {
-      server.close();
+    await runFetchOnce(
+      http.createServer((req, res) => {
+        savedSocket = req.socket;
+        res.end("ok");
+      }),
+    );
+    // Destroy the socket and wait for `close` so `kHandle` is cleared. Guard
+    // against the socket already being torn down, which can race under load.
+    if (!savedSocket.destroyed) {
+      const closed = once(savedSocket, "close");
+      savedSocket.destroy();
+      await closed;
     }
+    expect(savedSocket.fd).toBe(-1);
   });
 });

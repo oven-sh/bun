@@ -124,11 +124,11 @@ The directory name encodes both the package version and its peer dependency vers
 
 ### Global virtual store
 
-By default, store entries are materialized once into a [global virtual store](/pm/global-store) at `<cache>/links/` and `node_modules/.bun/<pkg>@<ver>` is a symlink into it. Warm installs after `rm -rf node_modules` only create one symlink per package instead of copying every package's files again, which is roughly **7× faster** on a typical mid-size project. See the [global store docs](/pm/global-store) for the full layout, benchmarks, and tradeoffs.
+Store entries can optionally be materialized once into a [global virtual store](/pm/global-store) at `<cache>/links/`, with `node_modules/.bun/<pkg>@<ver>` symlinked into it. Opt in with `install.globalStore = true` in bunfig.toml or `BUN_INSTALL_GLOBAL_STORE=1`. Warm installs after `rm -rf node_modules` then only create one symlink per package instead of copying every package's files again — roughly **7× faster** on a typical mid-size project. By default (`globalStore = false`), packages are materialized inside `<project>/node_modules/.bun/` so canonical paths stay in-project. See the [global store docs](/pm/global-store) for the full layout, benchmarks, and tradeoffs.
 
 ### Backend strategies
 
-When an entry isn't eligible for the global store (or the global store is disabled), Bun materializes it under the project using one of:
+When an entry isn't using the global store, Bun materializes it under the project using one of:
 
 - **Clonefile** (macOS) — Copy-on-write filesystem clones for maximum efficiency
 - **Hardlink** (Linux/Windows) — Hardlinks to save disk space

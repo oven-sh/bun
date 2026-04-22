@@ -1428,7 +1428,9 @@ describe("global virtual store", () => {
   });
 
   test("--force replaces a corrupted global-store entry", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore: true },
+    });
 
     await write(
       packageJson,
@@ -1491,8 +1493,13 @@ describe("global virtual store", () => {
     expect(siblings.some(n => n.includes(".old-") || n.includes(".tmp-"))).toBe(false);
   });
 
-  test("can be disabled via BUN_INSTALL_GLOBAL_STORE=0", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  test("BUN_INSTALL_GLOBAL_STORE=0 overrides a bunfig-enabled store", async () => {
+    // With the default now off, this test only proves the env var does
+    // something if bunfig first turns the store *on*. `PackageManagerOptions.load`
+    // reads `BUN_INSTALL_GLOBAL_STORE` after the bunfig values, so env wins.
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore: true },
+    });
 
     await write(
       packageJson,
@@ -1504,15 +1511,19 @@ describe("global virtual store", () => {
 
     await runBunInstall({ ...bunEnv, BUN_INSTALL_GLOBAL_STORE: "0" }, packageDir);
 
-    // With the global store disabled the entry is a real directory under
-    // `node_modules/.bun/` (the pre-global-store layout).
+    // Entry is a real directory even though bunfig enabled the store —
+    // the env override took precedence.
     const entry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
     expect(lstatSync(entry).isSymbolicLink()).toBe(false);
     expect(lstatSync(entry).isDirectory()).toBe(true);
     expect(existsSync(join(entry, "node_modules", "no-deps", "package.json"))).toBe(true);
   });
 
-  test("can be disabled via bunfig install.globalStore", async () => {
+  test("bunfig install.globalStore = false is the effective default", async () => {
+    // With the default already off, `globalStore = false` in bunfig is
+    // functionally the same as omitting it. Keep the test as a belt-and-
+    // suspenders pin: an explicit `false` must never get coerced to `true`
+    // (e.g. by a config-parsing bug that treats `false` as an absent key).
     const { packageJson, packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated", globalStore: false },
     });
@@ -1578,7 +1589,8 @@ describe("global virtual store", () => {
 
     const entry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0");
     expect(lstatSync(entry).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(entry)).toContain(`${sep}links${sep}`);
+    // Windows junction targets can mix separators, so don't depend on `sep`.
+    expect(readlinkSync(entry)).toMatch(/[\\/]links[\\/]/);
   });
 
   test("entry hash is deterministic across fresh installs", async () => {

@@ -164,19 +164,25 @@ All of React, your components, and your CSS are bundled into `dist/index.html`. 
 
 ## Using with Tailwind CSS
 
-Install the plugin and reference Tailwind in your HTML or CSS:
+Use the official [`@tailwindcss/cli`](https://tailwindcss.com/docs/installation/tailwind-cli) to generate a CSS file, then let Bun inline it into the standalone HTML.
 
 ```bash terminal icon="terminal"
-bun install --dev bun-plugin-tailwind
+bun add --dev tailwindcss @tailwindcss/cli
 ```
 
+Create a Tailwind entry stylesheet and reference the generated CSS from your HTML:
+
 <CodeGroup>
+
+```css tailwind.css icon="file-code"
+@import "tailwindcss";
+```
 
 ```html index.html icon="file-code"
 <!doctype html>
 <html>
   <head>
-    <link rel="stylesheet" href="tailwindcss" />
+    <link rel="stylesheet" href="./styles.css" />
   </head>
   <body class="bg-gray-100 flex items-center justify-center min-h-screen">
     <div id="root"></div>
@@ -203,23 +209,38 @@ createRoot(document.getElementById("root")!).render(<App />);
 
 </CodeGroup>
 
-Build with the plugin using the JavaScript API:
-
-```ts build.ts icon="/icons/typescript.svg"
-await Bun.build({
-  entrypoints: ["./index.html"],
-  compile: true,
-  target: "browser",
-  outdir: "./dist",
-  plugins: [require("bun-plugin-tailwind")],
-});
-```
+Run the Tailwind CLI to produce `styles.css`, then compile the HTML:
 
 ```bash terminal icon="terminal"
-bun run build.ts
+bun tailwindcss -i ./tailwind.css -o ./styles.css --minify
+bun build --compile --target=browser ./index.html --outdir=dist
 ```
 
-The generated Tailwind CSS is inlined directly into the HTML file as a `<style>` tag.
+Bun inlines the generated `styles.css` into `dist/index.html` as a `<style>` tag, alongside your bundled JavaScript. The final output is still a single self-contained file.
+
+### Dev workflow with watch mode
+
+For iterative development, use `bun run --parallel` to run the Tailwind watcher and your server side by side:
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "dev": "bun run --parallel dev:css dev:server",
+    "dev:css": "bun tailwindcss -i ./tailwind.css -o ./styles.css --watch=always",
+    "dev:server": "bun ./index.html",
+
+    "build": "bun run build:css && bun run build:html",
+    "build:css": "bun tailwindcss -i ./tailwind.css -o ./styles.css --minify",
+    "build:html": "bun build --compile --target=browser ./index.html --outdir=dist"
+  }
+}
+```
+
+<Info>
+  Pass `--watch=always` (not `--watch`) — without it, `@tailwindcss/cli` exits when stdin is not a TTY, which is the case under `bun run --parallel`.
+</Info>
+
+`bun run --parallel` was added in Bun v1.3.9.
 
 ## How it works
 

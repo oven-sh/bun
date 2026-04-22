@@ -374,7 +374,7 @@ export function resolveLlvmToolchain(
   arch: Arch,
 ): Pick<
   Toolchain,
-  "cc" | "cxx" | "ar" | "ranlib" | "ld" | "strip" | "dsymutil" | "ccache" | "rc" | "mt" | "clangVersion"
+  "cc" | "cxx" | "ar" | "ranlib" | "ld" | "strip" | "dsymutil" | "ccache" | "rc" | "mt" | "nasm" | "clangVersion"
 > {
   // Compute search paths ONCE. Contains a brew spawn on macOS (~100ms)
   // so calling it per-tool would burn ~600ms. Every tool below gets
@@ -452,6 +452,19 @@ export function resolveLlvmToolchain(
     mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false })?.path;
   }
 
+  // nasm: windows-x64 only. BoringSSL's win-x64 assembly is NASM syntax
+  // (perlasm emits gas .S everywhere else, including win-aarch64). clang's
+  // integrated assembler can't read NASM, and OPENSSL_NO_ASM is a 5-10×
+  // crypto perf hit, so this is required when targeting win-x64.
+  let nasm: string | undefined;
+  if (os === "windows") {
+    nasm = findTool({
+      names: ["nasm"],
+      required: false,
+      hint: "Install from https://nasm.us or `winget install NASM.NASM`",
+    })?.path;
+  }
+
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
 
@@ -476,6 +489,7 @@ export function resolveLlvmToolchain(
     ccache,
     rc,
     mt,
+    nasm,
   };
 }
 

@@ -1,6 +1,10 @@
 /**
  * libdeflate — fast deflate/gzip/zlib codec. Faster than zlib for one-shot
  * compression (no streaming). Used by Blob.gzip() and bun's .gz asset loader.
+ *
+ * DirectBuild: 11 .c files, no config.h, no codegen. The arm/x86 cpu_features
+ * sources both compile on every target — they self-guard with #ifdef and the
+ * inactive one becomes an empty TU.
  */
 
 import type { Dependency } from "../source.ts";
@@ -18,20 +22,28 @@ export const libdeflate: Dependency = {
   }),
 
   build: () => ({
-    kind: "nested-cmake",
-    targets: ["libdeflate_static"],
-    args: {
-      LIBDEFLATE_BUILD_STATIC_LIB: "ON",
-      LIBDEFLATE_BUILD_SHARED_LIB: "OFF",
-      LIBDEFLATE_BUILD_GZIP: "OFF",
-    },
+    kind: "direct",
+    sources: [
+      "lib/utils.c",
+      "lib/arm/cpu_features.c",
+      "lib/x86/cpu_features.c",
+      "lib/deflate_compress.c",
+      "lib/deflate_decompress.c",
+      "lib/adler32.c",
+      "lib/zlib_compress.c",
+      "lib/zlib_decompress.c",
+      "lib/crc32.c",
+      "lib/gzip_compress.c",
+      "lib/gzip_decompress.c",
+    ],
+    // libdeflate.h + common_defs.h live at the repo root; sources reach
+    // lib/*.h by relative include from their own directory.
+    includes: ["."],
+    cflags: ["-std=c99"],
   }),
 
-  // Windows output is `deflatestatic.lib`, unix is `libdeflate.a`. Same code,
-  // different naming because libdeflate's CMakeLists uses a target-specific
-  // OUTPUT_NAME on win32 (avoids the windows convention of prefixing "lib").
-  provides: cfg => ({
-    libs: [cfg.windows ? "deflatestatic" : "deflate"],
+  provides: () => ({
+    libs: [],
     includes: ["."],
   }),
 };

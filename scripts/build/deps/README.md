@@ -87,7 +87,13 @@ export const mydep: Dependency = {
 
 ## Build types
 
-- **`nested-cmake`**: Most deps. Runs `cmake --fresh -B ...` then `cmake --build`.
+- **`direct`**: Sources compiled as first-class `cc` edges in our ninja
+  graph — no sub-process. Best for deps with a stable, small file list and
+  no configure-time codegen we can't replicate. See `DirectBuild` in
+  `../source.ts`. Prefer this over `nested-cmake` when feasible: it skips a
+  cmake configure (often 5–20s of try_compile probes) and lets LTO see
+  across the dep boundary into bun's call sites.
+- **`nested-cmake`**: Runs `cmake --fresh -B ...` then `cmake --build`.
   See `NestedCmakeBuild` in `../source.ts` for all fields.
 - **`cargo`**: Rust deps (currently just lolhtml). See `CargoBuild` in `../source.ts`.
 - **`none`**: Header-only or prebuilt. No build step; `.ref` stamp is the output.
@@ -95,10 +101,11 @@ export const mydep: Dependency = {
 ## Worked examples
 
 - **boringssl.ts** (33 lines) — simplest possible cmake dep
+- **libdeflate.ts** — simplest possible direct dep
 - **zstd.ts** — `sourceSubdir` (CMakeLists.txt not at repo root)
-- **libarchive.ts** — `fetchDeps` + `extraCFlags` for cross-dep headers
-- **mimalloc.ts** — complex conditional args, lib name depends on config
-- **tinycc.ts** — overlay patches (inject a CMakeLists.txt)
+- **libarchive.ts** — direct build with hand-written config.h + `fetchDeps`
+- **mimalloc.ts** — direct build, single unity TU compiled as C++
+- **tinycc.ts** — direct build with a build-time codegen tool
 - **lolhtml.ts** — cargo build with rustflags
 - **sqlite.ts** — in-tree source (lives in `src/`, not `vendor/`)
 

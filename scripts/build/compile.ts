@@ -76,6 +76,18 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
     ...depfileOpts,
   });
 
+  // ─── NASM assemble (Windows-x64 only) ───
+  // BoringSSL's win-x64 assembly is NASM syntax; clang can't assemble it.
+  // -MD writes a Make-style depfile; nasm 2.14+ supports it.
+  if (cfg.nasm !== undefined) {
+    n.rule("nasm", {
+      command: `${q(cfg.nasm)} $nasmflags -MD $out.d -o $out $in`,
+      description: "nasm $out",
+      depfile: "$out.d",
+      deps: "gcc",
+    });
+  }
+
   // ─── PCH compilation ───
   // Compiles a header into a precompiled header.
   //
@@ -181,11 +193,41 @@ export function cxx(n: Ninja, cfg: Config, src: string, opts: CompileOpts): stri
 
 /**
  * Compile a C source file. Returns absolute path to the .o output.
+ *
+ * `.S` (preprocessed assembly) is also accepted — clang dispatches on the
+ * extension and runs cpp + as. Used by deps that ship hand-tuned kernels
+ * (e.g. zstd's huf_decompress_amd64.S).
  */
 export function cc(n: Ninja, cfg: Config, src: string, opts: Omit<CompileOpts, "pch" | "pchHeader">): string {
-  assert(extname(src) === ".c", `cc() expects .c source, got: ${src}`);
+  const ext = extname(src);
+  assert(ext === ".c" || ext === ".S", `cc() expects .c/.S source, got: ${src}`);
   // C files never use PCH (PCH is C++-only in our build)
   return compile(n, cfg, src, opts, "cc");
+}
+
+/**
+ * Assemble a NASM-syntax `.asm` file. Returns absolute path to the .obj
+ * output. Windows-x64 only — gas-syntax `.S` goes through cc().
+ */
+export function nasm(
+  n: Ninja,
+  cfg: Config,
+  src: string,
+  opts: { flags: string[]; orderOnlyInputs?: string[] },
+): string {
+  assert(extname(src) === ".asm", `nasm() expects .asm source, got: ${src}`);
+  assert(cfg.nasm !== undefined, "nasm not found in toolchain", {
+    hint: "Install from https://nasm.us or `winget install NASM.NASM`",
+  });
+  const out = objectPath(cfg, src);
+  n.build({
+    outputs: [out],
+    rule: "nasm",
+    inputs: [resolve(cfg.cwd, src)],
+    orderOnlyInputs: [objectDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
+    vars: { nasmflags: opts.flags.join(" ") },
+  });
+  return out;
 }
 
 function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "cxx" | "cc"): string {

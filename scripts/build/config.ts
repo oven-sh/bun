@@ -184,6 +184,8 @@ export interface Config {
   rc: string | undefined;
   /** Windows: llvm-mt for nested cmake (CMAKE_MT). May be absent in some LLVM distros. */
   mt: string | undefined;
+  /** Windows-x64: nasm for BoringSSL's NASM-syntax assembly. */
+  nasm: string | undefined;
 
   // ─── macOS SDK (darwin only, undefined elsewhere) ───
   /** e.g. "13.0". Passed to deps as -DCMAKE_OSX_DEPLOYMENT_TARGET. */
@@ -293,6 +295,12 @@ export interface Toolchain {
    * source.ts) sidesteps the need.
    */
   mt: string | undefined;
+  /**
+   * Windows only: nasm. BoringSSL's win-x64 assembly is NASM syntax;
+   * clang's integrated assembler can't read it. win-aarch64 uses gas
+   * .S files instead, so this is x64-only in practice.
+   */
+  nasm: string | undefined;
 }
 
 /**
@@ -553,6 +561,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     msvcLinker: toolchain.msvcLinker,
     rc: toolchain.rc,
     mt: toolchain.mt,
+    nasm: toolchain.nasm,
     osxDeploymentTarget,
     osxSysroot,
     version,

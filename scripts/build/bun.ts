@@ -5,7 +5,7 @@
  *   - resolve all deps → lib paths + include dirs
  *   - emit codegen → generated .cpp/.h/.zig
  *   - emit zig build → bun-zig.o
- *   - build PCH from root.h (implicit deps: WebKit libs + all codegen)
+ *   - build PCH from root-pch.h (implicit deps: WebKit libs + all codegen)
  *   - compile all C/C++ with the PCH
  *   - link everything → bun-debug (or bun-profile, bun-asan, etc.)
  *   - smoke test: run `<exe> --revision` to catch load-time failures
@@ -38,6 +38,7 @@ import { quote, slash } from "./shell.ts";
 import { emitShims } from "./shims.ts";
 import { computeDepLibs, depSourceStamp, resolveDep, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
+import { generateUnifiedSources } from "./unified.ts";
 import { emitZig, emitZigCheck, zigObjectPaths } from "./zig.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -262,7 +263,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // mode where it fails on the pinned bun version (see cppAll docstring).
     // Scripts that emit undeclared .h also emit a .cpp/.h in cppAll, so they
     // still run. cxx transitively waits: cxx → PCH → deps+cppAll.
-    pchOut = pch(n, cfg, "src/bun.js/bindings/root.h", {
+    pchOut = pch(n, cfg, "src/bun.js/bindings/root-pch.h", {
       flags: cxxFlagsFull,
       implicitInputs: depHeaderSignal,
       orderOnlyInputs: codegen.cppAll,
@@ -274,7 +275,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.blank();
 
   // Source lists: from the pre-globbed snapshot + platform extras.
-  const cxxSources = [...sources.cxx];
+  // Unified sources: bundle the globbed .cpp into N-per-TU wrappers (see
+  // unified.ts for N). Generated at configure time; depfiles track the underlying
+  // .cpp files so editing one rebuilds its bundle. Codegen .cpp are kept
+  // separate — those are already large single TUs (ZigGeneratedClasses.cpp
+  // is 3.3 MB) and bundling them would serialize work. Always called so
+  // stale bundles are pruned even with --unifiedSources=false.
+  const split = generateUnifiedSources(cfg, sources.cxx);
+  const cxxSources = [...split.unified, ...split.standalone];
   const cSources = [...sources.c];
 
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
@@ -312,6 +320,18 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const codegenOrderOnly = codegen.cppAll;
 
   // Compile all .cpp with PCH.
+  // Emit compile_commands.json entries for the ORIGINAL bundled .cpp files
+  // too — clangd looks up flags by the file you opened, and a bundled source
+  // has no ninja edge of its own. Same flags as the bundle (no PCH listed —
+  // clangd parses standalone, and the PCH path is build-internal).
+  for (const src of split.bundled) {
+    n.addCompileCommand({
+      directory: cfg.buildDir,
+      file: src,
+      arguments: [cfg.cxx, ...cxxFlagsFull, "-c", src],
+    });
+  }
+
   const cxxObjects: string[] = [];
   for (const src of cxxSources) {
     const relSrc = relative(cfg.cwd, src);

@@ -62,7 +62,7 @@ const binaryTypes = [
 let servers: Server[] = [];
 let clients: Subprocess[] = [];
 
-it("should work fine if you repeatedly call methods on closed websockets", async () => {
+it.concurrent("should work fine if you repeatedly call methods on closed websockets", async () => {
   let env = { ...bunEnv };
   forceGuardMalloc(env);
 
@@ -93,7 +93,7 @@ afterEach(() => {
 // the other client should not receive the message
 // the server should not crash
 // https://github.com/oven-sh/bun/issues/4443
-it("websocket/4443", async () => {
+it.concurrent("websocket/4443", async () => {
   var serverSockets: ServerWebSocket<unknown>[] = [];
   var onFirstConnected = Promise.withResolvers();
   var onSecondMessageEchoedBack = Promise.withResolvers();
@@ -168,7 +168,7 @@ describe("Server", () => {
     },
   }));
 
-  it("subscriptions - basic usage", async () => {
+  it.concurrent("subscriptions - basic usage", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -220,7 +220,7 @@ describe("Server", () => {
     expect(subscriptions).not.toContain("topic2");
   });
 
-  it("subscriptions - all unsubscribed", async () => {
+  it.concurrent("subscriptions - all unsubscribed", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -263,7 +263,7 @@ describe("Server", () => {
     expect(subscriptions.length).toBe(0);
   });
 
-  it("subscriptions - after close", async () => {
+  it.concurrent("subscriptions - after close", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -298,7 +298,7 @@ describe("Server", () => {
     expect(subscriptions).toStrictEqual([]);
   });
 
-  it("subscriptions - duplicate subscriptions", async () => {
+  it.concurrent("subscriptions - duplicate subscriptions", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -336,7 +336,7 @@ describe("Server", () => {
     expect(subscriptions).toContain("topic1");
   });
 
-  it("subscriptions - multiple cycles", async () => {
+  it.concurrent("subscriptions - multiple cycles", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -987,15 +987,18 @@ function test(
   ) => Partial<WebSocketHandler<{ id: number }>>,
   timeout?: number,
 ) {
-  it(
+  it.concurrent(
     label,
-    async testDone => {
+    async () => {
       let isDone = false;
+      const localClients: Subprocess[] = [];
+      const { promise: donePromise, resolve: resolveDone, reject: rejectDone } = Promise.withResolvers<void>();
       const done = (err?: unknown) => {
         if (!isDone) {
           isDone = true;
           server.stop();
-          testDone(err);
+          if (err) rejectDone(err);
+          else resolveDone();
         }
       };
       let id = 0;
@@ -1014,18 +1017,26 @@ function test(
         websocket: {
           sendPings: false,
           message() {},
-          ...fn(done, () => connect(server), options as any),
+          ...fn(done, () => connect(server, localClients), options as any),
         },
       });
       options.server = server;
       expect(server.subscriberCount("empty topic")).toBe(0);
-      await connect(server);
+      const connected = connect(server, localClients);
+      try {
+        await Promise.all([donePromise, connected]);
+      } finally {
+        server.stop(true);
+        for (const client of localClients) {
+          client.kill();
+        }
+      }
     },
-    { timeout: timeout ?? 1000 },
+    { timeout: timeout ?? 10000 },
   );
 }
 
-async function connect(server: Server): Promise<void> {
+async function connect(server: Server, clientList: Subprocess[] = clients): Promise<void> {
   const url = new URL(`ws://${server.hostname}:${server.port}/`);
   const pathname = path.resolve(import.meta.dir, "./websocket-client-echo.mjs");
   const { promise, resolve } = Promise.withResolvers();
@@ -1041,7 +1052,7 @@ async function connect(server: Server): Promise<void> {
     },
     serialization: "json",
   });
-  clients.push(client);
+  clientList.push(client);
   await promise;
 }
 

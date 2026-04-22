@@ -367,6 +367,14 @@ export const globalFlags: Flag[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const bunOnlyFlags: Flag[] = [
+  // ─── Build profiling ───
+  {
+    flag: "-ftime-trace",
+    when: c => c.timeTrace,
+    lang: "cxx",
+    desc: "Emit per-TU Chrome-trace JSON next to each .o (analyze with ClangBuildAnalyzer)",
+  },
+
   // ─── Language standard ───
   // WebKit uses gnu++ extensions on Linux; if we don't match, the first
   // memory allocation crashes (ABI mismatch in sized delete).

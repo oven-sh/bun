@@ -177,7 +177,12 @@ fn getRuntimeSourceComptime(comptime target: options.Target) RuntimeSource {
         \\
     };
     const runtime_using_symbols = switch (target) {
-        // bun's webkit has Symbol.asyncDispose, Symbol.dispose, and SuppressedError, but not the syntax support
+        // JavaScriptCore supports `using` / `await using` natively (see
+        // `lower_using = !target.isBun()` below), so these helpers are unused
+        // when bundling for Bun and will be tree-shaken. They are still defined
+        // here so the runtime module exports a consistent shape across targets.
+        // Bun's WebKit also has Symbol.asyncDispose, Symbol.dispose, and
+        // SuppressedError, so no polyfills are needed.
         .bun =>
         \\export var __using = (stack, value, async) => {
         \\  if (value != null) {
@@ -1226,6 +1231,9 @@ fn runWithSourceCode(
     opts.features.standard_decorators = !loader.isTypeScript() or !(task.experimental_decorators or task.emit_decorator_metadata);
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
     opts.features.bundler_feature_flags = transpiler.options.bundler_feature_flags;
+    // JavaScriptCore implements `using` / `await using` natively, so when
+    // targeting Bun there is no need to lower them.
+    opts.features.lower_using = !target.isBun();
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;
     opts.features.react_fast_refresh = transpiler.options.react_fast_refresh and

@@ -38,7 +38,7 @@ public:
     JSValue instantiate(JSGlobalObject* globalObject);
     RefPtr<CachedBytecode> bytecode(JSGlobalObject* globalObject);
     JSUint8Array* cachedData(JSGlobalObject* globalObject);
-    Exception* evaluationException() const { return m_evaluationException.get(); }
+    JSC::Exception* evaluationException() const { return m_evaluationException.get(); }
     void initializeImportMeta(JSGlobalObject* globalObject);
 
     const SourceCode& sourceCode() const { return m_sourceCode; }
@@ -52,7 +52,7 @@ private:
     WriteBarrier<JSArray> m_moduleRequestsArray;
     WriteBarrier<ModuleProgramExecutable> m_cachedExecutable;
     WriteBarrier<JSUint8Array> m_cachedBytecodeBuffer;
-    WriteBarrier<Exception> m_evaluationException;
+    WriteBarrier<JSC::Exception> m_evaluationException;
     WriteBarrier<Unknown> m_initializeImportMeta;
     RefPtr<CachedBytecode> m_bytecode;
     SourceCode m_sourceCode;

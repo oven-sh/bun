@@ -157,3 +157,5 @@ void ProcessBindingBuffer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 DEFINE_VISIT_CHILDREN(ProcessBindingBuffer);
 
 } // namespace Bun
+
+#undef PROCESS_BINDING_NOT_IMPLEMENTED

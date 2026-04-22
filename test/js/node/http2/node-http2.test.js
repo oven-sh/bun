@@ -9,7 +9,7 @@ import tls from "node:tls";
 import { Duplex } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
-const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
+const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx } = createTest(import.meta.path);
 const ASAN_MULTIPLIER = isASAN ? 3 : 1;
 
 function invalidArgTypeHelper(input) {
@@ -48,7 +48,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           fs.mkdirSync(tmp_dir, { recursive: true });
         }
 
-        const file_name = path.join(tmp_dir, test_name);
+        const file_name = path.join(
+          tmp_dir,
+          `${path.basename(nodeExecutable)}.${paddingStrategyName(paddingStrategy)}.${test_name}`,
+        );
         const contents = Buffer.from(`const http2 = require("http2");
     const server = http2.createServer({ paddingStrategy: ${paddingStrategy} });
   ${code}
@@ -159,10 +162,20 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
       }
 
       describe("Client Basics", () => {
+        // The echo server is stateless; share one instance across all tests in
+        // this describe block instead of spawning a fresh subprocess per test.
+        let sharedEchoServer;
+        let HTTPS_SERVER;
+        beforeAll(async () => {
+          sharedEchoServer = await nodeEchoServer(paddingStrategy);
+          HTTPS_SERVER = sharedEchoServer.url;
+        });
+        afterAll(() => {
+          sharedEchoServer?.subprocess?.kill?.(9);
+        });
+
         // we dont support server yet but we support client
         it("should be able to send a GET request", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const result = await doHttp2Request(HTTPS_SERVER, HTTPS_SERVER, {
             ":path": "/get",
             "test-header": "test-value",
@@ -173,8 +186,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(parsed.headers["test-header"]).toBe("test-value");
         });
         it("should be able to send a POST request", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const payload = JSON.stringify({ "hello": "bun" });
           const result = await doHttp2Request(
             HTTPS_SERVER,
@@ -190,8 +201,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(parsed.data).toEqual(payload);
         });
         it("should be able to send data using end", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const payload = JSON.stringify({ "hello": "bun" });
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
@@ -220,8 +229,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(parsed.data).toEqual(payload);
         });
         it("should be able to mutiplex GET requests", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const results = await doMultiplexHttp2Request(HTTPS_SERVER, [
             { headers: { ":path": "/get" } },
             { headers: { ":path": "/get" } },
@@ -237,8 +244,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           }
         });
         it("http2 should receive remoteSettings when receiving default settings frame", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const { promise, resolve, reject } = Promise.withResolvers();
           const session = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
 
@@ -264,8 +269,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           }
         });
         it("should be able to mutiplex POST requests", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const results = await doMultiplexHttp2Request(HTTPS_SERVER, [
             { headers: { ":path": "/post", ":method": "POST" }, payload: JSON.stringify({ "request": 1 }) },
             { headers: { ":path": "/post", ":method": "POST" }, payload: JSON.stringify({ "request": 2 }) },
@@ -566,8 +569,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(() => http2.getUnpackedSettings(buffer)).toThrow();
         });
         it("headers cannot be bigger than 65536 bytes", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           try {
             await doHttp2Request(HTTPS_SERVER, HTTPS_SERVER, { ":path": "/", "test-header": "A".repeat(90000) });
             expect("unreachable").toBe(true);
@@ -577,8 +578,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           }
         });
         it("should be destroyed after close", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const { promise, resolve, reject: promiseReject } = Promise.withResolvers();
           const client = http2.connect(`${HTTPS_SERVER}/get`, TLS_OPTIONS);
           client.on("error", promiseReject);
@@ -600,8 +599,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(client.destroyed).toBe(true);
         });
         it("should be destroyed after destroy", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const { promise, resolve, reject: promiseReject } = Promise.withResolvers();
           const client = http2.connect(`${HTTPS_SERVER}/get`, TLS_OPTIONS);
           client.on("error", promiseReject);
@@ -623,8 +620,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(client.destroyed).toBe(true);
         });
         it("should fail to connect over HTTP/1.1", async () => {
-          await using server_ = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server_.url;
           const tlsCert = TLS_CERT;
           using server = Bun.serve({
             port: 0,
@@ -646,8 +641,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           }
         });
         it("works with Duplex", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           class JSSocket extends Duplex {
             constructor(socket) {
               super({ emitClose: true });
@@ -689,8 +682,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           socket.destroy();
         });
         it("close callback", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(`${HTTPS_SERVER}/get`, TLS_OPTIONS);
           client.on("error", reject);
@@ -699,8 +690,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(client.destroyed).toBe(true);
         });
         it("is possible to abort request", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const abortController = new AbortController();
           const promise = doHttp2Request(HTTPS_SERVER, `${HTTPS_SERVER}/get`, { ":path": "/get" }, null, null, {
             signal: abortController.signal,
@@ -714,8 +703,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           }
         });
         it("aborted event should work with abortController", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const abortController = new AbortController();
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
@@ -739,8 +726,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         });
 
         it("aborted event should work with aborted signal", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
@@ -763,8 +748,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         });
 
         it("state should work", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
@@ -887,8 +870,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           }
         });
         it("ping events should work", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
@@ -916,8 +897,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(received_ping).toEqual(Buffer.from("12345678"));
         });
         it("ping without events should work", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
@@ -944,8 +923,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(received_ping).toEqual(result.payload);
         });
         it("ping with wrong payload length events should error", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
@@ -964,8 +941,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(result.code).toBe("ERR_HTTP2_PING_LENGTH");
         });
         it("ping with wrong payload type events should throw", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
@@ -985,8 +960,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(result.code).toBe("ERR_INVALID_ARG_TYPE");
         });
         it("stream event should work", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
@@ -1001,8 +974,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         });
 
         it("wantTrailers should work", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
@@ -1048,6 +1019,8 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         it.skipIf(!isCI)(
           "should not leak memory",
           async () => {
+            // Use a dedicated server: this test floods it with requests for ~100s
+            // and would contend with other concurrent tests sharing the same server.
             await using server = await nodeEchoServer(paddingStrategy);
             await using proc = Bun.spawn({
               cmd: [bunExe(), "--smol", "run", path.join(import.meta.dir, "node-http2-memory-leak.js")],
@@ -1134,8 +1107,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           }
         });
         it("should not be able to write on socket", async () => {
-          await using server = await nodeEchoServer(paddingStrategy);
-          const HTTPS_SERVER = server.url;
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS, (session, socket) => {
             try {

@@ -3,84 +3,66 @@
 // `bun build --compile` binaries that `dlopen()` an embedded .so/.dylib
 // used to extract a fresh copy to `/tmp` for every single call — no dedup,
 // no cleanup. On long-running servers that recreate Workers this filled
-// the disk. The extraction path is now content-hash based, so repeated
-// dlopens and repeated Workers share a single extracted file.
+// the disk. The extraction path is now content-hash based and lives in a
+// per-user 0700 subdirectory of the tmpdir, so repeated dlopens and
+// repeated Workers share a single extracted file.
 //
 // Checks both dimensions:
 //   1. one process calling dlopen() many times leaks O(1) files, not O(N)
 //   2. many Workers each calling dlopen() once also leak O(1) files
 //
 // Skipped on non-Linux: repro needs a platform-native shared library and
-// the /tmp extraction path is POSIX-shaped. The underlying fix applies
-// on macOS too but we can't rely on cc being present on CI darwin runners.
+// we can't rely on cc being present on CI darwin runners. The underlying
+// fix applies on all POSIX platforms.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const cc = isLinux ? (Bun.which("cc") ?? Bun.which("gcc")) : null;
 
-// Returns the count of files under /tmp whose contents match `bytes` exactly.
-// Matching by content keeps the check robust against any future naming scheme —
-// what we care about is "how many copies of this .so live in /tmp", not what
-// they're called.
-async function countExtractedCopies(bytes: Uint8Array): Promise<number> {
-  let n = 0;
-  let entries: string[];
+// Returns paths inside `tmpdir` whose contents match `bytes` exactly. Matching
+// by content (not by name pattern) keeps the check robust against any future
+// naming scheme — what we care about is "how many copies of this .so live
+// here", not what they're called.
+async function findExtractedCopies(tmpdir: string, bytes: Uint8Array): Promise<string[]> {
+  const expected = Buffer.from(bytes);
+  const matches: string[] = [];
+  // Walk one level deep because the compiled binary extracts into
+  // `{tmpdir}/bun-{uid}/` rather than `{tmpdir}/` directly.
+  const roots = [tmpdir];
   try {
-    entries = readdirSync(tmpdir());
+    for (const name of readdirSync(tmpdir)) {
+      const p = join(tmpdir, name);
+      try {
+        if (statSync(p).isDirectory()) roots.push(p);
+      } catch {}
+    }
   } catch {
-    return 0;
+    return matches;
   }
-  for (const name of entries) {
-    if (!name.endsWith(".so")) continue;
-    const p = join(tmpdir(), name);
+  for (const root of roots) {
+    let entries: string[];
     try {
-      const f = Bun.file(p);
-      if (f.size !== bytes.length) continue;
-      const buf = new Uint8Array(await f.arrayBuffer());
-      if (buf.length !== bytes.length) continue;
-      let same = true;
-      for (let i = 0; i < buf.length; i++) {
-        if (buf[i] !== bytes[i]) {
-          same = false;
-          break;
-        }
-      }
-      if (same) n++;
+      entries = readdirSync(root);
     } catch {
-      // raced with deletion / permission — ignore
+      continue;
+    }
+    for (const name of entries) {
+      if (!name.endsWith(".so")) continue;
+      const p = join(root, name);
+      try {
+        const f = Bun.file(p);
+        if (f.size !== bytes.length) continue;
+        const buf = Buffer.from(await f.arrayBuffer());
+        if (expected.equals(buf)) matches.push(p);
+      } catch {
+        // raced with deletion / permission — ignore
+      }
     }
   }
-  return n;
-}
-
-async function removeExtractedCopies(bytes: Uint8Array): Promise<void> {
-  let entries: string[];
-  try {
-    entries = readdirSync(tmpdir());
-  } catch {
-    return;
-  }
-  for (const name of entries) {
-    if (!name.endsWith(".so")) continue;
-    const p = join(tmpdir(), name);
-    try {
-      const f = Bun.file(p);
-      if (f.size !== bytes.length) continue;
-      const buf = new Uint8Array(await f.arrayBuffer());
-      let same = true;
-      for (let i = 0; i < buf.length; i++) {
-        if (buf[i] !== bytes[i]) {
-          same = false;
-          break;
-        }
-      }
-      if (same) rmSync(p, { force: true });
-    } catch {}
-  }
+  return matches;
 }
 
 test.skipIf(!isLinux || !cc)(
@@ -122,7 +104,9 @@ test.skipIf(!isLinux || !cc)(
     });
     const cwd = String(dir);
 
-    // Build the .so.
+    // Build the .so. Don't assert stderr is empty — gcc/clang/ld can emit
+    // benign notes on success depending on toolchain version (see e.g.
+    // binutils .note.GNU-stack warnings).
     {
       await using proc = Bun.spawn({
         cmd: [cc!, "-shared", "-fPIC", "-o", "libhello.so", "libhello.c"],
@@ -130,8 +114,9 @@ test.skipIf(!isLinux || !cc)(
         env: bunEnv,
         stderr: "pipe",
       });
-      expect(await proc.stderr.text()).toBe("");
-      expect(await proc.exited).toBe(0);
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      if (stderr) console.log("cc stderr:", stderr);
+      expect(exitCode).toBe(0);
     }
 
     const libBytes = new Uint8Array(await Bun.file(join(cwd, "libhello.so")).arrayBuffer());
@@ -151,29 +136,49 @@ test.skipIf(!isLinux || !cc)(
       expect(exitCode).toBe(0);
     }
 
-    await removeExtractedCopies(libBytes);
+    // Isolate extraction into a fresh directory so concurrent runs (or
+    // unrelated processes that happen to have a byte-identical `.so` in
+    // `/tmp`) can't interfere with us. `BUN_TMPDIR` is checked first by
+    // `FileSystem.RealFS.tmpdirPath()` and `TMPDIR` is honored by everything
+    // else.
+    using extractRoot = tempDir("29585-extract", {});
+    const extractDir = String(extractRoot);
+    const runEnv = { ...bunEnv, BUN_TMPDIR: extractDir, TMPDIR: extractDir };
 
     // First run: 5 main-thread dlopens + 5 workers (each dlopen once).
     // Pre-fix: 10 /tmp files. Post-fix: 1.
     {
-      await using proc = Bun.spawn({ cmd: [out], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      await using proc = Bun.spawn({ cmd: [out], env: runEnv, stdout: "pipe", stderr: "pipe" });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(stdout.trim()).toBe("ok");
       expect(exitCode).toBe(0);
     }
-    expect(await countExtractedCopies(libBytes)).toBe(1);
+    expect((await findExtractedCopies(extractDir, libBytes)).length).toBe(1);
 
     // Second run of the same binary: still one file. Filename is content-hash
-    // based, so the existing extraction is reused across process restarts too.
+    // based, so the existing extraction is reused across process restarts.
     {
-      await using proc = Bun.spawn({ cmd: [out], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      await using proc = Bun.spawn({ cmd: [out], env: runEnv, stdout: "pipe", stderr: "pipe" });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(stdout.trim()).toBe("ok");
       expect(exitCode).toBe(0);
     }
-    expect(await countExtractedCopies(libBytes)).toBe(1);
+    expect((await findExtractedCopies(extractDir, libBytes)).length).toBe(1);
 
-    await removeExtractedCopies(libBytes);
+    // Third run: simulate systemd-tmpfiles sweeping the extracted file. The
+    // next invocation must re-extract instead of handing a deleted path to
+    // dlopen (cache self-heal).
+    for (const p of await findExtractedCopies(extractDir, libBytes)) rmSync(p, { force: true });
+    {
+      await using proc = Bun.spawn({ cmd: [out], env: runEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe("ok");
+      expect(exitCode).toBe(0);
+    }
+    expect((await findExtractedCopies(extractDir, libBytes)).length).toBe(1);
   },
+  // `bun build --compile` on a debug+ASAN host takes ~25s; the default 5s
+  // timeout is not enough. Matches the pattern in 24742.test.ts, 29290.test.ts,
+  // and 25628.test.ts for compile-heavy regression tests.
   180_000,
 );

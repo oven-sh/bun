@@ -88,7 +88,7 @@ build {
   provisioner "powershell" {
     script           = var.bootstrap_script
     valid_exit_codes = [0, 3010]
-    environment_vars = ["CI=true"]
+    environment_vars = ["CI=true", "BUN_BOOTSTRAP_REPO_REF=${var.repo_ref}"]
   }
 
   // Step 2: Upload agent.mjs

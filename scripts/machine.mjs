@@ -1237,6 +1237,8 @@ async function buildWindowsImageWithPacker({ os, arch, release, command, ci, age
     `bootstrap_script=${bootstrapPath}`,
     "-var",
     `agent_script=${agentPath}`,
+    "-var",
+    `repo_ref=${/^[\w./-]+$/.test(getBranch() ?? "") ? getBranch() : "main"}`,
     templateDir,
   ];
 

@@ -572,6 +572,66 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     }
   });
 
+  // https://github.com/oven-sh/bun/issues/27894
+  test("workspace member's patchedDependencies should be ignored", async () => {
+    // When a workspace member has its own `patchedDependencies`, installing from
+    // the workspace root should ignore it. Only the install root's `patchedDependencies`
+    // is honored (matching `overrides`, `workspaces`, and `catalogs` behavior).
+    //
+    // Previously the member's patch paths were written to the root lockfile and
+    // resolved relative to the root directory, failing with "Couldn't find patch file".
+    const filedir = tempDirWithFiles("patch-workspace-member", {
+      "package.json": JSON.stringify({
+        name: "workspace-root",
+        workspaces: ["packages/*"],
+      }),
+      packages: {
+        lib: {
+          "package.json": JSON.stringify({
+            name: "lib",
+            dependencies: {
+              "is-even": "1.0.0",
+            },
+            // This only applies when `lib` itself is the install root.
+            patchedDependencies: {
+              "is-even@1.0.0": "patches/is-even@1.0.0.patch",
+            },
+          }),
+          patches: {
+            "is-even@1.0.0.patch": is_even_patch,
+          },
+          "index.ts": `import isEven from 'is-even'; isEven(4);`,
+        },
+        app: {
+          "package.json": JSON.stringify({
+            name: "app",
+            dependencies: {
+              lib: "workspace:*",
+            },
+          }),
+        },
+      },
+    });
+
+    // Use an isolated install cache so this test isn't affected by other
+    // tests in this file that patch `is-even` into the shared cache.
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(filedir, ".bun-cache") };
+
+    const install = await $`${bunExe()} install`.env(env).cwd(filedir).throws(false);
+    expect(install.stderr.toString()).not.toContain("Couldn't find patch file");
+    expect(install.exitCode).toBe(0);
+
+    // The member's patch was not applied (root has no patchedDependencies).
+    const run = await $`${bunExe()} run index.ts`.env(env).cwd(join(filedir, "packages", "lib")).throws(false);
+    expect(run.stderr.toString()).not.toContain("error:");
+    expect(run.stdout.toString()).not.toContain("HI");
+    expect(run.exitCode).toBe(0);
+
+    // The member's patchedDependencies did not leak into the root lockfile.
+    const lockfile = await Bun.file(join(filedir, "bun.lock")).text();
+    expect(lockfile).not.toContain("patchedDependencies");
+  });
+
   describe("bun patch with --linker=isolated", () => {
     const patchEnv = bunEnv;
 

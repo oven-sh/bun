@@ -1025,6 +1025,27 @@ declare module "bun" {
     requestIP(request: Request): SocketAddress | null;
 
     /**
+     * Returns the OS file descriptor (or Windows SOCKET handle) for the underlying
+     * socket of the given Request, or `null` if the socket was already closed.
+     *
+     * Useful for per-connection low-level socket operations via FFI, such as
+     * `getsockopt(TCP_INFO)`, `setsockopt(TCP_CORK)`, `SO_RCVBUF`, etc.
+     *
+     * On Windows, this returns the SOCKET handle value as a JavaScript number.
+     *
+     * @example
+     * ```js
+     * export default {
+     *  async fetch(request, server) {
+     *    const fd = server.requestFD(request);
+     *    return new Response(`fd=${fd}`);
+     *  }
+     * }
+     * ```
+     */
+    requestFD(request: Request): number | null;
+
+    /**
      * Reset the idleTimeout of the given Request to the number in seconds. 0 means no timeout.
      *
      * @example

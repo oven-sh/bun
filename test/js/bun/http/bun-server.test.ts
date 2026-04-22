@@ -1,6 +1,9 @@
 import type { Server, ServerWebSocket, Socket } from "bun";
+import { dlopen, FFIType, ptr, suffix } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
+import { bunEnv, bunExe, bunRun, isPosix, isWindows, rejectUnauthorizedScope, tempDirWithFiles, tls } from "harness";
+import http from "http";
+import { once } from "node:events";
 import path from "path";
 
 describe.concurrent("Server", () => {
@@ -1388,4 +1391,85 @@ test("should be able to redirect when using empty streams #15320", async () => {
 
   const response = await fetch(`http://localhost:${server.port}/redirect`);
   expect(await response.text()).toBe("Hello, World");
+});
+
+describe.concurrent("node:http socket.fd (Bun extension)", () => {
+  test("request.socket.fd is a positive integer", async () => {
+    let observedFromFetch: number | undefined;
+    let observedFromConnection: number | undefined;
+    const server = http.createServer((req, res) => {
+      observedFromFetch = (req.socket as any).fd;
+      res.end("ok");
+    });
+    server.on("connection", socket => {
+      observedFromConnection = (socket as any).fd;
+    });
+    server.listen(0);
+    await once(server, "listening");
+    try {
+      const address = server.address() as { port: number };
+      const res = await fetch(`http://127.0.0.1:${address.port}/`);
+      await res.text();
+      expect(typeof observedFromFetch).toBe("number");
+      expect(observedFromFetch).toBeGreaterThan(0);
+      expect(typeof observedFromConnection).toBe("number");
+      expect(observedFromConnection).toBeGreaterThan(0);
+      expect(observedFromFetch).toBe(observedFromConnection);
+    } finally {
+      server.close();
+    }
+  });
+
+  test.if(isPosix)("socket.fd works with getsockname() via FFI", async () => {
+    const libName = process.platform === "darwin" ? `libc.${suffix}` : `libc.${suffix}.6`;
+    const libc = dlopen(libName, {
+      getsockname: {
+        args: [FFIType.i32, FFIType.ptr, FFIType.ptr],
+        returns: FFIType.i32,
+      },
+    });
+
+    let result: { rc: number; addrLen: number } | undefined;
+    const server = http.createServer((req, res) => {
+      const fd = (req.socket as any).fd;
+      const addr = new ArrayBuffer(128);
+      const addrLen = new Uint32Array(1);
+      addrLen[0] = 128;
+      const rc = libc.symbols.getsockname(fd, ptr(addr), ptr(addrLen));
+      result = { rc, addrLen: addrLen[0] };
+      res.end("ok");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    try {
+      const address = server.address() as { port: number };
+      const res = await fetch(`http://127.0.0.1:${address.port}/`);
+      await res.text();
+      expect(result).toEqual({ rc: 0, addrLen: expect.any(Number) });
+      expect(result!.addrLen).toBeGreaterThan(0);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("socket.fd becomes -1 after the socket is destroyed", async () => {
+    let savedSocket: any;
+    const server = http.createServer((req, res) => {
+      savedSocket = req.socket;
+      res.end("ok");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    try {
+      const address = server.address() as { port: number };
+      const res = await fetch(`http://127.0.0.1:${address.port}/`, { headers: { Connection: "close" } });
+      await res.text();
+      // Explicitly destroy the socket and wait for the close event so kHandle is cleared.
+      savedSocket.destroy();
+      await once(savedSocket, "close");
+      expect(savedSocket.fd).toBe(-1);
+    } finally {
+      server.close();
+    }
+  });
 });

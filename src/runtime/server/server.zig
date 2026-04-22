@@ -592,6 +592,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false);
 
+        pub const doRequestFD = host_fn.wrapInstanceMethod(ThisServer, "requestFD", false);
+
         pub const doTimeout = timeout;
 
         pub const UserRoute = struct {
@@ -653,6 +655,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             if (this.config.address == .unix) return JSValue.jsNull();
             const info = request.request_context.getRemoteSocketInfo() orelse return JSValue.jsNull();
             return SocketAddress.createDTO(this.globalThis, info.ip, @intCast(info.port), info.is_ipv6);
+        }
+
+        pub fn requestFD(_: *ThisServer, request: *jsc.WebCore.Request) bun.JSError!jsc.JSValue {
+            const fd = request.request_context.getNativeHandle() orelse return JSValue.jsNull();
+            return fd.toJSWithoutMakingLibUVOwned();
         }
 
         pub fn memoryCost(this: *ThisServer) usize {

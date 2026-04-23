@@ -135,12 +135,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
             clear_screen = clear_screen_flag;
             const watcher = Watcher.init(Reloader, reloader, fs, bun.default_allocator) catch |err| {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                bun.crash_handler.handleRootError(err, @errorReturnTrace());
             };
             watcher.start() catch |err| {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                Output.panic("Failed to start File Watcher: {s}", .{@errorName(err)});
+                bun.crash_handler.handleRootError(err, @errorReturnTrace());
             };
             return watcher;
         }
@@ -308,8 +306,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         this.transpiler.fs,
                         bun.default_allocator,
                     ) catch |err| {
-                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                        Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                        bun.crash_handler.handleRootError(err, @errorReturnTrace());
                     } }
                 else
                     .{ .hot = Watcher.init(
@@ -318,8 +315,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         this.transpiler.fs,
                         bun.default_allocator,
                     ) catch |err| {
-                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                        Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                        bun.crash_handler.handleRootError(err, @errorReturnTrace());
                     } };
 
                 if (reload_immediately) {
@@ -334,15 +330,16 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     this.transpiler.fs,
                     bun.default_allocator,
                 ) catch |err| {
-                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
-                    Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                    bun.crash_handler.handleRootError(err, @errorReturnTrace());
                 };
                 this.transpiler.resolver.watcher = bun.resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
             clear_screen = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors_stdout);
 
-            reloader.getContext().start() catch @panic("Failed to start File Watcher");
+            reloader.getContext().start() catch |err| {
+                bun.crash_handler.handleRootError(err, @errorReturnTrace());
+            };
         }
 
         fn putTombstone(this: *@This(), key: []const u8, value: *bun.fs.FileSystem.RealFS.EntriesOption) void {

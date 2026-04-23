@@ -1721,13 +1721,13 @@ prefetch_build_deps() {
 	# don't fetch them at runtime. install_docker() only enables the daemon for
 	# next boot on most distros — start it now. Best-effort: a docker hiccup
 	# shouldn't fail the bake.
-	if [ -f "$clone_dir/bun/test/docker/prepare-ci.sh" ] && command -v docker >/dev/null; then
+	if [ -f "$clone_dir/bun/test/docker/prepare-ci.ts" ] && command -v docker >/dev/null; then
 		systemctl_path="$(which systemctl)"
 		if [ -n "$systemctl_path" ] && ! docker info >/dev/null 2>&1; then
 			execute_sudo "$systemctl_path" start docker || true
 		fi
-		( cd "$clone_dir/bun/test/docker" && sh prepare-ci.sh ) || \
-			print "warning: prepare-ci.sh failed; test docker images not pre-pulled"
+		( cd "$clone_dir/bun" && "$bun_path" test/docker/prepare-ci.ts ) || \
+			print "warning: prepare-ci.ts failed; test docker images not pre-pulled"
 	fi
 
 	execute_sudo rm -rf "$clone_dir"

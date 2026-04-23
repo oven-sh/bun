@@ -107,9 +107,9 @@ docker buildx build \
 # hiccup shouldn't fail the bake.
 if git clone --depth=1 --branch "${BUN_BOOTSTRAP_REPO_REF:-main}" \
     https://github.com/oven-sh/bun.git /tmp/bun-test-docker; then
-    if [ -f /tmp/bun-test-docker/test/docker/prepare-ci.sh ]; then
-        (cd /tmp/bun-test-docker/test/docker && sh prepare-ci.sh) || \
-            echo "warning: prepare-ci.sh failed; test docker images not pre-pulled"
+    if [ -f /tmp/bun-test-docker/test/docker/prepare-ci.ts ]; then
+        (cd /tmp/bun-test-docker && bun test/docker/prepare-ci.ts) || \
+            echo "warning: prepare-ci.ts failed; test docker images not pre-pulled"
     fi
     rm -rf /tmp/bun-test-docker
 fi

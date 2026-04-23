@@ -1080,7 +1080,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
             source_blob,
             @truncate(s3.options.partSize),
         ), ctx)) |stream| {
-            return destination_blob.pipeReadableStreamToBlob(ctx, stream, options.extra_options);
+            return destination_blob.pipeReadableStreamToBlob(ctx, stream, options.extra_options, options.mkdirp_if_not_exists orelse true);
         } else {
             return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(ctx, ctx.createErrorInstance("Failed to stream bytes from s3 bucket", .{}));
         }
@@ -2423,7 +2423,7 @@ comptime {
     @export(&jsonRejectRequestStream, .{ .name = "Bun__FileStreamWrapper__onRejectRequestStream" });
 }
 
-pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, readable_stream: jsc.WebCore.ReadableStream, extra_options: ?JSValue) bun.JSError!jsc.JSValue {
+pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, readable_stream: jsc.WebCore.ReadableStream, extra_options: ?JSValue, mkdirp_if_not_exists: bool) bun.JSError!jsc.JSValue {
     var store = this.store orelse {
         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, globalThis.createErrorInstance("Blob is detached", .{}));
     };
@@ -2467,17 +2467,37 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
             const fd: bun.FD = if (pathlike == .fd) pathlike.fd else brk: {
                 var file_path: bun.PathBuffer = undefined;
                 const path = pathlike.path.sliceZ(&file_path);
-                switch (bun.sys.open(
-                    path,
-                    bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
-                    write_permissions,
-                )) {
-                    .result => |result| {
-                        break :brk result;
-                    },
-                    .err => |err| {
-                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, try err.withPath(path).toJS(globalThis));
-                    },
+                var did_mkdirp = false;
+                while (true) {
+                    switch (bun.sys.open(
+                        path,
+                        bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
+                        write_permissions,
+                    )) {
+                        .result => |result| {
+                            break :brk result;
+                        },
+                        .err => |err| {
+                            // Try to create parent directories if they don't exist
+                            if (err.getErrno() == .NOENT and mkdirp_if_not_exists and !did_mkdirp) {
+                                if (std.fs.path.dirname(path)) |dirname| {
+                                    var node_fs: jsc.Node.fs.NodeFS = .{};
+                                    switch (node_fs.mkdirRecursive(.{
+                                        .path = .{ .string = bun.PathString.init(dirname) },
+                                        .recursive = true,
+                                        .always_return_none = true,
+                                    })) {
+                                        .result => {
+                                            did_mkdirp = true;
+                                            continue;
+                                        },
+                                        .err => {},
+                                    }
+                                }
+                            }
+                            return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, try err.withPath(path).toJS(globalThis));
+                        },
+                    }
                 }
                 unreachable;
             };
@@ -2550,6 +2570,31 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
 
         switch (sink.start(stream_start)) {
             .err => |err| {
+                // Try to create parent directories if they don't exist
+                if (err.getErrno() == .NOENT and mkdirp_if_not_exists and input_path == .path) {
+                    if (std.fs.path.dirname(input_path.path.slice())) |dirname| {
+                        var node_fs: jsc.Node.fs.NodeFS = .{};
+                        switch (node_fs.mkdirRecursive(.{
+                            .path = .{ .string = bun.PathString.init(dirname) },
+                            .recursive = true,
+                            .always_return_none = true,
+                        })) {
+                            .result => {
+                                // Retry opening the file after creating directories
+                                switch (sink.start(stream_start)) {
+                                    .err => |retry_err| {
+                                        sink.deref();
+                                        return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, try retry_err.toJS(globalThis));
+                                    },
+                                    else => {
+                                        break :brk_sink sink;
+                                    },
+                                }
+                            },
+                            .err => {},
+                        }
+                    }
+                }
                 sink.deref();
                 return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, try err.toJS(globalThis));
             },

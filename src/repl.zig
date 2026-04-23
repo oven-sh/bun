@@ -681,6 +681,7 @@ use_colors: bool = false,
 terminal_width: u16 = 80,
 terminal_height: u16 = 24,
 ctrl_c_pressed: bool = false,
+prev_extra_lines: usize = 0, // extra terminal lines from previous refreshLine render
 
 // Buffered stdin
 stdin_buf: [256]u8 = .{0} ** 256,
@@ -746,8 +747,14 @@ fn setupTerminal(self: *Repl) void {
     // Check for NO_COLOR
     self.use_colors = !bun.env_var.NO_COLOR.get();
 
-    // Get terminal size
-    if (Output.terminal_size.col > 0) {
+    // Get terminal size via ioctl (Output.terminal_size may not be initialized)
+    if (Environment.isPosix) {
+        var size: std.posix.winsize = undefined;
+        if (std.posix.system.ioctl(std.posix.STDOUT_FILENO, std.posix.T.IOCGWINSZ, @intFromPtr(&size)) == 0) {
+            if (size.col > 0) self.terminal_width = size.col;
+            if (size.row > 0) self.terminal_height = size.row;
+        }
+    } else if (Output.terminal_size.col > 0) {
         self.terminal_width = Output.terminal_size.col;
         self.terminal_height = Output.terminal_size.row;
     }
@@ -959,10 +966,37 @@ fn refreshLine(self: *Repl) void {
     const prompt = self.getPrompt();
     const prompt_len = self.getPromptLength();
     const line = self.line_editor.getLine();
+    const tw: usize = if (self.terminal_width > 0) @as(usize, self.terminal_width) else 80;
+    var buf: [32]u8 = undefined;
 
-    // Move to beginning of line
+    // When previous render spanned multiple terminal rows (due to soft wrapping),
+    // the cursor is on the last row. Move up to the first row and clear all rows
+    // that were part of the previous render to avoid ghost/duplicate lines.
+    if (self.prev_extra_lines > 0) {
+        // Move cursor up from last row to first row
+        const seq = std.fmt.bufPrint(&buf, CSI ++ "{d}A", .{self.prev_extra_lines}) catch return;
+        self.write(seq);
+    }
+
+    // Clear the first row
     self.write("\r");
     self.write(Cursor.clear_line);
+
+    // Clear all extra rows from previous render
+    {
+        var i: usize = 0;
+        while (i < self.prev_extra_lines) : (i += 1) {
+            self.write("\n");
+            self.write(Cursor.clear_line);
+        }
+    }
+
+    // Move back up to the first row
+    if (self.prev_extra_lines > 0) {
+        const seq = std.fmt.bufPrint(&buf, CSI ++ "{d}A", .{self.prev_extra_lines}) catch return;
+        self.write(seq);
+    }
+    self.write("\r");
 
     // Write prompt
     self.write(prompt);
@@ -974,12 +1008,20 @@ fn refreshLine(self: *Repl) void {
         self.write(line);
     }
 
-    // Position cursor
-    const cursor_pos = prompt_len + self.line_editor.cursor;
-    if (cursor_pos < self.terminal_width) {
+    // Calculate how many extra terminal rows the content occupies due to wrapping.
+    // After writing N visible chars from col 0, the last char is on row (N-1)/tw,
+    // so extra_lines (rows beyond the first) = (N-1)/tw for N > 0.
+    const total_len = prompt_len + line.len;
+    const extra_lines: usize = if (total_len > tw) (total_len -| 1) / tw else 0;
+    self.prev_extra_lines = extra_lines;
+
+    // Position cursor. When content wraps to multiple rows, the cursor is left
+    // at the end of the content (last row) which is the correct position for
+    // typing. When content fits on one row, reposition to the exact cursor column.
+    if (extra_lines == 0) {
+        const cursor_pos = prompt_len + self.line_editor.cursor;
         self.write("\r");
         if (cursor_pos > 0) {
-            var buf: [16]u8 = undefined;
             const seq = std.fmt.bufPrint(&buf, CSI ++ "{d}C", .{cursor_pos}) catch return;
             self.write(seq);
         }
@@ -1675,6 +1717,7 @@ pub fn runWithVM(self: *Repl, vm: ?*jsc.VirtualMachine) !void {
     while (self.running) {
         const key = self.readKey() orelse {
             // EOF
+            self.movePastMultilineContent();
             self.print("\n", .{});
             break;
         };
@@ -1688,6 +1731,7 @@ pub fn runWithVM(self: *Repl, vm: ?*jsc.VirtualMachine) !void {
             .ctrl_d => {
                 if (self.editor_mode) {
                     // Finish editor mode
+                    self.movePastMultilineContent();
                     self.print("\n", .{});
                     const code = self.editor_buffer.items;
                     if (code.len > 0) {
@@ -1697,6 +1741,7 @@ pub fn runWithVM(self: *Repl, vm: ?*jsc.VirtualMachine) !void {
                     self.editor_buffer.clearRetainingCapacity();
                     self.refreshLine();
                 } else if (self.line_editor.buffer.items.len == 0 and !self.in_multiline) {
+                    self.movePastMultilineContent();
                     self.print("\n", .{});
                     self.running = false;
                 } else {
@@ -1705,6 +1750,7 @@ pub fn runWithVM(self: *Repl, vm: ?*jsc.VirtualMachine) !void {
                 }
             },
             .ctrl_l => {
+                self.prev_extra_lines = 0;
                 self.write(Cursor.clear_screen);
                 self.write(Cursor.home);
                 self.refreshLine();
@@ -1795,7 +1841,20 @@ pub fn runWithVM(self: *Repl, vm: ?*jsc.VirtualMachine) !void {
     self.history.save();
 }
 
+/// Move cursor past all wrapped content so that subsequent output (newline,
+/// evaluation result) appears below it rather than overwriting wrapped lines.
+fn movePastMultilineContent(self: *Repl) void {
+    if (self.prev_extra_lines > 0) {
+        // Cursor is on the last row of wrapped content (refreshLine leaves it there).
+        // Move to end of that row so the next newline goes below all content.
+        self.write("\r");
+        self.write(Cursor.clear_to_end);
+        self.prev_extra_lines = 0;
+    }
+}
+
 fn handleEnter(self: *Repl) !void {
+    self.movePastMultilineContent();
     self.print("\n", .{});
 
     const line = self.line_editor.getLine();
@@ -1886,6 +1945,7 @@ fn handleEnter(self: *Repl) !void {
 }
 
 fn handleCtrlC(self: *Repl) void {
+    self.movePastMultilineContent();
     if (self.editor_mode) {
         self.print("\n{s}// Editor mode cancelled{s}\n", .{ Color.dim, Color.reset });
         self.editor_mode = false;

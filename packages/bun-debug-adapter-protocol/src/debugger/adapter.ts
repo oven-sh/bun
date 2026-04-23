@@ -25,49 +25,76 @@ export async function getAvailablePort(): Promise<number> {
 }
 
 /**
- * Resolve a bare command name (e.g. `"bun"`) to an absolute executable path on
- * Windows by walking `PATH` and trying the extensions in `PATHEXT`.
+ * Resolve a command for `child_process.spawn` on Windows. Returns the path to
+ * hand to `spawn`, plus whether the caller must pass `shell: true`.
  *
- * Node's `child_process.spawn` does not perform `PATHEXT` resolution, and since
- * the CVE-2024-27980 hardening it refuses to spawn `.cmd`/`.bat` files without
- * `shell: true`. When Bun is installed via the npm wrapper on Windows it lives
- * on `PATH` as `bun.cmd`, not `bun.exe`, so `spawn("bun", ...)` fails with
- * `EINVAL`. Resolving to the actual file here avoids both issues and sidesteps
- * the `shell: true` argument-escaping surface entirely.
+ * Two Windows-specific gotchas need handling together:
  *
- * If `command` is already absolute, or already has an extension, or cannot be
- * located, the original string is returned unchanged so `spawn` produces its
- * usual error.
+ * 1. Node's `spawn` does not walk `PATHEXT`, so a bare name like `"bun"` is
+ *    never auto-resolved to `bun.exe`/`bun.cmd`. When Bun is installed via
+ *    the npm wrapper, `bun.exe` lives in `node_modules\bun\bin\` (not on
+ *    `PATH`) and only `bun.cmd` is discoverable — so `spawn("bun", ...)`
+ *    fails with `ENOENT`.
  *
- * `platform` defaults to `process.platform` so the helper becomes a no-op on
- * POSIX where the native PATH lookup already handles bare names. It's an
- * explicit parameter so tests can exercise the Windows path on any host.
+ * 2. Post–CVE-2024-27980 (Node 18.20.2 / 20.12.2 / 21.7.3+), Node's C++
+ *    `ProcessWrap::Spawn` unconditionally rejects any `options.file` whose
+ *    extension is `.bat`/`.cmd` unless `shell: true` is set — the check is
+ *    suffix-based, so an absolute `.cmd` path fails too. See
+ *    `node:src/util-inl.h IsWindowsBatchFile`.
+ *
+ * Resolving PATH+PATHEXT handles (1); returning `useShell: true` when the
+ * resolved path ends in `.bat`/`.cmd` handles (2). When `useShell` is true,
+ * the caller must spawn with `shell: true` so Node rewrites `file` to
+ * `cmd.exe` and wraps the batch invocation in `/d /s /c "..."`. Node's
+ * shell-wrapping code joins args with spaces, so arguments containing
+ * `cmd.exe` metacharacters (`&`, `|`, `<`, `>`, `^`) will still be
+ * interpreted — callers have to decide whether their argument surface is
+ * safe. For our debug-adapter use, args are VS Code launch-config values
+ * (file paths, flags) and the inspector URL goes through `env`, so this is
+ * acceptable.
+ *
+ * On POSIX the helper returns `{ command, useShell: false }` and defers to
+ * `spawn`'s native PATH lookup. `platform` is an explicit parameter so
+ * tests can exercise the Windows path on any host.
  */
 export function resolveCommand(
   command: string,
   env: Record<string, string | undefined> | NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
-): string {
-  if (platform !== "win32") return command;
-  // Absolute or relative paths are used as-is. Only bare names need PATH lookup.
-  if (command.includes("/") || command.includes("\\")) return command;
-  if (path.extname(command) !== "") return command;
+): { command: string; useShell: boolean } {
+  if (platform !== "win32") return { command, useShell: false };
 
-  const pathVar = env.PATH ?? env.Path ?? env.path ?? "";
-  // PATHEXT drives extension resolution on Windows. Fall back to the typical
-  // default if the environment doesn't define it.
-  const pathExt = env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD";
-  const extensions = pathExt.split(";").filter(Boolean);
+  // Absolute or relative paths skip PATH lookup, but still need the
+  // batch-file check below so `spawn("C:\\...\\bun.cmd", ...)` works.
+  const hasSeparator = command.includes("/") || command.includes("\\");
+  const hasExtension = path.extname(command) !== "";
 
-  for (const dir of pathVar.split(";")) {
-    if (!dir) continue;
-    for (const ext of extensions) {
-      const candidate = path.join(dir, command + ext);
-      if (existsSync(candidate)) return candidate;
+  let resolved = command;
+  if (!hasSeparator && !hasExtension) {
+    const pathVar = env.PATH ?? env.Path ?? env.path ?? "";
+    // PATHEXT drives extension resolution on Windows. Fall back to the
+    // typical default if the environment doesn't define it.
+    const pathExt = env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD";
+    const extensions = pathExt.split(";").filter(Boolean);
+
+    outer: for (const dir of pathVar.split(";")) {
+      if (!dir) continue;
+      for (const ext of extensions) {
+        const candidate = path.join(dir, command + ext);
+        if (existsSync(candidate)) {
+          resolved = candidate;
+          break outer;
+        }
+      }
     }
   }
 
-  return command;
+  // Covers both `bun.cmd` and `C:\...\bun.cmd` — Node's batch-file check
+  // is suffix-only, so absoluteness doesn't exempt us.
+  const ext = path.extname(resolved).toLowerCase();
+  const useShell = ext === ".cmd" || ext === ".bat";
+
+  return { command: resolved, useShell };
 }
 
 const capabilities: DAP.Capabilities = {
@@ -2307,15 +2334,17 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
     const request = { command, args, cwd, env };
     this.emit("Process.requested", request);
 
-    // On Windows, resolve a bare command name (e.g. `"bun"`) to its absolute
-    // path via `PATH`/`PATHEXT` before spawning — see `resolveCommand`.
-    const resolvedCommand = resolveCommand(command, env);
+    // On Windows, resolve a bare command name via PATH/PATHEXT, then decide
+    // whether `shell: true` is required. `.cmd`/`.bat` files cannot be spawned
+    // directly on Node after CVE-2024-27980 — see `resolveCommand`.
+    const { command: resolvedCommand, useShell } = resolveCommand(command, env);
 
     let subprocess: ChildProcess;
     try {
       subprocess = spawn(resolvedCommand, args, {
         ...request,
         stdio: ["ignore", "pipe", "pipe"],
+        shell: useShell,
       });
     } catch (cause) {
       this.emit("Process.exited", new Error("Failed to spawn process", { cause }), null);

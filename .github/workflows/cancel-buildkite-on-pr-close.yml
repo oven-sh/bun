@@ -1,0 +1,67 @@
+name: Cancel BuildKite on PR close
+
+# When a PR is closed without merging, its BuildKite builds keep running.
+# On the macOS queue (fixed, non-ephemeral runners) those orphaned jobs can
+# sit for hours and burn slots that live PRs need. This cancels them.
+#
+# Intentionally does NOT fire for merged PRs — those builds may still carry
+# useful signal and the merge-queue path handles them separately.
+
+on:
+  pull_request_target:
+    types: [closed]
+
+# This job does not need the GitHub token at all — it only talks to BuildKite.
+permissions: {}
+
+jobs:
+  cancel:
+    if: github.event.pull_request.merged == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel running/scheduled BuildKite builds for this branch
+        env:
+          BUILDKITE_API_TOKEN: ${{ secrets.BUILDKITE_API_TOKEN }}
+          # Same-repo PRs build under the bare branch name; fork PRs build
+          # under "owner:branch" (head.label). Pick accordingly. head.repo can
+          # be null if the fork was deleted before close — fall back to label.
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork || github.event.pull_request.head.repo == null }}
+          HEAD_LABEL: ${{ github.event.pull_request.head.label }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BUILDKITE_API_TOKEN}" ]; then
+            echo "BUILDKITE_API_TOKEN secret not set; skipping."
+            exit 0
+          fi
+
+          if [ "${IS_FORK}" = "true" ]; then
+            BK_BRANCH="${HEAD_LABEL}"
+          else
+            BK_BRANCH="${HEAD_REF}"
+          fi
+
+          # Defence in depth: never touch protected/queue branches even if the
+          # event somehow resolves to one.
+          case "${BK_BRANCH}" in
+            "" | main | master | gh-readonly-queue/*)
+              echo "Refusing to cancel builds on protected branch '${BK_BRANCH}'"
+              exit 0
+              ;;
+          esac
+
+          enc=$(jq -rn --arg b "$BK_BRANCH" '$b|@uri')
+          api="https://api.buildkite.com/v2/organizations/bun/pipelines/bun"
+
+          builds=$(curl -fsS -H "Authorization: Bearer ${BUILDKITE_API_TOKEN}" \
+            "${api}/builds?branch=${enc}&state[]=running&state[]=scheduled&state[]=failing&per_page=30")
+
+          count=$(jq 'length' <<<"$builds")
+          echo "Found ${count} active build(s) on branch '${BK_BRANCH}'"
+          [ "$count" -eq 0 ] && exit 0
+
+          jq -r '.[].number' <<<"$builds" | while read -r num; do
+            echo "Cancelling build #${num}"
+            curl -fsS -X PUT -H "Authorization: Bearer ${BUILDKITE_API_TOKEN}" \
+              "${api}/builds/${num}/cancel" >/dev/null
+          done

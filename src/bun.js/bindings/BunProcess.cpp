@@ -2864,9 +2864,52 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     return JSValue::encode(jsNumber(result));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionInitgroups, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 2) {
+        return Bun::ERR::MISSING_ARGS(scope, globalObject, "user, group"_s, 2, callFrame->argumentCount());
+    }
+
+    auto userValue = callFrame->argument(0);
+    auto groupValue = callFrame->argument(1);
+
+    // Convert user to string
+    Bun::V::validateString(scope, globalObject, userValue, "user"_s, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto userStr = userValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Convert group to gid_t
+    gid_t group;
+    if (groupValue.isNumber()) {
+        Bun::V::validateUint32(scope, globalObject, groupValue, "group"_s, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, {});
+        group = groupValue.toUInt32(globalObject);
+    } else if (groupValue.isString()) {
+        auto resolvedGroup = maybe_gid_by_name(scope, globalObject, groupValue);
+        RETURN_IF_EXCEPTION(scope, {});
+        group = resolvedGroup.toUInt32(globalObject);
+    } else {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "group"_s, "number or string"_s, groupValue);
+    }
+
+    // Call initgroups
+    auto result = initgroups(userStr.utf8().data(), group);
+    if (result != 0) {
+        throwSystemError(scope, globalObject, "initgroups"_s, errno);
+        return {};
+    }
+
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
 #endif
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -4074,6 +4117,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   seteuid                          Process_functionseteuid                             Function 1
   setgid                           Process_functionsetgid                              Function 1
   setgroups                        Process_functionsetgroups                           Function 1
+  initgroups                       Process_functionInitgroups                          Function 1
   setuid                           Process_functionsetuid                              Function 1
 #endif
 @end

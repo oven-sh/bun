@@ -18,8 +18,7 @@ const BarrelExportResolution = struct {
     import_record_index: u32,
     /// The original alias in the source module (e.g. "d" for `export { d as c }`)
     original_alias: ?[]const u8,
-    /// True when the underlying import is `import * as ns` — propagation
-    /// through this export must treat the target as needing all exports.
+    /// True when the export resolves to `export * as Name from '...'`
     alias_is_star: bool,
 };
 
@@ -98,6 +97,10 @@ fn applyBarrelOptimizationImpl(this: *BundleV2, parse_result: *ParseTask.Result)
                 while (partial_iter.next()) |p_entry| {
                     if (resolveBarrelExport(p_entry.key_ptr.*, named_exports, named_imports)) |resolution| {
                         try needed_records.put(needed_records_alloc, resolution.import_record_index, {});
+                        // When the export resolves to `export * as Name from '...'`,
+                        // the entire target namespace is consumed — bail out of
+                        // barrel optimization so nothing gets deferred.
+                        if (resolution.alias_is_star) return;
                     }
                 }
             },
@@ -476,7 +479,12 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
             try barrels_to_resolve.put(barrels_to_resolve_alloc, barrel_idx, {});
         }
 
-        const propagate_alias = resolution.original_alias orelse alias;
+        // When the export resolves to `export * as Name from '...'`,
+        // the target module's exports are the namespace members (e.g. Root,
+        // Title), not the alias (e.g. Toast). Propagate as a star import
+        // so the target is not barrel-deferred.
+        const propagate_star = resolution.alias_is_star;
+        const propagate_alias = if (propagate_star) "" else (resolution.original_alias orelse alias);
         if (resolution.import_record_index < barrel_ir.len) {
             var rec = barrel_ir.slice()[resolution.import_record_index];
             if (!rec.source_index.isValid()) {
@@ -486,9 +494,7 @@ pub fn scheduleBarrelDeferredImports(this: *BundleV2, result: *ParseTask.Result.
                 rec = barrel_ir.slice()[resolution.import_record_index];
             }
             if (rec.source_index.isValid()) {
-                // When the barrel re-exports a namespace import (`import * as X; export { X }`),
-                // propagate as a star import so the target barrel loads all exports.
-                try queue.append(queue_alloc, .{ .barrel_source_index = rec.source_index.get(), .alias = propagate_alias, .is_star = resolution.alias_is_star });
+                try queue.append(queue_alloc, .{ .barrel_source_index = rec.source_index.get(), .alias = propagate_alias, .is_star = propagate_star });
             }
         }
     }

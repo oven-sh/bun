@@ -19,29 +19,9 @@
 // WebSocketDebugAdapter#spawn feeds both into `child_process.spawn`.
 
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tempDir } from "harness";
 import { join, sep } from "node:path";
 import { resolveCommand } from "../../../packages/bun-debug-adapter-protocol/src/debugger/adapter.ts";
-
-/**
- * Build an ad-hoc PATH directory containing `files`. Each key is a filename
- * (e.g. `"bun.cmd"`); each value is the file body. The files are written with
- * executable permissions so the host OS won't reject them for reasons
- * unrelated to the test.
- */
-function makePathDir(files: Record<string, string>): string {
-  const dir = mkdtempSync(join(tmpdir(), "issue-29636-"));
-  for (const [name, body] of Object.entries(files)) {
-    const full = join(dir, name);
-    mkdirSync(join(full, ".."), { recursive: true });
-    writeFileSync(full, body);
-    try {
-      chmodSync(full, 0o755);
-    } catch {}
-  }
-  return dir;
-}
 
 describe("issue #29636 — resolveCommand", () => {
   test("is a no-op on POSIX platforms", () => {
@@ -69,10 +49,10 @@ describe("issue #29636 — resolveCommand", () => {
     // absolute .cmd path *and* tells the caller to set `shell: true`, so
     // Node rewrites the file to cmd.exe and the CVE-2024-27980 check
     // (suffix-based, absolute path does NOT exempt us) never fires.
-    const dir = makePathDir({ "bun.cmd": "@echo off\r\necho hi\r\n" });
-    const result = resolveCommand("bun", { PATH: dir, PATHEXT: ".com;.exe;.bat;.cmd" }, "win32");
+    using dir = tempDir("issue-29636", { "bun.cmd": "@echo off\r\necho hi\r\n" });
+    const result = resolveCommand("bun", { PATH: String(dir), PATHEXT: ".com;.exe;.bat;.cmd" }, "win32");
     expect(result).toEqual({
-      command: join(dir, "bun.cmd"),
+      command: join(String(dir), "bun.cmd"),
       useShell: true,
     });
   });
@@ -81,13 +61,13 @@ describe("issue #29636 — resolveCommand", () => {
     // Native Bun install plus npm wrapper both on PATH: `.exe` comes first in
     // the default PATHEXT, so we resolve to the real binary and can spawn it
     // directly without shell (avoiding the cmd.exe quoting surface entirely).
-    const dir = makePathDir({
+    using dir = tempDir("issue-29636", {
       "bun.cmd": "@echo off\r\n",
       "bun.exe": "MZ", // PE magic; contents don't matter for this lookup
     });
-    const result = resolveCommand("bun", { PATH: dir, PATHEXT: ".exe;.cmd" }, "win32");
+    const result = resolveCommand("bun", { PATH: String(dir), PATHEXT: ".exe;.cmd" }, "win32");
     expect(result).toEqual({
-      command: join(dir, "bun.exe"),
+      command: join(String(dir), "bun.exe"),
       useShell: false,
     });
   });
@@ -96,13 +76,13 @@ describe("issue #29636 — resolveCommand", () => {
     // If the user has configured PATHEXT with `.cmd` first, we honour that and
     // set useShell accordingly — same logic whether the ordering is default
     // or user-overridden.
-    const dir = makePathDir({
+    using dir = tempDir("issue-29636", {
       "bun.cmd": "@echo off\r\n",
       "bun.exe": "MZ",
     });
-    const result = resolveCommand("bun", { PATH: dir, PATHEXT: ".cmd;.exe" }, "win32");
+    const result = resolveCommand("bun", { PATH: String(dir), PATHEXT: ".cmd;.exe" }, "win32");
     expect(result).toEqual({
-      command: join(dir, "bun.cmd"),
+      command: join(String(dir), "bun.cmd"),
       useShell: true,
     });
   });
@@ -110,8 +90,8 @@ describe("issue #29636 — resolveCommand", () => {
   test("returns the original command when nothing matches on PATH", () => {
     // Falling through to `spawn` lets it emit the usual ENOENT. Swallowing
     // that would hide genuine "command missing" diagnostics from users.
-    const dir = makePathDir({});
-    expect(resolveCommand("bun", { PATH: dir, PATHEXT: ".exe;.cmd" }, "win32")).toEqual({
+    using dir = tempDir("issue-29636", {});
+    expect(resolveCommand("bun", { PATH: String(dir), PATHEXT: ".exe;.cmd" }, "win32")).toEqual({
       command: "bun",
       useShell: false,
     });
@@ -121,9 +101,9 @@ describe("issue #29636 — resolveCommand", () => {
     // If the caller already supplied an absolute `.exe` path, the PATH walk is
     // noise — and worse, it could shadow the explicit path with a different
     // binary found earlier on PATH.
-    const dir = makePathDir({ "bun.exe": "MZ" });
-    const abs = join(dir, "bun.exe");
-    expect(resolveCommand(abs, { PATH: dir }, "win32")).toEqual({
+    using dir = tempDir("issue-29636", { "bun.exe": "MZ" });
+    const abs = join(String(dir), "bun.exe");
+    expect(resolveCommand(abs, { PATH: String(dir) }, "win32")).toEqual({
       command: abs,
       useShell: false,
     });
@@ -133,9 +113,9 @@ describe("issue #29636 — resolveCommand", () => {
     // CVE-2024-27980's batch-file check is suffix-based: an absolute .cmd
     // path hits the same EINVAL as a bare one. We must flag useShell so the
     // caller spawns through cmd.exe even when they supplied the full path.
-    const dir = makePathDir({ "bun.cmd": "@echo off\r\n" });
-    const abs = join(dir, "bun.cmd");
-    expect(resolveCommand(abs, { PATH: dir }, "win32")).toEqual({
+    using dir = tempDir("issue-29636", { "bun.cmd": "@echo off\r\n" });
+    const abs = join(String(dir), "bun.cmd");
+    expect(resolveCommand(abs, { PATH: String(dir) }, "win32")).toEqual({
       command: abs,
       useShell: true,
     });
@@ -171,10 +151,10 @@ describe("issue #29636 — resolveCommand", () => {
     // Windows PATH routinely contains `;;` separators or trailing `;`.
     // An empty path segment must not degenerate into a lookup in the
     // current directory, which could pick up a hostile `bun.cmd` in CWD.
-    const dir = makePathDir({ "bun.cmd": "@echo off\r\n" });
-    const result = resolveCommand("bun", { PATH: `;${dir};`, PATHEXT: ".cmd" }, "win32");
+    using dir = tempDir("issue-29636", { "bun.cmd": "@echo off\r\n" });
+    const result = resolveCommand("bun", { PATH: `;${String(dir)};`, PATHEXT: ".cmd" }, "win32");
     expect(result).toEqual({
-      command: join(dir, "bun.cmd"),
+      command: join(String(dir), "bun.cmd"),
       useShell: true,
     });
   });
@@ -183,13 +163,13 @@ describe("issue #29636 — resolveCommand", () => {
     // Windows env vars are case-insensitive at the OS layer but JS exposes
     // them as-is. Node's process.env preserves whatever casing the launching
     // shell used, so we must check all three common spellings.
-    const dir = makePathDir({ "bun.exe": "MZ" });
-    expect(resolveCommand("bun", { Path: dir, PATHEXT: ".exe" }, "win32")).toEqual({
-      command: join(dir, "bun.exe"),
+    using dir = tempDir("issue-29636", { "bun.exe": "MZ" });
+    expect(resolveCommand("bun", { Path: String(dir), PATHEXT: ".exe" }, "win32")).toEqual({
+      command: join(String(dir), "bun.exe"),
       useShell: false,
     });
-    expect(resolveCommand("bun", { path: dir, PATHEXT: ".exe" }, "win32")).toEqual({
-      command: join(dir, "bun.exe"),
+    expect(resolveCommand("bun", { path: String(dir), PATHEXT: ".exe" }, "win32")).toEqual({
+      command: join(String(dir), "bun.exe"),
       useShell: false,
     });
   });

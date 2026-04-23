@@ -26,7 +26,7 @@ export async function getAvailablePort(): Promise<number> {
 
 /**
  * Resolve a command for `child_process.spawn` on Windows. Returns the path to
- * hand to `spawn`, plus whether the caller must pass `shell: true`.
+ * hand to `spawn`, plus whether a `cmd.exe` shell invocation is required.
  *
  * Two Windows-specific gotchas need handling together:
  *
@@ -38,20 +38,22 @@ export async function getAvailablePort(): Promise<number> {
  *
  * 2. Post–CVE-2024-27980 (Node 18.20.2 / 20.12.2 / 21.7.3+), Node's C++
  *    `ProcessWrap::Spawn` unconditionally rejects any `options.file` whose
- *    extension is `.bat`/`.cmd` unless `shell: true` is set — the check is
- *    suffix-based, so an absolute `.cmd` path fails too. See
+ *    extension is `.bat`/`.cmd` with `EINVAL`. The check is suffix-based,
+ *    so an absolute `.cmd` path fails the same way as a bare one. See
  *    `node:src/util-inl.h IsWindowsBatchFile`.
  *
- * Resolving PATH+PATHEXT handles (1); returning `useShell: true` when the
- * resolved path ends in `.bat`/`.cmd` handles (2). When `useShell` is true,
- * the caller must spawn with `shell: true` so Node rewrites `file` to
- * `cmd.exe` and wraps the batch invocation in `/d /s /c "..."`. Node's
- * shell-wrapping code joins args with spaces, so arguments containing
- * `cmd.exe` metacharacters (`&`, `|`, `<`, `>`, `^`) will still be
- * interpreted — callers have to decide whether their argument surface is
- * safe. For our debug-adapter use, args are VS Code launch-config values
- * (file paths, flags) and the inspector URL goes through `env`, so this is
- * acceptable.
+ * Resolving PATH+PATHEXT handles (1). For (2), the caller must invoke
+ * `cmd.exe /d /s /c "..."` so that `options.file` Node sees is `cmd.exe`
+ * rather than the `.cmd` file. `useShell: true` flags that requirement —
+ * `buildShellCommand` constructs the properly quoted `/d /s /c` argument.
+ *
+ * We deliberately DO NOT use Node's built-in `shell: true`, because its
+ * Windows implementation joins `[file, ...args]` with a naive space and no
+ * per-argument quoting — so any space in the resolved path (e.g. the
+ * common `C:\\Users\\Name With Space\\AppData\\Roaming\\npm\\bun.cmd`) or
+ * in an argument breaks tokenization and cmd.exe fails with
+ * `'C:\\Users\\Name' is not recognized as an internal or external command`.
+ * See lib/child_process.js normalizeSpawnArguments in Node.
  *
  * On POSIX the helper returns `{ command, useShell: false }` and defers to
  * `spawn`'s native PATH lookup. `platform` is an explicit parameter so
@@ -95,6 +97,35 @@ export function resolveCommand(
   const useShell = ext === ".cmd" || ext === ".bat";
 
   return { command: resolved, useShell };
+}
+
+/**
+ * Build the argument string for `cmd.exe /d /s /c "<...>"` that invokes
+ * `command` with `args`, quoting each token so that paths and arguments
+ * containing spaces survive cmd.exe's tokenizer intact.
+ *
+ * Usage:
+ *   spawn("cmd.exe", ["/d", "/s", "/c", buildShellCommand(cmd, args)], {
+ *     windowsVerbatimArguments: true,
+ *     ...,
+ *   });
+ *
+ * Quoting rules: each token is wrapped in `"…"`. Any literal `"` inside a
+ * token is doubled (`""`) — cmd.exe's `/c` processor reads `""` as a single
+ * literal quote. The outermost `"…"` pair is the one `/s` strips before
+ * handing the inner text back to cmd.exe for tokenization, so the
+ * per-token quotes survive and cmd.exe splits on whitespace only outside
+ * them. Caret-escaping of shell metacharacters (`&`, `|`, `<`, `>`, `^`)
+ * is not required inside double-quoted regions — those bytes are taken
+ * literally by the cmd.exe parser once it's inside a quoted token.
+ */
+export function buildShellCommand(command: string, args: readonly string[]): string {
+  const quote = (token: string) => `"${token.replace(/"/g, '""')}"`;
+  const body = [command, ...args].map(quote).join(" ");
+  // Wrapping in an outer pair of quotes gives `cmd.exe /s` something to
+  // strip — what remains is exactly `"token1" "token2" ...`, which cmd.exe
+  // then tokenizes with quote-awareness.
+  return `"${body}"`;
 }
 
 const capabilities: DAP.Capabilities = {
@@ -2334,18 +2365,26 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
     const request = { command, args, cwd, env };
     this.emit("Process.requested", request);
 
-    // On Windows, resolve a bare command name via PATH/PATHEXT, then decide
-    // whether `shell: true` is required. `.cmd`/`.bat` files cannot be spawned
-    // directly on Node after CVE-2024-27980 — see `resolveCommand`.
+    // On Windows, resolve a bare command name via PATH/PATHEXT. If the result
+    // is a `.cmd`/`.bat` file, route through `cmd.exe /d /s /c` ourselves
+    // (with `windowsVerbatimArguments`) rather than using Node's `shell: true`
+    // — see `resolveCommand` and `buildShellCommand` for the reasoning.
     const { command: resolvedCommand, useShell } = resolveCommand(command, env);
 
     let subprocess: ChildProcess;
     try {
-      subprocess = spawn(resolvedCommand, args, {
-        ...request,
-        stdio: ["ignore", "pipe", "pipe"],
-        shell: useShell,
-      });
+      if (useShell) {
+        subprocess = spawn("cmd.exe", ["/d", "/s", "/c", buildShellCommand(resolvedCommand, args)], {
+          ...request,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsVerbatimArguments: true,
+        });
+      } else {
+        subprocess = spawn(resolvedCommand, args, {
+          ...request,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      }
     } catch (cause) {
       this.emit("Process.exited", new Error("Failed to spawn process", { cause }), null);
       return false;

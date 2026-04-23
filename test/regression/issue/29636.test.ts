@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/29636
 //
 // On Windows, child_process.spawn("bun", ...) from the VS Code debug adapter
-// fails with `Error: spawn EINVAL`. Two distinct Windows-only gotchas combine
+// fails with `Error: spawn EINVAL`. Three distinct Windows-only gotchas combine
 // to break the npm-installed Bun case:
 //
 //   1. Node's `spawn` does not walk PATHEXT, so a bare `"bun"` is never
@@ -10,18 +10,24 @@
 //      lives under `node_modules\bun\bin\` which is not on PATH).
 //   2. Since CVE-2024-27980 (Node >= 18.20.2 / 20.12.2 / 21.7.3),
 //      `ProcessWrap::Spawn` rejects any `options.file` whose extension is
-//      `.bat`/`.cmd` with `EINVAL` unless `shell: true` is set. The check is
-//      suffix-based — an absolute `C:\...\bun.cmd` fails the same way as a
-//      bare `bun.cmd`.
+//      `.bat`/`.cmd` with `EINVAL` unless `cmd.exe` is the actual file being
+//      spawned. The check is suffix-based — an absolute `C:\...\bun.cmd`
+//      fails the same way as a bare `bun.cmd`.
+//   3. Node's built-in `shell: true` on Windows builds the final command
+//      line as `[file, ...args].join(' ')` with no per-argument quoting, so
+//      any space in the resolved path (e.g. `C:\Users\Name With Space\...`)
+//      or in an argument breaks cmd.exe's tokenizer.
 //
 // Fix: `resolveCommand` walks PATH+PATHEXT to find the real file and reports
-// whether `shell: true` is required (when the resolved path is a batch file).
-// WebSocketDebugAdapter#spawn feeds both into `child_process.spawn`.
+// whether a `cmd.exe` shell invocation is required. `buildShellCommand`
+// constructs a properly quoted `/d /s /c` argument that survives spaces in
+// paths. WebSocketDebugAdapter#spawn wires them together with
+// `windowsVerbatimArguments: true` so libuv doesn't re-quote.
 
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { join, sep } from "node:path";
-import { resolveCommand } from "../../../packages/bun-debug-adapter-protocol/src/debugger/adapter.ts";
+import { buildShellCommand, resolveCommand } from "../../../packages/bun-debug-adapter-protocol/src/debugger/adapter.ts";
 
 describe("issue #29636 — resolveCommand", () => {
   test("is a no-op on POSIX platforms", () => {
@@ -185,5 +191,50 @@ describe("issue #29636 — resolveCommand", () => {
       command: "wrapper.CmD",
       useShell: true,
     });
+  });
+});
+
+describe("issue #29636 — buildShellCommand", () => {
+  test("wraps a simple command and args in one outer quote pair", () => {
+    // The outer pair is what `cmd /s /c` strips before handing the inner
+    // text back to the tokenizer. The per-token quotes survive.
+    expect(buildShellCommand("bun.cmd", ["run", "dev"])).toBe('""bun.cmd" "run" "dev""');
+  });
+
+  test("keeps spaces in the command path intact", () => {
+    // This is the claude[bot] finding: Node's `shell: true` builds the
+    // command string as a naive space-join, so a path like the npm global
+    // prefix (which contains the Windows user's home directory, commonly
+    // a name with a space) would tokenize into "C:\Users\John" and fail.
+    // Our quoting puts the whole path inside one "…" token.
+    const cmdPath = "C:\\Users\\John Doe\\AppData\\Roaming\\npm\\bun.cmd";
+    const programArg = "C:\\Users\\John Doe\\project\\app.ts";
+    expect(buildShellCommand(cmdPath, [programArg])).toBe(
+      `""C:\\Users\\John Doe\\AppData\\Roaming\\npm\\bun.cmd" "C:\\Users\\John Doe\\project\\app.ts""`,
+    );
+  });
+
+  test("doubles literal double quotes inside a token", () => {
+    // cmd.exe's `/c` processor reads `""` as one literal `"`. Doubling is
+    // the idiomatic escape and avoids tripping cmd's quote-state machine.
+    // Structure:
+    //   arg `say "hi"` → inner escape `say ""hi""` → wrapped `"say ""hi"""`
+    //   command `foo.cmd` → wrapped `"foo.cmd"`
+    //   body = `"foo.cmd" "say ""hi"""`, outer wrap yields:
+    expect(buildShellCommand("foo.cmd", ['say "hi"'])).toBe('""foo.cmd" "say ""hi""""');
+  });
+
+  test("passes cmd metacharacters through double quotes unharmed", () => {
+    // Inside a `"…"` region cmd.exe takes `&`, `|`, `<`, `>`, `^` literally,
+    // so we don't need caret-escaping on top of quoting. This prevents a
+    // launch-config arg with an `&` from being reinterpreted as a command
+    // separator by cmd.exe.
+    expect(buildShellCommand("foo.cmd", ["--flag=a&b"])).toBe('""foo.cmd" "--flag=a&b""');
+  });
+
+  test("handles an empty args list", () => {
+    // `[].map(...).join(" ")` = `""`, so the `command + " " + ""` case must
+    // still emit a well-formed wrapper with just the command.
+    expect(buildShellCommand("bun.cmd", [])).toBe('""bun.cmd""');
   });
 });

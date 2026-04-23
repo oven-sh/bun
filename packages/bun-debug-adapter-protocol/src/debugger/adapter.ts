@@ -104,22 +104,38 @@ export function resolveCommand(
 }
 
 /**
- * Case-insensitive lookup of `name` in `env`. Windows env vars are
- * case-insensitive at the OS layer, but JS exposes `process.env` with the
- * casing the launching shell used — so `env.PATH` vs `env.Path` vs
- * `env.path` all need to be considered. Returns the first match, or
- * `undefined` if no key matches.
+ * Case-insensitive lookup of `name` in `env`, matching Node's Windows
+ * env-dedup rule so the resolver walks the same PATH that the spawned
+ * child will actually receive.
+ *
+ * Windows env vars are case-insensitive at the OS layer, but JS exposes
+ * `process.env` with whatever casing the launching shell used (typically
+ * `Path`, not `PATH`). A merged `{...process.env, ...userEnv}` can end up
+ * with BOTH casings as distinct keys. Node's spawn on Windows (see
+ * lib/child_process.js normalizeSpawnArguments, sort+first branch) sorts
+ * keys and keeps the first case-insensitive match; since uppercase sorts
+ * before lowercase, `PATH` wins over `Path`.
+ *
+ * We replicate that rule so a user's launch.json `"env": {"PATH": "..."}`
+ * override is honoured here too — otherwise `resolveCommand` would walk
+ * the system `Path` while the child runs with the user's `PATH`, and
+ * `bun` would resolve to a different binary than the one actually on the
+ * child's PATH.
  */
 function lookupEnvCaseInsensitive(
   env: Record<string, string | undefined> | NodeJS.ProcessEnv,
   name: string,
 ): string | undefined {
   const target = name.toUpperCase();
-  for (const key of Object.keys(env)) {
-    if (key.toUpperCase() === target) {
-      const value = (env as Record<string, string | undefined>)[key];
-      if (typeof value === "string") return value;
-    }
+  // Sort matches Node's dedup: earliest lexicographic key wins. `PATH` <
+  // `Path` < `path` by ASCII, so any uppercase variant will take priority
+  // over mixed- or lowercase ones present alongside it.
+  const keys = Object.keys(env)
+    .filter(key => key.toUpperCase() === target)
+    .sort();
+  for (const key of keys) {
+    const value = (env as Record<string, string | undefined>)[key];
+    if (typeof value === "string") return value;
   }
   return undefined;
 }
@@ -163,13 +179,29 @@ const CMD_META_CHARS = /([()[\]%!^"`<>&|;, ])/g;
  *    process. This is the only approach that handles all three of
  *    spaces-in-paths, metacharacters, and `%VAR%` at once.
  *
+ * Because `useShell: true` fires only for a `.cmd`/`.bat` target, the
+ * shim's body (`"%~dp0\...\bun.exe" %*` or similar) is re-parsed by cmd
+ * after `%*` expands — and in that second parse `\` is NOT an escape
+ * character, so the `\"` sequences produced by the qntm pass toggle
+ * quote-state. A `&`/`|`/`<`/`>` sitting between two inner `"` bytes
+ * would therefore land OUTSIDE quote-state in the batch re-parse and be
+ * treated as a command separator (the BatBadBut pattern). The caret
+ * pass is applied TWICE: one layer is consumed by the outer cmd.exe,
+ * the second layer survives into the batch-line phase 2 and keeps
+ * metacharacters literal there too. This mirrors cross-spawn's
+ * `doubleEscapeMetaChars` flag, which is always-on for cmd-shim targets.
+ *
  * Argument handling uses the qntm.org/cmd algorithm for backslash/quote
  * interaction inside the quoted region (necessary so inner `"` characters
  * survive `CommandLineToArgvW`'s unescape pass). The command itself is
- * caret-escaped without the qntm pass because it's a file path — we
- * assume no embedded `"` in the path. Matches cross-spawn exactly.
+ * caret-escaped (also twice, for the same batch re-parse reason) without
+ * the qntm pass because it's a file path — we assume no embedded `"` in
+ * the path. Matches cross-spawn exactly.
  */
 export function buildShellCommand(command: string, args: readonly string[]): string {
+  // The command itself goes through only the outer cmd.exe parse (cmd uses
+  // it to locate the program to run; it is not re-interpreted as part of
+  // the batch file's body). One caret layer is enough.
   const escapeCommand = (token: string) => token.replace(CMD_META_CHARS, "^$1");
 
   const escapeArgument = (token: string) => {
@@ -180,18 +212,21 @@ export function buildShellCommand(command: string, args: readonly string[]): str
     // A trailing backslash run would abut the closing wrapper `"` we are
     // about to add, so the same doubling applies.
     escaped = escaped.replace(/(\\*)$/, "$1$1");
-    // Wrap, then caret-escape EVERY metachar — including the wrapping
-    // quotes. Once cmd.exe sees `^"` it treats the `"` as ordinary (not
-    // a quote-state toggle), so every caret in the final line survives
-    // phase 1 but gets consumed in phase 2.
-    return `"${escaped}"`.replace(CMD_META_CHARS, "^$1");
+    // Wrap, then caret-escape EVERY metachar TWICE — including the
+    // wrapping quotes. The outer cmd.exe consumes one layer; the second
+    // layer survives into the shim's own cmd re-parse (where `%*` expands
+    // these tokens into its `"%dp0%\...\bun.exe" %*` line) and keeps
+    // metachars literal there too. Without the second pass, an arg like
+    // `fetch("http://a?x=1&y=2")` splits on `&` in the inner parse —
+    // the BatBadBut pattern — because `\` is not an escape in cmd.
+    return `"${escaped}"`.replace(CMD_META_CHARS, "^$1").replace(CMD_META_CHARS, "^$1");
   };
 
   const body = [escapeCommand(command), ...args.map(escapeArgument)].join(" ");
-  // Outer wrap so cmd.exe `/s` has something to strip. What remains is the
-  // caret-escaped body, which cmd parses without ever entering quote-state
-  // (because every `"` in the body is `^"`), so every caret is consumed as
-  // an escape — no carets leak to the debuggee.
+  // Outer wrap so cmd.exe `/s` has something to strip. After the outer
+  // parse consumes one caret layer, `%*` inside the shim holds the
+  // still-single-escaped tokens, and the shim's inner parse consumes the
+  // last layer before handing the final argv to `CommandLineToArgvW`.
   return `"${body}"`;
 }
 

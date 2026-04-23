@@ -729,6 +729,64 @@ pub const BunTest = struct {
                         return cfg_data;
                     },
                 }
+            } else if (result.isObject()) {
+                // Check for non-native thenables (objects with a callable .then method).
+                // This handles libraries like supertest that return custom thenable objects
+                // rather than native Promises. Per the Promises/A+ spec and Jest's behavior,
+                // any object with a .then() method should be awaited.
+                const then_fn = result.getPropertyValue(globalThis, "then") catch |err| switch (err) {
+                    error.JSError => {
+                        this.onUncaughtException(globalThis, globalThis.tryTakeException(), false, cfg_data);
+                        return cfg_data;
+                    },
+                    error.OutOfMemory => bun.handleOom(error.OutOfMemory),
+                    error.JSTerminated => {
+                        globalThis.clearTerminationException();
+                        return cfg_data;
+                    },
+                };
+                if (then_fn) |tfn| {
+                    if (tfn.isCell() and tfn.isCallable()) {
+                        group.log("callTestCallback -> thenable: data {f}", .{cfg_data});
+
+                        // Wrap the thenable in a native Promise by creating a wrapper object
+                        // with the captured .then function bound to the original result.
+                        // This avoids reading .then from the original object a second time
+                        // (Promises/A+ spec §2.3.3.1) while preserving the correct `this`.
+                        var then_name = bun.String.static("then");
+                        const bound_then = tfn.bind(globalThis, result, &then_name, 2, &.{}) catch |err| switch (err) {
+                            error.JSError => {
+                                this.onUncaughtException(globalThis, globalThis.tryTakeException(), false, cfg_data);
+                                return cfg_data;
+                            },
+                            error.OutOfMemory => bun.handleOom(error.OutOfMemory),
+                            error.JSTerminated => {
+                                globalThis.clearTerminationException();
+                                return cfg_data;
+                            },
+                        };
+                        const wrapper_obj = jsc.JSValue.createEmptyObject(globalThis, 1);
+                        wrapper_obj.put(globalThis, "then", bound_then);
+
+                        const wrapper_promise = jsc.JSPromise.create(globalThis);
+                        wrapper_promise.resolve(globalThis, wrapper_obj) catch {
+                            globalThis.clearTerminationException();
+                            return cfg_data;
+                        };
+
+                        // The wrapper promise is still pending (thenable unwrapping is async).
+                        // Register then/catch handlers to capture the eventual result.
+                        const wrapper_value = wrapper_promise.toJS();
+                        defer wrapper_value.ensureStillAlive();
+                        const this_ref: *RefData = if (dcb_ref) |dcb_ref_value| dcb_ref_value.dupe() else ref(this_strong, cfg_data);
+                        wrapper_value.then(globalThis, this_ref, bunTestThen, bunTestCatch) catch {
+                            globalThis.clearTerminationException();
+                            this_ref.deref();
+                            return cfg_data;
+                        };
+                        return null;
+                    }
+                }
             }
         }
 

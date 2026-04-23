@@ -1887,6 +1887,10 @@ pub fn parseIntoBinaryLockfile(
                     };
 
                     pkg.meta.integrity = Integrity.parse(integrity_str);
+                    if (integrity_str.len > 0 and !pkg.meta.integrity.tag.isSupported()) {
+                        try log.addError(source, integrity_expr.loc, "Unsupported integrity hash algorithm");
+                        return error.InvalidPackageInfo;
+                    }
                 },
                 .local_tarball, .remote_tarball => {
                     // integrity is optional for tarball deps (backward compat)

@@ -613,6 +613,9 @@ pub fn migratePnpmLockfile(
                         };
 
                         pkg.meta.integrity = Integrity.parse(integrity_str);
+                        if (integrity_str.len > 0 and !pkg.meta.integrity.tag.isSupported()) {
+                            return invalidPnpmLockfile();
+                        }
                     }
                 }
 

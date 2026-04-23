@@ -2119,6 +2119,35 @@ static napi_value test_napi_create_tsfn_async_context_frame(const Napi::Callback
   return env.Undefined();
 }
 
+// Test for BUN-1PYR: napi_typeof should not crash when given an invalid
+// napi_value that is actually a raw C string pointer. This simulates the
+// scenario where a native module passes garbage data (e.g., a string pointer
+// like "Tensor ...") as a napi_value to napi_typeof.
+static napi_value test_napi_typeof_invalid_pointer(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Simulate the exact crash scenario: a C string pointer reinterpreted as napi_value.
+  // The crash address 0x6F20726F736E6554 decoded to ASCII is "Tensor o",
+  // meaning a string pointer was being used as a JSValue.
+  // Use aligned_alloc to ensure 16-byte alignment (bit 3 = 0), so the pointer
+  // goes through the MarkedBlock validation path (not the PreciseAllocation path).
+  char *fake_string = static_cast<char *>(aligned_alloc(16, 64));
+  memcpy(fake_string, "Tensor operation test string", 29);
+  napi_value bad_value = reinterpret_cast<napi_value>(fake_string);
+
+  napi_valuetype type;
+  napi_status status = napi_typeof(env, bad_value, &type);
+
+  if (status != napi_ok) {
+    printf("PASS: napi_typeof returned error status %d for invalid pointer\n", status);
+  } else {
+    printf("PASS: napi_typeof did not crash for invalid pointer (returned type %d)\n", type);
+  }
+
+  free(fake_string);
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
@@ -2157,6 +2186,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_async_context_frame);
   REGISTER_FUNCTION(env, exports, test_napi_create_tsfn_async_context_frame);
+  REGISTER_FUNCTION(env, exports, test_napi_typeof_invalid_pointer);
 }
 
 } // namespace napitests

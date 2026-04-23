@@ -3479,6 +3479,71 @@ JSC_DEFINE_HOST_FUNCTION(Process_stubEmptyFunction, (JSGlobalObject * globalObje
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_fatalException, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue exception = callFrame->argument(0);
+
+    // Check if process.domain is set and can handle this error
+    auto domainIdent = Identifier::fromString(vm, "domain"_s);
+    auto* process = globalObject->processObject();
+    JSValue domainValue = process->get(globalObject, domainIdent);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (domainValue && !domainValue.isUndefinedOrNull() && domainValue.isObject()) {
+        auto* domainObj = domainValue.getObject();
+
+        // Set domainThrown and domain on the error object
+        if (exception.isObject()) {
+            auto* exObj = exception.getObject();
+            exObj->putDirect(vm, Identifier::fromString(vm, "domainThrown"_s), jsBoolean(true));
+            exObj->putDirect(vm, domainIdent, domainValue, JSC::PropertyAttribute::DontEnum | 0);
+        }
+
+        // Get listenerCount to check if domain has 'error' listeners
+        JSValue listenerCountFn = domainObj->get(globalObject, Identifier::fromString(vm, "listenerCount"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (listenerCountFn && listenerCountFn.isCallable()) {
+            auto listenerCountCallData = JSC::getCallData(listenerCountFn);
+            MarkedArgumentBuffer lcArgs;
+            lcArgs.append(jsString(vm, String("error"_s)));
+            JSValue countValue = JSC::call(globalObject, listenerCountFn, listenerCountCallData, domainObj, lcArgs);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            double count = countValue.toNumber(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            if (count > 0) {
+                // Domain has error listeners - emit the error on the domain
+                JSValue emitFn = domainObj->get(globalObject, Identifier::fromString(vm, "emit"_s));
+                RETURN_IF_EXCEPTION(scope, {});
+
+                if (emitFn && emitFn.isCallable()) {
+                    auto emitCallData = JSC::getCallData(emitFn);
+                    MarkedArgumentBuffer emitArgs;
+                    emitArgs.append(jsString(vm, String("error"_s)));
+                    emitArgs.append(exception);
+                    JSC::call(globalObject, emitFn, emitCallData, domainObj, emitArgs);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    return JSValue::encode(jsBoolean(true));
+                }
+            }
+        }
+    }
+
+    // No domain or domain didn't handle it - use standard uncaught exception handling
+    int handled = Bun__handleUncaughtException(lexicalGlobalObject, exception, 0);
+    if (!handled) {
+        Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+    }
+
+    return JSValue::encode(jsBoolean(handled != 0));
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -3992,7 +4057,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _debugEnd                        Process_stubEmptyFunction                           Function 0
   _debugProcess                    Process_stubEmptyFunction                           Function 0
   _eval                            processGetEval                                      CustomAccessor
-  _fatalException                  Process_stubEmptyFunction                           Function 1
+  _fatalException                  Process_fatalException                              Function 1
   _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
   _getActiveRequests               Process_stubFunctionReturningArray                  Function 0
   _kill                            Process_functionReallyKill                          Function 2

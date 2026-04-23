@@ -500,7 +500,7 @@ fn escapePatchFilename(allocator: std.mem.Allocator, name: []const u8) ?[]const 
 
         pub fn escaped(this: @This()) ?[]const u8 {
             return switch (this) {
-                .@"/" => "%2F",
+                .@"/" => "+",
                 .@"\\" => "%5c",
                 .@" " => "%20",
                 .@"\n" => "%0A",

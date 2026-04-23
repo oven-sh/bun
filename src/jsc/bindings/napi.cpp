@@ -1845,6 +1845,7 @@ extern "C" napi_status napi_get_all_property_names(
                 }
             } else {
                 object->getOwnPropertyDescriptor(globalObject, key.toPropertyKey(globalObject), desc);
+                NAPI_RETURN_IF_EXCEPTION(env);
             }
 
             bool include = true;

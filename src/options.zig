@@ -1050,6 +1050,7 @@ pub fn getLoaderAndVirtualSource(
     jsc_vm: *jsc.VirtualMachine,
     virtual_source_to_use: *?logger.Source,
     blob_to_deinit: *?jsc.WebCore.Blob,
+    data_url_body_to_free: *?[]const u8,
     type_attribute_str: ?string,
 ) GetLoaderAndVirtualSourceErr!LoaderResult {
     const normalized_file_path_from_specifier, const specifier, const query = normalizeSpecifier(
@@ -1069,6 +1070,35 @@ pub fn getLoaderAndVirtualSource(
         if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
             virtual_source = eval_source;
             loader = .tsx;
+        }
+    }
+
+    if (strings.hasPrefixComptime(specifier, "data:")) {
+        // Always set the dataurl namespace so filename-based inference
+        // never runs on the raw data URL string.
+        path = Fs.Path.initWithNamespace(specifier, "dataurl");
+        loader = null;
+        if (DataURL.parse(specifier) catch null) |data_url| {
+            const mime = data_url.decodeMimeType();
+            const mime_loader: ?Loader = switch (mime.category) {
+                .javascript => .js,
+                .css => .css,
+                .json => .json,
+                .text => .text,
+                else => null,
+            };
+            if (mime_loader) |ml| {
+                const decoded = data_url.decodeData(jsc_vm.allocator) catch null;
+                if (decoded) |body| {
+                    loader = ml;
+                    data_url_body_to_free.* = body;
+                    virtual_source_to_use.* = logger.Source{
+                        .path = path,
+                        .contents = body,
+                    };
+                    virtual_source = &virtual_source_to_use.*.?;
+                }
+            }
         }
     }
 
@@ -1100,7 +1130,7 @@ pub fn getLoaderAndVirtualSource(
         }
     }
 
-    if (strings.eqlComptime(query, "?raw")) {
+    if (virtual_source == null and strings.eqlComptime(query, "?raw")) {
         loader = .text;
     }
     if (type_attribute_str) |attr_str| if (bun.options.Loader.fromString(attr_str)) |attr_loader| {
@@ -2728,6 +2758,7 @@ const string = []const u8;
 const DotEnv = @import("./env_loader.zig");
 const Fs = @import("./fs.zig");
 const resolver = @import("./resolver/resolver.zig");
+const DataURL = @import("./resolver/data_url.zig").DataURL;
 const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("./url.zig").URL;
 

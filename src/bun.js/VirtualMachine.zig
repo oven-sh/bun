@@ -1590,8 +1590,10 @@ pub fn fetchWithoutOnLoadPlugins(
 
     var virtual_source_to_use: ?logger.Source = null;
     var blob_to_deinit: ?jsc.WebCore.Blob = null;
+    var data_url_body_to_free: ?[]const u8 = null;
     defer if (blob_to_deinit) |*blob| blob.deinit();
-    const lr = options.getLoaderAndVirtualSource(specifier_clone.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, null) catch {
+    defer if (data_url_body_to_free) |body| jsc_vm.allocator.free(body);
+    const lr = options.getLoaderAndVirtualSource(specifier_clone.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, &data_url_body_to_free, null) catch {
         return error.ModuleNotFound;
     };
     const module_type: options.ModuleType = if (lr.package_json) |pkg| pkg.module_type else .unknown;

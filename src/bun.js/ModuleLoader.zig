@@ -355,7 +355,16 @@ pub fn transpileSourceCode(
                     .allocator = null,
                     .source_code = switch (comptime flags) {
                         .print_source_and_clone => bun.String.init(jsc_vm.allocator.dupe(u8, source.contents) catch unreachable),
-                        .print_source => bun.String.init(source.contents),
+                        // .print_source returns a borrow that the caller keeps
+                        // alive until it calls module_loader.resetArena(). For
+                        // virtual sources (data:/blob: URLs, eval) the contents
+                        // live in caller-owned memory that will be freed when
+                        // fetchWithoutOnLoadPlugins returns, so copy into the
+                        // arena to tie lifetime to resetArena() instead.
+                        .print_source => bun.String.init(if (virtual_source != null)
+                            bun.handleOom(allocator.dupe(u8, source.contents))
+                        else
+                            source.contents),
                         else => @compileError("unreachable"),
                     },
                     .specifier = input_specifier,
@@ -906,11 +915,13 @@ pub export fn Bun__transpileFile(
 
     var virtual_source_to_use: ?logger.Source = null;
     var blob_to_deinit: ?jsc.WebCore.Blob = null;
-    var lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, type_attribute_str) catch {
+    var data_url_body_to_free: ?[]const u8 = null;
+    var lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, &data_url_body_to_free, type_attribute_str) catch {
         ret.* = jsc.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.ERR(.MODULE_NOT_FOUND, "Blob not found", .{}).toJS());
         return null;
     };
     defer if (blob_to_deinit) |*blob| blob.deinit();
+    defer if (data_url_body_to_free) |body| jsc_vm.allocator.free(body);
 
     if (force_loader_type.unwrap()) |loader_type| {
         @branchHint(.unlikely);
@@ -939,6 +950,7 @@ pub export fn Bun__transpileFile(
     }
 
     const module_type: options.ModuleType = brk: {
+        if (lr.path.isDataURL()) break :brk .unknown;
         const ext = lr.path.name.ext;
         // regular expression /.[cm][jt]s$/
         if (ext.len == ".cjs".len) {
@@ -1102,6 +1114,10 @@ pub export fn Bun__transpileFile(
             switch (err) {
                 error.AsyncModule => {
                     bun.assert(promise != null);
+                    // Ownership of the decoded body transfers to AsyncModule:
+                    // parse_result.source.contents aliases this buffer and is
+                    // freed by AsyncModule.deinit -> ParseResult.deinit.
+                    data_url_body_to_free = null;
                     return promise;
                 },
                 error.PluginError => return null,

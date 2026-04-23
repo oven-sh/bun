@@ -113,7 +113,17 @@ pub fn BundleThread(CompletionStruct: type) type {
 
             const transpiler = try allocator.create(bun.Transpiler);
 
+            // Use the existing configureBundler for initial Transpiler setup.
+            // For ?bundle imports, the shared config function is applied AFTER
+            // to override env/define/naming with import attribute values.
             try completion.configureBundler(transpiler, allocator);
+
+            if (@hasField(CompletionStruct, "bundle_import_config")) {
+                if (completion.bundle_import_config) |bic| {
+                    try bundler.bundle_config.configureTranspilerForBundle(transpiler, bic);
+                    bundler.bundle_config.applyBundleModeOverrides(transpiler, .production);
+                }
+            }
 
             transpiler.resolver.generation = generation;
 

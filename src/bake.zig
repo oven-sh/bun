@@ -755,12 +755,11 @@ pub const Framework = struct {
         out.options.hot_module_reloading = mode == .development;
         out.options.code_splitting = mode != .development;
 
-        // Client-side bundles run in the browser (or worker), where `process`
-        // is not a global. Without the polyfill, code that touches `process`
-        // (including common patterns like `process.env.NODE_ENV`) throws a
-        // ReferenceError at runtime. `fromCLIOptions` sets this for the CLI
-        // bundler path; set it here for the dev server's client/ssr paths too.
-        out.options.polyfill_node_globals = out.options.target.isBrowserLike();
+        // NOTE: polyfill_node_globals is intentionally left as default (false).
+        // Setting it injects process/Buffer polyfill imports which changes
+        // CJS module wrapping and breaks lazy init ordering for libraries
+        // like lodash in HMR mode. The env define pipeline (configureDefines)
+        // handles process.env.* inlining separately.
 
         // force disable filesystem output, even though bundle_v2
         // is special cased to return before that code is reached.

@@ -56,6 +56,9 @@ pub fn memoryCostDetailed(dev: *DevServer) MemoryCost {
                 other_bytes += val.content.len;
             }
         },
+        .bundle_groups = {
+            other_bytes += dev.bundle_groups.items.len * @sizeOf(DevServer.BundleGroup);
+        },
         .generation = {},
         .graph_safety_lock = {},
         .has_pre_crash_handler = {},

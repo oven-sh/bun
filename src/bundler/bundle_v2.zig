@@ -1981,6 +1981,10 @@ pub const BundleV2 = struct {
 
         html_build_task: ?*jsc.API.HTMLBundle.HTMLBundleRoute = null,
         js_bundle_owner: ?*jsc.API.JSBundle = null,
+        /// When set, the BundleThread uses configureTranspilerForBundle instead
+        /// of the generic configureBundler. This ensures ?bundle imports use the
+        /// shared config function (see BUNDLE_IMPORTS.md).
+        bundle_import_config: ?ImportRecord.BundleImportConfig = null,
 
         result: Result = .{ .pending = {} },
 
@@ -3450,40 +3454,10 @@ pub const BundleV2 = struct {
             this.transpiler.env,
         );
 
-        // Apply config from import attributes
-        sub_transpiler.options.output_format = .esm;
-        sub_transpiler.options.code_splitting = sb.config.splitting orelse false;
-        if (sb.config.minify) |minify| {
-            sub_transpiler.options.minify_syntax = minify;
-            sub_transpiler.options.minify_whitespace = minify;
-            sub_transpiler.options.minify_identifiers = minify;
-            sub_transpiler.options.inlining = minify;
-        }
-        if (sb.config.sourcemap) |sm| {
-            sub_transpiler.options.source_map = sm;
-        }
-        if (sb.config.target) |t| sub_transpiler.options.target = t;
-        if (sb.config.format) |f| sub_transpiler.options.output_format = f;
-        // Sub-builds produce in-memory output — the parent build handles writing to disk.
-        // Empty output_dir forces the in-memory code path in generateChunksInParallel.
-        sub_transpiler.options.output_dir = "";
-        // Set naming templates so output files get proper filenames with content hashes.
-        const naming = sb.config.naming orelse "[name]-[hash].[ext]";
-        sub_transpiler.options.entry_naming = naming;
-        sub_transpiler.options.chunk_naming = naming;
-
-        // Apply env behavior from import attributes (explicit only, no inheritance)
-        if (sb.config.env_behavior) |env_beh| {
-            sub_transpiler.options.env.behavior = env_beh;
-            if (sb.config.env_prefix) |pfx| {
-                sub_transpiler.options.env.prefix = pfx;
-            }
-        }
-
-        sub_transpiler.configureLinker();
-        try sub_transpiler.configureDefines();
-        sub_transpiler.resolver.env_loader = sub_transpiler.env;
-        sub_transpiler.resolver.opts = sub_transpiler.options;
+        // Use the shared configuration function for ALL ?bundle transpiler setup.
+        // See src/bundler/BUNDLE_IMPORTS.md for the architecture principles.
+        try bundle_config.configureTranspilerForBundle(sub_transpiler, sb.config);
+        bundle_config.applyBundleModeOverrides(sub_transpiler, .sub_build);
 
         // Create a fresh BundleV2
         const sub_bundler = try BundleV2.init(
@@ -5899,6 +5873,7 @@ pub const LinkerGraph = @import("./LinkerGraph.zig").LinkerGraph;
 pub const Graph = @import("./Graph.zig");
 pub const SubBuildCache = @import("./SubBuildCache.zig");
 pub const BuildPipeline = @import("./BuildPipeline.zig");
+pub const bundle_config = @import("./bundle_config.zig");
 
 const string = []const u8;
 

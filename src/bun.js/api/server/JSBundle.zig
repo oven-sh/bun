@@ -92,85 +92,21 @@ pub fn build(this: *JSBundle) !void {
         return;
     }
 
+    // The JSBundler.Config is a minimal container for entry points and
+    // output dir. The actual transpiler configuration (env, defines, target,
+    // minify, sourcemap, naming) is handled by configureTranspilerForBundle
+    // on the BundleThread, using this.config (BundleImportConfig).
+    // See src/bundler/BUNDLE_IMPORTS.md.
     var config: JSBundler.Config = .{};
     errdefer config.deinit(bun.default_allocator);
     try config.entry_points.insert(this.path);
 
-    // Default to empty public_path so chunk-to-chunk imports use paths
-    // relative to the entry point's dir. This lets the user mount `.files`
-    // under any URL prefix (e.g. "/assets/") and the browser resolves
-    // relative chunk URLs against the entry's served URL naturally.
-    //
-    // A non-empty public_path forces chunks to absolute URLs prefixed with
-    // public_path — only correct when the user mounts under exactly that
-    // prefix.
     if (vm.transpiler.options.transform_options.serve_public_path) |public_path| {
         if (public_path.len > 0) {
             try config.public_path.appendSlice(public_path);
         }
     }
 
-    if (vm.transpiler.options.transform_options.serve_env_behavior != ._none) {
-        config.env_behavior = vm.transpiler.options.transform_options.serve_env_behavior;
-        if (config.env_behavior == .prefix) {
-            try config.env_prefix.appendSlice(vm.transpiler.options.transform_options.serve_env_prefix orelse "");
-        }
-    }
-
-    if (vm.transpiler.options.transform_options.serve_splitting) {
-        config.code_splitting = vm.transpiler.options.transform_options.serve_splitting;
-    }
-
-    config.target = .browser;
-
-    if (bun.cli.Command.get().args.serve_minify_identifiers) |minify_identifiers| {
-        config.minify.identifiers = minify_identifiers;
-    }
-    if (bun.cli.Command.get().args.serve_minify_whitespace) |minify_whitespace| {
-        config.minify.whitespace = minify_whitespace;
-    }
-    if (bun.cli.Command.get().args.serve_minify_syntax) |minify_syntax| {
-        config.minify.syntax = minify_syntax;
-    }
-
-    if (bun.cli.Command.get().args.serve_define) |define| {
-        bun.assert(define.keys.len == define.values.len);
-        try config.define.map.ensureUnusedCapacity(define.keys.len);
-        config.define.map.unmanaged.entries.len = define.keys.len;
-        @memcpy(config.define.map.keys(), define.keys);
-        for (config.define.map.values(), define.values) |*to, from| {
-            to.* = bun.handleOom(config.define.map.allocator.dupe(u8, from));
-        }
-        try config.define.map.reIndex();
-    }
-
-    config.source_map = .linked;
-
-    // Apply per-bundle config overrides from import attributes
-    if (this.config.splitting) |s| config.code_splitting = s;
-    if (this.config.minify) |m| {
-        config.minify.syntax = m;
-        config.minify.whitespace = m;
-        config.minify.identifiers = m;
-    }
-    if (this.config.sourcemap) |s| config.source_map = s;
-    if (this.config.target) |t| config.target = t;
-    if (this.config.format) |f| config.format = f;
-    if (this.config.env_behavior) |env_beh| {
-        config.env_behavior = env_beh;
-        if (this.config.env_prefix) |pfx| {
-            try config.env_prefix.appendSlice(pfx);
-        }
-    }
-    if (this.config.naming) |n| {
-        try config.names.owned_entry_point.appendSliceExact(n);
-        config.names.entry_point.data = config.names.owned_entry_point.list.items;
-        try config.names.owned_chunk.appendSliceExact(n);
-        config.names.chunk.data = config.names.owned_chunk.list.items;
-    }
-
-    // Enable content-based CSS chunk deduplication so that multiple
-    // entry points sharing the same CSS produce one chunk, not duplicates.
     config.css_chunking = true;
 
     // Load plugins if configured
@@ -220,6 +156,7 @@ pub fn build(this: *JSBundle) !void {
     );
     completion_task.started_at_ns = bun.getRoughTickCount(.allow_mocked_time).ns();
     completion_task.js_bundle_owner = this;
+    completion_task.bundle_import_config = this.config;
 
     // Keep a reference while building
     this.ref();

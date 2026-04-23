@@ -133,6 +133,10 @@ needs_standalone_rebuild: bool = false,
 /// Keyed by dest_path (e.g., "frontend-abc.js"), value is the file content.
 /// These are served via HTTP at `/_bun/sub/<key>`.
 sub_build_files: bun.StringArrayHashMapUnmanaged(SubBuildFile) = .{},
+/// Per-bundle groups for standalone mode. Each unique (entry_path, config)
+/// gets a BundleGroup that tracks consumers and per-group state.
+/// See BUNDLE_IMPORTS.md for architecture.
+bundle_groups: std.ArrayListUnmanaged(BundleGroup) = .{},
 /// The Plugin API is missing a way to attach filesystem watchers (addWatchFile)
 /// This special case makes `bun-plugin-tailwind` work, which is a requirement
 /// to ship initial incremental bundling support for HTML files.
@@ -849,16 +853,31 @@ pub fn startStandaloneBuild(dev: *DevServer) bun.OOM!void {
     var sfb = std.heap.stackFallback(4096, dev.allocator());
     const temp_alloc = sfb.get();
 
-    // Apply env config from entry points that have it. This ensures the
-    // client transpiler has the right env defines for HMR compilation.
-    // Each entry's config is also stored for sub-builds which get fresh transpilers.
+    // Apply env config from ALL bundle groups to the shared client transpiler.
+    // Each group's env defines are merged. The shared config function
+    // (configureTranspilerForBundle) is used to ensure defines are loaded
+    // via the same pipeline as production builds (see BUNDLE_IMPORTS.md).
     for (dev.standalone_entry_points) |ep| {
         try entry_points.appendJs(temp_alloc, ep.path, .client);
-        if (ep.config) |config| {
-            if (config.env_behavior) |env_beh| {
-                if (dev.client_transpiler.options.env.behavior == .disable) {
-                    dev.applyEnvConfig(env_beh, config.env_prefix);
+    }
+
+    // Apply env config from bundle groups that have it
+    for (dev.bundle_groups.items) |*group| {
+        if (group.config.env_behavior != null) {
+            if (dev.client_transpiler.options.env.behavior == .disable) {
+                if (group.config.env_behavior) |env_beh| {
+                    dev.client_transpiler.options.env.behavior = env_beh;
+                    if (group.config.env_prefix) |pfx| {
+                        dev.client_transpiler.options.env.prefix = pfx;
+                    }
                 }
+                dev.client_transpiler.options.polyfill_node_globals = dev.client_transpiler.options.target.isBrowserLike();
+                dev.client_transpiler.options.defines_loaded = false;
+                dev.client_transpiler.configureDefines() catch |err| {
+                    bun.Output.prettyErrorln("<red>error<r>: failed to configure defines: {s}", .{@errorName(err)});
+                    return;
+                };
+                dev.client_transpiler.resolver.opts = dev.client_transpiler.options;
             }
         }
     }
@@ -881,6 +900,7 @@ pub fn getStandaloneHmrPort(dev: *DevServer) ?u16 {
 }
 
 /// Register a new entry point for standalone mode builds. Deduplicates by path.
+/// Also creates a BundleGroup for the entry if one doesn't exist.
 /// Returns true if the entry point was newly added, false if already registered.
 pub fn addStandaloneEntryPoint(dev: *DevServer, path: []const u8, config: ?ImportRecord.BundleImportConfig) bun.OOM!bool {
     // Seed dynamic list with original entries on first dynamic addition
@@ -896,6 +916,14 @@ pub fn addStandaloneEntryPoint(dev: *DevServer, path: []const u8, config: ?Impor
         .config = config,
     });
     dev.standalone_entry_points = dev.standalone_entry_points_dynamic.items;
+
+    // Create a BundleGroup for this entry if one doesn't already exist.
+    const cfg: ImportRecord.BundleImportConfig = config orelse .{};
+    for (dev.bundle_groups.items) |*group| {
+        if (group.matches(path, cfg)) return true; // group exists
+    }
+    try dev.bundle_groups.append(bun.default_allocator, try BundleGroup.init(bun.default_allocator, path, cfg));
+
     return true;
 }
 
@@ -1302,6 +1330,12 @@ pub fn deinit(dev: *DevServer) void {
                 alloc.free(@constCast(val.content));
             }
             dev.sub_build_files.deinit(alloc);
+        },
+        .bundle_groups = {
+            for (dev.bundle_groups.items) |*group| {
+                group.deinit(alloc);
+            }
+            dev.bundle_groups.deinit(alloc);
         },
         .generation = {},
         .plugin_state = {},
@@ -3141,6 +3175,34 @@ pub fn finalizeBundle(
         }
     }
 
+    // Store file-loader assets (WASM, images, etc.) in dev.assets so they're
+    // served at /_bun/asset/<hash>.<ext>. The parse step already created URLs
+    // pointing here; this ensures the content is actually available.
+    {
+        const file_loaders = bv2.graph.input_files.items(.loader);
+        const file_sources = bv2.graph.input_files.items(.source);
+        const file_content_hashes = bv2.graph.input_files.items(.content_hash_for_additional_file);
+        const file_unique_keys = bv2.graph.input_files.items(.unique_key_for_additional_file);
+
+        for (file_loaders, 0..) |loader, idx| {
+            if (!loader.shouldCopyForBundling()) continue;
+            const key = file_unique_keys[idx];
+            if (key.len == 0) continue;
+            const source = &file_sources[idx];
+            if (source.contents.len == 0) continue;
+
+            const content_hash = file_content_hashes[idx];
+            const content_copy = dev.allocator().dupe(u8, source.contents) catch continue;
+            const mime = &loader.toMimeType(&.{source.path.text});
+            _ = dev.assets.replacePath(
+                key,
+                &.fromOwnedSlice(dev.allocator(), content_copy),
+                mime,
+                content_hash,
+            ) catch continue;
+        }
+    }
+
     for (result.htmlChunks()) |*chunk| {
         const index = bun.ast.Index.init(chunk.entry_point.source_index);
         const compile_result = chunk.compile_results_for_chunk[0].html;
@@ -4957,53 +5019,6 @@ fn fromOpaqueFileId(comptime side: bake.Side, id: OpaqueFileId) IncrementalGraph
     return IncrementalGraph(side).FileIndex.init(@intCast(id.get()));
 }
 
-/// Apply env variable defines from import attributes (e.g. `env: "VITE_*"`)
-/// to the client transpiler. This adds `process.env.{KEY}` → `"value"` defines
-/// for all env vars matching the prefix, without replacing the existing define map
-/// (which preserves import.meta defines set up during init).
-pub fn applyEnvConfig(dev: *DevServer, env_beh: bun.schema.api.DotEnvBehavior, env_prefix: ?[]const u8) void {
-    if (env_beh == .disable or env_beh == .load_all_without_inlining) return;
-
-    // Iterate the OS process environment directly and add matching
-    // process.env.{KEY} defines to the client transpiler's define map.
-    const js_ast = bun.ast;
-    const prefix = env_prefix orelse "";
-    const define = dev.client_transpiler.options.define;
-    const alloc = dev.client_transpiler.allocator;
-    const environ = std.c.environ;
-    var i: usize = 0;
-    while (environ[i]) |env_entry| : (i += 1) {
-        const entry = std.mem.span(env_entry);
-        const eq_pos = std.mem.indexOfScalar(u8, entry, '=') orelse continue;
-        const key = entry[0..eq_pos];
-        const value = entry[eq_pos + 1 ..];
-        const should_include = switch (env_beh) {
-            .prefix => key.len > 0 and bun.strings.startsWith(key, prefix),
-            .load_all => key.len > 0,
-            else => false,
-        };
-        if (should_include) {
-            const define_key = std.fmt.allocPrint(alloc, "process.env.{s}", .{key}) catch continue;
-            const e_str = alloc.create(js_ast.E.String) catch continue;
-            e_str.* = .{
-                .data = bun.handleOom(alloc.dupe(u8, value)),
-            };
-            const define_data = bun.options.defines.DefineData{
-                .value = .{ .e_string = e_str },
-                .flags = .{ .can_be_removed_if_unused = true, .call_can_be_unwrapped_if_unused = .if_unused },
-            };
-            define.insert(alloc, define_key, define_data) catch continue;
-        }
-    }
-
-    // Mark all existing client graph files as stale so they get re-parsed
-    // with the new defines. Without this, files parsed in a previous build
-    // (before env defines were added) would use cached results.
-    if (dev.client_graph.stale_files.bit_length > 0) {
-        dev.client_graph.stale_files.setAll(true);
-    }
-}
-
 /// Returns posix style path, suitible for URLs and reproducible hashes.
 /// Calculate the relative path from the dev server root.
 /// The caller must provide a PathBuffer from the pool.
@@ -5105,6 +5120,8 @@ pub const SubBuildFile = struct {
     content: []const u8,
     loader: bun.options.Loader,
 };
+
+pub const BundleGroup = @import("DevServer/BundleGroup.zig").BundleGroup;
 
 /// Bake needs to specify which graph (client/server/ssr) each entry point is.
 /// File paths are always absolute paths. Files may be bundled for multiple

@@ -223,6 +223,10 @@ pub const Runtime = struct {
         /// - Assigns functions to context for persistence
         repl_mode: bool = false,
 
+        /// Code coverage mode: unwrap constant-condition if statements so JSC's
+        /// ControlFlowProfiler can correctly track coverage of their bodies.
+        code_coverage: bool = false,
+
         pub const empty_bundler_feature_flags: bun.StringSet = bun.StringSet.initComptime();
 
         /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.

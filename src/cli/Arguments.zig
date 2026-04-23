@@ -752,7 +752,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             const preloads = args.options("--preload");
             const preloads2 = args.options("--require");
             const preloads3 = args.options("--import");
-            const preload4 = bun.env_var.BUN_INSPECT_PRELOAD.get();
+            // In standalone executables, ignore BUN_INSPECT_PRELOAD set by the VSCode extension.
+            const preload4 = if (bun.StandaloneModuleGraph.get() != null) null else bun.env_var.BUN_INSPECT_PRELOAD.get();
 
             const total_preloads = ctx.preloads.len + preloads.len + preloads2.len + preloads3.len + (if (preload4 != null) @as(usize, 1) else @as(usize, 0));
             if (total_preloads > 0) {

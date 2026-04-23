@@ -1253,8 +1253,13 @@ fn configureDebugger(this: *VirtualMachine, cli_flag: bun.cli.Command.Debugger) 
         return;
     }
 
-    const unix = bun.env_var.BUN_INSPECT.get();
-    const connect_to = bun.env_var.BUN_INSPECT_CONNECT_TO.get();
+    const is_standalone = this.standalone_module_graph != null;
+
+    // In standalone executables, ignore the BUN_INSPECT and BUN_INSPECT_CONNECT_TO
+    // environment variables set by the VSCode extension. Users can still enable the
+    // inspector via BUN_OPTIONS=--inspect (which goes through the .enable path).
+    const unix = if (is_standalone) "" else bun.env_var.BUN_INSPECT.get();
+    const connect_to = if (is_standalone) "" else bun.env_var.BUN_INSPECT_CONNECT_TO.get();
 
     const set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1"); // If we should set a breakpoint on the first line
     const wait_for_debugger = unix.len > 0 and strings.endsWith(unix, "?wait=1"); // If we should wait for the debugger to connect before starting the event loop

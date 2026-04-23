@@ -316,7 +316,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // effect of the edge whose declared outputs are only lib*.a. Depfiles record
   // those headers, but ninja stats them BEFORE the sub-build runs — so with
   // order-only, any compile that #includes a dep header lags one build behind
-  // a dep rebuild (observed: asan-config.c / uv-posix-*.c → wtf/Compiler.h).
+  // a dep rebuild (observed: uv-posix-*.c → wtf/Compiler.h).
   // Implicit deps on the libs make "dep rebuilt" itself the invalidation
   // signal. Cost is negligible: if the libs changed you're relinking anyway.
   //

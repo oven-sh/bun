@@ -1183,7 +1183,7 @@ pub const PosixSpawnResult = struct {
         }
     };
 
-    pub fn close(this: *WindowsSpawnResult) void {
+    pub fn close(this: *PosixSpawnResult) void {
         for (this.extra_pipes.items) |item| {
             switch (item) {
                 .owned_fd => |f| f.close(),

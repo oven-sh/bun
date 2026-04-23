@@ -65,6 +65,25 @@ for (let backend of ["api", "cli"] as const) {
       },
     });
 
+    // Test disable mode also prevents NODE_ENV and BUN_ENV from being inlined (#20183)
+    itBundled("env/disable-node-env", {
+      backend: backend,
+      dotenv: "disable",
+      files: {
+        "/a.js": `
+        console.log(process.env.NODE_ENV);
+        console.log(process.env.BUN_ENV);
+      `,
+      },
+      run: {
+        env: {
+          NODE_ENV: "production",
+          BUN_ENV: "production",
+        },
+        stdout: "production\nproduction\n",
+      },
+    });
+
     // TODO: make this work as expected with process.env isntead of relying on the initial env vars.
     // Test pattern matching - only vars with prefix are inlined
     if (backend === "cli")

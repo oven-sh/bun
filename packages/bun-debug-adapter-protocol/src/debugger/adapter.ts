@@ -84,12 +84,15 @@ export function resolveCommand(
 
     outer: for (const rawDir of pathVar.split(";")) {
       if (!rawDir) continue;
-      // Windows PATH entries can be double-quoted (required when the
-      // directory itself contains a `;`, and sometimes added by installers
-      // or manual System-Properties edits). node-which, libuv's
-      // `search_path`, and cmd.exe all strip a wrapping pair before
-      // probing, so we do the same — otherwise `path.join('"C:\\...\\dir"',
-      // 'bun.exe')` retains the literal quotes and `existsSync` misses.
+      // Windows PATH entries are sometimes wrapped in double quotes —
+      // added by installers or manual System-Properties edits on dirs
+      // that don't actually need quoting. (A dir containing a literal
+      // `;` can't be represented this way because we already split on
+      // `;`; handling that properly would require a quote-aware split.)
+      // node-which, libuv's `search_path`, and cmd.exe all strip a
+      // wrapping pair before probing, so we do the same — otherwise
+      // `path.join('"C:\\...\\dir"', 'bun.exe')` keeps the literal
+      // quotes and `existsSync` misses.
       const dir = rawDir.replace(/^"(.*)"$/, "$1");
       if (!dir) continue;
       for (const ext of extensions) {

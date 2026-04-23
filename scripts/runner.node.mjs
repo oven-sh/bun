@@ -28,12 +28,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { availableParallelism, userInfo } from "node:os";
+import { userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import pLimit from "./p-limit.mjs";
 import {
   getAbi,
   getAbiVersion,
@@ -162,9 +161,15 @@ const { values: options, positionals: filters } = parseArgs({
       type: "boolean",
       default: isBuildkite && isLinux,
     },
-    ["parallel"]: {
+    // Run parallel-safe tests in a single `bun test --parallel` batch first,
+    // then fall through to the per-file loop for failures + the denylist.
+    ["parallel-batch"]: {
       type: "boolean",
       default: false,
+    },
+    ["parallel-batch-timeout"]: {
+      type: "string",
+      default: "1800000", // 30 min — whole-batch wall clock
     },
   },
 });
@@ -301,44 +306,58 @@ function getTestExpectations() {
   return expectations;
 }
 
-const skipsForExceptionValidation = (() => {
-  const path = join(cwd, "test/no-validate-exceptions.txt");
-  if (!existsSync(path)) {
-    return [];
+/**
+ * @param {string} relPath relative to repo root, e.g. "test/no-parallel.txt"
+ * @returns {Set<string>} entries with both `test/...` and bare-of-test/ forms
+ */
+function loadDenylist(relPath) {
+  const path = join(cwd, relPath);
+  if (!existsSync(path)) return new Set();
+  const out = new Set();
+  for (let line of readFileSync(path, "utf-8").split("\n")) {
+    line = line.trim();
+    if (!line || line.startsWith("#")) continue;
+    out.add(line);
+    if (line.startsWith("test/")) out.add(line.slice(5));
+    else out.add("test/" + line);
   }
-  return readFileSync(path, "utf-8")
-    .split("\n")
-    .map(line => line.trim())
-    .filter(line => !line.startsWith("#") && line.length > 0);
-})();
+  return out;
+}
 
-const skipsForLeaksan = (() => {
-  const path = join(cwd, "test/no-validate-leaksan.txt");
-  if (!existsSync(path)) {
-    return [];
-  }
-  return readFileSync(path, "utf-8")
-    .split("\n")
-    .filter(line => !line.startsWith("#") && line.length > 0);
-})();
+const skipsForExceptionValidation = loadDenylist("test/no-validate-exceptions.txt");
+const skipsForLeaksan = loadDenylist("test/no-validate-leaksan.txt");
+const skipsForParallelBatch = loadDenylist("test/no-parallel.txt");
 
 /**
  * Returns whether we should validate exception checks running the given test
  * @param {string} test
  * @returns {boolean}
  */
-const shouldValidateExceptions = test => {
-  return !(skipsForExceptionValidation.includes(test) || skipsForExceptionValidation.includes("test/" + test));
-};
+const shouldValidateExceptions = test => !skipsForExceptionValidation.has(test);
 
 /**
  * Returns whether we should validate exception checks running the given test
  * @param {string} test
  * @returns {boolean}
  */
-const shouldValidateLeakSan = test => {
-  return !(skipsForLeaksan.includes(test) || skipsForLeaksan.includes("test/" + test));
-};
+const shouldValidateLeakSan = test => !skipsForLeaksan.has(test);
+
+/**
+ * Can this test go into the `bun test --parallel` batch? Anything that
+ * measures GC/RSS, loads native addons, or runs through `bun run` instead of
+ * `bun test` must take the per-file path. See test/no-parallel.txt.
+ * @param {string} testPath path relative to test/, posix or native sep
+ * @returns {boolean}
+ */
+function isParallelSafe(testPath) {
+  const posix = testPath.replaceAll(sep, "/");
+  if (skipsForParallelBatch.has(posix)) return false;
+  if (isNodeTest(posix) || isClusterTest(posix)) return false;
+  if (!isTestStrict(posix)) return false;
+  if (/(?:^|\/)(napi|v8|ffi|webview)\//i.test(posix)) return false;
+  if (/\b(leak|stress|memory|heap|gc|rss)\b/i.test(basename(posix))) return false;
+  return true;
+}
 
 /**
  * @param {string} testPath
@@ -403,8 +422,23 @@ async function runTests() {
   const revision = getRevision(execPath);
   !isQuiet && console.log("Revision:", revision);
 
-  const tests = getRelevantTests(testsPath, modifiers, expectations);
+  let tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
+
+  /** @type {string[]} */
+  let parallelBatchTests = [];
+  if (options["parallel-batch"]) {
+    const isAsan = basename(execPath).includes("asan");
+    const needsPerFileEnv = p => (isAsan || !isCI) && (skipsForExceptionValidation.has(p) || skipsForLeaksan.has(p));
+    const sequential = [];
+    for (const t of tests) {
+      if (isParallelSafe(t) && !needsPerFileEnv(t)) parallelBatchTests.push(t);
+      else sequential.push(t);
+    }
+    tests = sequential;
+    !isQuiet &&
+      console.log("Parallel batch:", parallelBatchTests.length, "files; sequential tail:", tests.length, "files");
+  }
 
   /** @type {VendorTest[] | undefined} */
   let vendorTests;
@@ -418,7 +452,7 @@ async function runTests() {
   }
 
   let i = 0;
-  let total = vendorTotal + tests.length + 2;
+  let total = vendorTotal + tests.length + parallelBatchTests.length + 2;
 
   const okResults = [];
   const flakyResults = [];
@@ -426,10 +460,6 @@ async function runTests() {
   const failedResults = [];
   const failedResultsTitles = [];
   const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
-
-  const parallelism = options["parallel"] ? availableParallelism() : 1;
-  console.log("parallelism", parallelism);
-  const limit = pLimit(parallelism);
 
   /**
    * @param {string} title
@@ -449,12 +479,7 @@ async function runTests() {
       let grouptitle = `${getAnsi("gray")}[${index}/${total}]${getAnsi("reset")} ${title}`;
       if (attempt > 1) grouptitle += ` ${getAnsi("gray")}[attempt #${attempt}]${getAnsi("reset")}`;
 
-      if (parallelism > 1) {
-        console.log(grouptitle);
-        result = await fn(index);
-      } else {
-        result = await startGroup(grouptitle, fn);
-      }
+      result = await startGroup(grouptitle, fn);
 
       const { ok, stdoutPreview, error } = result;
       if (ok) {
@@ -470,7 +495,6 @@ async function runTests() {
       const color = attempt >= maxAttempts ? "red" : "yellow";
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
       startGroup(label, () => {
-        if (parallelism > 1) return;
         if (!isCI) return;
         process.stderr.write(stdoutPreview);
       });
@@ -575,73 +599,85 @@ async function runTests() {
       }
     }
 
-    await Promise.all(
-      tests.map(testPath =>
-        limit(() => {
-          const absoluteTestPath = join(testsPath, testPath);
-          const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
-          if (isNodeTest(testPath)) {
-            const testContent = readFileSync(absoluteTestPath, "utf-8");
-            let runWithBunTest = title.includes("needs-test") || testContent.includes("node:test");
-            // don't wanna have a filter for includes("bun:test") but these need our mocks
-            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-append-file-flush.js";
-            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-file-flush.js";
-            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-stream-flush.js";
-            const subcommand = runWithBunTest ? "test" : "run";
-            const env = {
-              FORCE_COLOR: "0",
-              NO_COLOR: "1",
-              BUN_DEBUG_QUIET_LOGS: "1",
-            };
-            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
-              env.BUN_JSC_validateExceptionChecks = "1";
-              env.BUN_JSC_dumpSimulatedThrows = "1";
-            }
-            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
-              env.BUN_DESTRUCT_VM_ON_EXIT = "1";
-              env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
-              // prettier-ignore
-              env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
-            }
-            return runTest(title, async () => {
-              const { ok, error, stdout, crashes } = await spawnBun(execPath, {
-                cwd: cwd,
-                args: [
-                  subcommand,
-                  "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"),
-                  absoluteTestPath,
-                ],
-                timeout: getNodeParallelTestTimeout(title),
-                env,
-                stdout: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-                stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
-              });
-              const mb = 1024 ** 3;
-              let stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
-              if (crashes) stdoutPreview += crashes;
-              return {
-                testPath: title,
-                ok: ok,
-                status: ok ? "pass" : "fail",
-                error: error,
-                errors: [],
-                tests: [],
-                stdout: stdout,
-                stdoutPreview: stdoutPreview,
-              };
-            });
-          } else {
-            return runTest(title, async () =>
-              spawnBunTest(execPath, join("test", testPath), {
-                cwd,
-                stdout: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
-                stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
-              }),
-            );
-          }
-        }),
-      ),
-    );
+    if (parallelBatchTests.length) {
+      const { passed, duration } = await startGroup(
+        `${getAnsi("gray")}[parallel batch]${getAnsi("reset")} ${parallelBatchTests.length} files`,
+        () => spawnBunTestParallelBatch(execPath, parallelBatchTests),
+      );
+      const failed = parallelBatchTests.filter(t => !passed.has(t));
+      for (const t of passed) {
+        okResults.push({ testPath: join("test", t), ok: true, status: "pass", tests: [], errors: [] });
+      }
+      // Re-queue failures ahead of the denylisted tail so they retry while
+      // the failure context is still fresh in logs.
+      tests = [...failed, ...tests];
+      total = vendorTotal + tests.length + 2;
+      !isQuiet &&
+        console.log(
+          `${getAnsi("green")}parallel batch:${getAnsi("reset")} ${passed.size} passed, ${failed.length} to retry, ` +
+            `${(duration / 1000).toFixed(1)}s`,
+        );
+    }
+
+    for (const testPath of tests) {
+      const absoluteTestPath = join(testsPath, testPath);
+      const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
+      if (isNodeTest(testPath)) {
+        const testContent = readFileSync(absoluteTestPath, "utf-8");
+        let runWithBunTest = title.includes("needs-test") || testContent.includes("node:test");
+        // don't wanna have a filter for includes("bun:test") but these need our mocks
+        runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-append-file-flush.js";
+        runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-file-flush.js";
+        runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-stream-flush.js";
+        const subcommand = runWithBunTest ? "test" : "run";
+        const env = {
+          FORCE_COLOR: "0",
+          NO_COLOR: "1",
+          BUN_DEBUG_QUIET_LOGS: "1",
+        };
+        if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
+          env.BUN_JSC_validateExceptionChecks = "1";
+          env.BUN_JSC_dumpSimulatedThrows = "1";
+        }
+        if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
+          env.BUN_DESTRUCT_VM_ON_EXIT = "1";
+          env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
+          // prettier-ignore
+          env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+        }
+        await runTest(title, async () => {
+          const { ok, error, stdout, crashes } = await spawnBun(execPath, {
+            cwd: cwd,
+            args: [subcommand, "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"), absoluteTestPath],
+            timeout: getNodeParallelTestTimeout(title),
+            env,
+            stdout: chunk => pipeTestStdout(process.stdout, chunk),
+            stderr: chunk => pipeTestStdout(process.stderr, chunk),
+          });
+          const mb = 1024 ** 3;
+          let stdoutPreview = stdout.slice(0, mb).split("\n").slice(0, 50).join("\n");
+          if (crashes) stdoutPreview += crashes;
+          return {
+            testPath: title,
+            ok: ok,
+            status: ok ? "pass" : "fail",
+            error: error,
+            errors: [],
+            tests: [],
+            stdout: stdout,
+            stdoutPreview: stdoutPreview,
+          };
+        });
+      } else {
+        await runTest(title, async () =>
+          spawnBunTest(execPath, join("test", testPath), {
+            cwd,
+            stdout: chunk => pipeTestStdout(process.stdout, chunk),
+            stderr: chunk => pipeTestStdout(process.stderr, chunk),
+          }),
+        );
+      }
+    }
   }
 
   if (vendorTests?.length) {
@@ -1313,6 +1349,122 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @property {string} name
  * @property {string} stack
  */
+
+/**
+ * Run many test files in one `bun test --parallel` invocation and return
+ * which ones passed. Failures (including files the batch never reached
+ * because the coordinator crashed or timed out) fall through to the caller
+ * for per-file retry, so this never has to be precise about *why* a file
+ * failed — only whether it definitely passed.
+ *
+ * @param {string} execPath
+ * @param {string[]} testPaths paths relative to test/
+ * @returns {Promise<{ passed: Set<string>, junitFile: string | null, duration: number }>}
+ */
+async function spawnBunTestParallelBatch(execPath, testPaths) {
+  const passed = new Set();
+  if (!testPaths.length) return { passed, junitFile: null, duration: 0 };
+
+  const isAsan = basename(execPath).includes("asan");
+  // Windows CreateProcessW caps lpCommandLine at 32 767 chars; elsewhere
+  // ARG_MAX is far larger than we'll ever hit. Chunk only when forced to.
+  const argvBudget = isWindows ? 30_000 : 1_500_000;
+  const chunks = [[]];
+  let len = 0;
+  for (const p of testPaths) {
+    const arg = "./" + join("test", p).replaceAll(sep, "/");
+    if (len + arg.length + 1 > argvBudget && chunks.at(-1).length) {
+      chunks.push([]);
+      len = 0;
+    }
+    chunks.at(-1).push(arg);
+    len += arg.length + 1;
+  }
+
+  const perTestTimeout = Math.ceil(testTimeout / 2);
+  const batchTimeout = parseInt(options["parallel-batch-timeout"]) || 1_800_000;
+  const junitDir = mkdtempSync(join(tmpdir(), "bun-parallel-batch-"));
+  let lastJunit = null;
+  const start = Date.now();
+
+  for (const [i, chunk] of chunks.entries()) {
+    const junitFile = join(junitDir, `batch-${i}.xml`);
+    const args = [
+      "test",
+      "--parallel",
+      `--timeout=${perTestTimeout}`,
+      "--reporter=junit",
+      `--reporter-outfile=${junitFile}`,
+      ...chunk,
+    ];
+
+    const env = { GITHUB_ACTIONS: "true" };
+    // Per-file env denylists can't apply to a shared batch process; route
+    // those files to the sequential tail instead so they get correct env.
+    if (isAsan || !isCI) {
+      env.BUN_JSC_validateExceptionChecks = "1";
+      env.BUN_JSC_dumpSimulatedThrows = "1";
+    }
+
+    !isQuiet &&
+      console.log(
+        `${getAnsi("gray")}[batch ${i + 1}/${chunks.length}]${getAnsi("reset")} bun test --parallel (${chunk.length} files)`,
+      );
+
+    await spawnBun(execPath, {
+      args,
+      cwd,
+      timeout: batchTimeout,
+      env,
+      stdout: chunk => process.stdout.write(chunk),
+      stderr: chunk => process.stderr.write(chunk),
+    });
+
+    if (existsSync(junitFile)) {
+      lastJunit = junitFile;
+      for (const p of parsePassedFilesFromJunit(junitFile, testPaths)) passed.add(p);
+      if (cliOptions.junit && isBuildkite && cliOptions["junit-upload"]) addToJunitUploadQueue(junitFile);
+    }
+  }
+
+  return { passed, junitFile: lastJunit, duration: Date.now() - start };
+}
+
+/**
+ * @param {string} junitFile
+ * @param {string[]} testPaths relative-to-test/ paths to attribute results to
+ * @returns {string[]} subset of testPaths whose <testsuite> reported failures="0"
+ */
+function parsePassedFilesFromJunit(junitFile, testPaths) {
+  const xml = readFileSync(junitFile, "utf-8");
+  // We only need the file-level suites: <testsuite name="..." file="..." ... failures="N" ...>
+  // Nested describe-suites also have file=, but only the file-level one has
+  // name === file. Match either and resolve by suffix against our path list.
+  const suiteRe = /<testsuite\s+name="([^"]+)"\s+file="([^"]+)"[^>]*\bfailures="(\d+)"/g;
+  const failedSuffixes = new Set();
+  const seenSuffixes = new Set();
+  let m;
+  while ((m = suiteRe.exec(xml))) {
+    const file = m[2].replaceAll("\\", "/");
+    const failures = parseInt(m[3]);
+    seenSuffixes.add(file);
+    if (failures > 0) failedSuffixes.add(file);
+  }
+  const matchesSuffix = (set, p) => {
+    for (const s of set) if (s === p || s.endsWith("/" + p) || p.endsWith("/" + s)) return true;
+    return false;
+  };
+  const passed = [];
+  for (const p of testPaths) {
+    const posix = p.replaceAll(sep, "/");
+    if (matchesSuffix(failedSuffixes, posix)) continue;
+    // A file the batch never reached (coordinator crash / timeout) won't have
+    // a suite at all — treat as not-passed so it falls through to retry.
+    if (!matchesSuffix(seenSuffixes, posix)) continue;
+    passed.push(p);
+  }
+  return passed;
+}
 
 /**
  *

@@ -19,7 +19,7 @@ import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { availableParallelism, homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { Config, OS } from "./config.ts";
+import type { Config } from "./config.ts";
 import { downloadWithRetry, extractZip } from "./download.ts";
 import { assert } from "./error.ts";
 import { fetchCliPath } from "./fetch-cli.ts";
@@ -31,38 +31,8 @@ import { streamPath } from "./stream.ts";
  * Zig compiler commit — determines compiler download + bundled stdlib.
  * Override via `--zig-commit=<hash>` to test a new compiler.
  * From https://github.com/oven-sh/zig releases.
- *
- * TEMPORARY SPLIT: ZIG_COMMIT is the pre-parallel-sema compiler, kept
- * for Windows hosts only (COFF shard emission isn't implemented and
- * the build path needs a single object). Everything else — local and
- * CI, all targets — uses ZIG_COMMIT_PARALLEL (parallel sema is
- * deterministic; codegen-unit count is decided separately by
- * codegenThreads()). Once Windows is supported, collapse both back to
- * one constant.
  */
-export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
-export const ZIG_COMMIT_PARALLEL = "0bcf4c3d998133e724d27e9fd783172ffed4c943";
-
-/**
- * The one place that picks which compiler to use. The parallel compiler
- * is used everywhere except Windows (its sharded-codegen object emission
- * for COFF is unimplemented). Parallel SEMA is deterministic and changes
- * no output, so CI gets it too — only the codegen-unit count differs by
- * config (see codegenThreads()).
- */
-export function defaultZigCommit(hostOs: OS): string {
-  if (hostOs === "windows") return ZIG_COMMIT;
-  return ZIG_COMMIT_PARALLEL;
-}
-
-/**
- * True iff `cfg` is using the parallel-sema compiler. Gates
- * ZIG_PARALLEL_SEMA and the `llvm_no_merge_shards` build.zig path —
- * the stable compiler doesn't understand either.
- */
-function usingParallelCompiler(cfg: Config): boolean {
-  return cfg.zigCommit !== ZIG_COMMIT;
-}
+export const ZIG_COMMIT = "04e7f6ac1e009525bc00934f20199c68f04e0a24";
 
 /**
  * Number of LLVM codegen units. >1 splits the build into N independent
@@ -73,6 +43,8 @@ function usingParallelCompiler(cfg: Config): boolean {
  *   - Non-ASAN CI: shipped releases want full IPO; cg=1 keeps that and
  *     keeps the upload/download contract a single file.
  *   - Windows targets: COFF shard emission is unimplemented in oven-sh/zig.
+ *   - LTO: zig_llvm.cpp gates SplitModule on !lto, so cg>1 would emit one
+ *     .o instead of N and the no_merge_shards path would expect missing files.
  *
  * ASAN CI uses a FIXED count (CI_ASAN_CODEGEN_THREADS) so zig-only and
  * link-only — which run on different machines — agree on the artifact
@@ -80,8 +52,8 @@ function usingParallelCompiler(cfg: Config): boolean {
  * a non-ASAN CI artifact if cross-unit inlining matters.
  */
 function codegenThreads(cfg: Config): number {
-  if (!usingParallelCompiler(cfg)) return 0;
   if (cfg.windows) return 1;
+  if (cfg.lto) return 1;
   if (cfg.ci) {
     // ASAN is a test-only build (not shipped), so cross-shard IPO loss is
     // fine and the speedup is worth it. The count is FIXED so zig-only and
@@ -291,7 +263,7 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
   // our fork (upstream added Feb 2026, not backported).
   const interleave = false;
   const consoleMode = !interleave || hostWin;
-  const parallelSema = usingParallelCompiler(cfg) ? " --env=ZIG_PARALLEL_SEMA=1" : "";
+  const parallelSema = " --env=ZIG_PARALLEL_SEMA=1";
   n.rule("zig_build", {
     command: `${stream} ${consoleMode ? "--console" : "--zig-progress"} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache${parallelSema} $zig build $step $args`,
     // $out can be 16 shard paths; the build edge sets a compact $label.
@@ -469,6 +441,7 @@ function zigBuildArgs(cfg: Config): string[] {
     `-Denable_fuzzilli=${bool(cfg.fuzzilli)}`,
     `-Denable_valgrind=${bool(cfg.valgrind)}`,
     `-Denable_tinycc=${bool(cfg.tinycc)}`,
+    `-Dlto=${bool(cfg.lto)}`,
     // Always ON — bun uses mimalloc as its default allocator. The flag
     // exists for experimentation; in practice it's never OFF.
     `-Duse_mimalloc=true`,

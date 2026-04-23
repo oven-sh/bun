@@ -43,9 +43,11 @@ export const highway: Dependency = {
       ],
       includes: ["."],
       defines: { HWY_STATIC_DEFINE: true },
-      // -fmath-errno isn't a CLOption (clang-cl warns); highway's own
-      // cmake skips it in the MSVC branch.
-      cflags: cfg.windows ? ["-fno-exceptions"] : ["-fno-exceptions", "-fmath-errno"],
+      // -fno-exceptions / -fmath-errno aren't CLOptions (clang-cl warns
+      // "unknown argument ignored"). Match upstream's MSVC branch instead:
+      // /EHs-c- overrides globalFlags' /EHsc (later flag wins) so highway
+      // is built without exceptions like it was under nested-cmake.
+      cflags: cfg.windows ? ["/EHs-c-", "-D_HAS_EXCEPTIONS=0"] : ["-fno-exceptions", "-fmath-errno"],
     };
 
     // clang-cl on arm64-windows doesn't define __ARM_NEON even though NEON

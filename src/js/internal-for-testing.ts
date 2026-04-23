@@ -167,6 +167,17 @@ export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $n
 
 export const createSocketPair: () => [number, number] = $newZigFunction("socket.zig", "jsCreateSocketPair", 0);
 
+/**
+ * Node's `internalBinding('util').guessHandleType(fd)` — native form returns a u32
+ * index into `["TCP","TTY","UDP","FILE","PIPE","UNKNOWN"]`. The string wrapper
+ * mirrors `require('internal/util').guessHandleType` exactly.
+ */
+const _guessHandleType: (fd: number) => number = $newZigFunction("node_util_binding.zig", "guessHandleType", 1);
+const guessHandleTypes = ["TCP", "TTY", "UDP", "FILE", "PIPE", "UNKNOWN"] as const;
+export const guessHandleType = (fd: number): (typeof guessHandleTypes)[number] =>
+  guessHandleTypes[_guessHandleType(fd)];
+export const guessHandleTypeNative = _guessHandleType;
+
 export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
   "NodeModuleModule.cpp",
   "jsFunctionIsModuleResolveFilenameSlowPathEnabled",

@@ -106,6 +106,75 @@ pub fn enobufsErrorCode(_: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!j
     return jsc.JSValue.jsNumberFromInt32(-bun.sys.UV_E.NOBUFS);
 }
 
+/// Node's `util.guessHandleType(fd)` — returns a uint32 index into
+/// `["TCP","TTY","UDP","FILE","PIPE","UNKNOWN"]`, matching the libuv
+/// `uv_guess_handle` mapping that Node's `createHandle`/`getStdin` rely on.
+pub fn guessHandleType(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const fd_value = callframe.argument(0);
+    if (!fd_value.isNumber()) {
+        return globalThis.throwInvalidArgumentTypeValue("fd", "number", fd_value);
+    }
+    const fd_int = fd_value.toInt32();
+    if (fd_int < 0) return jsc.JSValue.jsNumber(@as(u32, 5)); // UNKNOWN
+
+    return jsc.JSValue.jsNumber(@as(u32, guessHandleTypeFromFd(fd_int)));
+}
+
+fn guessHandleTypeFromFd(fd_int: i32) u32 {
+    const TCP = 0;
+    const TTY_TYPE = 1;
+    const UDP = 2;
+    const FILE_TYPE = 3;
+    const PIPE_TYPE = 4;
+    const UNKNOWN = 5;
+
+    if (comptime bun.Environment.isWindows) {
+        const uv = bun.windows.libuv;
+        return switch (uv.uv_guess_handle(fd_int)) {
+            uv.Handle.Type.tcp => TCP,
+            uv.Handle.Type.tty => TTY_TYPE,
+            uv.Handle.Type.udp => UDP,
+            uv.Handle.Type.file => FILE_TYPE,
+            uv.Handle.Type.named_pipe => PIPE_TYPE,
+            else => UNKNOWN,
+        };
+    }
+
+    const fd: bun.FD = .fromNative(fd_int);
+
+    if (std.posix.isatty(fd_int)) return TTY_TYPE;
+
+    const st = switch (bun.sys.fstat(fd)) {
+        .result => |s| s,
+        .err => return UNKNOWN,
+    };
+    const mode = st.mode;
+    if (bun.S.ISREG(mode) or bun.S.ISCHR(mode)) return FILE_TYPE;
+    if (bun.S.ISFIFO(mode)) return PIPE_TYPE;
+    if (!bun.S.ISSOCK(mode)) return UNKNOWN;
+
+    var ss: std.posix.sockaddr.storage = undefined;
+    var ss_len: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.storage);
+    if (std.c.getsockname(fd_int, @ptrCast(&ss), &ss_len) != 0) return UNKNOWN;
+
+    var so_type: c_int = 0;
+    var so_type_len: std.posix.socklen_t = @sizeOf(c_int);
+    if (std.c.getsockopt(fd_int, std.posix.SOL.SOCKET, std.posix.SO.TYPE, @ptrCast(&so_type), &so_type_len) != 0) {
+        return UNKNOWN;
+    }
+
+    const family = ss.family;
+    if (so_type == std.posix.SOCK.DGRAM) {
+        if (family == std.posix.AF.INET or family == std.posix.AF.INET6) return UDP;
+        return UNKNOWN;
+    }
+    if (so_type == std.posix.SOCK.STREAM) {
+        if (family == std.posix.AF.INET or family == std.posix.AF.INET6) return TCP;
+        if (family == std.posix.AF.UNIX) return PIPE_TYPE;
+    }
+    return UNKNOWN;
+}
+
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
 /// Returns `undefined` if param is utf8 or utf16 and not fully ascii.
 ///

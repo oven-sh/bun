@@ -178,11 +178,7 @@ describe("issue #29636 — resolveCommand", () => {
     // pair before probing. Without the strip, `path.join('"…"', 'bun.cmd')`
     // retains the literal quotes and `existsSync` misses.
     using dir = tempDir("issue-29636-quoted", { "bun.cmd": "@echo off\r\n" });
-    const result = resolveCommand(
-      "bun",
-      { PATH: `"${String(dir)}"`, PATHEXT: ".cmd" },
-      "win32",
-    );
+    const result = resolveCommand("bun", { PATH: `"${String(dir)}"`, PATHEXT: ".cmd" }, "win32");
     expect(result).toEqual({
       command: join(String(dir), "bun.cmd"),
       useShell: true,

@@ -1902,13 +1902,17 @@ pub fn resolveMaybeNeedsTrailingSlash(
             // This Msg is wrapped in a ResolveMessage JS object below; without
             // `.resolve` metadata here, accessing `err.specifier` / `err.importKind`
             // or calling `JSON.stringify(err)` from JS would read the inactive
-            // union field and panic in safe builds. The specifier is left empty:
-            // on Windows it always exceeds what `BabyString` (u16 offset/len) can
-            // encode here, and on other platforms it may — the full specifier is
-            // in the message text regardless.
+            // union field and panic in safe builds. `BabyString` uses u16
+            // offset/len, so encode the specifier only when it fits (it always
+            // does on macOS/Linux at this threshold; on Windows the threshold
+            // itself exceeds u16 so it never does). When it doesn't fit the
+            // full specifier is still in the message text.
             .metadata = .{
                 .resolve = .{
-                    .specifier = .{ .offset = 0, .len = 0 },
+                    .specifier = if (specifier_utf8.slice().len <= std.math.maxInt(u16))
+                        logger.BabyString.in(printed, specifier_utf8.slice())
+                    else
+                        .{ .offset = 0, .len = 0 },
                     .import_kind = import_kind,
                     .err = error.NameTooLong,
                 },

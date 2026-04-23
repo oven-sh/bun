@@ -247,6 +247,15 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     });
   });
 
+  test("CookieMap.toJSON() prefers modified value for numeric cookie names", () => {
+    const map = new Bun.CookieMap("0=original; 1=unchanged");
+    map.set("0", "modified");
+    expect(map.toJSON()).toEqual({
+      "0": "modified",
+      "1": "unchanged",
+    });
+  });
+
   test("CookieMap.toJSON() handles cookie names matching Object.prototype properties", () => {
     const map = new Bun.CookieMap("toString=hello; constructor=world; valueOf=test");
     expect(map.toJSON()).toEqual({

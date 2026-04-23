@@ -1382,7 +1382,7 @@ async function spawnBunTestParallelBatch(execPath, testPaths) {
 
   const perTestTimeout = Math.ceil(testTimeout / 2);
   const batchTimeout = parseInt(options["parallel-batch-timeout"]) || 1_800_000;
-  const junitDir = mkdtempSync(join(tmpdir(), "bun-parallel-batch-"));
+  const junitDir = cliOptions.junit ? cliOptions["junit-temp-dir"] : mkdtempSync(join(tmpdir(), "bun-parallel-batch-"));
   let lastJunit = null;
   const start = Date.now();
 
@@ -1430,14 +1430,17 @@ async function spawnBunTestParallelBatch(execPath, testPaths) {
  */
 function parsePassedFilesFromJunit(junitFile, testPaths) {
   const xml = readFileSync(junitFile, "utf-8");
-  // We only need the file-level suites: <testsuite name="..." file="..." ... failures="N" ...>
-  // Nested describe-suites also have file=, but only the file-level one has
-  // name === file. Match either and resolve by suffix against our path list.
+  // File-level suites have name === file (is_file_suite in test_command.zig);
+  // nested describe suites have name = describe label. Only the file-level
+  // suite's failures= is the per-file aggregate, and only its presence proves
+  // the file ran to completion — a fragment that crashed mid-file may carry
+  // inner describe suites but no closed file-level one.
   const suiteRe = /<testsuite\s+name="([^"]+)"\s+file="([^"]+)"[^>]*\bfailures="(\d+)"/g;
   const failedSuffixes = new Set();
   const seenSuffixes = new Set();
   let m;
   while ((m = suiteRe.exec(xml))) {
+    if (m[1] !== m[2]) continue;
     const file = m[2].replaceAll("\\", "/");
     const failures = parseInt(m[3]);
     seenSuffixes.add(file);

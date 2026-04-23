@@ -443,8 +443,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // failure is loud ("cannot find -l:libatomic.a") and the fix is obvious.
   const staticLibatomic = partial.staticLibatomic ?? true;
 
-  // TinyCC: off on Windows ARM64 (not supported), on elsewhere
-  const tinycc = partial.tinycc ?? !(windows && arm64);
+  const tinycc = partial.tinycc ?? true;
 
   const valgrind = partial.valgrind ?? false;
   const fuzzilli = partial.fuzzilli ?? false;

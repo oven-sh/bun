@@ -8,14 +8,11 @@
 // Now `fromJS`/`fromJSValidated` return `.fromUV(0|1|2)` directly, and
 // `FD.uv()` checks the cached stdio handles before `GetStdHandle`.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 describe.concurrent.skipIf(!isWindows)("fs.writeSync on Windows stdio/handles", () => {
-  // bun:ffi (TinyCC) is unavailable on Windows arm64, so this repro can only
-  // run on x64. The second test below covers the plain openSync→writeSync path
-  // on all Windows arches.
-  test.skipIf(isArm64)("fs.writeSync(1, ...) does not panic after SetStdHandle swaps stdout", async () => {
+  test("fs.writeSync(1, ...) does not panic after SetStdHandle swaps stdout", async () => {
     const fixture = `
       const fs = require("node:fs");
       const { dlopen } = require("bun:ffi");

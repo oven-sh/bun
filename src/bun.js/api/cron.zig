@@ -275,8 +275,12 @@ pub const CronRegisterJob = struct {
     fn startMac(this: *CronRegisterJob) void {
         this.state = .writing_plist;
 
-        const calendar_xml = cronToCalendarInterval(this.schedule) catch {
-            this.setErr("Invalid cron expression", .{});
+        const calendar_xml = cronToCalendarInterval(this.schedule) catch |err| {
+            if (err == error.TooManyTriggers) {
+                this.setErr("This cron expression expands to too many launchd calendar intervals (max 256). Use wildcards (*) for fields that don't need restricting, or simplify the expression.", .{});
+            } else {
+                this.setErr("Invalid cron expression", .{});
+            }
             this.finish();
             return;
         };
@@ -1405,6 +1409,15 @@ fn cronToCalendarInterval(schedule: []const u8) ![]const u8 {
         }
         try result.appendSlice("    </dict>");
     } else {
+        // Bound total StartCalendarInterval dicts before emitting. The OR split emits two
+        // passes (day-of-month and day-of-week) whose sum is what launchd actually parses,
+        // so cap the sum — not each pass — at 256.
+        const total: u64 = if (needs_or_split)
+            countCalendarDicts(field_values, .exclude_weekday) + countCalendarDicts(field_values, .exclude_day)
+        else
+            countCalendarDicts(field_values, .include_all);
+        if (total > 256) return error.TooManyTriggers;
+
         try result.appendSlice("    <array>\n");
 
         if (needs_or_split) {
@@ -1431,19 +1444,31 @@ fn appendCalendarKey(result: *std.array_list.Managed(u8), key: []const u8, val: 
 
 const EmitMode = enum { include_all, exclude_weekday, exclude_day };
 
-/// Emit Cartesian-product <dict> entries for the given field values.
-/// In exclude_weekday mode, day-of-week (index 4) is treated as wildcard.
-/// In exclude_day mode, day-of-month (index 2) is treated as wildcard.
-fn emitCalendarDicts(result: *std.array_list.Managed(u8), field_values: [5]?[]const i32, mode: EmitMode) !void {
-    const plist_keys = [_][]const u8{ "Minute", "Hour", "Day", "Month", "Weekday" };
-
-    // Build effective field values based on mode
+fn effectiveFieldValues(field_values: [5]?[]const i32, mode: EmitMode) [5]?[]const i32 {
     var effective: [5]?[]const i32 = field_values;
     switch (mode) {
         .exclude_weekday => effective[4] = null,
         .exclude_day => effective[2] = null,
         .include_all => {},
     }
+    return effective;
+}
+
+/// Count how many <dict> entries emitCalendarDicts() would produce for a given mode.
+fn countCalendarDicts(field_values: [5]?[]const i32, mode: EmitMode) u64 {
+    const effective = effectiveFieldValues(field_values, mode);
+    var product: u64 = 1;
+    inline for (effective) |fv| product *= if (fv) |v| v.len else 1;
+    return product;
+}
+
+/// Emit Cartesian-product <dict> entries for the given field values.
+/// In exclude_weekday mode, day-of-week (index 4) is treated as wildcard.
+/// In exclude_day mode, day-of-month (index 2) is treated as wildcard.
+fn emitCalendarDicts(result: *std.array_list.Managed(u8), field_values: [5]?[]const i32, mode: EmitMode) !void {
+    const plist_keys = [_][]const u8{ "Minute", "Hour", "Day", "Month", "Weekday" };
+
+    const effective = effectiveFieldValues(field_values, mode);
 
     const iter_mins: []const i32 = if (effective[0]) |v| v else &.{0};
     const iter_hrs: []const i32 = if (effective[1]) |v| v else &.{0};

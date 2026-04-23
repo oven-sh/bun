@@ -935,6 +935,33 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
     }
   });
 
+  test("rejects expressions that expand to too many calendar intervals", async () => {
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      // 10 × 10 × 3 = 300 dicts, over the 256 cap. Harmless ~60KB if a regression slips through.
+      await expect(Bun.cron(`${dir}/job.ts`, "0-9 0-9 1-3 * *", "test-mac-toomany")).rejects.toThrow(
+        /too many launchd calendar intervals/i,
+      );
+      // OR-split: both day-of-month and day-of-week restricted emits two passes.
+      // (10×10×2) + (10×10×2) = 400 dicts — each pass is under 256 but the sum is not.
+      await expect(Bun.cron(`${dir}/job.ts`, "0-9 0-9 1,15 * 1,3", "test-mac-toomany-or")).rejects.toThrow(
+        /too many launchd calendar intervals/i,
+      );
+      // Nothing should have been written.
+      expect(existsSync(plistPath("test-mac-toomany"))).toBe(false);
+      expect(existsSync(plistPath("test-mac-toomany-or"))).toBe(false);
+      // Just under the cap still works.
+      await Bun.cron(`${dir}/job.ts`, "0-9 0-9 1,15 * *", "test-mac-undercap"); // 10×10×2 = 200
+      expect(existsSync(plistPath("test-mac-undercap"))).toBe(true);
+    } finally {
+      removeLaunchdJob("test-mac-toomany");
+      removeLaunchdJob("test-mac-toomany-or");
+      removeLaunchdJob("test-mac-undercap");
+    }
+  });
+
   test("plist contains correct CalendarInterval XML", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,

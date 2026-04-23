@@ -504,7 +504,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mi
   // means the failure happens in the resolve phase, where the runTasks
   // callback is the void `onPackageDownloadError = {}` — i.e. the branch the
   // fix in runTasks.zig now cleans up.
-  it("should fail (not hang) when tarball bytes don't match manifest SHA-512", async () => {
+  it("should fail (not hang) when tarball bytes don't match manifest SHA-512", { timeout: 60_000 }, async () => {
     function octal(n: number, width: number) {
       return n.toString(8).padStart(width - 1, "0") + "\0";
     }
@@ -592,7 +592,15 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mi
     });
     const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
 
-    // Must surface the integrity failure and must not claim success.
+    // The hang path in #29646 also prints "Integrity check failed" (it comes
+    // from the streaming extractor — the hang happens *after*), exits with a
+    // SIGTERM-induced non-zero code when the spawn timeout fires, and never
+    // produces "1 package installed". So the presence of the message, the
+    // absence of success output, and a non-zero exit are all consistent with
+    // either outcome. The load-bearing assertion is `signalCode === null`:
+    // with the fix, bun exits cleanly on its own; on hang, Bun.spawn's
+    // timeout kills the child with SIGTERM.
+    expect(proc.signalCode).toBeNull();
     expect(stderr + stdout).toContain("Integrity check failed");
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);

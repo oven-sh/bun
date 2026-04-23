@@ -101,4 +101,39 @@ describe("fake node cli", () => {
     const temp = tempDirWithFiles("fake-node", {});
     expect(() => fakeNodeRun(temp, [])).toThrow();
   });
+
+  describe("node --run", () => {
+    test("runs a package.json script", () => {
+      const temp = tempDirWithFiles("fake-node", {
+        "package.json": JSON.stringify({
+          scripts: {
+            echo_test: "echo pass",
+          },
+        }),
+      });
+      expect(fakeNodeRun(temp, ["--run", "echo_test"]).stdout).toBe("pass");
+    });
+
+    test("runs pre/post scripts", () => {
+      const temp = tempDirWithFiles("fake-node", {
+        "package.json": JSON.stringify({
+          scripts: {
+            premyscript: "echo pre",
+            myscript: "echo main",
+            postmyscript: "echo post",
+          },
+        }),
+      });
+      expect(fakeNodeRun(temp, ["--run", "myscript"]).stdout).toBe("pre\nmain\npost");
+    });
+
+    test("errors on missing script", () => {
+      const temp = tempDirWithFiles("fake-node", {
+        "package.json": JSON.stringify({
+          scripts: {},
+        }),
+      });
+      expect(() => fakeNodeRun(temp, ["--run", "nonexistent"])).toThrow();
+    });
+  });
 });

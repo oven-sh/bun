@@ -363,7 +363,10 @@ public:
         hasOutOfOrderNames = false;
 
         size_t count = this->count;
-        size_t prefixOffset = trimLeadingPrefix ? 1 : 0;
+        // Always strip the leading prefix character (@, $, :) from parameter names
+        // so that JS object property lookups work regardless of strict mode.
+        // e.g., @expiresAt -> expiresAt, $id -> id
+        constexpr size_t prefixOffset = 1;
         bindingNames.clear();
 
         bool hasLoadedBindingNames = false;
@@ -387,7 +390,7 @@ public:
             }
             name += prefixOffset;
             size_t namelen = strlen(reinterpret_cast<const char*>(name));
-            if (prefixOffset == 1 && name[0] >= '0' && name[0] <= '9') {
+            if (name[0] >= '0' && name[0] <= '9') {
                 auto integer = WTF::parseInteger<uint64_t>(StringView({ name, namelen }), 10);
                 if (integer.has_value()) {
                     hasOutOfOrderNames = true;
@@ -906,8 +909,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
     const auto& bindingNames = bindings.bindingNames;
     size_t size = bindings.count;
 
-    const bool trimLeadingPrefix = bindings.trimLeadingPrefix;
-    const bool throwOnMissing = trimLeadingPrefix;
+    const bool throwOnMissing = bindings.trimLeadingPrefix;
 
     // Did they reorder the columns?
     //
@@ -921,13 +923,12 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
                 return target->getDirectIndex(globalObject, i);
             }
 
-            if (trimLeadingPrefix) {
-                name += 1;
-            }
+            // Always skip the leading prefix character (@, $, :) from parameter names.
+            name += 1;
 
             const WTF::String str = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), strlen(name) });
 
-            if (trimLeadingPrefix && name[0] >= '0' && name[0] <= '9') {
+            if (name[0] >= '0' && name[0] <= '9') {
                 auto integer = WTF::parseInteger<int32_t>(str, 10);
                 if (integer.has_value()) {
                     return target->getDirectIndex(globalObject, integer.value() - 1);

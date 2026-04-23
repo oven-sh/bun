@@ -5344,9 +5344,16 @@ restart:
 
     {
 
-        JSObject* iterating = prototypeObject.getObject();
+        JSValue iteratingValue = prototypeObject;
 
-        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
+        while (JSObject* iterating = iteratingValue.getObject()) {
+            if (iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject))
+                break;
+            if (prototypeCount++ >= 5)
+                break;
+
+            JSC::EnsureStillAliveScope ensureIteratingStillAlive(iteratingValue);
+
             if constexpr (nonIndexedOnly) {
                 iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
             } else {
@@ -5445,12 +5452,11 @@ restart:
                 break;
             if (iterating == globalObject)
                 break;
-            JSValue iteratingProto = iterating->getPrototype(globalObject);
+            iteratingValue = iterating->getPrototype(globalObject);
             // Ignore exceptions from Proxy "getPrototypeOf" trap.
             CLEAR_IF_EXCEPTION(scope);
-            if (!iteratingProto)
+            if (!iteratingValue)
                 break;
-            iterating = iteratingProto.getObject();
         }
     }
 

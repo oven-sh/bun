@@ -111,4 +111,53 @@ describe.if(!isWindows)("uv stubs", () => {
     // Let's say not more than 100ms (100,000,000 ns)
     expect(diff <= 100_000_000n).toBe(true);
   });
+
+  test("version", () => {
+    const result = nativeModule.testVersion();
+    expect(result.versionString).toMatch(/^\d+\.\d+\.\d+/);
+    const [major, minor, patch] = result.versionString.split(/[.-]/).map(Number);
+    expect(result.version).toBe((major << 16) | (minor << 8) | patch);
+  });
+
+  test("buf_init", () => {
+    expect(nativeModule.testBufInit()).toBe(true);
+  });
+
+  test("error functions", () => {
+    const result = nativeModule.testErrors();
+    expect(result.errName).toBe("EINVAL");
+    expect(result.strerror).toBe("invalid argument");
+    expect(result.errNameR).toBe("ENOENT");
+    expect(result.strerrorR).toBe("no such file or directory");
+    expect(result.translatedIsCorrect).toBe(true);
+    expect(result.unknownErrName).toBe("Unknown system error -123456");
+  });
+
+  test("osfhandle identity", () => {
+    expect(nativeModule.testOsfhandle()).toBe(true);
+  });
+
+  test("time functions", () => {
+    expect(nativeModule.testTime()).toBe(true);
+  });
+
+  test("thread-local storage", () => {
+    expect(nativeModule.testTls()).toBe(true);
+  });
+
+  test("rwlock", () => {
+    expect(nativeModule.testRwlock()).toBe(true);
+  });
+
+  test("thread self/equal", () => {
+    expect(nativeModule.testThread()).toBe(true);
+  });
+
+  test("sizes and type names", () => {
+    expect(nativeModule.testSizes()).toBe(true);
+  });
+
+  test("data accessors", () => {
+    expect(nativeModule.testDataAccessors()).toBe(true);
+  });
 });

@@ -103,25 +103,10 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_buf_init") == 0) {
-    char *arg0 = {0};
-    unsigned int arg1 = {0};
-
-    uv_buf_init(arg0, arg1);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_cancel") == 0) {
     uv_req_t *arg0 = {0};
 
     uv_cancel(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_chdir") == 0) {
-    const char *arg0 = {0};
-
-    uv_chdir(arg0);
     return NULL;
   }
 
@@ -145,14 +130,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     uv_check_t *arg0 = {0};
 
     uv_check_stop(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_clock_gettime") == 0) {
-    uv_clock_id arg0 = {0};
-    uv_timespec64_t *arg1 = {0};
-
-    uv_clock_gettime(arg0, arg1);
     return NULL;
   }
 
@@ -274,22 +251,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_err_name") == 0) {
-    int arg0 = {0};
-
-    uv_err_name(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_err_name_r") == 0) {
-    int arg0 = {0};
-    char *arg1 = {0};
-    size_t arg2 = {0};
-
-    uv_err_name_r(arg0, arg1, arg2);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_exepath") == 0) {
     char *arg0 = {0};
     size_t *arg1 = {0};
@@ -319,13 +280,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     int arg1 = {0};
 
     uv_free_interface_addresses(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_freeaddrinfo") == 0) {
-    struct addrinfo *arg0 = {0};
-
-    uv_freeaddrinfo(arg0);
     return NULL;
   }
 
@@ -867,13 +821,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_get_osfhandle") == 0) {
-    int arg0 = {0};
-
-    uv_get_osfhandle(arg0);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_get_process_title") == 0) {
     char *arg0 = {0};
     size_t arg1 = {0};
@@ -918,60 +865,10 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_gettimeofday") == 0) {
-    uv_timeval64_t *arg0 = {0};
-
-    uv_gettimeofday(arg0);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_guess_handle") == 0) {
     uv_file arg0 = {0};
 
     uv_guess_handle(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_handle_get_data") == 0) {
-    const uv_handle_t *arg0 = {0};
-
-    uv_handle_get_data(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_handle_get_loop") == 0) {
-    const uv_handle_t *arg0 = {0};
-
-    uv_handle_get_loop(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_handle_get_type") == 0) {
-    const uv_handle_t *arg0 = {0};
-
-    uv_handle_get_type(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_handle_set_data") == 0) {
-    uv_handle_t *arg0 = {0};
-    void *arg1 = {0};
-
-    uv_handle_set_data(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_handle_size") == 0) {
-    uv_handle_type arg0 = {0};
-
-    uv_handle_size(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_handle_type_name") == 0) {
-    uv_handle_type arg0 = {0};
-
-    uv_handle_type_name(arg0);
     return NULL;
   }
 
@@ -1123,43 +1020,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_key_create") == 0) {
-    uv_key_t *arg0 = {0};
-
-    uv_key_create(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_key_delete") == 0) {
-    uv_key_t *arg0 = {0};
-
-    uv_key_delete(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_key_get") == 0) {
-    uv_key_t *arg0 = {0};
-
-    uv_key_get(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_key_set") == 0) {
-    uv_key_t *arg0 = {0};
-    void *arg1 = {0};
-
-    uv_key_set(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_kill") == 0) {
-    int arg0 = {0};
-    int arg1 = {0};
-
-    uv_kill(arg0, arg1);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_library_shutdown") == 0) {
 
     uv_library_shutdown();
@@ -1218,13 +1078,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_loop_get_data") == 0) {
-    const uv_loop_t *arg0 = {0};
-
-    uv_loop_get_data(arg0);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_loop_init") == 0) {
     uv_loop_t *arg0 = {0};
 
@@ -1235,20 +1088,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
   if (strcmp(buffer, "uv_loop_new") == 0) {
 
     uv_loop_new();
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_loop_set_data") == 0) {
-    uv_loop_t *arg0 = {0};
-    void *arg1 = {0};
-
-    uv_loop_set_data(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_loop_size") == 0) {
-
-    uv_loop_size();
     return NULL;
   }
 
@@ -1271,13 +1110,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     const uv_loop_t *arg0 = {0};
 
     uv_now(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_open_osfhandle") == 0) {
-    uv_os_fd_t arg0 = {0};
-
-    uv_open_osfhandle(arg0);
     return NULL;
   }
 
@@ -1367,14 +1199,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_os_setenv") == 0) {
-    const char *arg0 = {0};
-    const char *arg1 = {0};
-
-    uv_os_setenv(arg0, arg1);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_os_setpriority") == 0) {
     uv_pid_t arg0 = {0};
     int arg1 = {0};
@@ -1395,13 +1219,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     uv_utsname_t *arg0 = {0};
 
     uv_os_uname(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_os_unsetenv") == 0) {
-    const char *arg0 = {0};
-
-    uv_os_unsetenv(arg0);
     return NULL;
   }
 
@@ -1670,42 +1487,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_req_get_data") == 0) {
-    const uv_req_t *arg0 = {0};
-
-    uv_req_get_data(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_req_get_type") == 0) {
-    const uv_req_t *arg0 = {0};
-
-    uv_req_get_type(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_req_set_data") == 0) {
-    uv_req_t *arg0 = {0};
-    void *arg1 = {0};
-
-    uv_req_set_data(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_req_size") == 0) {
-    uv_req_type arg0 = {0};
-
-    uv_req_size(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_req_type_name") == 0) {
-    uv_req_type arg0 = {0};
-
-    uv_req_type_name(arg0);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_resident_set_memory") == 0) {
     size_t *arg0 = {0};
 
@@ -1718,62 +1499,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     uv_run_mode arg1 = {0};
 
     uv_run(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_rwlock_destroy") == 0) {
-    uv_rwlock_t *arg0 = {0};
-
-    uv_rwlock_destroy(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_rwlock_init") == 0) {
-    uv_rwlock_t *arg0 = {0};
-
-    uv_rwlock_init(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_rwlock_rdlock") == 0) {
-    uv_rwlock_t *arg0 = {0};
-
-    uv_rwlock_rdlock(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_rwlock_rdunlock") == 0) {
-    uv_rwlock_t *arg0 = {0};
-
-    uv_rwlock_rdunlock(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_rwlock_tryrdlock") == 0) {
-    uv_rwlock_t *arg0 = {0};
-
-    uv_rwlock_tryrdlock(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_rwlock_trywrlock") == 0) {
-    uv_rwlock_t *arg0 = {0};
-
-    uv_rwlock_trywrlock(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_rwlock_wrlock") == 0) {
-    uv_rwlock_t *arg0 = {0};
-
-    uv_rwlock_wrlock(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_rwlock_wrunlock") == 0) {
-    uv_rwlock_t *arg0 = {0};
-
-    uv_rwlock_wrunlock(arg0);
     return NULL;
   }
 
@@ -1880,13 +1605,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_sleep") == 0) {
-    unsigned int arg0 = {0};
-
-    uv_sleep(arg0);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_socketpair") == 0) {
     int arg0 = {0};
     int arg1 = {0};
@@ -1926,22 +1644,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     int arg1 = {0};
 
     uv_stream_set_blocking(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_strerror") == 0) {
-    int arg0 = {0};
-
-    uv_strerror(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_strerror_r") == 0) {
-    int arg0 = {0};
-    char *arg1 = {0};
-    size_t arg2 = {0};
-
-    uv_strerror_r(arg0, arg1, arg2);
     return NULL;
   }
 
@@ -2059,14 +1761,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_thread_equal") == 0) {
-    const uv_thread_t *arg0 = {0};
-    const uv_thread_t *arg1 = {0};
-
-    uv_thread_equal(arg0, arg1);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_thread_getaffinity") == 0) {
     uv_thread_t *arg0 = {0};
     char *arg1 = {0};
@@ -2079,19 +1773,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
   if (strcmp(buffer, "uv_thread_getcpu") == 0) {
 
     uv_thread_getcpu();
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_thread_join") == 0) {
-    uv_thread_t *arg0 = {0};
-
-    uv_thread_join(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_thread_self") == 0) {
-
-    uv_thread_self();
     return NULL;
   }
 
@@ -2156,13 +1837,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     uv_timer_t *arg0 = {0};
 
     uv_timer_stop(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_translate_sys_error") == 0) {
-    int arg0 = {0};
-
-    uv_translate_sys_error(arg0);
     return NULL;
   }
 
@@ -2424,18 +2098,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     double *arg0 = {0};
 
     uv_uptime(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_version") == 0) {
-
-    uv_version();
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_version_string") == 0) {
-
-    uv_version_string();
     return NULL;
   }
 

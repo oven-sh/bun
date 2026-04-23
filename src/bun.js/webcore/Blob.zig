@@ -677,15 +677,21 @@ pub fn writeFormat(this: *Blob, comptime Formatter: type, formatter: *Formatter,
     const Writer = @TypeOf(writer);
 
     if (this.isDetached()) {
-        if (this.is_jsdom_file) {
-            try writer.writeAll(comptime Output.prettyFmt("<d>[<r>File<r> detached<d>]<r>", enable_ansi_colors));
-        } else {
-            try writer.writeAll(comptime Output.prettyFmt("<d>[<r>Blob<r> detached<d>]<r>", enable_ansi_colors));
+        // A blob with no store and size > 0 was genuinely detached (e.g. after
+        // transferring its contents). An empty `new Blob([])` or `new File([])`
+        // also has no store but is a valid zero-byte blob — render it like a
+        // normal zero-sized blob instead of calling it "detached".
+        if (this.size > 0) {
+            if (this.is_jsdom_file) {
+                try writer.writeAll(comptime Output.prettyFmt("<d>[<r>File<r> detached<d>]<r>", enable_ansi_colors));
+            } else {
+                try writer.writeAll(comptime Output.prettyFmt("<d>[<r>Blob<r> detached<d>]<r>", enable_ansi_colors));
+            }
+            return;
         }
-        return;
-    }
 
-    {
+        try writeFormatForSize(this.is_jsdom_file, 0, writer, enable_ansi_colors);
+    } else {
         const store = this.store.?;
         switch (store.data) {
             .s3 => |*s3| {

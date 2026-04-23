@@ -155,6 +155,7 @@ pub fn enqueueRequest(this: *@This(), item: *JSMySQLQuery) void {
     this.#connection.enqueueRequest(item);
     this.resetConnectionTimeout();
     this.registerAutoFlusher();
+    this.updateReferenceType();
 }
 
 pub fn close(this: *@This()) void {

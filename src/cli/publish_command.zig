@@ -534,6 +534,21 @@ pub const PublishCommand = struct {
     ) PublishError!void {
         const registry = ctx.manager.scopeForPackageName(ctx.package_name);
 
+        // continues from `printSummary`
+        Output.pretty(
+            \\<b><blue>Tag<r>: {s}
+            \\<b><blue>Access<r>: {s}
+            \\<b><blue>Registry<r>: {s}
+            \\
+        , .{
+            if (ctx.manager.options.publish_config.tag.len > 0) ctx.manager.options.publish_config.tag else "latest",
+            if (ctx.manager.options.publish_config.access) |access| @tagName(access) else "default",
+            registry.url.href,
+        });
+
+        // dry-run stops here, no auth or network requests needed
+        if (ctx.manager.options.dry_run) return;
+
         if (registry.token.len == 0 and (registry.url.password.len == 0 or registry.url.username.len == 0)) {
             return error.NeedAuth;
         }
@@ -553,21 +568,6 @@ pub const PublishCommand = struct {
                 return;
             }
         }
-
-        // continues from `printSummary`
-        Output.pretty(
-            \\<b><blue>Tag<r>: {s}
-            \\<b><blue>Access<r>: {s}
-            \\<b><blue>Registry<r>: {s}
-            \\
-        , .{
-            if (ctx.manager.options.publish_config.tag.len > 0) ctx.manager.options.publish_config.tag else "latest",
-            if (ctx.manager.options.publish_config.access) |access| @tagName(access) else "default",
-            registry.url.href,
-        });
-
-        // dry-run stops here
-        if (ctx.manager.options.dry_run) return;
 
         const publish_req_body = try constructPublishRequestBody(directory_publish, ctx);
 

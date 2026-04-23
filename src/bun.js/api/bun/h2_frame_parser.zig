@@ -667,6 +667,9 @@ pub const H2FrameParser = struct {
     maxHeaderListPairs: u32 = 128,
     maxRejectedStreams: u32 = 100,
     maxOutstandingSettings: u32 = 10,
+    /// RFC 9113 §6.5: limits the number of settings entries accepted in a
+    /// single received SETTINGS frame. Node.js defaults to 32.
+    maxSettings: u32 = 32,
     outstandingSettings: u32 = 0,
     rejectedStreams: u32 = 0,
     maxSessionMemory: u32 = 10, //this limit is in MB
@@ -2420,13 +2423,24 @@ pub const H2FrameParser = struct {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Settings frame on connection stream", this.lastStreamID, true);
             return data.len;
         }
-        defer if (!isACK) this.sendSettingsACK();
+        // RFC 9113 §6.5: a SETTINGS_ACK confirms the settings were received
+        // and applied, so it must only be sent once the frame is accepted.
+        var needs_ack = !isACK;
+        defer if (needs_ack) this.sendSettingsACK();
 
         const settingByteSize = SettingsPayloadUnit.byteSize;
         if (frame.length > 0) {
             if (isACK or frame.length % settingByteSize != 0) {
                 log("invalid settings frame size", .{});
+                needs_ack = false;
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid settings frame size", this.lastStreamID, true);
+                return data.len;
+            }
+            const entry_count: u32 = @intCast(@divTrunc(frame.length, settingByteSize));
+            if (entry_count > this.maxSettings) {
+                log("settings frame exceeds maxSettings ({} > {})", .{ entry_count, this.maxSettings });
+                needs_ack = false;
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.ENHANCE_YOUR_CALM, "SETTINGS frame exceeded maxSettings", this.lastStreamID, true);
                 return data.len;
             }
         } else {
@@ -4718,6 +4732,11 @@ pub const H2FrameParser = struct {
                 if (try settings_js.get(globalObject, "maxOutstandingSettings")) |max_outstanding_settings| {
                     if (max_outstanding_settings.isNumber()) {
                         this.maxOutstandingSettings = @max(1, @as(u32, @truncate(max_outstanding_settings.to(u64))));
+                    }
+                }
+                if (try settings_js.get(globalObject, "maxSettings")) |max_settings| {
+                    if (max_settings.isNumber()) {
+                        this.maxSettings = @max(1, @as(u32, @truncate(max_settings.to(u64))));
                     }
                 }
                 if (try settings_js.get(globalObject, "maxSendHeaderBlockLength")) |max_send_header_block_length| {

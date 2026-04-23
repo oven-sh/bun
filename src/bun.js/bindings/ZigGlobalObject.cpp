@@ -2228,28 +2228,16 @@ void GlobalObject::finishCreation(VM& vm)
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {
             auto* global = init.owner;
             auto& vm = init.vm;
-            auto scope = DECLARE_THROW_SCOPE(vm);
 
-            // if we get an exception (termination, or from a Proxy trap on the global's
-            // prototype chain), we'd still like to set a non-null Map so that we don't segfault
-            auto setEmpty = [&]() {
-                ASSERT(scope.exception());
-                init.set(JSC::JSMap::create(init.vm, init.owner->mapStructure()));
-            };
-
+            // Read the registry via the C++ moduleLoader() accessor and getDirect() so
+            // user tampering with globalThis.Loader or the global prototype can't affect us.
             JSMap* registry = nullptr;
-            auto loaderValue = global->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "Loader"_s));
-            RETURN_IF_EXCEPTION(scope, setEmpty());
-            if (auto* loaderObject = loaderValue ? loaderValue.getObject() : nullptr) {
-                auto registryValue = loaderObject->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "registry"_s));
-                RETURN_IF_EXCEPTION(scope, setEmpty());
-                if (registryValue) {
-                    registry = jsDynamicCast<JSC::JSMap*>(registryValue);
-                }
+            if (auto* loader = global->moduleLoader()) {
+                registry = jsDynamicCast<JSC::JSMap*>(loader->getDirect(vm, JSC::Identifier::fromString(vm, "registry"_s)));
             }
 
             if (!registry) {
-                registry = JSC::JSMap::create(init.vm, init.owner->mapStructure());
+                registry = JSC::JSMap::create(vm, global->mapStructure());
             }
 
             init.set(registry);

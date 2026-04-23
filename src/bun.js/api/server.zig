@@ -2225,6 +2225,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                     // Abort the request very early.
                     if (len > this.config.max_request_body_size) {
+                        // Ensure Date header is up-to-date (RFC 9110: 4xx responses should include Date)
+                        this.vm.uwsLoop().updateDate();
                         resp.writeStatus("413 Request Entity Too Large");
                         resp.endWithoutBody(true);
                         return null;

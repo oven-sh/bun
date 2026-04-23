@@ -23,7 +23,7 @@ test(
     const inner = `console.log(require("child_process").execFileSync("/bin/sh", ["-c", "ulimit -Sn"]).toString().trim())`;
     const { stdout } = await execFileP(
       "/bin/sh",
-      ["-c", `ulimit -Sn 256; exec "$1" -e "$2"`, "sh", process.execPath, inner],
+      ["-c", `ulimit -Sn 256 && exec "$1" -e "$2"`, "sh", process.execPath, inner],
       { env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" } },
     );
 

@@ -412,6 +412,42 @@ const IncomingMessagePrototype = {
   set socket(value) {
     this[fakeSocketSymbol] = value;
   },
+  // Used by HTTP parser for adding headers from raw socket parsing
+  // This is needed for allowHTTP1 fallback in HTTP/2 servers
+  _addHeaderLine(field, value, dest) {
+    const lowercased = field.toLowerCase();
+    if (lowercased === "set-cookie") {
+      if (dest[lowercased] !== undefined) {
+        dest[lowercased].push(value);
+      } else {
+        dest[lowercased] = [value];
+      }
+    } else {
+      if (dest[lowercased] !== undefined) {
+        dest[lowercased] += ", " + value;
+      } else {
+        dest[lowercased] = value;
+      }
+    }
+  },
+  _addHeaderLines(headers, n) {
+    if (headers?.length) {
+      if (!this.headers) {
+        this.headers = Object.create(null);
+      }
+      if (!this.rawHeaders) {
+        this.rawHeaders = [];
+      }
+      // Add to rawHeaders
+      for (let i = 0; i < n; i++) {
+        this.rawHeaders.push(headers[i]);
+      }
+      // Parse and add to headers object
+      for (let i = 0; i < n; i += 2) {
+        this._addHeaderLine(headers[i], headers[i + 1], this.headers);
+      }
+    }
+  },
 } satisfies typeof import("node:http").IncomingMessage.prototype;
 IncomingMessage.prototype = IncomingMessagePrototype;
 $setPrototypeDirect.$call(IncomingMessage, Readable);

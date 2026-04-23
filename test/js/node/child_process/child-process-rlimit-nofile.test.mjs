@@ -9,9 +9,9 @@
  * startup raise actually runs (neither Bun nor Node lowers an already-high
  * limit), then checks what a grandchild shell sees.
  */
-import { test } from "node:test";
 import assert from "node:assert";
 import { execFile } from "node:child_process";
+import { test } from "node:test";
 import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);

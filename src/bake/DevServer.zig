@@ -2427,7 +2427,10 @@ pub fn finalizeBundle(
             false,
         );
         const client_index = ctx.getCachedIndex(.client, index).*.unwrap() orelse @panic("unresolved index");
-        const route_bundle_index = dev.client_graph.htmlRouteBundleIndex(client_index);
+        // Skip HTML chunks that don't correspond to an actual HTML route.
+        // This can happen when HTML files are imported with { type: "text" }
+        // and get incorrectly assigned the .html loader during HMR. (#22533)
+        const route_bundle_index = dev.client_graph.getFileByIndex(client_index).html_route_bundle_index orelse continue;
         const route_bundle = dev.routeBundlePtr(route_bundle_index);
         assert(route_bundle.data.html.bundled_file == client_index);
         const html = &route_bundle.data.html;

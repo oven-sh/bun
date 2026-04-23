@@ -1358,6 +1358,165 @@ it("should close with WAL enabled", () => {
   expect(readdirSync(dir).sort()).toEqual(["empty.txt", "my.db"]);
 });
 
+describe("fileControl", () => {
+  it("should work with allowed opcodes and properly sized buffers", () => {
+    const dir = tempDirWithFiles("sqlite-fcntl-test", { "empty.txt": "" });
+    const file = path.join(dir, "my.db");
+    const db = new Database(file);
+    db.exec("PRAGMA journal_mode = WAL");
+
+    // SQLITE_FCNTL_PERSIST_WAL with integer argument (allowed, int-sized)
+    db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+
+    // SQLITE_FCNTL_DATA_VERSION with a properly sized buffer (4 bytes for int)
+    const buf = new Uint8Array(4);
+    db.fileControl(constants.SQLITE_FCNTL_DATA_VERSION, buf);
+
+    db.close();
+  });
+
+  it("should reject unsupported opcodes", () => {
+    const db = new Database(":memory:");
+
+    // SQLITE_FCNTL_FILE_POINTER (7) - writes a pointer, not in allowlist
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_FILE_POINTER, new Uint8Array(8))).toThrow(
+      "Unsupported file control opcode",
+    );
+
+    // SQLITE_FCNTL_VFS_POINTER (27) - writes a pointer, not in allowlist
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_VFS_POINTER, new Uint8Array(8))).toThrow(
+      "Unsupported file control opcode",
+    );
+
+    // SQLITE_FCNTL_JOURNAL_POINTER (28) - writes a pointer, not in allowlist
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_JOURNAL_POINTER, new Uint8Array(8))).toThrow(
+      "Unsupported file control opcode",
+    );
+
+    // SQLITE_FCNTL_BUSYHANDLER (15) - expects callback, not in allowlist
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_BUSYHANDLER, new Uint8Array(16))).toThrow(
+      "Unsupported file control opcode",
+    );
+
+    // SQLITE_FCNTL_PRAGMA (14) - internal, not in allowlist
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_PRAGMA, new Uint8Array(24))).toThrow(
+      "Unsupported file control opcode",
+    );
+
+    // Completely made-up opcode
+    expect(() => db.fileControl(99999, new Uint8Array(64))).toThrow("Unsupported file control opcode");
+
+    db.close();
+  });
+
+  it("should reject undersized buffers for opcodes that write data", () => {
+    const dir = tempDirWithFiles("sqlite-fcntl-buf-test", { "empty.txt": "" });
+    const file = path.join(dir, "my.db");
+    const db = new Database(file);
+
+    // SQLITE_FCNTL_PERSIST_WAL needs at least 4 bytes (sizeof int)
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(1))).toThrow("Buffer too small");
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(3))).toThrow("Buffer too small");
+
+    // Should succeed with exactly 4 bytes
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(4))).not.toThrow();
+
+    // SQLITE_FCNTL_SIZE_LIMIT needs at least 8 bytes (sizeof sqlite3_int64)
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_SIZE_LIMIT, new Uint8Array(4))).toThrow("Buffer too small");
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_SIZE_LIMIT, new Uint8Array(7))).toThrow("Buffer too small");
+
+    // Should succeed with exactly 8 bytes
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_SIZE_LIMIT, new Uint8Array(8))).not.toThrow();
+
+    db.close();
+  });
+
+  it("should accept null argument for no-arg opcodes", () => {
+    const dir = tempDirWithFiles("sqlite-fcntl-null-test", { "empty.txt": "" });
+    const file = path.join(dir, "my.db");
+    const db = new Database(file);
+
+    // SQLITE_FCNTL_RESET_CACHE takes no argument, null is fine
+    // (May return SQLITE_NOTFOUND on some VFS implementations, which is OK)
+    const result = db.fileControl(constants.SQLITE_FCNTL_RESET_CACHE, null);
+    expect(typeof result).toBe("number");
+
+    db.close();
+  });
+
+  it("should reject null argument for opcodes that require writable storage", () => {
+    const dir = tempDirWithFiles("sqlite-fcntl-null-req-test", { "empty.txt": "" });
+    const file = path.join(dir, "my.db");
+    const db = new Database(file);
+
+    // SQLITE_FCNTL_PERSIST_WAL requires int* storage
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, null)).toThrow(
+      "This opcode requires a buffer or value argument",
+    );
+
+    // SQLITE_FCNTL_DATA_VERSION requires int* storage
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_DATA_VERSION, null)).toThrow(
+      "This opcode requires a buffer or value argument",
+    );
+
+    // SQLITE_FCNTL_SIZE_LIMIT requires sqlite3_int64* storage
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_SIZE_LIMIT, null)).toThrow(
+      "This opcode requires a buffer or value argument",
+    );
+
+    db.close();
+  });
+
+  it("should handle number arguments correctly for int64 opcodes", () => {
+    const db = new Database(":memory:");
+
+    // SQLITE_FCNTL_SIZE_LIMIT with a number argument should use 64-bit conversion.
+    // Passing -1 queries the current limit without changing it.
+    const result = db.fileControl(constants.SQLITE_FCNTL_SIZE_LIMIT, -1);
+    expect(typeof result).toBe("number");
+
+    db.close();
+  });
+
+  it("should reject non-finite numeric arguments for int64 opcodes", () => {
+    const db = new Database(":memory:");
+
+    // NaN and Infinity are not valid for int64 opcodes
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_SIZE_LIMIT, NaN)).toThrow("Expected a finite integer");
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_SIZE_LIMIT, Infinity)).toThrow("Expected a finite integer");
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_SIZE_LIMIT, -Infinity)).toThrow("Expected a finite integer");
+
+    db.close();
+  });
+
+  it("should reject non-finite numeric arguments for int-sized opcodes", () => {
+    const dir = tempDirWithFiles("sqlite-fcntl-nan-int-test", { "empty.txt": "" });
+    const file = path.join(dir, "my.db");
+    const db = new Database(file);
+    db.exec("PRAGMA journal_mode = WAL");
+
+    // NaN and Infinity are not valid for int-sized opcodes either
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, NaN)).toThrow("Expected a finite integer");
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, Infinity)).toThrow("Expected a finite integer");
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, -Infinity)).toThrow("Expected a finite integer");
+
+    db.close();
+  });
+
+  it("should reject plain objects as arguments", () => {
+    const db = new Database(":memory:");
+
+    // A plain object is not a TypedArray - should be treated as a non-matching
+    // object (resultPtr stays null) and rejected for opcodes needing storage.
+    // For int-sized opcodes:
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, {})).toThrow();
+    // For int64-sized opcodes:
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_SIZE_LIMIT, {})).toThrow();
+
+    db.close();
+  });
+});
+
 it("close(true) should throw an error if the database is in use", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");

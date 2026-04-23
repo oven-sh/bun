@@ -1756,6 +1756,55 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
     return JSValue::encode(jsUndefined());
 }
 
+// Returns the minimum required buffer size in bytes for a given SQLITE_FCNTL_*
+// opcode, or -1 if the opcode is not allowed. This restricts fileControl to a
+// safe subset of opcodes with well-defined argument sizes, preventing misuse
+// with undersized buffers or opcodes that expect callback pointers.
+static int fcntlMinimumBufferSize(int op)
+{
+    switch (op) {
+    // Opcodes that use int* (4 bytes):
+    case SQLITE_FCNTL_LOCKSTATE: // 1
+    case SQLITE_FCNTL_LAST_ERRNO: // 4
+    case SQLITE_FCNTL_CHUNK_SIZE: // 6
+    case SQLITE_FCNTL_PERSIST_WAL: // 10
+    case SQLITE_FCNTL_POWERSAFE_OVERWRITE: // 13
+    case SQLITE_FCNTL_WAL_BLOCK: // 24
+    case SQLITE_FCNTL_LOCK_TIMEOUT: // 34
+    case SQLITE_FCNTL_DATA_VERSION: // 35
+    case SQLITE_FCNTL_RESERVE_BYTES: // 38
+    case SQLITE_FCNTL_EXTERNAL_READER: // 40
+        return sizeof(int);
+
+    // Opcodes that use sqlite3_int64* (8 bytes):
+    case SQLITE_FCNTL_SIZE_HINT: // 5
+    case SQLITE_FCNTL_MMAP_SIZE: // 18
+    case SQLITE_FCNTL_SIZE_LIMIT: // 36
+        return sizeof(sqlite3_int64);
+
+    // Opcodes that take no argument (pArg is unused/NULL is fine):
+    case SQLITE_FCNTL_SYNC_OMITTED: // 8
+    case SQLITE_FCNTL_OVERWRITE: // 11
+    case SQLITE_FCNTL_COMMIT_PHASETWO: // 22
+    case SQLITE_FCNTL_BEGIN_ATOMIC_WRITE: // 31
+    case SQLITE_FCNTL_COMMIT_ATOMIC_WRITE: // 32
+    case SQLITE_FCNTL_ROLLBACK_ATOMIC_WRITE: // 33
+    case SQLITE_FCNTL_CKPT_DONE: // 37
+    case SQLITE_FCNTL_CKPT_START: // 39
+    case SQLITE_FCNTL_RESET_CACHE: // 42
+        return 0;
+
+    // All other opcodes are disallowed. This includes opcodes that:
+    // - Return internal pointers (FILE_POINTER, VFS_POINTER, JOURNAL_POINTER)
+    // - Expect callback function pointers (BUSYHANDLER)
+    // - Are Windows-specific handle operations (WIN32_*)
+    // - Are internal/extension-specific (PRAGMA, RBU, ZIPVFS, PDB, CKSM_FILE)
+    // - Are obsolete (GET/SET_LOCKPROXYFILE)
+    default:
+        return -1;
+    }
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1786,6 +1835,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     int dbIndex = dbNumber.toInt32(lexicalGlobalObject);
     int op = opNumber.toInt32(lexicalGlobalObject);
 
+    // Validate opcode against allowlist and get minimum buffer size requirement.
+    int minBufSize = fcntlMinimumBufferSize(op);
+    if (minBufSize < 0) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Unsupported file control opcode"_s));
+        return {};
+    }
+
     if (dbIndex < 0 || dbIndex >= databases().size()) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
@@ -1804,8 +1860,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    int resultInt = -1;
+    // Use a stack buffer large enough for any allowed opcode (up to 8 bytes for
+    // sqlite3_int64). This avoids issues when a number argument is passed but
+    // the opcode writes more than sizeof(int) bytes.
+    alignas(sqlite3_int64) char resultBuf[sizeof(sqlite3_int64)] = {};
     void* resultPtr = nullptr;
+
     if (resultValue.isObject()) {
         if (auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(resultValue.getObject())) {
             if (view->isDetached()) {
@@ -1818,16 +1878,55 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
                 throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected buffer"_s));
                 return {};
             }
+
+            // Validate that the provided buffer is large enough for this opcode.
+            if (view->byteLength() < static_cast<size_t>(minBufSize)) {
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, makeString("Buffer too small for this opcode; need at least "_s, minBufSize, " bytes"_s)));
+                return {};
+            }
         }
     } else if (resultValue.isNumber()) {
-        resultInt = resultValue.toInt32(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        resultPtr = &resultInt;
+        // For opcodes expecting sqlite3_int64, convert to 64-bit so we fill
+        // the full 8 bytes that sqlite3_file_control will read/write.
+        if (minBufSize == sizeof(sqlite3_int64)) {
+            double raw = resultValue.toNumber(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!std::isfinite(raw)
+                || raw < static_cast<double>(std::numeric_limits<sqlite3_int64>::min())
+                || raw > static_cast<double>(std::numeric_limits<sqlite3_int64>::max())) {
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected a finite integer for this opcode"_s));
+                return {};
+            }
+            sqlite3_int64 resultInt64 = static_cast<sqlite3_int64>(raw);
+            memcpy(resultBuf, &resultInt64, sizeof(resultInt64));
+        } else {
+            double raw = resultValue.toNumber(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!std::isfinite(raw)) {
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected a finite integer for this opcode"_s));
+                return {};
+            }
+            int resultInt = resultValue.toInt32(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            memcpy(resultBuf, &resultInt, sizeof(resultInt));
+        }
+        resultPtr = resultBuf;
     } else if (resultValue.isNull()) {
-
+        // Reject null when the opcode requires writable storage.
+        if (minBufSize > 0) {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "This opcode requires a buffer or value argument"_s));
+            return {};
+        }
     } else {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected result to be a number, null or a TypedArray"_s));
+        return {};
+    }
+
+    // Final safety check: reject nullptr when the opcode requires writable
+    // storage. This catches cases like passing a plain object (not a TypedArray)
+    // where the dynamic cast silently fails and resultPtr stays null.
+    if (resultPtr == nullptr && minBufSize > 0) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "This opcode requires a buffer or value argument"_s));
         return {};
     }
 

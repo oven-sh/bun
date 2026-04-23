@@ -172,17 +172,22 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // compiled source files (deps like picohttpparser that provide .c files
   // instead of a .a — we compile those alongside bun's own sources).
   const depLibs: string[] = [];
+  const depObjects: string[] = [];
   const depIncludes: string[] = [];
   // Outputs of deps that provide headers — used as implicit inputs on PCH/cc/
   // no-PCH cxx so a dep rebuild invalidates compiles that #include its headers
   // (the .a is the signal — see comment at the PCH step). Deps with no provided
   // includes (tinycc, lolhtml) are skipped: nothing to invalidate, and a tinycc
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
-  // rebuild. Link still gets every dep via depLibs.
+  // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
   for (const d of deps) {
     depLibs.push(...d.libs);
+    depObjects.push(...d.objects);
     depIncludes.push(...d.includes);
+    // d.outputs is the "headers are ready" signal: for nested-cmake/
+    // prebuilt that's the .a/stamp (headers are undeclared side-effects),
+    // for direct deps it's the generated-header set + source stamp.
     if (d.includes.length > 0) depHeaderSignal.push(...d.outputs);
   }
 
@@ -380,7 +385,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     n.phony(d.name, d.sources.map(compileC));
   }
 
-  const allObjects = [...cxxObjects, ...cObjects];
+  // Dep objects (when !cfg.archiveDeps) are linked alongside bun's own
+  // objects — same response file, same archive in cpp-only mode. With
+  // cfg.archiveDeps they live in depLibs as .a files instead.
+  const allObjects = [...cxxObjects, ...cObjects, ...depObjects];
 
   // ─── Step 7: cpp-only → archive and return ───
   // CI's build-cpp step: archive all .o into libbun.a, stop. The sibling

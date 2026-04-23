@@ -294,7 +294,8 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
   const parallelSema = usingParallelCompiler(cfg) ? " --env=ZIG_PARALLEL_SEMA=1" : "";
   n.rule("zig_build", {
     command: `${stream} ${consoleMode ? "--console" : "--zig-progress"} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache${parallelSema} $zig build $step $args`,
-    description: "zig $step → $out",
+    // $out can be 16 shard paths; the build edge sets a compact $label.
+    description: "zig $step → $label",
     ...(consoleMode && { pool: "console" }),
     restat: true,
   });
@@ -421,6 +422,7 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
       args: quoteArgs(args, cfg.host.os === "windows"),
       zig_local_cache: cacheDirs.local,
       zig_global_cache: cacheDirs.global,
+      label: outputs.length > 1 ? `bun-zig.{0..${outputs.length - 1}}.o` : "bun-zig.o",
     },
   });
   n.phony("bun-zig", outputs);

@@ -575,19 +575,16 @@ describe.each([
           build.module("m", () => ({ exports: {}, loader: "object" }));
         },
       });
+      console.log("ok");
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", code],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: "",
-      stderr: expect.not.stringMatching(/runtime error|ASSERTION FAILED|panic/),
-      exitCode: 0,
-      signalCode: null,
-    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   });
 });

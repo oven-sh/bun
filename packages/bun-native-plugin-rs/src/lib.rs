@@ -455,7 +455,7 @@ impl<'a> OnBeforeParse<'a> {
         Ok(Self {
             args_raw: args,
             result_raw: result,
-            compilation_context: std::ptr::null_mut() as *mut _,
+            compilation_context: None,
             __phantom: Default::default(),
         })
     }
@@ -585,30 +585,34 @@ impl<'a> OnBeforeParse<'a> {
         let source_ptr = source.as_mut_ptr();
         let source_len = source.len();
 
-        if self.compilation_context.is_null() {
-            self.compilation_context = Box::into_raw(Box::new(SourceCodeContext {
+        if self.compilation_context.is_none() {
+            let context = Box::new(SourceCodeContext {
                 source_ptr,
                 source_len,
                 source_cap,
-            }));
+            });
+            // Keep ownership on the Rust side and only hand Bun a raw pointer.
+            let context_raw = Box::into_raw(context);
+            self.compilation_context = Some(unsafe { Box::from_raw(context_raw) });
 
             // SAFETY: We don't hand out mutable references to `result_raw` so dereferencing it is safe.
             unsafe {
                 (*self.result_raw).plugin_source_code_context =
-                    self.compilation_context as *mut c_void;
+                    context_raw as *mut c_void;
                 (*self.result_raw).free_plugin_source_code_context =
                     Some(free_plugin_source_code_context);
             }
         } else {
-            unsafe {
-                // SAFETY: If we're here we know that `compilation_context` is not null.
-                let context = &mut *self.compilation_context;
-
-                drop(String::from_raw_parts(
-                    context.source_ptr,
-                    context.source_len,
-                    context.source_cap,
-                ));
+            if let Some(context) = self.compilation_context.as_mut() {
+                // SAFETY: We created this string from `String::leak` and are now reconstructing it
+                // to drop the previous allocation before replacing it.
+                unsafe {
+                    drop(String::from_raw_parts(
+                        context.source_ptr,
+                        context.source_len,
+                        context.source_cap,
+                    ));
+                }
 
                 context.source_ptr = source_ptr;
                 context.source_len = source_len;

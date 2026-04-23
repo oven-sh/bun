@@ -321,6 +321,12 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
       await checkSameOutput("test_uv_os_getppid");
     });
   });
+
+  describe("async_hooks", () => {
+    it("can call EmitAsyncInit, EmitAsyncDestroy, and related functions", async () => {
+      await checkSameOutput("test_v8_async_hooks");
+    });
+  });
 });
 
 async function checkSameOutput(testName: string, args?: string, thisValue?: any) {

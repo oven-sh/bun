@@ -17,7 +17,7 @@ process: *Process,
 stdin: Writable,
 stdout: Readable,
 stderr: Readable,
-stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.FD) = .{},
+stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.spawn.PosixSpawnResult.ExtraPipe) = .{},
 pid_rusage: ?Rusage = null,
 
 /// Terminal attached to this subprocess (if spawned with terminal option)
@@ -485,10 +485,9 @@ pub fn getStdio(this: *Subprocess, global: *JSGlobalObject) bun.JSError!JSValue 
             } else {
                 try array.push(global, .null);
             }
-        } else if (item.isValid()) {
-            try array.push(global, JSValue.jsNumber(item.cast()));
-        } else {
-            try array.push(global, .null);
+        } else switch (item) {
+            .owned_fd, .unowned_fd => |fd| try array.push(global, JSValue.jsNumber(fd.cast())),
+            .unavailable => try array.push(global, .null),
         }
     }
     return array;
@@ -749,8 +748,9 @@ pub fn finalizeStreams(this: *Subprocess) void {
             if (item == .buffer) {
                 item.buffer.close(onPipeClose);
             }
-        } else if (item.isValid()) {
-            item.close();
+        } else switch (item) {
+            .owned_fd => |fd| fd.close(),
+            .unowned_fd, .unavailable => {},
         }
     }
     this.stdio_pipes.clearAndFree(bun.default_allocator);

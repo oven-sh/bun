@@ -101,19 +101,6 @@ docker buildx build \
     exit 1
 }
 
-# Pre-pull test docker images (postgres, mysql, redis, minio, …) into the host
-# daemon so tests don't fetch them at runtime. /var/lib/docker is on the root
-# volume and survives into the AMI. Best-effort — a missing script or docker
-# hiccup shouldn't fail the bake.
-if git clone --depth=1 --branch "${BUN_BOOTSTRAP_REPO_REF:-main}" \
-    https://github.com/oven-sh/bun.git /tmp/bun-test-docker; then
-    if [ -f /tmp/bun-test-docker/test/docker/prepare-ci.sh ]; then
-        (cd /tmp/bun-test-docker/test/docker && sh prepare-ci.sh) || \
-            echo "warning: prepare-ci.sh failed; test docker images not pre-pulled"
-    fi
-    rm -rf /tmp/bun-test-docker
-fi
-
 # Create container to ensure image is cached in AMI
 docker container create \
     --name buildkite \

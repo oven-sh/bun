@@ -3,8 +3,7 @@
  *
  * On macOS the hard RLIMIT_NOFILE defaults to RLIM_INFINITY. Both Bun and Node
  * raise the soft limit on startup; Node caps the raise at 1<<20. Raising it
- * anywhere near INT_MAX breaks some child processes that read the limit into
- * an int — e.g., FlexLM lmutil fails with "Cannot read data (-16,287)".
+ * anywhere near INT_MAX breaks child processes that read the limit into an int.
  *
  * The test lowers the soft limit to 256 before exec'ing the runtime so its
  * startup raise actually runs (neither Bun nor Node lowers an already-high

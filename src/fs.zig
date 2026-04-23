@@ -798,8 +798,8 @@ pub const FileSystem = struct {
                 file_limit = limit.max;
                 Limit.handles = file_limit;
                 // Cap at 1<<20 to match Node.js. On macOS the hard limit defaults to
-                // RLIM_INFINITY; raising soft anywhere near INT_MAX breaks some child
-                // processes
+                // RLIM_INFINITY; raising soft anywhere near INT_MAX breaks child
+                // processes that read the limit into an int.
                 // https://github.com/nodejs/node/blob/v25.9.0/src/node.cc#L621-L627
                 // https://github.com/postgres/postgres/blob/fee2b3ea2ecd0da0c88832b37ac0d9f6b3bfb9a9/src/backend/storage/file/fd.c#L1072
                 // https://discord.com/channels/876711213126520882/1316342194176790609/1318175562367242271

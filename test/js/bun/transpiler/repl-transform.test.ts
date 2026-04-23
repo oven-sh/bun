@@ -11,6 +11,13 @@ describe("Bun.Transpiler replMode", () => {
       expect(result).toContain("value:");
     });
 
+    test("emits \"use strict\" directive for TCO (issue #29647)", () => {
+      // JSC only applies tail-call optimization to strict-mode functions, so
+      // the REPL wrapper must evaluate as strict mode to match `bun run`.
+      const result = transpiler.transformSync("function foo(n) { return foo(n + 1); } foo(0)");
+      expect(result.startsWith(`"use strict";`)).toBe(true);
+    });
+
     test("variable declaration with await", () => {
       const result = transpiler.transformSync("var x = await 1");
       // Should hoist var declaration

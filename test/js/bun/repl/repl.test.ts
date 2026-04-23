@@ -152,6 +152,50 @@ describe.concurrent("Bun REPL", () => {
     });
   });
 
+  describe("strict mode", () => {
+    // Issue #29647: the REPL evaluated code as a sloppy-mode Program, so
+    // JavaScriptCore skipped proper tail calls (TCO only applies in strict
+    // mode). Recursing deeply would hit "Maximum call stack size exceeded"
+    // in the REPL while the same code ran fine via `bun run <file>`. The
+    // transform now emits a top-level `"use strict"` directive so functions
+    // and arrows inside the wrapper IIFE are strict-mode and JSC applies TCO.
+    test("function declarations are tail-call optimized (issue #29647)", async () => {
+      const { stdout, stderr, exitCode } = await runRepl([
+        "function foo(n) { if (n > 100000) return n; return foo(n + 1); }",
+        "foo(0)",
+        ".exit",
+      ]);
+      const output = stripAnsi(stdout + stderr);
+      expect(output).not.toContain("Maximum call stack size exceeded");
+      expect(output).toContain("100001");
+      expect(exitCode).toBe(0);
+    });
+
+    test("arrow functions are tail-call optimized (issue #29647)", async () => {
+      const { stdout, stderr, exitCode } = await runRepl([
+        "const bar = (n) => n > 100000 ? n : bar(n + 1)",
+        "bar(0)",
+        ".exit",
+      ]);
+      const output = stripAnsi(stdout + stderr);
+      expect(output).not.toContain("Maximum call stack size exceeded");
+      expect(output).toContain("100001");
+      expect(exitCode).toBe(0);
+    });
+
+    test("assignment to undeclared identifier throws (matches bun run)", async () => {
+      // In sloppy mode this would silently create a global. The REPL now
+      // runs in strict mode (same as `bun run`), so this throws ReferenceError.
+      const { stdout, stderr, exitCode } = await runRepl([
+        "undeclaredIdentifier123 = 1",
+        ".exit",
+      ]);
+      const output = stripAnsi(stdout + stderr);
+      expect(output).toContain("undeclaredIdentifier123 is not defined");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("special variables", () => {
     test("_ contains last result", async () => {
       const { stdout, exitCode } = await runRepl(["42", "_", ".exit"]);

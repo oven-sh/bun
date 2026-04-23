@@ -268,13 +268,21 @@ pub fn ReplTransforms(comptime P: type) type {
                 .args = ExprNodeList{},
             }, logger.Loc.Empty);
 
-            // Final output: hoisted declarations + IIFE call
-            const final_stmts_count = hoisted_stmts.items.len + 1;
+            // Final output: "use strict" directive + hoisted declarations + IIFE call
+            //
+            // The directive makes the whole REPL Program strict mode (and the IIFE body
+            // inherits strictness from it), which matches how `bun run <file>` evaluates
+            // code (as a Module, implicitly strict). In particular, JavaScriptCore only
+            // applies proper tail calls to strict-mode functions, so without this the
+            // recursive user functions declared inside the IIFE would not be TCO'd — see
+            // issue #29647.
+            const final_stmts_count = hoisted_stmts.items.len + 2;
             var final_stmts = bun.handleOom(allocator.alloc(Stmt, final_stmts_count));
+            final_stmts[0] = p.s(S.Directive{ .value = "use strict" }, logger.Loc.Empty);
             for (hoisted_stmts.items, 0..) |stmt, j| {
-                final_stmts[j] = stmt;
+                final_stmts[j + 1] = stmt;
             }
-            final_stmts[hoisted_stmts.items.len] = p.s(S.SExpr{ .value = iife }, logger.Loc.Empty);
+            final_stmts[final_stmts_count - 1] = p.s(S.SExpr{ .value = iife }, logger.Loc.Empty);
 
             // Update parts
             if (parts.items.len > 0) {

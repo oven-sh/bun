@@ -1,5 +1,6 @@
 /**
- * This test runs under both `node --test` and `bun test`.
+ * This test runs under `bun test` and (via node:test/node:assert) under
+ * `node --experimental-strip-types --test`.
  *
  * On macOS the hard RLIMIT_NOFILE defaults to RLIM_INFINITY. Both Bun and Node
  * raise the soft limit on startup; Node caps the raise at 1<<20. Raising it

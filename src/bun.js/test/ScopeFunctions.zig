@@ -402,7 +402,17 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
         return globalThis.throw("{f}() expects a number, object, or undefined as the third argument", .{signature});
     }
 
-    result.description = if (description.isUndefinedOrNull()) null else try getDescription(gpa, globalThis, description, signature);
+    result.description = if (description.isUndefinedOrNull()) blk: {
+        // If description is not provided, try to get it from the callback function name
+        // This matches Jest behavior: describe(fn, callback) uses fn.name as description
+        if (callback != null and callback.?.isFunction()) {
+            const func_name = try callback.?.getName(globalThis);
+            if (func_name.length() > 0) {
+                break :blk try func_name.toOwnedSlice(gpa);
+            }
+        }
+        break :blk null;
+    } else try getDescription(gpa, globalThis, description, signature);
 
     if (result.options.retry == null) {
         if (bun.jsc.Jest.Jest.runner) |runner| {

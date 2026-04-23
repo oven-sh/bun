@@ -994,6 +994,19 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
+            // Materialize any lazily-loaded Request properties before we
+            // sever the link to the underlying uws request, so that the
+            // Request object remains usable after the upgrade (e.g. when
+            // stored in websocket data).  See #27927.
+            request.ensureURL() catch {
+                request.url = bun.String.empty;
+            };
+            if (!request.hasFetchHeaders()) {
+                if (upgrader.req) |req| {
+                    request.setFetchHeaders(.createFromUWS(req));
+                }
+            }
+
             // --- After this point, do not throw an exception
             // See https://github.com/oven-sh/bun/issues/1339
 

@@ -2225,6 +2225,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
                     // Abort the request very early.
                     if (len > this.config.max_request_body_size) {
+                        // Add Date header as required by HTTP spec (RFC 9110)
+                        // All 2xx, 3xx, and 4xx responses MUST include a Date header
+                        if (this.date_header_timer) |timer| {
+                            resp.writeHeader("Date", timer.getDateString());
+                        }
                         resp.writeStatus("413 Request Entity Too Large");
                         resp.endWithoutBody(true);
                         return null;

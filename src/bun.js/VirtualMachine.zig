@@ -489,6 +489,24 @@ pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
         this.hide_bun_stackframes = false;
     }
 
+    // Re-evaluate color flags from env-file values.
+    // Output.Source.setInit() runs before --env-file is loaded, so
+    // NO_COLOR / FORCE_COLOR from .env files are missed at startup.
+    // Only act if the process env didn't already have these vars
+    // (startup already handled those via bun.env_var.*.get()).
+    if (bun.getenvZ("FORCE_COLOR") == null and bun.getenvZ("NO_COLOR") == null) {
+        // Neither color var was in process env — check if env-file introduced one.
+        // FORCE_COLOR takes precedence over NO_COLOR (matches startup if/else-if).
+        if (map.get("FORCE_COLOR")) |force_color| {
+            const enable = force_color.len == 0 or bun.env_var.isValueTruthy(force_color);
+            Output.enable_ansi_colors_stdout = enable;
+            Output.enable_ansi_colors_stderr = enable;
+        } else if (map.get("NO_COLOR") != null) {
+            Output.enable_ansi_colors_stdout = false;
+            Output.enable_ansi_colors_stderr = false;
+        }
+    }
+
     if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER.get()) {
         this.transpiler_store.enabled = false;
     }

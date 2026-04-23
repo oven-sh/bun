@@ -610,6 +610,22 @@ pub const Expect = struct {
         } else {
             err_value_res = .js_undefined;
         }
+
+        // Error messages from matchers (e.g. toMatchObject) contain ANSI
+        // escape codes baked in by throwPrettyMatcherError(). Strip them
+        // so snapshot content is deterministic regardless of terminal
+        // capabilities. Only error-throw snapshot matchers reach here;
+        // regular toMatchSnapshot is unaffected.
+        if (err_value_res != .js_undefined) {
+            var slice = try err_value_res.toSlice(globalThis, default_allocator);
+            defer slice.deinit();
+            const raw = slice.slice();
+            if (strings.indexOfChar(raw, '\x1b') != null) {
+                const stripped = stripAnsiFromSlice(raw);
+                defer default_allocator.free(stripped);
+                err_value_res = try bun.String.createUTF8ForJS(globalThis, stripped);
+            }
+        }
         return err_value_res;
     }
     const TrimResult = struct { trimmed: []const u8, start_indent: ?[]const u8, end_indent: ?[]const u8 };
@@ -2245,6 +2261,65 @@ test "Expect.trimLeadingWhitespaceForInlineSnapshot" {
 
 test "fuzz Expect.trimLeadingWhitespaceForInlineSnapshot" {
     try std.testing.fuzz(testOne, .{});
+}
+
+/// Strip ANSI escape sequences (CSI and OSC) from a byte slice, returning
+/// a newly allocated slice. Caller owns the returned memory. Used to clean
+/// error messages captured by toThrowErrorMatchingSnapshot — matcher errors
+/// contain ANSI codes from throwPrettyMatcherError() that should not leak
+/// into snapshot files.
+fn stripAnsiFromSlice(input: []const u8) []const u8 {
+    const buf = bun.handleOom(default_allocator.alloc(u8, input.len));
+    var read: usize = 0;
+    var write: usize = 0;
+
+    while (read < input.len) {
+        if (input[read] == '\x1b' and read + 1 < input.len) {
+            if (input[read + 1] == '[') {
+                // CSI sequence: ESC [ <params> <final byte 0x40-0x7E>
+                const seq_start = read;
+                read += 2;
+                while (read < input.len) {
+                    const c = input[read];
+                    read += 1;
+                    if (c >= 0x40 and c <= 0x7E) break;
+                } else {
+                    // Unterminated — preserve ESC and rescan after it.
+                    buf[write] = '\x1b';
+                    write += 1;
+                    read = seq_start + 1;
+                }
+                continue;
+            } else if (input[read + 1] == ']') {
+                // OSC sequence: ESC ] ... terminated by BEL or ST (ESC \)
+                const seq_start = read;
+                read += 2;
+                const found_terminator = while (read < input.len) {
+                    if (input[read] == 0x07) {
+                        read += 1;
+                        break true;
+                    } else if (input[read] == '\x1b' and read + 1 < input.len and input[read + 1] == '\\') {
+                        read += 2;
+                        break true;
+                    }
+                    read += 1;
+                } else false;
+                if (!found_terminator) {
+                    buf[write] = '\x1b';
+                    write += 1;
+                    read = seq_start + 1;
+                }
+                continue;
+            }
+        }
+        buf[write] = input[read];
+        write += 1;
+        read += 1;
+    }
+
+    const result = bun.handleOom(default_allocator.dupe(u8, buf[0..write]));
+    default_allocator.free(buf);
+    return result;
 }
 
 const string = []const u8;

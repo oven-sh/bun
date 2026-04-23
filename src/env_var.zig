@@ -313,16 +313,7 @@ const kind = struct {
         };
 
         fn stringIsTruthy(s: []const u8) bool {
-            // Most values are considered truthy, except for "", "0", "false", "no", and "off".
-            const false_values = .{ "", "0", "false", "no", "off" };
-
-            inline for (false_values) |tv| {
-                if (std.ascii.eqlIgnoreCase(s, tv)) {
-                    return false;
-                }
-            }
-
-            return true;
+            return isValueTruthy(s);
         }
 
         // This is a template which ignores its parameter, but is necessary so that a separate
@@ -702,6 +693,16 @@ const FeatureFlagOpts = struct {
 
 fn newFeatureFlag(comptime env_var: [:0]const u8, comptime opts: FeatureFlagOpts) type {
     return New(kind.boolean, env_var, .{ .default = opts.default });
+}
+
+/// Returns whether a string value is truthy for env-var purposes.
+/// Falsy values: "", "0", "false", "no", "off" (case-insensitive).
+pub fn isValueTruthy(s: []const u8) bool {
+    const false_values = .{ "", "0", "false", "no", "off" };
+    inline for (false_values) |tv| {
+        if (std.ascii.eqlIgnoreCase(s, tv)) return false;
+    }
+    return true;
 }
 
 const bun = @import("bun");

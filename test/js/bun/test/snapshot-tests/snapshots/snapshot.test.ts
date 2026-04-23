@@ -893,9 +893,9 @@ test("error snapshots", () => {
   expect(() => {
     expect(() => {}).toThrowErrorMatchingInlineSnapshot(`undefined`);
   }).toThrowErrorMatchingInlineSnapshot(`
-"\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoThrowErrorMatchingInlineSnapshot\x1B[2m(\x1B[0m\x1B[2m)\x1B[0m
+"expect(received).toThrowErrorMatchingInlineSnapshot()
 
-\x1B[1mMatcher error\x1B[0m: Received function did not throw
+Matcher error: Received function did not throw
 "
 `);
 });

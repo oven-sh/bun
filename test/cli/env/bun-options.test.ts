@@ -112,6 +112,28 @@ describe("BUN_OPTIONS environment variable", () => {
     expect(cpuProfiles.length).toBeGreaterThanOrEqual(1);
   });
 
+  test("space-separated option value is not merged with flag", () => {
+    // --cpu-prof is a bare flag (no value). --cpu-prof-dir takes a value
+    // via a space rather than '='. Each token should become its own argv
+    // entry so the argument parser can pair --cpu-prof-dir with its value.
+    using dir = tempDir("bun-options-space-sep", {});
+
+    const result = spawnSync({
+      cmd: [bunExe(), "-e", "1"],
+      env: {
+        ...bunEnv,
+        BUN_OPTIONS: `--cpu-prof --cpu-prof-dir ${dir}`,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+
+    // --cpu-prof should have produced a .cpuprofile file in the specified dir
+    const files = readdirSync(String(dir));
+    const cpuProfiles = files.filter((f: string) => f.endsWith(".cpuprofile"));
+    expect(cpuProfiles.length).toBeGreaterThanOrEqual(1);
+  });
+
   test("empty BUN_OPTIONS - should work normally", () => {
     const result = spawnSync({
       cmd: [bunExe(), "--print='NORMAL'"],

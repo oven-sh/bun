@@ -739,23 +739,40 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if (v1Array != v2Array)
         return false;
 
-    if (v1Array && v2Array && !(o1->isProxy() || o2->isProxy())) {
-        JSC::JSArray* array1 = JSC::jsCast<JSC::JSArray*>(v1);
-        JSC::JSArray* array2 = JSC::jsCast<JSC::JSArray*>(v2);
+    if (v1Array && v2Array) {
+        size_t array1Length;
+        size_t array2Length;
 
-        size_t array1Length = array1->length();
-        size_t array2Length = array2->length();
+        // For proxies wrapping arrays, unwrap to get the target JSArray's
+        // actual length rather than trusting the get trap, which could return
+        // an arbitrarily large value and cause a near-infinite loop.
+        JSObject* a1Obj = o1;
+        JSObject* a2Obj = o2;
+        while (a1Obj->type() == JSC::ProxyObjectType)
+            a1Obj = jsCast<ProxyObject*>(a1Obj)->target();
+        while (a2Obj->type() == JSC::ProxyObjectType)
+            a2Obj = jsCast<ProxyObject*>(a2Obj)->target();
+        array1Length = JSC::jsCast<JSC::JSArray*>(a1Obj)->length();
+        array2Length = JSC::jsCast<JSC::JSArray*>(a2Obj)->length();
         if constexpr (isStrict) {
             if (array1Length != array2Length) {
                 return false;
             }
+            // Check class names on the unwrapped targets so Array subclasses
+            // (e.g. class MyArr extends Array) are distinguished from Array.
+            if (!equal(JSObject::calculatedClassName(a1Obj), JSObject::calculatedClassName(a2Obj))) {
+                return false;
+            }
         }
 
+        // Use unwrapped targets for element access so that sparse array holes
+        // are correctly detected as JSValue() (isEmpty), not as jsUndefined()
+        // which the proxy [[Get]] trap would return for missing indices.
         uint64_t i = 0;
         for (; i < array1Length; i++) {
-            JSValue left = getIndexWithoutAccessors(globalObject, o1, i);
+            JSValue left = getIndexWithoutAccessors(globalObject, a1Obj, i);
             RETURN_IF_EXCEPTION(scope, false);
-            JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
+            JSValue right = getIndexWithoutAccessors(globalObject, a2Obj, i);
             RETURN_IF_EXCEPTION(scope, false);
 
             if constexpr (isStrict) {
@@ -779,7 +796,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         for (; i < array2Length; i++) {
-            JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
+            JSValue right = getIndexWithoutAccessors(globalObject, a2Obj, i);
             RETURN_IF_EXCEPTION(scope, false);
 
             if (((right.isEmpty() || right.isUndefined()))) {
@@ -791,9 +808,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
         JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
         JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
-        JSObject::getOwnPropertyNames(o1, globalObject, a1, DontEnumPropertiesMode::Exclude);
+        o1->methodTable()->getOwnPropertyNames(o1, globalObject, a1, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, false);
-        JSObject::getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
+        o2->methodTable()->getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, false);
 
         size_t propertyLength = a1.size();
@@ -839,7 +856,33 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (isStrict) {
-        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+        // Look through proxies to compare the target's class name rather than
+        // the proxy wrapper's, so that e.g. new Proxy({}, {}) equals {}.
+        JSObject* cn1 = o1;
+        JSObject* cn2 = o2;
+        while (cn1->type() == JSC::ProxyObjectType)
+            cn1 = jsCast<ProxyObject*>(cn1)->target();
+        while (cn2->type() == JSC::ProxyObjectType)
+            cn2 = jsCast<ProxyObject*>(cn2)->target();
+
+        // If unwrapping revealed a DOM wrapper or special type (URL, Headers,
+        // etc.), re-dispatch through specialObjectsDequal so semantic equality
+        // is used instead of generic property enumeration.
+        uint8_t cn1Type = cn1->type();
+        uint8_t cn2Type = cn2->type();
+        if (cn1Type == JSDOMWrapperType || cn1Type == JSAsJSONType
+            || cn2Type == JSDOMWrapperType || cn2Type == JSAsJSONType) {
+            std::optional<bool> result = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, cn1, cn2);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (result.has_value()) return *result;
+            result = specialObjectsDequal<isStrict, enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, cn2, cn1);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (result.has_value()) return *result;
+            // nullopt means semantic check passed but own-property comparison
+            // is still needed — fall through to normal path.
+        }
+
+        if (!equal(JSObject::calculatedClassName(cn1), JSObject::calculatedClassName(cn2))) {
             return false;
         }
     }

@@ -402,10 +402,11 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                                 }
                                 switch (arrayType) {
                                     .int8_array => {
+                                        const int8_val = std.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat;
                                         if (bigint) {
-                                            try array.append(bun.default_allocator, SQLDataCell{ .tag = .int8, .value = .{ .int8 = std.fmt.parseInt(i64, element, 0) catch return error.UnsupportedArrayFormat } });
+                                            try array.append(bun.default_allocator, SQLDataCell{ .tag = .int8, .value = .{ .int8 = int8_val } });
                                         } else {
-                                            try array.append(bun.default_allocator, SQLDataCell{ .tag = .string, .value = .{ .string = if (element.len > 0) bun.String.cloneUTF8(element).value.WTFStringImpl else null }, .free_value = 1 });
+                                            try array.append(bun.default_allocator, int8ToSafeCell(int8_val));
                                         }
                                         slice = trySlice(slice, current_idx);
                                         continue;
@@ -454,6 +455,25 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
         return error.UnsupportedArrayFormat;
     }
     return SQLDataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };
+}
+
+/// Returns an int8 value as a JS-safe number when possible, or falls back to string.
+/// Values within Number.MAX_SAFE_INTEGER range (±2^53 - 1) are returned as numbers;
+/// values outside that range are returned as strings to avoid precision loss.
+fn int8ToSafeCell(value: i64) SQLDataCell {
+    const max_safe_int = (1 << 53) - 1;
+    const min_safe_int = -max_safe_int;
+    if (value >= min_safe_int and value <= max_safe_int) {
+        // Value fits safely in a JS number (f64 without precision loss)
+        if (value >= std.math.minInt(i32) and value <= std.math.maxInt(i32)) {
+            return SQLDataCell{ .tag = .int4, .value = .{ .int4 = @intCast(value) } };
+        }
+        return SQLDataCell{ .tag = .float8, .value = .{ .float8 = @floatFromInt(value) } };
+    }
+    // Outside safe integer range: return as string to avoid precision loss
+    var buf: [21]u8 = undefined;
+    const str = std.fmt.bufPrint(&buf, "{d}", .{value}) catch unreachable;
+    return SQLDataCell{ .tag = .string, .value = .{ .string = bun.String.cloneUTF8(str).value.WTFStringImpl }, .free_value = 1 };
 }
 
 pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, globalObject: *jsc.JSGlobalObject) !SQLDataCell {
@@ -530,13 +550,15 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
                 return SQLDataCell{ .tag = .int4, .value = .{ .int4 = std.fmt.parseInt(i32, bytes, 0) catch 0 } };
             }
         },
-        // postgres when reading bigint as int8 it returns a string unless type: { bigint: postgres.BigInt is set
         .int8 => {
+            const value: i64 = if (binary)
+                try parseBinary(.int8, i64, bytes)
+            else
+                std.fmt.parseInt(i64, bytes, 0) catch 0;
             if (bigint) {
-                // .int8 is a 64-bit integer always string
-                return SQLDataCell{ .tag = .int8, .value = .{ .int8 = std.fmt.parseInt(i64, bytes, 0) catch 0 } };
+                return SQLDataCell{ .tag = .int8, .value = .{ .int8 = value } };
             } else {
-                return SQLDataCell{ .tag = .string, .value = .{ .string = if (bytes.len > 0) bun.String.cloneUTF8(bytes).value.WTFStringImpl else null }, .free_value = 1 };
+                return int8ToSafeCell(value);
             }
         },
         .float8 => {

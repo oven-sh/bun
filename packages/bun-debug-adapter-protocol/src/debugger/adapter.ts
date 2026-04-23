@@ -303,6 +303,22 @@ export function escapeMultilineArgsForCmd(
     // generated file would live elsewhere and breakpoints wouldn't bind.
     const effectiveCwd = cwd ?? process.cwd();
     const file = path.join(effectiveCwd, "[eval]");
+    // Refuse to touch a pre-existing `[eval]`. Someone else owns that file
+    // (extremely uncommon given the square-brackets name, but possible if a
+    // prior crashed debug session left one behind, or if the user created
+    // it intentionally). Silently overwriting it and then `rmSync`-ing it
+    // in cleanup would destroy their data; a clear error lets them
+    // resolve the collision manually.
+    if (existsSync(file)) {
+      cleanup();
+      throw new Error(
+        `A file already exists at ${file}. The debug adapter needs to use that ` +
+          `exact path to spill multi-line --eval source for the cmd.exe routing — ` +
+          `overwriting would destroy your file. Delete or rename it, or install ` +
+          `Bun via the official installer so bun.exe is on PATH directly and the ` +
+          `cmd.exe routing (and this spill file) is not needed.`,
+      );
+    }
     try {
       writeFileSync(file, arg);
     } catch (cause) {
@@ -314,6 +330,9 @@ export function escapeMultilineArgsForCmd(
         { cause },
       );
     }
+    // Only push onto `tempFiles` (which `cleanup` unconditionally rmSyncs)
+    // AFTER a successful write that also passed the existsSync guard — so
+    // we never delete a file we did not just create.
     tempFiles.push(file);
     // Drop the preceding `--eval`/`-e` flag and push the file path.
     rewritten.pop();

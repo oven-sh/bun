@@ -438,4 +438,27 @@ describe("issue #29636 — escapeMultilineArgsForCmd", () => {
       cleanup();
     }
   });
+
+  test("refuses to overwrite a pre-existing `<cwd>/[eval]` file", () => {
+    // Someone else owns the file at the target path — could be a leftover
+    // from a prior crashed debug session, or an intentional file with that
+    // name. Silently overwriting and then `rmSync`-ing it on cleanup would
+    // destroy their data. Throw early with a message that names the path
+    // and points at the workaround.
+    using dir = tempDir("issue-29636-collision", { "[eval]": "existing content" });
+    const existingPath = join(String(dir), "[eval]");
+    let caught: Error | undefined;
+    try {
+      escapeMultilineArgsForCmd(["--eval", "new\nsource"], String(dir));
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught!.message).toContain(existingPath);
+    expect(caught!.message).toMatch(/already exists/);
+    // The pre-existing file must NOT have been touched — neither its
+    // content nor its existence should have changed.
+    expect(existsSync(existingPath)).toBe(true);
+    expect(readFileSync(existingPath, "utf8")).toBe("existing content");
+  });
 });

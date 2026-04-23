@@ -27,7 +27,10 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { join, sep } from "node:path";
-import { buildShellCommand, resolveCommand } from "../../../packages/bun-debug-adapter-protocol/src/debugger/adapter.ts";
+import {
+  buildShellCommand,
+  resolveCommand,
+} from "../../../packages/bun-debug-adapter-protocol/src/debugger/adapter.ts";
 
 describe("issue #29636 — resolveCommand", () => {
   test("is a no-op on POSIX platforms", () => {

@@ -374,6 +374,9 @@ pub const PackageInstall = struct {
     else
         Method.hardlink;
 
+    /// Set by --backend. Null means use defaults (symlink for local, supported_method otherwise).
+    pub var requested_method: ?Method = null;
+
     fn installWithClonefileEachDir(this: *@This(), destination_dir: std.fs.Dir) !Result {
         var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.fail(err, .opening_cache_dir, @errorReturnTrace());
         defer cached_package_dir.close();
@@ -1342,7 +1345,9 @@ pub const PackageInstall = struct {
     }
 
     pub fn getInstallMethod(this: *const @This()) Method {
-        return if (strings.eqlComptime(this.cache_dir_subpath, ".") or strings.hasPrefixComptime(this.cache_dir_subpath, ".."))
+        return if (requested_method == supported_method)
+            supported_method
+        else if (strings.eqlComptime(this.cache_dir_subpath, ".") or strings.hasPrefixComptime(this.cache_dir_subpath, ".."))
             Method.symlink
         else
             supported_method;

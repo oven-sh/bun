@@ -612,7 +612,9 @@ pub fn load(
             this.do.save_yarn_lock = true;
         }
 
+        PackageInstall.requested_method = null;
         if (cli.backend) |backend| {
+            PackageInstall.requested_method = backend;
             PackageInstall.supported_method = backend;
         }
 

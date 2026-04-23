@@ -107,6 +107,87 @@ it("should create template from local folder", async () => {
   expect(await Bun.file(join(x_dir, testTemplate, "foo", "bar.js")).text()).toBe("hi");
 });
 
+it("should error when local template destination exists with conflicting files", async () => {
+  const bunCreateDir = join(x_dir, "bun-create");
+  const testTemplate = "conflict-template";
+  const destDir = join(x_dir, testTemplate);
+
+  // Create a local template with some files
+  await Bun.write(join(bunCreateDir, testTemplate, "index.js"), "template content");
+  await Bun.write(join(bunCreateDir, testTemplate, "foo", "bar.js"), "template content");
+
+  // Create destination directory with a conflicting file
+  await Bun.write(join(destDir, "index.js"), "IMPORTANT DATA");
+  await Bun.write(join(destDir, "existing-only.txt"), "should be preserved");
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "create", testTemplate],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: { ...env, BUN_CREATE_DIR: bunCreateDir },
+  });
+
+  const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+
+  // Should fail with conflict error
+  expect(err).toContain("already exists and is not empty");
+  expect(err).toContain("--force");
+  expect(exitCode).toBe(1);
+
+  // Original files should be preserved
+  expect(await Bun.file(join(destDir, "index.js")).text()).toBe("IMPORTANT DATA");
+  expect(await Bun.file(join(destDir, "existing-only.txt")).text()).toBe("should be preserved");
+});
+
+it("should overwrite local template destination with --force", async () => {
+  const bunCreateDir = join(x_dir, "bun-create");
+  const testTemplate = "force-template";
+  const destDir = join(x_dir, testTemplate);
+
+  // Create a local template
+  await Bun.write(join(bunCreateDir, testTemplate, "index.js"), "new content");
+
+  // Create destination directory with a conflicting file
+  await Bun.write(join(destDir, "index.js"), "old content");
+
+  const { exited } = spawn({
+    cmd: [bunExe(), "create", testTemplate, "--force"],
+    cwd: x_dir,
+    stdout: "inherit",
+    stdin: "inherit",
+    stderr: "inherit",
+    env: { ...env, BUN_CREATE_DIR: bunCreateDir },
+  });
+
+  expect(await exited).toBe(0);
+
+  // Template content should have replaced the old content
+  expect(await Bun.file(join(destDir, "index.js")).text()).toBe("new content");
+});
+
+it("should succeed when local template destination does not exist", async () => {
+  const bunCreateDir = join(x_dir, "bun-create");
+  const testTemplate = "fresh-template";
+
+  // Create a local template
+  await Bun.write(join(bunCreateDir, testTemplate, "index.js"), "hi");
+
+  // Don't create the destination - it should work fine
+  const { exited } = spawn({
+    cmd: [bunExe(), "create", testTemplate],
+    cwd: x_dir,
+    stdout: "inherit",
+    stdin: "inherit",
+    stderr: "inherit",
+    env: { ...env, BUN_CREATE_DIR: bunCreateDir },
+  });
+
+  expect(await exited).toBe(0);
+  expect(await Bun.file(join(x_dir, testTemplate, "index.js")).text()).toBe("hi");
+});
+
 it("should not mention cd prompt when created in current directory", async () => {
   const { stdout, exited } = spawn({
     cmd: [bunExe(), "create", "https://github.com/dylan-conway/create-test", "."],

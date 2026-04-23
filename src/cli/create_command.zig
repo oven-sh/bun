@@ -424,6 +424,52 @@ pub const CreateCommand = struct {
                     Global.exit(1);
                 };
 
+                if (!create_options.overwrite) {
+                    // Check if destination directory already exists and contains files.
+                    // Refuse to overwrite unless --force is passed to prevent accidental data loss.
+                    if (std.fs.openDirAbsolute(destination, .{ .iterate = true })) |dest_dir_| {
+                        var dest_dir = dest_dir_;
+                        defer dest_dir.close();
+
+                        var iter = dest_dir.iterate();
+                        const has_conflict = while (true) {
+                            const entry = iter.next() catch {
+                                // If we can't read the directory, err on the side of safety
+                                break true;
+                            } orelse break false;
+                            // Skip entries that never conflict (same list used by remote templates)
+                            const dominated = inline for (never_conflict) |nc| {
+                                const nc_trimmed = comptime if (nc.len > 0 and nc[nc.len - 1] == '/') nc[0 .. nc.len - 1] else nc;
+                                if (strings.eqlComptime(entry.name, nc_trimmed)) break true;
+                            } else false;
+                            if (!dominated) break true;
+                        };
+
+                        if (has_conflict) {
+                            node.end();
+                            progress.refresh();
+
+                            Output.prettyErrorln(
+                                "<r>\n<red>error<r><d>: <r>The directory <b><blue>{s}<r>/ already exists and is not empty.",
+                                .{
+                                    std.fs.path.basename(destination),
+                                },
+                            );
+
+                            Output.prettyErrorln("<r>\n<d>To overwrite it anyway, use --force<r>", .{});
+                            Global.exit(1);
+                        }
+                    } else |e| switch (e) {
+                        error.FileNotFound => {},
+                        else => {
+                            node.end();
+                            progress.refresh();
+                            Output.prettyErrorln("<r><red>{s}<r>: opening dir {s}", .{ @errorName(e), destination });
+                            Global.exit(1);
+                        },
+                    }
+                }
+
                 std.fs.deleteTreeAbsolute(destination) catch {};
                 const destination_dir__ = std.fs.cwd().makeOpenPath(destination, .{}) catch |err| {
                     node.end();

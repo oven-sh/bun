@@ -1132,7 +1132,7 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
             memcpy(dirname_buf, path, dirname_len);
             dirname_buf[dirname_len] = 0;
 
-            int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_PATH | O_DIRECTORY, 0700);
+            int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_PATH | O_DIRECTORY);
             if (socket_dir_fd == -1) {
                 errno = ENAMETOOLONG;
                 return LIBUS_SOCKET_ERROR;

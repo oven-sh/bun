@@ -1079,7 +1079,7 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
     defer self.allocator.free(transformed_code);
 
     // Evaluate the transformed code
-    var exception: jsc.JSValue = .js_undefined;
+    var exception: jsc.JSValue = .zero;
     const result = Bun__REPL__evaluate(
         global,
         transformed_code.ptr,
@@ -1089,8 +1089,8 @@ fn evaluateAndPrint(self: *Repl, code: []const u8) void {
         &exception,
     );
 
-    // Check for exception
-    if (!exception.isUndefined() and !exception.isNull()) {
+    // Check for exception (use .zero sentinel so throw null/undefined are detected)
+    if (exception != .zero) {
         self.setLastError(exception);
         self.printJSError(exception);
         return;
@@ -1210,16 +1210,16 @@ pub fn evalScript(self: *Repl, code: []const u8, print_result: bool) bool {
 
     const transformed_code = self.transformForRepl(code) orelse {
         // Transform failed — fall back to raw evaluation for the error message
-        var exception: jsc.JSValue = .js_undefined;
+        var exception: jsc.JSValue = .zero;
         _ = Bun__REPL__evaluate(global, code.ptr, code.len, "[eval]".ptr, "[eval]".len, &exception);
-        if (!exception.isUndefined() and !exception.isNull()) {
+        if (exception != .zero) {
             self.printJSErrorTo(exception, Output.errorWriter(), stderr_colors);
         }
         return true;
     };
     defer self.allocator.free(transformed_code);
 
-    var exception: jsc.JSValue = .js_undefined;
+    var exception: jsc.JSValue = .zero;
     const result = Bun__REPL__evaluate(
         global,
         transformed_code.ptr,
@@ -1229,7 +1229,7 @@ pub fn evalScript(self: *Repl, code: []const u8, print_result: bool) bool {
         &exception,
     );
 
-    if (!exception.isUndefined() and !exception.isNull()) {
+    if (exception != .zero) {
         self.printJSErrorTo(exception, Output.errorWriter(), stderr_colors);
         return true;
     }
@@ -1291,7 +1291,7 @@ pub fn evalScript(self: *Repl, code: []const u8, print_result: bool) bool {
 fn evaluateRaw(self: *Repl, code: []const u8) void {
     const global = self.global orelse return;
 
-    var exception: jsc.JSValue = .js_undefined;
+    var exception: jsc.JSValue = .zero;
     const result = Bun__REPL__evaluate(
         global,
         code.ptr,
@@ -1301,7 +1301,7 @@ fn evaluateRaw(self: *Repl, code: []const u8) void {
         &exception,
     );
 
-    if (!exception.isUndefined() and !exception.isNull()) {
+    if (exception != .zero) {
         self.setLastError(exception);
         self.printJSError(exception);
         return;
@@ -1335,7 +1335,7 @@ fn evaluateAndCopy(self: *Repl, code: []const u8) void {
     };
     defer self.allocator.free(transformed_code);
 
-    var exception: jsc.JSValue = .js_undefined;
+    var exception: jsc.JSValue = .zero;
     const result = Bun__REPL__evaluate(
         global,
         transformed_code.ptr,
@@ -1345,7 +1345,7 @@ fn evaluateAndCopy(self: *Repl, code: []const u8) void {
         &exception,
     );
 
-    if (!exception.isUndefined() and !exception.isNull()) {
+    if (exception != .zero) {
         self.setLastError(exception);
         self.printJSError(exception);
         return;
@@ -1607,7 +1607,14 @@ fn setReplVariables(self: *Repl) void {
 
 fn printJSError(self: *Repl, error_value: jsc.JSValue) void {
     // Interactive REPL writes everything to stdout (single terminal stream).
-    self.printJSErrorTo(error_value, Output.writer(), self.use_colors);
+    const writer = Output.writer();
+    // Print "Uncaught" prefix to distinguish thrown values from expression results (matches Node.js)
+    if (self.use_colors) {
+        writer.writeAll(Color.red ++ "Uncaught " ++ Color.reset) catch {};
+    } else {
+        writer.writeAll("Uncaught ") catch {};
+    }
+    self.printJSErrorTo(error_value, writer, self.use_colors);
 }
 
 fn printJSErrorTo(self: *Repl, error_value: jsc.JSValue, writer: *std.Io.Writer, enable_colors: bool) void {

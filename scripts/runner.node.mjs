@@ -2671,6 +2671,24 @@ export async function main() {
     }
   }
 
+  // Kick off the test docker services early so mysql/postgres have already
+  // initialized by the time any test's ensure() runs. No --wait — just start
+  // them in the background; ensure()'s own `up --wait` is the synchronization
+  // point and returns fast when the container is already healthy. Linux-only
+  // (Windows/macOS CI don't run docker tests); arm64 currently still skips in
+  // harness.isDockerEnabled() but warming there is harmless and removes a
+  // coupling if that gate is lifted.
+  if (doRunTests && isCI && isLinux) {
+    const probe = spawnSync("docker", ["compose", "version"], { stdio: "ignore" });
+    if (probe.status === 0) {
+      console.log("Warming docker test services in background...");
+      const composeFile = join(cwd, "test", "docker", "docker-compose.yml");
+      spawn("docker", ["compose", "-p", "bun-test-services", "-f", composeFile, "up", "-d", "--build"], {
+        stdio: "inherit",
+      }).on("error", err => console.warn("docker warmup spawn failed:", err.message));
+    }
+  }
+
   let ok = true;
   if (doRunTests) {
     const results = await runTests();

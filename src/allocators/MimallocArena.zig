@@ -158,8 +158,14 @@ pub fn deinit(self: *Self) void {
     self.* = undefined;
 }
 
+/// Use a non-zero heap tag so that mimalloc's _mi_heap_by_tag routes
+/// reclaimed pages from dead threads to the backing heap (tag 0) instead
+/// of to this arena. Without this, mi_heap_destroy frees those reclaimed
+/// pages and their live blocks, corrupting the malloc free-list.
+const arena_heap_tag = 111;
+
 pub fn init() Self {
-    const mimalloc_heap = mimalloc.mi_heap_new() orelse bun.outOfMemory();
+    const mimalloc_heap = mimalloc.mi_heap_new_ex(arena_heap_tag, true, null) orelse bun.outOfMemory();
     if (comptime !safety_checks) return .{ .#heap = mimalloc_heap };
     const heap: Owned(*DebugHeap) = .new(.{
         .inner = mimalloc_heap,

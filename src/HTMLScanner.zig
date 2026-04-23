@@ -4,6 +4,7 @@ allocator: std.mem.Allocator,
 import_records: ImportRecord.List = .{},
 log: *logger.Log,
 source: *const logger.Source,
+template_depth: u32 = 0,
 
 pub fn init(allocator: std.mem.Allocator, log: *logger.Log, source: *const logger.Source) HTMLScanner {
     return .{
@@ -201,6 +202,9 @@ pub fn HTMLProcessor(
         fn generateHandlerForTag(comptime tag_info: TagHandler) fn (*T, *lol.Element) bool {
             const Handler = struct {
                 pub fn handle(this: *T, element: *lol.Element) bool {
+                    // Skip elements inside <template> tags — template content is inert HTML
+                    if (this.template_depth > 0) return false;
+
                     // Handle URL attribute if present
                     if (tag_info.url_attribute.len > 0) {
                         if (element.hasAttribute(tag_info.url_attribute) catch false) {
@@ -218,14 +222,45 @@ pub fn HTMLProcessor(
             return Handler.handle;
         }
 
+        fn templateOpenHandler(this: *T, element: *lol.Element) bool {
+            this.template_depth += 1;
+            element.onEndTag(templateEndHandler, @ptrCast(this)) catch return true;
+            return false;
+        }
+
+        fn templateEndHandler(_: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.c) lol.Directive {
+            const this: *T = @ptrCast(@alignCast(opaque_this.?));
+            this.template_depth -= 1;
+            return .@"continue";
+        }
+
         pub fn run(this: *T, input: []const u8) !void {
             var builder = lol.HTMLRewriter.Builder.init();
             defer builder.deinit();
 
-            var selectors: bun.BoundedArray(*lol.HTMLSelector, tag_handlers.len + if (visit_document_tags) 3 else 0) = .{};
+            // +1 for the <template> depth tracking handler
+            var selectors: bun.BoundedArray(*lol.HTMLSelector, tag_handlers.len + 1 + if (visit_document_tags) 3 else 0) = .{};
             defer for (selectors.slice()) |selector| {
                 selector.deinit();
             };
+
+            // Track <template> depth so we skip resolving URLs inside inert template content
+            {
+                const template_selector = try lol.HTMLSelector.parse("template");
+                selectors.appendAssumeCapacity(template_selector);
+                try builder.addElementContentHandlers(
+                    template_selector,
+                    T,
+                    templateOpenHandler,
+                    this,
+                    void,
+                    null,
+                    null,
+                    void,
+                    null,
+                    null,
+                );
+            }
 
             // Add handlers for each tag type
             inline for (tag_handlers) |tag_info| {

@@ -51,6 +51,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         },
         added_head_tags: bool,
         added_body_script: bool,
+        template_depth: u32 = 0,
 
         pub fn onWriteHTML(this: *@This(), bytes: []const u8) void {
             bun.handleOom(this.output.appendSlice(bytes));

@@ -43,6 +43,12 @@ pub const TSConfigJSON = struct {
     emit_decorator_metadata: bool = false,
     experimental_decorators: bool = false,
 
+    // TypeScript project references. Each entry is the "path" value from the
+    // "references" array in tsconfig.json. These are relative paths to other
+    // tsconfig files (or directories containing tsconfig.json).
+    // See: https://www.typescriptlang.org/docs/handbook/project-references.html
+    references: []const string = &.{},
+
     pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;
     }
@@ -158,6 +164,26 @@ pub const TSConfigJSON = struct {
                 }
             }
         }
+        // Parse "references"
+        if (json.asProperty("references")) |references_value| {
+            if (!source.path.isNodeModule()) {
+                if (references_value.expr.asArray()) |ref_array_iter| {
+                    var ref_array = ref_array_iter;
+                    var refs = std.array_list.Managed(string).init(allocator);
+                    while (ref_array.next()) |element| {
+                        if (element.asProperty("path")) |path_prop| {
+                            if (path_prop.expr.asString(allocator)) |ref_path| {
+                                refs.append(ref_path) catch unreachable;
+                            }
+                        }
+                    }
+                    if (refs.items.len > 0) {
+                        result.references = refs.toOwnedSlice() catch unreachable;
+                    }
+                }
+            }
+        }
+
         var has_base_url = false;
 
         // Parse "compilerOptions"

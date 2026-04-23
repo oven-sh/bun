@@ -380,7 +380,7 @@ pub const Parser = struct {
 };
 
 pub fn calculateExpandedAmount(tokens: []const Token) u32 {
-    var nested_brace_stack = bun.SmallList(u8, MAX_NESTED_BRACES){};
+    var nested_brace_stack = bun.SmallList(u16, MAX_NESTED_BRACES){};
     defer nested_brace_stack.deinit(bun.default_allocator);
     var variant_count: u32 = 0;
     var prev_comma: bool = false;

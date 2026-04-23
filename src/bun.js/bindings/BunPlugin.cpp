@@ -301,11 +301,13 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
     if (targetValue) {
         if (auto* targetJSString = targetValue.toStringOrNull(globalObject)) {
             String targetString = targetJSString->value(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
             if (!(targetString == "node"_s || targetString == "bun"_s || targetString == "browser"_s)) {
                 JSC::throwTypeError(globalObject, throwScope, "plugin target must be one of 'node', 'bun' or 'browser'"_s);
                 return {};
             }
         }
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     JSObject* builderObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);

@@ -10,8 +10,56 @@ using namespace JSC;
 extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
 extern "C" SYSV_ABI bool JSDOMFile__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
 
-// TODO: make this inehrit from JSBlob instead of InternalFunction
-// That will let us remove this hack for [Symbol.hasInstance] and fix the prototype chain.
+// File.prototype inherits from Blob.prototype per the spec.
+// This gives File instances all Blob methods while having a distinct prototype
+// with constructor === File and [Symbol.toStringTag] === "File".
+class JSDOMFilePrototype final : public JSC::JSNonFinalObject {
+    using Base = JSC::JSNonFinalObject;
+
+public:
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    static JSDOMFilePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSDOMFilePrototype* prototype = new (NotNull, JSC::allocateCell<JSDOMFilePrototype>(vm)) JSDOMFilePrototype(vm, structure);
+        prototype->finishCreation(vm, globalObject);
+        return prototype;
+    }
+
+    DECLARE_INFO;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        structure->setMayBePrototype(true);
+        return structure;
+    }
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDOMFilePrototype, Base);
+        return &vm.plainObjectSpace();
+    }
+
+protected:
+    JSDOMFilePrototype(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+    {
+        Base::finishCreation(vm);
+        // Set [Symbol.toStringTag] = "File" so Object.prototype.toString.call(file) === "[object File]"
+        this->putDirectWithoutTransition(vm, vm.propertyNames->toStringTagSymbol,
+            jsNontrivialString(vm, "File"_s),
+            JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+    }
+};
+
+const JSC::ClassInfo JSDOMFilePrototype::s_info = { "File"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMFilePrototype) };
+
 class JSDOMFile : public JSC::InternalFunction {
     using Base = JSC::InternalFunction;
 
@@ -40,15 +88,20 @@ public:
         Base::finishCreation(vm, 2, "File"_s);
     }
 
-    static JSDOMFile* create(JSC::VM& vm, JSGlobalObject* globalObject)
+    static JSDOMFile* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::JSObject* filePrototype)
     {
         auto* zigGlobal = defaultGlobalObject(globalObject);
         auto structure = createStructure(vm, globalObject, zigGlobal->functionPrototype());
         auto* object = new (NotNull, JSC::allocateCell<JSDOMFile>(vm)) JSDOMFile(vm, structure);
         object->finishCreation(vm);
 
-        // This is not quite right. But we'll fix it if someone files an issue about it.
-        object->putDirect(vm, vm.propertyNames->prototype, zigGlobal->JSBlobPrototype(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+        // Set File.prototype to the distinct FilePrototype object (which inherits from Blob.prototype).
+        object->putDirect(vm, vm.propertyNames->prototype, filePrototype,
+            JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+        // Set FilePrototype.constructor = File
+        filePrototype->putDirect(vm, vm.propertyNames->constructor, object,
+            static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
 
         return object;
     }
@@ -69,7 +122,7 @@ public:
         auto& vm = JSC::getVM(globalObject);
         JSObject* newTarget = asObject(callFrame->newTarget());
         auto* constructor = globalObject->JSDOMFileConstructor();
-        Structure* structure = globalObject->JSBlobStructure();
+        Structure* structure = globalObject->JSFileStructure();
         if (constructor != newTarget) {
             auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -77,7 +130,7 @@ public:
                 // ShadowRealm functions belong to a different global object.
                 getFunctionRealm(lexicalGlobalObject, newTarget));
             RETURN_IF_EXCEPTION(scope, {});
-            structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, functionGlobalObject->JSBlobStructure());
+            structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, functionGlobalObject->JSFileStructure());
             RETURN_IF_EXCEPTION(scope, {});
         }
 
@@ -103,9 +156,30 @@ const JSC::ClassInfo JSDOMFile::s_info = { "File"_s, &Base::s_info, nullptr, nul
 
 namespace Bun {
 
+JSC::Structure* createJSFileStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    JSC::JSObject* blobPrototype = zigGlobal->JSBlobPrototype();
+
+    // Create FilePrototype with [[Prototype]] = Blob.prototype
+    auto* protoStructure = JSDOMFilePrototype::createStructure(vm, globalObject, blobPrototype);
+    auto* filePrototype = JSDOMFilePrototype::create(vm, globalObject, protoStructure);
+
+    // Create the structure for File instances: [[Prototype]] = FilePrototype
+    return JSC::Structure::create(vm, globalObject, filePrototype,
+        JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), WebCore::JSBlob::StructureFlags),
+        WebCore::JSBlob::info(), NonArray);
+}
+
 JSC::JSObject* createJSDOMFileConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
-    return JSDOMFile::create(vm, globalObject);
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+
+    // Get the File instance structure - its prototype is the FilePrototype we need
+    auto* fileStructure = zigGlobal->JSFileStructure();
+    auto* filePrototype = fileStructure->storedPrototypeObject();
+
+    return JSDOMFile::create(vm, globalObject, filePrototype);
 }
 
 }

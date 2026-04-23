@@ -204,13 +204,47 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
       return `"${arrayEscape(JSON.stringify(value))}"`;
   }
 }
+function validateArrayTypeName(type: string): void {
+  if (type.length === 0) {
+    throw $ERR_INVALID_ARG_VALUE("type", type, "must not be empty");
+  }
+  // Support schema-qualified names like "myschema.INTEGER" by splitting on dots
+  // and validating each segment individually.
+  const segments = type.split(".");
+  const lastIdx = segments.length - 1;
+  for (let s = 0; s <= lastIdx; s++) {
+    const seg = segments[s];
+    if (seg.length === 0) {
+      throw $ERR_INVALID_ARG_VALUE("type", type, "must not contain empty segments");
+    }
+    for (let i = 0; i < seg.length; i++) {
+      const c = seg.charCodeAt(i);
+      if (
+        (c >= 65 && c <= 90) || // A-Z
+        (c >= 97 && c <= 122) || // a-z
+        (c >= 48 && c <= 57) || // 0-9
+        c === 95 // _
+      ) {
+        continue;
+      }
+      // Only the last segment may contain spaces (for "DOUBLE PRECISION")
+      if (c === 32 && s === lastIdx) {
+        continue;
+      }
+      throw $ERR_INVALID_ARG_VALUE("type", type, "contains invalid characters");
+    }
+  }
+}
+
 function getArrayType(typeNameOrID: number | ArrayType | undefined = undefined): ArrayType {
   const typeOfType = typeof typeNameOrID;
   if (typeOfType === "number") {
     return getPostgresArrayType(typeNameOrID as number) ?? "JSON";
   }
   if (typeOfType === "string") {
-    return (typeNameOrID as string)?.toUpperCase();
+    const upper = (typeNameOrID as string).toUpperCase();
+    validateArrayTypeName(upper);
+    return upper;
   }
   // default to JSON so we accept most of the types
   return "JSON";

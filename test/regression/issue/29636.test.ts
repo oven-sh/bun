@@ -219,7 +219,7 @@ describe("issue #29636 — buildShellCommand", () => {
   // and `%VAR%` expansion in phase 1 is defeated without leaving literal
   // carets in the debuggee's argv.
 
-  test("no-metachar tokens: each argument gets `^\"…^\"` wrapping", () => {
+  test('no-metachar tokens: each argument gets `^"…^"` wrapping', () => {
     // After cmd.exe `/s` strips the outer quotes and phase 2 consumes the
     // carets, the target sees: `bun.cmd "run" "dev"` → argv `[bun.cmd, run, dev]`.
     expect(buildShellCommand("bun.cmd", ["run", "dev"])).toBe(`"bun.cmd ^"run^" ^"dev^""`);
@@ -237,7 +237,7 @@ describe("issue #29636 — buildShellCommand", () => {
     );
   });
 
-  test("literal `\"` in an arg is backslash-escaped (qntm) then caret-escaped", () => {
+  test('literal `"` in an arg is backslash-escaped (qntm) then caret-escaped', () => {
     // `CommandLineToArgvW`'s rules: inside `"..."` a `"` must be `\"`.
     // qntm's algorithm escapes `"` as `\"` and doubles any preceding run
     // of `\`. Then the whole line is caret-escaped so cmd's phase 2

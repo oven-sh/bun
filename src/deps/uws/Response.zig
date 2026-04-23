@@ -42,6 +42,12 @@ pub fn NewResponse(ssl_flag: i32) type {
             return c.uws_res_is_connect_request(ssl_flag, res.downcast());
         }
 
+        /// Mark this connection as raw/tunnel mode (like CONNECT).
+        /// Stops the HTTP parser from parsing subsequent data as HTTP.
+        pub fn markAsRawMode(res: *Response) void {
+            c.uws_res_mark_as_raw_mode(ssl_flag, res.downcast());
+        }
+
         pub fn flushHeaders(res: *Response, flushImmediately: bool) void {
             c.uws_res_flush_headers(ssl_flag, res.downcast(), flushImmediately);
         }
@@ -602,6 +608,12 @@ pub const AnyResponse = union(enum) {
         };
     }
 
+    pub fn markAsRawMode(this: AnyResponse) void {
+        switch (this) {
+            inline else => |resp| resp.markAsRawMode(),
+        }
+    }
+
     pub fn endStream(this: AnyResponse, close_connection: bool) void {
         switch (this) {
             inline else => |resp| resp.endStream(close_connection),
@@ -684,6 +696,7 @@ const c = struct {
     pub extern fn us_socket_mark_needs_more_not_ssl(socket: ?*c.uws_res) void;
     pub extern fn uws_res_state(ssl: c_int, res: *const c.uws_res) State;
     pub extern fn uws_res_is_connect_request(ssl: i32, res: *c.uws_res) bool;
+    pub extern fn uws_res_mark_as_raw_mode(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_get_remote_address_info(res: *c.uws_res, dest: *[*]const u8, port: *i32, is_ipv6: *bool) usize;
     pub extern fn uws_res_uncork(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_end(ssl: i32, res: *c.uws_res, data: [*c]const u8, length: usize, close_connection: bool) void;

@@ -3512,7 +3512,7 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.sy
         .Buffer = @constCast(sub_path_w.ptr),
     };
 
-    if (sub_path_w[0] == '.' and sub_path_w[1] == 0) {
+    if (sub_path_w.len == 2 and sub_path_w[0] == '.' and sub_path_w[1] == 0) {
         // Windows does not recognize this, but it does work with empty string.
         nt_name.Length = 0;
     }

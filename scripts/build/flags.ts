@@ -871,7 +871,11 @@ export const stripFlags: Flag[] = [
     // musl: no eh_frame handling differences, but CMake gates on NOT musl so we do too.
     // Strip only runs on plain release (shouldStrip gates debug/asan/valgrind/assertions)
     // which in CI always has LTO on — in practice paired with --no-eh-frame-hdr.
-    flag: ["-R", ".eh_frame", "-R", ".gcc_except_table"],
+    //
+    // GNU strip does not rewrite the program header table — so any
+    // PT_GNU_EH_FRAME phdr entry also survives as an orphan. See the
+    // --no-eh-frame-hdr rationale in linkFlags above.
+    flag: ["-R", ".eh_frame", "-R", ".eh_frame_hdr", "-R", ".gcc_except_table"],
     when: c => c.linux && c.abi !== "musl",
     desc: "Remove unwind sections (GNU strip required — llvm-strip leaves [LOAD #2 [R]])",
   },

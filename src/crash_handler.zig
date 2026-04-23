@@ -1700,8 +1700,9 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
 
     const programs: []const [:0]const u8 = switch (bun.Environment.os) {
         .windows => &.{"pdb-addr2line"},
-        // if `llvm-symbolizer` doesn't work, also try `llvm-symbolizer-21`
-        else => &.{ "llvm-symbolizer", "llvm-symbolizer-21" },
+        // if `llvm-symbolizer` doesn't work, also try versioned names:
+        // `llvm-symbolizer-21` (Debian/Ubuntu) or `llvm21-symbolizer` (Alpine)
+        else => &.{ "llvm-symbolizer", "llvm-symbolizer-21", "llvm21-symbolizer" },
     };
     for (programs) |program| {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);

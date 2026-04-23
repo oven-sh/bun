@@ -88,7 +88,11 @@ services:
     tmpfs:
       - /var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      # 127.0.0.1 (not localhost) forces TCP — `localhost` would use the unix
+      # socket, which is up during the entrypoint's temporary init server and
+      # passes the check before the real TCP listener exists. Auth + SELECT 1
+      # so we don't go healthy until the real server is accepting connections.
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-e", "SELECT 1"]
       interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
@@ -109,7 +113,7 @@ services:
     tmpfs:
       - /var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pbun"]
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-pbun", "-e", "SELECT 1"]
       interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30
@@ -133,7 +137,7 @@ services:
     tmpfs:
       - /var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pbun"]
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-uroot", "-pbun", "-e", "SELECT 1"]
       interval: 1h # Effectively disable after startup
       timeout: 5s
       retries: 30

@@ -554,7 +554,7 @@ pub const Expect = struct {
                 return .{ value, return_value_from_function };
             }
 
-            return globalThis.throw("Expected value must be a function", .{});
+            return globalThis.throw("Received value must be a function", .{});
         }
 
         var return_value: JSValue = .zero;
@@ -2002,7 +2002,7 @@ pub const mock = struct {
         if (!returns.jsType().isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();
-            return globalThis.throw("Expected value must be a mock function: {f}", .{value.toFmt(&formatter)});
+            return globalThis.throw("Received value must be a mock function: {f}", .{value.toFmt(&formatter)});
         }
 
         return try returns.arrayIterator(globalThis);
@@ -2015,7 +2015,7 @@ pub const mock = struct {
         }
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        return globalThis.throw("Expected value must be a mock function with returns: {f}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Received value must be a mock function with returns: {f}", .{value.toFmt(&formatter)});
     }
     pub fn jestMockReturnObject_value(globalThis: *JSGlobalObject, value: bun.jsc.JSValue) bun.JSError!JSValue {
         return (try value.get(globalThis, "value")) orelse .js_undefined;

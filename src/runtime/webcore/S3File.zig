@@ -83,6 +83,7 @@ pub fn presign(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
                 return globalThis.throwInvalidArguments("Expected a S3 or path to presign", .{});
             }
             const options = args.nextEat();
+            path_or_blob = .{ .path = .{ .path = .{ .string = bun.PathString.empty } } };
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
             return try getPresignUrlFrom(&blob, globalThis, options);
@@ -113,6 +114,7 @@ pub fn unlink(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
                 return globalThis.throwInvalidArguments("Expected a S3 or path to delete", .{});
             }
             const options = args.nextEat();
+            path_or_blob = .{ .path = .{ .path = .{ .string = bun.PathString.empty } } };
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
             return try blob.store.?.data.s3.unlink(blob.store.?, globalThis, options);
@@ -150,6 +152,7 @@ pub fn write(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
             if (path == .fd) {
                 return globalThis.throwInvalidArguments("Expected a S3 or path to upload", .{});
             }
+            path_or_blob = .{ .path = .{ .path = .{ .string = bun.PathString.empty } } };
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
 
@@ -189,6 +192,7 @@ pub fn size(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
             if (path == .fd) {
                 return globalThis.throwInvalidArguments("Expected a S3 or path to get size", .{});
             }
+            path_or_blob = .{ .path = .{ .path = .{ .string = bun.PathString.empty } } };
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
 
@@ -222,6 +226,7 @@ pub fn exists(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JS
             if (path == .fd) {
                 return globalThis.throwInvalidArguments("Expected a S3 or path to check if it exists", .{});
             }
+            path_or_blob = .{ .path = .{ .path = .{ .string = bun.PathString.empty } } };
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
 
@@ -243,6 +248,7 @@ fn constructS3FileInternalStore(
     return constructS3FileWithS3Credentials(globalObject, path, options, existing_credentials);
 }
 /// if the credentials have changed, we need to clone it, if not we can just ref/deref it
+/// Always takes ownership of `path`; freed on error, stored in the returned blob on success.
 pub fn constructS3FileWithS3CredentialsAndOptions(
     globalObject: *jsc.JSGlobalObject,
     path: jsc.Node.PathLike,
@@ -253,7 +259,10 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
     default_storage_class: ?bun.S3.StorageClass,
     default_request_payer: bool,
 ) bun.JSError!Blob {
-    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, default_storage_class, default_request_payer, globalObject);
+    var aws_options = S3.S3Credentials.getCredentialsWithOptions(default_credentials.*, default_options, options, default_acl, default_storage_class, default_request_payer, globalObject) catch |err| {
+        path.deinit();
+        return err;
+    };
     defer aws_options.deinit();
 
     const store = brk: {
@@ -298,13 +307,17 @@ pub fn constructS3FileWithS3CredentialsAndOptions(
     return blob;
 }
 
+/// Always takes ownership of `path`; freed on error, stored in the returned blob on success.
 pub fn constructS3FileWithS3Credentials(
     globalObject: *jsc.JSGlobalObject,
     path: jsc.Node.PathLike,
     options: ?jsc.JSValue,
     existing_credentials: S3.S3Credentials,
 ) bun.JSError!Blob {
-    var aws_options = try S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, false, globalObject);
+    var aws_options = S3.S3Credentials.getCredentialsWithOptions(existing_credentials, .{}, options, null, null, false, globalObject) catch |err| {
+        path.deinit();
+        return err;
+    };
     defer aws_options.deinit();
     const store = bun.handleOom(Blob.Store.initS3(path, null, aws_options.credentials, bun.default_allocator));
     errdefer store.deinit();
@@ -573,6 +586,7 @@ pub fn stat(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSEr
             if (path == .fd) {
                 return globalThis.throwInvalidArguments("Expected a S3 or path to get size", .{});
             }
+            path_or_blob = .{ .path = .{ .path = .{ .string = bun.PathString.empty } } };
             var blob = try constructS3FileInternalStore(globalThis, path.path, options);
             defer blob.deinit();
 

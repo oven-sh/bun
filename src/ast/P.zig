@@ -233,6 +233,21 @@ pub fn NewParser_(
         had_commonjs_named_exports_this_visit: bool = false,
         commonjs_replacement_stmts: StmtNodeList = &.{},
 
+        /// Tracks nesting depth inside control flow constructs (if/else, while,
+        /// do-while). Used to detect when CJS export assignments like
+        /// `exports.x = value` appear inside control flow, where emitting an
+        /// `export {}` clause inline would produce invalid JavaScript (export
+        /// declarations must be at the top level). The `var` declaration is
+        /// still emitted inline (since var is hoisted), but the export clause
+        /// is deferred to be appended at the part's top level.
+        control_flow_nesting_depth: u32 = 0,
+
+        /// Export clauses deferred from inside control flow. When a CJS export
+        /// assignment is found inside an if/while/do-while body that doesn't
+        /// push a new scope, we can't emit `export { $x as x }` inline. These
+        /// are collected here and appended at the end of `appendPart`.
+        deferred_commonjs_export_stmts: List(Stmt) = .{},
+
         parse_pass_symbol_uses: ParsePassSymbolUsageType = undefined,
 
         /// Used by commonjs_at_runtime
@@ -3686,6 +3701,15 @@ pub fn NewParser_(
                     }
                 }
                 p.relocated_top_level_vars.clearRetainingCapacity();
+            }
+
+            // Append any export clauses that were deferred from inside control
+            // flow (e.g. `if (cond) exports.x = "y"`). The var declarations
+            // were emitted inline (since var is hoisted), but export clauses
+            // must be at the module top level.
+            if (p.deferred_commonjs_export_stmts.items.len > 0) {
+                try partStmts.appendSlice(p.deferred_commonjs_export_stmts.items);
+                p.deferred_commonjs_export_stmts.clearRetainingCapacity();
             }
 
             if (partStmts.items.len > 0) {

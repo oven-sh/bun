@@ -240,3 +240,8 @@ export const hostedGitInfo = {
   parseUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsParseUrl", 1),
   fromUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsFromUrl", 1),
 };
+
+export const repositoryUrl = {
+  trySSH: $newZigFunction("repository.zig", "TestingAPIs.jsTrySSH", 1) as (url: string) => string | null,
+  tryHTTPS: $newZigFunction("repository.zig", "TestingAPIs.jsTryHTTPS", 1) as (url: string) => string | null,
+};

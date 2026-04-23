@@ -389,6 +389,66 @@ pub const Repository = extern struct {
         return error.InstallFailed;
     }
 
+    /// Given the portion of a URL after `ssh://` (i.e. `user@host:9999/path` or
+    /// `host:path`), returns true if it contains an explicit numeric port.
+    ///
+    /// Used to distinguish a real port from an scp-style path component:
+    ///   - `user@host:9999/path` -> true (port 9999)
+    ///   - `git@github.com:owner/repo` -> false (scp-style path)
+    ///   - `host:9999` -> true
+    ///   - `host:9999#branch` -> true
+    ///   - `[2001:db8::1]:9999/path` -> true (bracketed IPv6 literal)
+    ///   - `[2001:db8::1]/path` -> false (IPv6 without port)
+    fn hasExplicitPort(after_scheme: string) bool {
+        // RFC 3986 §3.2: the authority ends at the first `/`, `?`, or `#`.
+        // A `@` inside the path (e.g. `/@scope/pkg` for scoped npm packages)
+        // is NOT userinfo and must not be mistaken for it.
+        const authority_end = for (after_scheme, 0..) |c, i| {
+            switch (c) {
+                '/', '?', '#' => break i,
+                else => {},
+            }
+        } else after_scheme.len;
+        const authority = after_scheme[0..authority_end];
+
+        // Skip past `user@` or `user:pass@` within the authority only.
+        const host_start = if (strings.indexOfChar(authority, '@')) |at| at + 1 else 0;
+        const rest = after_scheme[host_start..];
+
+        // Find the `:` that would separate host from port. Bracketed IPv6
+        // literals like `[2001:db8::1]:9999` have colons inside the brackets
+        // that are part of the address, not a port separator — skip past the
+        // `]` and only accept a colon immediately after it.
+        const colon = brk: {
+            if (rest.len > 0 and rest[0] == '[') {
+                const end_bracket = strings.indexOfChar(rest, ']') orelse return false;
+                if (end_bracket + 1 >= rest.len or rest[end_bracket + 1] != ':') return false;
+                break :brk end_bracket + 1;
+            }
+
+            const c = strings.indexOfChar(rest, ':') orelse return false;
+            // If there's a `/`, `#`, or `?` before the colon, there's no port.
+            for (rest[0..c]) |ch| switch (ch) {
+                '/', '#', '?' => return false,
+                else => {},
+            };
+            break :brk c;
+        };
+
+        // Everything after the colon up to a path/fragment/query separator must
+        // be digits, and there must be at least one digit.
+        const after_colon = rest[colon + 1 ..];
+        var i: usize = 0;
+        while (i < after_colon.len) : (i += 1) {
+            switch (after_colon[i]) {
+                '0'...'9' => {},
+                '/', '#', '?' => break,
+                else => return false,
+            }
+        }
+        return i > 0;
+    }
+
     pub fn trySSH(url: string) ?string {
         // Do not cast explicit http(s) URLs to SSH
         if (strings.hasPrefixComptime(url, "http")) {
@@ -400,6 +460,14 @@ pub const Repository = extern struct {
         }
 
         if (strings.hasPrefixComptime(url, "ssh://")) {
+            // If the URL already has an explicit numeric port (e.g.
+            // ssh://user@host:9999/path), it's well-formed — don't run it
+            // through correctUrl(), which would turn the `:` into `/` and
+            // mangle the port into a path segment.
+            if (hasExplicitPort(url["ssh://".len..])) {
+                return url;
+            }
+
             // TODO(markovejnovic): This is a stop-gap. One of the problems with the implementation
             // here is that we should integrate hosted_git_info more thoroughly into the codebase
             // to avoid the allocation and copy here. For now, the thread-local buffer is a good
@@ -457,6 +525,14 @@ pub const Repository = extern struct {
         }
 
         if (strings.hasPrefixComptime(url, "ssh://")) {
+            // If the user pinned an explicit port (e.g. ssh://host:9999/...),
+            // the port belongs to SSH. Speaking HTTPS to it would hang (or
+            // fail slowly) waiting for an HTTPS response from sshd — skip the
+            // HTTPS attempt and go straight to SSH.
+            if (hasExplicitPort(url["ssh://".len..])) {
+                return null;
+            }
+
             final_path_buf[0.."https".len].* = "https".*;
             bun.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
             const out = final_path_buf[0 .. url.len - "ssh".len + "https".len];
@@ -697,6 +773,49 @@ pub const Repository = extern struct {
     }
 };
 
+pub const TestingAPIs = struct {
+    pub fn jsTrySSH(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        if (callframe.argumentsCount() != 1) {
+            return go.throw("repository.trySSH takes exactly 1 argument", .{});
+        }
+        const arg0 = callframe.argument(0);
+        if (!arg0.isString()) {
+            return go.throw("repository.trySSH takes a string as its first argument", .{});
+        }
+        const url_str = try arg0.toBunString(go);
+        defer url_str.deref();
+        var as_utf8 = url_str.toUTF8(bun.default_allocator);
+        defer as_utf8.deinit();
+        const result = Repository.trySSH(as_utf8.slice()) orelse return .null;
+        // trySSH may return either a slice into `as_utf8` (pass-through) or a
+        // slice into the thread-local `ssh_path_buf` (rewritten). Copy it into
+        // an owned String before returning to JS.
+        var cloned = bun.String.cloneUTF8(result);
+        defer cloned.deref();
+        return cloned.toJS(go);
+    }
+
+    pub fn jsTryHTTPS(go: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        if (callframe.argumentsCount() != 1) {
+            return go.throw("repository.tryHTTPS takes exactly 1 argument", .{});
+        }
+        const arg0 = callframe.argument(0);
+        if (!arg0.isString()) {
+            return go.throw("repository.tryHTTPS takes a string as its first argument", .{});
+        }
+        const url_str = try arg0.toBunString(go);
+        defer url_str.deref();
+        var as_utf8 = url_str.toUTF8(bun.default_allocator);
+        defer as_utf8.deinit();
+        const result = Repository.tryHTTPS(as_utf8.slice()) orelse return .null;
+        // tryHTTPS may return a slice into `as_utf8` (http pass-through) or a
+        // slice into the thread-local `final_path_buf` (rewritten). Copy.
+        var cloned = bun.String.cloneUTF8(result);
+        defer cloned.deref();
+        return cloned.toJS(go);
+    }
+};
+
 const string = []const u8;
 
 const Dependency = @import("./dependency.zig");
@@ -713,6 +832,7 @@ const PackageManager = Install.PackageManager;
 const bun = @import("bun");
 const OOM = bun.OOM;
 const Path = bun.path;
+const jsc = bun.jsc;
 const logger = bun.logger;
 const strings = bun.strings;
 const File = bun.sys.File;

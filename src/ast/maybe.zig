@@ -314,6 +314,15 @@ pub fn AstMaybe(
                                     return null;
                                 }
 
+                                // Deoptimize if exports.x appears inside control flow
+                                // (if/else/for/while/etc.), since the export value is
+                                // dynamic and cannot be statically converted to an ESM
+                                // export clause (which must be at the top level).
+                                if (p.control_flow_nesting_depth > 0) {
+                                    p.deoptimizeCommonJSNamedExports();
+                                    return null;
+                                }
+
                                 const named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
                                 if (!named_export_entry.found_existing) {
                                     const new_ref = p.newSymbol(
@@ -483,6 +492,13 @@ pub fn AstMaybe(
                             if (!p.is_control_flow_dead) {
                                 if (!p.commonjs_named_exports_deoptimized) {
                                     if (identifier_opts.is_delete_target) {
+                                        p.deoptimizeCommonJSNamedExports();
+                                        return null;
+                                    }
+
+                                    // Deoptimize if module.exports.x appears inside
+                                    // control flow, same as for exports.x above.
+                                    if (p.control_flow_nesting_depth > 0) {
                                         p.deoptimizeCommonJSNamedExports();
                                         return null;
                                     }

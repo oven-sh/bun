@@ -1486,6 +1486,7 @@ fn gitDiffPostprocess(stdout: *std.array_list.Managed(u8), old_folder: []const u
                 const line_start = line_iter.index.? - 1 - line.len;
                 line_iter.index.? -= 1 + line.len;
                 try stdout.replaceRange(line_start + @"$old_folder/ start", old_folder_trimmed.len + 1, "");
+                line_iter.buffer = stdout.items;
                 saw_a_folder = line_idx;
                 continue;
             }
@@ -1494,6 +1495,7 @@ fn gitDiffPostprocess(stdout: *std.array_list.Managed(u8), old_folder: []const u
                 const line_start = line_iter.index.? - 1 - line.len;
                 try stdout.replaceRange(line_start + @"$new_folder/ start", new_folder_trimmed.len + 1, "");
                 line_iter.index.? -= new_folder_trimmed.len + 1;
+                line_iter.buffer = stdout.items;
                 saw_b_folder = line_idx;
                 continue;
             }
@@ -1503,6 +1505,7 @@ fn gitDiffPostprocess(stdout: *std.array_list.Managed(u8), old_folder: []const u
                         const line_start = line_iter.index.? - 1 - line.len;
                         line_iter.index.? -= 1 + line.len;
                         try stdout.replaceRange(line_start + idx, old_folder.len + 1, "");
+                        line_iter.buffer = stdout.items;
                         saw_a_folder = line_idx;
                         continue;
                     }
@@ -1514,6 +1517,7 @@ fn gitDiffPostprocess(stdout: *std.array_list.Managed(u8), old_folder: []const u
                         const line_start = line_iter.index.? - 1 - line.len;
                         line_iter.index.? -= 1 + line.len;
                         try stdout.replaceRange(line_start + idx, new_folder.len + 1, "");
+                        line_iter.buffer = stdout.items;
                         saw_b_folder = line_idx;
                         continue;
                     }

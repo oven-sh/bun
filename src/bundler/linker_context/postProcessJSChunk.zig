@@ -155,10 +155,11 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
                             // imports by the linker. The printer already recorded them
                             // when printing cross_chunk_prefix_stmts.
                             if (record.source_index.isValid()) continue;
-                            // Skip barrel-optimized-away imports — marked is_unused by
-                            // barrel_imports.zig. Never resolved (source_index invalid),
-                            // and removed by convertStmtsForChunk. Not in emitted code.
-                            if (record.flags.is_unused) continue;
+                            // Skip barrel-optimized-away imports — marked is_unused and
+                            // is_barrel_deferred by barrel_imports.zig. Never resolved
+                            // (source_index invalid), and removed by convertStmtsForChunk.
+                            // Not in emitted code.
+                            if (record.flags.is_unused or record.flags.is_barrel_deferred) continue;
 
                             const import_path = record.path.text;
                             const irp_id = mi.str(import_path) catch continue;

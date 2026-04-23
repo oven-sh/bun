@@ -26,40 +26,74 @@
 #include "config.h"
 #include "SerializedCryptoKeyWrap.h"
 
-#include "CryptoAlgorithmAES_CTR.h"
+#include "OpenSSLUtilities.h"
+#include <openssl/rand.h>
 
 #if ENABLE(WEB_CRYPTO)
 
-// #include "NotImplemented.h"
-
 namespace WebCore {
+
+static constexpr size_t masterKeySize = 32; // 256-bit AES key
+
+static Vector<uint8_t>& getPerProcessMasterKey()
+{
+    static Vector<uint8_t> masterKey;
+    static std::once_flag flag;
+    std::call_once(flag, [] {
+        masterKey.resize(masterKeySize);
+        RAND_bytes(masterKey.begin(), masterKeySize);
+    });
+    return masterKey;
+}
 
 std::optional<Vector<uint8_t>> defaultWebCryptoMasterKey()
 {
-    // notImplemented();
-    return std::nullopt;
+    return getPerProcessMasterKey();
 }
 
-// Initially these helper functions were intended to perform KEK wrapping and unwrapping,
-// but this is not required anymore, despite the function names and the Mac implementation
-// still indicating otherwise.
-// See https://bugs.webkit.org/show_bug.cgi?id=173883 for more info.
+bool deleteDefaultWebCryptoMasterKey()
+{
+    return true;
+}
 
 bool wrapSerializedCryptoKey(const Vector<uint8_t>& masterKey, const Vector<uint8_t>& key, Vector<uint8_t>& result)
 {
-    UNUSED_PARAM(masterKey);
+    if (masterKey.size() < masterKeySize || key.isEmpty())
+        return false;
 
-    // No wrapping performed -- the serialized key data is copied into the `result` variable.
-    result = Vector<uint8_t>(key);
+    AESKey aesKey;
+    if (!aesKey.setKey(masterKey, AES_ENCRYPT))
+        return false;
+
+    // AES_wrap_key_padded (RFC 5649) handles arbitrary-length input.
+    // Maximum output size is input size rounded up to 8-byte boundary plus 8 bytes for the IV.
+    size_t maxOutputSize = ((key.size() + 7) & ~static_cast<size_t>(7)) + 8;
+    result.resize(maxOutputSize);
+    size_t outLen = 0;
+    if (!AES_wrap_key_padded(aesKey.key(), result.begin(), &outLen, maxOutputSize, key.begin(), key.size()))
+        return false;
+
+    result.shrink(outLen);
     return true;
 }
 
 bool unwrapSerializedCryptoKey(const Vector<uint8_t>& masterKey, const Vector<uint8_t>& wrappedKey, Vector<uint8_t>& key)
 {
-    UNUSED_PARAM(masterKey);
+    if (masterKey.size() < masterKeySize || wrappedKey.isEmpty())
+        return false;
 
-    // No unwrapping performed -- the serialized key data is copied into the `key` variable.
-    key = Vector<uint8_t>(wrappedKey);
+    AESKey aesKey;
+    if (!aesKey.setKey(masterKey, AES_DECRYPT))
+        return false;
+
+    // Output size is at most the wrapped size (minus 8 bytes for the IV/padding header).
+    size_t maxOutputSize = wrappedKey.size();
+    key.resize(maxOutputSize);
+    size_t outLen = 0;
+    if (!AES_unwrap_key_padded(aesKey.key(), key.begin(), &outLen, maxOutputSize, wrappedKey.begin(), wrappedKey.size()))
+        return false;
+
+    key.shrink(outLen);
     return true;
 }
 

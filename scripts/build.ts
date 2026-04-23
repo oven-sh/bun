@@ -435,7 +435,7 @@ Options:
                           Fields: asan, lto, assertions, logs, baseline,
                                   canary, valgrind, webkit (prebuilt|local),
                                   buildDir, mode (full|cpp-only|link-only),
-                                  unifiedSources, timeTrace
+                                  unifiedSources, timeTrace, staticAll
   --target=<name>         Build a specific ninja target (repeatable)
   --configure-only        Emit build.ninja, don't run it
   -j<N>, -v, -k<N>        Passed through to ninja
@@ -448,6 +448,7 @@ Any bare positional and everything after is passed to the built binary:
 Examples:
   bun scripts/build.ts --profile=debug
   bun scripts/build.ts --profile=release --lto=off
+  bun scripts/build.ts --profile=release --static-all=on --asan=off
   bun scripts/build.ts test foo.test.ts
   bun scripts/build.ts --profile=debug-local run script.ts
   bun scripts/build.ts --target=bun-zig

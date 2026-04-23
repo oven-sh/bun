@@ -216,6 +216,12 @@ export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeini
 export const getCounters = $newZigFunction("Counters.zig", "createCountersObject", 0);
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
+export const isBigIntInRange: (value: bigint, min: bigint, max: bigint, unsigned: boolean) => boolean = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_isBigIntInRange",
+  4,
+);
+
 interface setSocketOptionsFn {
   (socket: Bun.Socket, sendBuffer: 1, size: number): void;
   (socket: Bun.Socket, recvBuffer: 2, size: number): void;

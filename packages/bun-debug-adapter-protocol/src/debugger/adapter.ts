@@ -193,9 +193,10 @@ const CMD_META_CHARS = /([()[\]%!^"`<>&|;, ])/g;
  * Argument handling uses the qntm.org/cmd algorithm for backslash/quote
  * interaction inside the quoted region (necessary so inner `"` characters
  * survive `CommandLineToArgvW`'s unescape pass). The command itself is
- * caret-escaped (also twice, for the same batch re-parse reason) without
- * the qntm pass because it's a file path — we assume no embedded `"` in
- * the path. Matches cross-spawn exactly.
+ * caret-escaped just once — it is used to locate the program to run and
+ * is not re-parsed inside the shim's batch body, unlike args — and without
+ * the qntm pass because it's a file path we assume has no embedded `"`.
+ * Matches cross-spawn exactly.
  */
 export function buildShellCommand(command: string, args: readonly string[]): string {
   // The command itself goes through only the outer cmd.exe parse (cmd uses

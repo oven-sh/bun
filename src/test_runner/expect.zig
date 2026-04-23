@@ -1723,9 +1723,15 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         return Expect.executeCustomMatcher(globalThis, matcher_name, matcher_fn, matcher_args.items, this.flags, true);
     }
 
-    /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
+    /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue.
+    /// Errors are swallowed here because the C++ caller (`matchAsymmetricMatcherAndGetFlags`) cannot observe a pending
+    /// JS exception — it only inspects the bool return value. Leaving the exception pending would trip
+    /// `releaseAssertNoException` in a downstream `ThrowScope` destructor. Clear the exception to match the C ABI contract.
     pub fn execute(this: *ExpectCustomAsymmetricMatcher, thisValue: JSValue, globalThis: *JSGlobalObject, received: JSValue) callconv(.c) bool {
-        return executeImpl(this, thisValue, globalThis, received) catch false;
+        return executeImpl(this, thisValue, globalThis, received) catch {
+            globalThis.clearException();
+            return false;
+        };
     }
 
     pub fn asymmetricMatch(this: *ExpectCustomAsymmetricMatcher, globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {

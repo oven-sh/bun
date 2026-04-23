@@ -171,12 +171,16 @@ describe("issue #29636 — resolveCommand", () => {
   });
 
   test("strips surrounding double-quotes from PATH segments (matches libuv/node-which)", () => {
-    // Windows PATH entries can be double-quoted — required when the
-    // directory itself contains `;`, and sometimes added by installers or
-    // manual System-Properties edits. libuv's `search_path`, npm's
-    // `node-which` (used by cross-spawn), and cmd.exe all strip a wrapping
-    // pair before probing. Without the strip, `path.join('"…"', 'bun.cmd')`
-    // retains the literal quotes and `existsSync` misses.
+    // Windows PATH entries are sometimes wrapped in double quotes —
+    // installers or manual System-Properties edits occasionally add them
+    // to dirs that don't actually need quoting. libuv's `search_path`,
+    // npm's `node-which` (used by cross-spawn), and cmd.exe all strip a
+    // wrapping pair before probing. Without the strip,
+    // `path.join('"…"', 'bun.cmd')` keeps the literal quotes and
+    // `existsSync` misses. (A dir containing a literal `;` can't be
+    // represented here because we split on `;` first — full parity
+    // would need a quote-aware split. See the corresponding comment in
+    // adapter.ts.)
     using dir = tempDir("issue-29636-quoted", { "bun.cmd": "@echo off\r\n" });
     const result = resolveCommand("bun", { PATH: `"${String(dir)}"`, PATHEXT: ".cmd" }, "win32");
     expect(result).toEqual({

@@ -56,6 +56,12 @@ describe("$.braces", () => {
     expect($.braces("", { tokenize: true })).toBeString();
   });
 
+  test("empty string parse returns valid AST", () => {
+    const result = $.braces("", { parse: true });
+    const parsed = JSON.parse(result);
+    expect(parsed).toHaveProperty("atoms");
+  });
+
   test("unicode", () => {
     const result = $.braces(`lol {😂,🫵,🤣}`);
     expect(result).toEqual(["lol 😂", "lol 🫵", "lol 🤣"]);

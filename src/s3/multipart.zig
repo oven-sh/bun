@@ -1,3 +1,18 @@
+/// S3 Multipart Upload Implementation
+/// See: https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html
+///
+/// Key constraints from AWS:
+/// - Minimum part size: 5 MiB (except last part)
+/// - Maximum part size: 5 GiB
+/// - Maximum parts: 10,000
+/// - Maximum object size: 5 TiB
+///
+/// AWS Multipart Upload API operations used:
+/// - CreateMultipartUpload: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateMultipartUpload.html
+/// - UploadPart: https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPart.html
+/// - CompleteMultipartUpload: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
+/// - AbortMultipartUpload: https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html
+///
 // When we start the request we will buffer data until partSize is reached or the last chunk is received.
 // If the buffer is smaller than partSize, it will be sent as a single request. Otherwise, a multipart upload will be initiated.
 // If we send a single request it will retry until the maximum retry count is reached. The single request do not increase the reference count of MultiPartUpload, as they are the final step.
@@ -106,6 +121,7 @@ pub const MultiPartUpload = struct {
     acl: ?ACL = null,
     storage_class: ?Storageclass = null,
     request_payer: bool = false,
+    metadata: ?s3creds.MetadataMap = null,
     credentials: *S3Credentials,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
     vm: *jsc.VirtualMachine,
@@ -144,6 +160,15 @@ pub const MultiPartUpload = struct {
 
     const log = bun.Output.scoped(.S3MultiPartUpload, .hidden);
 
+    /// Represents a single part in a multipart upload.
+    /// Each part tracks its data, state, retry count, and part number.
+    ///
+    /// State machine:
+    /// - not_assigned: Initial state, slot available
+    /// - pending: Data assigned, waiting to start upload
+    /// - started: Upload request in progress
+    /// - completed: Upload succeeded, ETag received
+    /// - canceled: Upload aborted (on failure or user cancel)
     pub const UploadPart = struct {
         data: []const u8,
         ctx: *MultiPartUpload,
@@ -290,6 +315,9 @@ pub const MultiPartUpload = struct {
                 bun.default_allocator.free(ce);
             }
         }
+        if (this.metadata) |*meta| {
+            meta.deinit(bun.default_allocator);
+        }
         this.credentials.deref();
         this.uploadid_buffer.deinit();
         for (this.multipart_etags.items) |tag| {
@@ -320,6 +348,7 @@ pub const MultiPartUpload = struct {
                         .acl = this.acl,
                         .storage_class = this.storage_class,
                         .request_payer = this.request_payer,
+                        .metadata = this.metadata,
                     }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this);
 
                     return;
@@ -421,7 +450,8 @@ pub const MultiPartUpload = struct {
             }
         }
     }
-    /// Finalize the upload with a failure
+    /// Handle upload failure - abort multipart upload and notify callback.
+    /// Triggers rollback to clean up any uploaded parts.
     pub fn fail(this: *@This(), _err: S3Error) bun.JSTerminated!void {
         log("fail {s}:{s}", .{ _err.code, _err.message });
         this.ended = true;
@@ -562,6 +592,12 @@ pub const MultiPartUpload = struct {
         }
     }
 
+    /// Complete the multipart upload by combining all parts.
+    /// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html
+    ///
+    /// Sends CompleteMultipartUpload request with all part ETags.
+    /// On success, S3 combines parts into final object.
+    /// Retries on failure up to options.retry times.
     fn commitMultiPartRequest(this: *@This()) bun.JSTerminated!void {
         log("commitMultiPartRequest {s}", .{this.upload_id});
         var params_buffer: [2048]u8 = undefined;
@@ -578,6 +614,11 @@ pub const MultiPartUpload = struct {
             .request_payer = this.request_payer,
         }, .{ .commit = @ptrCast(&onCommitMultiPartRequest) }, this);
     }
+    /// Abort the multipart upload and delete all uploaded parts.
+    /// See: https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html
+    ///
+    /// Called when any part fails after max retries.
+    /// Cleans up partial uploads to avoid storage charges.
     fn rollbackMultiPartRequest(this: *@This()) bun.JSTerminated!void {
         log("rollbackMultiPartRequest {s}", .{this.upload_id});
         var params_buffer: [2048]u8 = undefined;
@@ -613,6 +654,7 @@ pub const MultiPartUpload = struct {
                 .acl = this.acl,
                 .storage_class = this.storage_class,
                 .request_payer = this.request_payer,
+                .metadata = this.metadata,
             }, .{ .download = @ptrCast(&startMultiPartRequestResult) }, this);
         } else if (this.state == .multipart_completed) {
             try part.start();
@@ -692,6 +734,7 @@ pub const MultiPartUpload = struct {
                 .acl = this.acl,
                 .storage_class = this.storage_class,
                 .request_payer = this.request_payer,
+                .metadata = this.metadata,
             }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this) catch {}; // TODO: properly propagate exception upwards
         } else {
             // we need to split
@@ -779,6 +822,15 @@ pub const MultiPartUpload = struct {
         return try this.write(chunk, is_last, .utf16);
     }
 
+    /// Buffer incoming data for upload.
+    ///
+    /// Behavior:
+    /// - Accumulates data in internal buffer
+    /// - When buffer reaches partSize, initiates part upload
+    /// - If is_last=true and total size < partSize, uses single PUT request
+    /// - If is_last=true and multipart started, uploads final part and commits
+    ///
+    /// Returns backpressure status to caller for flow control.
     pub fn writeBytes(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!ResumableSinkBackpressure {
         return try this.write(chunk, is_last, .bytes);
     }
@@ -787,9 +839,11 @@ pub const MultiPartUpload = struct {
 const std = @import("std");
 const ACL = @import("./acl.zig").ACL;
 const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
-const S3Credentials = @import("./credentials.zig").S3Credentials;
 const S3Error = @import("./error.zig").S3Error;
 const Storageclass = @import("./storage_class.zig").StorageClass;
+
+const s3creds = @import("./credentials.zig");
+const S3Credentials = s3creds.S3Credentials;
 
 const S3SimpleRequest = @import("./simple_request.zig");
 const executeSimpleS3Request = S3SimpleRequest.executeSimpleS3Request;

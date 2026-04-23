@@ -15,7 +15,7 @@ import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
 import { clangTargetArch } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
-import { ZIG_COMMIT } from "./zig.ts";
+import { ZIG_COMMIT_FAST, ZIG_COMMIT_STABLE, zigFastCompiler } from "./zig.ts";
 
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
@@ -48,11 +48,14 @@ export interface Host {
  * Pinned version defaults. Each lives at the top of its own file
  * (deps/webkit.ts, zig.ts, deps/nodejs-headers.ts) — look there to bump.
  * Overridable via PartialConfig for testing (e.g. trying a WebKit branch).
+ *
+ * Zig is NOT here: there are two pins (STABLE/FAST) and which one applies
+ * depends on resolved build options (ci/asan/windows/lto), so the default
+ * is computed inside resolveConfig via zigFastCompiler().
  */
 const versionDefaults = {
   nodejsVersion: NODEJS_VERSION,
   nodejsAbiVersion: NODEJS_ABI_VERSION,
-  zigCommit: ZIG_COMMIT,
   webkitVersion: WEBKIT_VERSION,
 };
 
@@ -229,8 +232,15 @@ export interface Config {
   /** Node.js compat version. Default in versions.ts; override to test a bump. */
   nodejsVersion: string;
   nodejsAbiVersion: string;
-  /** Zig compiler commit. Default in versions.ts; override to test a new compiler. */
+  /** Zig compiler commit. Defaults to STABLE or FAST per zigFast; override to test a new compiler. */
   zigCommit: string;
+  /**
+   * Which zig compiler line this build uses — true = `upgrade-0.15.2-fast`
+   * (parallel sema + sharded codegen), false = `upgrade-0.15.2` (stable).
+   * Derived from {windows, lto, ci, asan} via zigFastCompiler(); also gates
+   * ZIG_PARALLEL_SEMA and codegenThreads() in zig.ts.
+   */
+  zigFast: boolean;
   /** WebKit commit. Default in versions.ts; override to test a WebKit branch. */
   webkitVersion: string;
 }
@@ -736,8 +746,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // to test a branch before bumping the pinned default.
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
-  const zigCommit = partial.zigCommit ?? versionDefaults.zigCommit;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
+  // Zig: STABLE for shipped builds (non-ASAN CI, Windows, LTO), FAST
+  // (parallel sema + sharded codegen) for local dev and ASAN CI.
+  const zigFast = zigFastCompiler({ windows, lto, ci, asan });
+  const zigCommit = partial.zigCommit ?? (zigFast ? ZIG_COMMIT_FAST : ZIG_COMMIT_STABLE);
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
@@ -832,6 +845,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     nodejsAbiVersion,
     canaryRevision,
     zigCommit,
+    zigFast,
     webkitVersion,
   };
 }
@@ -1074,7 +1088,9 @@ export function formatConfig(cfg: Config, exe: string): string {
   // revert my WebKit test branch" before the build goes weird.
   if (cfg.webkitVersion !== versionDefaults.webkitVersion)
     features.push(`webkit-version:${cfg.webkitVersion.slice(0, 10)}`);
-  if (cfg.zigCommit !== versionDefaults.zigCommit) features.push(`zig-commit:${cfg.zigCommit.slice(0, 10)}`);
+  if (cfg.zigFast) features.push("zig:fast");
+  if (cfg.zigCommit !== ZIG_COMMIT_STABLE && cfg.zigCommit !== ZIG_COMMIT_FAST)
+    features.push(`zig-commit:${cfg.zigCommit.slice(0, 10)}`);
   if (cfg.nodejsVersion !== versionDefaults.nodejsVersion) features.push(`nodejs:${cfg.nodejsVersion}`);
   lines.push(`  ${label("features")} ${features.length > 0 ? c.cyan(features.join(", ")) : c.dim("(none)")}`);
   return lines.join("\n");

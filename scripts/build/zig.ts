@@ -29,40 +29,55 @@ import { quote, quoteArgs } from "./shell.ts";
 import { streamPath } from "./stream.ts";
 
 /**
- * Zig compiler commit — determines compiler download + bundled stdlib.
- * Override via `--zig-commit=<hash>` to test a new compiler.
- * From https://github.com/oven-sh/zig releases.
+ * Zig compiler commits — determine compiler download + bundled stdlib.
+ * Two pins from https://github.com/oven-sh/zig releases:
+ *
+ *   STABLE  oven-sh/zig branch `upgrade-0.15.2`. Upstream 0.15.2 + our
+ *           required correctness patches. Serial sema/codegen — same
+ *           pipeline as upstream. Used for shipped builds.
+ *
+ *   FAST    oven-sh/zig branch `upgrade-0.15.2-fast`. STABLE + the
+ *           parallel-sema/shard-codegen patchset. ~8× faster on a
+ *           16-core box but the parallelisation is not yet proven
+ *           bit-identical across runs, so it's dev/ASAN-CI only.
+ *
+ * `cfg.zigFast` (resolved in config.ts via zigFastCompiler) picks which.
+ * Override via `--zig-commit=<hash>` to test something else.
  */
-export const ZIG_COMMIT = "04e7f6ac1e009525bc00934f20199c68f04e0a24";
+export const ZIG_COMMIT_STABLE = "24475de8100b01a135c79d1629fa2e5341572fd1";
+export const ZIG_COMMIT_FAST = "af6e006bec4494b5f716b1508e7113fc2210ed67";
 
 /**
- * Number of LLVM codegen units. >1 splits the build into N independent
- * LLVM modules — parallelises emit, but cross-unit calls become
- * `linkonce_odr` externs so LLVM can't inline or IPO across them.
+ * Decides which compiler pin a given build configuration uses. Returns
+ * true → FAST, false → STABLE. Called from config.ts during resolution
+ * (before the full Config exists, hence the narrow input shape).
  *
- * Sharding is gated off for:
- *   - Non-ASAN CI: shipped releases want full IPO; cg=1 keeps that and
- *     keeps the upload/download contract a single file.
- *   - Windows targets: COFF shard emission is unimplemented in oven-sh/zig.
- *   - LTO: zig_llvm.cpp gates SplitModule on !lto, so cg>1 would emit one
- *     .o instead of N and the no_merge_shards path would expect missing files.
+ * STABLE is forced for:
+ *   - Non-ASAN CI: shipped releases must use the proven compiler.
+ *   - Windows targets: COFF shard emission is unimplemented in the fork.
+ *   - LTO: zig_llvm.cpp gates SplitModule on !lto, so sharding can't
+ *     fire anyway, and stable already has the LTO module-summary fix.
  *
- * ASAN CI uses a FIXED count (CI_ASAN_CODEGEN_THREADS) so zig-only and
- * link-only — which run on different machines — agree on the artifact
- * names. Local builds shard at availableParallelism(); benchmark against
- * a non-ASAN CI artifact if cross-unit inlining matters.
+ * Everything else (local dev, ASAN CI) gets FAST.
+ */
+export function zigFastCompiler(opts: { windows: boolean; lto: boolean; ci: boolean; asan: boolean }): boolean {
+  if (opts.windows) return false;
+  if (opts.lto) return false;
+  if (opts.ci) return opts.asan;
+  return true;
+}
+
+/**
+ * Number of LLVM codegen units. Only meaningful on the FAST compiler;
+ * STABLE has no shard support so it's always 1 there. On FAST, ASAN CI
+ * uses a FIXED count (CI_ASAN_CODEGEN_THREADS) so zig-only and link-only
+ * — which run on different machines — agree on artifact names; local dev
+ * shards at availableParallelism(). Benchmark against a non-ASAN CI
+ * artifact if cross-unit inlining matters.
  */
 function codegenThreads(cfg: Config): number {
-  if (cfg.windows) return 1;
-  if (cfg.lto) return 1;
-  if (cfg.ci) {
-    // ASAN is a test-only build (not shipped), so cross-shard IPO loss is
-    // fine and the speedup is worth it. The count is FIXED so zig-only and
-    // link-only — which run on different machines — agree on the artifact
-    // names. Non-asan CI stays at 1: shipped releases want full IPO.
-    return cfg.asan ? CI_ASAN_CODEGEN_THREADS : 1;
-  }
-  return availableParallelism();
+  if (!cfg.zigFast) return 1;
+  return cfg.ci ? CI_ASAN_CODEGEN_THREADS : availableParallelism();
 }
 
 /** Fixed shard count for CI ASAN builds. Matches getZigAgent's instance size. */
@@ -327,7 +342,9 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
   // our fork (upstream added Feb 2026, not backported).
   const interleave = false;
   const consoleMode = !interleave || hostWin;
-  const parallelSema = " --env=ZIG_PARALLEL_SEMA=1";
+  // ZIG_PARALLEL_SEMA is only recognised by the FAST compiler; harmless
+  // on STABLE but pointless to set there.
+  const parallelSema = cfg.zigFast ? " --env=ZIG_PARALLEL_SEMA=1" : "";
   n.rule("zig_build", {
     command: `${stream} ${consoleMode ? "--console" : "--zig-progress"} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache${parallelSema} $zig build $step $args`,
     // $out can be 16 shard paths; the build edge sets a compact $label.
@@ -510,9 +527,9 @@ function zigBuildArgs(cfg: Config): string[] {
     // Always ON — bun uses mimalloc as its default allocator. The flag
     // exists for experimentation; in practice it's never OFF.
     `-Duse_mimalloc=true`,
-    // Sharded LLVM codegen — one shard per host core on the parallel
-    // compiler. Zig has no "auto" value (0 = single-threaded). MUST be 0
-    // on the stable compiler — see codegenThreads().
+    // Sharded LLVM codegen. 1 on STABLE (build.zig @hasField-gates the
+    // Compile field so this is a no-op there); availableParallelism() or
+    // CI_ASAN_CODEGEN_THREADS on FAST.
     `-Dllvm_codegen_threads=${codegenThreads(cfg)}`,
 
     // Versioning

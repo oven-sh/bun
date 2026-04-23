@@ -1,4 +1,4 @@
-const ScriptConfig = struct {
+pub const ScriptConfig = struct {
     package_json_path: []u8,
     package_name: []const u8,
     script_name: []const u8,
@@ -484,7 +484,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
 
         for (&[3][]const u8{ pre_script_name, script_name, post_script_name }, 0..) |name, i| {
             const original_content = pkgscripts.get(name) orelse {
-                if (i == 1 and ctx.workspaces and !ctx.if_present) {
+                if (i == 1 and ctx.workspaces and !ctx.if_present and !ctx.affected) {
                     Output.errGeneric("Missing '{s}' script at '{s}'", .{ script_name, path });
                     Global.exit(1);
                 }
@@ -523,9 +523,22 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         }
     }
 
+    // If --affected is set, filter scripts to only affected packages
+    if (ctx.affected) {
+        Affected.filterAffectedScripts(ctx.allocator, &scripts, resolve_root, ctx.base_ref, ctx.head_ref, ctx.explicit_refs) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: Failed to detect affected packages: {s}", .{@errorName(err)});
+            Global.exit(1);
+        };
+
+        // If --list is set, print affected packages and exit
+        if (ctx.list_affected) {
+            Affected.listAffectedAndExit(ctx.allocator, &scripts);
+        }
+    }
+
     if (scripts.items.len == 0) {
-        if (ctx.if_present) {
-            // Exit silently with success when --if-present is set
+        if (ctx.if_present or ctx.affected) {
+            // Exit silently with success when --if-present or --affected with no changes
             Global.exit(0);
         }
         if (ctx.workspaces) {
@@ -662,6 +675,7 @@ fn hasCycle(current: *ProcessHandle) bool {
     return false;
 }
 
+const Affected = @import("./affected.zig");
 const FilterArg = @import("./filter_arg.zig");
 const std = @import("std");
 const DependencyMap = @import("../resolver/package_json.zig").DependencyMap;

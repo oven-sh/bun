@@ -133,6 +133,10 @@ pub const auto_or_run_params = [_]ParamType{
     clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
     clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
     clap.parseParam("--workspaces                      Run a script in all workspace packages (from the \"workspaces\" field in package.json)") catch unreachable,
+    clap.parseParam("--affected                        Run a script only in workspace packages affected by git changes") catch unreachable,
+    clap.parseParam("--base <STR>                      Base git ref for --affected (default: \"main\")") catch unreachable,
+    clap.parseParam("--head <STR>                      Head git ref for --affected (default: \"HEAD\")") catch unreachable,
+    clap.parseParam("--list                            List affected packages without running scripts (with --affected)") catch unreachable,
     clap.parseParam("--parallel                        Run multiple scripts concurrently with Foreman-style output") catch unreachable,
     clap.parseParam("--sequential                      Run multiple scripts sequentially with Foreman-style output") catch unreachable,
     clap.parseParam("--no-exit-on-error                Continue running other scripts when one fails (with --parallel/--sequential)") catch unreachable,
@@ -468,10 +472,21 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     if (cmd == .RunCommand or cmd == .AutoCommand) {
         ctx.filters = args.options("--filter");
         ctx.workspaces = args.flag("--workspaces");
+        ctx.affected = args.flag("--affected");
         ctx.if_present = args.flag("--if-present");
         ctx.parallel = args.flag("--parallel");
         ctx.sequential = args.flag("--sequential");
         ctx.no_exit_on_error = args.flag("--no-exit-on-error");
+        ctx.list_affected = args.flag("--list");
+
+        if (args.option("--base")) |base| {
+            ctx.base_ref = base;
+            ctx.explicit_refs = true;
+        }
+        if (args.option("--head")) |head| {
+            ctx.head_ref = head;
+            ctx.explicit_refs = true;
+        }
 
         if (args.option("--elide-lines")) |elide_lines| {
             if (elide_lines.len > 0) {
@@ -480,6 +495,20 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     Global.exit(1);
                 };
             }
+        }
+
+        // --affected implies --workspaces (run across all workspace packages, then filter)
+        if (ctx.affected) {
+            if (ctx.filters.len > 0) {
+                Output.prettyErrorln("<r><red>error<r>: --affected and --filter cannot be used together", .{});
+                Global.exit(1);
+            }
+            ctx.workspaces = true;
+        }
+
+        if (ctx.list_affected and !ctx.affected) {
+            Output.prettyErrorln("<r><red>error<r>: --list requires --affected", .{});
+            Global.exit(1);
         }
     }
 

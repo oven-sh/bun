@@ -606,6 +606,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.end();
           socket.destroy();
         } else if (is_upgrade) {
+          socket[kEnableStreaming](true);
           server.emit("upgrade", http_req, socket, kEmptyBuffer);
           if (!socket._httpMessage) {
             if (canUseInternalAssignSocket) {
@@ -633,7 +634,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           server.emit("request", http_req, http_res);
         }
 
-        socket.cork();
+        if (!is_upgrade) {
+          socket.cork();
+        }
 
         if (handle.finished || didFinish) {
           handle = undefined;

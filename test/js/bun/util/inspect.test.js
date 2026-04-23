@@ -100,6 +100,30 @@ it("when prototype defines the same property, don't print the same property twic
   expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456",\n}'.trim());
 });
 
+it("Proxy prototype with a getter that throws does not crash", () => {
+  const proto = {
+    get foo() {
+      throw new Error("nope");
+    },
+  };
+  const obj = Object.create(new Proxy(proto, {}));
+  expect(Bun.inspect(obj)).toBe("{}");
+});
+
+it("Proxy prototype with a getPrototypeOf trap that throws does not crash", () => {
+  const obj = Object.create(
+    new Proxy(
+      { foo: 1 },
+      {
+        getPrototypeOf() {
+          throw new Error("nope");
+        },
+      },
+    ),
+  );
+  expect(Bun.inspect(obj)).toBe("{\n  foo: 1,\n}");
+});
+
 it("Blob inspect", () => {
   expect(Bun.inspect(new Blob(["123"]))).toBe(`Blob (3 bytes)`);
   expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (2.70 KB)`);

@@ -253,6 +253,11 @@ pub const Bunfig = struct {
                 }
             }
 
+            if (json.get("version")) |expr| {
+                try this.expectString(expr);
+                this.ctx.pinned_version = try expr.data.e_string.string(allocator);
+            }
+
             if (comptime cmd == .RunCommand or cmd == .AutoCommand) {
                 if (json.get("smol")) |expr| {
                     try this.expect(expr, .e_boolean);

@@ -276,6 +276,13 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
     }
 
     try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);
+
+    // Check version pinning after bunfig is fully loaded.
+    if (comptime cmd != .UpgradeCommand) {
+        if (ctx.pinned_version) |pinned| {
+            version_manager.checkPinnedVersion(pinned, allocator);
+        }
+    }
 }
 
 fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
@@ -1705,6 +1712,7 @@ const string = []const u8;
 
 const builtin = @import("builtin");
 const std = @import("std");
+const version_manager = @import("./version_manager.zig");
 
 const bun = @import("bun");
 const Bunfig = bun.Bunfig;

@@ -34,3 +34,26 @@ test("weird headers", async () => {
     }
   }
 });
+
+// https://github.com/oven-sh/bun/issues/10507
+test("Content-Length header set in response is preserved", async () => {
+  const body = "Hello, World!";
+  const customLength = 999;
+
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    fetch() {
+      return new Response(body, {
+        headers: {
+          "Content-Length": String(customLength),
+        },
+      });
+    },
+  });
+
+  const res = await fetch(server.url);
+  expect(res.headers.get("Content-Length")).toBe(String(customLength));
+  // Ensure body is still readable
+  expect(await res.text()).toBe(body);
+});

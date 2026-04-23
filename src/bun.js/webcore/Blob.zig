@@ -649,7 +649,10 @@ export fn Blob__getFileNameString(this: *Blob) callconv(.c) bun.String {
         return bun.String.fromBytes(filename);
     }
 
-    return bun.String.empty;
+    // Per the XHR spec ("create an entry" algorithm), when a Blob (not a File)
+    // is appended to FormData without an explicit filename, the name should
+    // default to "blob". See: https://xhr.spec.whatwg.org/#dom-formdata-append
+    return bun.String.static("blob");
 }
 
 comptime {

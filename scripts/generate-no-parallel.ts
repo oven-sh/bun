@@ -1,18 +1,19 @@
 #!/usr/bin/env bun
-// Regenerates test/no-parallel.txt — the denylist of test files that must NOT
-// be batched into `bun test --parallel` by scripts/runner.node.mjs.
+// Regenerates test/no-parallel.txt — the single source of truth for which
+// test files must NOT be batched into `bun test --parallel` by
+// scripts/runner.node.mjs.
 //
-// A file is denylisted when its body matches any of CONTENT_PATTERNS below
-// (GC pressure, RSS measurement, heap snapshots, etc. — anything whose result
-// is perturbed by other workers sharing the machine).
+// A file is denylisted when:
+//   - its path is under napi/, v8/, ffi/, or webview/
+//   - its basename contains leak|stress|memory|heap|gc|rss
+//   - its body matches any of CONTENT_PATTERNS (GC pressure, RSS measurement,
+//     heap snapshots, etc. — anything perturbed by sibling workers)
 //
-// Path-based excludes (napi/, v8/, leak/stress/memory in basename, node-test
-// tree) are applied directly in the runner, NOT listed here, so this file
-// stays focused on the content-derived cases that aren't visible from the
-// path alone.
+// The node-test tree (js/node/test/{parallel,sequential}/) is NOT listed —
+// those run via `bun run`, not `bun test`, so they're excluded structurally
+// in the runner regardless of this file.
 //
 // Run: bun run regenerate-no-parallel
-//   or: bun scripts/generate-no-parallel.ts
 
 import { Glob } from "bun";
 import { join, relative } from "node:path";
@@ -20,6 +21,8 @@ import { join, relative } from "node:path";
 const repoRoot = join(import.meta.dirname, "..");
 const testRoot = join(repoRoot, "test");
 const outPath = join(testRoot, "no-parallel.txt");
+
+const PATH_PATTERNS = [/(?:^|\/)(napi|v8|ffi|webview)\//i, /\b(leak|stress|memory|heap|gc|rss)\b/i];
 
 const CONTENT_PATTERNS = [
   /\bexpectMaxObjectTypeCount\b/,
@@ -35,14 +38,9 @@ const CONTENT_PATTERNS = [
   /BUN_JSC_forceRAMSize/,
 ];
 
-// These are already excluded by isParallelSafe() in the runner via path
-// match — listing them here would just be noise.
-function isPathExcludedByRunner(p: string): boolean {
-  const posix = p.replaceAll("\\", "/");
-  if (/\/(napi|v8|ffi|webview)\//i.test(posix)) return true;
-  if (/(^|\/)js\/node\/test\/(parallel|sequential)\//.test(posix)) return true;
-  if (/\b(leak|stress|memory|heap|gc|rss)\b/i.test(posix.split("/").at(-1)!)) return true;
-  return false;
+// Runs via `bun run`, not `bun test` — structurally excluded by the runner.
+function isNodeTestTree(posix: string): boolean {
+  return /(^|\/)js\/(node|bun)\/test\/(parallel|sequential)\//.test(posix);
 }
 
 // Preserve hand-added entries that the grep wouldn't rediscover. Anything
@@ -67,13 +65,16 @@ let scanned = 0;
 
 for await (const entry of glob.scan({ cwd: testRoot, onlyFiles: true })) {
   if (entry.includes("node_modules")) continue;
-  scanned++;
   const rel = "test/" + entry.replaceAll("\\", "/");
-  if (isPathExcludedByRunner(rel)) continue;
-  const body = await Bun.file(join(testRoot, entry)).text();
-  if (CONTENT_PATTERNS.some(re => re.test(body))) {
+  if (isNodeTestTree(rel)) continue;
+  scanned++;
+  const base = rel.split("/").at(-1)!;
+  if (PATH_PATTERNS[0].test(rel) || PATH_PATTERNS[1].test(base)) {
     matches.push(rel);
+    continue;
   }
+  const body = await Bun.file(join(testRoot, entry)).text();
+  if (CONTENT_PATTERNS.some(re => re.test(body))) matches.push(rel);
 }
 
 matches.sort();
@@ -83,12 +84,12 @@ const header = `# Tests that must NOT run inside the \`bun test --parallel\` bat
 #
 # scripts/runner.node.mjs partitions tests into a single \`--parallel\` batch
 # (fast path) and a sequential per-file tail. Anything listed here goes to
-# the tail because it measures GC/RSS/heap state that other workers would
-# perturb, or otherwise can't tolerate sibling processes.
+# the tail because it measures GC/RSS/heap state, loads native addons, or
+# otherwise can't tolerate sibling worker processes.
 #
-# Path-based excludes (napi/, v8/, ffi/, webview/, node-test tree, and any
-# file whose basename contains leak/stress/memory/heap/gc/rss) are applied
-# in the runner and intentionally NOT repeated here.
+# This file is the single source of truth. The runner adds nothing on top
+# except the node-test tree (js/node/test/{parallel,sequential}/), which runs
+# via \`bun run\` rather than \`bun test\` and so can never join the batch.
 #
 # REGENERATE: bun run regenerate-no-parallel
 # Hand-added entries go below the "# manual" marker so regeneration keeps them.

@@ -343,9 +343,9 @@ const shouldValidateExceptions = test => !skipsForExceptionValidation.has(test);
 const shouldValidateLeakSan = test => !skipsForLeaksan.has(test);
 
 /**
- * Can this test go into the `bun test --parallel` batch? Anything that
- * measures GC/RSS, loads native addons, or runs through `bun run` instead of
- * `bun test` must take the per-file path. See test/no-parallel.txt.
+ * Can this test go into the `bun test --parallel` batch?
+ * The denylist lives entirely in test/no-parallel.txt; the only checks here
+ * are structural (node-test/cluster files run via `bun run`, not `bun test`).
  * @param {string} testPath path relative to test/, posix or native sep
  * @returns {boolean}
  */
@@ -354,8 +354,6 @@ function isParallelSafe(testPath) {
   if (skipsForParallelBatch.has(posix)) return false;
   if (isNodeTest(posix) || isClusterTest(posix)) return false;
   if (!isTestStrict(posix)) return false;
-  if (/(?:^|\/)(napi|v8|ffi|webview)\//i.test(posix)) return false;
-  if (/\b(leak|stress|memory|heap|gc|rss)\b/i.test(basename(posix))) return false;
   return true;
 }
 

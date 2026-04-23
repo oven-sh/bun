@@ -5,7 +5,7 @@ description: Regenerate test/no-parallel.txt (denylist for the CI parallel batch
 
 # Regenerate `test/no-parallel.txt`
 
-`scripts/runner.node.mjs --parallel-batch` runs most test files in a single `bun test --parallel` invocation, then runs the rest one-per-process. `test/no-parallel.txt` is the explicit denylist for files whose **contents** make them unsafe to share a machine with other workers (GC counting, RSS measurement, heap snapshots, `Bun.WebView`, etc.). Path-based excludes — `napi/`, `v8/`, `ffi/`, `webview/`, the node-test tree, and any basename containing `leak|stress|memory|heap|gc|rss` — are applied in the runner directly and are **not** listed in the file.
+`scripts/runner.node.mjs --parallel-batch` runs most test files in a single `bun test --parallel` invocation, then runs the rest one-per-process. `test/no-parallel.txt` is the **single source of truth** for which files must take the per-process path. The generator denylists a file when its path is under `napi/`, `v8/`, `ffi/`, or `webview/`; its basename contains `leak|stress|memory|heap|gc|rss`; or its body references GC/RSS/heap measurement (`expectMaxObjectTypeCount`, `Bun.gc(`, `heapStats`, `process.memoryUsage`, `Bun.WebView`, etc.). The runner itself adds nothing on top except the node-test tree, which runs via `bun run` rather than `bun test` and so structurally can't join the batch.
 
 Do exactly this:
 

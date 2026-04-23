@@ -2,19 +2,21 @@
 #
 # scripts/runner.node.mjs partitions tests into a single `--parallel` batch
 # (fast path) and a sequential per-file tail. Anything listed here goes to
-# the tail because it measures GC/RSS/heap state that other workers would
-# perturb, or otherwise can't tolerate sibling processes.
+# the tail because it measures GC/RSS/heap state, loads native addons, or
+# otherwise can't tolerate sibling worker processes.
 #
-# Path-based excludes (napi/, v8/, ffi/, webview/, node-test tree, and any
-# file whose basename contains leak/stress/memory/heap/gc/rss) are applied
-# in the runner and intentionally NOT repeated here.
+# This file is the single source of truth. The runner adds nothing on top
+# except the node-test tree (js/node/test/{parallel,sequential}/), which runs
+# via `bun run` rather than `bun test` and so can never join the batch.
 #
 # REGENERATE: bun run regenerate-no-parallel
 # Hand-added entries go below the "# manual" marker so regeneration keeps them.
 
+test/bake/dev/stress.test.ts
 test/bundler/bun-build-api.test.ts
 test/bundler/bundler_defer.test.ts
 test/bundler/bundler_plugin.test.ts
+test/cli/heap-prof.test.ts
 test/cli/hot/hot.test.ts
 test/cli/install/semver.test.ts
 test/cli/run/require-cache.test.ts
@@ -24,15 +26,27 @@ test/js/bun/css/color.test.ts
 test/js/bun/css/css-fuzz.test.ts
 test/js/bun/css/small-list-grow.test.ts
 test/js/bun/dns/resolve-dns.test.ts
+test/js/bun/ffi/addr32.test.ts
+test/js/bun/ffi/cc.test.ts
+test/js/bun/ffi/ffi-error-messages.test.ts
+test/js/bun/ffi/ffi-viewSource-non-object.test.ts
+test/js/bun/ffi/ffi.test.js
+test/js/bun/glob/leak.test.ts
 test/js/bun/glob/scan.test.ts
+test/js/bun/glob/stress.test.ts
 test/js/bun/globals.test.js
 test/js/bun/http/bun-connect-x509.test.ts
 test/js/bun/http/bun-serve-file.test.ts
 test/js/bun/http/bun-serve-html.test.ts
 test/js/bun/http/bun-serve-static.test.ts
 test/js/bun/http/fetch-file-upload.test.ts
+test/js/bun/http/req-url-leak.test.ts
+test/js/bun/http/serve-body-leak.test.ts
+test/js/bun/http/serve-pending-promise-abort-leak.test.ts
 test/js/bun/http/serve.test.ts
+test/js/bun/io/bun-write-leak.test.ts
 test/js/bun/io/bun-write.test.js
+test/js/bun/jsc-stress/jsc-stress.test.ts
 test/js/bun/jsc/bun-jsc.test.ts
 test/js/bun/jsc/heapStats-mimalloc.test.ts
 test/js/bun/jsonl/jsonl-parse.test.ts
@@ -43,12 +57,19 @@ test/js/bun/net/tcp-server.test.ts
 test/js/bun/resolve/load-file-loader-a-lot.test.ts
 test/js/bun/resolve/load-same-js-file-a-lot.test.ts
 test/js/bun/resolve/resolve-error.test.ts
+test/js/bun/s3/s3-stream-cancel-leak.test.ts
+test/js/bun/s3/s3.leak.test.ts
 test/js/bun/shell/bunshell.test.ts
+test/js/bun/shell/leak.test.ts
 test/js/bun/shell/shell-blocking-pipe.test.ts
+test/js/bun/shell/shell-leak-args.test.ts
+test/js/bun/spawn/spawn-noread-leak.test.ts
+test/js/bun/spawn/spawn-pipe-leak.test.ts
 test/js/bun/spawn/spawn-stdin-destroy.test.ts
 test/js/bun/spawn/spawn-stdin-readable-stream.test.ts
 test/js/bun/spawn/spawn-streaming-stdin.test.ts
 test/js/bun/spawn/spawn-streaming-stdout.test.ts
+test/js/bun/spawn/spawn-stress.test.ts
 test/js/bun/spawn/spawn.ipc.test.ts
 test/js/bun/spawn/spawn.test.ts
 test/js/bun/sqlite/sqlite.test.js
@@ -60,16 +81,29 @@ test/js/bun/test/mock-fn.test.js
 test/js/bun/test/mock/mock-module-non-string.test.ts
 test/js/bun/util/arraybuffersink.test.ts
 test/js/bun/util/bun-cryptohasher.test.ts
+test/js/bun/util/error-gc-test.test.js
 test/js/bun/util/filesystem_router.test.ts
 test/js/bun/util/fuzzy-wuzzy.test.ts
 test/js/bun/util/hash.test.js
+test/js/bun/util/heap-snapshot.test.ts
+test/js/bun/util/inspect-error-leak.test.js
 test/js/bun/util/inspect.test.js
 test/js/bun/util/mmap.test.js
 test/js/bun/util/stripANSI.test.ts
+test/js/bun/util/v8-heap-snapshot.test.ts
+test/js/bun/websocket/websocket-upgrade-signal-gc.test.ts
+test/js/bun/webview/webview-chrome-ws.test.ts
+test/js/bun/webview/webview-chrome.test.ts
+test/js/bun/webview/webview.test.ts
+test/js/deno/v8/error.test.ts
 test/js/node/diagnostics_channel/diagnostics_channel.test.ts
+test/js/node/fs/abort-signal-leak-read-write-file.test.ts
+test/js/node/fs/fs-leak.test.js
 test/js/node/fs/fs-oom.test.ts
 test/js/node/fs/fs.test.ts
+test/js/node/http/node-http.compress.leak.test.ts
 test/js/node/http2/node-http2.test.js
+test/js/node/net/handle-leak.test.ts
 test/js/node/net/node-net.test.ts
 test/js/node/net/socketaddress.spec.ts
 test/js/node/process/process-args.test.js
@@ -78,29 +112,108 @@ test/js/node/string_decoder/string-decoder.test.js
 test/js/node/tls/node-tls-namedpipes.test.ts
 test/js/node/util/parse_args/parse-args.test.mjs
 test/js/node/util/test-aborted.test.ts
+test/js/node/v8/capture-stack-trace.test.js
+test/js/node/v8/v8-date-parser.test.js
+test/js/node/vm/script-leak.test.ts
+test/js/node/vm/sourcetextmodule-leak.test.ts
+test/js/node/vm/vm-script-fetcher-leak.test.ts
 test/js/node/watch/fs.watchFile.test.ts
+test/js/node/zlib/leak.test.ts
 test/js/sql/sql.test.ts
+test/js/third_party/body-parser/express-memory-leak.test.ts
 test/js/third_party/prisma/prisma.test.ts
 test/js/third_party/resvg/bbox.test.js
 test/js/third_party/svelte/svelte.test.ts
+test/js/valkey/valkey-gc.test.ts
+test/js/web/abort/abort-controller-gc-reason.test.ts
+test/js/web/broadcastchannel/broadcast-channel-worker-gc.test.ts
 test/js/web/encoding/text-decoder.test.js
 test/js/web/encoding/text-encoder.test.js
+test/js/web/fetch/abort-signal-leak.test.ts
 test/js/web/fetch/blob-oom.test.ts
 test/js/web/fetch/blob-write.test.ts
 test/js/web/fetch/body-stream.test.ts
 test/js/web/fetch/fetch-cyclic-reference.test.ts
 test/js/web/fetch/fetch-gzip.test.ts
+test/js/web/fetch/fetch-leak.test.ts
+test/js/web/fetch/fetch-stream-cancel-leak.test.ts
+test/js/web/fetch/fetch-tcp-stress.test.ts
 test/js/web/fetch/fetch.stream.test.ts
 test/js/web/fetch/fetch.test.ts
 test/js/web/fetch/request-cyclic-reference.test.ts
 test/js/web/fetch/response-cyclic-reference.test.ts
+test/js/web/fetch/server-response-stream-leak.test.ts
 test/js/web/html/FormData.test.ts
+test/js/web/request/request-clone-leak.test.ts
 test/js/web/request/request-method-getter.test.ts
+test/js/web/streams/pipeTo-signal-leak.test.ts
+test/js/web/streams/streams-leak.test.ts
 test/js/web/structured-clone-fastpath.test.ts
 test/js/web/timers/setTimeout.test.js
 test/js/web/web-globals.test.js
 test/js/web/websocket/websocket.test.js
+test/js/web/workers/message-port-closed-leak.test.ts
 test/js/workerd/html-rewriter.test.js
+test/napi/napi-value-ffi.test.ts
+test/napi/napi.test.ts
+test/napi/node-napi-tests/test/js-native-api/2_function_arguments/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/3_callbacks/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/4_object_factory/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/5_function_factory/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/7_factory_wrap/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/8_passing_wrapped/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_array/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_bigint/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_cannot_run_js/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_constructor/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_conversions/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_dataview/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_date/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_error/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_exception/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_finalizer/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_function/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_general/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_handle_scope/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_instance_data/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_new_target/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_number/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_object/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_promise/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_properties/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_reference/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_reference_double_free/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_string/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_symbol/do.test.ts
+test/napi/node-napi-tests/test/js-native-api/test_typedarray/do.test.ts
+test/napi/node-napi-tests/test/node-api/1_hello_world/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_async/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_async_cleanup_hook/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_async_context/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_buffer/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_callback_scope/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_cleanup_hook/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_env_teardown_gc/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_exception/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_fatal/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_fatal_exception/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_general/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_init_order/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_instance_data/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_make_callback/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_make_callback_recurse/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_null_init/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_reference_by_node_api_version/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_threadsafe_function/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_uv_loop/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_uv_threadpool_size/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_worker_buffer_callback/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_worker_terminate/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_worker_terminate_finalization/do.test.ts
+test/napi/uv.test.ts
+test/napi/uv_stub.test.ts
+test/regression/brotli-reset-leak.test.ts
 test/regression/issue/07827.test.ts
 test/regression/issue/08794.test.ts
 test/regression/issue/09748.test.ts
@@ -112,5 +225,6 @@ test/regression/issue/28632.test.ts
 test/regression/issue/28756.test.ts
 test/regression/issue/29519.test.ts
 test/regression/issue/text-chunk-null-access.test.ts
+test/v8/v8.test.ts
 
 # manual

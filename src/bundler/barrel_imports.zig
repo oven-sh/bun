@@ -56,6 +56,14 @@ fn applyBarrelOptimizationImpl(this: *BundleV2, parse_result: *ParseTask.Result)
     if (ast.import_records.len == 0) return;
     if (ast.named_exports.count() == 0 and ast.export_star_import_records.len == 0) return;
 
+    // Entry points need all their exports preserved — they are the public API
+    // of the bundle. Since nothing imports from them within the bundle,
+    // requested_exports will be empty, causing barrel optimization to
+    // incorrectly mark all their imports as unused.
+    for (this.graph.entry_points.items) |ep| {
+        if (ep.get() == source_index) return;
+    }
+
     const named_exports = ast.named_exports;
     const named_imports = ast.named_imports;
 

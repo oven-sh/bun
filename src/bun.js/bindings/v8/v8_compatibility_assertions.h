@@ -13,7 +13,7 @@
 
 // usage: [*outside* namespace v8] ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::SomeTemplate<v8::SomeParam>)
 #define ASSERT_V8_TYPE_LAYOUT_MATCHES(TYPENAME)                                       \
-    namespace V8_TYPE_ASSERTIONS_NAMESPACE_NAME(__LINE__) {                           \
+    namespace V8_TYPE_ASSERTIONS_NAMESPACE_NAME(__COUNTER__) {                        \
     namespace DeclareBunType {                                                        \
     namespace v8 = ::v8;                                                              \
     using BunType = TYPENAME;                                                         \
@@ -32,7 +32,7 @@
 
 // usage: [*outside* namespace v8] ASSERT_V8_TYPE_FIELD_OFFSET_MATCHES(v8::Maybe<int>, m_hasValue, has_value_)
 #define ASSERT_V8_TYPE_FIELD_OFFSET_MATCHES(TYPENAME, BUN_FIELD_NAME, V8_FIELD_NAME)       \
-    namespace V8_TYPE_ASSERTIONS_NAMESPACE_NAME(__LINE__) {                                \
+    namespace V8_TYPE_ASSERTIONS_NAMESPACE_NAME(__COUNTER__) {                             \
     namespace DeclareBunType {                                                             \
     namespace v8 = ::v8;                                                                   \
     using BunType = TYPENAME;                                                              \

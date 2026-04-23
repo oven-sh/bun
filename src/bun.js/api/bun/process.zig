@@ -1480,13 +1480,16 @@ pub fn spawnProcessPosix(
             .dup2 => @panic("TODO dup2 extra fd"),
             .inherit => {
                 try actions.inherit(fileno);
+                try extra_fds.append(bun.invalid_fd);
             },
             .ignore => {
                 try actions.openZ(fileno, "/dev/null", bun.O.RDWR, 0o664);
+                try extra_fds.append(bun.invalid_fd);
             },
 
             .path => |path| {
                 try actions.open(fileno, path, bun.O.RDWR | bun.O.CREAT, 0o664);
+                try extra_fds.append(bun.invalid_fd);
             },
             .ipc, .buffer => {
                 const fds: [2]bun.FD = try bun.sys.socketpair(
@@ -1509,8 +1512,10 @@ pub fn spawnProcessPosix(
             },
             .pipe => |fd| {
                 try actions.dup2(fd, fileno);
-
-                try extra_fds.append(fd);
+                // The fd was supplied by the caller (a number in the stdio array) and is
+                // not owned by us. Record an invalid sentinel so finalizeStreams skips it
+                // instead of closing the caller's descriptor out from under them.
+                try extra_fds.append(bun.invalid_fd);
             },
         }
     }

@@ -161,23 +161,31 @@ describe("Zstandard compression", async () => {
   });
 
   for (const { data: input, name } of testCases) {
-    describe(name + " (" + input.length + " bytes)", () => {
+    describe.concurrent(name + " (" + input.length + " bytes)", () => {
       for (let level = 1; level <= 22; level++) {
         it("level " + level, async () => {
+          // Kick off async compression first so it runs in the thread pool while
+          // the sync compression below blocks the main thread.
+          const asyncCompressedPromise = zstdCompress(input, { level });
+
           // Sync compression
           const syncCompressed = zstdCompressSync(input, { level });
 
           // Async compression
-          const asyncCompressed = await zstdCompress(input, { level });
+          const asyncCompressed = await asyncCompressedPromise;
 
           // Compare compressed results (they should be identical with same level)
           expect(syncCompressed).toStrictEqual(asyncCompressed);
+
+          // Kick off async decompression of sync compressed data first so it overlaps
+          // with the sync decompression below.
+          const asyncDecompressedPromise = zstdDecompress(syncCompressed);
 
           // Sync decompression of async compressed data
           const syncDecompressed = zstdDecompressSync(asyncCompressed);
 
           // Async decompression of sync compressed data
-          const asyncDecompressed = await zstdDecompress(syncCompressed);
+          const asyncDecompressed = await asyncDecompressedPromise;
 
           // Compare decompressed results
           expect(syncDecompressed).toStrictEqual(asyncDecompressed);
@@ -191,7 +199,7 @@ describe("Zstandard compression", async () => {
   }
 });
 
-describe("Zstandard HTTP compression", () => {
+describe.concurrent("Zstandard HTTP compression", () => {
   // Sample data for HTTP tests
   const testData = {
     text: "This is a test string for zstd HTTP compression tests. Repeating content to improve compression: This is a test string for zstd HTTP compression tests.",

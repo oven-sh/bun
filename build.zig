@@ -51,6 +51,7 @@ const BunBuildOptions = struct {
     /// `./build/codegen` or equivalent
     codegen_path: []const u8,
     no_llvm: bool,
+    lto: bool,
     override_no_export_cpp_apis: bool,
 
     cached_options_module: ?*Module = null,
@@ -201,6 +202,7 @@ pub fn build(b: *Build) !void {
     const obj_format = b.option(ObjectFormat, "obj_format", "Output file for object files") orelse .obj;
 
     const no_llvm = b.option(bool, "no_llvm", "Experiment with Zig self hosted backends. No stability guaranteed") orelse false;
+    const lto = b.option(bool, "lto", "Emit LLVM bitcode for full LTO instead of a native object") orelse false;
     const override_no_export_cpp_apis = b.option(bool, "override-no-export-cpp-apis", "Override the default export_cpp_apis logic to disable exports") orelse false;
 
     var build_options = BunBuildOptions{
@@ -211,6 +213,7 @@ pub fn build(b: *Build) !void {
         .codegen_path = codegen_path,
         .codegen_embed = codegen_embed,
         .no_llvm = no_llvm,
+        .lto = lto,
         .override_no_export_cpp_apis = override_no_export_cpp_apis,
         .version = try Version.parse(bun_version),
         .canary_revision = canary: {
@@ -640,6 +643,7 @@ fn addMultiCheck(
                 .reported_nodejs_version = root_build_options.reported_nodejs_version,
                 .codegen_path = root_build_options.codegen_path,
                 .no_llvm = root_build_options.no_llvm,
+                .lto = false,
                 .enable_asan = root_build_options.enable_asan,
                 .enable_valgrind = root_build_options.enable_valgrind,
                 .enable_tinycc = root_build_options.enable_tinycc,
@@ -751,6 +755,10 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     // Object options
     obj.use_llvm = !opts.no_llvm;
     obj.use_lld = if (opts.os == .mac or opts.os == .linux) false else !opts.no_llvm;
+    if (opts.lto) {
+        obj.lto = .full;
+        obj.use_lld = true;
+    }
 
     if (@hasField(std.meta.Child(@TypeOf(obj)), "llvm_codegen_threads"))
         obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;

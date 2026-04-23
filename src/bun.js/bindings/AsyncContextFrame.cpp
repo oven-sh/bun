@@ -134,7 +134,7 @@ JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, 
 
     ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
 }
-JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, NakedPtr<Exception>& returnedException)
+JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, NakedPtr<JSC::Exception>& returnedException)
 {
 #if ASSERT_ENABLED
     auditEverything(global, functionObject, thisValue, args);
@@ -150,7 +150,7 @@ JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue function
 {
     return AsyncContextFrame::call(global, functionObject, thisValue, args);
 }
-JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, NakedPtr<Exception>& returnedException)
+JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, NakedPtr<JSC::Exception>& returnedException)
 {
     return AsyncContextFrame::call(global, functionObject, thisValue, args, returnedException);
 }

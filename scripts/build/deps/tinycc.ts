@@ -67,7 +67,7 @@ export const tinycc: Dependency = {
       cflags: ["-fno-strict-aliasing"],
       // tcc sources #include "config.h" — autotools would generate it,
       // we just stub it.
-      stubHeaders: ["config.h"],
+      headers: { "config.h": "" },
       // conftest.c with -DC2STR compiles to a tool that turns tccdefs.h
       // (C macros) into tccdefs_.h (C string literal for embedding).
       // tccpp.c includes the generated file.
@@ -86,7 +86,7 @@ export const tinycc: Dependency = {
   },
 
   provides: () => ({
-    libs: ["tcc"],
+    libs: [],
     includes: [],
   }),
 };

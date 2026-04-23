@@ -44,6 +44,7 @@ class JSHeapData {
 
 public:
     JSHeapData(JSC::Heap&);
+    ~JSHeapData();
 
     static JSHeapData* ensureHeapData(JSC::Heap&);
 

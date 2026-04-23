@@ -394,7 +394,11 @@ pub fn runTasks(
                     // will not arrive. `Store.Installer.onPackageDownloadError`
                     // drains `task_queue` itself but does not touch
                     // `network_dedupe_map`, so this must run on the callback
-                    // path too.
+                    // path too. Capture `is_required` first —
+                    // `isNetworkTaskRequired` reads the map and returns `true`
+                    // when the entry is gone, which would upgrade optional-dep
+                    // warnings to errors on the void-callback fallback below.
+                    const is_required = manager.isNetworkTaskRequired(task.task_id);
                     _ = manager.network_dedupe_map.remove(task.task_id);
 
                     if (@TypeOf(callbacks.onPackageDownloadError) != void) {
@@ -422,7 +426,7 @@ pub fn runTasks(
                     }
 
                     const fmt = "{s} downloading tarball <b>{s}@{f}<r>";
-                    if (manager.isNetworkTaskRequired(task.task_id)) {
+                    if (is_required) {
                         manager.log.addErrorFmt(
                             null,
                             logger.Loc.Empty,
@@ -473,7 +477,10 @@ pub fn runTasks(
                     // enqueue for this task_id schedules a fresh network task
                     // instead of waiting on this failed one. Runs before the
                     // callback branch so `Store.Installer` (which `continue`s
-                    // from the callback) is covered too.
+                    // from the callback) is covered too. Capture
+                    // `is_required` first — `isNetworkTaskRequired` reads the
+                    // map and returns `true` when the entry is gone.
+                    const is_required = manager.isNetworkTaskRequired(task.task_id);
                     _ = manager.network_dedupe_map.remove(task.task_id);
 
                     if (@TypeOf(callbacks.onPackageDownloadError) != void) {
@@ -510,7 +517,7 @@ pub fn runTasks(
                         continue;
                     }
 
-                    if (manager.isNetworkTaskRequired(task.task_id)) {
+                    if (is_required) {
                         manager.log.addErrorFmt(
                             null,
                             logger.Loc.Empty,

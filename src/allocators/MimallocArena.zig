@@ -158,8 +158,15 @@ pub fn deinit(self: *Self) void {
     self.* = undefined;
 }
 
+/// Marks the arena as "not the general-purpose heap." When mimalloc reclaims
+/// an abandoned page from a dead thread, it routes it by tag to a heap on the
+/// current thread — and with the default tag 0 that's us, not the backing
+/// heap. `mi_heap_destroy` then nukes the page and the live blocks inside it.
+/// Any non-zero value works.
+const arena_heap_tag = 111;
+
 pub fn init() Self {
-    const mimalloc_heap = mimalloc.mi_heap_new() orelse bun.outOfMemory();
+    const mimalloc_heap = mimalloc.mi_heap_new_ex(arena_heap_tag, true, null) orelse bun.outOfMemory();
     if (comptime !safety_checks) return .{ .#heap = mimalloc_heap };
     const heap: Owned(*DebugHeap) = .new(.{
         .inner = mimalloc_heap,

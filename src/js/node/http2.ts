@@ -27,6 +27,8 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
+const { inspect: utilInspect } = require("node:util");
+const kInspect = Symbol.for("nodejs.util.inspect.custom");
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const { STATUS_CODES } = require("internal/http");
 const tls = require("node:tls");
@@ -2085,6 +2087,19 @@ class Http2Stream extends Duplex {
       return session[bunHTTP2Native]?.getStreamState(this.#id);
     }
     return constants.NGHTTP2_STREAM_STATE_CLOSED;
+  }
+
+  [kInspect](depth, opts) {
+    if (typeof depth === "number" && depth < 0) return this;
+    const obj = {
+      id: this.#id || "<pending>",
+      closed: this.closed,
+      destroyed: this.destroyed,
+      state: this.state,
+      readableState: this._readableState,
+      writableState: this._writableState,
+    };
+    return `Http2Stream ${utilInspect(obj, opts)}`;
   }
 
   priority(options) {

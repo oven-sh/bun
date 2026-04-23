@@ -56,13 +56,3 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 #undef IS_SLASH
 
 extern "C" BunString ResolvePath__joinAbsStringBufCurrentPlatformBunString(JSC::JSGlobalObject*, BunString);
-
-/// CWD is determined by the global object's current cwd.
-ALWAYS_INLINE WTF::String pathResolveWTFString(JSC::JSGlobalObject* globalToGetCwdFrom, const WTF::String& input)
-{
-    if (isAbsolutePath(input))
-        return input;
-    BunString in = Bun::toString(input);
-    BunString out = ResolvePath__joinAbsStringBufCurrentPlatformBunString(globalToGetCwdFrom, in);
-    return out.transferToWTFString();
-}

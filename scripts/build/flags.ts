@@ -814,7 +814,7 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: c => [
-      "-Bsymbolics-functions",
+      "-Wl,-Bsymbolic-functions",
       "-rdynamic",
       `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
       `-Wl,--version-script=${c.cwd}/src/linker.lds`,

@@ -215,22 +215,27 @@ devTest("hmr handles rapid consecutive edits", {
 
     const waitForMessage = (value: string) =>
       new Promise<void>((resolve, reject) => {
-        const check = () => {
-          if (client.exited) {
-            client.off("message", check);
-            client.off("exit", check);
-            reject(new Error(`Client exited while waiting for ${JSON.stringify(value)}`));
-            return;
-          }
+        const cleanup = () => {
+          client.off("message", onMessage);
+          client.off("exit", onExit);
+        };
+        const onMessage = () => {
           if (client.messages.includes(value)) {
-            client.off("message", check);
-            client.off("exit", check);
+            cleanup();
             resolve();
           }
         };
-        client.on("message", check);
-        client.on("exit", check);
-        check();
+        // The harness emits "exit" before setting client.exited (bake-harness.ts
+        // onExit), so a dedicated listener is needed — reading client.exited
+        // inside a shared handler would still be false when "exit" fires.
+        const onExit = () => {
+          cleanup();
+          reject(new Error(`Client exited while waiting for ${JSON.stringify(value)}`));
+        };
+        if (client.exited) return onExit();
+        client.on("message", onMessage);
+        client.on("exit", onExit);
+        onMessage();
       });
 
     // Regression coverage for https://github.com/oven-sh/bun/issues/19736:
@@ -259,18 +264,18 @@ devTest("hmr handles rapid consecutive edits", {
     // Wait until at least one rapid hot_update has been applied.
     await waitForMessage("render rapid");
 
-    // Barrier: one synchronized write through the harness, then wait for it to
-    // appear at the client. Hot_updates are delivered over a single ordered
-    // WebSocket and applied in order (client-fixture.mjs evals each blob in a
-    // FIFO microtask), so once the sentinel's console.log arrives, every prior
-    // hot_update has already been applied — no stragglers can land later and
-    // leak into the disposal check. Use batchChanges + writeFileSync directly
-    // (rather than dev.write, which uses async Bun.write) so the sentinel
-    // write is also free of the truncated-read window.
-    {
-      await using _wait = await dev.batchChanges();
-      writeFileSync(target, hmrSelfAcceptingModule("render sentinel"));
-    }
+    // Barrier: one more write, then wait for it to appear at the client.
+    // Hot_updates are delivered over a single ordered WebSocket and applied in
+    // order (client-fixture.mjs evals each blob in a FIFO microtask), so once
+    // the sentinel's console.log arrives, every prior hot_update has already
+    // been applied — no stragglers can land later and leak into the disposal
+    // check. Don't use dev.batchChanges() here: when a bundle from the rapid
+    // burst is still in flight as 'H' arrives, the queued event is later
+    // drained by startNextBundleIfPresent without publishing SeenFiles, and
+    // the harness's seenFiles.promise hangs (the 100% Windows-CI timeout).
+    // waitForMessage already gives us the only ordering guarantee this test
+    // needs.
+    writeFileSync(target, hmrSelfAcceptingModule("render sentinel"));
     await waitForMessage("render sentinel");
 
     // Drain. The watcher may have coalesced or double-fired, so the exact

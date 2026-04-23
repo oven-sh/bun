@@ -472,6 +472,9 @@ devTest("import.meta.hot on/off events", {
   },
 });
 devTest("hmr detects atomic-rename saves alongside other file activity", {
+  // Windows can't rename over a file the dev server has open (EPERM); the
+  // merged-names code path under test is `Environment.isLinux`-gated anyway.
+  skip: ["win32"],
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],

@@ -565,6 +565,35 @@ console.log("PRELOAD");
     },
   });
 
+  // Regression test for https://github.com/oven-sh/bun/issues/27431
+  // Standalone with autoloadDotenv=false crashed when spawning a Worker
+  // because the worker didn't inherit the disable_default_env_files flag,
+  // causing it to try loading .env files with the wrong thread's allocator.
+  itBundled("compile/AutoloadDotenvDisabledWithWorker", {
+    compile: {
+      autoloadDotenv: false,
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        new Worker("./worker.ts");
+      `,
+      "/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+    `.trim(),
+    },
+    runtimeFiles: {
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: {
+      stdout: "Worker loaded!\n",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
+
   // Test that both tsconfig and package.json can be enabled together
   itBundled("compile/AutoloadBothTsconfigAndPackageJson", {
     compile: {

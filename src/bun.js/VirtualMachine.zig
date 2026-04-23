@@ -1380,6 +1380,17 @@ pub fn initWorker(
     };
     vm.transpiler.resolver.standalone_module_graph = opts.graph;
 
+    // Mirror the env behavior logic from bootStandalone (src/bun.js.zig).
+    // Without this, workers in standalone executables with autoloadDotenv=false
+    // would still try to load .env files, causing cross-thread allocation panics.
+    if (opts.graph) |graph| {
+        if (graph.flags.disable_default_env_files) {
+            vm.transpiler.options.env.behavior = .disable;
+        } else {
+            vm.transpiler.options.env.behavior = .load_all_without_inlining;
+        }
+    }
+
     if (opts.graph == null) {
         vm.transpiler.configureLinker();
     } else {

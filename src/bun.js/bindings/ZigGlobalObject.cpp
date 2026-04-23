@@ -2230,8 +2230,8 @@ void GlobalObject::finishCreation(VM& vm)
             auto& vm = init.vm;
             auto scope = DECLARE_THROW_SCOPE(vm);
 
-            // if we get the termination exception, we'd still like to set a non-null Map so that
-            // we don't segfault
+            // if we get an exception (termination, or from a Proxy trap on the global's
+            // prototype chain), we'd still like to set a non-null Map so that we don't segfault
             auto setEmpty = [&]() {
                 ASSERT(scope.exception());
                 init.set(JSC::JSMap::create(init.vm, init.owner->mapStructure()));
@@ -2239,14 +2239,12 @@ void GlobalObject::finishCreation(VM& vm)
 
             JSMap* registry = nullptr;
             auto loaderValue = global->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "Loader"_s));
-            scope.assertNoExceptionExceptTermination();
             RETURN_IF_EXCEPTION(scope, setEmpty());
-            if (loaderValue) {
-                auto registryValue = loaderValue.getObject()->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "registry"_s));
-                scope.assertNoExceptionExceptTermination();
+            if (auto* loaderObject = loaderValue ? loaderValue.getObject() : nullptr) {
+                auto registryValue = loaderObject->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "registry"_s));
                 RETURN_IF_EXCEPTION(scope, setEmpty());
                 if (registryValue) {
-                    registry = jsCast<JSC::JSMap*>(registryValue);
+                    registry = jsDynamicCast<JSC::JSMap*>(registryValue);
                 }
             }
 

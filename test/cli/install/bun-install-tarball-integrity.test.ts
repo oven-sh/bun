@@ -575,7 +575,9 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download fai
         // because the store entry's pending-task slot was never released.
         expect(urls.some(u => u.endsWith(".tgz"))).toBe(true);
         expect(stderr).toContain("baz");
-        expect(stderr).toMatch(/404/);
+        // The isolated installer maps the status to a human-readable
+        // reason phrase; the hoisted installer prints `GET <url> - 404`.
+        expect(stderr).toContain(linker === "isolated" ? "404 Not Found" : "404");
         expect(stdout).not.toContain("1 package installed");
         expect(exitCode).not.toBe(0);
       }

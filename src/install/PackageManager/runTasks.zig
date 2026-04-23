@@ -386,6 +386,17 @@ pub fn runTasks(
                 const metadata = task.response.metadata orelse {
                     const err = task.response.fail orelse error.TarballFailedToDownload;
 
+                    // The download will not be retried for this task_id, so
+                    // drop the dedupe state before dispatching the error.
+                    // Otherwise a later `enqueuePackageForDownload` for the
+                    // same package sees `found_existing`, never schedules a
+                    // network task, and waits forever for a callback that
+                    // will not arrive. `Store.Installer.onPackageDownloadError`
+                    // drains `task_queue` itself but does not touch
+                    // `network_dedupe_map`, so this must run on the callback
+                    // path too.
+                    _ = manager.network_dedupe_map.remove(task.task_id);
+
                     if (@TypeOf(callbacks.onPackageDownloadError) != void) {
                         if (Ctx == *Store.Installer) {
                             callbacks.onPackageDownloadError(
@@ -451,7 +462,6 @@ pub fn runTasks(
                         var list = removed.value;
                         list.deinit(manager.allocator);
                     }
-                    _ = manager.network_dedupe_map.remove(task.task_id);
 
                     continue;
                 };
@@ -459,6 +469,13 @@ pub fn runTasks(
                 const response = metadata.response;
 
                 if (response.status_code > 399) {
+                    // Non-retryable HTTP error: drop dedupe state so a later
+                    // enqueue for this task_id schedules a fresh network task
+                    // instead of waiting on this failed one. Runs before the
+                    // callback branch so `Store.Installer` (which `continue`s
+                    // from the callback) is covered too.
+                    _ = manager.network_dedupe_map.remove(task.task_id);
+
                     if (@TypeOf(callbacks.onPackageDownloadError) != void) {
                         const err = switch (response.status_code) {
                             400 => error.TarballHTTP400,
@@ -527,16 +544,10 @@ pub fn runTasks(
                         }
                     }
 
-                    // The download will not be retried for this task_id, so
-                    // drop the dedupe state. Otherwise the install phase's
-                    // `enqueuePackageForDownload` sees `found_existing`, never
-                    // schedules a network task, and waits forever for a
-                    // callback that will not arrive.
                     if (manager.task_queue.fetchRemove(task.task_id)) |removed| {
                         var list = removed.value;
                         list.deinit(manager.allocator);
                     }
-                    _ = manager.network_dedupe_map.remove(task.task_id);
 
                     continue;
                 }
@@ -792,6 +803,59 @@ pub fn runTasks(
                             err,
                             url,
                         );
+                    } else if (@TypeOf(callbacks.onPackageDownloadError) != void and Ctx == *Store.Installer) {
+                        // The isolated installer queued its entry contexts
+                        // under `checkout_id`, not `clone_id`. A failed clone
+                        // never reaches checkout, so drain every waiting
+                        // checkout for this repo or the install loop blocks
+                        // forever on the entry's pending-task slot.
+                        var drained_any = false;
+                        if (manager.task_queue.fetchRemove(task.id)) |removed| {
+                            var waiters = removed.value;
+                            defer waiters.deinit(manager.allocator);
+                            const pkg_resolutions = manager.lockfile.packages.items(.resolution);
+                            for (waiters.items) |waiter| {
+                                const dep_id = switch (waiter) {
+                                    .dependency => |id| id,
+                                    else => continue,
+                                };
+                                const pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
+                                if (pkg_id == invalid_package_id) continue;
+                                const res = &pkg_resolutions[pkg_id];
+                                if (res.tag != .git) continue;
+                                const checkout_id = Task.Id.forGitCheckout(
+                                    manager.lockfile.str(&res.value.git.repo),
+                                    manager.lockfile.str(&res.value.git.resolved),
+                                );
+                                drained_any = true;
+                                callbacks.onPackageDownloadError(
+                                    extract_ctx,
+                                    checkout_id,
+                                    name,
+                                    res,
+                                    err,
+                                    url,
+                                );
+                            }
+                        }
+                        if (!drained_any) {
+                            // No clone waiters recorded (or all were skipped
+                            // above) — fall back to the clone task's own
+                            // resolution so the originating entry is still
+                            // released.
+                            const checkout_id = Task.Id.forGitCheckout(
+                                url,
+                                manager.lockfile.str(&clone.res.value.git.resolved),
+                            );
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                checkout_id,
+                                name,
+                                &clone.res,
+                                err,
+                                url,
+                            );
+                        }
                     } else if (log_level != .silent) {
                         manager.log.addErrorFmt(
                             null,

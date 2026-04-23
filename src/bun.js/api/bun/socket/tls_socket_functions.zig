@@ -105,22 +105,20 @@ pub fn setMaxSendFragment(this: *This, globalObject: *jsc.JSGlobalObject, callfr
 pub fn getPeerCertificate(this: *This, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     jsc.markBinding(@src());
 
+    // Node.js does not type-check the argument; it uses args[0]->IsTrue(),
+    // so only boolean `true` yields the detailed chain.
     const args = callframe.arguments_old(1);
-    var abbreviated: bool = true;
-    if (args.len > 0) {
-        const arg = args.ptr[0];
-        if (!arg.isBoolean()) {
-            return globalObject.throw("Expected abbreviated to be a boolean", .{});
-        }
-        abbreviated = arg.toBoolean();
-    }
+    const detailed: bool = args.len > 0 and args.ptr[0] == .true;
 
     const ssl_ptr = this.socket.ssl() orelse return .js_undefined;
 
-    if (abbreviated) {
+    if (!detailed) {
         if (this.isServer()) {
+            // SSL_get_peer_certificate increments the refcount; X509.toJS
+            // creates a non-owning view, so we must free it ourselves.
             const cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
             if (cert) |x509| {
+                defer BoringSSL.X509_free(x509);
                 return X509.toJS(x509, globalObject);
             }
         }
@@ -129,20 +127,109 @@ pub fn getPeerCertificate(this: *This, globalObject: *jsc.JSGlobalObject, callfr
         const cert = BoringSSL.sk_X509_value(cert_chain, 0) orelse return .js_undefined;
         return X509.toJS(cert, globalObject);
     }
-    var cert: ?*BoringSSL.X509 = null;
-    if (this.isServer()) {
-        cert = BoringSSL.SSL_get_peer_certificate(ssl_ptr);
-    }
 
-    const cert_chain = BoringSSL.SSL_get_peer_cert_chain(ssl_ptr);
-    const first_cert = if (cert) |c| c else if (cert_chain) |cc| BoringSSL.sk_X509_value(cc, 0) else null;
+    // Detailed chain. Mirrors Node.js GetPeerCert in src/crypto/crypto_common.cc.
+    // SSL_get_peer_certificate bumps the refcount; balance it on every exit.
+    const leaf: ?*BoringSSL.X509 = if (this.isServer()) BoringSSL.SSL_get_peer_certificate(ssl_ptr) else null;
+    defer if (leaf) |l| BoringSSL.X509_free(l);
+    // SSL_get_peer_cert_chain does NOT transfer ownership.
+    const ssl_certs = BoringSSL.SSL_get_peer_cert_chain(ssl_ptr);
+    const chain_len: usize = if (ssl_certs) |c| BoringSSL.sk_X509_num(c) else 0;
 
-    if (first_cert == null) {
+    if (leaf == null and chain_len == 0) {
         return .js_undefined;
     }
 
-    // TODO: we need to support the non abbreviated version of this
-    return .js_undefined;
+    // Collect all peer-sent certs into a flat borrowed array so we can
+    // search by issuer (not position) and mark entries consumed.
+    var sfa = std.heap.stackFallback(16 * @sizeOf(*BoringSSL.X509), bun.default_allocator);
+    const allocator = sfa.get();
+    const total = chain_len + @as(usize, if (leaf != null) 1 else 0);
+    const certs = try allocator.alloc(?*BoringSSL.X509, total);
+    defer allocator.free(certs);
+    {
+        var w: usize = 0;
+        if (leaf) |l| {
+            certs[w] = l;
+            w += 1;
+        }
+        var i: usize = 0;
+        while (i < chain_len) : (i += 1) {
+            certs[w] = BoringSSL.sk_X509_value(ssl_certs, i);
+            w += 1;
+        }
+    }
+
+    const issuer_cert_key = jsc.ZigString.static("issuerCertificate");
+
+    // `cert` tracks the tail of the chain we've linked so far. It is a
+    // borrowed pointer while walking `certs`; once we enter the trust-store
+    // fallback below it becomes owned (`cert_owned` tracks which).
+    var cert: *BoringSSL.X509 = certs[0] orelse return .js_undefined;
+    var cert_owned = false;
+    defer if (cert_owned) BoringSSL.X509_free(cert);
+    certs[0] = null; // consumed
+
+    const result = try X509.toJS(cert, globalObject);
+    var tail_obj = result;
+
+    // Link issuers from the peer-sent set (handles misordered chains).
+    outer: while (true) {
+        for (certs, 0..) |maybe_ca, i| {
+            const ca = maybe_ca orelse continue;
+            if (BoringSSL.X509_check_issued(ca, cert) != BoringSSL.X509_V_OK) continue;
+
+            const ca_obj = try X509.toJS(ca, globalObject);
+            tail_obj.put(globalObject, issuer_cert_key, ca_obj);
+            tail_obj = ca_obj;
+
+            cert = ca;
+            certs[i] = null; // consumed
+            continue :outer;
+        }
+        break;
+    }
+
+    // If still not at a root, try to extend from the local trust store.
+    while (BoringSSL.X509_check_issued(cert, cert) != BoringSSL.X509_V_OK) {
+        const ca = issuerFromStore(ssl_ptr, cert) orelse break;
+        errdefer BoringSSL.X509_free(ca);
+
+        const ca_obj = try X509.toJS(ca, globalObject);
+        tail_obj.put(globalObject, issuer_cert_key, ca_obj);
+        tail_obj = ca_obj;
+
+        // Guard against the store returning the same cert (pointer- or
+        // value-equal), which would loop forever.
+        if (ca == cert or BoringSSL.X509_cmp(ca, cert) == 0) {
+            BoringSSL.X509_free(ca);
+            break;
+        }
+        if (cert_owned) BoringSSL.X509_free(cert);
+        cert = ca;
+        cert_owned = true;
+    }
+
+    // If we reached a self-signed root, make its issuerCertificate point to
+    // itself. Otherwise leave it unset so callers can detect the chain end.
+    if (BoringSSL.X509_check_issued(cert, cert) == BoringSSL.X509_V_OK) {
+        tail_obj.put(globalObject, issuer_cert_key, tail_obj);
+    }
+
+    return result;
+}
+
+// Look up the issuer of `cert` in the SSL connection's trust store.
+// Returns an owned X509* (caller must X509_free), or null if not found.
+fn issuerFromStore(ssl: *BoringSSL.SSL, cert: *BoringSSL.X509) ?*BoringSSL.X509 {
+    const ssl_ctx = BoringSSL.SSL_get_SSL_CTX(ssl) orelse return null;
+    const store = BoringSSL.SSL_CTX_get_cert_store(ssl_ctx) orelse return null;
+    const store_ctx = BoringSSL.X509_STORE_CTX_new() orelse return null;
+    defer BoringSSL.X509_STORE_CTX_free(store_ctx);
+    if (BoringSSL.X509_STORE_CTX_init(store_ctx, store, null, null) == 0) return null;
+    var issuer: ?*BoringSSL.X509 = null;
+    if (BoringSSL.X509_STORE_CTX_get1_issuer(&issuer, store_ctx, cert) <= 0) return null;
+    return issuer;
 }
 
 pub fn getCertificate(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {

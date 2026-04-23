@@ -683,22 +683,29 @@ export function readDirectStream(stream, sink, underlyingSource) {
   $putByIdDirectPrivate(stream, "underlyingSource", null); // doing this causes isReadableStreamDefaultController to return false
   $putByIdDirectPrivate(stream, "start", undefined);
   function close(stream, reason) {
-    const cancelFn = underlyingSource?.cancel;
-    if (cancelFn) {
-      try {
-        var prom = cancelFn.$call(underlyingSource, reason);
-        if ($isPromise(prom)) {
-          $markPromiseAsHandled(prom);
-        }
-      } catch {}
-
-      underlyingSource = undefined;
+    // reason !== undefined means an abort/error (native passes a truthy value for abort).
+    // reason === undefined means normal stream completion.
+    // Only call the user's cancel callback on abort/error, not on normal completion.
+    if (reason !== undefined) {
+      const cancelFn = underlyingSource?.cancel;
+      if (cancelFn) {
+        try {
+          // Pass undefined to the cancel callback to preserve existing abort semantics
+          // (readableStreamFromAsyncIterator relies on cancel(undefined) to call iter.return()
+          // instead of iter.throw() for abort).
+          var prom = cancelFn.$call(underlyingSource, undefined);
+          if ($isPromise(prom)) {
+            $markPromiseAsHandled(prom);
+          }
+        } catch {}
+      }
     }
+    underlyingSource = undefined;
 
     if (stream) {
       $putByIdDirectPrivate(stream, "readableStreamController", undefined);
       $putByIdDirectPrivate(stream, "reader", undefined);
-      if (reason) {
+      if (reason !== undefined) {
         $putByIdDirectPrivate(stream, "state", $streamErrored);
         $putByIdDirectPrivate(stream, "storedError", reason);
       } else {

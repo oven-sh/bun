@@ -227,8 +227,11 @@ pub fn JSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
                 return streams.Signal.initWithType(SinkSignal, @as(*SinkSignal, @ptrFromInt(@as(usize, @bitCast(@intFromEnum(cpp))))));
             }
 
-            pub fn close(this: *@This(), _: ?Syscall.Error) void {
-                onClose(@as(SinkSignal, @bitCast(@intFromPtr(this))).cpp, .js_undefined);
+            pub fn close(this: *@This(), err: ?Syscall.Error) void {
+                // Pass a truthy value for abort/error (non-null err) and js_undefined for normal
+                // completion. This allows the JS close callback to distinguish between the two cases.
+                const reason: JSValue = if (err != null) .true else .js_undefined;
+                onClose(@as(SinkSignal, @bitCast(@intFromPtr(this))).cpp, reason);
             }
 
             pub fn ready(this: *@This(), _: ?Blob.SizeType, _: ?Blob.SizeType) void {

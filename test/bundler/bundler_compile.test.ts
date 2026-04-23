@@ -179,6 +179,35 @@ describe("bundler", () => {
       },
       stdout: "a b",
     },
+    {
+      // #27454: Named imports from packages with re-export index files.
+      // The package index imports from internal modules and re-exports them.
+      // When bundled, these internal imports are inlined, but the original AST
+      // import records may have unresolved source_index. The ModuleInfo must
+      // not record these phantom imports.
+      name: "PackageReExportNamedImport",
+      files: {
+        "/entry.ts": `
+          import { greet } from "fake-pkg";
+          console.log(greet("world"));
+        `,
+        "/node_modules/fake-pkg/package.json": `{"name":"fake-pkg","version":"1.0.0","type":"module","exports":{".":{"import":"./libesm/index.js"}}}`,
+        "/node_modules/fake-pkg/libesm/index.js": [
+          `import { greet } from './utils/greet.js';`,
+          `import { format } from './utils/format.js';`,
+          `import { upper } from './utils/upper.js';`,
+          `import { lower } from './utils/lower.js';`,
+          `import { trim } from './utils/trim.js';`,
+          `export { greet, format, upper, lower, trim };`,
+        ].join("\n"),
+        "/node_modules/fake-pkg/libesm/utils/greet.js": `import { format } from './format.js';\nexport function greet(name) { return format("Hello, " + name + "!"); }`,
+        "/node_modules/fake-pkg/libesm/utils/format.js": `export function format(str) { return "[" + str + "]"; }`,
+        "/node_modules/fake-pkg/libesm/utils/upper.js": `export function upper(str) { return str.toUpperCase(); }`,
+        "/node_modules/fake-pkg/libesm/utils/lower.js": `export function lower(str) { return str.toLowerCase(); }`,
+        "/node_modules/fake-pkg/libesm/utils/trim.js": `export function trim(str) { return str.trim(); }`,
+      },
+      stdout: "[Hello, world!]",
+    },
   ];
 
   for (const scenario of esmBytecodeScenarios) {

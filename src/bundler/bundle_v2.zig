@@ -4758,6 +4758,15 @@ pub const CompileResult = union(enum) {
         kind: Kind,
     };
 
+    /// Import info collected from **converted** statements during parallel
+    /// printing. Only truly-external imports survive conversion (bundled ones
+    /// are removed by `convertStmtsForChunk`), so these accurately reflect
+    /// what the printer emits.
+    pub const ImportInfoCollected = struct {
+        import_record_index: u32,
+        source_index: u32,
+    };
+
     javascript: struct {
         source_index: Index.Int,
         result: js_printer.PrintResult,
@@ -4765,6 +4774,11 @@ pub const CompileResult = union(enum) {
         /// parallel printing. Used by postProcessJSChunk to populate ModuleInfo
         /// without re-scanning the original (unconverted) AST.
         decls: []const DeclInfo = &.{},
+        /// Import info collected from converted statements during parallel
+        /// printing. Used by postProcessJSChunk to populate ModuleInfo instead
+        /// of re-scanning the original (unconverted) AST, which may contain
+        /// bundled imports with unresolved source_index.
+        imports: []const ImportInfoCollected = &.{},
 
         pub fn code(this: @This()) []const u8 {
             return switch (this.result) {

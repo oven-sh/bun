@@ -648,20 +648,21 @@ pub fn generateCodeForFileInChunkJS(
 
 pub const DeclCollector = struct {
     decls: std.ArrayListUnmanaged(CompileResult.DeclInfo) = .{},
+    imports: std.ArrayListUnmanaged(CompileResult.ImportInfoCollected) = .{},
     allocator: std.mem.Allocator,
+    source_index: u32 = 0,
 
     const CompileResult = bun.bundle_v2.CompileResult;
 
-    /// Collect top-level declarations from **converted** statements (after
-    /// `convertStmtsForChunk`). At that point, export statements have already
-    /// been transformed:
-    /// - `s_export_default` → `s_local` / `s_function` / `s_class`
-    /// - `s_export_clause` → removed entirely
-    /// - `s_export_from` / `s_export_star` → removed or converted to `s_import`
+    /// Collect top-level declarations and import statements from **converted**
+    /// statements (after `convertStmtsForChunk`). At that point:
+    /// - Export statements have been transformed (export default → var, etc.)
+    /// - Bundled imports have been removed by `shouldRemoveImportExportStmt`
+    /// - Only truly-external imports (non-bundled) remain as `s_import`
     ///
-    /// Remaining `s_import` statements (external, non-bundled) don't need
-    /// handling here; their bindings are recorded separately in
-    /// `postProcessJSChunk` by scanning the original AST import records.
+    /// This ensures that only imports actually present in the emitted code
+    /// are recorded in ModuleInfo, avoiding mismatches when import records
+    /// have unresolved `source_index` from the async resolution pipeline.
     pub fn collectFromStmts(self: *DeclCollector, stmts: []const Stmt, r: renamer.Renamer, c: *LinkerContext) void {
         for (stmts) |stmt| {
             switch (stmt.data) {
@@ -684,6 +685,12 @@ pub const DeclCollector = struct {
                             self.addRef(name_ref, .lexical, r, c);
                         }
                     }
+                },
+                .s_import => |s| {
+                    self.imports.append(self.allocator, .{
+                        .import_record_index = s.import_record_index,
+                        .source_index = self.source_index,
+                    }) catch return;
                 },
                 else => {},
             }

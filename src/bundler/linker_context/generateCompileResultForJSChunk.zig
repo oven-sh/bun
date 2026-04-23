@@ -47,7 +47,7 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
     const runtimeRequireRef = if (c.options.output_format == .cjs) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
     const collect_decls = c.options.generate_bytecode_cache and c.options.output_format == .esm and c.options.compile;
-    var dc = DeclCollector{ .allocator = allocator };
+    var dc = DeclCollector{ .allocator = allocator, .source_index = part_range.source_index.get() };
 
     const result = c.generateCodeForFileInChunkJS(
         &buffer_writer,
@@ -80,6 +80,7 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
             .source_index = part_range.source_index.get(),
             .result = result,
             .decls = if (collect_decls) dc.decls.items else &.{},
+            .imports = if (collect_decls) dc.imports.items else &.{},
         },
     };
 }

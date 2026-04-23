@@ -156,6 +156,12 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
         return null;
     }
 
+    // On Windows, check cwd for bare command names (matching cmd.exe behavior)
+    if (searchBinInPath(buf, path_buf, cwd, bin, check_windows_extensions)) |bin_path| {
+        bun.path.posixToPlatformInPlace(u16, bin_path);
+        return bin_path;
+    }
+
     // iterate over system path delimiter
     var path_iter = std.mem.tokenizeScalar(u8, path, ';');
     while (path_iter.next()) |segment_part| {

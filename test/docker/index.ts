@@ -39,7 +39,7 @@ interface DockerComposeOptions {
 class DockerComposeHelper {
   private projectName: string;
   private composeFile: string;
-  private runningServices: Set<ServiceName> = new Set();
+  private upPromises: Map<ServiceName, Promise<void>> = new Map();
 
   constructor(options: DockerComposeOptions = {}) {
     this.projectName =
@@ -104,11 +104,22 @@ class DockerComposeHelper {
     }
   }
 
-  async up(service: ServiceName): Promise<void> {
-    if (this.runningServices.has(service)) {
-      return;
+  up(service: ServiceName): Promise<void> {
+    // Share one in-flight promise per service so `Promise.all([ensure(a), ensure(b)])`
+    // (or two describeWithContainer blocks for the same service) start their
+    // containers in parallel without racing duplicate `compose up` invocations.
+    let p = this.upPromises.get(service);
+    if (p === undefined) {
+      p = this.doUp(service);
+      this.upPromises.set(service, p);
+      // Evict on failure so a later retry actually re-runs compose instead of
+      // re-awaiting the same rejected promise.
+      p.catch(() => this.upPromises.delete(service));
     }
+    return p;
+  }
 
+  private async doUp(service: ServiceName): Promise<void> {
     // Build the service if needed (for services like mysql_tls, postgres_tls that need building)
     if (service === "mysql_tls" || service === "redis_unified" || service === "postgres_tls") {
       const buildResult = await this.exec(["build", service]);
@@ -131,8 +142,6 @@ class DockerComposeHelper {
         `Failed to start service ${service}: ${stderr}\n` + `--- ps ---\n${ps.stdout}\n--- logs ---\n${logs.stdout}`,
       );
     }
-
-    this.runningServices.add(service);
   }
 
   async port(service: ServiceName, targetPort: number): Promise<number> {
@@ -352,7 +361,7 @@ class DockerComposeHelper {
       console.warn("Failed to tear down Docker services");
     }
 
-    this.runningServices.clear();
+    this.upPromises.clear();
   }
 
   async waitTcp(host: string, port: number, timeout = 30000): Promise<void> {
@@ -391,17 +400,12 @@ class DockerComposeHelper {
    * Build all services that need building - useful for CI
    */
   async buildServices(): Promise<void> {
-    console.log("Building Docker services...");
-    // Services that need building
+    // One `compose build` with all services — buildkit parallelizes them.
     const servicesToBuild = ["postgres_tls", "mysql_tls", "redis_unified"];
-
-    for (const service of servicesToBuild) {
-      console.log(`Building ${service}...`);
-      const { exitCode, stderr } = await this.exec(["build", service]);
-
-      if (exitCode !== 0) {
-        throw new Error(`Failed to build ${service}: ${stderr}`);
-      }
+    console.log(`Building ${servicesToBuild.join(", ")}...`);
+    const { exitCode, stderr } = await this.exec(["build", ...servicesToBuild]);
+    if (exitCode !== 0) {
+      throw new Error(`Failed to build services: ${stderr}`);
     }
   }
 

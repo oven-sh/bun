@@ -2594,7 +2594,14 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
           spawnArgs = prepared.args;
           cleanupTempFiles = prepared.cleanup;
         } catch (cause) {
-          this.emit("Process.exited", cause, null);
+          // `escapeMultilineArgsForCmd` only ever throws `Error` instances,
+          // but `cause` is typed `unknown` under strict mode and
+          // `Process.exited`'s payload is `number | Error | null`. Run it
+          // through the same `unknownToError` helper the other catch sites
+          // in this file use — it passes real `Error` values through
+          // unchanged, so the carefully-worded message from
+          // `escapeMultilineArgsForCmd` reaches the user verbatim.
+          this.emit("Process.exited", unknownToError(cause), null);
           return false;
         }
         // Resolve the shell via %ComSpec% first. libuv's search_path uses the

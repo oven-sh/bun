@@ -288,7 +288,7 @@ describe("issue #29636 — buildShellCommand", () => {
     expect(buildShellCommand("foo.cmd", ["--flag=a&b"])).toBe(`"foo.cmd ^^^"--flag=a^^^&b^^^""`);
   });
 
-  test("embedded `\"` + metachar (the BatBadBut pattern) stays intact", () => {
+  test('embedded `"` + metachar (the BatBadBut pattern) stays intact', () => {
     // `fetch("http://a?x=1&y=2")` — the `&` sits between two embedded `"`
     // bytes in the arg. Single caret-escape is NOT enough: after the
     // outer cmd consumes it, the shim's re-parse sees `"fetch(\"...\")"`
@@ -312,9 +312,7 @@ describe("issue #29636 — buildShellCommand", () => {
     // caret-escape defeats both: the outer phase-1 scanner sees `PATH^`
     // (undefined), then phase 2 strips one caret; the shim's phase-1
     // scanner sees `PATH^` again, and its phase 2 strips the last caret.
-    expect(buildShellCommand("foo.cmd", ["--flag=%PATH%"])).toBe(
-      `"foo.cmd ^^^"--flag=^^^%PATH^^^%^^^""`,
-    );
+    expect(buildShellCommand("foo.cmd", ["--flag=%PATH%"])).toBe(`"foo.cmd ^^^"--flag=^^^%PATH^^^%^^^""`);
   });
 
   test("a lone `%` round-trips through without introducing a literal caret", () => {

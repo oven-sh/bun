@@ -3479,12 +3479,6 @@ JSC::EncodedJSValue ZigString__toRangeErrorInstance(const ZigString* str, JSC::J
     return JSC::JSValue::encode(Zig::getRangeErrorInstance(str, globalObject));
 }
 
-static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalObject,
-    JSC::CallFrame* callFrame)
-{
-    return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
 JSC::JSInternalPromise*
 JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
     const BunString* arg1)
@@ -3497,12 +3491,17 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
     EXCEPTION_ASSERT(!!promise == !scope.exception());
     if (!promise) return nullptr;
 
-    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
-        vm, globalObject, 1, String(), resolverFunctionCallback);
-
-    auto* newPromise = promise->then(globalObject, resolverFunction, globalObject->promiseEmptyOnRejectedFunction());
-    EXCEPTION_ASSERT(!!scope.exception() == !newPromise);
-    return newPromise;
+    // Return the promise directly without chaining .then().
+    // Previously, this used promise->then(resolver, promiseEmptyOnRejectedFunction()),
+    // which converted rejections into fulfilled promises with undefined.
+    // This caused CJS module evaluation errors to be silently swallowed in `bun -e`
+    // mode, because CJS modules are evaluated via SyntheticSourceProvider whose
+    // errors only propagate through the promise chain (unlike ESM errors which also
+    // propagate as synchronous exceptions during microtask draining).
+    // The resolver just returned undefined (result was never used by callers),
+    // and JSInternalPromise rejections are already excluded from the unhandled
+    // rejection tracker, so the .then() chain served no purpose.
+    return promise;
 }
 #pragma mark - JSC::JSPromise
 

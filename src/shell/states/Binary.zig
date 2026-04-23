@@ -122,6 +122,12 @@ pub fn childDone(this: *Binary, child: ChildPtr, exit_code: ExitCode) Yield {
     child.deinit();
     this.currently_executing = null;
 
+    // If exit was requested (via the `exit` builtin), stop executing
+    // the right side and propagate the exit code immediately.
+    if (this.base.shell.exit_requested) {
+        return this.parent.childDone(this, exit_code);
+    }
+
     if (this.left == null) {
         this.left = exit_code;
         if ((this.node.op == .And and exit_code != 0) or (this.node.op == .Or and exit_code == 0)) {

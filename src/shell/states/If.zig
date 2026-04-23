@@ -156,8 +156,6 @@ pub fn deinit(this: *If) void {
 }
 
 pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) Yield {
-    defer child.deinit();
-
     if (this.state != .exec) {
         @panic("Expected `exec` state in If, this indicates a bug in Bun. Please file a GitHub issue.");
     }
@@ -165,6 +163,16 @@ pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) Yield {
     var exec = &this.state.exec;
     exec.last_exit_code = exit_code;
 
+    // If exit was requested (via the `exit` builtin), stop executing
+    // remaining statements in this if block and propagate immediately.
+    // Must deinit child before propagating, since the parent will deinit
+    // this If (and its alloc scope) before the defer would run.
+    if (this.base.shell.exit_requested) {
+        child.deinit();
+        return this.parent.childDone(this, exit_code);
+    }
+
+    child.deinit();
     switch (exec.state) {
         .cond => return .{ .@"if" = this },
         .then => return .{ .@"if" = this },

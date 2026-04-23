@@ -85,7 +85,7 @@ fn finish(this: *Script, exit_code: ExitCode) Yield {
 
 pub fn childDone(this: *Script, child: ChildPtr, exit_code: ExitCode) Yield {
     child.deinit();
-    if (this.state.normal.idx >= this.node.stmts.len) {
+    if (this.base.shell.exit_requested or this.state.normal.idx >= this.node.stmts.len) {
         return this.finish(exit_code);
     }
     return this.next();

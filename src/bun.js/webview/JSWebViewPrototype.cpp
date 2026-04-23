@@ -102,12 +102,9 @@ private:
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 
         // close() is synchronous: writes the Close frame, rejects any pending
-        // promises, erases from the routing table. `using` calls dispose;
-        // `await using` calls asyncDispose if present (else dispose). Both
-        // point to close — no async teardown to wait for.
+        // promises, erases from the routing table. No async teardown to wait for.
         auto* closeFn = JSFunction::create(vm, globalObject, 0, "close"_s, jsWebViewProtoFuncClose, ImplementationVisibility::Public);
         putDirect(vm, vm.propertyNames->disposeSymbol, closeFn, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
-        putDirect(vm, vm.propertyNames->asyncDisposeSymbol, closeFn, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);
     }
 };
 

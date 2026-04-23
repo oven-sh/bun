@@ -8670,8 +8670,6 @@ declare module "bun" {
 
     /** Alias for {@link close}. Enables `using view = new Bun.WebView(...)`. */
     [Symbol.dispose](): void;
-    /** Alias for {@link close}. Enables `await using view = new Bun.WebView(...)`. */
-    [Symbol.asyncDispose](): void;
   }
 
   /**

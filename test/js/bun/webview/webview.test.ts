@@ -228,20 +228,13 @@ it("scroll(NaN/Infinity) throws before sending", () => {
   expect(() => view.scroll(0, 0 / 0)).toThrow(/must be finite/);
 });
 
-it("Symbol.dispose / Symbol.asyncDispose call close()", async () => {
-  // Both symbols point to the same JSFunction (close). close() is
-  // synchronous — writes the Close frame, rejects pending promises,
-  // erases from the routing table. No async teardown to await.
+it("Symbol.dispose calls close()", async () => {
+  // Symbol.dispose points to close(). close() is synchronous — writes
+  // the Close frame, rejects pending promises, erases from the routing
+  // table. No async teardown to await.
   {
     using view = new Bun.WebView({ width: 100, height: 100 });
-    expect(view[Symbol.dispose]).toBe(view[Symbol.asyncDispose]);
     expect(typeof view[Symbol.dispose]).toBe("function");
-  }
-  // `await using` prefers asyncDispose.
-  {
-    await using view = new Bun.WebView({ width: 100, height: 100 });
-    await view.navigate(html("<body></body>"));
-    expect(await view.evaluate("1+1")).toBe(2);
   }
   // And it's close() — idempotent, second close no-ops.
   const view = new Bun.WebView({ width: 100, height: 100 });

@@ -39,6 +39,11 @@ pub const KnownGlobal = enum {
         if (symbol.kind != .unbound)
             return null;
 
+        // If the global has been reassigned (e.g. `WeakMap = function() {...}`),
+        // we can't assume it still refers to the built-in constructor.
+        if (symbol.has_been_assigned_to)
+            return null;
+
         const constructor = map.get(symbol.original_name) orelse return null;
 
         return switch (constructor) {

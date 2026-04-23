@@ -26,44 +26,45 @@ async function runFixture(flags: string[]): Promise<{ order: number[]; seed: num
 }
 
 const sortNumbers = (a: number, b: number) => a - b;
-test("--randomize and --seed work", async () => {
+test.concurrent("--randomize and --seed work", async () => {
   const fixture = import.meta.dir + "/test-randomize.fixture.ts";
 
-  // with --randomize
-  const { order: randomizedOrder, seed: randomizedSeed } = await runFixture([fixture, "--randomize"]);
+  // with --randomize (and the no-flag run, which is independent)
+  const [{ order: randomizedOrder, seed: randomizedSeed }, { order: unseededOrder, seed: unseededSeed }] =
+    await Promise.all([runFixture([fixture, "--randomize"]), runFixture([fixture])]);
   expect(randomizedSeed).toBeFinite();
   expect(randomizedOrder.toSorted(sortNumbers)).toEqual(unsortedOrder);
   expect(randomizedOrder).not.toEqual(unsortedOrder);
 
-  // different randomized run is different
-  const { order: differentRandomizedOrder, seed: differentRandomizedSeed } = await runFixture([fixture, "--randomize"]);
+  // different randomized run is different; runs that depend on the first seed can run alongside it
+  const [
+    { order: differentRandomizedOrder, seed: differentRandomizedSeed },
+    { order: seededOrder, seed: seededSeed },
+    { order: randomizedAndSeededOrder, seed: randomizedAndSeededSeed },
+  ] = await Promise.all([
+    runFixture([fixture, "--randomize"]),
+    runFixture([fixture, "--seed", "" + randomizedSeed]),
+    runFixture([fixture, "--randomize", "--seed", "" + randomizedSeed]),
+  ]);
   expect(differentRandomizedOrder.toSorted(sortNumbers)).toEqual(unsortedOrder);
   expect(differentRandomizedOrder).not.toEqual(unsortedOrder);
   expect(differentRandomizedOrder).not.toEqual(randomizedOrder);
   expect(differentRandomizedSeed).not.toEqual(randomizedSeed);
 
   // with same seed as first run
-  const { order: seededOrder, seed: seededSeed } = await runFixture([fixture, "--seed", "" + randomizedSeed]);
   expect(seededOrder).toEqual(randomizedOrder);
   expect(seededSeed).toEqual(randomizedSeed);
 
   // with both randomize and seed parameter
-  const { order: randomizedAndSeededOrder, seed: randomizedAndSeededSeed } = await runFixture([
-    fixture,
-    "--randomize",
-    "--seed",
-    "" + randomizedSeed,
-  ]);
   expect(randomizedAndSeededOrder).toEqual(randomizedOrder);
   expect(randomizedAndSeededSeed).toEqual(randomizedSeed);
 
   // without seed
-  const { order: unseededOrder, seed: unseededSeed } = await runFixture([fixture]);
   expect(unseededOrder).toEqual(unsortedOrder);
   expect(unseededSeed).toBeNull();
 });
 
-test("randomizes order of files", async () => {
+test.concurrent("randomizes order of files", async () => {
   const dir = tempDirWithFiles(
     "randomize-order-of-files",
     Object.fromEntries(
@@ -74,22 +75,24 @@ test("randomizes order of files", async () => {
     ),
   );
 
-  const { order: unrandomizedOrder, seed: unrandomizedSeed } = await runFixture([dir]);
-  const { order: anotherUnrandomizedOrder, seed: anotherUnrandomizedSeed } = await runFixture([dir]);
+  const [
+    { order: unrandomizedOrder, seed: unrandomizedSeed },
+    { order: anotherUnrandomizedOrder, seed: anotherUnrandomizedSeed },
+    { order: randomizedOrder, seed: randomizedSeed },
+  ] = await Promise.all([runFixture([dir]), runFixture([dir]), runFixture([dir, "--randomize"])]);
   expect(unrandomizedSeed).toBeNull();
   expect(anotherUnrandomizedSeed).toBeNull();
   expect(anotherUnrandomizedOrder).toEqual(unrandomizedOrder);
 
-  const { order: randomizedOrder, seed: randomizedSeed } = await runFixture([dir, "--randomize"]);
   expect(randomizedSeed).toBeFinite();
   expect(unrandomizedOrder).not.toEqual(randomizedOrder);
 
-  const { order: anotherRandomizedOrder, seed: anotherRandomizedSeed } = await runFixture([dir, "--randomize"]);
+  const [{ order: anotherRandomizedOrder, seed: anotherRandomizedSeed }, { order: seededOrder, seed: seededSeed }] =
+    await Promise.all([runFixture([dir, "--randomize"]), runFixture([dir, "--seed", "" + randomizedSeed])]);
   expect(anotherRandomizedOrder).not.toEqual(randomizedOrder);
   expect(anotherRandomizedSeed).not.toEqual(randomizedSeed);
 
   // test with --seed
-  const { order: seededOrder, seed: seededSeed } = await runFixture([dir, "--seed", "" + randomizedSeed]);
   expect(seededOrder).toEqual(randomizedOrder);
   expect(seededSeed).toEqual(randomizedSeed);
 });

@@ -344,7 +344,7 @@ void JSPerformanceObserver::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<JSPerformanceObserver*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSPerformanceObserver);
@@ -355,7 +355,7 @@ void JSPerformanceObserver::visitOutputConstraints(JSCell* cell, Visitor& visito
     auto* thisObject = jsCast<JSPerformanceObserver*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 template void JSPerformanceObserver::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);

@@ -101,7 +101,7 @@ pub fn NewCodePointIterator(comptime CodePointType_: type, comptime zeroValue: c
             }
 
             const cp_len = wtf8ByteSequenceLength(it.bytes[pos]);
-            const error_char = comptime std.math.minInt(CodePointType);
+            const error_char = comptime std.math.maxInt(CodePointType);
 
             const codepoint = @as(
                 CodePointType,

@@ -3,8 +3,20 @@
 #include "JSBunRequest.h"
 #include "JavaScriptCore/SlotVisitorMacros.h"
 #include "ErrorCode.h"
+#include "WebCoreJSBuiltins.h"
 
 namespace Bun {
+
+JSC::JSFunction* BakeAdditionsToGlobalObject::wrapComponent(JSGlobalObject* globalObject)
+{
+    auto* function = m_wrapComponent.get();
+    if (!function) {
+        auto& vm = globalObject->vm();
+        function = JSC::JSFunction::create(vm, globalObject, WebCore::bakeSSRResponseWrapComponentCodeGenerator(vm), globalObject);
+        m_wrapComponent.set(vm, globalObject, function);
+    }
+    return function;
+}
 
 void createDevServerFrameworkRequestArgsStructure(JSC::LazyClassStructure::Initializer& init)
 {

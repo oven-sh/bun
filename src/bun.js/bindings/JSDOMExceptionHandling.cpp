@@ -164,6 +164,9 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
             return createRangeError(lexicalGlobalObject, "Bad value"_s);
         return createRangeError(lexicalGlobalObject, message);
 
+    // WebIDL says ExceptionCode::SyntaxError should be a DOMException named "SyntaxError",
+    // but Bun throws a JS SyntaxError here (WebSocket URL validation etc.) and existing
+    // code depends on `instanceof SyntaxError`. Intentional divergence from upstream.
     case ExceptionCode::SyntaxError:
     case ExceptionCode::JSSyntaxError:
         if (message.isEmpty())

@@ -189,6 +189,13 @@ pub fn fromInt(flags: u32) Capabilities {
     return this;
 }
 
+/// Returns the intersection of two capability sets (AND).
+/// Per MySQL protocol, the client should only request capabilities
+/// that the server also advertises.
+pub fn intersect(self: Capabilities, other: Capabilities) Capabilities {
+    return fromInt(self.toInt() & other.toInt());
+}
+
 pub fn getDefaultCapabilities(ssl: bool, has_db_name: bool) Capabilities {
     return .{
         .CLIENT_PROTOCOL_41 = true,

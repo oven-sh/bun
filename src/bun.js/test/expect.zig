@@ -957,9 +957,9 @@ pub const Expect = struct {
 
                 const wrapper_fn = Bun__JSWrappingFunction__create(globalThis, matcher_name, jsc.toJSHostFn(Expect.applyCustomMatcher), matcher_fn, true);
 
-                expect_proto.put(globalThis, matcher_name, wrapper_fn);
-                expect_constructor.put(globalThis, matcher_name, wrapper_fn);
-                expect_static_proto.put(globalThis, matcher_name, wrapper_fn);
+                try expect_proto.putMayBeIndex(globalThis, matcher_name, wrapper_fn);
+                try expect_constructor.putMayBeIndex(globalThis, matcher_name, wrapper_fn);
+                try expect_static_proto.putMayBeIndex(globalThis, matcher_name, wrapper_fn);
             }
         }
 

@@ -2,7 +2,7 @@ pub const Stdio = union(enum) {
     inherit,
     capture: struct { buf: *bun.ByteList },
     ignore,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     dup2: struct {
         out: bun.jsc.Subprocess.StdioKind,
         to: bun.jsc.Subprocess.StdioKind,
@@ -10,7 +10,7 @@ pub const Stdio = union(enum) {
     path: jsc.Node.PathLike,
     blob: jsc.WebCore.Blob.Any,
     array_buffer: jsc.ArrayBuffer.Strong,
-    memfd: bun.FileDescriptor,
+    memfd: bun.FD,
     pipe,
     ipc,
     readable_stream: jsc.WebCore.ReadableStream,
@@ -93,6 +93,7 @@ pub const Stdio = union(enum) {
         if (comptime !Environment.isLinux) {
             return false;
         }
+        if (!bun.sys.canUseMemfd()) return false;
         const label = switch (index) {
             0 => "spawn_stdio_stdin",
             1 => "spawn_stdio_stdout",

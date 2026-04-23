@@ -107,8 +107,8 @@ const azureVmSizes = {
     test: "Standard_D4ds_v6", // 4 vCPU, 16 GiB — test shards
   },
   "windows-aarch64": {
-    build: "Standard_D16ps_v6", // 16 vCPU, 64 GiB — C++ build, link
-    test: "Standard_D4ps_v6", // 4 vCPU, 16 GiB — test shards
+    build: "Standard_D16pds_v6", // 16 vCPU, 64 GiB, local NVMe — C++ build, link
+    test: "Standard_D4pds_v6", // 4 vCPU, 16 GiB, local NVMe — test shards
   },
 };
 
@@ -224,12 +224,12 @@ function getImageLabel(platform) {
  * @returns {string}
  */
 function getImageName(platform, options) {
-  const { os } = platform;
-  const { buildImages, publishImages } = options;
+  const { os, distro } = platform;
+  const { buildImages, publishImages, imageFilter } = options;
 
   const name = getImageKey(platform);
 
-  if (buildImages && !publishImages) {
+  if (buildImages && !publishImages && (!imageFilter || os === imageFilter || distro === imageFilter)) {
     return `${name}-build-${getBuildNumber()}`;
   }
 
@@ -379,9 +379,11 @@ function getZigAgent(platform, options) {
     });
   }
 
-  // Everything else cross-compiles from Linux aarch64
+  // Everything else cross-compiles from Linux aarch64. ASAN gets a wider
+  // box: it builds with cg=CI_ASAN_CODEGEN_THREADS (8) so it can use the
+  // parallel backend; release stays at cg=1 (full IPO) so 2 vCPU suffice.
   return getEc2Agent(getZigPlatform(), options, {
-    instanceType: "r8g.large",
+    instanceType: platform.profile === "asan" ? "r8g.2xlarge" : "r8g.large",
   });
 }
 
@@ -444,39 +446,64 @@ function getTestAgent(platform, options) {
  */
 
 /**
+ * Build the scripts/build.ts argument list from a target's properties.
+ * Replaces the old getBuildEnv (cmake -D env vars) + getBuildCommand
+ * (--target passthrough) with direct build.ts flags.
+ *
  * @param {Target} target
  * @param {PipelineOptions} options
- * @returns {Record<string, string | undefined>}
+ * @param {"cpp-only" | "zig-only" | "link-only"} mode
+ * @returns {string}
  */
-function getBuildEnv(target, options) {
-  const { baseline, abi } = target;
+function getBuildArgs(target, options, mode) {
+  const { os, arch, abi, baseline, profile } = target;
   const { canary } = options;
-  const revision = typeof canary === "number" ? canary : 1;
 
-  return {
-    ENABLE_BASELINE: baseline ? "ON" : "OFF",
-    ENABLE_CANARY: revision > 0 ? "ON" : "OFF",
-    CANARY_REVISION: revision,
-    ABI: abi === "musl" ? "musl" : undefined,
-    CMAKE_VERBOSE_MAKEFILE: "ON",
-    CMAKE_TLS_VERIFY: "0",
-  };
+  const args = [`--profile=ci-${mode}`];
+
+  // zig-only cross-compiles (linux host → all targets); os/arch/abi must
+  // all be explicit — host detection (detectLinuxAbi checks /etc/alpine-release)
+  // would report the build box's abi (Alpine→musl), not the target's.
+  // cpp-only/link-only: native build, host detection is correct.
+  if (mode === "zig-only") {
+    args.push(`--os=${os}`, `--arch=${arch}`);
+    if (os === "linux") args.push(`--abi=${abi ?? "gnu"}`);
+  } else if (abi === "musl") {
+    args.push("--abi=musl");
+  }
+  if (baseline) args.push("--baseline=on");
+  if (profile === "asan") args.push("--asan=on");
+
+  // canary: options.canary can be number (revision count) or undefined
+  // (default on). Old system used CANARY_REVISION as a counter; build.ts
+  // has only on/off — disabled only when explicitly 0.
+  const canaryRev = typeof canary === "number" ? canary : 1;
+  if (canaryRev === 0) args.push("--canary=off");
+
+  return args.join(" ");
 }
 
 /**
  * @param {Target} target
  * @param {PipelineOptions} options
+ * @param {"cpp-only" | "zig-only" | "link-only"} mode
  * @returns {string}
  */
-function getBuildCommand(target, options, label) {
-  const { profile } = target;
-  const buildProfile = profile || "release";
-
+function getBuildCommand(target, options, mode) {
   // Windows code signing is handled by a dedicated 'windows-sign' step after
   // all Windows builds complete — see getWindowsSignStep(). smctl is x64-only,
   // so signing on the build agent wouldn't work for ARM64 anyway.
-
-  return `bun run build:${buildProfile}`;
+  //
+  // Literal `node` — ci.mjs generates pipeline YAML that runs on a
+  // different agent later, so process.execPath (the generator's path)
+  // is wrong. PATH on the agent has node via bootstrap.sh.
+  // --experimental-strip-types for Node 24's .ts support (unflagged in
+  // 25+; drop once CI bumps past the ABI-141 blocker).
+  //
+  // Windows ARM64 node v24 intermittently fastfails (0xC0000409) in
+  // fetch-cli.ts; run build.ts under bun there instead.
+  const runtime = target.os === "windows" && target.arch === "aarch64" ? "bun" : "node --experimental-strip-types";
+  return `${runtime} scripts/build.ts ${getBuildArgs(target, options, mode)}`;
 }
 
 /**
@@ -485,39 +512,17 @@ function getBuildCommand(target, options, label) {
  * @returns {Step}
  */
 function getBuildCppStep(platform, options) {
-  const command = getBuildCommand(platform, options);
-
   return {
     key: `${getTargetKey(platform)}-build-cpp`,
     label: `${getTargetLabel(platform)} - build-cpp`,
     agents: getCppAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    env: {
-      BUN_CPP_ONLY: "ON",
-      ...getBuildEnv(platform, options),
-    },
-    // We used to build the C++ dependencies and bun in separate steps.
-    // However, as long as the zig build takes longer than both sequentially,
-    // it's cheaper to run them in the same step. Can be revisited in the future.
-    command: [`${command} --target bun`, `${command} --target dependencies`],
+    // cpp-only builds deps + bun's C++ in one ninja graph (ninja pulls
+    // everything the archive transitively needs). The old two-command
+    // split (--target bun, --target dependencies) was a cmake artifact.
+    command: getBuildCommand(platform, options, "cpp-only"),
   };
-}
-
-/**
- * @param {Target} target
- * @returns {string}
- */
-function getBuildToolchain(target) {
-  const { os, arch, abi, baseline } = target;
-  let key = `${os}-${arch}`;
-  if (abi) {
-    key += `-${abi}`;
-  }
-  if (baseline) {
-    key += "-baseline";
-  }
-  return key;
 }
 
 /**
@@ -526,18 +531,15 @@ function getBuildToolchain(target) {
  * @returns {Step}
  */
 function getBuildZigStep(platform, options) {
-  const { os, arch } = platform;
-  const toolchain = getBuildToolchain(platform);
-  // Native Windows builds don't need a cross-compilation toolchain
-  const toolchainArg = os === "windows" ? "" : ` --toolchain ${toolchain}`;
   return {
     key: `${getTargetKey(platform)}-build-zig`,
     retry: getRetry(),
     label: `${getTargetLabel(platform)} - build-zig`,
     agents: getZigAgent(platform, options),
     cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform, options),
-    command: `${getBuildCommand(platform, options)} --target bun-zig${toolchainArg}`,
+    // zig cross-compiles via --os/--arch in build args. No separate
+    // toolchain file — zig handles cross-compilation natively.
+    command: getBuildCommand(platform, options, "zig-only"),
     timeout_in_minutes: 35,
   };
 }
@@ -556,11 +558,13 @@ function getLinkBunStep(platform, options) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {
-      BUN_LINK_ONLY: "ON",
+      // ASAN runtime settings — unrelated to build config, affects the
+      // linked binary's startup during the smoke test.
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
-      ...getBuildEnv(platform, options),
     },
-    command: `${getBuildCommand(platform, options, "build-bun")} --target bun`,
+    // link-only downloads artifacts from the sibling build-cpp and
+    // build-zig steps (derived from BUILDKITE_STEP_KEY) before ninja runs.
+    command: getBuildCommand(platform, options, "link-only"),
   };
 }
 
@@ -678,23 +682,6 @@ function getVerifyBaselineStep(platform, options) {
 }
 
 /**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
-function getBuildBunStep(platform, options) {
-  return {
-    key: `${getTargetKey(platform)}-build-bun`,
-    label: `${getTargetLabel(platform)} - build-bun`,
-    agents: getCppAgent(platform, options),
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform, options),
-    command: getBuildCommand(platform, options),
-  };
-}
-
-/**
  * @typedef {Object} TestOptions
  * @property {string} [buildId]
  * @property {string[]} [testFiles]
@@ -716,8 +703,11 @@ function getTestBunStep(platform, options, testOptions = {}) {
     args.push(`--build-id=${buildId}`);
   }
 
-  if (testFiles) {
+  if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
+  } else {
+    // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead
+    args.push("--exclude=integration/bun-types");
   }
 
   const depends = [];
@@ -828,6 +818,45 @@ function getWindowsSignStep(windowsPlatforms, options) {
 }
 
 /**
+ * Aggregates stripped-binary sizes from every release build, compares them
+ * against the latest main build's binary-sizes.json, and fails if any grew
+ * past the threshold. Runs on PR builds (comparison) and main (record-only,
+ * to produce the baseline artifact).
+ *
+ * @param {Platform[]} releasePlatforms
+ * @param {PipelineOptions} options
+ * @param {{ recordOnly: boolean }} [extra]
+ * @returns {Step}
+ */
+function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {}) {
+  const targets = releasePlatforms.map(p => ({ triplet: getTargetTriplet(p) }));
+  const args = [`--targets '${JSON.stringify(targets)}'`, `--threshold-mb ${BINARY_SIZE_THRESHOLD_MB}`];
+  if (recordOnly) args.push("--no-fail");
+  if (!options.canary) args.push("--release");
+
+  return {
+    key: "binary-size",
+    label: `${getBuildkiteEmoji("package")} binary-size`,
+    agents: getEc2Agent(
+      buildPlatforms.find(p => p.os === "linux" && p.arch === "aarch64" && p.distro === "amazonlinux"),
+      options,
+      { instanceType: "c8g.large" },
+    ),
+    depends_on: releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+    allow_dependency_failure: true,
+    soft_fail: !!options.skipSizeCheck,
+    retry: {
+      manual: { permit_on_passed: true },
+      automatic: [{ exit_status: "*", limit: 2 }],
+    },
+    cancel_on_build_failing: isMergeQueue(),
+    command: `bun scripts/binary-size.ts ${args.join(" ")}`,
+  };
+}
+
+const BINARY_SIZE_THRESHOLD_MB = 0.5;
+
+/**
  * @param {Platform[]} buildPlatforms
  * @param {PipelineOptions} options
  * @param {{ signed: boolean }} [extra]
@@ -857,22 +886,6 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
       WINDOWS_ARTIFACT_STEP: signed ? "windows-sign" : "",
     },
     command: ".buildkite/scripts/upload-release.sh",
-  };
-}
-
-/**
- * @param {Platform[]} buildPlatforms
- * @returns {Step}
- */
-function getBenchmarkStep() {
-  return {
-    key: "benchmark",
-    label: "📊",
-    agents: {
-      queue: "build-image",
-    },
-    depends_on: `linux-x64-build-bun`,
-    command: "node .buildkite/scripts/upload-benchmark.mjs",
   };
 }
 
@@ -957,6 +970,7 @@ function getBenchmarkStep() {
  * @property {string | boolean} [skipEverything]
  * @property {string | boolean} [skipBuilds]
  * @property {string | boolean} [skipTests]
+ * @property {string | boolean} [skipSizeCheck]
  * @property {string | boolean} [forceBuilds]
  * @property {string | boolean} [forceTests]
  * @property {string | boolean} [buildImages]
@@ -1236,6 +1250,7 @@ async function getPipelineOptions() {
     skipBuilds: parseOption(/\[(skip builds?|no builds?|only tests?)\]/i),
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
+    skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
     buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
     dryRun: parseOption(/\[(dry run)\]/i),
@@ -1351,6 +1366,11 @@ async function getPipeline(options = {}) {
     }
   }
 
+  const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
+  if (!buildId && strippedPlatforms.length) {
+    steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: isMainBranch() }));
+  }
+
   // Sign Windows builds on release (non-canary main) or when [sign windows]
   // is in the commit message (for testing the sign step on a branch).
   // DigiCert charges per signature, so canary builds are never signed.
@@ -1365,7 +1385,6 @@ async function getPipeline(options = {}) {
   if (isMainBranch()) {
     steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows }));
   }
-  steps.push(getBenchmarkStep());
 
   /** @type {Map<string, GroupStep>} */
   const stepsByGroup = new Map();

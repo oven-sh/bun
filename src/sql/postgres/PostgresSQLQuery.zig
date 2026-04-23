@@ -420,7 +420,9 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
                 this.status = .binding;
                 did_write = true;
                 connection.flags.waiting_to_prepare = true;
-            } else {
+            } else if (!connection.flags.use_unnamed_prepared_statements) {
+                // Named prepared statements: send Parse+Describe+Sync now and wait
+                // for ParameterDescription before sending Bind+Execute in advance().
                 debug("writeQuery", .{});
 
                 PostgresRequest.writeQuery(query_str.slice(), signature.prepared_statement_name, signature.fields, PostgresSQLConnection.Writer, writer) catch |err| {
@@ -450,6 +452,9 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
                 did_write = true;
                 connection.flags.waiting_to_prepare = true;
             }
+            // Unnamed prepared statements with params: skip writeQuery+Sync here.
+            // advance() will send Parse+Describe+Bind+Execute atomically via
+            // parseAndBindAndExecute(), preventing PgBouncer from splitting them.
         }
         {
             const stmt = bun.default_allocator.create(PostgresSQLStatement) catch {
@@ -465,7 +470,7 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
                 stmt.* = .{
                     .signature = signature,
                     .ref_count = .initExactRefs(2),
-                    .status = if (can_execute) .parsing else .pending,
+                    .status = if (did_write) .parsing else .pending,
                 };
                 this.statement = stmt;
 
@@ -473,7 +478,7 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
             } else {
                 stmt.* = .{
                     .signature = signature,
-                    .status = if (can_execute) .parsing else .pending,
+                    .status = if (did_write) .parsing else .pending,
                 };
                 this.statement = stmt;
             }
@@ -488,6 +493,9 @@ pub fn doRun(this: *PostgresSQLQuery, globalObject: *jsc.JSGlobalObject, callfra
         connection.flushDataAndResetTimeout();
     } else {
         connection.resetConnectionTimeout();
+        // For unnamed prepared statements with params, we skip writeQuery+Sync
+        // in the enqueue path and let advance() handle it atomically.
+        connection.advanceAndFlush();
     }
     return .js_undefined;
 }

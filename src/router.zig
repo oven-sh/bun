@@ -15,7 +15,7 @@ pub const Param = struct {
     pub const List = std.MultiArrayList(Param);
 };
 
-dir: StoredFileDescriptorType = .invalid,
+dir: FD = .invalid,
 routes: Routes,
 loaded_routes: bool = false,
 allocator: std.mem.Allocator,
@@ -903,11 +903,11 @@ const MockRequestContextType = struct {
 };
 
 pub const MockServer = struct {
-    watchloop_handle: ?StoredFileDescriptorType = null,
+    watchloop_handle: ?FD = null,
     watcher: Watcher = Watcher{},
 
     pub const Watcher = struct {
-        watchloop_handle: ?StoredFileDescriptorType = null,
+        watchloop_handle: ?FD = null,
         pub fn start(_: *Watcher) anyerror!void {}
     };
 };
@@ -1899,11 +1899,11 @@ const FileSystem = Fs.FileSystem;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const HashedString = bun.HashedString;
 const Logger = bun.logger;
 const Output = bun.Output;
 const PathString = bun.PathString;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const default_allocator = bun.default_allocator;
 const api = bun.schema.api;
 

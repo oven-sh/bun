@@ -13,6 +13,7 @@
 #include "BunClientData.h"
 #include "wtf/Compiler.h"
 #include "wtf/Forward.h"
+#include "WebCoreJSBuiltins.h"
 
 using namespace JSC;
 
@@ -20,6 +21,8 @@ extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, ZigString* name, ZigString* value);
+extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, BunString* name, BunString* value);
+extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, BunString* name, BunString* value);
 
 namespace Bun {
 
@@ -61,6 +64,50 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalOb
         return false;
 
     object->putDirect(vm, propertyName, string, 0);
+    return true;
+}
+
+// Proxy-related env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase
+// variants) are read by fetch()'s Zig-side proxy resolution via
+// env_loader.getHttpProxyFor(). Writes from JS must sync back to the Zig env
+// map so runtime changes take effect. Unlike the generic getter, this does
+// NOT cache on the JS object — the Zig env map is the single source of truth
+// so set-then-get stays consistent and the CustomAccessor isn't clobbered.
+JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    BunString name = Bun::toStringView(propertyName.publicName());
+    BunString value = { BunStringTag::Dead };
+    if (!Bun__getEnvValueBunString(globalObject, &name, &value)) {
+        return JSValue::encode(jsUndefined());
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, value.toWTFString())));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
+    if (!object)
+        return false;
+
+    auto* string = JSValue::decode(value).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!string) [[unlikely]]
+        return false;
+
+    auto view = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    BunString name = Bun::toStringView(propertyName.publicName());
+    BunString val = Bun::toStringView(view);
+    Bun__setEnvValue(globalObject, &name, &val);
     return true;
 }
 
@@ -305,7 +352,28 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     bool hasNodeTLSRejectUnauthorized = false;
     bool hasBunConfigVerboseFetch = false;
 
+    // Proxy-related env vars need write-back to the Zig env map so that
+    // fetch()'s getHttpProxyFor() observes runtime changes.
+    static constexpr ASCIILiteral proxyVarNames[] = {
+        "HTTP_PROXY"_s,
+        "http_proxy"_s,
+        "HTTPS_PROXY"_s,
+        "https_proxy"_s,
+        "NO_PROXY"_s,
+        "no_proxy"_s,
+    };
+    constexpr size_t proxyVarCount = std::size(proxyVarNames);
+    bool hasProxyVar[proxyVarCount] = {};
+
+    auto isProxyVar = [&](const String& name) -> std::optional<size_t> {
+        for (size_t j = 0; j < proxyVarCount; j++) {
+            if (name == proxyVarNames[j]) return j;
+        }
+        return std::nullopt;
+    };
+
     auto* cached_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, nullptr);
+    auto* proxy_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterProxyEnvironmentVariable, jsSetterProxyEnvironmentVariable);
 
     for (size_t i = 0; i < count; i++) {
         unsigned char* chars;
@@ -325,6 +393,10 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         }
         if (name == BUN_CONFIG_VERBOSE_FETCH) {
             hasBunConfigVerboseFetch = true;
+            continue;
+        }
+        if (auto idx = isProxyVar(name)) {
+            hasProxyVar[*idx] = true;
             continue;
         }
         ASSERT(len > 0);
@@ -381,6 +453,22 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     object->putDirectCustomAccessor(
         vm,
         Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), JSC::CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter), BUN_CONFIG_VERBOSE_FETCH_Attrs);
+
+    for (size_t j = 0; j < proxyVarCount; j++) {
+        // Known limitation: `delete process.env.NO_PROXY` removes the accessor
+        // without calling the setter, leaving Zig's env map stale (same as TZ).
+        // Use `process.env.NO_PROXY = ""` to unset. DontDelete would throw in
+        // strict mode, so we leave it deletable and document the gap.
+        unsigned attrs = JSC::PropertyAttribute::CustomAccessor | 0;
+        if (!hasProxyVar[j]) {
+            attrs |= JSC::PropertyAttribute::DontEnum;
+        }
+        object->putDirectCustomAccessor(
+            vm,
+            Identifier::fromString(vm, proxyVarNames[j]),
+            proxy_getter_setter,
+            attrs);
+    }
 
 #if OS(WINDOWS)
     auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), jsEditWindowsEnvVar, ImplementationVisibility::Public);

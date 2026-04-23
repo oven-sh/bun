@@ -318,9 +318,13 @@ pub fn enqueueDependencyToRoot(
     }));
 
     if (this.lockfile.buffers.resolutions.items[dep_id] == invalid_package_id) {
+        // Copy to the stack: `enqueueDependencyWithMainAndSuccessFn` can call
+        // `Lockfile.Package.fromNPM`, which grows `buffers.dependencies` and
+        // would invalidate a pointer taken directly into it.
+        const dependency = this.lockfile.buffers.dependencies.items[dep_id];
         this.enqueueDependencyWithMainAndSuccessFn(
             dep_id,
-            &this.lockfile.buffers.dependencies.items[dep_id],
+            &dependency,
             invalid_package_id,
             false,
             assignRootResolution,
@@ -1197,11 +1201,19 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
     }
 }
 
-pub fn enqueueExtractNPMPackage(
+/// Allocate and initialise an `.extract` Task for an npm tarball.
+/// Shared by the buffered path (`enqueueExtractNPMPackage`) and the
+/// streaming path (`createExtractTaskForStreaming`) so both produce
+/// an identical Task shape; only the return type differs.
+///
+/// Intentionally does *not* move `network_task.apply_patch_task`: the
+/// install phase creates its own PatchTask via `PackageInstaller`, so
+/// applying it here would run the patch twice.
+fn initExtractTask(
     this: *PackageManager,
     tarball: *const ExtractTarball,
     network_task: *NetworkTask,
-) *ThreadPool.Task {
+) *Task {
     var task = this.preallocated_resolve_tasks.get();
     task.* = Task{
         .package_manager = this,
@@ -1217,7 +1229,28 @@ pub fn enqueueExtractNPMPackage(
         .data = undefined,
     };
     task.request.extract.tarball.skip_verify = !this.options.do.verify_integrity;
-    return &task.threadpool_task;
+    return task;
+}
+
+pub fn enqueueExtractNPMPackage(
+    this: *PackageManager,
+    tarball: *const ExtractTarball,
+    network_task: *NetworkTask,
+) *ThreadPool.Task {
+    return &initExtractTask(this, tarball, network_task).threadpool_task;
+}
+
+/// Allocate the extract Task up front so the streaming extractor can
+/// publish it to `resolve_tasks` when extraction finishes. Done on the
+/// main thread because `preallocated_resolve_tasks` is not thread-safe.
+/// The NetworkTask's pending-task slot is reused for the extraction so
+/// progress counters stay balanced.
+pub fn createExtractTaskForStreaming(
+    this: *PackageManager,
+    tarball: *const ExtractTarball,
+    network_task: *NetworkTask,
+) *Task {
+    return initExtractTask(this, tarball, network_task);
 }
 
 fn enqueueGitClone(
@@ -1273,7 +1306,7 @@ fn enqueueGitClone(
 pub fn enqueueGitCheckout(
     this: *PackageManager,
     task_id: Task.Id,
-    dir: bun.FileDescriptor,
+    dir: bun.FD,
     dependency_id: DependencyID,
     name: string,
     resolution: Resolution,
@@ -1488,7 +1521,7 @@ fn getOrPutResolvedPackageWithFindResult(
                     .network_task = try this.generateNetworkTaskForTarball(
                         task_id,
                         manifest.str(&find_result.package.tarball_url),
-                        dependency.behavior.isRequired(),
+                        behavior.isRequired(),
                         dependency_id,
                         package,
                         name_and_version_hash,

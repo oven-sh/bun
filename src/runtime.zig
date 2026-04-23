@@ -227,6 +227,7 @@ pub const Runtime = struct {
 
         /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
         /// Returns a pointer to a StringSet containing the enabled flags, or the empty set if no flags are provided.
+        /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
         pub fn initBundlerFeatureFlags(allocator: std.mem.Allocator, feature_flags: []const []const u8) *const bun.StringSet {
             if (feature_flags.len == 0) {
                 return &empty_bundler_feature_flags;
@@ -237,6 +238,12 @@ pub const Runtime = struct {
             for (feature_flags) |flag| {
                 bun.handleOom(set.insert(flag));
             }
+            set.map.sort(struct {
+                keys: []const []const u8,
+                pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+                    return std.mem.lessThan(u8, ctx.keys[a], ctx.keys[b]);
+                }
+            }{ .keys = set.map.keys() });
             return set;
         }
 
@@ -271,6 +278,15 @@ pub const Runtime = struct {
             }
 
             hasher.update(std.mem.asBytes(&bools));
+
+            // Hash --feature flags. These directly affect transpiled output via
+            // feature("NAME") replacement in visitExpr.zig. When empty, we add
+            // nothing to the hash so existing cache entries remain valid.
+            // Keys are sorted in initBundlerFeatureFlags so flag order on the CLI doesn't matter.
+            for (this.bundler_feature_flags.keys()) |flag| {
+                hasher.update(flag);
+                hasher.update("\x00");
+            }
         }
 
         pub fn shouldUnwrapRequire(this: *const Features, package_name: string) bool {

@@ -706,6 +706,17 @@ pub fn preparePatch(manager: *PackageManager) !void {
     // meaning that changes to the folder will also change the package in the cache.
     //
     // So we will overwrite the folder by directly copying the package in cache into it
+    //
+    // With the isolated linker's global virtual store, `module_folder` is
+    // reached *through* a `node_modules/.bun/<storepath>` symlink that points
+    // into `<cache>/links/`. `deleteTree(module_folder)` would follow that
+    // symlink and wipe the shared global entry (and its dep symlinks)
+    // underneath every other project, then FileCopier would write the user's
+    // edits into the shared cache. Detach first: walk up `module_folder` to
+    // find the first symlink ancestor, replace it with a real directory, and
+    // recreate the path below it so the copy lands in a project-local tree.
+    detachModuleFolderFromSharedStore(module_folder);
+
     overwritePackageInNodeModulesFolder(cache_dir, cache_dir_subpath, module_folder) catch |e| {
         Output.prettyError(
             "<r><red>error<r>: error overwriting folder in node_modules: {s}\n<r>",
@@ -726,6 +737,65 @@ pub fn preparePatch(manager: *PackageManager) !void {
     return;
 }
 
+fn detachModuleFolderFromSharedStore(module_folder: []const u8) void {
+    // `module_folder` reaches here normalised to forward slashes on every
+    // platform (see `pathToPosixBuf` in `preparePatch`). Re-normalise to the
+    // platform separator so `undo()`/`basename()` walk the path correctly on
+    // Windows and the lstat/getFileAttributes calls below see a native path.
+    var native_buf: bun.PathBuffer = undefined;
+    const native = if (comptime Environment.isWindows) native: {
+        @memcpy(native_buf[0..module_folder.len], module_folder);
+        const slice = native_buf[0..module_folder.len];
+        bun.path.posixToPlatformInPlace(u8, slice);
+        break :native slice;
+    } else module_folder;
+
+    var path: bun.Path(.{ .sep = .auto }) = .from(native);
+    defer path.deinit();
+    var components: usize = 1;
+    for (native) |c| {
+        if (c == std.fs.path.sep) components += 1;
+    }
+    var depth: usize = 0;
+    while (depth < components) : (depth += 1) {
+        const is_symlink = if (comptime Environment.isWindows)
+            (bun.sys.getFileAttributes(path.sliceZ()) orelse return).is_reparse_point
+        else if (bun.sys.lstat(path.sliceZ()).asValue()) |st|
+            std.posix.S.ISLNK(@intCast(st.mode))
+        else
+            return;
+        if (is_symlink) {
+            // Windows directory symlinks/junctions are removed with rmdir,
+            // file symlinks with unlink; on POSIX unlink covers both. If
+            // removal fails the symlink is still live, and the caller's
+            // `deleteTree` + `FileCopier` would follow it into the shared
+            // global-store entry — so fail loudly here rather than silently
+            // corrupting the cache.
+            const remove_err: ?bun.sys.Error = if (comptime Environment.isWindows) remove: {
+                if (bun.sys.rmdir(path.sliceZ()).asErr()) |_| {
+                    if (bun.sys.unlink(path.sliceZ()).asErr()) |e| break :remove if (e.getErrno() == .NOENT) null else e;
+                }
+                break :remove null;
+            } else if (bun.sys.unlink(path.sliceZ()).asErr()) |e|
+                if (e.getErrno() == .NOENT) null else e
+            else
+                null;
+            if (remove_err) |e| {
+                Output.err(e, "failed to detach <b>{s}<r> from the shared package store; refusing to patch through it", .{path.slice()});
+                Global.crash();
+            }
+            // Re-create the now-missing path segments below the removed
+            // symlink so `module_folder`'s parent exists for the copy.
+            const parent = bun.path.dirname(native, .auto);
+            if (parent.len > 0) {
+                FD.cwd().makePath(u8, parent) catch {};
+            }
+            return;
+        }
+        path.undo(1);
+    }
+}
+
 fn overwritePackageInNodeModulesFolder(
     cache_dir: std.fs.Dir,
     cache_dir_subpath: []const u8,
@@ -733,7 +803,7 @@ fn overwritePackageInNodeModulesFolder(
 ) !void {
     FD.cwd().deleteTree(node_modules_folder_path) catch {};
 
-    var dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }) = .from(node_modules_folder_path);
+    var dest_subpath: bun.Path(.{ .sep = .auto, .unit = .os }) = .from(node_modules_folder_path);
     defer dest_subpath.deinit();
 
     const src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = src_path: {

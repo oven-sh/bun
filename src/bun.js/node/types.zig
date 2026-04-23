@@ -895,7 +895,7 @@ pub fn modeFromJS(ctx: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Mod
 }
 
 pub const PathOrFileDescriptor = union(Tag) {
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     path: PathLike,
 
     pub const Tag = enum { fd, path };
@@ -1053,7 +1053,15 @@ pub const FileSystemFlags = enum(c_int) {
                 return ctx.throwValue(ctx.ERR(.OUT_OF_RANGE, "The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS());
             }
             const number = try val.coerce(i32, ctx);
-            return @as(FileSystemFlags, @enumFromInt(@max(number, 0)));
+            const flags = @max(number, 0);
+            // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
+            // use the platform's native MSVC/libuv values which differ from the
+            // internal bun.O representation. Convert them here so downstream
+            // code that operates on bun.O flags works correctly.
+            if (comptime bun.Environment.isWindows) {
+                return @as(FileSystemFlags, @enumFromInt(bun.windows.libuv.O.toBunO(flags)));
+            }
+            return @as(FileSystemFlags, @enumFromInt(flags));
         }
 
         const jsType = val.jsType();

@@ -584,11 +584,12 @@ rsaz_1024_sqr_avx2             [AVX, AVX2]
 
 # ----------------------------------------------------------------------------
 # BoringSSL Curve25519.
-# (3 symbols)
+# (4 symbols)
 # ----------------------------------------------------------------------------
-fiat_curve25519_adx_mul     [ADX, BMI2]
-fiat_curve25519_adx_square  [ADX, BMI2]
-x25519_scalar_mult_adx      [BMI2]
+fiat_curve25519_adx_mul                            [ADX, BMI2]
+fiat_curve25519_adx_square                         [ADX, BMI2]
+_ZN4bssl22x25519_scalar_mult_adxEPhPKhS2_          [ADX, BMI2]
+_ZN4bssl29x25519_ge_scalarmult_base_adxEPA32_hPKh  [ADX, BMI2]
 
 
 # ----------------------------------------------------------------------------
@@ -641,10 +642,48 @@ deflate_decompress_bmi2            [BMI2]
 
 
 # ----------------------------------------------------------------------------
-# zlib crc32 PCLMULQDQ.
-# (1 symbols)
+# zlib-ng. Gate: init_functable() — cpu_check_features() CPUID at first call,
+# results cached in `functable` (vendor/zlib/functable.c, arch/x86/x86_features.c).
+# chunkcopy_safe is a static-inline in inflate_p.h that may outline from any of
+# the per-ISA inffast_tpl.h instantiations; the outlined copy is local to that
+# TU and only reachable from the gated inflate_fast_* of the same tier.
+# (31 symbols)
 # ----------------------------------------------------------------------------
-crc32  [PCLMULQDQ]
+# has_pclmulqdq
+crc32_pclmulqdq             [PCLMULQDQ]
+crc32_fold_pclmulqdq        [PCLMULQDQ]
+crc32_fold_pclmulqdq_copy   [PCLMULQDQ]
+crc32_fold_pclmulqdq_final  [PCLMULQDQ]
+crc32_fold_pclmulqdq_reset  [PCLMULQDQ]
+# has_avx2 && has_bmi2
+adler32_avx2                [AVX, AVX2, BMI2]
+adler32_fold_copy_avx2      [AVX, AVX2, BMI2]
+chunkmemset_avx2            [AVX, AVX2, BMI2]
+chunkmemset_safe_avx2       [AVX, AVX2, BMI2]
+compare256_avx2             [AVX, AVX2, BMI2]
+inflate_fast_avx2           [AVX, AVX2, BMI2]
+longest_match_avx2          [AVX, AVX2, BMI2]
+longest_match_slow_avx2     [AVX, AVX2, BMI2]
+slide_hash_avx2             [AVX, AVX2, BMI2]
+# has_avx512_common (F+DQ+BW+VL+BMI2)
+adler32_avx512              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+adler32_fold_copy_avx512    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+chunkmemset_avx512          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+chunkmemset_safe_avx512     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+compare256_avx512           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+inflate_fast_avx512         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+longest_match_avx512        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+longest_match_slow_avx512   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+chunkcopy_safe              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+# has_avx512vnni
+adler32_avx512_vnni            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+adler32_fold_copy_avx512_vnni  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+# has_pclmulqdq && has_avx512_common && has_vpclmulqdq
+crc32_vpclmulqdq             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
+crc32_fold_vpclmulqdq        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
+crc32_fold_vpclmulqdq_copy   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
+crc32_fold_vpclmulqdq_final  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
+crc32_fold_vpclmulqdq_reset  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
 
 
 # ----------------------------------------------------------------------------

@@ -18,8 +18,10 @@ static JSC_DEFINE_CUSTOM_GETTER(JSBufferList_getLength, (JSC::JSGlobalObject * g
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSBufferList* bufferList = JSC::jsDynamicCast<JSBufferList*>(JSValue::decode(thisValue));
-    if (!bufferList)
+    if (!bufferList) [[unlikely]] {
         JSC::throwTypeError(globalObject, scope, "not calling on JSBufferList"_s);
+        return {};
+    }
 
     return JSValue::encode(JSC::jsNumber(bufferList->length()));
 }

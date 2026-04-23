@@ -1031,6 +1031,23 @@ async function spawnSafe(options) {
       error = "spawn error";
       buffer = stack || message;
     }
+  } else if ((error = buffer.match(/ERROR: Unchecked JS exception:/g))) {
+    // Format from JSC's VM::verifyExceptionCheckNeedIsSatisfied / ExceptionEventLocation::printInternal:
+    //   "{functionName} @ {__FILE__}:{line}"
+    // __FILE__ is relative to the cmake build dir (e.g. ../../src/...) — strip leading ../ for a repo-relative path.
+    // JSC crashes immediately after printing, so >1 block means multiple subprocesses crashed.
+    const count = error.length;
+    const repoRel = p => p?.replace(/^(?:\.\.?[\\/])+/, "");
+    const thrown = /This scope can throw a JS exception: (\S+) @ (\S+)/.exec(buffer);
+    const unchecked = /But the exception was unchecked as of this scope: (\S+) @ (\S+)/.exec(buffer);
+    error = "unchecked exception";
+    if (unchecked) {
+      error += ` at ${unchecked[1]} @ ${repoRel(unchecked[2])}`;
+      if (thrown) error += ` (thrown from ${repoRel(thrown[2])})`;
+    } else if (thrown) {
+      error += ` thrown from ${thrown[1]} @ ${repoRel(thrown[2])}`;
+    }
+    if (count > 1) error += ` +${count - 1} more`;
   } else if (
     (error = /thread \d+ panic: (.*)(?:\r\n|\r|\n|\\n)/i.exec(buffer)) ||
     (error = /panic\(.*\): (.*)(?:\r\n|\r|\n|\\n)/i.exec(buffer)) ||
@@ -1387,7 +1404,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
  * @returns {number}
  */
 function getTestTimeout(testPath) {
-  if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
+  if (/integration|3rd_party|docker|bun-install-registry|v8|bundler_compile/i.test(testPath)) {
     return integrationTimeout;
   }
   return testTimeout;
@@ -1972,11 +1989,17 @@ async function getExecPathFromBuildKite(target, buildId) {
       args.push("--build", buildId);
     }
 
-    await spawnSafe({
+    const { error } = await spawnSafe({
       command: "buildkite-agent",
       args,
-      timeout: 60000,
+      timeout: 120000,
     });
+    if (error === "timeout") {
+      throw new Error(
+        `buildkite-agent artifact download timed out after 120s for step '${target}'. ` +
+          `Refusing to continue with a partial download (would silently fall back to the wrong binary).`,
+      );
+    }
 
     zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
       .filter(filename => /^bun.*\.zip$/i.test(filename))
@@ -2311,6 +2334,7 @@ function isAlwaysFailure(error) {
   return (
     error.includes("segmentation fault") ||
     error.includes("illegal instruction") ||
+    error.includes("unchecked exception") ||
     error.includes("sigtrap") ||
     error.includes("sigkill") ||
     error.includes("error: addresssanitizer") ||

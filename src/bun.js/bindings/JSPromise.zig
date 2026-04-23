@@ -107,6 +107,15 @@ pub const JSPromise = opaque {
             try this.swap().reject(globalThis, val catch globalThis.tryTakeException().?);
         }
 
+        /// Like `reject` but first attaches async stack frames from this
+        /// promise's await chain to the error. Use when rejecting from native
+        /// code at the top of the event loop (threadpool callback).
+        pub fn rejectWithAsyncStack(this: *Strong, globalThis: *jsc.JSGlobalObject, val: JSError!jsc.JSValue) bun.JSTerminated!void {
+            const err = val catch return this.reject(globalThis, val);
+            err.attachAsyncStackFromPromise(globalThis, this.get());
+            try this.swap().reject(globalThis, err);
+        }
+
         /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
         pub fn rejectTask(this: *Strong, globalThis: *jsc.JSGlobalObject, val: jsc.JSValue) bun.JSTerminated!void {
             const loop = jsc.VirtualMachine.get().eventLoop();
@@ -304,6 +313,16 @@ pub const JSPromise = opaque {
 
     pub fn rejectAsHandled(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) bun.JSTerminated!void {
         bun.cpp.JSC__JSPromise__rejectAsHandled(this, globalThis, value) catch return error.JSTerminated;
+    }
+
+    /// Like `reject` but first attaches async stack frames from this promise's
+    /// await chain to the error. Use when rejecting from native code at the top
+    /// of the event loop (threadpool callback) where the error would otherwise
+    /// have an empty stack trace.
+    pub fn rejectWithAsyncStack(this: *JSPromise, globalThis: *JSGlobalObject, value: JSError!JSValue) bun.JSTerminated!void {
+        const err = value catch return this.reject(globalThis, value);
+        err.attachAsyncStackFromPromise(globalThis, this);
+        return this.reject(globalThis, err);
     }
 
     /// Create a new pending promise.

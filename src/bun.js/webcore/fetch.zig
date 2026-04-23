@@ -1108,7 +1108,7 @@ fn fetchImpl(
     }
     if (body.needsToReadFile()) {
         prepare_body: {
-            const opened_fd_res: bun.sys.Maybe(bun.FileDescriptor) = switch (body.store().?.data.file.pathlike) {
+            const opened_fd_res: bun.sys.Maybe(bun.FD) = switch (body.store().?.data.file.pathlike) {
                 .fd => |fd| bun.sys.dup(fd),
                 .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), if (Environment.isWindows) bun.O.RDONLY else bun.O.RDONLY | bun.O.NOCTTY, 0),
             };

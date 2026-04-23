@@ -1,5 +1,8 @@
+extern fn bun_sysconf__SC_NPROCESSORS_ONLN() i32;
+
 pub fn createNodeOsBinding(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     return (try jsc.JSObject.create(.{
+        .hostCpuCount = @max(1, bun_sysconf__SC_NPROCESSORS_ONLN()),
         .cpus = gen.createCpusCallback(global),
         .freemem = gen.createFreememCallback(global),
         .getPriority = gen.createGetPriorityCallback(global),

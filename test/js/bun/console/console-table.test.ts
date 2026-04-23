@@ -1,6 +1,19 @@
-import { spawnSync } from "bun";
+import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+
+// Kick off the subprocess immediately so multiple cases can overlap, then
+// resolve to its stdout text. Tests stay sequential (snapshot matchers require
+// it) but subprocess startup is parallelized.
+function runTable(argSource: string): Promise<string> {
+  const proc = spawn({
+    cmd: [bunExe(), `${import.meta.dir}/console-table-run.ts`, argSource],
+    stdout: "pipe",
+    stderr: "inherit",
+    env: bunEnv,
+  });
+  return proc.stdout.text();
+}
 
 describe("console.table", () => {
   test("throws when second arg is invalid", () => {
@@ -10,7 +23,7 @@ describe("console.table", () => {
     expect(() => console.table({}, "invalid")).toThrow();
   });
 
-  test.each([
+  const cases: [string, { args: () => any[] }][] = [
     [
       "not object (number)",
       {
@@ -140,60 +153,38 @@ describe("console.table", () => {
         args: () => [{ test: { "10": 123, "100": 154 } }],
       },
     ],
-  ])("expected output for: %s", (label, { args }) => {
-    const { stdout } = spawnSync({
-      cmd: [bunExe(), `${import.meta.dir}/console-table-run.ts`, args.toString()],
-      stdout: "pipe",
-      stderr: "inherit",
-      env: bunEnv,
-    });
+  ];
+  const outputs = new Map(cases.map(([label, { args }]) => [label, runTable(args.toString())]));
 
-    const actualOutput = stdout.toString();
+  test.each(cases)("expected output for: %s", async (label, { args }) => {
+    const actualOutput = await outputs.get(label)!;
     expect(actualOutput).toMatchSnapshot();
     console.log(actualOutput);
   });
 });
 
-test("console.table json fixture", () => {
-  const { stdout } = spawnSync({
-    cmd: [
-      bunExe(),
-      `${import.meta.dir}/console-table-run.ts`,
-      `(() => [${JSON.stringify(require("./console-table-json-fixture.json"), null, 2)}])`,
-    ],
-    stdout: "pipe",
-    stderr: "inherit",
-    env: bunEnv,
-  });
-
-  const actualOutput = stdout
-    .toString()
+const jsonFixtureOutput = runTable(
+  `(() => [${JSON.stringify(require("./console-table-json-fixture.json"), null, 2)}])`,
+);
+test("console.table json fixture", async () => {
+  const actualOutput = (await jsonFixtureOutput)
     // todo: fix bug causing this to be necessary:
     .replaceAll("`", "'");
   expect(actualOutput).toMatchSnapshot();
   console.log(actualOutput);
 });
 
-test("console.table ansi colors", () => {
-  const obj = {
-    [ansify("hello")]: ansify("this is a long string with ansi color codes"),
-    [ansify("world")]: ansify("this is another long string with ansi color"),
-    [ansify("foo")]: ansify("bar"),
-  };
-
-  function ansify(str: string) {
-    return `\u001b[31m${str}\u001b[39m`;
-  }
-
-  const { stdout } = spawnSync({
-    cmd: [bunExe(), `${import.meta.dir}/console-table-run.ts`, `(() => [${JSON.stringify(obj, null, 2)}])`],
-    stdout: "pipe",
-    stderr: "inherit",
-    env: bunEnv,
-  });
-
-  const actualOutput = stdout
-    .toString()
+function ansify(str: string) {
+  return `\u001b[31m${str}\u001b[39m`;
+}
+const ansiObj = {
+  [ansify("hello")]: ansify("this is a long string with ansi color codes"),
+  [ansify("world")]: ansify("this is another long string with ansi color"),
+  [ansify("foo")]: ansify("bar"),
+};
+const ansiColorsOutput = runTable(`(() => [${JSON.stringify(ansiObj, null, 2)}])`);
+test("console.table ansi colors", async () => {
+  const actualOutput = (await ansiColorsOutput)
     // todo: fix bug causing this to be necessary:
     .replaceAll("`", "'");
   expect(actualOutput).toMatchSnapshot();
@@ -221,20 +212,22 @@ test.skip("console.table character widths", () => {
   console.log(actualOutput);
 });
 
-test("console.table repeat 50", () => {
+const repeat50Proc = spawn({
+  cmd: [bunExe(), `${import.meta.dir}/console-table-repeat-50.ts`],
+  stdout: "pipe",
+  stderr: "pipe",
+  env: bunEnv,
+});
+const repeat50Output = Promise.all([repeat50Proc.stdout.text(), repeat50Proc.stderr.text()]);
+test("console.table repeat 50", async () => {
   const expected = `┌───┬───┐
 │   │ n │
 ├───┼───┤
 │ 0 │ 8 │
 └───┴───┘
 `;
-  const { stdout, stderr } = spawnSync({
-    cmd: [bunExe(), `${import.meta.dir}/console-table-repeat-50.ts`],
-    stdout: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
-  });
+  const [stdout, stderr] = await repeat50Output;
 
-  expect(stdout.toString()).toBe(expected.repeat(50));
-  expect(stderr.toString()).toBe("");
+  expect(stdout).toBe(expected.repeat(50));
+  expect(stderr).toBe("");
 });

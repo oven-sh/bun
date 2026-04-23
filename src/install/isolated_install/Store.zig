@@ -108,6 +108,15 @@ pub const Store = struct {
 
         peer_hash: PeerHash,
 
+        /// Content hash of (package + sorted resolved dependency global-store keys),
+        /// used to key the global virtual store at `<cache>/links/<storepath>-<entry_hash>/`.
+        /// Two projects that resolve the same package to the same dependency closure
+        /// share one global-store entry; if a transitive dep version differs, the
+        /// hash differs and a new global-store entry is created. Computed after the
+        /// store is built (see `computeEntryHashes`). 0 means "do not use global store"
+        /// (root, workspace, folder, symlink, patched).
+        entry_hash: u64 = 0,
+
         scripts: ?*Package.Scripts.List = null,
 
         pub const PeerHash = enum(u64) {
@@ -181,6 +190,26 @@ pub const Store = struct {
 
         pub fn fmtStorePath(entry_id: Id, store: *const Store, lockfile: *const Lockfile) StorePathFormatter {
             return .{ .entry_id = entry_id, .store = store, .lockfile = lockfile };
+        }
+
+        const GlobalStorePathFormatter = struct {
+            inner: StorePathFormatter,
+            entry_hash: u64,
+
+            pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+                try this.inner.format(writer);
+                try writer.print("-{f}", .{bun.fmt.hexIntLower(this.entry_hash)});
+            }
+        };
+
+        /// Like `fmtStorePath` but suffixes the entry's content hash so the
+        /// resulting name is safe to use as a key in the shared global virtual
+        /// store (different dependency closures get different directory names).
+        pub fn fmtGlobalStorePath(entry_id: Id, store: *const Store, lockfile: *const Lockfile) GlobalStorePathFormatter {
+            return .{
+                .inner = fmtStorePath(entry_id, store, lockfile),
+                .entry_hash = store.entries.items(.entry_hash)[entry_id.get()],
+            };
         }
 
         pub fn debugGatherAllParents(entry_id: Id, store: *const Store) []const Id {

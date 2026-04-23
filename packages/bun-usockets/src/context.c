@@ -201,6 +201,10 @@ struct us_loop_t *us_socket_context_loop(int ssl, struct us_socket_context_t *co
     return context->loop;
 }
 
+struct us_socket_context_t *us_socket_context_next(struct us_socket_context_t *context) {
+    return context->next;
+}
+
 /* Not shared with SSL */
 
 /* Lookup userdata by server name pattern */
@@ -400,6 +404,11 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
 
     ls->socket_ext_size = socket_ext_size;
+    ls->deferred_accept = 0;
+
+    if (options & LIBUS_LISTEN_DEFER_ACCEPT) {
+        ls->deferred_accept = bsd_set_defer_accept(listen_socket_fd);
+    }
 
     return ls;
 }
@@ -438,6 +447,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
 
     ls->socket_ext_size = socket_ext_size;
+    ls->deferred_accept = 0;
 
     return ls;
 }
@@ -562,6 +572,11 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     c->timeout = 255;
     c->long_timeout = 255;
     c->pending_resolve_callback = 1;
+    /* hold a context ref for the lifetime of pending_resolve_callback so that
+     * us_internal_socket_after_resolve always sees a live context, even if c is
+     * unlinked/relinked between now and the drain */
+    us_socket_context_ref(ssl, context);
+    c->addrinfo_req = ai_req;
     c->port = port;
     us_internal_socket_context_link_connecting_socket(ssl, context, c);
 
@@ -623,22 +638,36 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
 }
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
+    int ssl = c->ssl;
+    /* us_socket_context_connect took a context ref alongside
+     * pending_resolve_callback = 1; every return below drops it */
+    struct us_socket_context_t *context = c->context;
+
     // make sure to decrement the active_handles counter, no matter what
 #ifdef _WIN32
-    c->context->loop->uv_loop->active_handles--;
+    context->loop->uv_loop->active_handles--;
 #else
-    c->context->loop->num_polls--;
+    context->loop->num_polls--;
 #endif
 
     c->pending_resolve_callback = 0;
     // if the socket was closed while we were resolving the address, free it
     if (c->closed) {
-        us_connecting_socket_free(c->ssl, c);
+        // us_connecting_socket_close could not cancel the pending callback (the
+        // result was already set), so the request ref taken by Bun__addrinfo_get
+        // is released here instead
+        if (c->addrinfo_req) {
+            Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
+            c->addrinfo_req = 0;
+        }
+        us_connecting_socket_free(ssl, c);
+        us_socket_context_unref(ssl, context);
         return;
     }
     struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
     if (result->error) {
-        us_connecting_socket_close(c->ssl, c);
+        us_connecting_socket_close(ssl, c);
+        us_socket_context_unref(ssl, context);
         return;
     }
 
@@ -646,9 +675,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
     int opened = start_connections(c, CONCURRENT_CONNECTIONS);
     if (opened == 0) {
-        us_connecting_socket_close(c->ssl, c);
-        return;
+        us_connecting_socket_close(ssl, c);
     }
+    us_socket_context_unref(ssl, context);
 }
 
 void us_internal_socket_after_open(struct us_socket_t *s, int error) {

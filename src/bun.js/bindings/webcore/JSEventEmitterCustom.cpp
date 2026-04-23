@@ -87,11 +87,11 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
 }
 
 template<typename Visitor>
-void JSEventEmitter::visitAdditionalChildren(Visitor& visitor)
+void JSEventEmitter::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     wrapped().eventListenerMap().visitJSEventListeners(visitor);
 }
 
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSEventEmitter);
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSEventEmitter);
 
 } // namespace WebCore

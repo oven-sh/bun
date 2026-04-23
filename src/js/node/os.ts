@@ -28,9 +28,9 @@ var tmpdir = function () {
 // Some packages like FastGlob only bother to read the length of the array
 // so instead of actually populating the entire object
 // we turn them into getters
-function lazyCpus({ cpus }) {
+function lazyCpus({ cpus, hostCpuCount }) {
   return () => {
-    const array = new Array(navigator.hardwareConcurrency);
+    const array = new Array(hostCpuCount);
     function populate() {
       const results = cpus();
       const length = results.length;

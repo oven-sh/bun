@@ -898,7 +898,7 @@ pub const upgrade_js_bindings = struct {
     const JSValue = jsc.JSValue;
     const ZigString = jsc.ZigString;
 
-    var tempdir_fd: ?bun.FileDescriptor = null;
+    var tempdir_fd: ?bun.FD = null;
 
     pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
         const obj = JSValue.createEmptyObject(global, 2);

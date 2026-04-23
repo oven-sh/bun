@@ -8,6 +8,7 @@ import {
   isIntelMacOS,
   isPosix,
   isWindows,
+  tempDir,
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
@@ -90,16 +91,37 @@ function tmpdirTestMkdir(): string {
   return tempdir;
 }
 
-it("fs.writeFile(1, data) should work when its inherited", async () => {
-  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), "1"]).toRun();
+it.concurrent("fs.writeFile(1, data) should work when its inherited", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), "1"],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  if (exitCode !== 0) throw new Error("Command failed:\n" + stdout);
+  expect(exitCode).toBe(0);
 });
 
-it("fs.writeFile(2, data) should work when its inherited", async () => {
-  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), "2"]).toRun();
+it.concurrent("fs.writeFile(2, data) should work when its inherited", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), "2"],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  if (exitCode !== 0) throw new Error("Command failed:\n" + stdout);
+  expect(exitCode).toBe(0);
 });
 
-it("fs.writeFile(/dev/null, data) should work", async () => {
-  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), require("os").devNull]).toRun();
+it.concurrent("fs.writeFile(/dev/null, data) should work", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), os.devNull],
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  if (exitCode !== 0) throw new Error("Command failed:\n" + stdout);
+  expect(exitCode).toBe(0);
 });
 
 it("fs.openAsBlob", async () => {
@@ -426,12 +448,13 @@ it("writeFileSync in append should not truncate the file", () => {
   expect(readFileSync(path, "utf8")).toBe(str);
 });
 
-it("await readdir #3931", async () => {
-  const { exitCode } = spawnSync({
+it.concurrent("await readdir #3931", async () => {
+  await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "./repro-3931.js")],
     env: bunEnv,
     cwd: import.meta.dir,
   });
+  const exitCode = await proc.exited;
   expect(exitCode).toBe(0);
 });
 
@@ -1559,6 +1582,22 @@ it.if(isPosix)("realpathSync doesn't block on FIFO", () => {
   unlinkSync(path);
 });
 
+// Regression guard for realpathSync on POSIX hosts. On Linux, getFdPath has
+// a /dev/fd fallback for environments where /proc is broken (FreeBSD
+// Linuxulator) or absent (minimal containers).
+it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => {
+  expect(realpathSync("/")).toBe("/");
+
+  const self = realpathSync(import.meta.path);
+  expect(self).toStartWith("/");
+  expect(existsSync(self)).toBe(true);
+
+  using dir = tempDir("fs-realpath-getfdpath", {});
+  const linkPath = join(String(dir), "link");
+  symlinkSync(import.meta.path, linkPath);
+  expect(realpathSync(linkPath)).toBe(self);
+});
+
 it("readlink", () => {
   const actual = join(tmpdirSync(), "fs-readlink.txt");
   try {
@@ -2063,10 +2102,8 @@ describe("fs.WriteStream", () => {
     });
 
     stream.on("finish", () => {
-      Bun.sleep(1000).then(() => {
-        expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
-        done();
-      });
+      expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+      done();
     });
   });
 
@@ -2384,150 +2421,166 @@ describe("fs/promises", () => {
     expect(files.length).toBeGreaterThan(0);
   });
 
-  it("readdir(path, {recursive: true}) produces the same result as Node.js", async () => {
-    const full = resolve(import.meta.dir, "../");
-    const [bun, subprocess] = await Promise.all([
-      (async function () {
-        const files = await promises.readdir(full, { recursive: true });
-        files.sort();
-        return files;
-      })(),
-      (async function () {
-        const subprocess = Bun.spawn({
-          cmd: [
-            "node",
-            "-e",
-            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-              full,
-            )}, { recursive: true }).sort()), null, 2)`,
-          ],
-          cwd: process.cwd(),
-          stdout: "pipe",
-          stderr: "inherit",
-          stdin: "inherit",
-        });
-        await subprocess.exited;
-        return subprocess;
-      })(),
-    ]);
+  it.concurrent(
+    "readdir(path, {recursive: true}) produces the same result as Node.js",
+    async () => {
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = await promises.readdir(full, { recursive: true });
+          files.sort();
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              "node",
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { recursive: true }).sort()), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
+      ]);
 
-    expect(subprocess.exitCode).toBe(0);
-    const text = await subprocess.stdout.text();
-    const node = JSON.parse(text);
-    expect(bun).toEqual(node as string[]);
-  }, 100000);
+      expect(subprocess.exitCode).toBe(0);
+      const text = await subprocess.stdout.text();
+      const node = JSON.parse(text);
+      expect(bun).toEqual(node as string[]);
+    },
+    100000,
+  );
 
-  it("readdir(path, {withFileTypes: true}) produces the same result as Node.js", async () => {
-    const full = resolve(import.meta.dir, "../");
-    const [bun, subprocess] = await Promise.all([
-      (async function () {
-        const files = await promises.readdir(full, { withFileTypes: true });
-        files.sort();
-        return files;
-      })(),
-      (async function () {
-        const subprocess = Bun.spawn({
-          cmd: [
-            "node",
-            "-e",
-            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-              full,
-            )}, { withFileTypes: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort()), null, 2)`,
-          ],
-          cwd: process.cwd(),
-          stdout: "pipe",
-          stderr: "inherit",
-          stdin: "inherit",
-        });
-        await subprocess.exited;
-        return subprocess;
-      })(),
-    ]);
+  it.concurrent(
+    "readdir(path, {withFileTypes: true}) produces the same result as Node.js",
+    async () => {
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = await promises.readdir(full, { withFileTypes: true });
+          files.sort();
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              "node",
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { withFileTypes: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort()), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
+      ]);
 
-    expect(subprocess.exitCode).toBe(0);
-    const text = await subprocess.stdout.text();
-    const node = JSON.parse(text);
-    expect(bun.length).toEqual(node.length);
-    expect([...new Set(node.map(v => v.parentPath ?? v.path))]).toEqual([full]);
-    expect([...new Set(bun.map(v => v.parentPath ?? v.path))]).toEqual([full]);
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
-      node.map(v => join(v.path, v.name)).sort(),
-    );
-  }, 100000);
+      expect(subprocess.exitCode).toBe(0);
+      const text = await subprocess.stdout.text();
+      const node = JSON.parse(text);
+      expect(bun.length).toEqual(node.length);
+      expect([...new Set(node.map(v => v.parentPath ?? v.path))]).toEqual([full]);
+      expect([...new Set(bun.map(v => v.parentPath ?? v.path))]).toEqual([full]);
+      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+        node.map(v => join(v.path, v.name)).sort(),
+      );
+    },
+    100000,
+  );
 
-  it("readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
-    const full = resolve(import.meta.dir, "../");
-    const [bun, subprocess] = await Promise.all([
-      (async function () {
-        const files = await promises.readdir(full, { withFileTypes: true, recursive: true });
-        files.sort((a, b) => a.path.localeCompare(b.path));
-        return files;
-      })(),
-      (async function () {
-        const subprocess = Bun.spawn({
-          cmd: [
-            "node",
-            "-e",
-            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-              full,
-            )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
-          ],
-          cwd: process.cwd(),
-          stdout: "pipe",
-          stderr: "inherit",
-          stdin: "inherit",
-        });
-        await subprocess.exited;
-        return subprocess;
-      })(),
-    ]);
+  it.concurrent(
+    "readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js",
+    async () => {
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = await promises.readdir(full, { withFileTypes: true, recursive: true });
+          files.sort((a, b) => a.path.localeCompare(b.path));
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              "node",
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
+      ]);
 
-    expect(subprocess.exitCode).toBe(0);
-    const text = await subprocess.stdout.text();
-    const node = JSON.parse(text);
-    expect(bun.length).toEqual(node.length);
-    expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
-      node.map(v => join(v.path, v.name)).sort(),
-    );
-  }, 100000);
+      expect(subprocess.exitCode).toBe(0);
+      const text = await subprocess.stdout.text();
+      const node = JSON.parse(text);
+      expect(bun.length).toEqual(node.length);
+      expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
+      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+        node.map(v => join(v.path, v.name)).sort(),
+      );
+    },
+    100000,
+  );
 
-  it("readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
-    const full = resolve(import.meta.dir, "../");
-    const [bun, subprocess] = await Promise.all([
-      (async function () {
-        const files = readdirSync(full, { withFileTypes: true, recursive: true });
-        files.sort((a, b) => a.path.localeCompare(b.path));
-        return files;
-      })(),
-      (async function () {
-        const subprocess = Bun.spawn({
-          cmd: [
-            "node",
-            "-e",
-            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-              full,
-            )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
-          ],
-          cwd: process.cwd(),
-          stdout: "pipe",
-          stderr: "inherit",
-          stdin: "inherit",
-        });
-        await subprocess.exited;
-        return subprocess;
-      })(),
-    ]);
+  it.concurrent(
+    "readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js",
+    async () => {
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = readdirSync(full, { withFileTypes: true, recursive: true });
+          files.sort((a, b) => a.path.localeCompare(b.path));
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              "node",
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "inherit",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
+      ]);
 
-    expect(subprocess.exitCode).toBe(0);
-    const text = await subprocess.stdout.text();
-    const node = JSON.parse(text);
-    expect(bun.length).toEqual(node.length);
-    expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
-      node.map(v => join(v.path, v.name)).sort(),
-    );
-  }, 100000);
+      expect(subprocess.exitCode).toBe(0);
+      const text = await subprocess.stdout.text();
+      const node = JSON.parse(text);
+      expect(bun.length).toEqual(node.length);
+      expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
+      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+        node.map(v => join(v.path, v.name)).sort(),
+      );
+    },
+    100000,
+  );
 
   for (let withFileTypes of [false, true] as const) {
     const iterCount = 200;
@@ -3301,10 +3354,11 @@ it("new Stats", () => {
   expectclose(BigInt(Math.floor(withoutBigInt.ctimeMs)), withBigInt.ctimeMs);
   expectclose(BigInt(Math.floor(withoutBigInt.birthtimeMs)), withBigInt.birthtimeMs);
 
-  expect(withBigInt.atime.getTime()).toEqual(withoutBigInt.atime.getTime());
-  expect(withBigInt.mtime.getTime()).toEqual(withoutBigInt.mtime.getTime());
-  expect(withBigInt.ctime.getTime()).toEqual(withoutBigInt.ctime.getTime());
-  expect(withBigInt.birthtime.getTime()).toEqual(withoutBigInt.birthtime.getTime());
+  // Allow ±1ms leeway: the non-bigint path goes through a float and can round differently.
+  expect(Math.abs(withBigInt.atime.getTime() - withoutBigInt.atime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.mtime.getTime() - withoutBigInt.mtime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.ctime.getTime() - withoutBigInt.ctime.getTime())).toBeLessThanOrEqual(1);
+  expect(Math.abs(withBigInt.birthtime.getTime() - withoutBigInt.birthtime.getTime())).toBeLessThanOrEqual(1);
 });
 
 it("test syscall errno, issue#4198", () => {
@@ -3644,25 +3698,27 @@ describe('kernel32 long path conversion does not mangle "../../path" into "path"
   ];
 
   for (const [name, code] of nonExistTests) {
-    it(`${name} (not existing)`, () => {
-      const { success } = spawnSync({
+    it.concurrent(`${name} (not existing)`, async () => {
+      await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", code],
         cwd: workingDir1,
         stdio: ["ignore", "inherit", "inherit"],
         env: bunEnv,
       });
-      expect(success).toBeTrue();
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
     });
   }
   for (const [name, code] of existTests) {
-    it(`${name} (existing)`, () => {
-      const { success } = spawnSync({
+    it.concurrent(`${name} (existing)`, async () => {
+      await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", code],
         cwd: workingDir2,
         stdio: ["ignore", "inherit", "inherit"],
         env: bunEnv,
       });
-      expect(success).toBeTrue();
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
     });
   }
 });
@@ -3679,4 +3735,152 @@ it("overflowing mode doesn't crash", () => {
       path: "./a.txt",
     }),
   );
+});
+
+describe("numeric flags produce same result as string flags", () => {
+  it("numeric O_CREAT|O_TRUNC|O_WRONLY is equivalent to 'w'", () => {
+    const { O_CREAT, O_TRUNC, O_WRONLY } = constants;
+    const numericFlag = O_CREAT | O_TRUNC | O_WRONLY;
+
+    using dir = tempDir("numeric-flags", {});
+    const fileStr = join(String(dir), "string.txt");
+    const fileNum = join(String(dir), "numeric.txt");
+
+    const fd1 = openSync(fileStr, "w", 0o666);
+    writeSync(fd1, "hello");
+    closeSync(fd1);
+
+    const fd2 = openSync(fileNum, numericFlag, 0o666);
+    writeSync(fd2, "hello");
+    closeSync(fd2);
+
+    expect(readFileSync(fileNum, "utf8")).toBe(readFileSync(fileStr, "utf8"));
+  });
+
+  it("numeric O_CREAT|O_WRONLY|O_APPEND is equivalent to 'a'", () => {
+    const { O_APPEND, O_CREAT, O_WRONLY } = constants;
+    const numericFlag = O_CREAT | O_WRONLY | O_APPEND;
+
+    using dir = tempDir("numeric-flags", {});
+    const fileStr = join(String(dir), "string.txt");
+    const fileNum = join(String(dir), "numeric.txt");
+
+    const fd1 = openSync(fileStr, "a", 0o666);
+    writeSync(fd1, "first");
+    closeSync(fd1);
+    const fd1b = openSync(fileStr, "a", 0o666);
+    writeSync(fd1b, "second");
+    closeSync(fd1b);
+
+    const fd2 = openSync(fileNum, numericFlag, 0o666);
+    writeSync(fd2, "first");
+    closeSync(fd2);
+    const fd2b = openSync(fileNum, numericFlag, 0o666);
+    writeSync(fd2b, "second");
+    closeSync(fd2b);
+
+    expect(readFileSync(fileNum, "utf8")).toBe(readFileSync(fileStr, "utf8"));
+    expect(readFileSync(fileNum, "utf8")).toBe("firstsecond");
+  });
+
+  it("numeric O_CREAT|O_RDWR|O_TRUNC is equivalent to 'w+'", () => {
+    const { O_CREAT, O_RDWR, O_TRUNC } = constants;
+    const numericFlag = O_CREAT | O_RDWR | O_TRUNC;
+
+    using dir = tempDir("numeric-flags", {});
+    const file = join(String(dir), "readwrite.txt");
+
+    const fd = openSync(file, numericFlag, 0o666);
+    writeSync(fd, "read-write");
+
+    // Read back from the same fd to verify O_RDWR actually grants read access.
+    const buf = Buffer.alloc(10);
+    const bytesRead = readSync(fd, buf, 0, 10, 0);
+    closeSync(fd);
+
+    expect(buf.toString("utf8", 0, bytesRead)).toBe("read-write");
+  });
+
+  it("numeric O_RDONLY reads existing file", () => {
+    const { O_RDONLY } = constants;
+    using dir = tempDir("numeric-flags", {});
+    const file = join(String(dir), "readonly.txt");
+
+    writeFileSync(file, "existing content");
+
+    const fd = openSync(file, O_RDONLY);
+    const buf = Buffer.alloc(50);
+    const bytesRead = readSync(fd, buf);
+    closeSync(fd);
+
+    expect(buf.slice(0, bytesRead).toString("utf8")).toBe("existing content");
+  });
+
+  it("numeric O_CREAT|O_EXCL|O_RDWR fails on existing file", () => {
+    const { O_CREAT, O_EXCL, O_RDWR } = constants;
+    const numericFlag = O_CREAT | O_EXCL | O_RDWR;
+
+    using dir = tempDir("numeric-flags", {});
+    const file = join(String(dir), "excl.txt");
+
+    // First open should succeed (creates the file).
+    const fd = openSync(file, numericFlag, 0o666);
+    closeSync(fd);
+
+    // Second open with O_EXCL should fail (file already exists).
+    expect(() => openSync(file, numericFlag, 0o666)).toThrow();
+  });
+});
+
+describe("synchronous I/O string flags", () => {
+  it("'rs' opens existing file for reading", () => {
+    using dir = tempDir("sync-flags", {
+      "existing.txt": "sync content",
+    });
+
+    const fd = openSync(join(String(dir), "existing.txt"), "rs");
+    const buf = Buffer.alloc(20);
+    const bytesRead = readSync(fd, buf);
+    closeSync(fd);
+
+    expect(buf.slice(0, bytesRead).toString("utf8")).toBe("sync content");
+  });
+
+  it("'rs+' opens existing file for read-write", () => {
+    using dir = tempDir("sync-flags", {
+      "existing.txt": "original",
+    });
+    const file = join(String(dir), "existing.txt");
+
+    const fd = openSync(file, "rs+");
+    writeSync(fd, "replaced");
+    closeSync(fd);
+
+    expect(readFileSync(file, "utf8")).toBe("replaced");
+  });
+
+  it("'as' creates and appends to file", () => {
+    using dir = tempDir("sync-flags", {});
+    const file = join(String(dir), "appended.txt");
+
+    const fd = openSync(file, "as");
+    writeSync(fd, "sync-append");
+    closeSync(fd);
+
+    expect(readFileSync(file, "utf8")).toBe("sync-append");
+  });
+
+  it("'as+' creates and appends with read access", () => {
+    using dir = tempDir("sync-flags", {});
+    const file = join(String(dir), "appended-rw.txt");
+
+    const fd = openSync(file, "as+");
+    writeSync(fd, "hello");
+
+    const buf = Buffer.alloc(10);
+    const bytesRead = readSync(fd, buf, 0, 10, 0);
+    closeSync(fd);
+
+    expect(buf.toString("utf8", 0, bytesRead)).toBe("hello");
+  });
 });

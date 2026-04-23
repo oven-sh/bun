@@ -1,6 +1,6 @@
 import { $ as Shell, fileURLToPath } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { makeTree } from "harness";
+import { bunEnv, bunExe, makeTree } from "harness";
 import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -315,6 +315,36 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // TypeScript 7's native (Go-based) compiler does not expose a JS compiler API yet,
+  // so unlike the tests above we have to write a real tsconfig and spawn the CLI.
+  // https://devblogs.microsoft.com/typescript/announcing-typescript-7-0-beta/
+  describe("tsgo (TypeScript 7 native preview)", () => {
+    test("checks without lib.dom.d.ts", async () => {
+      const fixtureDir = await createIsolatedFixture(["@typescript/native-preview"]);
+
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.compilerOptions.skipLibCheck = false;
+      tsconfig.include = ["*.ts", "*.tsx"];
+      await Bun.write(join(fixtureDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
+
+      const tsgo = join(fixtureDir, "node_modules", "@typescript", "native-preview", "bin", "tsgo.js");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), tsgo, "-p", "."],
+        env: bunEnv,
+        cwd: fixtureDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("Test Globals", () => {
     const code = `
       const test_shouldBeAFunction: Function = test;
@@ -343,22 +373,22 @@ describe("@types/bun integration test", () => {
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
       diagnostics: [
         {
-          "code": 2582,
+          "code": 2593,
           "line": "my-test.test.ts:2:48",
           "message":
-            "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+            "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\` and then add 'jest' or 'mocha' to the types field in your tsconfig.",
         },
         {
-          "code": 2582,
+          "code": 2593,
           "line": "my-test.test.ts:3:46",
           "message":
-            "Cannot find name 'it'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+            "Cannot find name 'it'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\` and then add 'jest' or 'mocha' to the types field in your tsconfig.",
         },
         {
-          "code": 2582,
+          "code": 2593,
           "line": "my-test.test.ts:4:52",
           "message":
-            "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+            "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\` and then add 'jest' or 'mocha' to the types field in your tsconfig.",
         },
         {
           "code": 2304,
@@ -371,9 +401,10 @@ describe("@types/bun integration test", () => {
           "message": "Cannot find name 'beforeAll'.",
         },
         {
-          "code": 2304,
+          "code": 2593,
           "line": "my-test.test.ts:7:54",
-          "message": "Cannot find name 'beforeEach'.",
+          "message":
+            "Cannot find name 'beforeEach'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\` and then add 'jest' or 'mocha' to the types field in your tsconfig.",
         },
         {
           "code": 2304,
@@ -537,9 +568,11 @@ describe("@types/bun integration test", () => {
       },
       emptyInterfaces: new Set([
         "ThisType",
+        "GPUExternalTextureBindingLayout",
         "RTCAnswerOptions",
         "RTCOfferAnswerOptions",
         "RTCSetParameterOptions",
+        "ReportBody",
         "EXT_color_buffer_float",
         "EXT_float_blend",
         "EXT_frag_depth",
@@ -710,11 +743,6 @@ describe("@types/bun integration test", () => {
           line: "websocket.ts:51:5",
           message:
             "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
-        },
-        {
-          code: 2554,
-          line: "websocket.ts:185:29",
-          message: "Expected 2 arguments, but got 0.",
         },
         {
           code: 2551,

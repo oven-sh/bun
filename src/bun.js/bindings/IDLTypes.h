@@ -66,6 +66,8 @@ struct IDLType {
     using ImplementationType = T;
     using StorageType = T;
     using SequenceStorageType = T;
+    using ConversionResultType = T;
+    using NullableConversionResultType = std::optional<T>;
 
     using ParameterType = T;
     using NullableParameterType = std::optional<ImplementationType>;
@@ -104,6 +106,8 @@ struct IDLAny : IDLType<JSC::Strong<JSC::Unknown>> {
     // IDLSequence<IDLAny> would yield a Vector<JSC::JSValue>, whose contents
     // are invisible to the GC.
     // [do not uncomment] using SequenceStorageType = JSC::JSValue;
+    using ConversionResultType = JSC::JSValue;
+    using NullableConversionResultType = JSC::JSValue;
     using ParameterType = JSC::JSValue;
     using NullableParameterType = JSC::JSValue;
 
@@ -161,6 +165,8 @@ struct IDLUnrestrictedDouble : IDLFloatingPoint<double> {
 };
 
 template<typename StringType> struct IDLString : IDLType<StringType> {
+    using ConversionResultType = StringType;
+    using NullableConversionResultType = StringType;
     using ParameterType = const StringType&;
     using NullableParameterType = const StringType&;
 
@@ -201,6 +207,8 @@ template<typename T> struct IDLAllowSharedAdaptor : T {
 };
 
 struct IDLObject : IDLType<JSC::Strong<JSC::JSObject>> {
+    using ConversionResultType = JSC::Strong<JSC::JSObject>;
+    using NullableConversionResultType = JSC::Strong<JSC::JSObject>;
     using NullableType = JSC::Strong<JSC::JSObject>;
 
     static inline NullableType nullValue() { return {}; }
@@ -212,6 +220,8 @@ template<typename T> struct IDLWrapper : IDLType<RefPtr<T>> {
     using RawType = T;
 
     using StorageType = Ref<T>;
+    using ConversionResultType = std::reference_wrapper<T>;
+    using NullableConversionResultType = T*;
 
     using ParameterType = T&;
     using NullableParameterType = T*;
@@ -243,6 +253,8 @@ template<typename T> struct IDLEnumeration : IDLType<T> {
 template<typename T> struct IDLNullable : IDLType<typename T::NullableType> {
     using InnerType = T;
 
+    using ConversionResultType = typename T::NullableConversionResultType;
+    using NullableConversionResultType = std::optional<ConversionResultType>;
     using ParameterType = typename T::NullableParameterType;
     using NullableParameterType = typename T::NullableParameterType;
 
@@ -345,6 +357,8 @@ template<typename T> struct IDLTypedArray : IDLBufferSource<T> {
 // Non-WebIDL extensions
 
 struct IDLDate : IDLType<WallTime> {
+    using ConversionResultType = WallTime;
+    using NullableConversionResultType = WallTime;
     using NullableType = WallTime;
     static WallTime nullValue() { return WallTime::nan(); }
     static bool isNullValue(WallTime value) { return value.isNaN(); }
@@ -352,6 +366,8 @@ struct IDLDate : IDLType<WallTime> {
 };
 
 struct IDLJSON : IDLType<String> {
+    using ConversionResultType = String;
+    using NullableConversionResultType = String;
     using ParameterType = const String&;
     using NullableParameterType = const String&;
 

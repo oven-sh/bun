@@ -1,0 +1,254 @@
+/**
+ * Unified source bundling — WebKit-style.
+ *
+ * Concatenates N small .cpp files into one translation unit by writing
+ * `UnifiedSource-<dir>-<n>.cpp` files that contain only `#include` lines
+ * pointing at the originals, then compiling those instead.
+ *
+ * Why: Bun has ~550 .cpp files, ~330 of them under 200 lines. Each compile
+ * spends most of its time re-parsing the same JSC/WebCore headers. Bundling
+ * N files into one TU means 1 header parse instead of N — same code, 1/Nth
+ * the redundant frontend work. WebKit reports a 3–4× clean-build speedup
+ * from this technique alone.
+ *
+ * Algorithm (matches WebKit's generate-unified-source-bundles):
+ *   - Group sources by parent directory. Files from different directories
+ *     never share a bundle — keeps `using namespace WebCore` in webcore/
+ *     from leaking into bindings/ etc.
+ *   - Sort each group by basename for determinism.
+ *   - Walk each group filling bundles of `bundleSizeFor(cfg)`.
+ *   - Files in `noUnify` compile standalone (large enough to saturate a
+ *     core alone, or have per-file flag overrides, or are known to conflict).
+ *
+ * Pitfalls (handled by convention, not by this script — fix at the source):
+ *   - File-static names from N files now share a TU. On collision, wrap the
+ *     statics in an anonymous or `namespace FILENAME { }` block, or rename.
+ *   - `using namespace X;` at file scope leaks into later includes in the
+ *     same bundle.
+ *   - A file may build only because an earlier sibling already pulled a
+ *     header. When bundle composition shifts (file added/removed), the
+ *     missing include surfaces. Fix the include; don't reorder bundles.
+ *
+ * Incremental builds: editing one .cpp recompiles its whole bundle.
+ * Acceptable — the bundle compile is still fast, and ccache handles the
+ * common case of unchanged bundles. Set `cfg.unifiedSources = false` for
+ * fine-grained incremental during heavy single-file iteration.
+ */
+
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { basename, dirname, relative, resolve } from "node:path";
+import type { Config } from "./config.ts";
+import { assert } from "./error.ts";
+import { fileOverrides } from "./flags.ts";
+import { writeIfChanged } from "./fs.ts";
+import { slash } from "./shell.ts";
+
+/**
+ * Files that must compile standalone. Reasons inline.
+ * Paths are repo-root-relative; matched against `relative(cwd, abs)`.
+ */
+const noUnify: readonly string[] = [
+  // Heavy single-file TUs that already saturate a core. Bundling them with
+  // siblings would serialize work that should run in parallel.
+  "src/bun.js/bindings/ZigGlobalObject.cpp",
+  "src/bun.js/bindings/BunObject.cpp",
+  "src/bun.js/bindings/bindings.cpp",
+  "src/bun.js/bindings/BunProcess.cpp",
+  "src/bun.js/bindings/JSBuffer.cpp",
+  "src/bun.js/bindings/napi.cpp",
+  "src/bun.js/bindings/webcore/SerializedScriptValue.cpp",
+  "src/bun.js/bindings/webcore/HTTPParsers.cpp",
+
+  // Duplicates static MIME-parsing helpers from JSMIMEParams.cpp verbatim;
+  // both end up in the same bundle. TODO: extract helpers to a shared header.
+  "src/bun.js/bindings/webcore/JSMIMEType.cpp",
+
+  // These instantiate JSDOMConvert templates with JSC::* types whose toJS()
+  // overloads live in namespace WebCore — ADL can't find them, so they rely
+  // on ordinary lookup at template definition time. That fails if an earlier
+  // file in the bundle already parsed JSDOMConvertInterface.h /
+  // JSDOMWrapperCache.h before the overload was visible.
+  "src/bun.js/bindings/webcore/JSWasmStreamingCompiler.cpp",
+  "src/bun.js/bindings/webcore/JSDOMPromiseDeferred.cpp",
+  "src/bun.js/bindings/webcore/JSMessageEventCustom.cpp",
+  "src/bun.js/bindings/sqlite/JSSQLStatement.cpp",
+
+  // WebKit-derived crypto algorithm impls share file-static helper names
+  // (`aesAlgorithm`, `cryptEncrypt`, `ALG128`, `IVSIZE`, ...) — upstream
+  // also compiles these outside unified sources. The remaining ~70
+  // webcrypto files (JS bindings, key types) bundle cleanly.
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CBC.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CBCOpenSSL.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CFB.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CFBOpenSSL.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CTR.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_CTROpenSSL.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_GCM.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_GCMOpenSSL.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmAES_KW.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmECDSA.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmHMAC.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSAES_PKCS1_v1_5.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSASSA_PKCS1_v1_5.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSA_OAEP.cpp",
+  "src/bun.js/bindings/webcrypto/CryptoAlgorithmRSA_PSS.cpp",
+  "src/bun.js/bindings/webcrypto/SubtleCrypto.cpp",
+
+  // Redefines ~80 errno/EAI_* macros (the EAI_* ones unconditionally, the
+  // rest via `#if !defined`) and uses them to build a switch. The defines
+  // leak forward; an earlier sibling pulling <netdb.h>/<errno.h> changes
+  // which conditional branches fire.
+  "src/bun.js/bindings/ProcessBindingUV.cpp",
+
+  // Uses `#ifdef S_IFBLK` / `#ifdef S_IFSOCK` etc. to decide which constants
+  // to expose in `fs.constants` — Node.js omits these on Windows. When
+  // bundled after NodeFSStatBinding.cpp (which `#define`s them for its own
+  // S_IS*() helpers on Windows), the ifdefs fire and the constants leak into
+  // `fs.constants`, breaking Node.js parity and test/js/node/fs/fs.test.ts.
+  "src/bun.js/bindings/ProcessBindingConstants.cpp",
+
+  // Defines extern "C" replacements for platform symbols (strncasecmp,
+  // fstat64, environ, ...). On Windows an earlier sibling can leak
+  // `#define strncasecmp _strnicmp`, turning the definition here into a
+  // duplicate of the CRT's _strnicmp. Independent of the flags-override
+  // exclusion, which is linux-lto-only.
+  "src/bun.js/bindings/workaround-missing-symbols.cpp",
+
+  // Platform cert loaders include OS crypto headers (<wincrypt.h>,
+  // <Security/Security.h>) and deliberately avoid OpenSSL. wincrypt
+  // macro-defines X509_NAME etc., poisoning BoringSSL headers in any
+  // sibling that includes them; the darwin file defines errSecSuccess /
+  // SecCertificateRef that clash with the real framework header. Written
+  // assuming TU isolation — keep it that way.
+  "packages/bun-usockets/src/crypto/root_certs_windows.cpp",
+  "packages/bun-usockets/src/crypto/root_certs_darwin.cpp",
+];
+
+/**
+ * How many .cpp files per bundle. WebKit defaults to 8.
+ *
+ * Release (incl. release-asan): 32. Measured 701s vs 866s @ 16 vs 1532s @ 8
+ * release cpp-only — frontend parsing dominates, so more dedup wins. ~70 TUs
+ * still keeps CI's 16–32 cores saturated.
+ *
+ * Debug: 8. Local iteration cares about incremental blast radius — editing
+ * one .cpp recompiles its 7 siblings, not 31.
+ *
+ * Fixed per profile rather than host-core-derived so bundle composition is
+ * identical across machines (ccache, reproducible builds).
+ */
+function bundleSizeFor(cfg: Config): number {
+  return cfg.release ? 32 : 8;
+}
+
+export interface UnifiedSplit {
+  /** Generated UnifiedSource-*.cpp absolute paths to compile. */
+  unified: string[];
+  /** Sources that compile standalone (no-unify list, or alone in their dir). */
+  standalone: string[];
+  /**
+   * Original .cpp paths that were bundled (i.e. NOT in `standalone`). Used to
+   * emit per-file compile_commands.json entries so clangd works when the user
+   * opens an individual source instead of the bundle.
+   */
+  bundled: string[];
+}
+
+/**
+ * Generate unified-source bundle files under `<buildDir>/unified/` and return
+ * the split. Idempotent — `writeIfChanged` preserves mtimes, so a no-op
+ * configure produces no rebuilds.
+ *
+ * `cxxSources` must be absolute paths (the glob output). Generated codegen
+ * .cpp files should NOT be passed here — those are already large single TUs
+ * (ZigGeneratedClasses.cpp etc.) and are added to the compile list separately
+ * in bun.ts.
+ */
+export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[]): UnifiedSplit {
+  const outDir = resolve(cfg.buildDir, "unified");
+  mkdirSync(outDir, { recursive: true });
+  const bundleSize = bundleSizeFor(cfg);
+
+  // Files with active per-file flag overrides (flags.ts) can't share a TU
+  // with files that need different flags. Computed here so the override's
+  // `when` predicate is honored — a file only excluded on linux+lto can
+  // still bundle on macOS.
+  const skip = new Set(noUnify);
+  for (const o of fileOverrides) {
+    if (o.when === undefined || o.when(cfg)) skip.add(o.file);
+  }
+
+  const standalone: string[] = [];
+  const byDir = new Map<string, string[]>();
+
+  for (const abs of cxxSources) {
+    if (!cfg.unifiedSources) {
+      standalone.push(abs);
+      continue;
+    }
+    // slash(): noUnify keys and the dir tag below are posix-style.
+    const rel = slash(relative(cfg.cwd, abs));
+    if (skip.has(rel)) {
+      standalone.push(abs);
+      continue;
+    }
+    const dir = dirname(rel);
+    let arr = byDir.get(dir);
+    if (arr === undefined) byDir.set(dir, (arr = []));
+    arr.push(abs);
+  }
+
+  const unified: string[] = [];
+  const bundled: string[] = [];
+  const tagToDir = new Map<string, string>();
+  // Stable iteration: sort directory keys and basenames by code unit (default
+  // .sort()) so bundle composition is identical regardless of glob order or
+  // host LC_COLLATE.
+  for (const dir of [...byDir.keys()].sort()) {
+    const files = byDir.get(dir)!.sort((a, b) => {
+      const x = basename(a);
+      const y = basename(b);
+      return x < y ? -1 : x > y ? 1 : 0;
+    });
+
+    // Single file in a directory: no point wrapping it. Compile directly so
+    // compiler diagnostics point at the real path.
+    if (files.length === 1) {
+      standalone.push(files[0]!);
+      continue;
+    }
+
+    const tag = dir.replace(/[^A-Za-z0-9]+/g, "_");
+    // The tag is lossy (foo-bar and foo_bar both → foo_bar). Our directory
+    // set doesn't hit this today; fail loudly if it ever does so the second
+    // dir's bundles don't silently overwrite the first's.
+    const prior = tagToDir.get(tag);
+    assert(prior === undefined, `unified-source tag collision: '${dir}' and '${prior}' both sanitize to '${tag}'`);
+    tagToDir.set(tag, dir);
+
+    for (let i = 0; i < files.length; i += bundleSize) {
+      const chunk = files.slice(i, i + bundleSize);
+      const n = i / bundleSize;
+      const out = resolve(outDir, `UnifiedSource-${tag}-${n}.cpp`);
+      // Paths relative to the bundle file: ccache hashes source content
+      // verbatim (CCACHE_BASEDIR only rewrites command-line args), so an
+      // absolute checkout root in the body would defeat cache sharing
+      // across worktrees. slash(): clang accepts forward slashes everywhere;
+      // native backslashes in `#include "C:\..."` are escape sequences.
+      const body = chunk.map(f => `#include "${slash(relative(outDir, f))}"`).join("\n") + "\n";
+      writeIfChanged(out, body);
+      unified.push(out);
+      bundled.push(...chunk);
+    }
+  }
+
+  // Prune stale bundles from previous configures (e.g. a directory shrank
+  // from 3 bundles to 1). They're not in the ninja graph so they wouldn't be
+  // built, but leaving them confuses grep/clangd indexing.
+  const live = new Set(unified.map(p => basename(p)));
+  for (const f of readdirSync(outDir)) {
+    if (f.endsWith(".cpp") && !live.has(f)) rmSync(resolve(outDir, f));
+  }
+
+  return { unified, standalone, bundled };
+}

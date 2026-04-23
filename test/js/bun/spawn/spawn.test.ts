@@ -814,6 +814,59 @@ describe("close handling", () => {
       }
     }
   }
+
+  it.skipIf(isWindows)("does not close caller-owned fds passed as extra stdio", async () => {
+    const fd = openSync(import.meta.path, "r");
+    try {
+      await (async function () {
+        const procs = Array.from({ length: 8 }, () =>
+          spawn({
+            cmd: [bunExe(), "-e", ""],
+            env: bunEnv,
+            stdio: ["ignore", "ignore", "ignore", fd],
+          }),
+        );
+        // The caller-supplied fd should be exposed on stdio[N] (not null) while
+        // still not being closed by the subprocess.
+        expect(procs[0].stdio).toEqual([null, null, null, fd]);
+        await Promise.all(procs.map(p => p.exited));
+      })();
+
+      Bun.gc(true);
+      await Bun.sleep(0);
+      Bun.gc(true);
+
+      expect(() => fstatSync(fd)).not.toThrow();
+
+      const { exited } = spawn({
+        cmd: [bunExe(), "-e", `require("fs").fstatSync(3)`],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "inherit", fd],
+      });
+      expect(await exited).toBe(0);
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  });
+
+  it.skipIf(isWindows)("stdio[N] for non-fd extra slots is null", async () => {
+    const fd = openSync(import.meta.path, "r");
+    try {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", ""],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "ignore", "ignore", fd],
+      });
+      expect(proc.stdio).toEqual([null, null, null, null, fd]);
+      await proc.exited;
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  });
 });
 
 it("dispose keyword works", async () => {

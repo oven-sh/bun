@@ -49,6 +49,7 @@ pub const Classes = struct {
     pub const ServerWebSocket = api.ServerWebSocket;
     pub const Subprocess = api.Subprocess;
     pub const ResourceUsage = api.Subprocess.ResourceUsage;
+    pub const CronJob = api.cron.CronJob;
     pub const Terminal = api.Terminal;
     pub const TCPSocket = api.TCPSocket;
     pub const TLSSocket = api.TLSSocket;

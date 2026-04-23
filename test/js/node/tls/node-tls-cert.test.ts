@@ -27,9 +27,9 @@ function split(file: any, into: any) {
 split(clientTls.cert, clientTls);
 split(serverTls.cert, serverTls);
 
-// The certificates aren't for "localhost", so override the identity check.
+// The certificates aren't for "127.0.0.1", so override the identity check.
 function checkServerIdentity(hostname: string, cert: any) {
-  expect(hostname).toBe("localhost");
+  expect(hostname).toBe("127.0.0.1");
   expect(cert.subject.CN).toBe("agent10.example.com");
 }
 
@@ -593,6 +593,7 @@ describe("tls ciphers should work", () => {
           host: "127.0.0.1",
           ca: serverTls.ca,
           ciphers: cipher_name,
+          checkServerIdentity,
         });
         await once(socket, "secureConnect");
       } finally {

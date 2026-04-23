@@ -7,7 +7,7 @@ done: bool = false,
 pending: streams.Result.Pending = .{},
 pending_value: jsc.Strong.Optional = .empty,
 pending_view: []u8 = &.{},
-fd: bun.FileDescriptor = bun.invalid_fd,
+fd: bun.FD = bun.invalid_fd,
 start_offset: ?usize = null,
 max_size: ?usize = null,
 total_readed: usize = 0,
@@ -37,7 +37,7 @@ pub const Lazy = union(enum) {
     blob: *Blob.Store,
 
     const OpenedFileBlob = struct {
-        fd: bun.FileDescriptor,
+        fd: bun.FD,
         pollable: bool = false,
         nonblocking: bool = true,
         file_type: bun.io.FileType = .file,
@@ -168,7 +168,7 @@ pub fn loop(this: *const FileReader) *bun.Async.Loop {
 
 pub fn setup(
     this: *FileReader,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
 ) void {
     this.* = FileReader{
         .reader = .{},

@@ -2157,6 +2157,10 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
                         if (this.pending_internal_promise.?.status() == .pending) {
                             this.eventLoop().autoTick();
                         }
+
+                        if (this.pending_internal_promise.?.status() == .pending and !this.isEventLoopAlive()) {
+                            break;
+                        }
                     }
                 },
                 else => {},
@@ -2336,6 +2340,10 @@ pub fn loadEntryPointForTestRunner(this: *VirtualMachine, entry_path: string) an
                     if (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().autoTick();
                     }
+
+                    if (this.pending_internal_promise.?.status() == .pending and !this.isEventLoopAlive()) {
+                        break;
+                    }
                 }
             },
             else => {},
@@ -2367,6 +2375,10 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
 
                     if (this.pending_internal_promise.?.status() == .pending) {
                         this.eventLoop().autoTick();
+                    }
+
+                    if (this.pending_internal_promise.?.status() == .pending and !this.isEventLoopAlive()) {
+                        break;
                     }
                 }
             },

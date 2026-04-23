@@ -425,12 +425,14 @@ async function runTests() {
 
   /** @type {string[]} */
   let parallelBatchTests = [];
-  if (options["parallel-batch"]) {
-    const isAsan = basename(execPath).includes("asan");
-    const needsPerFileEnv = p => (isAsan || !isCI) && (skipsForExceptionValidation.has(p) || skipsForLeaksan.has(p));
+  // ASAN keeps the per-file path: LSAN reports at process exit, and --parallel
+  // workers run many files per process under --isolate, so a batch leak report
+  // can't be attributed to a file. Exception validation alone isn't worth the
+  // coverage trade.
+  if (options["parallel-batch"] && !basename(execPath).includes("asan")) {
     const sequential = [];
     for (const t of tests) {
-      if (isParallelSafe(t) && !needsPerFileEnv(t)) parallelBatchTests.push(t);
+      if (isParallelSafe(t)) parallelBatchTests.push(t);
       else sequential.push(t);
     }
     tests = sequential;
@@ -1363,7 +1365,6 @@ async function spawnBunTestParallelBatch(execPath, testPaths) {
   const passed = new Set();
   if (!testPaths.length) return { passed, junitFile: null, duration: 0 };
 
-  const isAsan = basename(execPath).includes("asan");
   // Windows CreateProcessW caps lpCommandLine at 32 767 chars; elsewhere
   // ARG_MAX is far larger than we'll ever hit. Chunk only when forced to.
   const argvBudget = isWindows ? 30_000 : 1_500_000;
@@ -1397,12 +1398,6 @@ async function spawnBunTestParallelBatch(execPath, testPaths) {
     ];
 
     const env = { GITHUB_ACTIONS: "true" };
-    // Per-file env denylists can't apply to a shared batch process; route
-    // those files to the sequential tail instead so they get correct env.
-    if (isAsan || !isCI) {
-      env.BUN_JSC_validateExceptionChecks = "1";
-      env.BUN_JSC_dumpSimulatedThrows = "1";
-    }
 
     !isQuiet &&
       console.log(

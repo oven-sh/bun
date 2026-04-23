@@ -1,10 +1,10 @@
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { createHash } from "node:crypto";
 import { rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
-import { join } from "path";
+import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
+import { join } from "path";
 import {
   createTestContext,
   destroyTestContext,
@@ -590,11 +590,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mi
       stderr: "pipe",
       timeout: 15_000,
     });
-    const [stderr, stdout, exitCode] = await Promise.all([
-      proc.stderr.text(),
-      proc.stdout.text(),
-      proc.exited,
-    ]);
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
 
     // Must surface the integrity failure and must not claim success.
     expect(stderr + stdout).toContain("Integrity check failed");

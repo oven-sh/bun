@@ -626,9 +626,6 @@ pub fn installIsolatedPackages(
         var dedupe: std.AutoHashMapUnmanaged(PackageID, std.ArrayListUnmanaged(DedupeInfo)) = .empty;
         defer dedupe.deinit(lockfile.allocator);
 
-        var res_fmt_buf: std.array_list.Managed(u8) = .init(lockfile.allocator);
-        defer res_fmt_buf.deinit();
-
         const nodes_slice = nodes.slice();
         const node_pkg_ids = nodes_slice.items(.pkg_id);
         const node_dep_ids = nodes_slice.items(.dep_id);
@@ -727,10 +724,9 @@ pub fn installIsolatedPackages(
                 for (peers.slice()) |peer_ids| {
                     const pkg_name = pkg_names[peer_ids.pkg_id];
                     hasher.update(pkg_name.slice(string_buf));
-                    const pkg_res = pkg_resolutions[peer_ids.pkg_id];
-                    res_fmt_buf.clearRetainingCapacity();
-                    try res_fmt_buf.writer().print("{f}", .{pkg_res.fmt(string_buf, .posix)});
-                    hasher.update(res_fmt_buf.items);
+                    // Only hash peer names, not their resolved versions. This
+                    // ensures a stable store path when workspaces resolve the
+                    // same peer dependency to different compatible versions.
                 }
                 break :peer_hash .from(hasher.final());
             };

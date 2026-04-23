@@ -490,23 +490,64 @@ describe("isolated workspaces", () => {
   });
 });
 
+// Regression test for https://github.com/oven-sh/bun/issues/27847
+// When workspaces resolve the same peer dependency to different compatible versions,
+// the package depending on that peer should be deduplicated into a single store entry
+// instead of creating separate entries with different peer hashes.
+test("workspaces with different peer version resolutions deduplicate store entries", async () => {
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+    files: {
+      "package.json": JSON.stringify({
+        name: "workspace-peer-dedup",
+        workspaces: ["packages/*"],
+      }),
+      // pkg-1 depends on no-deps@1.0.0 (peer dep resolved to 1.0.0)
+      "packages/pkg1/package.json": JSON.stringify({
+        name: "pkg1",
+        dependencies: {
+          "one-optional-peer-dep": "1.0.1",
+          "no-deps": "1.0.0",
+        },
+      }),
+      // pkg-2 depends on no-deps@1.0.1 (peer dep resolved to different version)
+      "packages/pkg2/package.json": JSON.stringify({
+        name: "pkg2",
+        dependencies: {
+          "one-optional-peer-dep": "1.0.1",
+          "no-deps": "1.0.1",
+        },
+      }),
+    },
+  });
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = await readdirSorted(join(packageDir, "node_modules/.bun"));
+  // There should be only ONE entry for one-optional-peer-dep, not two with different hashes.
+  // Both no-deps@1.0.0 and no-deps@1.0.1 satisfy the peer dep range (^1.0.0),
+  // so one-optional-peer-dep@1.0.1 should be deduplicated.
+  const peerDepEntries = bunDir.filter((e: string) => e.startsWith("one-optional-peer-dep@"));
+  expect(peerDepEntries).toHaveLength(1);
+});
+
 describe("optional peers", () => {
   const tests = [
     // non-optional versions
     {
       name: "non-optional transitive only",
       deps: [{ "one-optional-peer-dep": "1.0.1" }, { "one-optional-peer-dep": "1.0.1" }],
-      expected: ["no-deps@1.1.0", "node_modules", "one-optional-peer-dep@1.0.1+7ff199101204a65d"],
+      expected: ["no-deps@1.1.0", "node_modules", "one-optional-peer-dep@1.0.1+472ae378b15ad7b8"],
     },
     {
       name: "non-optional direct pkg1",
       deps: [{ "one-optional-peer-dep": "1.0.1", "no-deps": "1.0.1" }, { "one-optional-peer-dep": "1.0.1" }],
-      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.1+f8a822eca018d0a1"],
+      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.1+472ae378b15ad7b8"],
     },
     {
       name: "non-optional direct pkg2",
       deps: [{ "one-optional-peer-dep": "1.0.1" }, { "one-optional-peer-dep": "1.0.1", "no-deps": "1.0.1" }],
-      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.1+f8a822eca018d0a1"],
+      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.1+472ae378b15ad7b8"],
     },
     // optional versions
     {
@@ -517,12 +558,12 @@ describe("optional peers", () => {
     {
       name: "optional direct pkg1",
       deps: [{ "one-optional-peer-dep": "1.0.2", "no-deps": "1.0.1" }, { "one-optional-peer-dep": "1.0.2" }],
-      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.2+f8a822eca018d0a1"],
+      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.2+472ae378b15ad7b8"],
     },
     {
       name: "optional direct pkg2",
       deps: [{ "one-optional-peer-dep": "1.0.2" }, { "one-optional-peer-dep": "1.0.2", "no-deps": "1.0.1" }],
-      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.2+f8a822eca018d0a1"],
+      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.2+472ae378b15ad7b8"],
     },
   ];
 

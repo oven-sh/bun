@@ -18,7 +18,6 @@ state: union(enum) {
     },
     ebusy: struct {
         state: EbusyState,
-        idx: usize = 0,
         main_exit_code: ExitCode = 0,
     },
     waiting_write_err,
@@ -99,26 +98,38 @@ pub fn start(this: *Cp) Yield {
 pub fn ignoreEbusyErrorIfPossible(this: *Cp) Yield {
     if (!bun.Environment.isWindows) @compileError("dont call this plz");
 
-    if (this.state.ebusy.idx < this.state.ebusy.state.tasks.items.len) {
-        outer_loop: for (this.state.ebusy.state.tasks.items[this.state.ebusy.idx..], 0..) |task_, i| {
-            const task: *ShellCpTask = task_;
-            const failure_src = task.src_absolute.?;
-            const failure_tgt = task.tgt_absolute.?;
-            if (this.state.ebusy.state.absolute_targets.get(failure_tgt)) |_| {
-                task.deinit();
-                continue :outer_loop;
+    var exit_code = this.state.ebusy.main_exit_code;
+    // Collect error output for non-ignorable EBUSY tasks. We write errors
+    // directly here instead of going through printShellCpTask, which
+    // accesses the .exec union field that is no longer active.
+    var error_buf: std.ArrayListUnmanaged(u8) = .{};
+
+    for (this.state.ebusy.state.tasks.items) |task_| {
+        const task: *ShellCpTask = task_;
+        const failure_src = task.src_absolute.?;
+        const failure_tgt = task.tgt_absolute.?;
+        const can_ignore = this.state.ebusy.state.absolute_targets.get(failure_tgt) != null or
+            this.state.ebusy.state.absolute_srcs.get(failure_src) != null;
+
+        if (!can_ignore) {
+            exit_code = 1;
+            if (task.err) |cp_err| {
+                const error_string = this.bltn().taskErrorToString(.cp, cp_err);
+                bun.handleOom(error_buf.appendSlice(bun.default_allocator, error_string));
             }
-            if (this.state.ebusy.state.absolute_srcs.get(failure_src)) |_| {
-                task.deinit();
-                continue :outer_loop;
-            }
-            this.state.ebusy.idx += i + 1;
-            return this.printShellCpTask(task);
         }
+        task.deinit();
     }
 
     this.state.ebusy.state.deinit();
-    const exit_code = this.state.ebusy.main_exit_code;
+
+    if (error_buf.items.len > 0) {
+        defer error_buf.deinit(bun.default_allocator);
+        // Use writeFailingError which handles both sync and async
+        // (fd-backed) stderr correctly.
+        return this.writeFailingError(error_buf.items, exit_code);
+    }
+
     this.state = .done;
     return this.bltn().done(exit_code);
 }
@@ -214,10 +225,10 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
         if (task.err) |*err| {
             if (err.* == .sys and
                 err.sys.getErrno() == .BUSY and
-                (task.tgt_absolute != null and
+                ((task.tgt_absolute != null and
                     err.sys.path.eqlUTF8(task.tgt_absolute.?)) or
-                (task.src_absolute != null and
-                    err.sys.path.eqlUTF8(task.src_absolute.?)))
+                    (task.src_absolute != null and
+                        err.sys.path.eqlUTF8(task.src_absolute.?))))
             {
                 log("{f} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
                 bun.handleOom(this.state.exec.ebusy.tasks.append(bun.default_allocator, task));

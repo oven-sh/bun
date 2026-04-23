@@ -25,16 +25,17 @@ pub const SubscriptionCtx = struct {
         return @alignCast(@fieldParentPtr("_subscription_ctx", this));
     }
 
-    fn subscriptionCallbackMap(this: *Self) *jsc.JSMap {
-        const parent_this = this.parent().this_value.tryGet() orelse unreachable;
+    fn subscriptionCallbackMap(this: *Self) ?*jsc.JSMap {
+        const parent_this = this.parent().this_value.tryGet() orelse return null;
 
-        const value_js = ParentJS.gc.get(.subscriptionCallbackMap, parent_this).?;
-        return jsc.JSMap.fromJS(value_js).?;
+        const value_js = ParentJS.gc.get(.subscriptionCallbackMap, parent_this) orelse return null;
+        return jsc.JSMap.fromJS(value_js);
     }
 
     /// Get the total number of channels that this subscription context is subscribed to.
     pub fn channelsSubscribedToCount(this: *Self, globalObject: *jsc.JSGlobalObject) bun.JSError!u32 {
-        const count = try this.subscriptionCallbackMap().size(globalObject);
+        const map = this.subscriptionCallbackMap() orelse return 0;
+        const count = try map.size(globalObject);
 
         return count;
     }
@@ -50,12 +51,13 @@ pub const SubscriptionCtx = struct {
         globalObject: *jsc.JSGlobalObject,
         channelName: JSValue,
     ) bun.JSError!void {
-        const map = this.subscriptionCallbackMap();
+        const map = this.subscriptionCallbackMap() orelse return;
         _ = try map.remove(globalObject, channelName);
     }
 
     pub fn clearAllReceiveHandlers(this: *Self, globalObject: *jsc.JSGlobalObject) bun.JSError!void {
-        try this.subscriptionCallbackMap().clear(globalObject);
+        const map = this.subscriptionCallbackMap() orelse return;
+        try map.clear(globalObject);
     }
 
     /// Remove a specific receive handler.
@@ -70,7 +72,7 @@ pub const SubscriptionCtx = struct {
         channelName: JSValue,
         callback: JSValue,
     ) !?usize {
-        const map = this.subscriptionCallbackMap();
+        const map = this.subscriptionCallbackMap() orelse return null;
 
         const existing = try map.get(globalObject, channelName);
         if (existing.isUndefinedOrNull()) {
@@ -122,8 +124,8 @@ pub const SubscriptionCtx = struct {
         channelName: JSValue,
         callback: JSValue,
     ) bun.JSError!void {
+        const map = this.subscriptionCallbackMap() orelse return;
         defer this.parent().onNewSubscriptionCallbackInsert();
-        const map = this.subscriptionCallbackMap();
 
         var handlers_array: JSValue = .js_undefined;
         var is_new_channel = false;
@@ -154,7 +156,8 @@ pub const SubscriptionCtx = struct {
     }
 
     pub fn getCallbacks(this: *Self, globalObject: *jsc.JSGlobalObject, channelName: JSValue) bun.JSError!?JSValue {
-        const result = try this.subscriptionCallbackMap().get(globalObject, channelName);
+        const map = this.subscriptionCallbackMap() orelse return null;
+        const result = try map.get(globalObject, channelName);
         if (result == .js_undefined) {
             return null;
         }

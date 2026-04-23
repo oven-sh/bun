@@ -253,10 +253,12 @@ pub fn callback(task: *ThreadPool.Task) void {
             const workspace_pkg_id = manager.lockfile.getWorkspacePkgIfWorkspaceDep(this.request.local_tarball.tarball.dependency_id);
 
             var abs_buf: bun.PathBuffer = undefined;
+            const raw_url = this.request.local_tarball.tarball.url.slice();
+
             const tarball_path, const normalize = if (workspace_pkg_id != invalid_package_id) tarball_path: {
                 const workspace_res = manager.lockfile.packages.items(.resolution)[workspace_pkg_id];
 
-                if (workspace_res.tag != .workspace) break :tarball_path .{ this.request.local_tarball.tarball.url.slice(), true };
+                if (workspace_res.tag != .workspace) break :tarball_path resolveLocalTarball(manager, raw_url, &abs_buf);
 
                 // Construct an absolute path to the tarball.
                 // Normally tarball paths are always relative to the root directory, but if a
@@ -268,13 +270,13 @@ pub fn callback(task: *ThreadPool.Task) void {
                         &abs_buf,
                         &[_][]const u8{
                             workspace_path,
-                            this.request.local_tarball.tarball.url.slice(),
+                            raw_url,
                         },
                         .auto,
                     ),
                     false,
                 };
-            } else .{ this.request.local_tarball.tarball.url.slice(), true };
+            } else resolveLocalTarball(manager, raw_url, &abs_buf);
 
             const result = readAndExtract(
                 manager.allocator,
@@ -296,6 +298,23 @@ pub fn callback(task: *ThreadPool.Task) void {
             this.status = Status.success;
         },
     }
+}
+
+/// Resolve a local tarball path. For global installs, relative paths are resolved
+/// against the user's original working directory instead of the global install directory.
+fn resolveLocalTarball(manager: *const PackageManager, raw_url: string, abs_buf: *bun.PathBuffer) struct { string, bool } {
+    if (manager.user_cwd.len > 0 and !Path.Platform.isAbsolute(.auto, raw_url)) {
+        return .{
+            Path.joinAbsStringBuf(
+                manager.user_cwd,
+                abs_buf,
+                &[_][]const u8{raw_url},
+                .auto,
+            ),
+            false,
+        };
+    }
+    return .{ raw_url, true };
 }
 
 fn readAndExtract(

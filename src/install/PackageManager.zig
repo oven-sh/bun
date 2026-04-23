@@ -116,6 +116,10 @@ any_failed_to_install: bool = false,
 // workspace package. We keep track of the original here.
 original_package_json_path: stringZ,
 
+// The user's original working directory before any CWD changes (e.g., for --global).
+// Used to resolve relative local tarball paths correctly.
+user_cwd: string = "",
+
 // null means root. Used during `cleanWithLogger` to identifier which
 // workspace is adding/removing packages
 workspace_name_hash: ?PackageNameHash = null,
@@ -564,6 +568,20 @@ pub fn init(
     cli: CommandLineArguments,
     subcommand: Subcommand,
 ) !struct { *PackageManager, string } {
+    // Save the user's original CWD before switching to the global install directory.
+    // This is needed to resolve relative local tarball paths (e.g., `bun add ./pkg.tgz --global`).
+    var user_cwd_buf: bun.PathBuffer = undefined;
+    const user_cwd: string = if (cli.global) brk: {
+        const cwd = switch (bun.sys.getcwd(&user_cwd_buf)) {
+            .result => |cwd| cwd,
+            .err => |e| {
+                Output.err(e, "failed to get current working directory", .{});
+                Global.crash();
+            },
+        };
+        break :brk bun.handleOom(ctx.allocator.dupe(u8, cwd));
+    } else "";
+
     if (cli.global) {
         var explicit_global_dir: string = "";
         if (ctx.install) |opts| {
@@ -877,6 +895,7 @@ pub fn init(
         .workspace_name_hash = workspace_name_hash,
         .subcommand = subcommand,
         .root_package_json_name_at_time_of_init = root_package_json_name_at_time_of_init,
+        .user_cwd = user_cwd,
     };
     manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.jsc.EventLoopHandle.init(&manager.event_loop));
     manager.lockfile = try ctx.allocator.create(Lockfile);

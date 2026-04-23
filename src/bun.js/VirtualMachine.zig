@@ -284,8 +284,8 @@ pub fn getTLSRejectUnauthorized(this: *const VirtualMachine) bool {
     return this.default_tls_reject_unauthorized orelse this.transpiler.env.getTLSRejectUnauthorized();
 }
 
-pub fn onSubprocessSpawn(this: *VirtualMachine, process: *bun.spawn.Process) void {
-    this.auto_killer.onSubprocessSpawn(process);
+pub fn onSubprocessSpawn(this: *VirtualMachine, process: *bun.spawn.Process, command: ?[]const u8) void {
+    this.auto_killer.onSubprocessSpawn(process, command);
 }
 
 pub fn onSubprocessExit(this: *VirtualMachine, process: *bun.spawn.Process) void {

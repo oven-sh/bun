@@ -920,7 +920,11 @@ pub fn spawnMaybeSync(
 
     if (comptime !is_sync) {
         if (!subprocess.process.hasExited()) {
-            jsc_vm.onSubprocessSpawn(subprocess.process);
+            const spawn_cmd: ?[]const u8 = if (argv.items.len > 0 and argv.items[0] != null)
+                bun.sliceTo(argv.items[0].?, 0)
+            else
+                null;
+            jsc_vm.onSubprocessSpawn(subprocess.process, spawn_cmd);
         }
         return out;
     }
@@ -953,7 +957,11 @@ pub fn spawnMaybeSync(
     }
 
     if (!subprocess.process.hasExited()) {
-        jsc_vm.onSubprocessSpawn(subprocess.process);
+        const spawn_cmd: ?[]const u8 = if (argv.items.len > 0 and argv.items[0] != null)
+            bun.sliceTo(argv.items[0].?, 0)
+        else
+            null;
+        jsc_vm.onSubprocessSpawn(subprocess.process, spawn_cmd);
     }
 
     var did_timeout = false;

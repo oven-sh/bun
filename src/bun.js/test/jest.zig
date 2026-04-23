@@ -131,6 +131,7 @@ pub const TestRunner = struct {
         fail: u32 = 0,
         files: u32 = 0,
         skipped_because_label: u32 = 0,
+        dangling_processes: u32 = 0,
 
         pub fn didLabelFilterOutAllTests(this: *const Summary) bool {
             return this.skipped_because_label > 0 and (this.pass + this.skip + this.todo + this.fail + this.expectations) == 0;

@@ -768,6 +768,7 @@ pub const H2FrameParser = struct {
         waitForTrailers: bool = false,
         closeAfterDrain: bool = false,
         endAfterHeaders: bool = false,
+        contentLength: i64 = -1,
         isWaitingMoreHeaders: bool = false,
         padding: ?u8 = null,
         paddingStrategy: PaddingStrategy = .none,
@@ -1919,6 +1920,32 @@ pub const H2FrameParser = struct {
                 return null;
             }
 
+            if (header.name.len > 0 and header.name[0] == ':') {
+                if (this.isServer) {
+                    if (strings.eqlComptime(header.name, ":path")) {
+                        // RFC 9113 §8.3.1: invalid byte in :path is a malformed request
+                        if (hasInvalidPathByte(header.value)) {
+                            this.endStream(stream, ErrorCode.PROTOCOL_ERROR);
+                            if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
+                            return null;
+                        }
+                    } else if (hasInvalidHeaderValueByte(header.value)) {
+                        // :method/:scheme/:authority with NUL/CR/LF — malformed request
+                        this.endStream(stream, ErrorCode.PROTOCOL_ERROR);
+                        if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
+                        return null;
+                    }
+                }
+            } else if (hasInvalidHeaderValueByte(header.value)) {
+                // RFC 9113 §8.2.1: drop regular headers with NUL/CR/LF on both
+                // server and client (nghttp2 NGHTTP2_ERR_IGN_HTTP_HEADER).
+                if (offset >= payload.len) break;
+                continue;
+            } else if (this.isServer and strings.eqlComptime(header.name, "content-length")) {
+                // Track for RFC 9113 §8.6 content-length vs body validation
+                stream.contentLength = std.fmt.parseInt(i64, header.value, 10) catch -1;
+            }
+
             // RFC 7540 Section 6.5.2: Calculate header list size
             // Size = name length + value length + HPACK entry overhead per header
             headerListSize += header.name.len + header.value.len + HPACK_ENTRY_OVERHEAD;
@@ -1979,6 +2006,14 @@ pub const H2FrameParser = struct {
             if (offset >= payload.len) {
                 break;
             }
+        }
+
+        // RFC 9113 §8.6: a request with END_STREAM on HEADERS and a non-zero
+        // content-length is malformed (declared body length cannot match).
+        if (this.isServer and stream.contentLength > 0 and (flags & @intFromEnum(HeadersFrameFlags.END_STREAM)) != 0) {
+            this.endStream(stream, ErrorCode.PROTOCOL_ERROR);
+            if (this.streams.getEntry(stream_id)) |entry| return entry.value_ptr;
+            return null;
         }
 
         this.dispatchWith3Extra(.onStreamHeaders, stream.getIdentifier(), headers, sensitiveHeaders, jsc.JSValue.jsNumber(flags));
@@ -3525,6 +3560,40 @@ pub const H2FrameParser = struct {
         return if (any) out[0..in.len] else in;
     }
 
+    /// RFC 9113 §8.2.1 / nghttp2 VALID_HD_VALUE_CHARS: HT, 0x20-0x7E, 0x80-0xFF
+    fn isValidHeaderValueByte(c: u8) bool {
+        return c == 0x09 or (c >= 0x20 and c != 0x7f);
+    }
+
+    /// nghttp2 VALID_PATH_CHARS: 0x21-0x7E (no SP/HT), 0x80-0xFF
+    fn isValidPathByte(c: u8) bool {
+        return c >= 0x21 and c != 0x7f;
+    }
+
+    fn hasInvalidHeaderValueByte(value: []const u8) bool {
+        for (value) |c| if (!isValidHeaderValueByte(c)) return true;
+        return false;
+    }
+
+    fn hasInvalidPathByte(value: []const u8) bool {
+        for (value) |c| if (!isValidPathByte(c)) return true;
+        return false;
+    }
+
+    /// Node passes header values to nghttp2 as Latin-1 (low byte of each
+    /// UTF-16 code unit), so a code point like U+0D0A becomes byte 0x0A
+    /// and is rejected. Replicate that by checking the low byte of each
+    /// decoded UTF-8 code point.
+    fn utf8HasInvalidHeaderValueCodepoint(value: []const u8) bool {
+        var it = strings.CodepointIterator.init(value);
+        var cursor = strings.CodepointIterator.Cursor{};
+        while (it.next(&cursor)) {
+            const low: u8 = @truncate(@as(u32, @intCast(cursor.c)));
+            if (!isValidHeaderValueByte(low)) return true;
+        }
+        return false;
+    }
+
     pub fn sendTrailers(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
         const args_list = callframe.arguments_old(3);
@@ -4135,6 +4204,10 @@ pub const H2FrameParser = struct {
                         const value = value_slice.slice();
                         log("encode header {s} {s}", .{ validated_name, value });
 
+                        if (validated_name.len > 0 and validated_name[0] != ':' and utf8HasInvalidHeaderValueCodepoint(value)) {
+                            continue;
+                        }
+
                         _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
                             if (err == error.OutOfMemory) {
                                 return globalObject.throw("Failed to allocate header buffer", .{});
@@ -4171,6 +4244,10 @@ pub const H2FrameParser = struct {
                     defer value_slice.deinit();
                     const value = value_slice.slice();
                     log("encode header {s} {s}", .{ validated_name, value });
+
+                    if (validated_name.len > 0 and validated_name[0] != ':' and utf8HasInvalidHeaderValueCodepoint(value)) {
+                        continue;
+                    }
 
                     _ = this.encodeHeaderIntoList(&encoded_headers, alloc, validated_name, value, never_index) catch |err| {
                         if (err == error.OutOfMemory) {

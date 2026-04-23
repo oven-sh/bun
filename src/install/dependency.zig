@@ -970,10 +970,20 @@ pub fn parseWithTag(
 
             if (is_alias) {
                 if (package_manager) |pm| {
+                    // The `name` String was created via sliced.sub(str).value(),
+                    // so its offset is relative to sliced.buf — which may not be
+                    // lockfile.buffers.string_bytes (it could be a package.json
+                    // version string, a manifest buffer, or a StringBuilder's
+                    // temporary region). Re-append the name into string_bytes so
+                    // the stored String always has an offset valid for lockfile.str().
+                    var buf = pm.lockfile.stringBuf();
+                    const canonical_name = buf.append(name.slice(sliced.buf)) catch unreachable;
+                    var alias_result = result;
+                    alias_result.value.npm.name = canonical_name;
                     pm.known_npm_aliases.put(
                         allocator,
                         alias_hash.?,
-                        result,
+                        alias_result,
                     ) catch unreachable;
                 }
             }

@@ -560,3 +560,34 @@ it("recursion throws stack overflow at entry point", () => {
 
   expect(result.stderr.toString()).toContain("RangeError: Maximum call stack size exceeded.");
 });
+
+describe.each([
+  ["a primitive", `globalThis.Loader = 8;`],
+  ["an object with a non-Map registry", `globalThis.Loader = { registry: 42 };`],
+  ["a throwing getter", `Object.defineProperty(globalThis, "Loader", { get() { throw new Error("boom"); } });`],
+])("build.module when globalThis.Loader is overwritten with %s", (_, setup) => {
+  it.concurrent("does not crash", async () => {
+    const code = `
+      ${setup}
+      Bun.plugin({
+        name: "x",
+        setup(build) {
+          build.module("m", () => ({ exports: {}, loader: "object" }));
+        },
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "",
+      stderr: expect.not.stringMatching(/runtime error|ASSERTION FAILED|panic/),
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});

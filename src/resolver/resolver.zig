@@ -2851,7 +2851,7 @@ pub const Resolver = struct {
             defer top_parent = queue_top.result;
             queue_slice.len -= 1;
 
-            const open_dir: FD = if (queue_top.fd.isValid())
+            const maybe_open_dir: ?FD = if (queue_top.fd.isValid())
                 queue_top.fd
             else open_dir: {
                 // This saves us N copies of .toPosixPath
@@ -2891,6 +2891,15 @@ pub const Resolver = struct {
                     // list which contains such paths and treating them as missing means we just
                     // ignore them during path resolution.
                     error.ENOTDIR, error.IsDir, error.NotDir => return null,
+                    error.EACCES, error.AccessDenied => {
+                        // In sandboxed environments (e.g., Landlock), ancestor directories
+                        // may not be readable even though the CWD is accessible. Cache as
+                        // not found and skip this directory rather than treating it as fatal.
+                        const cached_dir_entry_result = rfs.entries.getOrPut(queue_top.unsafe_path) catch unreachable;
+                        r.dir_cache.markNotFound(queue_top.result);
+                        rfs.entries.markNotFound(cached_dir_entry_result);
+                        break :open_dir null;
+                    },
                     else => {
                         const cached_dir_entry_result = rfs.entries.getOrPut(queue_top.unsafe_path) catch unreachable;
                         // If we don't properly cache not found, then we repeatedly attempt to open the same directories, which causes a perf trace that looks like this stupidity;
@@ -2926,6 +2935,10 @@ pub const Resolver = struct {
                     },
                 };
             };
+
+            // If the directory couldn't be opened (e.g. EACCES in a sandboxed
+            // environment), skip it and continue to the next directory in the queue.
+            const open_dir = maybe_open_dir orelse continue;
 
             if (!queue_top.fd.isValid()) {
                 Fs.FileSystem.setMaxFd(open_dir.cast());
@@ -3034,7 +3047,10 @@ pub const Resolver = struct {
             }
         }
 
-        unreachable;
+        // All directories in the queue were skipped (e.g. every level
+        // returned EACCES in a sandboxed environment). Return null so the
+        // caller can report "error loading current directory".
+        return null;
     }
 
     // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the

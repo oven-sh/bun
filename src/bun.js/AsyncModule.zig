@@ -662,12 +662,15 @@ pub const AsyncModule = struct {
         jsc_vm.transpiler.linker.log = log;
         jsc_vm.transpiler.log = log;
         jsc_vm.transpiler.resolver.log = log;
-        jsc_vm.packageManager().log = log;
+        // Note: Do not swap the package manager's log here.
+        // The temporary log uses an allocator that may become invalid during
+        // transpilation. If the PM's log is swapped and auto-install runs,
+        // runTasks attempts to log HTTP errors which crashes. PM errors are
+        // properly propagated via callbacks instead.
         defer {
             jsc_vm.transpiler.linker.log = old_log;
             jsc_vm.transpiler.log = old_log;
             jsc_vm.transpiler.resolver.log = old_log;
-            jsc_vm.packageManager().log = old_log;
         }
 
         // We _must_ link because:

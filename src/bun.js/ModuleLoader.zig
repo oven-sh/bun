@@ -185,17 +185,18 @@ pub fn transpileSourceCode(
             jsc_vm.transpiler.log = log;
             jsc_vm.transpiler.linker.log = log;
             jsc_vm.transpiler.resolver.log = log;
-            if (jsc_vm.transpiler.resolver.package_manager) |pm| {
-                pm.log = log;
-            }
+            // Note: Do not swap the package manager's log here.
+            // The temporary log created above uses an allocator that may become
+            // invalid during transpilation. If the PM's log is swapped and
+            // auto-install runs (e.g., no node_modules), runTasks attempts to
+            // log HTTP errors via manager.log.addErrorFmt() which crashes.
+            // PM errors are properly propagated via callbacks (onPackageManifestError,
+            // onDependencyError) rather than through the log.
 
             defer {
                 jsc_vm.transpiler.log = old;
                 jsc_vm.transpiler.linker.log = old;
                 jsc_vm.transpiler.resolver.log = old;
-                if (jsc_vm.transpiler.resolver.package_manager) |pm| {
-                    pm.log = old;
-                }
             }
 
             // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words

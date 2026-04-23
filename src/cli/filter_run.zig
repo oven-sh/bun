@@ -536,6 +536,46 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         Global.exit(1);
     }
 
+    // Check if all scripts belong to a single package (single package match)
+    // When only one package is matched, run in foreground mode with interactive stdin
+    const first_pkg = scripts.items[0].package_name;
+    var is_single_package = true;
+    for (scripts.items[1..]) |script| {
+        if (!strings.eql(script.package_name, first_pkg)) {
+            is_single_package = false;
+            break;
+        }
+    }
+
+    // For a single package, run in foreground mode with interactive stdin
+    // This allows interactive scripts like Expo to receive user input
+    // Skip foreground optimization when --elide-lines is explicitly set,
+    // since eliding only works in the parallel execution path
+    if (is_single_package and ctx.bundler_options.elide_lines == null) {
+        for (scripts.items) |script| {
+            const script_cwd = std.fs.path.dirname(script.package_json_path) orelse "";
+
+            // Inject the per-package PATH into the environment before running
+            // This is required so binaries in local node_modules/.bin can be found
+            const original_path = this_transpiler.env.map.get("PATH") orelse "";
+            bun.handleOom(this_transpiler.env.map.put("PATH", script.PATH));
+            defer bun.handleOom(this_transpiler.env.map.put("PATH", original_path));
+
+            try RunCommand.runPackageScriptForeground(
+                ctx,
+                ctx.allocator,
+                script.script_content,
+                script.script_name,
+                script_cwd,
+                this_transpiler.env,
+                ctx.passthrough,
+                ctx.debug.silent,
+                ctx.debug.use_system_shell,
+            );
+        }
+        Global.exit(0);
+    }
+
     const event_loop = bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env, null);
     const shell_bin: [:0]const u8 = if (Environment.isPosix)
         RunCommand.findShell(this_transpiler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell

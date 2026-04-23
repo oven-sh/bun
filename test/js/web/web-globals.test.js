@@ -308,18 +308,9 @@ test("confirm (no) windows newline", async () => {
   expect(await proc.stderr.text()).toBe("No\n");
 });
 
-test("globalThis.self = 123 works", () => {
-  expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
-    configurable: true,
-    enumerable: true,
-    get: expect.any(Function),
-    set: expect.any(Function),
-  });
-  const original = Object.getOwnPropertyDescriptor(globalThis, "self");
-  try {
-    globalThis.self = 123;
-    expect(globalThis.self).toBe(123);
-  } finally {
-    Object.defineProperty(globalThis, "self", original);
-  }
+test("globalThis.self is not defined on main thread", () => {
+  // self should not be defined on the main thread (Node.js compat).
+  // See: https://github.com/oven-sh/bun/issues/27476
+  expect(globalThis.self).toBeUndefined();
+  expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toBeUndefined();
 });

@@ -190,13 +190,12 @@ it("globals are deletable", () => {
   expect(exitCode).toBe(0);
 });
 
-it("self is a getter", () => {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "self");
-  expect(descriptor.get).toBeInstanceOf(Function);
-  expect(descriptor.set).toBeInstanceOf(Function);
-  expect(descriptor.enumerable).toBe(true);
-  expect(descriptor.configurable).toBe(true);
-  expect(globalThis.self).toBe(globalThis);
+it("self is not defined on the main thread", () => {
+  // Node.js does not define `self` in the main context.
+  // Many libraries use `typeof self !== "undefined"` to detect a browser environment.
+  // See: https://github.com/oven-sh/bun/issues/27476
+  expect(globalThis.self).toBeUndefined();
+  expect("self" in globalThis).toBe(false);
 });
 
 it("errors thrown by native code should be TypeError", async () => {

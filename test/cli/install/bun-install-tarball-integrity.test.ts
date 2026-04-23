@@ -489,3 +489,98 @@ describe.concurrent("tarball integrity", () => {
     });
   });
 });
+
+describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download failure (%s)", linker => {
+  it("should fail (not hang) when registry returns 404 for tarball", async () => {
+    await withContext({ linker }, async ctx => {
+      const urls: string[] = [];
+      let tarballStatus = 200;
+      setContextHandler(ctx, async request => {
+        const url = request.url.replaceAll("%2f", "/");
+        urls.push(url);
+        if (url.endsWith(".tgz")) {
+          if (tarballStatus !== 200) {
+            return new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(
+                    new TextEncoder().encode(
+                      JSON.stringify({ errors: [{ status: 404, message: "Could not find resource" }] }),
+                    ),
+                  );
+                  controller.close();
+                },
+              }),
+              { status: tarballStatus, headers: { "content-type": "application/json" } },
+            );
+          }
+          return new Response(file(join(import.meta.dir, "baz-0.0.3.tgz")));
+        }
+        return Response.json({
+          name: "baz",
+          versions: {
+            "0.0.3": {
+              name: "baz",
+              version: "0.0.3",
+              dist: { tarball: `${ctx.registry_url}baz-0.0.3.tgz` },
+            },
+          },
+          "dist-tags": { latest: "0.0.3" },
+        });
+      });
+
+      // Project-local .npmrc takes precedence over any user-level ~/.npmrc.
+      await writeFile(join(ctx.package_dir, ".npmrc"), `registry=${ctx.registry_url}\n`);
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: { baz: "0.0.3" },
+        }),
+      );
+
+      // First install: succeeds, writes lockfile + node_modules.
+      {
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("404");
+        expect(exitCode).toBe(0);
+      }
+
+      // Second install with node_modules removed and tarball now 404: should
+      // fail with a clear error, not hang. The lockfile is kept so the resolve
+      // phase is a no-op and the tarball download happens in the install phase.
+      await rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true });
+      tarballStatus = 404;
+      urls.length = 0;
+
+      {
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+        // Previously, the isolated installer would hang indefinitely here
+        // because the store entry's pending-task slot was never released.
+        expect(urls.some(u => u.endsWith(".tgz"))).toBe(true);
+        expect(stderr).toContain("baz");
+        // The isolated installer maps the status to a human-readable
+        // reason phrase; the hoisted installer prints `GET <url> - 404`.
+        expect(stderr).toContain(linker === "isolated" ? "404 Not Found" : "404");
+        expect(stdout).not.toContain("1 package installed");
+        expect(exitCode).not.toBe(0);
+      }
+    });
+  });
+});

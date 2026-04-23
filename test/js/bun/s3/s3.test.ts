@@ -1564,6 +1564,10 @@ describe.concurrent("s3 missing credentials", () => {
       await Bun.s3.presign("test");
     });
   });
+  it("S3Client.presign static", () => {
+    expect(() => S3Client.presign("some/bucket/key")).toThrow("Missing S3 credentials");
+    expect(() => S3Client.presign("some/bucket/key", {})).toThrow("Missing S3 credentials");
+  });
   it("file", async () => {
     assertMissingCredentials(async () => {
       await Bun.s3.file("test").text();

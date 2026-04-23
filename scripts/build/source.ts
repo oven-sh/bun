@@ -1439,10 +1439,10 @@ function emitDirect(
 
   // ─── Generated headers (optional) ───
   // Literal-string headers are written at configure time via writeIfChanged
-  // (mtime only moves when contents change). HeaderSubst headers become
-  // ninja edges — their template lives in srcDir, which doesn't exist
-  // until fetch runs. Either way buildDir goes on -I and the outputs are
-  // implicit inputs to every cc edge.
+  // (mtime only moves when contents change) — depfiles handle their
+  // incrementality. HeaderSubst headers become ninja edges (template
+  // lives in srcDir which doesn't exist until fetch runs) and join
+  // `generated` so cc edges wait on them. Either way buildDir goes on -I.
   const headers = Object.entries(spec.headers ?? {});
   const needsBuildDirInc = headers.length > 0 || spec.codegen !== undefined;
   const generated: string[] = [];
@@ -1557,7 +1557,8 @@ function emitDirect(
   n.phony(name, objects);
   // headerOutputs: what downstream needs to wait on for HEADERS to be
   // ready. For no-archive direct deps that's the generated header set
-  // (subst/literal/codegen) plus the source stamp — not the .o files.
+  // (subst + codegen) plus the source stamp — not the .o files. Literal
+  // headers were written at configure time so they're not in here.
   return { libs: [], objects, headerOutputs: [...generated, sourceStamp] };
 }
 

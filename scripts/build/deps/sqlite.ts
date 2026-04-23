@@ -37,12 +37,7 @@ export const sqlite: Dependency = {
       SQLITE_ENABLE_UPDATE_DELETE_LIMIT: 1,
       SQLITE_UDL_CAPABLE_PARSER: 1,
     },
-    cflags: [
-      "-Wno-incompatible-pointer-types-discards-qualifiers",
-      // Match the static CRT bun links; /U_DLL keeps sqlite from picking
-      // the dllimport annotations meant for the DLL build.
-      ...(cfg.windows ? ["/MT", "/U_DLL"] : []),
-    ],
+    cflags: ["-Wno-incompatible-pointer-types-discards-qualifiers"],
   }),
 
   provides: () => ({

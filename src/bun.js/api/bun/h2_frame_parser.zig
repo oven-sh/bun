@@ -2352,6 +2352,18 @@ pub const H2FrameParser = struct {
             return data.len;
         };
 
+        // Stream was refused in handleReceivedStreamID because the concurrent
+        // stream limit was exceeded. RST_STREAM(REFUSED_STREAM) has already been
+        // sent. Consume the payload so currentFrame/remainingLength stay in sync,
+        // but do not decode headers or notify JS for this stream.
+        if (stream.state == .CLOSED and stream.rstCode == @intFromEnum(ErrorCode.REFUSED_STREAM)) {
+            if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+                this.readBuffer.reset();
+                return content.end;
+            }
+            return data.len;
+        }
+
         const settings = this.remoteSettings orelse this.localSettings;
         if (frame.length > settings.maxFrameSize) {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Headers frame size", this.lastStreamID, true);
@@ -2517,7 +2529,7 @@ pub const H2FrameParser = struct {
     }
 
     /// We need to be very carefull because this is not a stable ptr
-    fn handleReceivedStreamID(this: *H2FrameParser, streamIdentifier: u32) ?*Stream {
+    fn handleReceivedStreamID(this: *H2FrameParser, streamIdentifier: u32, frameType: u8) ?*Stream {
         // connection stream
         if (streamIdentifier == 0) {
             return null;
@@ -2526,6 +2538,52 @@ pub const H2FrameParser = struct {
         // already exists
         if (this.streams.getEntry(streamIdentifier)) |entry| {
             return entry.value_ptr;
+        }
+
+        // RFC 9113 Section 5.1.2: an endpoint that receives a HEADERS frame that
+        // causes its advertised concurrent stream limit to be exceeded MUST treat
+        // this as a stream error of type PROTOCOL_ERROR or REFUSED_STREAM. We use
+        // REFUSED_STREAM so the client may retry safely. Only HEADERS frames open
+        // new streams, so the check is gated on frame type to avoid refusing
+        // PRIORITY/WINDOW_UPDATE/etc. on idle streams.
+        if (this.isServer and
+            frameType == @intFromEnum(FrameType.HTTP_FRAME_HEADERS) and
+            this.localSettings.maxConcurrentStreams != std.math.maxInt(u32))
+        {
+            var open: u32 = 0;
+            var it = this.streams.valueIterator();
+            while (it.next()) |s| {
+                if (s.state != .CLOSED) open += 1;
+            }
+            if (open >= this.localSettings.maxConcurrentStreams) {
+                if (streamIdentifier > this.lastStreamID) this.lastStreamID = streamIdentifier;
+                var buffer: [FrameHeader.byteSize + 4]u8 = undefined;
+                @memset(&buffer, 0);
+                var writerStream = std.io.fixedBufferStream(&buffer);
+                const writer = writerStream.writer();
+                var frame: FrameHeader = .{ .type = @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM), .flags = 0, .streamIdentifier = streamIdentifier, .length = 4 };
+                _ = frame.write(@TypeOf(writer), writer);
+                var value: u32 = @intFromEnum(ErrorCode.REFUSED_STREAM);
+                value = @byteSwap(value);
+                _ = writer.write(std.mem.asBytes(&value)) catch 0;
+                _ = this.write(&buffer);
+
+                // Record the stream as CLOSED so subsequent frames for it are
+                // handled against an existing entry instead of re-triggering this
+                // path or being treated as the connection stream. Returning the
+                // pointer (not null) preserves the invariant that a null result
+                // means "stream 0", so callers do not emit GOAWAY(PROTOCOL_ERROR).
+                const entry = bun.handleOom(this.streams.getOrPut(streamIdentifier));
+                entry.value_ptr.* = Stream.init(
+                    streamIdentifier,
+                    this.localSettings.initialWindowSize,
+                    if (this.remoteSettings) |s| s.initialWindowSize else DEFAULT_WINDOW_SIZE,
+                    this.paddingStrategy,
+                );
+                entry.value_ptr.state = .CLOSED;
+                entry.value_ptr.rstCode = @intFromEnum(ErrorCode.REFUSED_STREAM);
+                return entry.value_ptr;
+            }
         }
 
         if (streamIdentifier > this.lastStreamID) {
@@ -2578,7 +2636,7 @@ pub const H2FrameParser = struct {
         if (this.currentFrame) |header| {
             log("current frame {s} {} {} {} {}", .{ if (this.isServer) "server" else "client", header.type, header.length, header.flags, header.streamIdentifier });
 
-            const stream = this.handleReceivedStreamID(header.streamIdentifier);
+            const stream = this.handleReceivedStreamID(header.streamIdentifier, header.type);
             return switch (header.type) {
                 @intFromEnum(FrameType.HTTP_FRAME_SETTINGS) => this.handleSettingsFrame(header, bytes),
                 @intFromEnum(FrameType.HTTP_FRAME_WINDOW_UPDATE) => this.handleWindowUpdateFrame(header, bytes, stream),
@@ -2626,7 +2684,7 @@ pub const H2FrameParser = struct {
             this.currentFrame = header;
             this.remainingLength = header.length;
             log("new frame {} {} {} {}", .{ header.type, header.length, header.flags, header.streamIdentifier });
-            const stream = this.handleReceivedStreamID(header.streamIdentifier);
+            const stream = this.handleReceivedStreamID(header.streamIdentifier, header.type);
 
             return switch (header.type) {
                 @intFromEnum(FrameType.HTTP_FRAME_SETTINGS) => this.handleSettingsFrame(header, bytes[needed..]) + needed,
@@ -2660,7 +2718,7 @@ pub const H2FrameParser = struct {
         log("new frame {s} {} {} {} {}", .{ if (this.isServer) "server" else "client", header.type, header.length, header.flags, header.streamIdentifier });
         this.currentFrame = header;
         this.remainingLength = header.length;
-        const stream = this.handleReceivedStreamID(header.streamIdentifier);
+        const stream = this.handleReceivedStreamID(header.streamIdentifier, header.type);
         return switch (header.type) {
             @intFromEnum(FrameType.HTTP_FRAME_SETTINGS) => this.handleSettingsFrame(header, bytes[FrameHeader.byteSize..]) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_WINDOW_UPDATE) => this.handleWindowUpdateFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
@@ -3883,7 +3941,7 @@ pub const H2FrameParser = struct {
         if (id > MAX_STREAM_ID) {
             return jsc.JSValue.jsNumber(-1);
         }
-        _ = this.handleReceivedStreamID(id) orelse {
+        _ = this.handleReceivedStreamID(id, std.math.maxInt(u8)) orelse {
             return jsc.JSValue.jsNumber(-1);
         };
 
@@ -4139,7 +4197,7 @@ pub const H2FrameParser = struct {
                             if (err == error.OutOfMemory) {
                                 return globalObject.throw("Failed to allocate header buffer", .{});
                             }
-                            const stream = this.handleReceivedStreamID(stream_id) orelse {
+                            const stream = this.handleReceivedStreamID(stream_id, std.math.maxInt(u8)) orelse {
                                 return jsc.JSValue.jsNumber(-1);
                             };
                             if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
@@ -4176,7 +4234,7 @@ pub const H2FrameParser = struct {
                         if (err == error.OutOfMemory) {
                             return globalObject.throw("Failed to allocate header buffer", .{});
                         }
-                        const stream = this.handleReceivedStreamID(stream_id) orelse {
+                        const stream = this.handleReceivedStreamID(stream_id, std.math.maxInt(u8)) orelse {
                             return jsc.JSValue.jsNumber(-1);
                         };
                         stream.state = .CLOSED;
@@ -4193,7 +4251,7 @@ pub const H2FrameParser = struct {
         const encoded_data = encoded_headers.items;
         const encoded_size = encoded_data.len;
 
-        const stream = this.handleReceivedStreamID(stream_id) orelse {
+        const stream = this.handleReceivedStreamID(stream_id, std.math.maxInt(u8)) orelse {
             return jsc.JSValue.jsNumber(-1);
         };
         if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {

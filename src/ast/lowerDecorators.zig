@@ -1327,7 +1327,15 @@ pub fn LowerDecorators(
                             super_index = index;
                             break;
                         }
-                        const insert_at = if (super_index) |j| j + 1 else 0;
+                        // Skip past TypeScript parameter property assignments
+                        // (e.g. `this.options = options` from `constructor(private options: any)`)
+                        // that were already inserted by the TS parameter property lowering phase.
+                        var insert_at = if (super_index) |j| j + 1 else @as(usize, 0);
+                        for (func.func.args) |arg| {
+                            if (arg.is_typescript_ctor_field and arg.binding.data == .b_identifier) {
+                                insert_at += 1;
+                            }
+                        }
                         body_stmts.insertSlice(insert_at, constructor_inject_stmts.items) catch unreachable;
                         func.func.body.stmts = body_stmts.items;
                         found_constructor = true;

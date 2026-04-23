@@ -391,6 +391,13 @@ static JSValue handleVirtualModuleResult(
             RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err.value)));
         }
 
+        if (commonJSModule && res->result.value.isCommonJSModule) {
+            auto specifierString = specifier->toWTFString(BunString::ZeroCopy);
+            commonJSModule->evaluate(globalObject, specifierString, res->result.value);
+            RETURN_IF_EXCEPTION(scope, {});
+            return commonJSModule;
+        }
+
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
         return resolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
     }

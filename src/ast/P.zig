@@ -154,6 +154,7 @@ pub fn NewParser_(
         has_top_level_return: bool = false,
         latest_return_had_semicolon: bool = false,
         has_import_meta: bool = false,
+        import_meta_keyword: logger.Range = logger.Range.None,
         has_es_module_syntax: bool = false,
         top_level_await_keyword: logger.Range = logger.Range.None,
         fn_or_arrow_data_parse: FnOrArrowDataParse = FnOrArrowDataParse{},

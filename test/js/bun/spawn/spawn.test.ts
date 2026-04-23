@@ -857,9 +857,9 @@ describe("close handling", () => {
       await using proc = spawn({
         cmd: [bunExe(), "-e", ""],
         env: bunEnv,
-        stdio: ["ignore", "ignore", "ignore", "ignore", fd, "inherit"],
+        stdio: ["ignore", "ignore", "ignore", "ignore", fd],
       });
-      expect(proc.stdio).toEqual([null, null, null, null, fd, null]);
+      expect(proc.stdio).toEqual([null, null, null, null, fd]);
       await proc.exited;
     } finally {
       try {

@@ -92,43 +92,55 @@ const kDeferredTimeouts = Symbol("deferredTimeouts");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
-export const enum ClientRequestEmitState {
-  socket = 1,
-  prefinish = 2,
-  finish = 3,
-  response = 4,
-}
+// These are declared as plain objects instead of `const enum` to prevent the
+// TypeScript enum reverse-mapping pattern (e.g. `Enum[Enum["x"] = 0] = "x"`)
+// from triggering setters on `Object.prototype` during module initialization.
+// See: https://github.com/oven-sh/bun/issues/24336
+export const ClientRequestEmitState = {
+  socket: 1,
+  prefinish: 2,
+  finish: 3,
+  response: 4,
+} as const;
+export type ClientRequestEmitState = (typeof ClientRequestEmitState)[keyof typeof ClientRequestEmitState];
 
-export const enum NodeHTTPResponseAbortEvent {
-  none = 0,
-  abort = 1,
-  timeout = 2,
-}
-export const enum NodeHTTPIncomingRequestType {
-  FetchRequest,
-  FetchResponse,
-  NodeHTTPResponse,
-}
-export const enum NodeHTTPBodyReadState {
-  none,
-  pending = 1 << 1,
-  done = 1 << 2,
-  hasBufferedDataDuringPause = 1 << 3,
-}
+export const NodeHTTPResponseAbortEvent = {
+  none: 0,
+  abort: 1,
+  timeout: 2,
+} as const;
+export type NodeHTTPResponseAbortEvent = (typeof NodeHTTPResponseAbortEvent)[keyof typeof NodeHTTPResponseAbortEvent];
+
+export const NodeHTTPIncomingRequestType = {
+  FetchRequest: 0,
+  FetchResponse: 1,
+  NodeHTTPResponse: 2,
+} as const;
+export type NodeHTTPIncomingRequestType =
+  (typeof NodeHTTPIncomingRequestType)[keyof typeof NodeHTTPIncomingRequestType];
+
+export const NodeHTTPBodyReadState = {
+  none: 0,
+  pending: 1 << 1,
+  done: 1 << 2,
+  hasBufferedDataDuringPause: 1 << 3,
+} as const;
+export type NodeHTTPBodyReadState = (typeof NodeHTTPBodyReadState)[keyof typeof NodeHTTPBodyReadState];
 
 // Must be kept in sync with NodeHTTPResponse.Flags
-export const enum NodeHTTPResponseFlags {
-  socket_closed = 1 << 0,
-  request_has_completed = 1 << 1,
+export const NodeHTTPResponseFlags = {
+  socket_closed: 1 << 0,
+  request_has_completed: 1 << 1,
+  closed_or_completed: (1 << 0) | (1 << 1),
+} as const;
+export type NodeHTTPResponseFlags = (typeof NodeHTTPResponseFlags)[keyof typeof NodeHTTPResponseFlags];
 
-  closed_or_completed = socket_closed | request_has_completed,
-}
-
-export const enum NodeHTTPHeaderState {
-  none,
-  assigned,
-  sent,
-}
+export const NodeHTTPHeaderState = {
+  none: 0,
+  assigned: 1,
+  sent: 2,
+} as const;
+export type NodeHTTPHeaderState = (typeof NodeHTTPHeaderState)[keyof typeof NodeHTTPHeaderState];
 
 function emitErrorNextTickIfErrorListenerNT(self, err, cb) {
   process.nextTick(emitErrorNextTickIfErrorListener, self, err, cb);

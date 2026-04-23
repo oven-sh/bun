@@ -2608,26 +2608,25 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
     // file in that case and remember cleanup for process exit. Pass `cwd`
     // so the temp file lands at `<cwd>/[eval]` — the exact path the VS Code
     // extension's source-mapping layer expects for `--eval` scripts.
+    //
+    // This runs BEFORE the `try` that wraps `spawn()` so that when the
+    // helper throws its actionable "install Bun via the official
+    // installer…" guidance, the thrown Error propagates out of `#spawn`
+    // → `#launch` → `launch()`'s catch, which surfaces `cause.message`
+    // verbatim via the stderr output event. Catching here would either
+    // drop the message (emit `Process.exited` with no listener) or wrap
+    // it ("Failed to spawn process") and bury it in the cause chain.
     let spawnArgs = args;
     let cleanupTempFiles = () => {};
+    if (useShell) {
+      const prepared = escapeMultilineArgsForCmd(args, cwd);
+      spawnArgs = prepared.args;
+      cleanupTempFiles = prepared.cleanup;
+    }
+
     let subprocess: ChildProcess;
     try {
       if (useShell) {
-        try {
-          const prepared = escapeMultilineArgsForCmd(args, cwd);
-          spawnArgs = prepared.args;
-          cleanupTempFiles = prepared.cleanup;
-        } catch (cause) {
-          // `escapeMultilineArgsForCmd` only ever throws `Error` instances,
-          // but `cause` is typed `unknown` under strict mode and
-          // `Process.exited`'s payload is `number | Error | null`. Run it
-          // through the same `unknownToError` helper the other catch sites
-          // in this file use — it passes real `Error` values through
-          // unchanged, so the carefully-worded message from
-          // `escapeMultilineArgsForCmd` reaches the user verbatim.
-          this.emit("Process.exited", unknownToError(cause), null);
-          return false;
-        }
         // Resolve the shell via %ComSpec% first. libuv's search_path uses the
         // child's env PATH, not the extension host's, so in `strictEnv: true`
         // launch configs a bare `"cmd.exe"` could miss System32. Matches

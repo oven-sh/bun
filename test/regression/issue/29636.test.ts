@@ -380,12 +380,27 @@ describe("issue #29636 — escapeMultilineArgsForCmd", () => {
     }
   });
 
-  test("throws a clear error for multi-line args outside the `--eval` pattern", () => {
+  test("throws a clear, actionable error for multi-line args outside the `--eval` pattern", () => {
     // A multi-line arg without a preceding `--eval`/`-e` has no safe
     // transformation — we'd be guessing at bun's semantics. Refuse with a
     // message that points users toward the official installer fix.
+    //
+    // `#spawn` lets this error propagate up to `launch()`'s catch, which
+    // surfaces `.message` verbatim via the stderr output event — so the
+    // message content matters for UX, not just "some error was thrown".
     using dir = tempDir("issue-29636-throw", {});
-    expect(() => escapeMultilineArgsForCmd(["app.ts", "line1\nline2"], String(dir))).toThrow(/cmd\.exe/);
+    let caught: Error | undefined;
+    try {
+      escapeMultilineArgsForCmd(["app.ts", "line1\nline2"], String(dir));
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    // The user-facing stderr output will be `Failed to start debugger.\n${message}`,
+    // so the message needs to explain both *what* failed and *how to fix*.
+    expect(caught!.message).toMatch(/multi-line/i);
+    expect(caught!.message).toMatch(/cmd\.exe/);
+    expect(caught!.message).toMatch(/official installer/i);
     // The helper cleans up any already-created files on the throw path;
     // no `[eval]` should be left behind in the cwd.
     expect(existsSync(join(String(dir), "[eval]"))).toBe(false);

@@ -553,6 +553,30 @@ pub const Repository = extern struct {
         };
     }
 
+    /// Returns whether a committish string is safe to pass to git commands.
+    /// This is a security check to prevent flag injection, not a ref-name
+    /// validation. Git revision specifiers legitimately use operators like
+    /// `~` (ancestor), `^` (parent/dereference), and `:` (tree path), so
+    /// those are allowed. We block:
+    ///  - leading `-` (would be interpreted as a git flag)
+    ///  - control characters (< 0x20) and DEL (0x7f)
+    ///  - spaces (not valid in committish values)
+    ///  - NUL bytes (string terminator issues)
+    pub fn isValidCommittish(committish: string) bool {
+        if (committish.len == 0) return true;
+        // Must not start with '-' (flag injection)
+        if (committish[0] == '-') return false;
+
+        for (committish) |c| {
+            switch (c) {
+                // Block control characters, spaces, and DEL
+                ' ', 0x7f => return false,
+                else => if (c < 0x20) return false,
+            }
+        }
+        return true;
+    }
+
     pub fn findCommit(
         allocator: std.mem.Allocator,
         env: *DotEnv.Loader,
@@ -567,6 +591,17 @@ pub const Repository = extern struct {
         })}, .auto);
 
         _ = repo_dir;
+
+        if (committish.len > 0 and !isValidCommittish(committish)) {
+            log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                allocator,
+                "invalid committish \"{s}\" for \"{s}\"",
+                .{ committish, name },
+            ) catch unreachable;
+            return error.InvalidCommittish;
+        }
 
         return std.mem.trim(u8, exec(
             allocator,

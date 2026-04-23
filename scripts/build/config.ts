@@ -116,6 +116,8 @@ export interface Config {
   /** MinSizeRel → optimize for size. */
   smol: boolean;
   staticSqlite: boolean;
+  /** Fully static binary: pass -static to the linker. Works on glibc (Ubuntu/Debian) and musl. */
+  staticAll: boolean;
   staticLibatomic: boolean;
   tinycc: boolean;
   valgrind: boolean;
@@ -235,6 +237,7 @@ export interface PartialConfig {
   baseline?: boolean;
   canary?: boolean;
   staticSqlite?: boolean;
+  staticAll?: boolean;
   staticLibatomic?: boolean;
   tinycc?: boolean;
   valgrind?: boolean;
@@ -443,6 +446,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // failure is loud ("cannot find -l:libatomic.a") and the fix is obvious.
   const staticLibatomic = partial.staticLibatomic ?? true;
 
+  const staticAll = partial.staticAll ?? false;
+
   // TinyCC: off on Windows ARM64 (not supported), on elsewhere
   const tinycc = partial.tinycc ?? !(windows && arm64);
 
@@ -535,6 +540,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     canary,
     smol,
     staticSqlite,
+    staticAll,
     staticLibatomic,
     tinycc,
     valgrind,

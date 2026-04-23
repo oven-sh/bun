@@ -293,6 +293,7 @@ function parseArgs(argv: string[]): CliArgs {
     "baseline",
     "canary",
     "staticSqlite",
+    "staticAll",
     "staticLibatomic",
     "tinycc",
     "valgrind",

@@ -84,6 +84,7 @@ extern "C" int kill(int pid, int sig)
 #endif
 #endif
 
+#if !defined(BUN_STATIC_BUILD)
 #if defined(__x86_64__)
 __asm__(".symver exp,exp@GLIBC_2.2.5");
 __asm__(".symver exp2,exp2@GLIBC_2.2.5");
@@ -105,8 +106,9 @@ __asm__(".symver logf,logf@GLIBC_2.17");
 __asm__(".symver pow,pow@GLIBC_2.17");
 __asm__(".symver powf,powf@GLIBC_2.17");
 #endif
+#endif // !BUN_STATIC_BUILD
 
-#if defined(__x86_64__) || defined(__aarch64__)
+#if !defined(BUN_STATIC_BUILD) && (defined(__x86_64__) || defined(__aarch64__))
 #define BUN_WRAP_GLIBC_SYMBOL(symbol) __wrap_##symbol
 #else
 #define BUN_WRAP_GLIBC_SYMBOL(symbol) symbol

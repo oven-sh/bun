@@ -969,6 +969,38 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
     }
   });
 
+  test("DOM/DOW both restricted: plist preserves OR semantics matching Bun.cron.parse()", async () => {
+    // POSIX cron: when day-of-month AND day-of-week are both non-`*`, the job
+    // fires when EITHER matches. Bun.cron.parse() honours this (next match for
+    // "0 0 15 * 0-6" is tomorrow, not the 15th). The OS-registered job must
+    // agree, so the normalized schedule must NOT collapse `0-6` to `*`.
+    const from = Date.UTC(2025, 0, 1, 12, 0, 0); // Wed Jan 1
+    expect(Bun.cron.parse("0 0 15 * 0-6", from)!.getUTCDate()).toBe(2); // OR → daily, not 15th
+
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "0 0 15 * 0-6", "test-mac-dom-dow-or");
+      const plist = await Bun.file(plistPath("test-mac-dom-dow-or")).text();
+      // The normalized schedule embedded in --cron-period must keep DOW explicit.
+      const period = /--cron-period=([^<]+)</.exec(plist)![1];
+      expect(period).toBe("0 0 15 * 0,1,2,3,4,5,6");
+      // OR-split: launchd dicts AND their keys, so we need separate Day-only and
+      // Weekday-only dicts. Verify both keys appear and that no single dict has both.
+      expect(plist).toContain("<key>Day</key>");
+      expect(plist).toContain("<key>Weekday</key>");
+      const dicts = [...plist.matchAll(/<dict>[\s\S]*?<\/dict>/g)].map(m => m[0]);
+      const calDicts = dicts.filter(d => d.includes("<key>Minute</key>"));
+      expect(calDicts.length).toBeGreaterThan(1);
+      for (const d of calDicts) {
+        expect(d.includes("<key>Day</key>") && d.includes("<key>Weekday</key>")).toBe(false);
+      }
+    } finally {
+      removeLaunchdJob("test-mac-dom-dow-or");
+    }
+  });
+
   test("--cron-period in plist is normalized form (docs L157)", async () => {
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,

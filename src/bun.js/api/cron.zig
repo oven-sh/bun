@@ -1490,10 +1490,11 @@ fn cronToTaskXml(
         \\
     );
 
-    // Use semantic checks (bitfield values) not syntax flags for wildcard detection.
-    // e.g. "*/1" sets all bits just like "*" but has _is_wildcard=false.
-    const days_is_wild = cron.days == cron_parser.all_days;
-    const weekdays_is_wild = cron.weekdays == cron_parser.all_weekdays;
+    // POSIX cron's DOM/DOW OR-vs-AND rule keys off the literal `*` token; use the
+    // syntactic flags so next() and the registered task agree on which days fire.
+    // Months have no such rule, so a semantic check is fine (lets `*/1` collapse).
+    const days_is_wild = cron.days_is_wildcard;
+    const weekdays_is_wild = cron.weekdays_is_wildcard;
     const months_is_wild = cron.months == cron_parser.all_months;
 
     // Try to use a single trigger with Repetition for simple repeating patterns.

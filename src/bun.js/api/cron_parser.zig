@@ -82,15 +82,18 @@ pub const CronExpression = struct {
     pub fn formatNumeric(self: CronExpression, buf: *[512]u8) []const u8 {
         var stream = std.io.fixedBufferStream(buf);
         const w = stream.writer();
-        formatBitfield(w, u64, self.minutes, 0, 59);
+        formatBitfield(w, u64, self.minutes, 0, 59, false);
         w.writeByte(' ') catch unreachable;
-        formatBitfield(w, u32, self.hours, 0, 23);
+        formatBitfield(w, u32, self.hours, 0, 23, false);
         w.writeByte(' ') catch unreachable;
-        formatBitfield(w, u32, self.days, 1, 31);
+        // POSIX cron's DOM/DOW OR-vs-AND rule keys off the literal `*` token, so a
+        // syntactically-restricted full range (e.g. `0-6`, `*/1`) must NOT collapse
+        // to `*` here or the OS scheduler diverges from next().
+        formatBitfield(w, u32, self.days, 1, 31, !self.days_is_wildcard);
         w.writeByte(' ') catch unreachable;
-        formatBitfield(w, u16, self.months, 1, 12);
+        formatBitfield(w, u16, self.months, 1, 12, false);
         w.writeByte(' ') catch unreachable;
-        formatBitfield(w, u8, self.weekdays, 0, 6);
+        formatBitfield(w, u8, self.weekdays, 0, 6, !self.weekdays_is_wildcard);
         return stream.getWritten();
     }
 
@@ -277,8 +280,8 @@ inline fn bitSet(comptime T: type, set: T, pos: std.math.Log2Int(T)) bool {
 }
 
 /// Write a bitfield as a cron field string: "*" if all bits set, or comma-separated values.
-fn formatBitfield(w: anytype, comptime T: type, bits: T, min: u8, max: u8) void {
-    if (@popCount(bits) == @as(u32, max) - min + 1) {
+fn formatBitfield(w: anytype, comptime T: type, bits: T, min: u8, max: u8, force_explicit: bool) void {
+    if (!force_explicit and @popCount(bits) == @as(u32, max) - min + 1) {
         w.writeByte('*') catch unreachable;
         return;
     }

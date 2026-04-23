@@ -380,6 +380,23 @@ pub const ValkeyClient = struct {
         }
     }
 
+    /// Reject only the in-flight commands (already written to the old socket).
+    /// Used during auto-reconnect to discard stale promise entries without
+    /// touching the offline queue, which can still be drained on the new
+    /// connection.
+    fn rejectInFlightCommands(this: *ValkeyClient) bun.JSTerminated!void {
+        var pending = this.in_flight;
+        defer pending.deinit();
+        this.in_flight = .init(this.allocator);
+
+        const globalThis = this.globalObject();
+        const err_value = protocol.valkeyErrorToJS(globalThis, "Connection lost; reconnecting", protocol.RedisError.ConnectionClosed);
+        for (pending.readableSlice(0)) |item| {
+            var command_pair = item;
+            try command_pair.rejectCommand(globalThis, err_value);
+        }
+    }
+
     /// Flush pending data to the socket
     pub fn flushData(this: *ValkeyClient) bool {
         const chunk = this.write_buffer.remaining();
@@ -498,6 +515,15 @@ pub const ValkeyClient = struct {
         }
 
         debug("reconnect in {d}ms (attempt {d}/{d})", .{ delay_ms, this.retry_attempts, this.max_retries });
+
+        // Reject all in-flight commands from the old connection. Their
+        // responses will never arrive on the new connection, so leaving
+        // them in the FIFO queue would cause new responses to be matched
+        // against stale promise entries.
+        // The offline `queue` is intentionally preserved — those commands
+        // have not been written to the wire yet and will be drained once
+        // the new connection is ready.
+        try this.rejectInFlightCommands();
 
         this.flags.is_reconnecting = true;
         this.flags.is_authenticated = false;

@@ -610,6 +610,83 @@ declare module "bun" {
    */
   function stripANSI(input: string): string;
 
+  interface SliceAnsiOptions {
+    /**
+     * If set, and content was cut at either edge of the requested range,
+     * insert this string at the cut edge(s). The ellipsis is counted against
+     * the visible-width budget and is emitted *inside* any active SGR styles
+     * (color, bold, etc.) so it inherits them, but *outside* any active OSC 8
+     * hyperlink.
+     *
+     * This turns `sliceAnsi` into a drop-in `cli-truncate` replacement:
+     * - truncate-end: `sliceAnsi(str, 0, max, { ellipsis: "\u2026" })`
+     * - truncate-start: `sliceAnsi(str, -max, undefined, { ellipsis: "\u2026" })`
+     */
+    ellipsis?: string;
+
+    /**
+     * Count characters with East Asian Width "Ambiguous" as 1 column (narrow)
+     * instead of 2 (wide). Affects Greek, Cyrillic, some symbols, etc. that
+     * render wide in CJK-encoded terminals but narrow in Western ones.
+     *
+     * Matches the option of the same name in {@link stringWidth} and
+     * {@link wrapAnsi}.
+     *
+     * @default true
+     */
+    ambiguousIsNarrow?: boolean;
+  }
+
+  /**
+   * Slice a string by visible column width, preserving ANSI escape codes.
+   *
+   * Like `String.prototype.slice`, but indices are terminal column widths
+   * (accounting for wide CJK characters, emoji grapheme clusters, and
+   * zero-width joiners), and ANSI escape sequences (SGR colors, OSC 8
+   * hyperlinks, etc.) are preserved and correctly re-opened/closed at the
+   * slice boundaries.
+   *
+   * @category Utilities
+   *
+   * @param input The string to slice
+   * @param start Starting column (default 0). Negative counts from end.
+   * @param end Ending column, exclusive (default end of string). Negative counts from end.
+   * @param options Optional behavior flags (e.g. `ellipsis` for truncation)
+   * @returns The sliced string with ANSI codes intact
+   *
+   * @example
+   * ```ts
+   * import { sliceAnsi } from "bun";
+   *
+   * // Plain slice (replaces the `slice-ansi` npm package)
+   * sliceAnsi("hello", 1, 4);                              // "ell"
+   * sliceAnsi("\u001b[31mhello\u001b[39m", 1, 4);          // "\u001b[31mell\u001b[39m"
+   * sliceAnsi("\u5b89\u5b81\u54c8", 0, 4);                 // "\u5b89\u5b81" (CJK: width 2 each)
+   *
+   * // Truncation (replaces the `cli-truncate` npm package)
+   * sliceAnsi("unicorn", 0, 4, "\u2026");           // "uni\u2026"
+   * sliceAnsi("unicorn", -4, undefined, "\u2026");  // "\u2026orn"
+   * ```
+   */
+  function sliceAnsi(
+    input: string,
+    start?: number,
+    end?: number,
+    /**
+     * Shorthand for common options (avoids `{}` allocation):
+     * - `string` → ellipsis (equivalent to `{ ellipsis: string }`)
+     * - `boolean` → ambiguousIsNarrow (equivalent to `{ ambiguousIsNarrow: boolean }`)
+     * - `SliceAnsiOptions` → full options object
+     */
+    options?: string | boolean | SliceAnsiOptions,
+    /**
+     * ambiguousIsNarrow as a positional arg, usable when the 4th arg is an
+     * ellipsis string (or `undefined`). Lets you pass both options without
+     * an object: `sliceAnsi(s, 0, n, "\u2026", false)`.
+     */
+    ambiguousIsNarrow?: boolean,
+  ): string;
+
   interface WrapAnsiOptions {
     /**
      * If `true`, break words in the middle if they don't fit on a line.
@@ -810,12 +887,14 @@ declare module "bun" {
      *
      * When a `TypedArray` is passed, the bytes are parsed directly without
      * copying if the content is ASCII. Optional `start` and `end` parameters
-     * allow slicing without copying, and `read` will be a byte offset into
-     * the original typed array.
+     * select a window of the input without copying. For typed arrays these
+     * are byte offsets and `read` will be a byte offset into the original
+     * typed array. For strings these are character offsets and `read` will
+     * be a character offset into the original string.
      *
      * @param input The JSONL string or typed array to parse
-     * @param start Byte offset to start parsing from (typed array only, default: 0)
-     * @param end Byte offset to stop parsing at (typed array only, default: input.byteLength)
+     * @param start Offset to start parsing from (bytes for typed arrays, characters for strings, default: 0)
+     * @param end Offset to stop parsing at (bytes for typed arrays, characters for strings, default: input length)
      * @returns An object with `values`, `read`, `done`, and `error` properties
      *
      * @example
@@ -830,9 +909,8 @@ declare module "bun" {
      * }
      * ```
      */
-    export function parseChunk(input: string): ParseChunkResult;
     export function parseChunk(
-      input: NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
       start?: number,
       end?: number,
     ): ParseChunkResult;
@@ -1116,10 +1194,20 @@ declare module "bun" {
       ordered: boolean;
       /** The start number for ordered lists. */
       start?: number;
+      /** Nesting depth. `0` for a top-level list, `1` for a list inside a list item, etc. */
+      depth: number;
     }
 
     /** Meta passed to the `listItem` callback. */
     interface ListItemMeta {
+      /** 0-based index of this item within its parent list. */
+      index: number;
+      /** Nesting depth of the parent list. `0` for items in a top-level list. */
+      depth: number;
+      /** Whether the parent list is ordered. */
+      ordered: boolean;
+      /** The start number of the parent list (only set when `ordered` is true). */
+      start?: number;
       /** Task list checked state. Set for `- [x]` / `- [ ]` items. */
       checked?: boolean;
     }
@@ -1157,8 +1245,8 @@ declare module "bun" {
       code?: (children: string, meta?: CodeBlockMeta) => string | null | undefined;
       /** Ordered or unordered list. `start` is the first item number for ordered lists. */
       list?: (children: string, meta: ListMeta) => string | null | undefined;
-      /** List item. `meta.checked` is set for task list items (`- [x]` / `- [ ]`). Only passed for task list items. */
-      listItem?: (children: string, meta?: ListItemMeta) => string | null | undefined;
+      /** List item. `meta` always includes `{index, depth, ordered}`. `meta.start` is set for ordered lists; `meta.checked` is set for task list items. */
+      listItem?: (children: string, meta: ListItemMeta) => string | null | undefined;
       /** Horizontal rule. */
       hr?: (children: string) => string | null | undefined;
       /** Table. */
@@ -1221,6 +1309,82 @@ declare module "bun" {
     export function html(
       input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
       options?: Options,
+    ): string;
+
+    /**
+     * Theme for ANSI terminal rendering.
+     */
+    export interface AnsiTheme {
+      /**
+       * Emit ANSI color + styling escape sequences. When `false`, the
+       * renderer falls back to plain ASCII chrome (no box drawing,
+       * no emoji, no escape codes).
+       * @default true
+       */
+      colors?: boolean;
+      /**
+       * Emit OSC 8 hyperlinks (clickable links in modern terminals).
+       * When `false`, links render as `text (url)`.
+       * @default false
+       */
+      hyperlinks?: boolean;
+      /**
+       * True when the terminal background is light. Affects the color
+       * palette chosen for inline code backgrounds. Defaults to
+       * detecting from the `COLORFGBG` environment variable.
+       */
+      light?: boolean;
+      /**
+       * Line width used for word-wrapping paragraphs and headings and
+       * for the horizontal rule. Pass `0` to disable wrapping.
+       * @default 80
+       */
+      columns?: number;
+      /**
+       * Inline images using the Kitty Graphics Protocol when the `src`
+       * resolves to a local file on disk. Falls through to the text alt
+       * for remote URLs. Supported by Kitty, WezTerm, and Ghostty.
+       * @default false
+       */
+      kittyGraphics?: boolean;
+    }
+
+    /**
+     * Render markdown to an ANSI-colored terminal string.
+     *
+     * Supports headings, lists, tables, inline styles, syntax-highlighted
+     * code blocks, links, images, and blockquotes. By default, enables all
+     * GFM extensions plus wikilinks, underline, and LaTeX math.
+     *
+     * @param input The markdown string or buffer to render
+     * @param theme Optional theme overrides
+     * @returns An ANSI-colored string
+     *
+     * @example
+     * ```ts
+     * const out = Bun.markdown.ansi("# Hello\n\n**bold** and *italic*\n");
+     * process.stdout.write(out);
+     *
+     * // Plain text, no escape codes
+     * const plain = Bun.markdown.ansi("# Hello", { colors: false });
+     *
+     * // Enable clickable OSC 8 hyperlinks
+     * const linked = Bun.markdown.ansi("[docs](https://bun.com)", {
+     *   hyperlinks: true,
+     * });
+     *
+     * // Inline images via Kitty Graphics Protocol
+     * const withImg = Bun.markdown.ansi("![alt](./logo.png)", {
+     *   kittyGraphics: true,
+     * });
+     *
+     * // Custom width
+     * const wrapped = Bun.markdown.ansi(longText, { columns: 60 });
+     * ```
+     */
+    export function ansi(
+      input: string | NodeJS.TypedArray | DataView<ArrayBuffer> | ArrayBufferLike,
+      theme?: AnsiTheme,
     ): string;
 
     /**
@@ -2428,7 +2592,7 @@ declare module "bun" {
   }
 
   namespace Build {
-    type Architecture = "x64" | "arm64";
+    type Architecture = "x64" | "arm64" | "aarch64";
     type Libc = "glibc" | "musl";
     type SIMD = "baseline" | "modern";
     type CompileTarget =
@@ -2496,6 +2660,21 @@ declare module "bun" {
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
+    /**
+     * Control whether dynamic `import()`, `require()`, or `require.resolve()` specifiers (non-literal
+     * arguments like `` `./locales/${lang}.json` ``) are allowed to pass through
+     * to runtime without being bundled.
+     *
+     * - `["*"]` (default) — allow all dynamic specifiers
+     * - `[]` — fail the build on any dynamic specifier
+     * - `["./locales/*.json", ...]` — allow only specifiers whose static
+     *   template parts match one of these glob patterns
+     *
+     * Add `""` to the list to allow fully opaque specifiers like `import(fn())`.
+     *
+     * @default ["*"]
+     */
+    allowUnresolved?: string[];
     packages?: "bundle" | "external";
     publicPath?: string;
     define?: Record<string, string>;
@@ -2643,6 +2822,25 @@ declare module "bun" {
      * ```
      */
     features?: string[];
+
+    /**
+     * List of package names whose barrel files (re-export index files) should
+     * be optimized. When a named import comes from one of these packages,
+     * only the submodules actually used are parsed — unused re-exports are
+     * skipped entirely.
+     *
+     * This is also enabled automatically for any package with
+     * `"sideEffects": false` in its `package.json`.
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ['./app.ts'],
+     *   optimizeImports: ['antd', '@mui/material', 'lodash-es'],
+     * });
+     * ```
+     */
+    optimizeImports?: string[];
 
     /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
@@ -4568,6 +4766,20 @@ declare module "bun" {
   function generateHeapSnapshot(format: "v8"): string;
 
   /**
+   * Show precise statistics about memory usage of your application
+   *
+   * Generate a V8 Heap Snapshot as an ArrayBuffer.
+   *
+   * This avoids the overhead of creating a JavaScript string for large heap snapshots.
+   * The ArrayBuffer contains the UTF-8 encoded JSON.
+   * ```ts
+   * const snapshot = Bun.generateHeapSnapshot("v8", "arraybuffer");
+   * await Bun.write("heap.heapsnapshot", snapshot);
+   * ```
+   */
+  function generateHeapSnapshot(format: "v8", encoding: "arraybuffer"): ArrayBuffer;
+
+  /**
    * The next time JavaScriptCore is idle, clear unused memory and attempt to reduce the heap size.
    *
    * @deprecated
@@ -6264,12 +6476,25 @@ declare module "bun" {
   namespace udp {
     type Data = string | ArrayBufferView | ArrayBufferLike;
 
+    /**
+     * Extra metadata passed to the `data` callback for each received datagram.
+     */
+    export interface ReceiveFlags {
+      /**
+       * `true` if the datagram was larger than the receive buffer and was
+       * truncated by the kernel (MSG_TRUNC). The `data` passed to the
+       * callback contains only the portion that fit in the buffer.
+       */
+      truncated: boolean;
+    }
+
     export interface SocketHandler<DataBinaryType extends BinaryType> {
       data?(
         socket: Socket<DataBinaryType>,
         data: BinaryTypeList[DataBinaryType],
         port: number,
         address: string,
+        flags: ReceiveFlags,
       ): void | Promise<void>;
       drain?(socket: Socket<DataBinaryType>): void | Promise<void>;
       error?(socket: Socket<DataBinaryType>, error: Error): void | Promise<void>;
@@ -6281,6 +6506,7 @@ declare module "bun" {
         data: BinaryTypeList[DataBinaryType],
         port: number,
         address: string,
+        flags: ReceiveFlags,
       ): void | Promise<void>;
       drain?(socket: ConnectedSocket<DataBinaryType>): void | Promise<void>;
       error?(socket: ConnectedSocket<DataBinaryType>, error: Error): void | Promise<void>;
@@ -6935,8 +7161,13 @@ declare module "bun" {
 
     /**
      * Access extra file descriptors passed to the `stdio` option in the options object.
+     *
+     * Entries beyond index 2 are `number` for `"pipe"` slots and, on POSIX, for slots
+     * where a raw file descriptor was supplied (the same fd is returned; it remains
+     * owned by the caller and is never closed by the subprocess). Other slots —
+     * including raw fds on Windows — are `null`.
      */
-    readonly stdio: [null, null, null, ...number[]];
+    readonly stdio: [null, null, null, ...(number | null)[]];
 
     /**
      * This returns the same value as {@link Subprocess.stdout}
@@ -7203,6 +7434,287 @@ declare module "bun" {
     cmds: string[],
     options?: SpawnOptions.SpawnSyncOptions<In, Out, Err>,
   ): SyncSubprocess<Out, Err>;
+
+  /**
+   * Controller object passed to the `scheduled()` handler when a cron job fires.
+   *
+   * Compatible with [Cloudflare Workers' ScheduledController](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/).
+   */
+  interface CronController {
+    /** The type of event that triggered the handler. Always `"scheduled"`. */
+    readonly type: "scheduled";
+    /** The cron expression that triggered this invocation. */
+    readonly cron: string;
+    /** Timestamp (ms since epoch) when the job was scheduled to run. */
+    readonly scheduledTime: number;
+  }
+
+  /**
+   * A cron schedule: a 5-field expression (`minute hour day month weekday`) or a nickname.
+   *
+   * Nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
+   *
+   * Fields support `*`, numbers, ranges (`1-5`), steps (`1-30/2`),
+   * comma lists (`1,5,10`), and month/weekday names (`JAN`-`DEC`, `SUN`-`SAT`).
+   *
+   * Validated at runtime by the cron parser.
+   */
+  type CronWithAutocomplete =
+    | "@yearly"
+    | "@annually"
+    | "@monthly"
+    | "@weekly"
+    | "@daily"
+    | "@midnight"
+    | "@hourly"
+    | "* * * * *"
+    | "0 * * * *"
+    | "0 0 * * *"
+    | "0 0 * * 0"
+    | "0 0 1 * *"
+    | "0 0 1 1 *"
+    | `${string} ${string} ${string} ${string} ${string}`
+    | (string & {});
+
+  /**
+   * A handle to an in-process cron job returned by {@link Bun.cron} when called with a callback.
+   *
+   * @example
+   * ```ts
+   * const job = Bun.cron("0 * * * *", async () => {
+   *   await cleanupTempFiles();
+   * });
+   * // Later:
+   * job.stop();
+   * ```
+   */
+  interface CronJob extends Disposable {
+    /** The cron expression string. */
+    readonly cron: string;
+    /** Cancel this cron job. The callback will not fire again. */
+    stop(): CronJob;
+    /** Keep the process alive while this job is scheduled (default). */
+    ref(): CronJob;
+    /** Allow the process to exit even while this job is scheduled. */
+    unref(): CronJob;
+  }
+
+  const cron: {
+    /**
+     * Schedule an **in-process** cron job that calls a function on a schedule.
+     *
+     * Unlike the module-path overload, this runs the callback on the current event loop —
+     * the job dies with the process and does not survive reboots. State is shared between
+     * invocations (closures, module-level variables, database connections all persist).
+     *
+     * | | In-process (this overload) | OS-level (path + title) |
+     * |---|---|---|
+     * | Survives process exit | No | Yes |
+     * | Shared state between runs | Yes | No (fresh process each time) |
+     * | Windows expression limits | None | 48-trigger cap |
+     * | Return type | {@link CronJob} (sync) | `Promise<void>` |
+     *
+     * ### No-overlap guarantee
+     *
+     * The next fire time is computed only after the callback settles (including any returned
+     * Promise). If your callback takes 3 minutes and runs every minute, it fires at T+0 → runs
+     * until T+3 → next fire is the first minute boundary after T+3. Invocations never stack.
+     *
+     * ### Error semantics
+     *
+     * Matches `setTimeout`: a synchronous throw emits `uncaughtException`, a rejected Promise
+     * emits `unhandledRejection`. Without a listener, the process exits with code 1. The job
+     * reschedules itself after an error — it does not stop on first failure.
+     *
+     * ```ts
+     * process.on("unhandledRejection", (err) => log.error(err)); // keep going
+     * Bun.cron("* * * * *", async () => { await mightThrow(); });
+     * ```
+     *
+     * ### Cron expression syntax
+     *
+     * Five fields: `minute hour day-of-month month day-of-week`. Schedules are
+     * interpreted in **UTC** — `0 9 * * *` fires at 9:00 UTC, regardless of `TZ`.
+     *
+     * | Field | Values | Special chars |
+     * |-------|--------|---------------|
+     * | Minute | `0-59` | `*` `,` `-` `/` |
+     * | Hour | `0-23` | `*` `,` `-` `/` |
+     * | Day of month | `1-31` | `*` `,` `-` `/` |
+     * | Month | `1-12` or `JAN`-`DEC` | `*` `,` `-` `/` |
+     * | Day of week | `0-7` or `SUN`-`SAT` | `*` `,` `-` `/` |
+     *
+     * - `0` and `7` both mean Sunday.
+     * - Month and weekday names are case-insensitive (`MON`, `Monday`, `jan`, `January` all work).
+     * - Nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
+     * - When both day-of-month and day-of-week are restricted (neither is `*`), the job
+     *   fires when **either** matches — [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) OR semantics.
+     * - All expressions work on all platforms — there is no Windows trigger limit here.
+     *
+     * ### Lifecycle & `--hot`
+     *
+     * Under `bun --hot`, all in-process cron jobs are stopped immediately before the module
+     * graph is re-evaluated. Each `Bun.cron()` call still in your source then re-registers,
+     * so editing the schedule, editing the callback, or **deleting the line entirely** all
+     * take effect on save without leaking timers.
+     *
+     * By default the job keeps the process alive (like `setInterval`); call `.unref()` to let
+     * the process exit naturally when nothing else is pending.
+     *
+     * @param schedule Cron expression or nickname (e.g. `"*\/5 * * * *"`, `"@hourly"`).
+     * @param handler Function to call on each fire. May return a Promise — the next fire
+     *   is not scheduled until it settles.
+     * @returns A {@link CronJob} handle. Chainable: `.stop()`, `.ref()`, `.unref()` all
+     *   return the job itself.
+     * @throws Synchronously if `schedule` is invalid, or the expression has no future
+     *   occurrences (e.g. `"0 0 30 2 *"` — February 30th).
+     *
+     * @example
+     * ```ts
+     * // Hourly cleanup, keeps process alive
+     * Bun.cron("0 * * * *", async () => {
+     *   await cleanupTempFiles();
+     * });
+     *
+     * // Background healthcheck that doesn't block process exit
+     * Bun.cron("*\/30 * * * *", () => fetch("https://example.com/health")).unref();
+     *
+     * // Stop conditionally
+     * const job = Bun.cron("* * * * *", async () => {
+     *   if (await isDone()) job.stop();
+     * });
+     * ```
+     *
+     * @see {@link CronJob} for the returned handle.
+     * @see {@link Bun.cron.parse} to preview the next fire time.
+     */
+    (schedule: CronWithAutocomplete, handler: (this: CronJob) => unknown): CronJob;
+    /**
+     * Register an **OS-level** cron job that runs a JavaScript/TypeScript module on a schedule.
+     *
+     * Unlike the callback overload, this registers the job with the operating system's
+     * scheduler — the job survives process exit and persists across reboots. Bun spawns
+     * a fresh process for each invocation, so there is no shared state between runs.
+     *
+     * | Platform | Scheduler | Inspect with |
+     * |----------|-----------|--------------|
+     * | Linux    | [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html) | `crontab -l` |
+     * | macOS    | [launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html) | `launchctl list` |
+     * | Windows  | [Task Scheduler](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page) | `schtasks /query` |
+     *
+     * ### Module shape
+     *
+     * The target module must have a `default` export with a `scheduled(controller)` method,
+     * matching the [Cloudflare Workers Cron Triggers](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/)
+     * API. The controller exposes `cron` (the expression) and `scheduledTime` (ms since epoch).
+     *
+     * ```ts
+     * // worker.ts
+     * export default {
+     *   async scheduled(controller: Bun.CronController) {
+     *     console.log(`Fired: ${controller.cron} at ${new Date(controller.scheduledTime)}`);
+     *     await doWork();
+     *   },
+     * };
+     * ```
+     *
+     * ### Cron expression syntax
+     *
+     * Five fields: `minute hour day-of-month month day-of-week`.
+     *
+     * | Field | Values | Special chars |
+     * |-------|--------|---------------|
+     * | Minute | `0-59` | `*` `,` `-` `/` |
+     * | Hour | `0-23` | `*` `,` `-` `/` |
+     * | Day of month | `1-31` | `*` `,` `-` `/` |
+     * | Month | `1-12` or `JAN`-`DEC` | `*` `,` `-` `/` |
+     * | Day of week | `0-7` or `SUN`-`SAT` | `*` `,` `-` `/` |
+     *
+     * - `0` and `7` both mean Sunday.
+     * - Month and weekday names are case-insensitive (`MON`, `Monday`, `jan`, `January` all work).
+     * - Nicknames: `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`, `@midnight`, `@hourly`.
+     * - When both day-of-month and day-of-week are restricted (neither is `*`), the job
+     *   fires when **either** matches — [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) OR semantics.
+     *
+     * ### Platform caveats
+     *
+     * - **Windows:** minute steps that don't evenly divide 60 (e.g. `*\/7`, `*\/11`) with
+     *   all hours active exceed Task Scheduler's 48-trigger limit and throw. Divisors
+     *   of 60 (`*\/5`, `*\/10`, `*\/15`, `*\/20`, `*\/30`) and all common patterns work.
+     * - **Windows headless/CI:** registration fails if the current user's SID can't be
+     *   resolved (typical under service accounts). Run as a regular user or create the
+     *   task manually with `schtasks /create /ru SYSTEM`.
+     * - **macOS:** stdout/stderr are written to `/tmp/bun.cron.<title>.{stdout,stderr}.log`.
+     *
+     * ### Idempotency & removal
+     *
+     * Registering with a title that already exists replaces the previous entry. Use
+     * {@link Bun.cron.remove} to unregister. The title is namespaced per user, so
+     * different users can register jobs with the same title independently.
+     *
+     * @param path Path to the module to run. Resolved relative to the calling file.
+     * @param schedule Cron expression or nickname (e.g. `"30 2 * * MON"`, `"@daily"`).
+     * @param title Unique identifier for this job. Alphanumeric, hyphens, and underscores only —
+     *   used directly in crontab markers, launchd service labels, and schtasks task names.
+     * @returns Promise that resolves once the OS scheduler has accepted the job.
+     * @throws If the cron expression is invalid, `title` contains illegal characters,
+     *   the expression exceeds Windows' trigger limit, or the underlying scheduler command fails
+     *   (the error message includes the scheduler's stderr output).
+     *
+     * @example
+     * ```ts
+     * // Register once (e.g. in a postinstall script or setup command)
+     * await Bun.cron("./jobs/weekly-report.ts", "30 2 * * MON", "weekly-report");
+     * await Bun.cron("./jobs/cleanup.ts", "@daily", "daily-cleanup");
+     *
+     * // Later, to unregister:
+     * await Bun.cron.remove("weekly-report");
+     * ```
+     *
+     * @see {@link Bun.cron.remove} to unregister.
+     * @see {@link Bun.cron.parse} to preview the next fire time.
+     */
+    (path: string, schedule: CronWithAutocomplete, title: string): Promise<void>;
+    /**
+     * Remove a previously registered cron job by its title.
+     *
+     * @param title - The title of the cron job to remove
+     * @returns Promise that resolves when the cron job is removed
+     *
+     * @example
+     * ```ts
+     * await Bun.cron.remove("weekly-report");
+     * ```
+     */
+    remove(title: string): Promise<void>;
+    /**
+     * Parse a cron expression and return the next matching `Date` in UTC.
+     *
+     * Supports the same syntax as {@link Bun.cron} — 5-field expressions, named
+     * days/months, and predefined nicknames like `@daily`.
+     *
+     * When both day-of-month and day-of-week are specified (neither is `*`),
+     * matching uses OR logic per [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html):
+     * a date matches if **either** field matches.
+     *
+     * @param expression - A cron expression or nickname (e.g. `"0,15,30,45 * * * *"`, `"0 9 * * MON-FRI"`, `"@hourly"`)
+     * @param relativeDate - Starting point for the search (defaults to `Date.now()`). Accepts a `Date` or milliseconds since epoch.
+     * @returns The next `Date` matching the expression in UTC, or `null` if no match exists within 8 years (e.g. `"0 0 30 2 *"` — Feb 30 never occurs)
+     * @throws If the expression is invalid or `relativeDate` is `NaN`/`Infinity`
+     *
+     * @example
+     * ```ts
+     * // Next weekday at 09:30 UTC
+     * const next = Bun.cron.parse("30 9 * * MON-FRI");
+     *
+     * // Chain calls to get a sequence
+     * const from = new Date();
+     * const first = Bun.cron.parse("@hourly", from);
+     * const second = first ? Bun.cron.parse("@hourly", first) : null;
+     * ```
+     */
+    parse(expression: CronWithAutocomplete, relativeDate?: Date | number): Date | null;
+  };
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */
   type ReadableSubprocess = Subprocess<any, "pipe", "pipe">;
@@ -7632,6 +8144,534 @@ declare module "bun" {
      * ```
      */
     match(str: string): boolean;
+  }
+
+  namespace WebView {
+    type Modifier = "Shift" | "Control" | "Alt" | "Meta";
+
+    type VirtualKey =
+      | "Enter"
+      | "Tab"
+      | "Space"
+      | "Backspace"
+      | "Delete"
+      | "Escape"
+      | "ArrowLeft"
+      | "ArrowRight"
+      | "ArrowUp"
+      | "ArrowDown"
+      | "Home"
+      | "End"
+      | "PageUp"
+      | "PageDown";
+
+    interface ClickOptions {
+      /** @default "left" */
+      button?: "left" | "right" | "middle";
+      /** Modifier keys to hold during the click. */
+      modifiers?: Modifier[];
+      /** Number of clicks (1 = single, 2 = double, 3 = triple). @default 1 */
+      clickCount?: 1 | 2 | 3;
+    }
+
+    interface ClickSelectorOptions extends ClickOptions {
+      /**
+       * Maximum time in milliseconds to wait for the element to become
+       * actionable (attached, visible, stable for 2 frames, not obscured).
+       * @default 30000
+       */
+      timeout?: number;
+    }
+
+    interface ScrollToOptions {
+      /**
+       * Maximum time in milliseconds to wait for the element to exist.
+       * @default 30000
+       */
+      timeout?: number;
+      /**
+       * Vertical alignment. `"nearest"` scrolls minimally (no-op if already
+       * in view); `"center"` snaps the element's center to the viewport
+       * center.
+       * @default "center"
+       */
+      block?: "start" | "center" | "end" | "nearest";
+    }
+
+    interface PressOptions {
+      /** Modifier keys to hold during the keypress. */
+      modifiers?: Modifier[];
+    }
+
+    /**
+     * Browser backend selection.
+     *
+     * - `"webkit"` (default): WKWebView. macOS only. Zero external
+     *   dependencies — uses the system WebKit.framework.
+     * - `"chrome"`: Chrome/Chromium via DevTools Protocol over
+     *   `--remote-debugging-pipe`. Works anywhere Chrome is installed.
+     *   Auto-detects the binary in standard locations; override with
+     *   `backend.path` or the `BUN_CHROME_PATH` environment variable.
+     *
+     * The object form lets you pass extra launch flags. Chrome switches are
+     * last-wins for duplicates, so `argv` can override the defaults.
+     *
+     * **Chrome is spawned once per process** — the first `new Bun.WebView()`
+     * call's `path`/`argv`/`dataStore.directory` win; subsequent views reuse
+     * the same Chrome instance via `Target.createTarget`.
+     *
+     * Default flags: `--remote-debugging-pipe --headless --no-first-run
+     * --no-default-browser-check --disable-gpu --user-data-dir=<temp>`.
+     */
+    type Backend =
+      | "webkit"
+      | "chrome"
+      | {
+          type: "chrome";
+          /**
+           * Connect to an existing Chrome's DevTools WebSocket directly.
+           * Get the URL from Chrome's `DevToolsActivePort` file
+           * (`<port>\n<path>`, in the profile directory) — the full URL
+           * is `ws://127.0.0.1:<port><path>`.
+           *
+           * Enable remote debugging in Chrome at
+           * `chrome://inspect/#remote-debugging`, or launch with
+           * `--remote-debugging-port=9222`. Both write
+           * `DevToolsActivePort`.
+           *
+           * **Note**: The `chrome://inspect` toggle shows an "Allow
+           * remote debugging?" dialog on **every** new connection.
+           *
+           * Mutually exclusive with `path`/`argv` — you're connecting
+           * to a Chrome that's already running, not spawning one.
+           */
+          url: string;
+        }
+      | {
+          type: "chrome";
+          /**
+           * Controls the connect-vs-spawn choice:
+           *
+           * - `false` — skip auto-detect, always spawn a fresh Chrome.
+           *   Executable path still auto-found unless `path` is set.
+           * - `undefined` (default) — **auto-detect**: if a
+           *   `DevToolsActivePort` file exists (Chrome with remote
+           *   debugging is running), connect to it; else spawn.
+           *
+           * Auto-detect falls back to spawn if the connect fails (stale
+           * file from a dead Chrome). The WebSocket auto-closes when
+           * the last `WebView` is closed. For unattended automation,
+           * pass `url: false`.
+           */
+          url?: false;
+          /**
+           * Path to the Chrome/Chromium executable. Overrides
+           * auto-detection and forces Bun to spawn a fresh Chrome
+           * subprocess (skipping the existing-Chrome auto-connect).
+           *
+           * **Auto-connect**: when neither `path` nor `url` is set, Bun
+           * checks Chrome's `DevToolsActivePort` file — if a Chrome with
+           * remote debugging is already running, Bun connects to it over
+           * WebSocket instead of spawning. Pass `path` (or `argv`) to
+           * force spawn-mode.
+           */
+          path?: string;
+          /**
+           * Extra command-line arguments appended after the default flags.
+           * Chrome's CommandLine does last-wins for duplicate switches, so
+           * `["--headless=new"]` would override the default `--headless`.
+           */
+          argv?: string[];
+          /**
+           * Route the subprocess's stdout to Bun's. Chrome is mostly quiet
+           * here. @default "ignore"
+           */
+          stdout?: "inherit" | "ignore";
+          /**
+           * Route the subprocess's stderr to Bun's. Chrome is chatty (GCM
+           * registration, updater noise, font-config warnings) even with a
+           * minimal flag set. Set to `"inherit"` when Chrome crashes silently
+           * — the crash report lands here. @default "ignore"
+           */
+          stderr?: "inherit" | "ignore";
+        }
+      | {
+          type: "webkit";
+          /**
+           * Route the host process's stdout to Bun's. The host runs no JS
+           * — only panic/NSLog output. @default "ignore"
+           */
+          stdout?: "inherit" | "ignore";
+          /**
+           * Route the host process's stderr to Bun's. @default "ignore"
+           */
+          stderr?: "inherit" | "ignore";
+        };
+
+    /**
+     * Console capture. Called for each `console.*` invocation in the page.
+     *
+     * - `globalThis.console`: forward directly to the parent's console.
+     *   `console.log("hi")` in the page prints `hi` to stdout with Bun's
+     *   formatter; `console.error` goes to stderr. Zero JS overhead per call
+     *   — dispatches through `ConsoleClient` directly.
+     * - `(type, ...args) => void`: custom callback. `type` is the method
+     *   name (`"log"` | `"warn"` | `"error"` | `"info"` | `"debug"` | ...).
+     *   Primitive args unwrap to their raw values; object args arrive as a
+     *   structured descriptor — for Chrome, the CDP `RemoteObject` with
+     *   `.type`/`.className`/`.description`/`.preview.properties`; for
+     *   WebKit, the JSON round-trip of the object (lossy for functions/
+     *   circular refs, which stringify to their `String(...)` coercion).
+     */
+    type ConsoleCapture = typeof console | ((type: string, ...args: unknown[]) => void);
+
+    interface ConstructorOptions {
+      /** Viewport width in pixels. Range: [1, 16384]. @default 800 */
+      width?: number;
+      /** Viewport height in pixels. Range: [1, 16384]. @default 600 */
+      height?: number;
+      /** Only `true` (headless) is implemented. @default true */
+      headless?: boolean;
+      /**
+       * Browser backend. Defaults to `"webkit"` on macOS, throws on other
+       * platforms unless `"chrome"` is specified.
+       * @default "webkit"
+       */
+      backend?: Backend;
+      /**
+       * Initial URL to navigate to. The navigation starts before the
+       * constructor returns; `await view.navigate(otherUrl)` or any other
+       * operation will wait for it to complete first.
+       *
+       * Equivalent to calling `view.navigate(url)` immediately after
+       * construction.
+       */
+      url?: string;
+      /** Capture page-side `console.*` calls. See {@link ConsoleCapture}. */
+      console?: ConsoleCapture;
+      /**
+       * Storage backing for cookies, localStorage, IndexedDB, etc.
+       *
+       * - `"ephemeral"` (default): in-memory only, nothing written to disk.
+       * - `{ directory }`: persistent storage rooted at the given path.
+       *   Multiple views with the same directory share state.
+       *
+       * **Chrome backend**: `directory` is per-Chrome-process
+       * (`--user-data-dir`), not per-view. The first view's directory
+       * applies to all views spawned in the same Bun process.
+       */
+      dataStore?: "ephemeral" | { directory: string };
+    }
+  }
+
+  /**
+   * A headless browser view for automation. WKWebView on macOS (zero
+   * dependencies), Chrome DevTools Protocol elsewhere (or with
+   * `backend: "chrome"`).
+   *
+   * Each view runs its page in a separate renderer process. All input
+   * methods dispatch **native** events — the resulting DOM events have
+   * `isTrusted: true`.
+   *
+   * @example
+   * ```ts
+   * await using view = new Bun.WebView({ width: 800, height: 600 });
+   * await view.navigate("https://example.com");
+   * await view.click("button[type=submit]");  // waits for actionability
+   * const title = await view.evaluate("document.title");
+   * const png = await view.screenshot();
+   * ```
+   *
+   * @example
+   * ```ts
+   * // Forward page console.log to parent stdout
+   * const view = new Bun.WebView({
+   *   backend: "chrome",
+   *   console: globalThis.console,
+   * });
+   * ```
+   *
+   * @experimental
+   */
+  class WebView extends EventTarget {
+    /**
+     * @throws on non-macOS platforms when `backend` is `"webkit"` (the
+     * default). Pass `backend: "chrome"` for cross-platform support.
+     */
+    constructor(options?: WebView.ConstructorOptions);
+
+    /**
+     * Force-kill all browser subprocesses (Chrome and the WKWebView host).
+     * Pending promises on all views reject on the next event loop tick.
+     *
+     * Called automatically at process exit. Call manually to reclaim browser
+     * resources early — subsequent `new Bun.WebView()` calls will respawn.
+     * Idempotent: calling when no subprocesses are alive is a no-op.
+     */
+    static closeAll(): void;
+
+    /** The last-navigated URL. Updated when a navigation completes. */
+    readonly url: string;
+    /** The page's `<title>`. Updated when a navigation completes. */
+    readonly title: string;
+    /** True while a navigation is in flight. */
+    readonly loading: boolean;
+
+    /**
+     * Fired when a navigation completes successfully. The callback runs
+     * before the corresponding `navigate()` promise resolves.
+     */
+    onNavigated: ((url: string, title: string) => void) | null;
+    /**
+     * Fired when a navigation fails. The callback runs before the
+     * corresponding `navigate()` promise rejects.
+     */
+    onNavigationFailed: ((error: Error) => void) | null;
+
+    /**
+     * Navigate to a URL. Resolves when the main frame's load completes
+     * (WKNavigationDelegate `didFinishNavigation`).
+     *
+     * @example
+     * ```ts
+     * await view.navigate("https://example.com");
+     * await view.navigate("data:text/html,<h1>hello</h1>");
+     * ```
+     */
+    navigate(url: string): Promise<void>;
+
+    /**
+     * Run a JavaScript expression in the page's main frame and return the
+     * result as a native JS value.
+     *
+     * The expression is wrapped as `await (${script})` — if it evaluates
+     * to a Promise, the promise is awaited. The resolved value is
+     * serialized page-side via `JSON.stringify` and deserialized here, so
+     * arrays and objects come back as real structures:
+     *
+     * ```ts
+     * await view.evaluate("document.title");        // string
+     * await view.evaluate("[1, 2, 3]");              // number[]
+     * await view.evaluate("({ a: 1, b: true })");    // { a: number, b: boolean }
+     * await view.evaluate("fetch('/api').then(r => r.json())");  // awaited
+     * ```
+     *
+     * **`script` must be an expression.** For statement sequences, wrap in
+     * an IIFE: `evaluate("(() => { let x = f(); return x + 1 })()")`.
+     *
+     * Values that `JSON.stringify` collapses to `undefined` (functions,
+     * symbols, `undefined` itself) resolve to `undefined`. Circular
+     * references reject.
+     *
+     * Only one `evaluate()` may be in flight at a time per view; a second
+     * concurrent call throws `ERR_INVALID_STATE`.
+     */
+    evaluate<T = unknown>(script: string): Promise<T>;
+
+    /**
+     * Capture a screenshot of the current viewport.
+     *
+     * **`encoding` controls the return type:**
+     * - `"blob"` (default) — `Blob` with the right MIME type. WebKit:
+     *   zero-copy mmap-backed store. Composes with `Bun.write()`,
+     *   `new Response()`, `blob.bytes()`.
+     * - `"buffer"` — Node `Buffer`. WebKit: zero-copy (the same mmap'd
+     *   pages wrapped as an `ArrayBuffer` that munmap's on GC).
+     * - `"base64"` — base64-encoded `string`. Chrome: zero decode (CDP
+     *   returns base64 natively). Direct Kitty `t=d` transmission.
+     * - `"shmem"` — `{ name, size }`. The POSIX shm name is left linked;
+     *   caller owns `shm_unlink`. Kitty `t=s` transmission: pass `name`
+     *   as the payload, Kitty unlinks after reading. Not on Windows.
+     *
+     * @param options.format Image format. `"webp"` requires Chrome.
+     *   @default `"png"`
+     * @param options.quality Compression quality for JPEG/WebP, 0-100.
+     *   Ignored for PNG. @default `80`
+     * @param options.encoding Return-type encoding. @default `"blob"`
+     *
+     * @example Kitty graphics protocol, shared-memory transmission
+     * ```ts
+     * const { name, size } = await view.screenshot({ encoding: "shmem" });
+     * process.stdout.write(
+     *   `\x1b_Gf=100,t=s,a=T,S=${size};${btoa(name)}\x1b\\`
+     * );
+     * // Kitty shm_open's the name, reads ${size} PNG bytes, unlinks.
+     * ```
+     */
+    screenshot(options?: { encoding?: "blob"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<Blob>;
+    screenshot(options: { encoding: "buffer"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<Buffer>;
+    screenshot(options: { encoding: "base64"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<string>;
+    screenshot(options: { encoding: "shmem"; format?: "png" | "jpeg" | "webp"; quality?: number }): Promise<{
+      /** POSIX shm name (pass to `shm_open(2)` or Kitty `t=s`). */
+      name: string;
+      /** Encoded image size in bytes. */
+      size: number;
+    }>;
+
+    /**
+     * Send a raw Chrome DevTools Protocol command. **Chrome backend only.**
+     *
+     * The command is scoped to this view's session (targets the current
+     * tab). Returns the decoded `result` object from the CDP response, or
+     * rejects with the `error.message` if Chrome reports a protocol error.
+     *
+     * Call `await view.navigate(...)` at least once before using `cdp()` —
+     * the first navigate sets up the CDP session.
+     *
+     * @param method Domain-qualified method name, e.g.
+     *   `"Runtime.evaluate"`, `"DOM.querySelector"`,
+     *   `"Emulation.setUserAgentOverride"`.
+     * @param params Command parameters. Must be JSON-serializable.
+     *
+     * @example
+     * ```ts
+     * const view = new Bun.WebView({ backend: "chrome" });
+     * await view.navigate("https://example.com");
+     *
+     * const { root } = await view.cdp("DOM.getDocument");
+     * const { nodeId } = await view.cdp("DOM.querySelector", {
+     *   nodeId: root.nodeId,
+     *   selector: "input#search",
+     * });
+     * await view.cdp("DOM.focus", { nodeId });
+     * ```
+     *
+     * @see https://chromedevtools.github.io/devtools-protocol/
+     */
+    cdp<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
+
+    /**
+     * Subscribe to CDP events. **Chrome backend only.**
+     *
+     * Event types are CDP method names directly —
+     * `"Network.responseReceived"`, `"Page.frameStartedLoading"`,
+     * `"DOM.documentUpdated"`, etc. The listener receives a
+     * `MessageEvent` with the CDP params as `event.data`.
+     *
+     * Enable the domain first with `cdp("Domain.enable")`, or Chrome
+     * won't send those events. Events without a registered listener
+     * are dropped before JSON parsing (no overhead for domains you
+     * enabled but don't fully listen to).
+     *
+     * @example
+     * ```ts
+     * await view.navigate("about:blank");
+     * await view.cdp("Network.enable");
+     * view.addEventListener("Network.responseReceived", e => {
+     *   console.log(e.data.response.status, e.data.response.url);
+     * });
+     * await view.navigate("https://example.com");
+     * ```
+     */
+    addEventListener<T = unknown>(
+      type: `${string}.${string}`,
+      listener: (event: MessageEvent<T>) => void,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+    addEventListener(
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ): void;
+
+    /**
+     * Click at the given viewport coordinates.
+     *
+     * Fires native `pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click`
+     * events with `isTrusted: true`. The promise resolves after WebContent
+     * has processed the full event sequence (including all JS handlers) —
+     * no polling, WebKit's own mouse-queue-drain barrier.
+     */
+    click(x: number, y: number, options?: WebView.ClickOptions): Promise<void>;
+    /**
+     * Wait for an element to become actionable, then click its center.
+     *
+     * Actionability is checked page-side at rAF rate: the element must be
+     * attached, have non-zero size, be in the viewport, be stable (bounding
+     * box unchanged for 2 consecutive frames), and be the topmost element
+     * at its center point (not obscured). Once actionable, a native click
+     * fires at the center coordinates.
+     *
+     * @example
+     * ```ts
+     * // Waits for the button to appear and stop animating, then clicks.
+     * await view.click("#submit");
+     * ```
+     */
+    click(selector: string, options?: WebView.ClickSelectorOptions): Promise<void>;
+
+    /**
+     * Insert text into the focused element.
+     *
+     * Uses WebKit's `InsertText` editing command (not keystroke simulation),
+     * so no `keydown` events fire — this is the same path as paste. No IME,
+     * no smart-quote substitution; the text lands exactly as given. Fires
+     * `beforeinput`/`input` with `isTrusted: true`.
+     */
+    type(text: string): Promise<void>;
+
+    /**
+     * Press a key.
+     *
+     * Named keys (`"Enter"`, `"Backspace"`, `"ArrowLeft"`, etc.) map to
+     * editing commands where available and resolve when WebContent has
+     * processed them. `"Escape"` and keys with modifiers fall back to raw
+     * keyDown/keyUp (no WebKit barrier exists for keyboard events — a
+     * following `evaluate()` serializes).
+     *
+     * A single character (e.g. `"a"`) combined with `modifiers` sends a
+     * chord like Cmd+A.
+     */
+    press(key: WebView.VirtualKey | (string & {}), options?: WebView.PressOptions): Promise<void>;
+
+    /**
+     * Scroll the viewport by the given pixel delta.
+     *
+     * Fires a native `wheel` event with `isTrusted: true` at the viewport
+     * center. Positive `dy` scrolls down (content up), matching
+     * `window.scrollBy` semantics.
+     */
+    scroll(dx: number, dy: number): Promise<void>;
+
+    /**
+     * Wait for an element to exist, then scroll it into view.
+     *
+     * Uses `Element.scrollIntoView({ block, behavior: 'instant' })` —
+     * scrolls every scrollable ancestor in the chain, not just the
+     * document. `scrollY` is updated synchronously before the promise
+     * resolves. No `wheel` event fires (this is a programmatic scroll).
+     *
+     * @example
+     * ```ts
+     * await view.scrollTo("#footer");               // center (default)
+     * await view.scrollTo("#hero", { block: "start" });
+     * await view.scrollTo(".item", { block: "nearest" }); // minimal scroll
+     * ```
+     */
+    scrollTo(selector: string, options?: WebView.ScrollToOptions): Promise<void>;
+
+    /**
+     * Resize the viewport.
+     */
+    resize(width: number, height: number): Promise<void>;
+
+    /** Navigate back in session history. */
+    back(): Promise<void>;
+    /** Navigate forward in session history. */
+    forward(): Promise<void>;
+    /** Reload the current page. */
+    reload(): Promise<void>;
+
+    /**
+     * Close the view and release its WebContent process. After close,
+     * all methods throw. Idempotent.
+     */
+    close(): void;
+
+    /** Alias for {@link close}. Enables `using view = new Bun.WebView(...)`. */
+    [Symbol.dispose](): void;
+    /** Alias for {@link close}. Enables `await using view = new Bun.WebView(...)`. */
+    [Symbol.asyncDispose](): void;
   }
 
   /**

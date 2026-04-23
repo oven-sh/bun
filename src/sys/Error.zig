@@ -16,7 +16,7 @@ pub const Int = u16;
 pub const oom = fromCode(E.NOMEM, .read);
 
 errno: Int = todo_errno,
-fd: bun.FileDescriptor = bun.invalid_fd,
+fd: bun.FD = bun.invalid_fd,
 from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
 path: []const u8 = "",
 syscall: sys.Tag = sys.Tag.TODO,
@@ -155,7 +155,7 @@ pub fn name(this: *const Error) []const u8 {
             // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
             @setRuntimeSafety(false);
             if (this.from_libuv) {
-                break :brk @as(SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(this.errno))));
+                break :brk @as(SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(-@as(c_int, this.errno)))));
             }
 
             break :brk @as(SystemErrno, @enumFromInt(this.errno));
@@ -325,6 +325,35 @@ pub inline fn todo() Error {
 pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     return this.toSystemError().toErrorInstance(ptr);
 }
+
+/// Like `toJS` but populates the error's stack trace with async frames from the
+/// given promise's await chain. Use when rejecting a promise from native code
+/// at the top of the event loop (threadpool callback) — otherwise the error
+/// will have an empty stack trace.
+pub fn toJSWithAsyncStack(this: Error, ptr: *jsc.JSGlobalObject, promise: *jsc.JSPromise) bun.JSError!jsc.JSValue {
+    return this.toSystemError().toErrorInstanceWithAsyncStack(ptr, promise);
+}
+
+pub const TestingAPIs = struct {
+    /// Exercises Error.name() with from_libuv=true so tests can feed the
+    /// negated-UV-code errno values that node_fs.zig stores and verify the
+    /// integer overflow at translateUVErrorToE(-code) is fixed. Windows-only.
+    pub fn sysErrorNameFromLibuv(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const arguments = callframe.arguments();
+        if (arguments.len < 1 or !arguments[0].isNumber()) {
+            return globalThis.throw("sysErrorNameFromLibuv: expected 1 number argument", .{});
+        }
+        if (comptime !Environment.isWindows) {
+            return .js_undefined;
+        }
+        const err: Error = .{
+            .errno = @intCast(arguments[0].toInt32()),
+            .syscall = .open,
+            .from_libuv = true,
+        };
+        return bun.String.createUTF8ForJS(globalThis, err.name());
+    }
+};
 
 const std = @import("std");
 

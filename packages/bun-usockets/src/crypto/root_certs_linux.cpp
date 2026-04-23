@@ -10,8 +10,6 @@
 #include <openssl/x509_vfy.h>
 #include <openssl/pem.h>
 
-extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char* error_msg);
-
 // Helper function to load certificates from a directory
 static void load_certs_from_directory(const char* dir_path, STACK_OF(X509)* cert_stack) {
   DIR* dir = opendir(dir_path);
@@ -148,21 +146,6 @@ extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs)
   // Then try loading from directories
   for (const char** path = dir_paths; *path != NULL; path++) {
     load_certs_from_directory(*path, *system_certs);
-  }
-  
-  // Also check NODE_EXTRA_CA_CERTS environment variable
-  const char* extra_ca_certs = getenv("NODE_EXTRA_CA_CERTS");
-  if (extra_ca_certs && strlen(extra_ca_certs) > 0) {
-    FILE* file = fopen(extra_ca_certs, "r");
-    if (file) {
-      X509* cert;
-      while ((cert = PEM_read_X509(file, NULL, NULL, NULL)) != NULL) {
-        sk_X509_push(*system_certs, cert);
-      }
-      fclose(file);
-    } else {
-      BUN__warn__extra_ca_load_failed(extra_ca_certs, "Failed to open file");
-    }
   }
 }
 

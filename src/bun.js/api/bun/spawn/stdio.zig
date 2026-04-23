@@ -2,7 +2,7 @@ pub const Stdio = union(enum) {
     inherit,
     capture: struct { buf: *bun.ByteList },
     ignore,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     dup2: struct {
         out: bun.jsc.Subprocess.StdioKind,
         to: bun.jsc.Subprocess.StdioKind,
@@ -10,7 +10,7 @@ pub const Stdio = union(enum) {
     path: jsc.Node.PathLike,
     blob: jsc.WebCore.Blob.Any,
     array_buffer: jsc.ArrayBuffer.Strong,
-    memfd: bun.FileDescriptor,
+    memfd: bun.FD,
     pipe,
     ipc,
     readable_stream: jsc.WebCore.ReadableStream,
@@ -93,6 +93,7 @@ pub const Stdio = union(enum) {
         if (comptime !Environment.isLinux) {
             return false;
         }
+        if (!bun.sys.canUseMemfd()) return false;
         const label = switch (index) {
             0 => "spawn_stdio_stdin",
             1 => "spawn_stdio_stdout",
@@ -235,10 +236,10 @@ pub const Stdio = union(enum) {
                         return .{ .err = .blob_used_as_out };
                     }
 
-                    break :brk .{ .buffer = bun.handleOom(bun.default_allocator.create(uv.Pipe)) };
+                    break :brk .{ .buffer = createZeroedPipe() };
                 },
-                .ipc => .{ .ipc = bun.handleOom(bun.default_allocator.create(uv.Pipe)) },
-                .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = bun.handleOom(bun.default_allocator.create(uv.Pipe)) },
+                .ipc => .{ .ipc = createZeroedPipe() },
+                .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = createZeroedPipe() },
                 .fd => |fd| .{ .pipe = fd },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
                 .path => |pathlike| .{ .path = pathlike.slice() },
@@ -487,12 +488,18 @@ pub const Stdio = union(enum) {
     }
 };
 
+/// Allocate a zero-initialized uv.Pipe. Zero-init ensures `pipe.loop` is null
+/// for pipes that never reach `uv_pipe_init`, so `closeAndDestroy` can tell
+/// whether `uv_close` is needed.
+fn createZeroedPipe() *uv.Pipe {
+    return bun.new(uv.Pipe, std.mem.zeroes(uv.Pipe));
+}
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const default_allocator = bun.default_allocator;
 const uv = bun.windows.libuv;
 
 const jsc = bun.jsc;

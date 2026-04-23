@@ -1,10 +1,13 @@
 import { spawnSync } from "bun";
 import { cc, dlopen } from "bun:ffi";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isWindows } from "harness";
 import { join } from "path";
 
 import source from "./napi-app/ffi_addon_1.c" with { type: "file" };
+
+// TinyCC (and all of bun:ffi) is disabled on Windows ARM64
+const isFFIUnavailable = isWindows && isArm64;
 
 const symbols = {
   set_instance_data: {
@@ -24,6 +27,8 @@ const symbols = {
 let addon1, addon2, cc1, cc2;
 
 beforeAll(() => {
+  if (isFFIUnavailable) return;
+
   // build gyp
   const install = spawnSync({
     cmd: [bunExe(), "install", "--verbose"],
@@ -59,7 +64,7 @@ beforeAll(() => {
   }
 });
 
-describe("ffi napi integration", () => {
+describe.skipIf(isFFIUnavailable)("ffi napi integration", () => {
   it("has a different napi_env for each ffi library", () => {
     addon1.set_instance_data(undefined, 5);
     addon2.set_instance_data(undefined, 6);
@@ -75,7 +80,7 @@ describe("ffi napi integration", () => {
   });
 });
 
-describe("cc napi integration", () => {
+describe.skipIf(isFFIUnavailable)("cc napi integration", () => {
   // fails on windows as TCC can't link the napi_ functions
   // TinyCC's setjmp/longjmp error handling conflicts with ASan.
   it.todoIf(isWindows || isASAN)("has a different napi_env for each cc invocation", () => {

@@ -289,7 +289,7 @@ pub noinline fn next(this: *Rm) Yield {
     }
 
     switch (this.state) {
-        .done => return this.bltn().done(0),
+        .done => return this.bltn().done(this.state.done.exit_code),
         .err => return this.bltn().done(this.state.err),
         else => unreachable,
     }
@@ -297,6 +297,7 @@ pub noinline fn next(this: *Rm) Yield {
 
 pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?jsc.SystemError) Yield {
     log("Rm(0x{x}).onIOWriterChunk()", .{@intFromPtr(this)});
+    defer if (e) |err| err.deref();
     if (comptime bun.Environment.allow_assert) {
         assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
             (this.state == .exec and this.state.exec.state == .waiting and this.state.exec.output_count.load(.seq_cst) > 0) or
@@ -314,7 +315,6 @@ pub fn onIOWriterChunk(this: *Rm, _: usize, e: ?jsc.SystemError) Yield {
     }
 
     if (e != null) {
-        defer e.?.deref();
         this.state = .{ .err = @intFromEnum(e.?.getErrno()) };
         return this.bltn().done(e.?.getErrno());
     }
@@ -403,6 +403,9 @@ fn parseFlag(this: *Opts, _: *Builtin, flag: []const u8) ParseFlagsResult {
 }
 
 pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
+    // In verbose mode the root DirTask may also be queued for writeVerbose; both callbacks
+    // hold a pending count and the last one to run frees the ShellRmTask.
+    defer task.decrPendingAndMaybeDeinit();
     var exec = &this.state.exec;
     const tasks_done = switch (exec.state) {
         .idle => @panic("Invalid state"),
@@ -410,7 +413,11 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
             exec.state.waiting.tasks_done += 1;
             const amt = exec.state.waiting.tasks_done;
             if (task.err) |err| {
+                // Ownership of err.path stays with the task (freed in ShellRmTask.deinit);
+                // exec.err is only used as a did-anything-fail flag after this point, so
+                // drop the soon-to-be-dangling path slice from our copy.
                 exec.err = err;
+                exec.err.?.path = "";
                 const error_string = this.bltn().taskErrorToString(.rm, err);
                 if (this.bltn().stderr.needsIO()) |safeguard| {
                     log("Rm(0x{x}) task=0x{x} ERROR={s}", .{ @intFromPtr(this), @intFromPtr(task), error_string });
@@ -430,12 +437,19 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
     if (tasks_done >= this.state.exec.total_tasks and
         exec.getOutputCount(.output_done) >= exec.getOutputCount(.output_count))
     {
-        this.state = .{ .done = .{ .exit_code = if (exec.err) |theerr| theerr.errno else 0 } };
+        this.state = .{ .done = .{ .exit_code = if (exec.err != null) 1 else 0 } };
         this.next().run();
     }
 }
 
 fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) Yield {
+    defer {
+        const tm = verbose.task_manager;
+        if (verbose.parent_task != null) verbose.deinit();
+        // Release the pending count taken in postRun(); the ShellRmTask is freed once every
+        // queued writeVerbose and onShellRmTaskDone have run.
+        tm.decrPendingAndMaybeDeinit();
+    }
     if (this.bltn().stdout.needsIO()) |safeguard| {
         const buf = verbose.takeDeletedEntries();
         defer buf.deinit();
@@ -455,7 +469,7 @@ pub const ShellRmTask = struct {
     rm: *Rm,
     opts: Opts,
 
-    cwd: bun.FileDescriptor,
+    cwd: bun.FD,
     cwd_path: ?CwdPath = if (bun.Environment.isPosix) 0 else null,
 
     root_task: DirTask,
@@ -464,6 +478,10 @@ pub const ShellRmTask = struct {
 
     error_signal: *std.atomic.Value(bool),
     err_mutex: bun.Mutex = .{},
+    /// Main-thread callbacks that must complete before this task can be freed:
+    /// always one for onShellRmTaskDone (via finishConcurrently), plus one per DirTask whose
+    /// verbose output was queued. Decremented by decrPendingAndMaybeDeinit.
+    pending_main_callbacks: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
     err: ?Syscall.Error = null,
 
     event_loop: jsc.EventLoopHandle,
@@ -598,15 +616,22 @@ pub const ShellRmTask = struct {
 
             // We have executed all the children of this task
             if (this.subtask_count.fetchSub(1, .seq_cst) == 1) {
-                defer {
-                    if (this.task_manager.opts.verbose)
-                        this.queueForWrite()
-                    else
-                        this.deinit();
+                // If a verbose write will be queued, take a pending count on the ShellRmTask now —
+                // before decrementing the parent (children) or calling finishConcurrently (root) —
+                // so the main thread can't free it out from under writeVerbose.
+                const will_queue_verbose = this.task_manager.opts.verbose and this.deleted_entries.items.len > 0;
+                if (will_queue_verbose) {
+                    _ = this.task_manager.pending_main_callbacks.fetchAdd(1, .seq_cst);
                 }
 
                 // If we have a parent and we are the last child, now we can delete the parent
                 if (this.parent_task != null) {
+                    defer {
+                        if (will_queue_verbose)
+                            this.queueForWrite()
+                        else
+                            this.deinit();
+                    }
                     // It's possible that we queued this subdir task and it finished, while the parent
                     // was still in the `removeEntryDir` function
                     const tasks_left_before_decrement = this.parent_task.?.subtask_count.fetchSub(1, .seq_cst);
@@ -617,8 +642,13 @@ pub const ShellRmTask = struct {
                     return;
                 }
 
-                // Otherwise we are root task
+                // Root task. After finishConcurrently() the task may be freed at any time unless
+                // we hold a pending count, so don't touch `this`/task_manager afterwards unless
+                // will_queue_verbose kept it alive.
                 this.task_manager.finishConcurrently();
+                if (will_queue_verbose) {
+                    this.queueForWrite();
+                }
             }
 
             // Otherwise need to wait
@@ -658,7 +688,10 @@ pub const ShellRmTask = struct {
 
         pub fn queueForWrite(this: *DirTask) void {
             log("DirTask(0x{x}, path={s}) queueForWrite to_write={d}", .{ @intFromPtr(this), this.path, this.deleted_entries.items.len });
-            if (this.deleted_entries.items.len == 0) return;
+            if (this.deleted_entries.items.len == 0) {
+                if (this.parent_task != null) this.deinit();
+                return;
+            }
             if (this.task_manager.event_loop == .js) {
                 this.task_manager.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(this, .manual_deinit));
             } else {
@@ -677,7 +710,7 @@ pub const ShellRmTask = struct {
         }
     };
 
-    pub fn create(root_path: bun.PathString, rm: *Rm, cwd: bun.FileDescriptor, error_signal: *std.atomic.Value(bool), is_absolute: bool) *ShellRmTask {
+    pub fn create(root_path: bun.PathString, rm: *Rm, cwd: bun.FD, error_signal: *std.atomic.Value(bool), is_absolute: bool) *ShellRmTask {
         const task = bun.handleOom(bun.default_allocator.create(ShellRmTask));
         task.* = ShellRmTask{
             .rm = rm,
@@ -721,10 +754,12 @@ pub const ShellRmTask = struct {
         this.enqueueNoJoin(parent_dir, new_path, kind_hint);
     }
 
+    /// Takes ownership of `path`; freed via the spawned DirTask's deinit (or here on early return).
     pub fn enqueueNoJoin(this: *ShellRmTask, parent_task: *DirTask, path: [:0]const u8, kind_hint: DirTask.EntryKindHint) void {
-        defer debug("enqueue: {s} {s}", .{ path, @tagName(kind_hint) });
+        debug("enqueue: {s} {s}", .{ path, @tagName(kind_hint) });
 
         if (this.error_signal.load(.seq_cst)) {
+            bun.default_allocator.free(path);
             return;
         }
 
@@ -747,7 +782,7 @@ pub const ShellRmTask = struct {
         jsc.WorkPool.schedule(&subtask.task);
     }
 
-    pub fn getcwd(this: *ShellRmTask) bun.FileDescriptor {
+    pub fn getcwd(this: *ShellRmTask) bun.FD {
         return this.cwd;
     }
 
@@ -814,7 +849,7 @@ pub const ShellRmTask = struct {
                             .NOTDIR => {
                                 delete_state.treat_as_dir = false;
                                 if (this.removeEntryFile(dir_task, dir_task.path, is_absolute, buf, &delete_state).asErr()) |err| {
-                                    return .{ .err = this.errorWithPath(err, path) };
+                                    return .{ .err = err };
                                 }
                                 if (!delete_state.treat_as_dir) return .success;
                                 if (delete_state.treat_as_dir) break :out_to_iter;
@@ -899,7 +934,7 @@ pub const ShellRmTask = struct {
                     };
 
                     switch (this.removeEntryFile(dir_task, file_path, is_absolute, buf, &remove_child_vtable)) {
-                        .err => |e| return .{ .err = this.errorWithPath(e, current.name.sliceAssumeZ()) },
+                        .err => |e| return .{ .err = e },
                         .result => {},
                     }
                 },
@@ -1012,7 +1047,7 @@ pub const ShellRmTask = struct {
 
             this.treat_as_dir = true;
             if (this.allow_enqueue) {
-                this.task.enqueueNoJoin(parent_dir_task, path, .dir);
+                this.task.enqueueNoJoin(parent_dir_task, bun.handleOom(bun.default_allocator.dupeZ(u8, path)), .dir);
                 this.enqueued = true;
             }
             return .success;
@@ -1169,7 +1204,20 @@ pub const ShellRmTask = struct {
         this.rm.onShellRmTaskDone(this);
     }
 
+    pub fn decrPendingAndMaybeDeinit(this: *ShellRmTask) void {
+        if (this.pending_main_callbacks.fetchSub(1, .seq_cst) == 1) {
+            this.deinit();
+        }
+    }
+
     pub fn deinit(this: *ShellRmTask) void {
+        if (bun.Environment.isWindows) {
+            if (this.cwd_path) |p| bun.default_allocator.free(p);
+        }
+        if (this.err) |*e| {
+            if (e.path.len > 0) bun.default_allocator.free(e.path);
+        }
+        this.root_task.deleted_entries.deinit();
         bun.default_allocator.destroy(this);
     }
 };

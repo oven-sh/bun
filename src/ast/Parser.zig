@@ -26,6 +26,8 @@ pub const Parser = struct {
 
         warn_about_unbundled_modules: bool = true,
 
+        allow_unresolved: *const options.AllowUnresolved = &options.AllowUnresolved.default,
+
         module_type: options.ModuleType = .unknown,
         output_format: options.Format = .esm,
 

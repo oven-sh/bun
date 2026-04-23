@@ -117,6 +117,7 @@
 #include "JSPrivateKeyObject.h"
 #include "CryptoKeyType.h"
 #include "JSNodePerformanceHooksHistogram.h"
+#include "../napi.h"
 #include <limits>
 #include <algorithm>
 
@@ -519,9 +520,12 @@ enum class CryptoAlgorithmIdentifierTag {
     PBKDF2 = 21,
     ED25519 = 22,
     X25519 = 23,
+    SHA3_256 = 24,
+    SHA3_384 = 25,
+    SHA3_512 = 26,
 };
 
-const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 22;
+const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 26;
 
 static unsigned countUsages(CryptoKeyUsageBitmap usages)
 {
@@ -832,7 +836,7 @@ template<> bool writeLittleEndian<uint8_t>(Vector<uint8_t>& buffer, const uint8_
     return true;
 }
 
-class CloneSerializer : CloneBase {
+class CloneSerializer : public CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
 
 public:
@@ -2393,6 +2397,15 @@ private:
         case CryptoAlgorithmIdentifier::SHA_512:
             write(CryptoAlgorithmIdentifierTag::SHA_512);
             break;
+        case CryptoAlgorithmIdentifier::SHA3_256:
+            write(CryptoAlgorithmIdentifierTag::SHA3_256);
+            break;
+        case CryptoAlgorithmIdentifier::SHA3_384:
+            write(CryptoAlgorithmIdentifierTag::SHA3_384);
+            break;
+        case CryptoAlgorithmIdentifier::SHA3_512:
+            write(CryptoAlgorithmIdentifierTag::SHA3_512);
+            break;
         case CryptoAlgorithmIdentifier::HKDF:
             write(CryptoAlgorithmIdentifierTag::HKDF);
             break;
@@ -2453,7 +2466,7 @@ private:
 
     void write(SerializableErrorType errorType)
     {
-        write(enumToUnderlyingType(errorType));
+        write(std::to_underlying(errorType));
     }
 
     void write(const CryptoKey* key)
@@ -2665,7 +2678,9 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // objects have been handled. If we reach this point and
             // the input is not an Object object then we should throw
             // a DataCloneError.
-            if (inObject->classInfo() != JSFinalObject::info())
+            // NapiPrototype is allowed because napi_create_object should behave
+            // like a plain object from JS's perspective (matches Node.js).
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info())
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);
@@ -2831,7 +2846,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
     return SerializationReturnCode::SuccessfullyCompleted;
 }
 
-class CloneDeserializer : CloneBase {
+class CloneDeserializer : public CloneBase {
     WTF_FORBID_HEAP_ALLOCATION;
 
 public:
@@ -3877,6 +3892,15 @@ private:
         case CryptoAlgorithmIdentifierTag::SHA_512:
             result = CryptoAlgorithmIdentifier::SHA_512;
             break;
+        case CryptoAlgorithmIdentifierTag::SHA3_256:
+            result = CryptoAlgorithmIdentifier::SHA3_256;
+            break;
+        case CryptoAlgorithmIdentifierTag::SHA3_384:
+            result = CryptoAlgorithmIdentifier::SHA3_384;
+            break;
+        case CryptoAlgorithmIdentifierTag::SHA3_512:
+            result = CryptoAlgorithmIdentifier::SHA3_512;
+            break;
         case CryptoAlgorithmIdentifierTag::HKDF:
             result = CryptoAlgorithmIdentifier::HKDF;
             break;
@@ -4197,7 +4221,7 @@ private:
     bool read(SerializableErrorType& errorType)
     {
         std::underlying_type_t<SerializableErrorType> errorTypeInt;
-        if (!read(errorTypeInt) || errorTypeInt > enumToUnderlyingType(SerializableErrorType::Last))
+        if (!read(errorTypeInt) || errorTypeInt > std::to_underlying(SerializableErrorType::Last))
             return false;
 
         errorType = static_cast<SerializableErrorType>(errorTypeInt);
@@ -4688,36 +4712,28 @@ private:
             return tryConvertToBigInt32(bigInt);
         }
 #endif
-        JSBigInt* bigInt = nullptr;
+        Vector<JSBigInt::Digit, 16> digits;
         if constexpr (sizeof(JSBigInt::Digit) == sizeof(uint64_t)) {
-            bigInt = JSBigInt::tryCreateWithLength(m_lexicalGlobalObject->vm(), lengthInUint64);
-            if (!bigInt) {
-                fail();
-                return JSValue();
-            }
+            digits.reserveInitialCapacity(lengthInUint64);
             for (uint32_t index = 0; index < lengthInUint64; ++index) {
                 uint64_t digit64 = 0;
                 if (!read(digit64))
                     return JSValue();
-                bigInt->setDigit(index, digit64);
+                digits.append(digit64);
             }
         } else {
             ASSERT(sizeof(JSBigInt::Digit) == sizeof(uint32_t));
-            bigInt = JSBigInt::tryCreateWithLength(m_lexicalGlobalObject->vm(), lengthInUint64 * 2);
-            if (!bigInt) {
-                fail();
-                return JSValue();
-            }
+            digits.reserveInitialCapacity(lengthInUint64 * 2);
             for (uint32_t index = 0; index < lengthInUint64; ++index) {
                 uint64_t digit64 = 0;
                 if (!read(digit64))
                     return JSValue();
-                bigInt->setDigit(index * 2, static_cast<uint32_t>(digit64));
-                bigInt->setDigit(index * 2 + 1, static_cast<uint32_t>(digit64 >> 32));
+                digits.append(static_cast<uint32_t>(digit64));
+                digits.append(static_cast<uint32_t>(digit64 >> 32));
             }
         }
-        bigInt->setSign(sign);
-        bigInt = bigInt->tryRightTrim(m_lexicalGlobalObject->vm());
+
+        auto* bigInt = JSBigInt::tryCreateFrom(nullptr, m_lexicalGlobalObject->vm(), sign, digits.span());
         if (!bigInt) {
             fail();
             return JSValue();
@@ -5027,15 +5043,20 @@ private:
 
             RefPtr<Wasm::Memory> memory;
             auto handler = [&vm, result](Wasm::Memory::GrowSuccess, PageCount oldPageCount, PageCount newPageCount) { result->growSuccessCallback(vm, oldPageCount, newPageCount); };
+            // Memory64 is not yet serialized in WasmMemoryTag, so we only
+            // support I32 address type for structured clone. Upstream WebKit
+            // has the same limitation (it calls result->memory().addressType()
+            // on an uninitialized stub here, which happens to return I32).
+            constexpr auto addressType = Wasm::AddressType::I32;
             if (RefPtr<SharedArrayBufferContents> contents = m_wasmMemoryHandles->at(index)) {
                 if (!contents->memoryHandle()) {
                     fail();
                     return JSValue();
                 }
-                memory = Wasm::Memory::create(contents.releaseNonNull(), WTF::move(handler));
+                memory = Wasm::Memory::create(contents.releaseNonNull(), addressType, WTF::move(handler));
             } else {
                 // zero size & max-size.
-                memory = Wasm::Memory::createZeroSized(JSC::MemorySharingMode::Shared, WTF::move(handler));
+                memory = Wasm::Memory::createZeroSized(JSC::MemorySharingMode::Shared, addressType, WTF::move(handler));
             }
 
             result->adopt(memory.releaseNonNull());

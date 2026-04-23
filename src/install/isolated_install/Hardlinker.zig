@@ -2,25 +2,29 @@ const Hardlinker = @This();
 
 src_dir: FD,
 src: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
-dest: bun.RelPath(.{ .sep = .auto, .unit = .os }),
+dest: bun.Path(.{ .sep = .auto, .unit = .os }),
 walker: Walker,
 
 pub fn init(
     folder_dir: FD,
     src: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
-    dest: bun.RelPath(.{ .sep = .auto, .unit = .os }),
+    dest: bun.Path(.{ .sep = .auto, .unit = .os }),
     skip_dirnames: []const bun.OSPathSlice,
 ) OOM!Hardlinker {
     return .{
         .src_dir = folder_dir,
         .src = src,
         .dest = dest,
-        .walker = try .walk(
-            folder_dir,
-            bun.default_allocator,
-            &.{},
-            skip_dirnames,
-        ),
+        .walker = walker: {
+            var w = try Walker.walk(
+                folder_dir,
+                bun.default_allocator,
+                &.{},
+                skip_dirnames,
+            );
+            w.resolve_unknown_entry_types = true;
+            break :walker w;
+        },
     };
 }
 
@@ -71,7 +75,14 @@ pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
                     const destfile_path_buf2 = bun.w_path_buffer_pool.get();
                     defer bun.w_path_buffer_pool.put(destfile_path_buf2);
                     defer bun.w_path_buffer_pool.put(destfile_path_buf);
-                    const destfile_path = bun.strings.addNTPathPrefixIfNeeded(destfile_path_buf2, bun.path.joinStringBufWZ(destfile_path_buf, &[_][]const u16{ dest_cwd, this.dest.slice() }, .windows));
+                    // `dest` may already be absolute (global virtual store
+                    // entries live under the cache, not cwd); only prefix the
+                    // working-directory path when it's project-relative.
+                    const dest_parts: []const []const u16 = if (this.dest.len() > 0 and bun.path.Platform.windows.isAbsoluteT(u16, this.dest.slice()))
+                        &.{this.dest.slice()}
+                    else
+                        &.{ dest_cwd, this.dest.slice() };
+                    const destfile_path = bun.strings.addNTPathPrefixIfNeeded(destfile_path_buf2, bun.path.joinStringBufWZ(destfile_path_buf, dest_parts, .windows));
 
                     const srcfile_path_buf = bun.w_path_buffer_pool.get();
                     defer bun.w_path_buffer_pool.put(srcfile_path_buf);

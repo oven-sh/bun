@@ -166,7 +166,7 @@ pub inline fn mimalloc_cleanup(force: bool) void {
         Mimalloc.mi_collect(force);
     }
 }
-// Versions are now handled by CMake-generated header (bun_dependency_versions.h)
+// Versions are now handled by build-generated header (bun_dependency_versions.h)
 
 // Enabling huge pages slows down bun by 8x or so
 // Keeping this code for:

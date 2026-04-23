@@ -102,7 +102,7 @@ pub const Options = struct {
     disable_keepalive: ?bool = null,
     disable_decompression: ?bool = null,
     reject_unauthorized: ?bool = null,
-    tls_props: ?*SSLConfig = null,
+    tls_props: ?SSLConfig.SharedPtr = null,
 };
 
 const Preconnect = struct {
@@ -408,7 +408,7 @@ pub fn onAsyncHTTPCallback(this: *AsyncHTTP, async_http: *AsyncHTTP, result: HTT
         assert(active_requests > 0);
     }
 
-    if (!bun.http.http_thread.queued_tasks.isEmpty() and AsyncHTTP.active_requests_count.load(.monotonic) < AsyncHTTP.max_simultaneous_requests.load(.monotonic)) {
+    if ((!bun.http.http_thread.queued_tasks.isEmpty() or bun.http.http_thread.deferred_tasks.items.len > 0) and AsyncHTTP.active_requests_count.load(.monotonic) < AsyncHTTP.max_simultaneous_requests.load(.monotonic)) {
         bun.http.http_thread.loop.loop.wakeup();
     }
 }

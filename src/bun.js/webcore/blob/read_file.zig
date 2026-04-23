@@ -27,7 +27,7 @@ pub fn NewReadFileHandler(comptime Function: anytype) type {
                     try jsc.AnyPromise.wrap(.{ .normal = promise }, globalThis, WrappedFn.wrapped, .{ &blob, globalThis, bytes });
                 },
                 .err => |err| {
-                    try promise.reject(globalThis, err.toErrorInstance(globalThis));
+                    try promise.reject(globalThis, err.toErrorInstanceWithAsyncStack(globalThis, promise));
                 },
             }
         }
@@ -46,7 +46,7 @@ pub const ReadFile = struct {
     offset: SizeType = 0,
     max_length: SizeType = Blob.max_size,
     total_size: SizeType = Blob.max_size,
-    opened_fd: bun.FileDescriptor = invalid_fd,
+    opened_fd: bun.FD = invalid_fd,
     read_off: SizeType = 0,
     read_eof: bool = false,
     size: SizeType = 0,
@@ -309,7 +309,7 @@ pub const ReadFile = struct {
         }
     }
 
-    fn resolveSizeAndLastModified(this: *ReadFile, fd: bun.FileDescriptor) void {
+    fn resolveSizeAndLastModified(this: *ReadFile, fd: bun.FD) void {
         const stat: bun.Stat = switch (bun.sys.fstat(fd)) {
             .result => |result| result,
             .err => |err| {
@@ -340,17 +340,14 @@ pub const ReadFile = struct {
         }
 
         this.could_block = !bun.isRegularFile(stat.mode);
-        this.total_size = @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))));
+        this.total_size = @intCast(@min(@max(stat.size, 0), Blob.max_size));
 
         if (stat.size > 0 and !this.could_block) {
             this.size = @min(this.total_size, this.max_length);
             // read up to 4k at a time if
             // they didn't explicitly set a size and we're reading from something that's not a regular file
         } else if (stat.size == 0 and this.could_block) {
-            this.size = if (this.max_length == Blob.max_size)
-                4096
-            else
-                this.max_length;
+            this.size = @min(this.max_length, 4096);
         }
 
         if (this.offset > 0) {
@@ -362,7 +359,7 @@ pub const ReadFile = struct {
         }
     }
 
-    fn runAsyncWithFD(this: *ReadFile, fd: bun.FileDescriptor) void {
+    fn runAsyncWithFD(this: *ReadFile, fd: bun.FD) void {
         if (this.errno != null) {
             this.onFinish();
             return;
@@ -384,8 +381,9 @@ pub const ReadFile = struct {
 
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
         if (!this.could_block or (this.size > 0 and this.size != Blob.max_size))
-            this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, this.size + 16) catch |err| {
+            this.buffer = std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, this.size +| 16) catch |err| {
                 this.errno = err;
+                this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
                 this.onFinish();
                 return;
             };
@@ -523,13 +521,14 @@ pub const ReadFileUV = struct {
     pub const doClose = FileCloser(@This()).doClose;
 
     loop: *libuv.Loop,
+    event_loop: *jsc.EventLoop,
     file_store: FileStore,
     byte_store: ByteStore = ByteStore{ .allocator = bun.default_allocator },
     store: *Store,
     offset: SizeType = 0,
     max_length: SizeType = Blob.max_size,
     total_size: SizeType = Blob.max_size,
-    opened_fd: bun.FileDescriptor = invalid_fd,
+    opened_fd: bun.FD = invalid_fd,
     read_len: SizeType = 0,
     read_off: SizeType = 0,
     read_eof: bool = false,
@@ -543,10 +542,11 @@ pub const ReadFileUV = struct {
 
     req: libuv.fs_t = std.mem.zeroes(libuv.fs_t),
 
-    pub fn start(loop: *libuv.Loop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *anyopaque) void {
+    pub fn start(event_loop: *jsc.EventLoop, store: *Store, off: SizeType, max_len: SizeType, comptime Handler: type, handler: *anyopaque) void {
         log("ReadFileUV.start", .{});
         var this = bun.new(ReadFileUV, .{
-            .loop = loop,
+            .loop = event_loop.virtual_machine.uvLoop(),
+            .event_loop = event_loop,
             .file_store = store.data.file,
             .store = store,
             .offset = off,
@@ -555,15 +555,20 @@ pub const ReadFileUV = struct {
             .on_complete_fn = @ptrCast(&Handler.run),
         });
         store.ref();
+        // Keep the event loop alive while the async operation is pending
+        event_loop.refConcurrently();
         this.getFd(onFileOpen);
     }
 
     pub fn finalize(this: *ReadFileUV) void {
         log("ReadFileUV.finalize", .{});
+        const event_loop = this.event_loop;
         defer {
             this.store.deref();
             this.req.deinit();
             bun.destroy(this);
+            // Release the event loop reference now that we're done
+            event_loop.unrefConcurrently();
             log("ReadFileUV.finalize destroy", .{});
         }
 
@@ -600,7 +605,7 @@ pub const ReadFileUV = struct {
         this.finalize();
     }
 
-    pub fn onFileOpen(this: *ReadFileUV, opened_fd: bun.FileDescriptor) void {
+    pub fn onFileOpen(this: *ReadFileUV, opened_fd: bun.FD) void {
         log("ReadFileUV.onFileOpen", .{});
         if (this.errno != null) {
             this.onFinish();
@@ -652,7 +657,7 @@ pub const ReadFileUV = struct {
             this.onFinish();
             return;
         }
-        this.total_size = @truncate(@as(SizeType, @intCast(@max(@as(i64, @intCast(stat.size)), 0))));
+        this.total_size = @intCast(@min(@max(stat.size, 0), Blob.max_size));
         this.is_regular_file = bun.isRegularFile(stat.mode);
 
         log("is_regular_file: {}", .{this.is_regular_file});
@@ -662,10 +667,7 @@ pub const ReadFileUV = struct {
         } else if (stat.size == 0 and !this.is_regular_file) {
             // read up to 4k at a time if they didn't explicitly set a size and
             // we're reading from something that's not a regular file.
-            this.size = if (this.max_length == Blob.max_size)
-                4096
-            else
-                this.max_length;
+            this.size = @min(this.max_length, 4096);
         }
 
         if (this.offset > 0) {
@@ -691,8 +693,9 @@ pub const ReadFileUV = struct {
             return;
         }
         // add an extra 16 bytes to the buffer to avoid having to resize it for trailing extra data
-        this.buffer.ensureTotalCapacityPrecise(this.byte_store.allocator, @min(this.size + 16, @as(usize, std.math.maxInt(bun.windows.ULONG)))) catch |err| {
-            this.errno = err;
+        this.buffer.ensureTotalCapacityPrecise(this.byte_store.allocator, @min(this.size +| 16, @as(usize, std.math.maxInt(bun.windows.ULONG)))) catch {
+            this.errno = error.OutOfMemory;
+            this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
             this.onFinish();
             return;
         };
@@ -719,9 +722,11 @@ pub const ReadFileUV = struct {
                 // non-regular files have variable sizes, so we always ensure
                 // theres at least 4096 bytes of free space. there has already
                 // been an initial allocation done for us
-                this.buffer.ensureUnusedCapacity(this.byte_store.allocator, 4096) catch |err| {
-                    this.errno = err;
+                this.buffer.ensureUnusedCapacity(this.byte_store.allocator, 4096) catch {
+                    this.errno = error.OutOfMemory;
+                    this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
                     this.onFinish();
+                    return;
                 };
             }
 
@@ -750,8 +755,9 @@ pub const ReadFileUV = struct {
 
             // We are done reading.
             this.byte_store = ByteStore.init(
-                this.buffer.toOwnedSlice(this.byte_store.allocator) catch |err| {
-                    this.errno = err;
+                this.buffer.toOwnedSlice(this.byte_store.allocator) catch {
+                    this.errno = error.OutOfMemory;
+                    this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
                     this.onFinish();
                     return;
                 },
@@ -769,15 +775,16 @@ pub const ReadFileUV = struct {
         if (result.errEnum()) |errno| {
             this.errno = bun.errnoToZigErr(errno);
             this.system_error = bun.sys.Error.fromCode(errno, .read).toSystemError();
-            this.finalize();
+            this.onFinish();
             return;
         }
 
         if (result.int() == 0) {
             // We are done reading.
             this.byte_store = ByteStore.init(
-                this.buffer.toOwnedSlice(this.byte_store.allocator) catch |err| {
-                    this.errno = err;
+                this.buffer.toOwnedSlice(this.byte_store.allocator) catch {
+                    this.errno = error.OutOfMemory;
+                    this.system_error = bun.sys.Error.fromCode(bun.sys.E.NOMEM, .read).toSystemError();
                     this.onFinish();
                     return;
                 },

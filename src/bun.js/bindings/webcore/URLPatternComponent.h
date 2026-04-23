@@ -27,16 +27,16 @@
 
 #include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/StrongInlines.h>
+#include <optional>
 
 namespace JSC {
 class RegExp;
 class VM;
-class JSValue;
+class JSGlobalObject;
 }
 
 namespace WebCore {
 
-class ScriptExecutionContext;
 struct URLPatternComponentResult;
 enum class EncodingCallbackType : uint8_t;
 template<typename> class ExceptionOr;
@@ -49,9 +49,8 @@ public:
     static ExceptionOr<URLPatternComponent> compile(Ref<JSC::VM>, StringView, EncodingCallbackType, const URLPatternStringOptions&);
     const String& patternString() const { return m_patternString; }
     bool hasRegexGroupsFromPartList() const { return m_hasRegexGroupsFromPartList; }
-    bool matchSpecialSchemeProtocol(ScriptExecutionContext&) const;
-    JSC::JSValue componentExec(ScriptExecutionContext&, StringView) const;
-    URLPatternComponentResult createComponentMatchResult(JSC::JSGlobalObject*, String&& input, const JSC::JSValue& execResult) const;
+    bool matchSpecialSchemeProtocol(JSC::JSGlobalObject*) const;
+    std::optional<URLPatternComponentResult> componentMatch(JSC::JSGlobalObject*, String&& input) const;
     URLPatternComponent() = default;
 
 private:

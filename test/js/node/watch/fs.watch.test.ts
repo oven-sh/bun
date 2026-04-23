@@ -1,5 +1,5 @@
 import { pathToFileURL } from "bun";
-import { bunRun, bunRunAsScript, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, bunRunAsScript, isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 
@@ -724,4 +724,65 @@ describe("immediately closing", () => {
     for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: true, recursive: true }).close();
     for (let i = 0; i < 100; i++) fs.watch(testDir, { persistent: false, recursive: false }).close();
   });
+});
+
+// On Windows, if fs.watch() fails after getOrPut() inserts into the internal path->watcher
+// map (e.g. uv_fs_event_start fails on a dangling junction, an ACL-protected dir, or a
+// directory deleted mid-watch), an errdefer that was silently broken by a !*T -> Maybe(*T)
+// refactor left the entry in place with a dangling key and an uninitialized value. The next
+// fs.watch() on the same path collided with the poisoned entry, returned the garbage value
+// as a *PathWatcher, and segfaulted at 0xFFFFFFFFFFFFFFFF calling .handlers.put() on it.
+//
+// https://github.com/oven-sh/bun/issues/26254
+// https://github.com/oven-sh/bun/issues/20203
+// https://github.com/oven-sh/bun/issues/19635
+//
+// Must run in a subprocess: on an unpatched build this segfaults the whole runtime.
+test.skipIf(!isWindows)("retrying a failed fs.watch does not crash (windows)", async () => {
+  using dir = tempDir("fswatch-retry-failed", { "index.js": "" });
+  const base = String(dir);
+
+  const fixture = /* js */ `
+    const { mkdirSync, rmdirSync, symlinkSync, watch } = require("node:fs");
+    const { join } = require("node:path");
+
+    const base   = ${JSON.stringify(base)};
+    const target = join(base, "target");
+    const link   = join(base, "link");
+
+    mkdirSync(target);
+    symlinkSync(target, link, "junction"); // junctions need no admin rights on Windows
+    rmdirSync(target);                     // junction now dangles
+
+    // Call 1: readlink(link) SUCCEEDS (returns the vanished target path into
+    // a stack-local buffer), then uv_fs_event_start(target) fails ENOENT.
+    // On unpatched builds: map entry left with dangling key + uninit value.
+    try { watch(link); throw new Error("expected first watch to fail"); }
+    catch (e) { if (e.code !== "ENOENT") throw e; }
+
+    // Call 2: identical stack frame layout -> identical outbuf address ->
+    // identical key slice -> getOrPut returns found_existing=true ->
+    // returns uninitialized value as a *PathWatcher -> segfault on unpatched builds.
+    // Correct behaviour: throw ENOENT again.
+    try { watch(link); throw new Error("expected second watch to fail"); }
+    catch (e) { if (e.code !== "ENOENT") throw e; }
+
+    // Call 3: a valid watch must still work (map must not be corrupted).
+    watch(base).close();
+
+    console.log("OK");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    cwd: base,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0); // unpatched: exitCode is 3 (Windows segfault)
 });

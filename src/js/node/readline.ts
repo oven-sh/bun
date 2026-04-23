@@ -2226,8 +2226,8 @@ Interface.prototype.question = function question(query, options, cb) {
   }
 };
 
-{
-  Interface.prototype.question[promisify.custom] = function question(query, options) {
+Interface.prototype.question[promisify.custom] = {
+  question(query, options) {
     if (options === null || typeof options !== "object") {
       options = kEmptyObject;
     }
@@ -2252,8 +2252,8 @@ Interface.prototype.question = function question(query, options, cb) {
       }
       this.question(query, options, cb);
     });
-  };
-}
+  },
+}.question;
 
 /**
  * Creates a new `readline.Interface` instance.

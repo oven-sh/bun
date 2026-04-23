@@ -60,12 +60,9 @@ public:
     unsigned short code() const { return m_code; }
     String reason() const { return m_reason; }
 
-    // Event function.
-    EventInterface eventInterface() const override { return CloseEventInterfaceType; }
-
 private:
     CloseEvent(bool wasClean, int code, const String& reason)
-        : Event(eventNames().closeEvent, CanBubble::No, IsCancelable::No)
+        : Event(CloseEventInterfaceType, eventNames().closeEvent, CanBubble::No, IsCancelable::No)
         , m_wasClean(wasClean)
         , m_code(code)
         , m_reason(reason)
@@ -73,7 +70,7 @@ private:
     }
 
     CloseEvent(const AtomString& type, const Init& initializer, IsTrusted isTrusted)
-        : Event(type, initializer, isTrusted)
+        : Event(CloseEventInterfaceType, type, initializer, isTrusted)
         , m_wasClean(initializer.wasClean)
         , m_code(initializer.code)
         , m_reason(initializer.reason)

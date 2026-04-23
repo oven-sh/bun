@@ -61,7 +61,7 @@ This auto-installation approach is useful for a few reasons:
 
 - **Space efficiency** — Each version of a dependency only exists in one place on disk. This is a huge space and time savings compared to redundant per-project installations.
 - **Portability** — To share simple scripts and gists, your source file is _self-contained_. No need to `zip` together a directory containing your code and config files. With version specifiers in `import` statements, even a `package.json` isn't necessary.
-- **Convenience** — There's no need to run `npm install` or `bun install` before running a file or script. Just `bun run` it.
+- **Convenience** — There's no need to run `npm install` or `bun install` before running a file or script. Run it with `bun run`.
 - **Backwards compatibility** — Because Bun still respects the versions specified in `package.json` if one exists, you can switch to Bun-style resolution with a single command: `rm -rf node_modules`.
 
 ---

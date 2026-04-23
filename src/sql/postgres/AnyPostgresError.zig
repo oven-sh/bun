@@ -25,6 +25,7 @@ pub const AnyPostgresError = error{
     ShortRead,
     TLSNotAvailable,
     TLSUpgradeFailed,
+    TooManyParameters,
     UnexpectedMessage,
     UNKNOWN_AUTHENTICATION_METHOD,
     UNSUPPORTED_AUTHENTICATION_METHOD,
@@ -101,6 +102,13 @@ pub fn postgresErrorToJS(globalObject: *jsc.JSGlobalObject, message: ?[]const u8
         error.SASL_SIGNATURE_INVALID_BASE64 => "ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64",
         error.TLSNotAvailable => "ERR_POSTGRES_TLS_NOT_AVAILABLE",
         error.TLSUpgradeFailed => "ERR_POSTGRES_TLS_UPGRADE_FAILED",
+        error.TooManyParameters => {
+            const too_many_msg = "query has too many parameters - the PostgreSQL wire protocol supports a maximum of 65535 parameters per query. Try reducing your batch size.";
+            return createPostgresError(globalObject, too_many_msg, .{
+                .code = "ERR_POSTGRES_TOO_MANY_PARAMETERS",
+                .hint = "Reduce the number of rows in your batch insert so that total_rows * columns_per_row does not exceed 65535.",
+            }) catch |e| globalObject.takeError(e);
+        },
         error.UnexpectedMessage => "ERR_POSTGRES_UNEXPECTED_MESSAGE",
         error.UNKNOWN_AUTHENTICATION_METHOD => "ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD",
         error.UNSUPPORTED_AUTHENTICATION_METHOD => "ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD",

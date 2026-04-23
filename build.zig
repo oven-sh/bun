@@ -51,6 +51,7 @@ const BunBuildOptions = struct {
     /// `./build/codegen` or equivalent
     codegen_path: []const u8,
     no_llvm: bool,
+    lto: bool,
     override_no_export_cpp_apis: bool,
 
     cached_options_module: ?*Module = null,
@@ -98,7 +99,7 @@ const BunBuildOptions = struct {
 
     pub fn windowsShim(this: *BunBuildOptions, b: *Build) WindowsShim {
         return this.windows_shim orelse {
-            this.windows_shim = WindowsShim.create(b);
+            this.windows_shim = WindowsShim.create(b, this.arch);
             return this.windows_shim.?;
         };
     }
@@ -123,7 +124,7 @@ pub fn getOSVersionMin(os: OperatingSystem) ?Target.Query.OsVersion {
 pub fn getOSGlibCVersion(os: OperatingSystem) ?Version {
     return switch (os) {
         // Compiling with a newer glibc than this will break certain cloud environments. See symbols.test.ts.
-        .linux => .{ .major = 2, .minor = 26, .patch = 0 },
+        .linux => .{ .major = 2, .minor = 17, .patch = 0 },
 
         else => null,
     };
@@ -201,6 +202,7 @@ pub fn build(b: *Build) !void {
     const obj_format = b.option(ObjectFormat, "obj_format", "Output file for object files") orelse .obj;
 
     const no_llvm = b.option(bool, "no_llvm", "Experiment with Zig self hosted backends. No stability guaranteed") orelse false;
+    const lto = b.option(bool, "lto", "Emit LLVM bitcode for full LTO instead of a native object") orelse false;
     const override_no_export_cpp_apis = b.option(bool, "override-no-export-cpp-apis", "Override the default export_cpp_apis logic to disable exports") orelse false;
 
     var build_options = BunBuildOptions{
@@ -211,6 +213,7 @@ pub fn build(b: *Build) !void {
         .codegen_path = codegen_path,
         .codegen_embed = codegen_embed,
         .no_llvm = no_llvm,
+        .lto = lto,
         .override_no_export_cpp_apis = override_no_export_cpp_apis,
         .version = try Version.parse(bun_version),
         .canary_revision = canary: {
@@ -640,6 +643,7 @@ fn addMultiCheck(
                 .reported_nodejs_version = root_build_options.reported_nodejs_version,
                 .codegen_path = root_build_options.codegen_path,
                 .no_llvm = root_build_options.no_llvm,
+                .lto = false,
                 .enable_asan = root_build_options.enable_asan,
                 .enable_valgrind = root_build_options.enable_valgrind,
                 .enable_tinycc = root_build_options.enable_tinycc,
@@ -751,14 +755,24 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     // Object options
     obj.use_llvm = !opts.no_llvm;
     obj.use_lld = if (opts.os == .mac or opts.os == .linux) false else !opts.no_llvm;
-
-    if (opts.optimize == .Debug) {
-        if (@hasField(std.meta.Child(@TypeOf(obj)), "llvm_codegen_threads"))
-            obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;
+    if (opts.lto) {
+        obj.lto = .full;
+        obj.use_lld = true;
     }
 
-    obj.no_link_obj = opts.os != .windows and !opts.no_llvm;
+    if (@hasField(std.meta.Child(@TypeOf(obj)), "llvm_codegen_threads"))
+        obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;
+    // Skip zig's relocatable -r merge of the codegen shards: it's
+    // single-threaded and dominated wall time at high shard counts
+    // (~9min for 64 × ~8MB shards). With this set, shards are emitted
+    // directly as `{out}.{i}.o`; addInstallObjectFile installs them
+    // all and the bun link step (lld, parallel) consumes them. Only
+    // for the main object — `zig build test` reuses configureObj and
+    // its install path expects a single artifact.
+    if (@hasField(std.meta.Child(@TypeOf(obj)), "llvm_no_merge_shards"))
+        obj.llvm_no_merge_shards = obj.kind == .obj and (opts.llvm_codegen_threads orelse 0) > 1;
 
+    obj.no_link_obj = opts.os != .windows and !opts.no_llvm;
 
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {
@@ -823,6 +837,34 @@ pub fn addInstallObjectFile(
 ) *Step {
     // bin always needed to be computed or else the compilation will do nothing. zig build system bug?
     const bin = compile.getEmittedBin();
+    if (out_mode == .obj and
+        @hasField(Compile, "llvm_no_merge_shards") and
+        @hasField(Compile, "llvm_codegen_threads") and
+        compile.llvm_no_merge_shards and
+        compile.llvm_codegen_threads > 1)
+    {
+        // Install every shard as `{name}.{i}.o`; scripts/build/zig.ts
+        // declares the matching outputs and the bun link step (lld)
+        // consumes them all. The merged `{name}.o` does not exist in
+        // this configuration. Shard `i` is at `{out_filename - ".o"}.{i}.o`
+        // in the emitted-bin directory (see Compilation.zig:3475).
+        const dir = compile.getEmittedBinDirectory();
+        const stem = if (std.mem.endsWith(u8, compile.out_filename, ".o"))
+            compile.out_filename[0 .. compile.out_filename.len - 2]
+        else
+            compile.out_filename;
+        // Group via shard 0's install step so we don't register a
+        // user-visible top-level `b.step()` for what is an internal
+        // fan-out. Ninja still parallelises the dependents.
+        var first: ?*Step = null;
+        var i: u32 = 0;
+        while (i < compile.llvm_codegen_threads) : (i += 1) {
+            const shard = dir.path(b, b.fmt("{s}.{d}.o", .{ stem, i }));
+            const inst = &b.addInstallFile(shard, b.fmt("{s}.{d}.o", .{ name, i })).step;
+            if (first) |f| f.dependOn(inst) else first = inst;
+        }
+        return first.?;
+    }
     return &b.addInstallFile(switch (out_mode) {
         .obj => bin,
         .bc => compile.getEmittedLlvmBc(),
@@ -986,10 +1028,16 @@ const WindowsShim = struct {
     exe: *Compile,
     dbg: *Compile,
 
-    fn create(b: *Build) WindowsShim {
+    fn create(b: *Build, arch: Arch) WindowsShim {
         const target = b.resolveTargetQuery(.{
-            .cpu_model = .{ .explicit = &std.Target.x86.cpu.nehalem },
-            .cpu_arch = .x86_64,
+            .cpu_model = switch (arch) {
+                .aarch64 => .baseline,
+                else => .{ .explicit = &std.Target.x86.cpu.nehalem },
+            },
+            .cpu_arch = switch (arch) {
+                .aarch64 => .aarch64,
+                else => .x86_64,
+            },
             .os_tag = .windows,
             .os_version_min = getOSVersionMin(.windows),
         });

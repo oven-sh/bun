@@ -115,7 +115,7 @@ JSValue HTTPParser::execute(JSGlobalObject* globalObject, const char* data, size
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    BunBuiltinNames builtinNames(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
 
     m_currentBufferLen = len;
     m_currentBufferData = data;
@@ -494,9 +494,9 @@ int HTTPParser::onHeadersComplete()
     } else {
         auto headers = createHeaders(globalObject);
         RETURN_IF_EXCEPTION(scope, -1);
-        args.set(A_HEADERS, headers);
+        args.at(A_HEADERS) = headers;
         if (m_parserData.type == HTTP_REQUEST) {
-            args.set(A_URL, m_url.toString(globalObject));
+            args.at(A_URL) = m_url.toString(globalObject);
         }
     }
 
@@ -504,21 +504,21 @@ int HTTPParser::onHeadersComplete()
     m_numValues = 0;
 
     if (m_parserData.type == HTTP_REQUEST) {
-        args.set(A_METHOD, jsNumber(m_parserData.method));
+        args.at(A_METHOD) = jsNumber(m_parserData.method);
     }
 
     if (m_parserData.type == HTTP_RESPONSE) {
-        args.set(A_STATUS_CODE, jsNumber(m_parserData.status_code));
-        args.set(A_STATUS_MESSAGE, m_statusMessage.toString(globalObject));
+        args.at(A_STATUS_CODE) = jsNumber(m_parserData.status_code);
+        args.at(A_STATUS_MESSAGE) = m_statusMessage.toString(globalObject);
     }
 
-    args.set(A_VERSION_MAJOR, jsNumber(m_parserData.http_major));
-    args.set(A_VERSION_MINOR, jsNumber(m_parserData.http_minor));
+    args.at(A_VERSION_MAJOR) = jsNumber(m_parserData.http_major);
+    args.at(A_VERSION_MINOR) = jsNumber(m_parserData.http_minor);
 
     bool shouldKeepAlive = llhttp_should_keep_alive(&m_parserData);
 
-    args.set(A_SHOULD_KEEP_ALIVE, jsBoolean(shouldKeepAlive));
-    args.set(A_UPGRADE, jsBoolean(m_parserData.upgrade));
+    args.at(A_SHOULD_KEEP_ALIVE) = jsBoolean(shouldKeepAlive);
+    args.at(A_UPGRADE) = jsBoolean(m_parserData.upgrade);
 
     CallData callData = getCallData(onHeadersCompleteCallback);
 

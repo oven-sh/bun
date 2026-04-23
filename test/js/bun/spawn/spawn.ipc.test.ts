@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunExe, gcTick } from "harness";
+import { bunEnv, bunExe, gcTick } from "harness";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -36,5 +36,17 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
 
     childProc.send(parentMessage);
     gcTick();
+  });
+
+  it("ipc works when preceded by a non-pipe extra stdio slot", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    await using child = spawn([bunExe(), path.join(__dirname, "bun-ipc-child.js")], {
+      env: bunEnv,
+      stdio: ["inherit", "inherit", "inherit", "ignore"],
+      serialization: mode,
+      ipc: message => resolve(message),
+    });
+    child.exited.then(code => reject(new Error(`exited ${code} before message`)));
+    expect(await promise).toBe("hello");
   });
 });

@@ -48,7 +48,6 @@ onNodeHTTPRequest: jsc.JSValue = jsc.JSValue.zero,
 
 websocket: ?WebSocketServerContext = null,
 
-inspector: bool = false,
 reuse_port: bool = false,
 id: []const u8 = "",
 allow_hot: bool = true,
@@ -838,15 +837,6 @@ pub fn fromJS(
 
         if (try arg.get(global, "ipv6Only")) |dev| {
             args.ipv6_only = dev.toBoolean();
-        }
-        if (global.hasException()) return error.JSError;
-
-        if (try arg.get(global, "inspector")) |inspector| {
-            args.inspector = inspector.toBoolean();
-
-            if (args.inspector and args.development == .production) {
-                return global.throwInvalidArguments("Cannot enable inspector in production. Please set development: true in Bun.serve()", .{});
-            }
         }
         if (global.hasException()) return error.JSError;
 

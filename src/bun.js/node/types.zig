@@ -587,12 +587,12 @@ pub const PathLike = union(enum) {
             if (std.fs.path.isAbsolute(sliced)) {
                 if (sliced.len > 2 and bun.path.isDriveLetter(sliced[0]) and sliced[1] == ':' and bun.path.isSepAny(sliced[2])) {
                     // Add the long path syntax. This affects most of node:fs
-                    const drive_resolve_buf = bun.path_buffer_pool.get();
-                    defer bun.path_buffer_pool.put(drive_resolve_buf);
-                    const rest = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBufZ(drive_resolve_buf, sliced) catch @panic("Error while resolving path.");
+                    // Normalize the path directly into buf without an intermediate
+                    // buffer. The input (sliced) already has a drive letter, so
+                    // resolveCWDWithExternalBufZ would just memcpy it, making the
+                    // temporary allocation unnecessary.
                     buf[0..4].* = bun.windows.long_path_prefix_u8;
-                    // When long path syntax is used, the entire string should be normalized
-                    const n = bun.path.normalizeBuf(rest, buf[4..], .windows).len;
+                    const n = bun.path.normalizeBuf(sliced, buf[4..], .windows).len;
                     buf[4 + n] = 0;
                     return buf[0 .. 4 + n :0];
                 }
@@ -611,6 +611,14 @@ pub const PathLike = union(enum) {
             if (sliced[sliced.len - 1] == 0) {
                 return sliced[0 .. sliced.len - 1 :0];
             }
+        }
+
+        if (sliced.len >= buf.len) {
+            bun.Output.debugWarn("path too long: {d} bytes exceeds PathBuffer capacity of {d}\n", .{ sliced.len, buf.len });
+            if (comptime !force) return "";
+
+            buf[0] = 0;
+            return buf[0..0 :0];
         }
 
         @memcpy(buf[0..sliced.len], sliced);
@@ -726,12 +734,13 @@ pub const PathLike = union(enum) {
     }
 
     pub fn fromBunString(global: *jsc.JSGlobalObject, str: *bun.String, will_be_async: bool, allocator: std.mem.Allocator) !PathLike {
-        try Valid.pathStringLength(str.length(), global);
-
         if (will_be_async) {
             var sliced = try str.toThreadSafeSlice(allocator);
             errdefer sliced.deinit();
 
+            // Validate the UTF-8 byte length after conversion, since the path
+            // will be stored in a fixed-size PathBuffer.
+            try Valid.pathStringLength(sliced.slice().len, global);
             try Valid.pathNullBytes(sliced.slice(), global);
 
             sliced.reportExtraMemory(global.vm());
@@ -744,6 +753,9 @@ pub const PathLike = union(enum) {
             var sliced = str.toSlice(allocator);
             errdefer sliced.deinit();
 
+            // Validate the UTF-8 byte length after conversion, since the path
+            // will be stored in a fixed-size PathBuffer.
+            try Valid.pathStringLength(sliced.slice().len, global);
             try Valid.pathNullBytes(sliced.slice(), global);
 
             // Costs nothing to keep both around.
@@ -883,7 +895,7 @@ pub fn modeFromJS(ctx: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Mod
 }
 
 pub const PathOrFileDescriptor = union(Tag) {
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     path: PathLike,
 
     pub const Tag = enum { fd, path };
@@ -1041,7 +1053,15 @@ pub const FileSystemFlags = enum(c_int) {
                 return ctx.throwValue(ctx.ERR(.OUT_OF_RANGE, "The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS());
             }
             const number = try val.coerce(i32, ctx);
-            return @as(FileSystemFlags, @enumFromInt(@max(number, 0)));
+            const flags = @max(number, 0);
+            // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
+            // use the platform's native MSVC/libuv values which differ from the
+            // internal bun.O representation. Convert them here so downstream
+            // code that operates on bun.O flags works correctly.
+            if (comptime bun.Environment.isWindows) {
+                return @as(FileSystemFlags, @enumFromInt(bun.windows.libuv.O.toBunO(flags)));
+            }
+            return @as(FileSystemFlags, @enumFromInt(flags));
         }
 
         const jsType = val.jsType();

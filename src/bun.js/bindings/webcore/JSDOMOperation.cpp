@@ -4,6 +4,12 @@
 #include "JSDOMOperation.h"
 #include "BunBuiltinNames.h"
 
+// JSDOMOperation.h #defines createNotEnoughArgumentsError → our wrapper.
+// Suspend it here so the wrapper can call the real JSC function, then
+// restore it — under unified builds the suspended macro would otherwise
+// leak into later siblings (JSDOMURL.cpp etc.) and they'd silently lose
+// the ERR_MISSING_ARGS code on the thrown error.
+#pragma push_macro("createNotEnoughArgumentsError")
 #undef createNotEnoughArgumentsError
 
 namespace WebCore {
@@ -19,6 +25,8 @@ JSC::JSObject* createNotEnoughArgumentsErrorBun(JSC::JSGlobalObject* globalObjec
 
     return error;
 }
+
+#pragma pop_macro("createNotEnoughArgumentsError")
 
 void throwNodeRangeError(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, const String& message)
 {

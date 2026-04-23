@@ -24,6 +24,23 @@ client_renegotiation_window: u32 = 0,
 requires_custom_request_ctx: bool = false,
 is_using_default_ciphers: bool = true,
 low_memory_mode: bool = false,
+cached_hash: u64 = 0,
+
+/// Atomic shared pointer with weak support. Refcounting and allocation are
+/// managed non-intrusively by `bun.ptr.shared`; the SSLConfig struct itself
+/// has no refcount field.
+pub const SharedPtr = bun.ptr.shared.WithOptions(*SSLConfig, .{
+    .atomic = true,
+    .allow_weak = true,
+});
+
+const WeakPtr = SharedPtr.Weak;
+
+/// Extract the raw `*SSLConfig` from an optional SharedPtr for pointer-equality
+/// comparison (interned configs have stable addresses).
+pub inline fn rawPtr(maybe_shared: ?SharedPtr) ?*SSLConfig {
+    return if (maybe_shared) |s| s.get() else null;
+}
 
 const ReadFromBlobError = bun.JSError || error{
     NullStore,
@@ -113,6 +130,7 @@ pub fn forClientVerification(this: SSLConfig) SSLConfig {
 
 pub fn isSame(this: *const SSLConfig, other: *const SSLConfig) bool {
     inline for (comptime std.meta.fields(SSLConfig)) |field| {
+        if (comptime std.mem.eql(u8, field.name, "cached_hash")) continue;
         const first = @field(this, field.name);
         const second = @field(other, field.name);
         switch (field.type) {
@@ -164,7 +182,15 @@ fn freeString(string: *?[*:0]const u8) void {
     string.* = null;
 }
 
+/// Destructor. Called by `bun.ptr.shared` on strong 1->0 for interned configs,
+/// and directly on value-type configs (e.g. `ServerConfig.ssl_config`).
+///
+/// For interned configs, we MUST remove from the registry before freeing the
+/// string fields, since concurrent `intern()` calls may read those fields for
+/// content comparison while we're still in the map. For non-interned configs,
+/// `remove()` is a cheap no-op (pointer-identity check fails).
 pub fn deinit(this: *SSLConfig) void {
+    GlobalRegistry.remove(this);
     bun.meta.useAllFields(SSLConfig, .{
         .server_name = freeString(&this.server_name),
         .key_file_name = freeString(&this.key_file_name),
@@ -185,6 +211,7 @@ pub fn deinit(this: *SSLConfig) void {
         .requires_custom_request_ctx = {},
         .is_using_default_ciphers = {},
         .low_memory_mode = {},
+        .cached_hash = {},
     });
 }
 
@@ -222,8 +249,114 @@ pub fn clone(this: *const SSLConfig) SSLConfig {
         .requires_custom_request_ctx = this.requires_custom_request_ctx,
         .is_using_default_ciphers = this.is_using_default_ciphers,
         .low_memory_mode = this.low_memory_mode,
+        .cached_hash = 0,
     };
 }
+
+pub fn contentHash(this: *SSLConfig) u64 {
+    if (this.cached_hash != 0) return this.cached_hash;
+    var hasher = std.hash.Wyhash.init(0);
+    inline for (comptime std.meta.fields(SSLConfig)) |field| {
+        if (comptime std.mem.eql(u8, field.name, "cached_hash")) continue;
+        const value = @field(this, field.name);
+        switch (field.type) {
+            ?[*:0]const u8 => {
+                if (value) |s| {
+                    hasher.update(bun.asByteSlice(s));
+                }
+                hasher.update(&.{0});
+            },
+            ?[][*:0]const u8 => {
+                if (value) |slice| {
+                    for (slice) |s| {
+                        hasher.update(bun.asByteSlice(s));
+                        hasher.update(&.{0});
+                    }
+                }
+                hasher.update(&.{0});
+            },
+            else => {
+                hasher.update(std.mem.asBytes(&value));
+            },
+        }
+    }
+    const hash = hasher.final();
+    // Avoid 0 since it's the sentinel for "not computed"
+    this.cached_hash = if (hash == 0) 1 else hash;
+    return this.cached_hash;
+}
+
+/// Weak dedup cache. Each map entry stores a weak pointer on its key's
+/// backing allocation. `upgrade()` on that weak pointer is memory-safe
+/// because the weak ref keeps the allocation alive (even if strong==0 and
+/// `deinit()` is running on another thread). The mutex only protects map
+/// structure and the invariant that entry content is intact while in the map.
+pub const GlobalRegistry = struct {
+    const MapContext = struct {
+        pub fn hash(_: @This(), key: *SSLConfig) u32 {
+            return @truncate(key.contentHash());
+        }
+        pub fn eql(_: @This(), a: *SSLConfig, b: *SSLConfig, _: usize) bool {
+            return a.isSame(b);
+        }
+    };
+
+    var mutex: bun.Mutex = .{};
+    var configs: std.ArrayHashMapUnmanaged(*SSLConfig, WeakPtr, MapContext, true) = .empty;
+
+    /// Takes a by-value SSLConfig, wraps it in a `SharedPtr` (strong=1), and
+    /// either returns an existing equivalent (upgraded) or the new one. Either
+    /// way, caller owns exactly one strong ref on the result.
+    ///
+    /// The returned `SharedPtr` must eventually be `.deinit()`d.
+    pub fn intern(config: SSLConfig) SharedPtr {
+        var new_shared = SharedPtr.new(config);
+        const new_ptr = new_shared.get();
+
+        // Deferred cleanup MUST run after `mutex.unlock()` (deinit re-locks
+        // the registry mutex via `SSLConfig.deinit -> remove`).
+        var dispose_new: ?SharedPtr = null;
+        var dispose_old_weak: ?WeakPtr = null;
+        defer if (dispose_new) |*s| s.deinit();
+        defer if (dispose_old_weak) |*w| w.deinit();
+
+        mutex.lock();
+        defer mutex.unlock();
+
+        const gop = bun.handleOom(configs.getOrPutContext(bun.default_allocator, new_ptr, .{}));
+        if (gop.found_existing) {
+            if (gop.value_ptr.upgrade()) |existing_shared| {
+                // Existing config is still alive; dispose the new duplicate.
+                dispose_new = new_shared;
+                return existing_shared;
+            }
+            // strong==0: existing is dying. Its `deinit()` is blocked in
+            // `remove()` waiting for this mutex, so content is still intact
+            // (fields not yet freed). Replace the slot; the dying config's
+            // `remove()` will pointer-mismatch and no-op when it runs.
+            dispose_old_weak = gop.value_ptr.*;
+            gop.key_ptr.* = new_ptr;
+        }
+        gop.value_ptr.* = new_shared.cloneWeak();
+        return new_shared;
+    }
+
+    /// Called from `SSLConfig.deinit()` on strong 1->0. If `intern()` replaced
+    /// our slot while we blocked on the mutex, the pointer-identity check
+    /// fails and we skip (intern already disposed our weak ref).
+    ///
+    /// No-op for configs that were never interned.
+    fn remove(config: *SSLConfig) void {
+        mutex.lock();
+        defer mutex.unlock();
+        if (configs.count() == 0) return;
+        const idx = configs.getIndexContext(config, .{}) orelse return;
+        if (configs.keys()[idx] != config) return;
+        var weak = configs.values()[idx];
+        configs.swapRemoveAt(idx);
+        weak.deinit();
+    }
+};
 
 pub const zero = SSLConfig{};
 
@@ -294,9 +427,9 @@ pub fn fromGenerated(
 
     const protocols = switch (generated.alpn_protocols) {
         .none => null,
-        .string => |*ref| ref.get().toOwnedSliceZ(bun.default_allocator),
-        .buffer => |*ref| blk: {
-            const buffer: jsc.ArrayBuffer = ref.get().asArrayBuffer();
+        .string => |*val| val.get().toOwnedSliceZ(bun.default_allocator),
+        .buffer => |*val| blk: {
+            const buffer: jsc.ArrayBuffer = val.get().asArrayBuffer();
             break :blk try bun.default_allocator.dupeZ(u8, buffer.byteSlice());
         },
     };
@@ -366,9 +499,9 @@ fn handleFile(
 ) ReadFromBlobError!?[][*:0]const u8 {
     const single = try handleSingleFile(global, switch (file.*) {
         .none => return null,
-        .string => |*ref| .{ .string = ref.get() },
-        .buffer => |*ref| .{ .buffer = ref.get() },
-        .file => |*ref| .{ .file = ref.get() },
+        .string => |*val| .{ .string = val.get() },
+        .buffer => |*val| .{ .buffer = val.get() },
+        .file => |*val| .{ .file = val.get() },
         .array => |*list| return try handleFileArray(global, list.items()),
     });
     errdefer bun.freeSensitive(bun.default_allocator, single);
@@ -391,9 +524,9 @@ fn handleFileArray(
     }
     for (elements) |*elem| {
         result.appendAssumeCapacity(try handleSingleFile(global, switch (elem.*) {
-            .string => |*ref| .{ .string = ref.get() },
-            .buffer => |*ref| .{ .buffer = ref.get() },
-            .file => |*ref| .{ .file = ref.get() },
+            .string => |*val| .{ .string = val.get() },
+            .buffer => |*val| .{ .buffer = val.get() },
+            .file => |*val| .{ .file = val.get() },
         }));
     }
     return try result.toOwnedSlice();

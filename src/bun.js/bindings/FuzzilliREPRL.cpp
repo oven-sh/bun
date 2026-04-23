@@ -144,9 +144,15 @@ static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlob
             WTF::String output = arg1.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 
-            FILE* f = fdopen(REPRL_DWFD, "w");
-            fprintf(f, "%s\n", output.utf8().data());
-            fflush(f);
+            // Use a static FILE* to avoid repeatedly calling fdopen (which
+            // duplicates the descriptor and leaks) and to gracefully handle
+            // the case where REPRL_DWFD is not open (i.e. running outside
+            // the fuzzer harness).
+            static FILE* f = fdopen(REPRL_DWFD, "w");
+            if (f) {
+                fprintf(f, "%s\n", output.utf8().data());
+                fflush(f);
+            }
         }
     }
 

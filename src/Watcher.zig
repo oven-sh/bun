@@ -212,7 +212,7 @@ pub const WatchItem = struct {
     // filepath hash for quick comparison
     hash: u32,
     loader: options.Loader,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     count: u32,
     parent_hash: u32,
     kind: Kind,
@@ -278,6 +278,8 @@ pub fn flushEvictions(this: *Watcher) void {
     for (this.evict_list[0..this.evict_list_i]) |item| {
         // catch duplicates, since the list is sorted, duplicates will appear right after each other
         if (item == last_item) continue;
+        // Stale udata from a kevent can point past the compacted watchlist; match the second pass's guard.
+        if (item >= fds.len) continue;
 
         if (!Environment.isWindows) {
             // on mac and linux we can just close the file descriptor
@@ -294,6 +296,20 @@ pub fn flushEvictions(this: *Watcher) void {
     for (this.evict_list[0..this.evict_list_i]) |item| {
         if (item == last_item or this.watchlist.len <= item) continue;
         this.watchlist.swapRemove(item);
+
+        // swapRemove put a different entry at `item`, but its kqueue registration still
+        // carries its old `udata` (= pre-swap index). Rewrite it so subsequent kevents
+        // route to the right module; EV_ADD on an existing (ident, filter) replaces in
+        // place. See #29524.
+        if (comptime Environment.isMac) {
+            if (item < this.watchlist.len) {
+                const moved_fd = this.watchlist.items(.fd)[item];
+                if (moved_fd.isValid()) {
+                    this.addFileDescriptorToKQueueWithoutChecks(moved_fd, item);
+                }
+            }
+        }
+
         last_item = item;
     }
 }
@@ -313,12 +329,15 @@ fn watchLoop(this: *Watcher) bun.sys.Maybe(void) {
 ///
 /// Preconditions (caller must ensure):
 /// - `fd` is a valid, open file descriptor
-/// - `fd` is not already registered with this kqueue
 /// - `watchlist_id` matches the entry's index in the watchlist
 ///
-/// Note: This function does not propagate kevent registration errors.
-/// If registration fails, the file will not be watched but no error is returned.
-pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FileDescriptor, watchlist_id: usize) void {
+/// Safe to call on an already-registered `fd`: `EV_ADD` on an existing
+/// `(ident, filter)` replaces the registration in place, which `flushEvictions`
+/// relies on to rewrite `udata` after `swapRemove`. Adding a
+/// skip-if-registered guard here silently reintroduces #29524.
+///
+/// Does not propagate kevent registration errors.
+pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FD, watchlist_id: usize) void {
     const KEvent = std.c.Kevent;
 
     // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
@@ -353,7 +372,7 @@ pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FileDescri
 
 fn appendFileAssumeCapacity(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     loader: options.Loader,
@@ -408,7 +427,7 @@ fn appendFileAssumeCapacity(
 }
 fn appendDirectoryAssumeCapacity(
     this: *Watcher,
-    stored_fd: bun.FileDescriptor,
+    stored_fd: bun.FD,
     file_path: string,
     hash: HashType,
     comptime clone_file_path: bool,
@@ -469,7 +488,7 @@ fn appendDirectoryAssumeCapacity(
         // id
         event.ident = @intCast(fd.native());
 
-        // Store the hash for fast filtering later
+        // Store the index for fast filtering later
         event.udata = @as(usize, @intCast(watchlist_id));
         var events: [1]KEvent = .{event};
 
@@ -515,11 +534,11 @@ fn appendDirectoryAssumeCapacity(
 
 pub fn appendFileMaybeLock(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     loader: options.Loader,
-    dir_fd: bun.FileDescriptor,
+    dir_fd: bun.FD,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
     comptime lock: bool,
@@ -539,7 +558,7 @@ pub fn appendFileMaybeLock(
 
         if (dir_fd.isValid()) {
             const fds = watchlist_slice.items(.fd);
-            if (std.mem.indexOfScalar(bun.FileDescriptor, fds, dir_fd)) |i| {
+            if (std.mem.indexOfScalar(bun.FD, fds, dir_fd)) |i| {
                 parent_watch_item = @as(WatchItemIndex, @truncate(i));
             }
         }
@@ -592,11 +611,11 @@ inline fn isEligibleDirectory(this: *Watcher, dir: string) bool {
 
 pub fn appendFile(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     loader: options.Loader,
-    dir_fd: bun.FileDescriptor,
+    dir_fd: bun.FD,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
 ) bun.sys.Maybe(void) {
@@ -605,7 +624,7 @@ pub fn appendFile(
 
 pub fn addDirectory(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     comptime clone_file_path: bool,
@@ -653,7 +672,7 @@ pub fn addFileByPathSlow(
     }
 
     // Only open fd if we might need it
-    var fd: bun.FileDescriptor = bun.invalid_fd;
+    var fd: bun.FD = bun.invalid_fd;
     if (Environment.isMac) {
         const path_z = std.posix.toPosixPath(file_path) catch return false;
         switch (bun.sys.open(&path_z, bun.c.O_EVTONLY, 0)) {
@@ -696,11 +715,11 @@ pub fn addFileByPathSlow(
 
 pub fn addFile(
     this: *Watcher,
-    fd: bun.FileDescriptor,
+    fd: bun.FD,
     file_path: string,
     hash: HashType,
     loader: options.Loader,
-    dir_fd: bun.FileDescriptor,
+    dir_fd: bun.FD,
     package_json: ?*PackageJSON,
     comptime clone_file_path: bool,
 ) bun.sys.Maybe(void) {
@@ -759,7 +778,7 @@ pub fn getResolveWatcher(watcher: *Watcher) bun.resolver.AnyResolveWatcher {
     return bun.resolver.ResolveWatcher(*@This(), onMaybeWatchDirectory).init(watcher);
 }
 
-pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: bun.StoredFileDescriptorType) void {
+pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: bun.FD) void {
     // We don't want to watch:
     // - Directories outside the root directory
     // - Directories inside node_modules

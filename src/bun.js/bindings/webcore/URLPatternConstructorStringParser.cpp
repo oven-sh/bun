@@ -155,7 +155,7 @@ ExceptionOr<void> URLPatternConstructorStringParser::computeProtocolMatchSpecial
         return maybeProtocolComponent.releaseException();
 
     auto protocolComponent = maybeProtocolComponent.releaseReturnValue();
-    m_protocolMatchesSpecialSchemeFlag = protocolComponent.matchSpecialSchemeProtocol(context);
+    m_protocolMatchesSpecialSchemeFlag = protocolComponent.matchSpecialSchemeProtocol(context.globalObject());
 
     return {};
 }

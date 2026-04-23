@@ -25,10 +25,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Claude Code slash command
-        uses: anthropics/claude-code-base-action@beta
+        uses: anthropics/claude-code-base-action@98d41f9809750c4c96f2cd285746ecef889f14bc
+        env:
+          ANTHROPIC_MODEL: claude-opus-4-6[1m]
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           prompt: "/dedupe ${{ github.repository }}/issues/${{ github.event.issue.number || inputs.issue_number }}"
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: "--model claude-sonnet-4-5-20250929"
-          claude_env: |
-            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

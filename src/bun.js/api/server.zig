@@ -19,6 +19,8 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
 pub const StaticRoute = @import("./server/StaticRoute.zig");
 pub const FileRoute = @import("./server/FileRoute.zig");
+pub const FileResponseStream = @import("./server/FileResponseStream.zig");
+pub const RangeRequest = @import("./server/RangeRequest.zig");
 
 pub const AnyRoute = union(enum) {
     /// Serve a static file
@@ -1550,6 +1552,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             this.notifyInspectorServerStopped();
 
+            if (this.config.address == .unix) {
+                const path = this.config.address.unix;
+                if (path.len > 0 and path[0] != 0) {
+                    _ = bun.sys.unlink(path);
+                }
+            }
+
             if (!abrupt) {
                 listener.close();
             } else if (!this.flags.terminated) {
@@ -2357,6 +2366,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             ctx.request_body = body;
             var signal = jsc.WebCore.AbortSignal.new(this.globalThis);
             ctx.signal = signal;
+            signal.pendingActivityRef();
 
             var request_object = Request.new(Request.init(
                 ctx.method,
@@ -2644,10 +2654,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // --- 7. Debug mode specific routes ---
             if (debug_mode) {
                 app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
-                if (this.config.inspector) {
-                    jsc.markBinding(@src());
-                    Bun__addInspector(ssl_enabled, app, this.globalThis);
-                }
             }
 
             // --- 8. Handle DevServer routes & Track "/*" Coverage ---
@@ -3252,8 +3258,6 @@ pub const AnyServer = struct {
         };
     }
 };
-
-extern fn Bun__addInspector(bool, *anyopaque, *jsc.JSGlobalObject) void;
 
 pub export fn Server__setIdleTimeout(server: jsc.JSValue, seconds: jsc.JSValue, globalThis: *jsc.JSGlobalObject) void {
     Server__setIdleTimeout_(server, seconds, globalThis) catch |err| switch (err) {

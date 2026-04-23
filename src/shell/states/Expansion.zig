@@ -36,6 +36,9 @@ child_state: union(enum) {
 out_exit_code: ExitCode = 0,
 out: Result,
 out_idx: u32,
+/// Set when the word contains a quoted_empty atom, indicating that an empty
+/// result should still be preserved as an argument (POSIX: `""` produces an empty arg).
+has_quoted_empty: bool = false,
 
 pub const ParentPtr = StatePtrUnion(.{
     Cmd,
@@ -193,6 +196,9 @@ pub fn next(this: *Expansion) Yield {
                                     bun.handleOom(this.current_out.insert(0, '~'));
                                 },
                             }
+                        } else if (this.has_quoted_empty) {
+                            // ~"" or ~'' should expand to the home directory
+                            bun.handleOom(this.current_out.appendSlice(homedir.slice()));
                         }
                     }
 
@@ -316,6 +322,8 @@ fn transitionToGlobState(this: *Expansion) Yield {
     ) catch |err| bun.handleOom(err)) {
         .result => {},
         .err => |e| {
+            arena.deinit();
+            this.child_state = .idle;
             this.state = .{ .err = bun.shell.ShellErr.newSys(e) };
             return .{ .expansion = this };
         },
@@ -331,7 +339,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) ?Yield {
         .simple => |*simp| {
             const is_cmd_subst = this.expandSimpleNoIO(simp, &this.current_out, true);
             if (is_cmd_subst) {
-                const io: IO = .{
+                var io: IO = .{
                     .stdin = this.base.rootIO().stdin.ref(),
                     .stdout = .pipe,
                     .stderr = this.base.rootIO().stderr.ref(),
@@ -339,6 +347,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) ?Yield {
                 const shell_state = switch (this.base.shell.dupeForSubshell(this.base.allocScope(), this.base.allocator(), io, .cmd_subst)) {
                     .result => |s| s,
                     .err => |e| {
+                        io.deref();
                         this.base.throw(&bun.shell.ShellErr.newSys(e));
                         return .failed;
                     },
@@ -363,7 +372,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) ?Yield {
             for (cmp.atoms[start_word_idx + starting_offset ..]) |*simple_atom| {
                 const is_cmd_subst = this.expandSimpleNoIO(simple_atom, &this.current_out, true);
                 if (is_cmd_subst) {
-                    const io: IO = .{
+                    var io: IO = .{
                         .stdin = this.base.rootIO().stdin.ref(),
                         .stdout = .pipe,
                         .stderr = this.base.rootIO().stderr.ref(),
@@ -371,6 +380,7 @@ pub fn expandVarAndCmdSubst(this: *Expansion, start_word_idx: u32) ?Yield {
                     const shell_state = switch (this.base.shell.dupeForSubshell(this.base.allocScope(), this.base.allocator(), io, .cmd_subst)) {
                         .result => |s| s,
                         .err => |e| {
+                            io.deref();
                             this.base.throw(&bun.shell.ShellErr.newSys(e));
                             return .failed;
                         },
@@ -586,6 +596,11 @@ pub fn expandSimpleNoIO(this: *Expansion, atom: *const ast.SimpleAtom, str_list:
         .Text => |txt| {
             bun.handleOom(str_list.appendSlice(txt));
         },
+        .quoted_empty => {
+            // A quoted empty string ("", '', or ${''}). We must ensure the word
+            // is not dropped by pushCurrentOut, so mark it with a flag.
+            this.has_quoted_empty = true;
+        },
         .Var => |label| {
             bun.handleOom(str_list.appendSlice(this.expandVar(label)));
         },
@@ -630,8 +645,8 @@ pub fn appendSlice(this: *Expansion, buf: *std.array_list.Managed(u8), slice: []
 }
 
 pub fn pushCurrentOut(this: *Expansion) void {
-    if (this.current_out.items.len == 0) return;
-    if (this.current_out.items[this.current_out.items.len - 1] != 0) bun.handleOom(this.current_out.append(0));
+    if (this.current_out.items.len == 0 and !this.has_quoted_empty) return;
+    if (this.current_out.items.len == 0 or this.current_out.items[this.current_out.items.len - 1] != 0) bun.handleOom(this.current_out.append(0));
     switch (this.out.pushResult(&this.current_out)) {
         .copied => {
             this.current_out.clearRetainingCapacity();
@@ -709,6 +724,7 @@ fn expansionSizeHint(this: *const Expansion, atom: *const ast.Atom, has_unknown:
 fn expansionSizeHintSimple(this: *const Expansion, simple: *const ast.SimpleAtom, has_unknown: *bool) usize {
     return switch (simple.*) {
         .Text => |txt| txt.len,
+        .quoted_empty => 0,
         .Var => |label| this.expandVar(label).len,
         .VarArgv => |int| this.expandVarArgv(int).len,
         .brace_begin, .brace_end, .comma, .asterisk => 1,

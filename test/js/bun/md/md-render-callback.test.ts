@@ -146,6 +146,130 @@ describe("Bun.markdown.render", () => {
     expect(result).toBe('<ol start="3"><li>first</li><li>second</li></ol>');
   });
 
+  test("listItem receives {index, depth, ordered, start, checked}", () => {
+    const metas: any[] = [];
+    Markdown.render("3. first\n4. second\n5. third\n", {
+      listItem: (c: string, m: any) => {
+        metas.push(m);
+        return c;
+      },
+      list: (c: string) => c,
+    });
+    // Shape is fixed (5 properties) so JSC inline caches stay monomorphic;
+    // `start` is undefined for unordered, `checked` is undefined for non-task items.
+    expect(metas).toEqual([
+      { index: 0, depth: 0, ordered: true, start: 3, checked: undefined },
+      { index: 1, depth: 0, ordered: true, start: 3, checked: undefined },
+      { index: 2, depth: 0, ordered: true, start: 3, checked: undefined },
+    ]);
+    // All items share the same hidden class.
+    expect(Object.keys(metas[0])).toEqual(["index", "depth", "ordered", "start", "checked"]);
+  });
+
+  test("listItem meta for unordered list (start is undefined)", () => {
+    const metas: any[] = [];
+    Markdown.render("- a\n- b\n", {
+      listItem: (c: string, m: any) => {
+        metas.push(m);
+        return c;
+      },
+      list: (c: string) => c,
+    });
+    expect(metas).toEqual([
+      { index: 0, depth: 0, ordered: false, start: undefined, checked: undefined },
+      { index: 1, depth: 0, ordered: false, start: undefined, checked: undefined },
+    ]);
+  });
+
+  test("listItem depth tracks nesting", () => {
+    const metas: any[] = [];
+    Markdown.render("1. outer\n   1. inner-a\n   2. inner-b\n2. outer2\n", {
+      listItem: (_: string, m: any) => {
+        metas.push(m);
+        return "";
+      },
+      list: () => "",
+    });
+    // Callbacks fire bottom-up: inner items first, then outer.
+    expect(metas).toEqual([
+      { index: 0, depth: 1, ordered: true, start: 1, checked: undefined },
+      { index: 1, depth: 1, ordered: true, start: 1, checked: undefined },
+      { index: 0, depth: 0, ordered: true, start: 1, checked: undefined },
+      { index: 1, depth: 0, ordered: true, start: 1, checked: undefined },
+    ]);
+  });
+
+  test("list meta includes depth", () => {
+    const metas: any[] = [];
+    Markdown.render("- outer\n  - inner\n", {
+      list: (c: string, m: any) => {
+        metas.push(m);
+        return c;
+      },
+      listItem: (c: string) => c,
+    });
+    // Inner list fires first (bottom-up). Fixed shape: start is always present.
+    expect(metas).toEqual([
+      { ordered: false, start: undefined, depth: 1 },
+      { ordered: false, start: undefined, depth: 0 },
+    ]);
+  });
+
+  test("listItem meta includes checked alongside index/depth/ordered", () => {
+    const metas: any[] = [];
+    Markdown.render(
+      "- [x] done\n- [ ] todo\n- plain\n",
+      {
+        listItem: (c: string, m: any) => {
+          metas.push(m);
+          return c;
+        },
+        list: (c: string) => c,
+      },
+      { tasklists: true },
+    );
+    expect(metas).toEqual([
+      { index: 0, depth: 0, ordered: false, start: undefined, checked: true },
+      { index: 1, depth: 0, ordered: false, start: undefined, checked: false },
+      { index: 2, depth: 0, ordered: false, start: undefined, checked: undefined },
+    ]);
+  });
+
+  test("listItem index resets across sibling lists", () => {
+    const metas: any[] = [];
+    Markdown.render("1. a\n2. b\n\npara\n\n1. c\n2. d\n", {
+      listItem: (c: string, m: any) => {
+        metas.push({ text: c, index: m.index });
+        return c;
+      },
+      list: (c: string) => c,
+      paragraph: (c: string) => c,
+    });
+    expect(metas).toEqual([
+      { text: "a", index: 0 },
+      { text: "b", index: 1 },
+      { text: "c", index: 0 },
+      { text: "d", index: 1 },
+    ]);
+  });
+
+  test("listItem enables direct marker rendering (no post-processing)", () => {
+    // The motivating use case: ANSI terminal renderer with depth-aware numbering.
+    const toAlpha = (n: number) => String.fromCharCode(96 + n);
+    const result = Markdown.render("1. first\n   1. sub-a\n   2. sub-b\n2. second\n", {
+      listItem: (c: string, m: any) => {
+        const n = (m.start ?? 1) + m.index;
+        const marker = !m.ordered ? "-" : m.depth === 0 ? `${n}.` : `${toAlpha(n)}.`;
+        const indent = "  ".repeat(m.depth);
+        return indent + marker + " " + c.trimEnd() + "\n";
+      },
+      // Nested lists are concatenated directly after the parent item's text;
+      // prefix a newline so the outer listItem's trimEnd() works correctly.
+      list: (c: string) => "\n" + c,
+    });
+    expect(result).toBe("\n1. first\n  a. sub-a\n  b. sub-b\n2. second\n");
+  });
+
   test("strikethrough callback", () => {
     const result = Markdown.render("~~deleted~~\n", {
       strikethrough: (children: string) => `<del>${children}</del>`,

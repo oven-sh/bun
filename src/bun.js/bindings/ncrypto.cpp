@@ -2507,6 +2507,7 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
     const PrivateKeyEncodingConfig& config,
     const Buffer<const unsigned char>& buffer)
 {
+    ClearErrorOnReturn clear_error_on_return;
     static constexpr auto keyOrError = [](EVPKeyPointer pkey,
                                            bool had_passphrase = false) {
         if (int err = ERR_peek_error()) {

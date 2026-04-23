@@ -377,7 +377,7 @@ void JSAbortSignal::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<JSAbortSignal*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSAbortSignal);
@@ -388,7 +388,7 @@ void JSAbortSignal::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<JSAbortSignal*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildren(visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSAbortSignal);

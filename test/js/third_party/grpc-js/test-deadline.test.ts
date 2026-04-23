@@ -28,8 +28,8 @@ const TIMEOUT_SERVICE_CONFIG: grpc.ServiceConfig = {
     {
       name: [{ service: "TestService" }],
       timeout: {
-        seconds: 1,
-        nanos: 0,
+        seconds: 0,
+        nanos: 300_000_000,
       },
     },
   ],
@@ -67,7 +67,7 @@ describe("Client with configured timeout", () => {
     server.forceShutdown();
   });
 
-  it("Should end calls without explicit deadline with DEADLINE_EXCEEDED", done => {
+  it.concurrent("Should end calls without explicit deadline with DEADLINE_EXCEEDED", done => {
     client.unary({}, (error: grpc.ServiceError, value: unknown) => {
       assert(error);
       assert.strictEqual(error.code, grpc.status.DEADLINE_EXCEEDED);
@@ -75,7 +75,7 @@ describe("Client with configured timeout", () => {
     });
   });
 
-  it("Should end calls with a long explicit deadline with DEADLINE_EXCEEDED", done => {
+  it.concurrent("Should end calls with a long explicit deadline with DEADLINE_EXCEEDED", done => {
     const deadline = new Date();
     deadline.setSeconds(deadline.getSeconds() + 20);
     client.unary({}, (error: grpc.ServiceError, value: unknown) => {

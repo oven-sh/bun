@@ -399,29 +399,6 @@ pub fn used(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
     return bun.cpp.ReadableStream__used(globalThis);
 }
 
-pub const StreamTag = enum(usize) {
-    invalid = 0,
-    _,
-
-    pub fn init(filedes: bun.FileDescriptor) StreamTag {
-        var bytes = [8]u8{ 1, 0, 0, 0, 0, 0, 0, 0 };
-        const filedes_ = @as([8]u8, @bitCast(@as(usize, @as(u56, @truncate(@as(usize, @intCast(filedes)))))));
-        bytes[1..8].* = filedes_[0..7].*;
-
-        return @as(StreamTag, @enumFromInt(@as(u64, @bitCast(bytes))));
-    }
-
-    pub fn fd(this: StreamTag) bun.FileDescriptor {
-        var bytes = @as([8]u8, @bitCast(@intFromEnum(this)));
-        if (bytes[0] != 1) {
-            return bun.invalid_fd;
-        }
-        const out: u64 = 0;
-        @as([8]u8, @bitCast(out))[0..7].* = bytes[1..8].*;
-        return @as(bun.FileDescriptor, @intCast(out));
-    }
-};
-
 pub fn NewSource(
     comptime Context: type,
     comptime name_: []const u8,
@@ -442,6 +419,8 @@ pub fn NewSource(
         close_handler: ?*const fn (?*anyopaque) void = null,
         close_ctx: ?*anyopaque = null,
         close_jsvalue: jsc.Strong.Optional = .empty,
+        cancel_handler: ?*const fn (?*anyopaque) void = null,
+        cancel_ctx: ?*anyopaque = null,
         globalThis: *JSGlobalObject = undefined,
         this_jsvalue: jsc.JSValue = .zero,
         is_closed: bool = false,
@@ -493,6 +472,10 @@ pub fn NewSource(
 
             this.cancelled = true;
             onCancel(&this.context);
+            if (this.cancel_handler) |handler| {
+                this.cancel_handler = null;
+                handler(this.cancel_ctx);
+            }
         }
 
         pub fn onClose(this: *This) void {

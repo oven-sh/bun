@@ -191,6 +191,7 @@ pub const linux = @import("./linux.zig");
 
 /// Translated from `c-headers-for-zig.h` for the current platform.
 pub const c = @import("translated-c-headers");
+pub const tty = @import("./tty.zig");
 
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("./feature_flags.zig");
@@ -241,15 +242,6 @@ pub const Global = @import("./Global.zig");
 
 pub const FD = @import("./fd.zig").FD;
 pub const MovableIfWindowsFd = @import("./fd.zig").MovableIfWindowsFd;
-
-/// Deprecated: Use `FD` instead.
-pub const FileDescriptor = FD;
-
-// When we are on a computer with an absurdly high number of max open file handles
-// such is often the case with macOS
-// As a useful optimization, we can store file descriptors and just keep them open...forever
-/// Deprecated: Rename to use `FD` instead.
-pub const StoredFileDescriptorType = FileDescriptor;
 
 /// Thin wrapper around iovec / libuv buffer
 /// This is used for readv/writev calls.
@@ -551,7 +543,7 @@ pub fn ensureNonBlocking(fd: anytype) void {
 }
 
 const global_scope_log = sys.syslog;
-pub fn isReadable(fd: FileDescriptor) PollFlag {
+pub fn isReadable(fd: FD) PollFlag {
     if (comptime Environment.isWindows) {
         @panic("TODO on Windows");
     }
@@ -581,7 +573,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
 }
 
 pub const PollFlag = enum { ready, not_ready, hup };
-pub fn isWritable(fd: FileDescriptor) PollFlag {
+pub fn isWritable(fd: FD) PollFlag {
     if (comptime Environment.isWindows) {
         var polls = [_]std.os.windows.ws2_32.WSAPOLLFD{
             .{
@@ -712,7 +704,7 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
 
 // TODO: prefer .invalid decl literal over this
 // Please prefer `bun.FD.Optional.none` over this
-pub const invalid_fd: FileDescriptor = .invalid;
+pub const invalid_fd: FD = .invalid;
 
 pub const bun_js = @import("./bun.js.zig");
 /// Bindings to JavaScriptCore and other JavaScript primatives.
@@ -774,7 +766,7 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     }
 }
 
-pub fn openDirNoRenamingOrDeletingWindows(dir: FileDescriptor, path_: [:0]const u8) !std.fs.Dir {
+pub fn openDirNoRenamingOrDeletingWindows(dir: FD, path_: [:0]const u8) !std.fs.Dir {
     if (comptime !Environment.isWindows) @compileError("use openDir!");
     const res = try sys.openDirAtWindowsA(dir, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
     return res.stdDir();
@@ -1176,10 +1168,10 @@ pub fn getcwdAlloc(allocator: std.mem.Allocator) ![:0]u8 {
     return allocator.dupeZ(u8, temp_slice);
 }
 
-/// TODO: move to bun.sys and add a method onto FileDescriptor
+/// TODO: move to bun.sys and add a method onto FD
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
-pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
+pub fn getFdPath(fd: FD, buf: *bun.PathBuffer) ![]u8 {
     if (comptime Environment.isWindows) {
         var wide_buf: WPathBuffer = undefined;
         const wide_slice = try windows.GetFinalPathNameByHandle(fd.native(), .{}, wide_buf[0..]);
@@ -1216,15 +1208,15 @@ pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
     };
 }
 
-/// TODO: move to bun.sys and add a method onto FileDescriptor
-pub fn getFdPathZ(fd: FileDescriptor, buf: *PathBuffer) ![:0]u8 {
+/// TODO: move to bun.sys and add a method onto FD
+pub fn getFdPathZ(fd: FD, buf: *PathBuffer) ![:0]u8 {
     const fd_path = try getFdPath(fd, buf);
     buf[fd_path.len] = 0;
     return buf[0..fd_path.len :0];
 }
 
-/// TODO: move to bun.sys and add a method onto FileDescriptor
-pub fn getFdPathW(fd: FileDescriptor, buf: *WPathBuffer) ![]u16 {
+/// TODO: move to bun.sys and add a method onto FD
+pub fn getFdPathW(fd: FD, buf: *WPathBuffer) ![]u16 {
     if (comptime Environment.isWindows) {
         return try windows.GetFinalPathNameByHandle(fd.native(), .{}, buf);
     }
@@ -2551,6 +2543,64 @@ pub noinline fn outOfMemory() noreturn {
 
 pub const handleOom = @import("./handle_oom.zig").handleOom;
 
+/// Like `std.heap.StackFallbackAllocator` but takes a runtime-provided buffer
+/// instead of a comptime-sized inline array. Use this when the "stack" buffer
+/// is heap-cached (e.g. in RareData) and you want the same try-fixed-then-fallback
+/// semantics without putting a large buffer on the actual call stack.
+pub const StackFallbackAllocator = struct {
+    fixed: std.heap.FixedBufferAllocator,
+    fallback: std.mem.Allocator,
+
+    pub fn init(buf: []u8, fallback: std.mem.Allocator) StackFallbackAllocator {
+        return .{
+            .fixed = std.heap.FixedBufferAllocator.init(buf),
+            .fallback = fallback,
+        };
+    }
+
+    pub fn get(self: *StackFallbackAllocator) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .remap = remap,
+                .free = free,
+            },
+        };
+    }
+
+    fn alloc(ctx: *anyopaque, n: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        return std.heap.FixedBufferAllocator.alloc(&self.fixed, n, alignment, ra) orelse
+            self.fallback.rawAlloc(n, alignment, ra);
+    }
+
+    fn resize(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) bool {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fixed.ownsPtr(buf.ptr)) {
+            return std.heap.FixedBufferAllocator.resize(&self.fixed, buf, alignment, new_len, ra);
+        }
+        return self.fallback.rawResize(buf, alignment, new_len, ra);
+    }
+
+    fn remap(ctx: *anyopaque, mem: []u8, alignment: std.mem.Alignment, new_len: usize, ra: usize) ?[*]u8 {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fixed.ownsPtr(mem.ptr)) {
+            return std.heap.FixedBufferAllocator.remap(&self.fixed, mem, alignment, new_len, ra);
+        }
+        return self.fallback.rawRemap(mem, alignment, new_len, ra);
+    }
+
+    fn free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ra: usize) void {
+        const self: *StackFallbackAllocator = @ptrCast(@alignCast(ctx));
+        if (self.fixed.ownsPtr(buf.ptr)) {
+            return std.heap.FixedBufferAllocator.free(&self.fixed, buf, alignment, ra);
+        }
+        return self.fallback.rawFree(buf, alignment, ra);
+    }
+};
+
 pub fn todoPanic(
     src: std.builtin.SourceLocation,
     comptime format: []const u8,
@@ -2820,7 +2870,8 @@ pub fn runtimeEmbedFile(
                     \\
                     \\To improve iteration speed, some files are not embedded but
                     \\loaded at runtime, at the cost of making the binary non-portable.
-                    \\To fix this, pass -DCODEGEN_EMBED=ON to CMake
+                    \\To fix this, build with a release profile, or pass
+                    \\-Dcodegen_embed=true to zig build.
                 , .{ abs_path, e });
             };
         }
@@ -3539,7 +3590,7 @@ pub fn getThreadCount() u16 {
             return null;
         }
         fn getThreadCountOnce() void {
-            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse std.Thread.getCpuCount() catch 0));
+            cached_thread_count = @min(max_threads, @max(min_threads, getThreadCountFromUser() orelse jsc.wtf.numberOfProcessorCores()));
         }
     };
     ThreadCount.cached_thread_count_once.call();
@@ -3704,6 +3755,7 @@ pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
 
 pub const macho = @import("./macho.zig");
 pub const pe = @import("./pe.zig");
+pub const elf = @import("./elf.zig");
 pub const valkey = @import("./valkey/index.zig");
 pub const highway = @import("./highway.zig");
 

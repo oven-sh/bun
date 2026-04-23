@@ -660,45 +660,112 @@ pub fn visibleCodepointWidthType(comptime T: type, cp: T, ambiguousAsWide: bool)
 }
 
 pub const visible = struct {
+    // Returns a 16-bit bitmask of which lanes in `chunk` are printable Latin-1
+    // (i.e. not C0 control, not DEL/C1, not soft hyphen). Used by the unrolled
+    // SIMD width loop — popCount the bitmask to get the printable count.
+    fn printableMaskLatin1(chunk: @Vector(16, u8)) u16 {
+        const lo: @Vector(16, u8) = @splat(0x20);
+        const c1_lo: @Vector(16, u8) = @splat(0x7F);
+        const c1_hi: @Vector(16, u8) = @splat(0x9F);
+        const ad: @Vector(16, u8) = @splat(0xAD);
+
+        const ge_20 = chunk >= lo;
+        const not_c1 = (chunk < c1_lo) | (chunk > c1_hi);
+        const not_ad = chunk != ad;
+        const printable = @select(bool, ge_20, not_c1, @as(@Vector(16, bool), @splat(false))) &
+            not_ad;
+        return @bitCast(@as(@Vector(16, u1), @bitCast(printable)));
+    }
+
     // Ref: https://cs.stanford.edu/people/miles/iso8859.html
     fn visibleLatin1Width(input_: []const u8) usize {
         var length: usize = 0;
-        var input = input_;
-        const input_end_ptr = input.ptr + input.len - (input.len % 16);
-        var input_ptr = input.ptr;
-        while (input_ptr != input_end_ptr) {
-            const input_chunk: [16]u8 = input_ptr[0..16].*;
-            const sums: @Vector(16, u8) = [16]u8{
-                visibleLatin1WidthScalar(input_chunk[0]),
-                visibleLatin1WidthScalar(input_chunk[1]),
-                visibleLatin1WidthScalar(input_chunk[2]),
-                visibleLatin1WidthScalar(input_chunk[3]),
-                visibleLatin1WidthScalar(input_chunk[4]),
-                visibleLatin1WidthScalar(input_chunk[5]),
-                visibleLatin1WidthScalar(input_chunk[6]),
-                visibleLatin1WidthScalar(input_chunk[7]),
-                visibleLatin1WidthScalar(input_chunk[8]),
-                visibleLatin1WidthScalar(input_chunk[9]),
-                visibleLatin1WidthScalar(input_chunk[10]),
-                visibleLatin1WidthScalar(input_chunk[11]),
-                visibleLatin1WidthScalar(input_chunk[12]),
-                visibleLatin1WidthScalar(input_chunk[13]),
-                visibleLatin1WidthScalar(input_chunk[14]),
-                visibleLatin1WidthScalar(input_chunk[15]),
-            };
-            length += @reduce(.Add, sums);
-            input_ptr += 16;
-        }
-        input.len %= 16;
-        input.ptr = input_ptr;
+        var input_ptr = input_.ptr;
+        const input_end = input_.ptr + input_.len;
 
-        for (input) |byte| length += visibleLatin1WidthScalar(byte);
+        // 4x prologue: process 64 bytes per iteration. Each per-chunk popcount
+        // is independent and pipelines, only summing into the scalar accumulator
+        // every 64 bytes — amortizes the addv→fmov hazard that caps throughput
+        // on the no-control-char fast path.
+        while (@intFromPtr(input_end) - @intFromPtr(input_ptr) >= 64) : (input_ptr += 64) {
+            const c0: @Vector(16, u8) = input_ptr[0..16].*;
+            const c1: @Vector(16, u8) = input_ptr[16..32].*;
+            const c2: @Vector(16, u8) = input_ptr[32..48].*;
+            const c3: @Vector(16, u8) = input_ptr[48..64].*;
+            length += @as(usize, @popCount(printableMaskLatin1(c0))) +
+                @as(usize, @popCount(printableMaskLatin1(c1))) +
+                @as(usize, @popCount(printableMaskLatin1(c2))) +
+                @as(usize, @popCount(printableMaskLatin1(c3)));
+        }
+
+        // 1x SIMD tail.
+        while (@intFromPtr(input_end) - @intFromPtr(input_ptr) >= 16) : (input_ptr += 16) {
+            const chunk: @Vector(16, u8) = input_ptr[0..16].*;
+            length += @popCount(printableMaskLatin1(chunk));
+        }
+
+        // Scalar tail.
+        while (input_ptr != input_end) : (input_ptr += 1) {
+            length += visibleLatin1WidthScalar(input_ptr[0]);
+        }
         return length;
     }
 
     fn visibleLatin1WidthScalar(c: u8) u1 {
         // Zero-width: control chars (0x00-0x1F, 0x7F-0x9F) and soft hyphen (0xAD)
         return if ((c >= 127 and c <= 159) or c < 32 or c == 0xAD) 0 else 1;
+    }
+
+    // SIMD scan for the first lane in the inclusive range [Lo, Hi]. Returns
+    // null if not found. Used to find the CSI final byte (0x40-0x7E). Same
+    // wrapping-subtract trick as the C++ ANSI helpers:
+    //   c in [Lo, Hi]  <=>  (c - Lo) <= (Hi - Lo) unsigned
+    fn scanLaneInRange(comptime T: type, comptime Lo: T, comptime Hi: T, slice: []const T) ?usize {
+        comptime bun.assert(Lo <= Hi);
+        const stride = 16 / @sizeOf(T);
+        const MaskInt = std.meta.Int(.unsigned, stride);
+        var i: usize = 0;
+        const lo: @Vector(stride, T) = @splat(Lo);
+        const range: @Vector(stride, T) = @splat(Hi - Lo);
+
+        while (slice.len - i >= stride) : (i += stride) {
+            const chunk: @Vector(stride, T) = slice[i..][0..stride].*;
+            const shifted = chunk -% lo;
+            const in_range = shifted <= range;
+            const mask: MaskInt = @bitCast(@as(@Vector(stride, u1), @bitCast(in_range)));
+            if (mask != 0) return i + @ctz(mask);
+        }
+        while (i < slice.len) : (i += 1) {
+            const c = slice[i];
+            if (c -% Lo <= Hi - Lo) return i;
+        }
+        return null;
+    }
+
+    // SIMD scan for the first lane equal to any of `targets`. Returns null if
+    // not found. Used to find OSC terminators (BEL/ESC and the C1 ST 0x9C).
+    fn scanLaneAnyOf(comptime T: type, comptime targets: []const T, slice: []const T) ?usize {
+        comptime bun.assert(targets.len > 0);
+        const stride = 16 / @sizeOf(T);
+        const MaskInt = std.meta.Int(.unsigned, stride);
+        var i: usize = 0;
+
+        while (slice.len - i >= stride) : (i += stride) {
+            const chunk: @Vector(stride, T) = slice[i..][0..stride].*;
+            var hit: @Vector(stride, bool) = chunk == @as(@Vector(stride, T), @splat(targets[0]));
+            inline for (targets[1..]) |t| {
+                hit = hit | (chunk == @as(@Vector(stride, T), @splat(t)));
+            }
+            const mask: MaskInt = @bitCast(@as(@Vector(stride, u1), @bitCast(hit)));
+            if (mask != 0) return i + @ctz(mask);
+        }
+        while (i < slice.len) : (i += 1) {
+            const c = slice[i];
+            inline for (targets) |t| {
+                if (c == t) return i;
+            }
+        }
+        return null;
     }
 
     fn visibleLatin1WidthExcludeANSIColors(input_: anytype) usize {
@@ -716,31 +783,37 @@ pub const visible = struct {
 
             if (input[1] == '[') {
                 // CSI sequence: ESC [ <params> <final byte>
-                // Final byte is in range 0x40-0x7E (@ through ~)
+                // Final byte is in range 0x40-0x7E (@ through ~). SIMD-scan
+                // for it instead of stepping byte-by-byte; CSI parameters can
+                // be 1-15+ bytes (e.g. ESC [ 1;31;48;2;255;0;0 m).
                 if (input.len < 3) return length;
                 input = input[2..];
-                while (input.len > 0) {
-                    const c = input[0];
-                    input = input[1..];
-                    // Final byte terminates the sequence
-                    if (c >= 0x40 and c <= 0x7E) break;
+                if (scanLaneInRange(u8, 0x40, 0x7E, input)) |t| {
+                    input = input[t + 1 ..];
+                } else {
+                    return length;
                 }
             } else if (input[1] == ']') {
-                // OSC sequence: ESC ] ... (BEL or ST)
-                // Find terminator: BEL (0x07) or ST (ESC \)
+                // OSC sequence: ESC ] ... (BEL or ST). The payload is opaque
+                // (titles, hyperlinks, filenames) — SIMD-scan for the
+                // terminators instead of byte-by-byte. Terminators per ECMA-48
+                // and xterm: BEL (0x07), C1 ST (0x9C), or 7-bit ST (ESC \).
                 input = input[2..];
-                while (input.len > 0) {
-                    if (input[0] == 0x07) {
-                        // BEL terminator
-                        input = input[1..];
-                        break;
-                    } else if (input[0] == 0x1b and input.len > 1 and input[1] == '\\') {
-                        // ST terminator (ESC \)
-                        input = input[2..];
+                while (scanLaneAnyOf(u8, &.{ 0x07, 0x9c, 0x1b }, input)) |t| {
+                    const term = input[t];
+                    if (term == 0x07 or term == 0x9c) {
+                        // Single-byte terminator (BEL or C1 ST).
+                        input = input[t + 1 ..];
                         break;
                     }
-                    input = input[1..];
-                }
+                    // ESC at offset t — check if next byte is '\\' (ST = ESC \).
+                    if (t + 1 < input.len and input[t + 1] == '\\') {
+                        input = input[t + 2 ..];
+                        break;
+                    }
+                    // Stray ESC inside OSC payload — skip it and keep scanning.
+                    input = input[t + 1 ..];
+                } else input = input[input.len..];
             } else {
                 input = input[1..];
             }
@@ -899,25 +972,47 @@ pub const visible = struct {
         }
     };
 
-    /// Count printable ASCII characters (0x20-0x7E) in a UTF-16 slice using SIMD
+    /// Count printable ASCII characters (0x20-0x7E) in a UTF-16 slice using SIMD.
+    /// 4x-unrolled main loop: process 32 u16s (64 bytes) per iteration, summing
+    /// 4 popcounts. Same hazard amortization as visibleLatin1Width.
     fn countPrintableAscii16(input: []const u16) usize {
         var total: usize = 0;
         var remaining = input;
 
-        // Process 8 u16 values at a time using SIMD
         const vec_len = 8;
+        const low: @Vector(vec_len, u16) = @splat(0x20);
+        const high: @Vector(vec_len, u16) = @splat(0x7F);
+
+        const printableMask = struct {
+            inline fn f(chunk: @Vector(vec_len, u16), l: @Vector(vec_len, u16), h: @Vector(vec_len, u16)) u8 {
+                const ge_low = chunk >= l;
+                const lt_high = chunk < h;
+                const printable = @select(bool, ge_low, lt_high, @as(@Vector(vec_len, bool), @splat(false)));
+                return @bitCast(@as(@Vector(vec_len, u1), @bitCast(printable)));
+            }
+        }.f;
+
+        // 4x prologue: 32 u16s = 64 bytes per iteration.
+        while (remaining.len >= 4 * vec_len) {
+            const c0: @Vector(vec_len, u16) = remaining[0..vec_len].*;
+            const c1: @Vector(vec_len, u16) = remaining[vec_len..][0..vec_len].*;
+            const c2: @Vector(vec_len, u16) = remaining[2 * vec_len ..][0..vec_len].*;
+            const c3: @Vector(vec_len, u16) = remaining[3 * vec_len ..][0..vec_len].*;
+            total += @as(usize, @popCount(printableMask(c0, low, high))) +
+                @as(usize, @popCount(printableMask(c1, low, high))) +
+                @as(usize, @popCount(printableMask(c2, low, high))) +
+                @as(usize, @popCount(printableMask(c3, low, high)));
+            remaining = remaining[4 * vec_len ..];
+        }
+
+        // 1x SIMD tail.
         while (remaining.len >= vec_len) {
             const chunk: @Vector(vec_len, u16) = remaining[0..vec_len].*;
-            const low: @Vector(vec_len, u16) = @splat(0x20);
-            const high: @Vector(vec_len, u16) = @splat(0x7F);
-            const ge_low = chunk >= low;
-            const lt_high = chunk < high;
-            const printable = @select(bool, ge_low, lt_high, @as(@Vector(vec_len, bool), @splat(false)));
-            total += @popCount(@as(u8, @bitCast(printable)));
+            total += @popCount(printableMask(chunk, low, high));
             remaining = remaining[vec_len..];
         }
 
-        // Handle remaining elements
+        // Scalar tail.
         for (remaining) |c| {
             total += @intFromBool(c >= 0x20 and c < 0x7F);
         }
@@ -928,7 +1023,15 @@ pub const visible = struct {
     fn visibleUTF16WidthFn(input_: []const u16, exclude_ansi_colors: bool, ambiguousAsWide: bool) usize {
         var input = input_;
         var len: usize = 0;
+        // `prev` tracks the literal previous codepoint (including ANSI bytes) —
+        // needed for the OSC ST terminator check (ESC \ = prev==0x1b, cp=='\\').
+        // `prev_visible` tracks the last VISIBLE codepoint — used by graphemeBreak.
+        // Using `prev` for graphemeBreak was a bug: CSI bytes like 'm' would
+        // wrongly join to a following combining mark (e.g. "\x1b[1m\uFE0F?" →
+        // graphemeBreak('m', FE0F) = false → add() on uninitialized state →
+        // width 2 instead of 1).
         var prev: ?u32 = null;
+        var prev_visible: ?u32 = null;
         var break_state: grapheme.BreakState = .default;
         var grapheme_state = GraphemeState{};
         var saw_1b = false;
@@ -966,6 +1069,7 @@ pub const visible = struct {
                         const last_cp: u32 = input[bulk_end - 1];
                         grapheme_state.reset(last_cp, ambiguousAsWide);
                         prev = last_cp;
+                        prev_visible = last_cp;
                         break_state = .default;
 
                         // If we consumed everything, advance and continue
@@ -982,42 +1086,70 @@ pub const visible = struct {
                     }
                 }
 
-                for (0..idx) |j| {
-                    const cp: u32 = input[j];
-                    defer prev = cp;
-
-                    if (saw_osc) {
-                        // In OSC sequence, look for BEL (0x07) or ST (ESC \)
-                        if (cp == 0x07) {
-                            saw_1b = false;
-                            saw_osc = false;
-                            stretch_len = 0;
-                            continue;
-                        } else if (cp == '\\' and prev == 0x1b) {
-                            // ST terminator complete (ESC \)
-                            saw_1b = false;
-                            saw_osc = false;
-                            stretch_len = 0;
-                            continue;
-                        } else if (cp == 0x1b) {
-                            // ESC inside OSC - might be start of ST terminator
-                            // Don't exit OSC yet, wait to see if next char is '\'
-                            continue;
-                        }
-                        stretch_len += visibleCodepointWidth(cp, ambiguousAsWide);
-                        continue;
-                    }
+                var j: usize = 0;
+                while (j < idx) {
+                    // Bulk SIMD scans inside escape states — replace the byte-by-byte
+                    // walk for long CSI parameter strings and OSC payloads (URLs,
+                    // titles, hyperlinks). The grapheme/width tracking lives below
+                    // and only fires on visible codepoints, so the escape body bytes
+                    // don't need per-byte processing here.
                     if (saw_csi) {
-                        // CSI final byte is in range 0x40-0x7E (@ through ~)
-                        if (cp >= 0x40 and cp <= 0x7E) {
+                        // CSI final byte is in [0x40, 0x7E].
+                        const sub = input[j..idx];
+                        if (scanLaneInRange(u16, 0x40, 0x7E, sub)) |t| {
                             saw_1b = false;
                             saw_csi = false;
                             stretch_len = 0;
+                            prev = sub[t];
+                            j += t + 1;
                             continue;
                         }
-                        // Parameter bytes - don't add to width
-                        continue;
+                        // Terminator not in this ASCII run — stay in CSI state and
+                        // advance to end. The next outer iteration (or non-ASCII
+                        // codepoint handler) will continue parsing.
+                        if (idx > j) prev = input[idx - 1];
+                        break;
                     }
+                    if (saw_osc) {
+                        // OSC payload terminates at BEL (0x07) or ESC + '\\' (ST).
+                        // SIMD scan for either ESC or BEL — for ESC we then peek
+                        // the next byte to see if it's '\\'.
+                        const sub = input[j..idx];
+                        if (scanLaneAnyOf(u16, &.{ 0x07, 0x1b }, sub)) |t| {
+                            const term = sub[t];
+                            if (term == 0x07) {
+                                saw_1b = false;
+                                saw_osc = false;
+                                stretch_len = 0;
+                                prev = 0x07;
+                                j += t + 1;
+                                continue;
+                            }
+                            // ESC found at offset t. Peek next byte for '\\' (ST).
+                            if (j + t + 1 < idx and input[j + t + 1] == '\\') {
+                                saw_1b = false;
+                                saw_osc = false;
+                                stretch_len = 0;
+                                prev = '\\';
+                                j += t + 2;
+                                continue;
+                            }
+                            // Lone ESC inside OSC — skip it and keep scanning. The
+                            // next outer iteration will SIMD-scan again from j+t+1.
+                            prev = 0x1b;
+                            j += t + 1;
+                            continue;
+                        }
+                        // Terminator not in this ASCII run — stay in OSC state.
+                        if (idx > j) prev = input[idx - 1];
+                        break;
+                    }
+
+                    // Per-byte path for everything else.
+                    const cp: u32 = input[j];
+                    j += 1;
+                    defer prev = cp;
+
                     if (saw_1b) {
                         if (cp == '[') {
                             saw_csi = true;
@@ -1037,7 +1169,7 @@ pub const visible = struct {
                         continue;
                     }
                     if (!exclude_ansi_colors or cp != 0x1b) {
-                        if (prev) |prev_| {
+                        if (prev_visible) |prev_| {
                             const should_break = grapheme.graphemeBreak(@truncate(prev_), @truncate(cp), &break_state);
                             if (should_break) {
                                 len += grapheme_state.width();
@@ -1048,6 +1180,7 @@ pub const visible = struct {
                         } else {
                             grapheme_state.reset(@truncate(cp), ambiguousAsWide);
                         }
+                        prev_visible = cp;
                         continue;
                     }
                     saw_1b = true;
@@ -1071,14 +1204,14 @@ pub const visible = struct {
 
             // Handle non-ASCII characters inside escape sequences
             if (saw_osc) {
-                // In OSC sequence, look for BEL (0x07) or ST (ESC \)
-                // Non-ASCII chars inside OSC should not contribute to width
-                if (cp == 0x07) {
+                // In OSC sequence, look for BEL (0x07) or C1 ST (0x9C). The
+                // 7-bit ST (ESC \) only uses ASCII chars and is handled above.
+                // Non-ASCII chars inside OSC should not contribute to width.
+                if (cp == 0x07 or cp == 0x9c) {
                     saw_1b = false;
                     saw_osc = false;
                     stretch_len = 0;
                 }
-                // Note: ST (ESC \) only uses ASCII chars, so we don't need to check here
                 continue;
             }
             if (saw_csi) {
@@ -1095,7 +1228,7 @@ pub const visible = struct {
                 // Don't count this char as part of escape, treat normally below
             }
 
-            if (prev) |prev_| {
+            if (prev_visible) |prev_| {
                 const should_break = grapheme.graphemeBreak(@truncate(prev_), @truncate(cp), &break_state);
                 if (should_break) {
                     len += grapheme_state.width();
@@ -1106,6 +1239,7 @@ pub const visible = struct {
             } else {
                 grapheme_state.reset(cp, ambiguousAsWide);
             }
+            prev_visible = cp;
         }
         // Add width of final grapheme
         len += grapheme_state.width();
@@ -1141,8 +1275,102 @@ pub const visible = struct {
             pub fn utf16(input: []const u16, ambiguousAsWide: bool) usize {
                 return visibleUTF16WidthFn(input, true, ambiguousAsWide);
             }
+
+            /// Byte index of the longest prefix of `input` whose visible
+            /// width is <= `max_width`. ANSI escapes count as zero-width
+            /// and are always included in the prefix. Never splits a
+            /// multi-byte UTF-8 codepoint.
+            pub fn utf8IndexAtWidth(input: []const u8, max_width: usize) usize {
+                return utf8IndexAtWidthExcludeANSI(input, max_width);
+            }
         };
     };
+
+    fn utf8IndexAtWidthExcludeANSI(input_: []const u8, max_width: usize) usize {
+        var input = input_;
+        var w: usize = 0;
+        while (strings.indexOfCharUsize(input, '\x1b')) |esc| {
+            // Walk the visible run before ESC.
+            const run_start = @intFromPtr(input.ptr) - @intFromPtr(input_.ptr);
+            if (utf8WalkRun(input_, run_start, esc, max_width, &w)) |stop| return stop;
+            input = input[esc..];
+            // Same CSI/OSC skip as visibleLatin1WidthExcludeANSIColors.
+            if (input.len < 2) return input_.len;
+            if (input[1] == '[') {
+                if (input.len < 3) return input_.len;
+                input = input[2..];
+                if (scanLaneInRange(u8, 0x40, 0x7E, input)) |t| {
+                    input = input[t + 1 ..];
+                } else return input_.len;
+            } else if (input[1] == ']') {
+                input = input[2..];
+                while (scanLaneAnyOf(u8, &.{ 0x07, 0x9c, 0x1b }, input)) |t| {
+                    const term = input[t];
+                    if (term == 0x07 or term == 0x9c) {
+                        input = input[t + 1 ..];
+                        break;
+                    }
+                    if (t + 1 < input.len and input[t + 1] == '\\') {
+                        input = input[t + 2 ..];
+                        break;
+                    }
+                    input = input[t + 1 ..];
+                } else input = input[input.len..];
+            } else {
+                input = input[1..];
+            }
+        }
+        const run_start = @intFromPtr(input.ptr) - @intFromPtr(input_.ptr);
+        if (utf8WalkRun(input_, run_start, input.len, max_width, &w)) |stop| return stop;
+        return input_.len;
+    }
+
+    /// Walk `len` bytes of `input` starting at absolute offset `start`,
+    /// accumulating visible width. Returns the absolute byte index at
+    /// which adding the next codepoint would exceed `max_width`, or null
+    /// if the whole run fits. Mirrors visibleUTF8WidthFn's decode loop.
+    fn utf8WalkRun(input: []const u8, start: usize, len: usize, max_width: usize, w: *usize) ?usize {
+        var bytes = input[start .. start + len];
+        while (firstNonASCII(bytes)) |i| {
+            // ASCII run: each printable char is width 1.
+            var k: usize = 0;
+            while (k < i) : (k += 1) {
+                const cw = visibleLatin1WidthScalar(bytes[k]);
+                if (w.* + cw > max_width) {
+                    return (@intFromPtr(bytes.ptr) - @intFromPtr(input.ptr)) + k;
+                }
+                w.* += cw;
+            }
+            const this_chunk = bytes[i..];
+            const byte = this_chunk[0];
+            const skip = bun.strings.wtf8ByteSequenceLengthWithInvalid(byte);
+            const cp_bytes: [4]u8 = switch (@min(@as(usize, skip), this_chunk.len)) {
+                inline 1, 2, 3, 4 => |cp_len| .{
+                    byte,
+                    if (comptime cp_len > 1) this_chunk[1] else 0,
+                    if (comptime cp_len > 2) this_chunk[2] else 0,
+                    if (comptime cp_len > 3) this_chunk[3] else 0,
+                },
+                else => unreachable,
+            };
+            const cp = decodeWTF8RuneTMultibyte(&cp_bytes, skip, u32, unicode_replacement);
+            const cw = visibleCodepointWidth(cp, false);
+            if (w.* + cw > max_width) {
+                return (@intFromPtr(bytes.ptr) - @intFromPtr(input.ptr)) + i;
+            }
+            w.* += cw;
+            bytes = bytes[@min(i + skip, bytes.len)..];
+        }
+        var k: usize = 0;
+        while (k < bytes.len) : (k += 1) {
+            const cw = visibleLatin1WidthScalar(bytes[k]);
+            if (w.* + cw > max_width) {
+                return (@intFromPtr(bytes.ptr) - @intFromPtr(input.ptr)) + k;
+            }
+            w.* += cw;
+        }
+        return null;
+    }
 };
 
 // extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
@@ -1172,6 +1400,25 @@ export fn Bun__visibleWidthExcludeANSI_latin1(ptr: [*]const u8, len: usize) usiz
 /// Calculate visible width of a single codepoint
 export fn Bun__codepointWidth(cp: u32, ambiguous_as_wide: bool) u8 {
     return @intCast(visibleCodepointWidth(cp, ambiguous_as_wide));
+}
+
+/// Grapheme break detection for C++ callers.
+/// Returns true if there should be a grapheme break between cp1 and cp2.
+/// `state` is an opaque u8 that must be initialized to 0 and passed between calls.
+export fn Bun__graphemeBreak(cp1: u32, cp2: u32, state_ptr: *u8) bool {
+    var state: grapheme.BreakState = @enumFromInt(state_ptr.*);
+    const result = grapheme.graphemeBreak(@truncate(cp1), @truncate(cp2), &state);
+    state_ptr.* = @intFromEnum(state);
+    return result;
+}
+
+/// Check if a codepoint has the Emoji property (using ICU).
+export fn Bun__isEmojiPresentation(cp: u32) bool {
+    if (cp < 0x203C) return false;
+    if (cp >= 0x2C00 and cp < 0x1F000) return false;
+    if (cp == 0xFE0E or cp == 0xFE0F or cp == 0x200D) return false;
+    // UCHAR_EMOJI = 57
+    return icu_hasBinaryProperty(cp, 57);
 }
 
 const bun = @import("bun");

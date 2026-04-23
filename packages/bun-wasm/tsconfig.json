@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "target": "esnext",
     "module": "esnext",
     "declaration": true,
@@ -10,7 +10,6 @@
     "emitDeclarationOnly": true,
     "strict": true,
     "outDir": ".",
-    "baseUrl": ".",
     "types": ["node"]
   },
   "include": ["./node_modules/peechy", "./schema.d.ts", "./index.ts", "./schema.js"],

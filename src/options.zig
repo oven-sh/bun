@@ -50,6 +50,36 @@ pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, t
     return hash_map;
 }
 
+pub const AllowUnresolved = union(enum) {
+    /// Default. Skip all checks — current behavior.
+    all,
+    /// Always error on dynamic specifiers.
+    none,
+    /// Glob patterns; at least one must match the extracted shape.
+    patterns: []const string,
+
+    pub const default: AllowUnresolved = .all;
+
+    /// Normalize from raw CLI/JS input.
+    /// [] → .none, contains "*" → .all, else → .patterns
+    pub fn fromStrings(strs: []const string) AllowUnresolved {
+        if (strs.len == 0) return .none;
+        for (strs) |s| if (bun.strings.eqlComptime(s, "*")) return .all;
+        return .{ .patterns = strs };
+    }
+
+    /// shape is the extracted template representation (may be "").
+    pub fn allows(self: AllowUnresolved, shape: []const u8) bool {
+        return switch (self) {
+            .all => true,
+            .none => false,
+            .patterns => |pats| for (pats) |p| {
+                if (bun.glob.match(p, shape).matches()) break true;
+            } else false,
+        };
+    }
+};
+
 pub const ExternalModules = struct {
     node_modules: std.BufSet,
     abs_paths: std.BufSet,
@@ -1126,6 +1156,8 @@ const default_loaders_posix = .{
     .{ ".html", .html },
     .{ ".jsonc", .jsonc },
     .{ ".json5", .json5 },
+    .{ ".md", .md },
+    .{ ".markdown", .md },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },
@@ -1774,6 +1806,7 @@ pub const BundleOptions = struct {
     /// TODO: remove this in favor accessing bundler.log
     log: *logger.Log,
     external: ExternalModules,
+    allow_unresolved: AllowUnresolved = .all,
     entry_points: []const string,
     entry_naming: []const u8 = "",
     asset_naming: []const u8 = "",
@@ -1865,6 +1898,12 @@ pub const BundleOptions = struct {
     force_node_env: ForceNodeEnv = .unspecified,
 
     ignore_module_resolution_errors: bool = false,
+
+    /// Package names whose barrel files should be optimized.
+    /// When set, barrel files from these packages will only load submodules
+    /// that are actually imported. Also, any file with sideEffects: false
+    /// in its package.json is automatically a barrel candidate.
+    optimize_imports: ?*const bun.StringSet = null,
 
     pub const ForceNodeEnv = enum {
         unspecified,

@@ -126,6 +126,7 @@ pub fn enqueueTarballForDownload(
 pub fn enqueueTarballForReading(
     this: *PackageManager,
     dependency_id: DependencyID,
+    package_id: PackageID,
     alias: string,
     resolution: *const Resolution,
     task_context: TaskCallbackContext,
@@ -144,6 +145,8 @@ pub fn enqueueTarballForReading(
 
     if (task_queue.found_existing) return;
 
+    const integrity = this.lockfile.packages.items(.meta)[package_id].integrity;
+
     this.task_batch.push(ThreadPool.Batch.from(enqueueLocalTarball(
         this,
         task_id,
@@ -151,6 +154,7 @@ pub fn enqueueTarballForReading(
         alias,
         path,
         resolution.*,
+        integrity,
     )));
 }
 
@@ -314,9 +318,13 @@ pub fn enqueueDependencyToRoot(
     }));
 
     if (this.lockfile.buffers.resolutions.items[dep_id] == invalid_package_id) {
+        // Copy to the stack: `enqueueDependencyWithMainAndSuccessFn` can call
+        // `Lockfile.Package.fromNPM`, which grows `buffers.dependencies` and
+        // would invalidate a pointer taken directly into it.
+        const dependency = this.lockfile.buffers.dependencies.items[dep_id];
         this.enqueueDependencyWithMainAndSuccessFn(
             dep_id,
-            &this.lockfile.buffers.dependencies.items[dep_id],
+            &dependency,
             invalid_package_id,
             false,
             assignRootResolution,
@@ -617,6 +625,40 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                                 },
                                             ) catch unreachable;
                                         }
+                                    }
+                                }
+                                return;
+                            },
+                            error.MissingPackageJSON => {
+                                if (dependency.behavior.isRequired()) {
+                                    if (failFn) |fail| {
+                                        fail(
+                                            this,
+                                            dependency,
+                                            id,
+                                            err,
+                                        );
+                                    } else if (version.tag == .folder) {
+                                        this.log.addErrorFmt(
+                                            null,
+                                            logger.Loc.Empty,
+                                            this.allocator,
+                                            "Could not find package.json for \"file:{s}\" dependency \"{s}\"",
+                                            .{
+                                                this.lockfile.str(&version.value.folder),
+                                                this.lockfile.str(&name),
+                                            },
+                                        ) catch unreachable;
+                                    } else {
+                                        this.log.addErrorFmt(
+                                            null,
+                                            logger.Loc.Empty,
+                                            this.allocator,
+                                            "Could not find package.json for dependency \"{s}\"",
+                                            .{
+                                                this.lockfile.str(&name),
+                                            },
+                                        ) catch unreachable;
                                     }
                                 }
                                 return;
@@ -1133,6 +1175,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                         this.lockfile.str(&dependency.name),
                         url,
                         res,
+                        .{},
                     )));
                 },
                 .remote => {
@@ -1158,11 +1201,19 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
     }
 }
 
-pub fn enqueueExtractNPMPackage(
+/// Allocate and initialise an `.extract` Task for an npm tarball.
+/// Shared by the buffered path (`enqueueExtractNPMPackage`) and the
+/// streaming path (`createExtractTaskForStreaming`) so both produce
+/// an identical Task shape; only the return type differs.
+///
+/// Intentionally does *not* move `network_task.apply_patch_task`: the
+/// install phase creates its own PatchTask via `PackageInstaller`, so
+/// applying it here would run the patch twice.
+fn initExtractTask(
     this: *PackageManager,
     tarball: *const ExtractTarball,
     network_task: *NetworkTask,
-) *ThreadPool.Task {
+) *Task {
     var task = this.preallocated_resolve_tasks.get();
     task.* = Task{
         .package_manager = this,
@@ -1178,7 +1229,28 @@ pub fn enqueueExtractNPMPackage(
         .data = undefined,
     };
     task.request.extract.tarball.skip_verify = !this.options.do.verify_integrity;
-    return &task.threadpool_task;
+    return task;
+}
+
+pub fn enqueueExtractNPMPackage(
+    this: *PackageManager,
+    tarball: *const ExtractTarball,
+    network_task: *NetworkTask,
+) *ThreadPool.Task {
+    return &initExtractTask(this, tarball, network_task).threadpool_task;
+}
+
+/// Allocate the extract Task up front so the streaming extractor can
+/// publish it to `resolve_tasks` when extraction finishes. Done on the
+/// main thread because `preallocated_resolve_tasks` is not thread-safe.
+/// The NetworkTask's pending-task slot is reused for the extraction so
+/// progress counters stay balanced.
+pub fn createExtractTaskForStreaming(
+    this: *PackageManager,
+    tarball: *const ExtractTarball,
+    network_task: *NetworkTask,
+) *Task {
+    return initExtractTask(this, tarball, network_task);
 }
 
 fn enqueueGitClone(
@@ -1234,7 +1306,7 @@ fn enqueueGitClone(
 pub fn enqueueGitCheckout(
     this: *PackageManager,
     task_id: Task.Id,
-    dir: bun.FileDescriptor,
+    dir: bun.FD,
     dependency_id: DependencyID,
     name: string,
     resolution: Resolution,
@@ -1294,6 +1366,7 @@ fn enqueueLocalTarball(
     name: string,
     path: string,
     resolution: Resolution,
+    integrity: Integrity,
 ) *ThreadPool.Task {
     var task = this.preallocated_resolve_tasks.get();
     task.* = Task{
@@ -1313,6 +1386,7 @@ fn enqueueLocalTarball(
                     .cache_dir = this.getCacheDirectory(),
                     .temp_dir = this.getTemporaryDirectory().handle,
                     .dependency_id = dependency_id,
+                    .integrity = integrity,
                     .url = strings.StringOrTinyString.initAppendIfNeeded(
                         path,
                         *FileSystem.FilenameStore,
@@ -1447,7 +1521,7 @@ fn getOrPutResolvedPackageWithFindResult(
                     .network_task = try this.generateNetworkTaskForTarball(
                         task_id,
                         manifest.str(&find_result.package.tarball_url),
-                        dependency.behavior.isRequired(),
+                        behavior.isRequired(),
                         dependency_id,
                         package,
                         name_and_version_hash,
@@ -1886,6 +1960,7 @@ const DependencyID = bun.install.DependencyID;
 const ExtractTarball = bun.install.ExtractTarball;
 const Features = bun.install.Features;
 const FolderResolution = bun.install.FolderResolution;
+const Integrity = bun.install.Integrity;
 const Npm = bun.install.Npm;
 const PackageID = bun.install.PackageID;
 const PackageNameHash = bun.install.PackageNameHash;

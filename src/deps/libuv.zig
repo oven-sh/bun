@@ -190,19 +190,64 @@ pub const O = struct {
     pub const SYMLINK = UV_FS_O_SYMLINK;
     pub const SYNC = UV_FS_O_SYNC;
 
+    /// Convert from internal bun.O flags to libuv/Windows flags.
+    ///
+    /// Note: NONBLOCK, NOFOLLOW, DIRECTORY, NOATIME, NOCTTY, SYMLINK map to
+    /// 0 in libuv on Windows (see UV_FS_O_* constants below), so they are
+    /// included here for correctness but are effectively no-ops.
+    /// When adding new flag mappings, keep in sync with toBunO.
     pub fn fromBunO(c_flags: i32) i32 {
         var flags: i32 = 0;
 
-        if (c_flags & bun.O.NONBLOCK != 0) flags |= NONBLOCK;
-        if (c_flags & bun.O.CREAT != 0) flags |= CREAT;
-        if (c_flags & bun.O.NOFOLLOW != 0) flags |= NOFOLLOW;
         if (c_flags & bun.O.WRONLY != 0) flags |= WRONLY;
-        if (c_flags & bun.O.RDONLY != 0) flags |= RDONLY;
         if (c_flags & bun.O.RDWR != 0) flags |= RDWR;
+        if (c_flags & bun.O.CREAT != 0) flags |= CREAT;
+        if (c_flags & bun.O.EXCL != 0) flags |= EXCL;
         if (c_flags & bun.O.TRUNC != 0) flags |= TRUNC;
         if (c_flags & bun.O.APPEND != 0) flags |= APPEND;
-        if (c_flags & bun.O.EXCL != 0) flags |= EXCL;
+        if (c_flags & bun.O.NONBLOCK != 0) flags |= NONBLOCK;
+        // SYNC and DSYNC must be mutually exclusive for libuv on Windows.
+        // On Linux, bun.O.SYNC (0o4010000) is a superset of bun.O.DSYNC
+        // (0o10000), so checking SYNC first ensures we emit only UV_FS_O_SYNC
+        // when both bits are present. libuv's fs__open rejects having both set.
+        if (c_flags & bun.O.SYNC != 0) {
+            flags |= SYNC;
+        } else if (c_flags & bun.O.DSYNC != 0) {
+            flags |= DSYNC;
+        }
+        if (c_flags & bun.O.NOFOLLOW != 0) flags |= NOFOLLOW;
+        if (c_flags & bun.O.DIRECT != 0) flags |= DIRECT;
         if (c_flags & FILEMAP != 0) flags |= FILEMAP;
+
+        return flags;
+    }
+
+    /// Convert from libuv/Windows MSVC O_ flags to internal bun.O flags.
+    /// This is the inverse of fromBunO and is needed because fs.constants
+    /// exposes the platform's native C values to JavaScript, but internally
+    /// Bun normalizes all flags to the bun.O (POSIX-like) representation.
+    ///
+    /// Only maps flags that have non-zero libuv values on Windows.
+    /// NOFOLLOW, NONBLOCK, DIRECTORY, NOATIME, NOCTTY, SYMLINK are all 0
+    /// in libuv on Windows (no-ops) and cannot be recovered from a bitmask.
+    /// When adding new flag mappings, keep in sync with fromBunO.
+    pub fn toBunO(uv_flags: i32) i32 {
+        var flags: i32 = 0;
+
+        if (uv_flags & WRONLY != 0) flags |= bun.O.WRONLY;
+        if (uv_flags & RDWR != 0) flags |= bun.O.RDWR;
+        if (uv_flags & CREAT != 0) flags |= bun.O.CREAT;
+        if (uv_flags & EXCL != 0) flags |= bun.O.EXCL;
+        if (uv_flags & TRUNC != 0) flags |= bun.O.TRUNC;
+        if (uv_flags & APPEND != 0) flags |= bun.O.APPEND;
+        // SYNC takes priority over DSYNC (see fromBunO comment).
+        if (uv_flags & SYNC != 0) {
+            flags |= bun.O.SYNC;
+        } else if (uv_flags & DSYNC != 0) {
+            flags |= bun.O.DSYNC;
+        }
+        if (uv_flags & DIRECT != 0) flags |= bun.O.DIRECT;
+        if (uv_flags & FILEMAP != 0) flags |= FILEMAP;
 
         return flags;
     }
@@ -433,7 +478,7 @@ fn HandleMixin(comptime Type: type) type {
             return uv_is_active(@ptrCast(this)) != 0;
         }
 
-        pub fn fd(this: *const Type) bun.FileDescriptor {
+        pub fn fd(this: *const Type) bun.FD {
             var fd_: uv_os_fd_t = windows.INVALID_HANDLE_VALUE;
             _ = uv_fileno(@ptrCast(this), &fd_);
             if (fd_ == windows.INVALID_HANDLE_VALUE)
@@ -1373,7 +1418,7 @@ pub const Pipe = extern struct {
         return .success;
     }
 
-    pub fn open(this: *Pipe, file: bun.FileDescriptor) Maybe(void) {
+    pub fn open(this: *Pipe, file: bun.FD) Maybe(void) {
         const uv_fd = file.uv();
         if (uv_pipe_open(this, uv_fd).toError(.open)) |err| return .{ .err = err };
 
@@ -1413,6 +1458,25 @@ pub const Pipe = extern struct {
 
     pub fn asStream(this: *@This()) *uv_stream_t {
         return @ptrCast(this);
+    }
+
+    /// Close the pipe handle (if needed) and then free it.
+    /// Handles all states: never-initialized (loop == null), already closing,
+    /// or active. After uv_pipe_init the handle is in the event loop's
+    /// handle_queue; freeing without uv_close corrupts that list.
+    pub fn closeAndDestroy(this: *@This()) void {
+        if (this.loop == null) {
+            // Never initialized — safe to free directly.
+            bun.destroy(this);
+        } else if (!this.isClosing()) {
+            // Initialized and not yet closing — must uv_close first.
+            this.close(&onCloseDestroy);
+        }
+        // else: already closing — the pending close callback owns the lifetime.
+    }
+
+    fn onCloseDestroy(handle: *@This()) callconv(.c) void {
+        bun.destroy(handle);
     }
 };
 const union_unnamed_416 = extern union {
@@ -2408,6 +2472,9 @@ pub const uv_process_options_t = extern struct {
     stdio: [*]uv_stdio_container_t,
     uid: uv_uid_t,
     gid: uv_gid_t,
+    /// Windows only: HPCON from CreatePseudoConsole. When non-null, the child
+    /// is attached to the pseudoconsole and stdio[] is not inherited.
+    pseudoconsole: ?*anyopaque = null,
 };
 pub const UV_PROCESS_SETUID: c_int = 1;
 pub const UV_PROCESS_SETGID: c_int = 2;
@@ -2776,7 +2843,12 @@ pub fn translateUVErrorToE(code_in: anytype) bun.sys.E {
         UV_ECANCELED => bun.sys.E.CANCELED,
         UV_ECHARSET => bun.sys.E.CHARSET,
         UV_EOF => bun.sys.E.EOF,
-        else => @enumFromInt(-code),
+        UV_UNKNOWN => bun.sys.E.UNKNOWN,
+        // libuv can return codes not explicitly mapped above (e.g. Windows-specific
+        // codes in the -4000s). `bun.sys.E` is exhaustive, so a strict @enumFromInt
+        // on an unmapped value panics in safe builds. Fall back to UNKNOWN instead.
+        // Wrapping negation so minInt(c_int) maps to UNKNOWN instead of overflowing.
+        else => std.meta.intToEnum(bun.sys.E, -%code) catch bun.sys.E.UNKNOWN,
     };
 }
 
@@ -2954,7 +3026,7 @@ pub const ReturnCodeI64 = enum(i64) {
         return @intFromEnum(this);
     }
 
-    pub fn toFD(this: ReturnCodeI64) bun.FileDescriptor {
+    pub fn toFD(this: ReturnCodeI64) bun.FD {
         return .fromUV(@truncate(this.int()));
     }
 };

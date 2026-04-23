@@ -57,16 +57,24 @@ describe.concurrent("fd leak", () => {
       const testcode = await Bun.file(join(import.meta.dirname, "./test_builder.ts")).text();
 
       const impl = /* ts */ `
-              import { openSync, closeSync } from "node:fs";
+              import { openSync, closeSync, readdirSync } from "node:fs";
               import { devNull } from "os";
               const TestBuilder = createTestBuilder(import.meta.path);
 
               const runs = ${runs};
               const threshold = ${threshold};
 
+              function getFDCount(): number {
+                if (process.platform === "darwin" || process.platform === "linux") {
+                  return readdirSync(process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd").length;
+                }
+                const maxFD = openSync(devNull, "r");
+                closeSync(maxFD);
+                return maxFD;
+              }
+
               Bun.gc(true);
-              const baseline = openSync(devNull, "r");
-              closeSync(baseline);
+              const baseline = getFDCount();
 
               for (let i = 0; i < runs; i++) {
                 await ${builder.toString().slice("() =>".length)}.quiet().run();
@@ -74,10 +82,9 @@ describe.concurrent("fd leak", () => {
               // Run the GC, because the interpreter closes file descriptors when it
               // deinitializes when its finalizer is called
               Bun.gc(true);
-              const fd = openSync(devNull, "r");
-              closeSync(fd);
-              if (fd - baseline > threshold) {
-                console.error('FD leak detected:', fd - baseline, 'leaked (threshold:', threshold, ')');
+              const after = getFDCount();
+              if (after - baseline > threshold) {
+                console.error('FD leak detected:', after - baseline, 'leaked (threshold:', threshold, ')');
                 process.exit(1);
               }
             `;

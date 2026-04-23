@@ -1708,13 +1708,19 @@ fn NewPrinter(
                 }
 
                 // Internal "require()" or "import()"
+                const has_side_effects = meta.wrapper_ref.isValid() or
+                    meta.exports_ref.isValid() or
+                    meta.was_unwrapped_require or
+                    p.options.input_files_for_dev_server != null;
                 if (record.kind == .dynamic) {
                     p.printSpaceBeforeIdentifier();
                     p.print("Promise.resolve()");
 
-                    level = p.printDotThenPrefix();
+                    if (has_side_effects) {
+                        level = p.printDotThenPrefix();
+                    }
                 }
-                defer if (record.kind == .dynamic) p.printDotThenSuffix();
+                defer if (record.kind == .dynamic and has_side_effects) p.printDotThenSuffix();
 
                 // Make sure the comma operator is properly wrapped
                 const wrap_comma_operator = meta.exports_ref.isValid() and
@@ -1920,6 +1926,10 @@ fn NewPrinter(
             return printClauseItemAs(p, item, .@"export");
         }
 
+        fn printExportFromClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
+            return printClauseItemAs(p, item, .export_from);
+        }
+
         fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.enum_literal)) void {
             const name = p.renamer.nameForSymbol(item.name.ref.?);
 
@@ -1945,6 +1955,23 @@ fn NewPrinter(
                 p.printIdentifier(name);
 
                 if (!strings.eql(name, item.alias)) {
+                    p.print(" as ");
+                    p.addSourceMapping(item.alias_loc);
+                    p.printClauseAlias(item.alias);
+                }
+            } else if (comptime as == .export_from) {
+                // In `export { x } from 'mod'`, the "name" on the left of `as`
+                // refers to an export of the other module, not a local binding.
+                // It's stored as the raw source text on `item.original_name`
+                // (ECMAScript allows this to be a string literal like `"a b c"`)
+                // and the item's ref points to a synthesized intermediate symbol
+                // whose display name may be mangled by a minifier. We must print
+                // `original_name` via `printClauseAlias` so string literals stay
+                // quoted and mangling can't corrupt the foreign-module name.
+                const from_name = if (item.original_name.len > 0) item.original_name else name;
+                p.printClauseAlias(from_name);
+
+                if (!strings.eql(from_name, item.alias)) {
                     p.print(" as ");
                     p.addSourceMapping(item.alias_loc);
                     p.printClauseAlias(item.alias);
@@ -4210,7 +4237,7 @@ fn NewPrinter(
                             p.printNewline();
                             p.printIndent();
                         }
-                        p.printExportClauseItem(item);
+                        p.printExportFromClauseItem(item);
                     }
 
                     if (!s.is_single_line) {
@@ -5616,7 +5643,7 @@ pub fn NewWriter(
             return comptime std.meta.hasFn(ContextType, "copyFileRange");
         }
 
-        pub fn copyFileRange(ctx: ContextType, in_file: StoredFileDescriptorType, start: usize, end: usize) !void {
+        pub fn copyFileRange(ctx: ContextType, in_file: FD, start: usize, end: usize) !void {
             ctx.sendfile(
                 in_file,
                 start,
@@ -6361,12 +6388,12 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const FD = bun.FD;
 const FeatureFlags = bun.FeatureFlags;
-const FileDescriptorType = bun.FileDescriptor;
+const FileDescriptorType = bun.FD;
 const ImportRecord = bun.ImportRecord;
 const MutableString = bun.MutableString;
 const Output = bun.Output;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const js_lexer = bun.js_lexer;

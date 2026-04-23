@@ -570,6 +570,11 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         if (header.key == WebCore::HTTPHeaderName::Date) {
             data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER;
         }
+
+        // Prevent automatic Transfer-Encoding: chunked insertion when user provides one
+        if (header.key == WebCore::HTTPHeaderName::TransferEncoding) {
+            data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
+        }
         writeResponseHeader<isSSL>(res, name, value);
     }
 
@@ -593,8 +598,8 @@ static void NodeHTTPServer__writeHead(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* headersObject = headersObjectValue.getObject();
-    if (response->getLoopData()->canCork() && response->getBufferedAmount() == 0) {
-        response->getLoopData()->setCorkedSocket(response, isSSL);
+    if (!response->uWS::template AsyncSocket<isSSL>::isCorked() && response->getBufferedAmount() == 0) {
+        response->uWS::template AsyncSocket<isSSL>::cork();
     }
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
@@ -642,6 +647,7 @@ static void NodeHTTPServer__writeHead(
                 String key = propertyNames[i].string();
                 String value = headerValue.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, void());
+
                 writeResponseHeader<isSSL>(response, key, value);
             }
         }
@@ -922,8 +928,9 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
             if (valueValue.isUndefined())
                 return JSValue::encode(jsUndefined());
 
-            if (isArray(globalObject, valueValue)) {
-                auto* array = jsCast<JSArray*>(valueValue);
+            // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
+            // Fall through to the single-value path in that case.
+            if (auto* array = jsDynamicCast<JSArray*>(valueValue)) {
                 unsigned length = array->length();
                 if (length > 0) {
                     JSValue item = array->getIndex(globalObject, 0);

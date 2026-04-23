@@ -550,12 +550,6 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         .env = this_transpiler.env,
     };
 
-    // Check if elide-lines is used in a non-terminal environment
-    if (ctx.bundler_options.elide_lines != null and !state.pretty_output) {
-        Output.prettyErrorln("<r><red>error<r>: --elide-lines is only supported in terminal environments", .{});
-        Global.exit(1);
-    }
-
     // initialize the handles
     var map = bun.StringHashMap(std.array_list.Managed(*ProcessHandle)).init(ctx.allocator);
     for (scripts.items, 0..) |*script, i| {
@@ -564,8 +558,8 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             .config = script,
             .options = .{
                 .stdin = .ignore,
-                .stdout = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
-                .stderr = if (Environment.isPosix) .buffer else .{ .buffer = try bun.default_allocator.create(bun.windows.libuv.Pipe) },
+                .stdout = if (Environment.isPosix) .buffer else .{ .buffer = bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)) },
+                .stderr = if (Environment.isPosix) .buffer else .{ .buffer = bun.new(bun.windows.libuv.Pipe, std.mem.zeroes(bun.windows.libuv.Pipe)) },
                 .cwd = std.fs.path.dirname(script.package_json_path) orelse "",
                 .windows = if (Environment.isWindows) .{ .loop = bun.jsc.EventLoopHandle.init(event_loop) },
                 .stream = true,

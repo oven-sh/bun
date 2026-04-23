@@ -652,6 +652,43 @@ postpack: \${fs.existsSync("postpack.txt")}\`)`;
   });
 });
 
+test("prepublishOnly modifying version publishes correct version (#17195)", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const bunfig = await registry.authBunfig("version-update");
+  const updateScript = `const fs = require("fs");
+    const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+    pkg.version = "9.9.9";
+    fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));`;
+
+  await Promise.all([
+    rm(join(registry.packagesPath, "publish-version-update"), { recursive: true, force: true }),
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "publish-version-update",
+        version: "1.0.0",
+        scripts: {
+          prepublishOnly: `${bunExe()} update-version.js`,
+        },
+        dependencies: {
+          "publish-version-update": "9.9.9",
+        },
+      }),
+    ),
+    write(join(packageDir, "update-version.js"), updateScript),
+    write(join(packageDir, "bunfig.toml"), bunfig),
+  ]);
+
+  const { out, err, exitCode } = await publish(env, packageDir);
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  // Should be able to install the package at the UPDATED version (9.9.9), not the original (1.0.0)
+  await runBunInstall(env, packageDir);
+  const installedPkg = await file(join(packageDir, "node_modules", "publish-version-update", "package.json")).json();
+  expect(installedPkg.version).toBe("9.9.9");
+});
+
 test("attempting to publish a private package should fail", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const bunfig = await registry.authBunfig("privatepackage");

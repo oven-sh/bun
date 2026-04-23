@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isBroken, isCI, isIntelMacOS, isMacOS, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isArm64, isBroken, isCI, isIntelMacOS, isMacOS, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe.concurrent("require.cache", () => {
@@ -24,7 +24,8 @@ describe.concurrent("require.cache", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/5188
-  test("require.cache does not include unevaluated modules", async () => {
+  // msgpackr-extract has no prebuilt binary for win32-arm64, so it's unavailable there
+  test.skipIf(isWindows && isArm64)("require.cache does not include unevaluated modules", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", join(import.meta.dir, "require-cache-bug-5188.js")],
       env: bunEnv,

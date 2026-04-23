@@ -59,8 +59,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellmanGroupGetter_verifyError, (JSC::JSGlobalO
     JSValue thisValue = callFrame->thisValue();
 
     JSDiffieHellmanGroup* thisObject = jsDynamicCast<JSDiffieHellmanGroup*>(thisValue);
-    if (!thisObject) {
-        throwVMTypeError(globalObject, scope);
+    if (!thisObject) [[unlikely]] {
+        return ERR::INVALID_THIS(scope, globalObject, "DiffieHellmanGroup"_s);
     }
 
     auto& dh = thisObject->getImpl();

@@ -209,56 +209,74 @@ describe("issue #29636 — resolveCommand", () => {
 });
 
 describe("issue #29636 — buildShellCommand", () => {
-  test("wraps a simple command and args in one outer quote pair", () => {
-    // The outer pair is what `cmd /s /c` strips before handing the inner
-    // text back to the tokenizer. The per-token quotes survive.
-    expect(buildShellCommand("bun.cmd", ["run", "dev"])).toBe('""bun.cmd" "run" "dev""');
+  // These tests assert the *exact* command-line string we feed to cmd.exe
+  // via `windowsVerbatimArguments: true`. The encoding matches cross-spawn's
+  // parse.js: wrap the whole body in `"..."` for cmd.exe `/s` to strip, and
+  // within the body caret-escape every metacharacter (including the
+  // per-token `"` wrappers) so cmd.exe never enters quote-state in phase 2.
+  // Every `^` is then consumed as an escape, the original `"` wrappers
+  // survive through to `CommandLineToArgvW` as ordinary quote characters,
+  // and `%VAR%` expansion in phase 1 is defeated without leaving literal
+  // carets in the debuggee's argv.
+
+  test("no-metachar tokens: each argument gets `^\"…^\"` wrapping", () => {
+    // After cmd.exe `/s` strips the outer quotes and phase 2 consumes the
+    // carets, the target sees: `bun.cmd "run" "dev"` → argv `[bun.cmd, run, dev]`.
+    expect(buildShellCommand("bun.cmd", ["run", "dev"])).toBe(`"bun.cmd ^"run^" ^"dev^""`);
   });
 
-  test("keeps spaces in the command path intact", () => {
-    // This is the claude[bot] finding: Node's `shell: true` builds the
-    // command string as a naive space-join, so a path like the npm global
-    // prefix (which contains the Windows user's home directory, commonly
-    // a name with a space) would tokenize into "C:\Users\John" and fail.
-    // Our quoting puts the whole path inside one "…" token.
+  test("spaces in the command path survive (the npm-wrapper scenario)", () => {
+    // `%APPDATA%\npm\bun.cmd` sits under a username that commonly contains
+    // a space (`John Doe`). The unquoted command gets its space caret-
+    // escaped (`John^ Doe`), and the argument's space is caret-escaped
+    // inside the wrapped+caret-escaped form.
     const cmdPath = "C:\\Users\\John Doe\\AppData\\Roaming\\npm\\bun.cmd";
     const programArg = "C:\\Users\\John Doe\\project\\app.ts";
     expect(buildShellCommand(cmdPath, [programArg])).toBe(
-      `""C:\\Users\\John Doe\\AppData\\Roaming\\npm\\bun.cmd" "C:\\Users\\John Doe\\project\\app.ts""`,
+      `"C:\\Users\\John^ Doe\\AppData\\Roaming\\npm\\bun.cmd ^"C:\\Users\\John^ Doe\\project\\app.ts^""`,
     );
   });
 
-  test("doubles literal double quotes inside a token", () => {
-    // cmd.exe's `/c` processor reads `""` as one literal `"`. Doubling is
-    // the idiomatic escape and avoids tripping cmd's quote-state machine.
-    // Structure:
-    //   arg `say "hi"` → inner escape `say ""hi""` → wrapped `"say ""hi"""`
-    //   command `foo.cmd` → wrapped `"foo.cmd"`
-    //   body = `"foo.cmd" "say ""hi"""`, outer wrap yields:
-    expect(buildShellCommand("foo.cmd", ['say "hi"'])).toBe('""foo.cmd" "say ""hi""""');
+  test("literal `\"` in an arg is backslash-escaped (qntm) then caret-escaped", () => {
+    // `CommandLineToArgvW`'s rules: inside `"..."` a `"` must be `\"`.
+    // qntm's algorithm escapes `"` as `\"` and doubles any preceding run
+    // of `\`. Then the whole line is caret-escaped so cmd's phase 2
+    // doesn't enter quote-state. Target receives argv[1] = `say "hi"`.
+    expect(buildShellCommand("foo.cmd", ['say "hi"'])).toBe(`"foo.cmd ^"say^ \\^"hi\\^"^""`);
   });
 
-  test("passes cmd metacharacters through double quotes unharmed", () => {
-    // Inside a `"…"` region cmd.exe takes `&`, `|`, `<`, `>`, `^` literally,
-    // so we don't need caret-escaping on top of quoting. This prevents a
-    // launch-config arg with an `&` from being reinterpreted as a command
-    // separator by cmd.exe.
-    expect(buildShellCommand("foo.cmd", ["--flag=a&b"])).toBe('""foo.cmd" "--flag=a&b""');
+  test("cmd metacharacters (& | < > etc.) are caret-escaped literally", () => {
+    // Without caret-escaping, `&` would be a command separator in phase 2.
+    // With caret-escaping via our single pass, `^&` is consumed to leave a
+    // literal `&` that reaches argv unchanged.
+    expect(buildShellCommand("foo.cmd", ["--flag=a&b"])).toBe(`"foo.cmd ^"--flag=a^&b^""`);
   });
 
-  test("handles an empty args list", () => {
-    // `[].map(...).join(" ")` = `""`, so the `command + " " + ""` case must
-    // still emit a well-formed wrapper with just the command.
-    expect(buildShellCommand("bun.cmd", [])).toBe('""bun.cmd""');
+  test("empty args list still produces a well-formed wrapped body", () => {
+    // No args at all — the body is just the (caret-escaped) command and
+    // the wrapper strips to `bun.cmd` for cmd.exe to execute.
+    expect(buildShellCommand("bun.cmd", [])).toBe(`"bun.cmd"`);
   });
 
-  test("caret-escapes `%` to defeat cmd.exe variable expansion", () => {
-    // cmd.exe expands `%VAR%` in phase 1 of parsing, BEFORE quote
-    // recognition in phase 2 — so plain `"--flag=%PATH%"` would be
-    // expanded to the user's PATH value before quotes take effect.
-    // Prefixing each `%` with `^` breaks the var-name scan; the caret is
-    // then consumed by the parser, leaving a literal `%`. Matches the
-    // approach cross-spawn uses.
-    expect(buildShellCommand("foo.cmd", ["--flag=%PATH%"])).toBe('""foo.cmd" "--flag=^%PATH^%""');
+  test("`%` is caret-escaped so cmd.exe phase-1 doesn't expand `%VAR%`", () => {
+    // This is the trickiest case: cmd.exe does `%VAR%` expansion in parsing
+    // phase 1 BEFORE quote recognition in phase 2. A plain `"--flag=%PATH%"`
+    // would expand to the user's PATH before any quoting takes effect. And
+    // a naive `"--flag=^%PATH^%"` (carets inside a quote-wrapper) fails the
+    // other way — inside a quoted region `^` is LITERAL, so carets leak to
+    // the debuggee. cross-spawn's trick: escape EVERY cmd metachar including
+    // the wrapping quotes. Because `"` appears as `^"` everywhere, phase 2
+    // never enters quote-state, so every caret is consumed and phase 1's
+    // var-name scanner sees `PATH^` (undefined) → nothing is expanded.
+    expect(buildShellCommand("foo.cmd", ["--flag=%PATH%"])).toBe(`"foo.cmd ^"--flag=^%PATH^%^""`);
+  });
+
+  test("a lone `%` round-trips through without introducing a literal caret", () => {
+    // Regression guard: the previous `^%`-inside-quotes attempt corrupted
+    // common cases like `%20` and trailing `%`. With cross-spawn's pattern
+    // the `^` is consumed by phase 2 (because it's outside quote-state),
+    // so the debuggee receives the byte unchanged.
+    expect(buildShellCommand("foo.cmd", ["file%20name"])).toBe(`"foo.cmd ^"file^%20name^""`);
+    expect(buildShellCommand("foo.cmd", ["80%"])).toBe(`"foo.cmd ^"80^%^""`);
   });
 });

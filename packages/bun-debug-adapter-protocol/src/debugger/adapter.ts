@@ -123,47 +123,74 @@ function lookupEnvCaseInsensitive(
   return undefined;
 }
 
+// cmd.exe metacharacters that need caret-escaping to be taken literally by
+// the parser. Includes `"` and space so the caret-escape pass below can do
+// "the one thing" and produce a command line that cmd.exe never enters
+// quote-state for — see `buildShellCommand`.
+const CMD_META_CHARS = /([()[\]%!^"`<>&|;, ])/g;
+
 /**
- * Build the argument string for `cmd.exe /d /s /c "<...>"` that invokes
- * `command` with `args`, quoting each token so that paths and arguments
- * containing spaces survive cmd.exe's tokenizer intact.
+ * Build the argument string for `cmd.exe /d /s /c <...>` that invokes
+ * `command` with `args` safely — paths and arguments with spaces, cmd
+ * metacharacters, or `%VAR%` sequences all survive to the debuggee intact.
  *
  * Usage:
- *   spawn("cmd.exe", ["/d", "/s", "/c", buildShellCommand(cmd, args)], {
+ *   spawn(cmdExe, ["/d", "/s", "/c", buildShellCommand(cmd, args)], {
  *     windowsVerbatimArguments: true,
  *     ...,
  *   });
  *
- * Quoting rules:
+ * Escaping follows cross-spawn (lib/util/escape.js) because the obvious
+ * approaches all have subtle failure modes:
  *
- * - Each token is wrapped in `"…"`. Any literal `"` inside a token is
- *   doubled (`""`) — cmd.exe's `/c` processor reads `""` as a single
- *   literal quote. The outermost `"…"` pair is the one `/s` strips before
- *   handing the inner text back to cmd.exe for tokenization, so the
- *   per-token quotes survive and cmd.exe splits on whitespace only outside
- *   them.
+ * 1. Simply wrapping in `"..."`. Fails because cmd.exe does `%VAR%`
+ *    expansion in **phase 1** of parsing, BEFORE quote recognition in
+ *    phase 2 — so `"--flag=%PATH%"` is expanded to the user's PATH
+ *    regardless of quotes.
  *
- * - Caret-escaping of cmd metacharacters like `&`, `|`, `<`, `>`, `^` is
- *   not required inside double-quoted regions — those bytes are taken
- *   literally by cmd.exe once it is inside a quoted token.
+ * 2. Wrapping then replacing `%` → `^%` inside the quotes. Looks right,
+ *    but `^` is the escape character only when the quote-flag is OFF.
+ *    Inside a `"..."` region `^` is taken literally, so the carets
+ *    survive phase 2 and reach the debuggee as part of the argument.
+ *    The arg becomes `--flag=^%PATH^%` — worse than doing nothing.
  *
- * - `%` is the exception: cmd.exe performs `%VAR%` expansion in phase 1 of
- *   its parser, BEFORE quote recognition in phase 2. So `"--flag=%PATH%"`
- *   is expanded to the user's PATH before our quotes ever take effect.
- *   Caret-escaping (`^%`) defeats the expansion by breaking the var-name
- *   match without introducing a literal character, and the caret is then
- *   consumed by the parser. Matches the approach cross-spawn uses.
+ * 3. Caret-escaping **everything including the wrapping quotes**. What
+ *    cross-spawn does. Because every `"` appears as `^"` in the final
+ *    command line, cmd.exe's phase 2 never enters quote-state; all
+ *    carets are consumed as escapes; and the `^"` pairs that survive
+ *    through to `CommandLineToArgvW` delimit tokens for the target
+ *    process. This is the only approach that handles all three of
+ *    spaces-in-paths, metacharacters, and `%VAR%` at once.
+ *
+ * Argument handling uses the qntm.org/cmd algorithm for backslash/quote
+ * interaction inside the quoted region (necessary so inner `"` characters
+ * survive `CommandLineToArgvW`'s unescape pass). The command itself is
+ * caret-escaped without the qntm pass because it's a file path — we
+ * assume no embedded `"` in the path. Matches cross-spawn exactly.
  */
 export function buildShellCommand(command: string, args: readonly string[]): string {
-  const quote = (token: string) => {
-    // Escape `%` first so our own `"` wrapping isn't accidentally expanded
-    // if the arg happens to look like `%x"y%`. Then double embedded `"`.
-    return `"${token.replace(/%/g, "^%").replace(/"/g, '""')}"`;
+  const escapeCommand = (token: string) => token.replace(CMD_META_CHARS, "^$1");
+
+  const escapeArgument = (token: string) => {
+    // qntm algorithm: a run of backslashes abutting a `"` gets doubled
+    // (and the `"` escaped with `\`) so `CommandLineToArgvW` sees the
+    // right number of literal backslashes + a literal quote.
+    let escaped = token.replace(/(\\*)"/g, '$1$1\\"');
+    // A trailing backslash run would abut the closing wrapper `"` we are
+    // about to add, so the same doubling applies.
+    escaped = escaped.replace(/(\\*)$/, "$1$1");
+    // Wrap, then caret-escape EVERY metachar — including the wrapping
+    // quotes. Once cmd.exe sees `^"` it treats the `"` as ordinary (not
+    // a quote-state toggle), so every caret in the final line survives
+    // phase 1 but gets consumed in phase 2.
+    return `"${escaped}"`.replace(CMD_META_CHARS, "^$1");
   };
-  const body = [command, ...args].map(quote).join(" ");
-  // Wrapping in an outer pair of quotes gives `cmd.exe /s` something to
-  // strip — what remains is exactly `"token1" "token2" ...`, which cmd.exe
-  // then tokenizes with quote-awareness.
+
+  const body = [escapeCommand(command), ...args.map(escapeArgument)].join(" ");
+  // Outer wrap so cmd.exe `/s` has something to strip. What remains is the
+  // caret-escaped body, which cmd parses without ever entering quote-state
+  // (because every `"` in the body is `^"`), so every caret is consumed as
+  // an escape — no carets leak to the debuggee.
   return `"${body}"`;
 }
 
@@ -2267,14 +2294,16 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
     if (!proc || proc.exitCode !== null) return false;
 
     if (this.#processUsesShell && process.platform === "win32" && typeof proc.pid === "number") {
-      try {
-        // Fire-and-forget: the inherited pipe output is discarded.
-        spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
-        return true;
-      } catch {
-        // Fall through to the usual kill() if taskkill isn't reachable —
-        // at worst we revert to the pre-fix behaviour of orphaning bun.exe.
-      }
+      // Fire-and-forget: the inherited pipe output is discarded. Attach an
+      // 'error' listener because spawn() surfaces ENOENT asynchronously —
+      // without a listener, a missing taskkill would become an uncaught
+      // exception in the extension host. If taskkill fails for any reason
+      // we still follow up with proc.kill() so at worst we revert to the
+      // pre-fix behaviour of orphaning bun.exe rather than crashing.
+      spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" }).on("error", () => {
+        proc.kill();
+      });
+      return true;
     }
 
     return proc.kill();

@@ -72,30 +72,41 @@ pub const Installer = struct {
             const pkg_name_hashes = pkgs.items(.name_hash);
             const pkg_resolutions = pkgs.items(.resolution);
 
-            for (removed.value.items) |install_ctx| {
-                const entry_id = install_ctx.isolated_package_install_context;
-
-                const node_id = entry_node_ids[entry_id.get()];
-                const pkg_id = node_pkg_ids[node_id.get()];
-                const pkg_name = pkg_names[pkg_id];
-                const pkg_name_hash = pkg_name_hashes[pkg_id];
-                const pkg_res = &pkg_resolutions[pkg_id];
+            // Apply the patch once (using the first entry) before starting
+            // any hardlink tasks. Applying per entry would race: a subsequent
+            // entry's patch application could mutate the shared cache
+            // directory while an earlier entry's hardlink task is reading it,
+            // causing EPERM on Windows.
+            var patch_failed = false;
+            if (removed.value.items.len > 0) {
+                const first_entry_id = removed.value.items[0].isolated_package_install_context;
+                const first_node_id = entry_node_ids[first_entry_id.get()];
+                const first_pkg_id = node_pkg_ids[first_node_id.get()];
+                const pkg_name = pkg_names[first_pkg_id];
+                const pkg_name_hash = pkg_name_hashes[first_pkg_id];
+                const pkg_res = &pkg_resolutions[first_pkg_id];
 
                 const patch_info = bun.handleOom(this.packagePatchInfo(pkg_name, pkg_name_hash, pkg_res));
 
                 if (patch_info == .patch) {
                     var log: bun.logger.Log = .init(this.manager.allocator);
-                    this.applyPackagePatch(entry_id, patch_info.patch, &log);
+                    this.applyPackagePatch(first_entry_id, patch_info.patch, &log);
                     if (log.hasErrors()) {
-                        // monotonic is okay because we haven't started the task yet (it isn't running
-                        // on another thread)
-                        entry_steps[entry_id.get()].store(.done, .monotonic);
-                        this.onTaskFail(entry_id, .{ .patching = log });
-                        continue;
+                        patch_failed = true;
+                        for (removed.value.items) |install_ctx| {
+                            const entry_id = install_ctx.isolated_package_install_context;
+                            entry_steps[entry_id.get()].store(.done, .monotonic);
+                            this.onTaskFail(entry_id, .{ .patching = log });
+                        }
                     }
                 }
+            }
 
-                this.startTask(entry_id);
+            if (!patch_failed) {
+                for (removed.value.items) |install_ctx| {
+                    const entry_id = install_ctx.isolated_package_install_context;
+                    this.startTask(entry_id);
+                }
             }
         }
     }

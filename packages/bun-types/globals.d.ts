@@ -1060,7 +1060,7 @@ interface ArrayBuffer {
   /**
    * Resize an ArrayBuffer in-place.
    */
-  resize(byteLength: number): ArrayBuffer;
+  resize(newByteLength?: number): void;
 
   /**
    * Returns a section of an ArrayBuffer.
@@ -1072,7 +1072,7 @@ interface SharedArrayBuffer {
   /**
    * Grow the SharedArrayBuffer in-place.
    */
-  grow(size: number): SharedArrayBuffer;
+  grow(newByteLength?: number): void;
 }
 
 interface ArrayConstructor {
@@ -1405,7 +1405,7 @@ interface PromiseConstructor {
    */
   withResolvers<T>(): {
     promise: Promise<T>;
-    resolve: (value?: T | PromiseLike<T>) => void;
+    resolve: (value: T | PromiseLike<T>) => void;
     reject: (reason?: any) => void;
   };
 

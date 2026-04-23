@@ -52,6 +52,11 @@ pub const invalid_id: Id = std.math.maxInt(Id);
 pub const HoistDependencyResult = union(enum) {
     dependency_loop,
     hoisted,
+    /// Hoist and update the resolution to the given package ID.
+    /// Used when a dependency's version range is satisfied by an existing
+    /// resolution at a higher level (e.g., after `bun add pkg@latest`
+    /// updates a root dep but transitive deps still reference old versions).
+    hoist_with_resolve: PackageID,
     resolve: PackageID,
     resolve_replace: ResolveReplace,
     resolve_later,
@@ -581,6 +586,10 @@ pub fn processSubtree(
 
         switch (hoisted) {
             .dependency_loop, .hoisted => continue,
+            .hoist_with_resolve => |new_res_id| {
+                builder.resolutions[dep_id] = new_res_id;
+                continue;
+            },
 
             .resolve => |res_id| {
                 bun.debugAssert(pkg_id == invalid_package_id);
@@ -732,6 +741,25 @@ fn hoistDependency(
             if (builder.lockfile.isWorkspaceRootDependency(dep_id)) {
                 // TODO: warning about peer dependency version mismatch
                 return .hoisted; // 1
+            }
+        }
+
+        // For non-peer dependencies: if the existing resolution satisfies
+        // the dependency's version range, deduplicate by hoisting and
+        // updating the resolution to match. This handles the case where
+        // a root package was updated (e.g., `bun add pkg@latest`) but
+        // transitive deps still reference old resolutions in the lockfile.
+        if (!dependency.behavior.isPeer() and dependency.version.tag == .npm) {
+            const resolution: Resolution = builder.lockfile.packages.items(.resolution)[res_id];
+            if (resolution.tag == .npm) {
+                const dep_real_name = dependency.version.value.npm.name;
+                const res_pkg_name = builder.lockfile.packages.items(.name)[res_id];
+                if (dep_real_name.eql(res_pkg_name, builder.buf(), builder.buf())) {
+                    const version = dependency.version.value.npm.version;
+                    if (version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
+                        return .{ .hoist_with_resolve = res_id };
+                    }
+                }
             }
         }
 

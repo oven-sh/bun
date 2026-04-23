@@ -804,22 +804,28 @@ fn BaseWindowsPipeWriter(
         }
 
         fn onPipeClose(handle: *uv.Pipe) callconv(.c) void {
-            const this = bun.cast(*uv.Pipe, handle.data);
-            bun.default_allocator.destroy(this);
+            // Use the handle directly for destroy, not handle.data which may be
+            // stale during cleanup races.
+            bun.default_allocator.destroy(handle);
         }
 
         fn onTTYClose(handle: *uv.uv_tty_t) callconv(.c) void {
-            const this = bun.cast(*uv.uv_tty_t, handle.data);
-            bun.default_allocator.destroy(this);
+            // Use the handle directly for destroy, not handle.data which may be
+            // stale during cleanup races.
+            bun.default_allocator.destroy(handle);
         }
 
         pub fn close(this: *WindowsPipeWriter) void {
             this.is_done = true;
             const source = this.source orelse return;
-            // Check for in-flight file write before detaching. detach()
-            // nulls fs.data so onFsWriteComplete can't recover the writer
-            // to call deref(). We must balance processSend's ref() here.
-            const has_inflight_write = if (@hasField(WindowsPipeWriter, "current_payload")) switch (source) {
+            // Check if there's a pending async write before closing.
+            // If so, we must defer onCloseSource() to the write-complete
+            // callback, because the parent's onClose handler may free
+            // resources that the pending callback still needs to access.
+            const has_pending_async_write = this.hasPendingAsyncWrite();
+            // For StreamingWriter: also check the file state for in-flight
+            // writes so we can balance processSend's ref().
+            const has_inflight_file_write = if (@hasField(WindowsPipeWriter, "current_payload")) switch (source) {
                 .sync_file, .file => |file| file.state == .operating or file.state == .canceling,
                 else => false,
             } else false;
@@ -844,9 +850,16 @@ fn BaseWindowsPipeWriter(
                 },
             }
             this.source = null;
-            this.onCloseSource();
+            if (!has_pending_async_write) {
+                // Safe to notify parent immediately — no pending callback.
+                this.onCloseSource();
+            }
+            // When has_pending_async_write is true, onCloseSource() will
+            // be called from onWriteComplete/onFsWriteComplete after the
+            // pending write callback completes safely.
+
             // Deref last — this may free the parent and `this`.
-            if (has_inflight_write) {
+            if (has_inflight_file_write) {
                 this.parent.deref();
             }
         }
@@ -999,7 +1012,22 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
             return .success;
         }
 
+        /// Returns true if there is an outstanding async write request
+        /// (uv_write or uv_fs_write) that hasn't completed yet.
+        pub fn hasPendingAsyncWrite(this: *const WindowsWriter) bool {
+            return this.pending_payload_size > 0;
+        }
+
         fn onWriteComplete(this: *WindowsWriter, status: uv.ReturnCode) void {
+            // If the source was closed while a write was in-flight,
+            // close() deferred onCloseSource(). Complete it now that
+            // the write callback has safely finished.
+            if (this.source == null) {
+                this.pending_payload_size = 0;
+                this.onCloseSource();
+                return;
+            }
+
             const written = this.pending_payload_size;
             this.pending_payload_size = 0;
             if (status.toError(.write)) |err| {
@@ -1037,6 +1065,14 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
             }
 
             const this = bun.cast(*WindowsWriter, parent_ptr);
+
+            // If source was closed while write was in-flight, close()
+            // deferred onCloseSource(). Complete it now.
+            if (this.source == null) {
+                this.pending_payload_size = 0;
+                this.onCloseSource();
+                return;
+            }
 
             if (was_canceled) {
                 // Canceled write - clear pending state
@@ -1302,6 +1338,12 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             return (this.outgoing.isNotEmpty() or this.current_payload.isNotEmpty());
         }
 
+        /// Returns true if there is an outstanding async write request
+        /// (uv_write or uv_fs_write) that hasn't completed yet.
+        pub fn hasPendingAsyncWrite(this: *const WindowsWriter) bool {
+            return this.current_payload.isNotEmpty();
+        }
+
         fn isDone(this: *WindowsWriter) bool {
             // done is flags andd no more data queued? so we are done!
             return this.is_done and !this.hasPendingData();
@@ -1311,6 +1353,16 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             // Deref the parent at the end to balance the ref taken in
             // processSend before submitting the async write request.
             defer this.parent.deref();
+
+            // If the source was closed while a write was in-flight,
+            // close() deferred onCloseSource(). Complete it now that
+            // the write callback has safely finished.
+            if (this.source == null) {
+                this.current_payload.reset();
+                this.outgoing.reset();
+                this.onCloseSource();
+                return;
+            }
 
             if (status.toError(.write)) |err| {
                 this.last_write_result = .{ .err = err };
@@ -1368,6 +1420,16 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             }
 
             const this = bun.cast(*WindowsWriter, parent_ptr);
+
+            // If source was closed while write was in-flight, close()
+            // deferred onCloseSource(). Complete it now and deref.
+            if (this.source == null) {
+                this.current_payload.reset();
+                this.outgoing.reset();
+                this.parent.deref();
+                this.onCloseSource();
+                return;
+            }
 
             if (was_canceled) {
                 // Canceled write - reset buffers and deref to balance processSend ref

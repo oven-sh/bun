@@ -968,7 +968,7 @@ pub const SystemErrno = enum(u16) {
         if (@TypeOf(code) == u16 or (@TypeOf(code) == c_int and code > 0)) {
             // Win32Error and WSA Error codes
             if (code <= @intFromEnum(Win32Error.IO_REISSUE_AS_CACHED) or (code >= @intFromEnum(Win32Error.WSAEINTR) and code <= @intFromEnum(Win32Error.WSA_QOS_RESERVED_PETYPE))) {
-                return init(@as(Win32Error, @enumFromInt(code)));
+                return init(std.meta.intToEnum(Win32Error, code) catch return null);
             } else {
                 // uv error codes
                 inline for (@typeInfo(SystemErrno).@"enum".fields) |field| {
@@ -988,7 +988,7 @@ pub const SystemErrno = enum(u16) {
         }
 
         if (comptime @TypeOf(code) == Win32Error or @TypeOf(code) == std.os.windows.Win32Error) {
-            return switch (@as(Win32Error, @enumFromInt(@intFromEnum(code)))) {
+            return switch (std.meta.intToEnum(Win32Error, @intFromEnum(code)) catch return null) {
                 Win32Error.NOACCESS => SystemErrno.EACCES,
                 Win32Error.WSAEACCES => SystemErrno.EACCES,
                 Win32Error.ELEVATION_REQUIRED => SystemErrno.EACCES,

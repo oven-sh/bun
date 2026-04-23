@@ -854,6 +854,15 @@ describe("cleanup hooks", () => {
       expect(output).toContain("PASS: napi_create_threadsafe_function accepted AsyncContextFrame");
     });
 
+    it("should not crash when given an invalid pointer (BUN-1PYR)", async () => {
+      // Test that napi_typeof validates cell pointers before dereferencing.
+      // Native modules may accidentally pass garbage (e.g., a C string pointer)
+      // as napi_value. This should return an error, not crash.
+      // Bun-only: Node.js doesn't have this validation and would crash/UB.
+      const output = await runOn(bunExe(), "test_napi_typeof_invalid_pointer", []);
+      expect(output).toContain("PASS");
+    });
+
     it("should return napi_object for boxed primitives (String, Number, Boolean)", async () => {
       // Regression test for https://github.com/oven-sh/bun/issues/25351
       // napi_typeof was incorrectly returning napi_string for String objects (new String("hello"))

@@ -575,13 +575,15 @@ test.concurrent("parentPort.on twice + off once leaves exactly one listener firi
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("parentPort.addEventListener with signal, then remove + re-add without signal, abort doesn't evict new (#29211)", async () => {
-  // The AbortSignal abort handler must capture the specific registration
-  // it was created for — not just (type, listener). Otherwise: add-with-signal,
-  // explicit remove, add-without-signal, abort → the stale abort handler
-  // silently removes the UNSIGNALED listener.
-  using dir = tempDir("issue-29211-abort-stale", {
-    "worker.mjs": String.raw`
+test.concurrent(
+  "parentPort.addEventListener with signal, then remove + re-add without signal, abort doesn't evict new (#29211)",
+  async () => {
+    // The AbortSignal abort handler must capture the specific registration
+    // it was created for — not just (type, listener). Otherwise: add-with-signal,
+    // explicit remove, add-without-signal, abort → the stale abort handler
+    // silently removes the UNSIGNALED listener.
+    using dir = tempDir("issue-29211-abort-stale", {
+      "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
       let fired = 0;
       function handler() { fired++; }
@@ -602,7 +604,7 @@ test.concurrent("parentPort.addEventListener with signal, then remove + re-add w
         }
       });
     `,
-    "main.mjs": String.raw`
+      "main.mjs": String.raw`
       import { Worker } from 'node:worker_threads';
       const w = new Worker(new URL('./worker.mjs', import.meta.url));
       const result = await new Promise((resolve, reject) => {
@@ -618,32 +620,35 @@ test.concurrent("parentPort.addEventListener with signal, then remove + re-add w
       await w.terminate();
       console.log(JSON.stringify(result));
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), String(dir) + "/main.mjs"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), String(dir) + "/main.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // All 4 messages reach 'handler' (the unsignaled re-registration). Pre-fix,
-  // fired would be 0 because the stale abort handler from step 1 evicted
-  // the step-3 registration.
-  expect(JSON.parse(stdout.trim())).toEqual({ fired: 4 });
-  expect(exitCode).toBe(0);
-});
+    // All 4 messages reach 'handler' (the unsignaled re-registration). Pre-fix,
+    // fired would be 0 because the stale abort handler from step 1 evicted
+    // the step-3 registration.
+    expect(JSON.parse(stdout.trim())).toEqual({ fired: 4 });
+    expect(exitCode).toBe(0);
+  },
+);
 
-test.concurrent("parentPort addEventListener after on/off does not leak via wrappedListener slot (#29211)", async () => {
-  // Cross-API interaction: `on` → `off` → `addEventListener` → `removeListener`
-  // must cleanly remove the direct registration. Pre-fix, `removeListener`
-  // followed the stale `fn[wrappedListener]` slot from the earlier `on`
-  // cycle, missed the direct `addEventListener` registration, and left
-  // the forwarder pinning the event loop.
-  using dir = tempDir("issue-29211-cross-api-remove", {
-    "worker.mjs": String.raw`
+test.concurrent(
+  "parentPort addEventListener after on/off does not leak via wrappedListener slot (#29211)",
+  async () => {
+    // Cross-API interaction: `on` → `off` → `addEventListener` → `removeListener`
+    // must cleanly remove the direct registration. Pre-fix, `removeListener`
+    // followed the stale `fn[wrappedListener]` slot from the earlier `on`
+    // cycle, missed the direct `addEventListener` registration, and left
+    // the forwarder pinning the event loop.
+    using dir = tempDir("issue-29211-cross-api-remove", {
+      "worker.mjs": String.raw`
       import { parentPort } from 'node:worker_threads';
       function handler() {}
       // Go through the emitter wrapping layer first so (with the old code)
@@ -656,7 +661,7 @@ test.concurrent("parentPort addEventListener after on/off does not leak via wrap
       // remove the direct registration.
       parentPort.removeListener('message', handler);
     `,
-    "main.mjs": String.raw`
+      "main.mjs": String.raw`
       import { Worker } from 'node:worker_threads';
       const w = new Worker(new URL('./worker.mjs', import.meta.url));
       const exitCode = await new Promise((resolve, reject) => {
@@ -666,23 +671,24 @@ test.concurrent("parentPort addEventListener after on/off does not leak via wrap
       });
       console.log(JSON.stringify({ exitCode }));
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), String(dir) + "/main.mjs"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), String(dir) + "/main.mjs"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Worker must exit naturally (exit code 0). Pre-fix, the forwarder
-  // pinned the event loop because removeListener followed a stale slot
-  // and never decremented the listener count for the direct registration.
-  expect(JSON.parse(stdout.trim())).toEqual({ exitCode: 0 });
-  expect(exitCode).toBe(0);
-});
+    // Worker must exit naturally (exit code 0). Pre-fix, the forwarder
+    // pinned the event loop because removeListener followed a stale slot
+    // and never decremented the listener count for the direct registration.
+    expect(JSON.parse(stdout.trim())).toEqual({ exitCode: 0 });
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("parentPort.onmessageerror alone does not keep the event loop alive (#29211)", async () => {
   // Registering only a `messageerror` handler on parentPort must NOT install

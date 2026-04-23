@@ -319,7 +319,9 @@ pub fn preadv(fd: FD, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usiz
         var req: uv.fs_t = uv.fs_t.uninitialized;
         defer req.deinit();
 
-        const rc = uv.uv_fs_read(
+        // The int return value of uv_fs_read truncates req.result (ssize_t) and
+        // wraps negative when bytes read > INT_MAX, so use req.result directly.
+        _ = uv.uv_fs_read(
             uv.Loop.get(),
             &req,
             uv_fd,
@@ -332,14 +334,14 @@ pub fn preadv(fd: FD, bufs: []const bun.PlatformIOVec, position: i64) Maybe(usiz
         const chunk_capacity = sumBufsLen(chunk_bufs);
 
         if (Environment.isDebug) {
-            log("uv read({}, {d} total bytes) = {d} ({f})", .{ uv_fd, chunk_capacity, rc.int(), debug_timer });
+            log("uv read({}, {d} total bytes) = {d} ({f})", .{ uv_fd, chunk_capacity, req.result.int(), debug_timer });
         }
 
-        if (rc.errno()) |errno| {
-            return .{ .err = .{ .errno = errno, .fd = fd, .syscall = .read } };
+        if (req.result.errEnum()) |e| {
+            return .{ .err = .{ .errno = @intFromEnum(e), .fd = fd, .syscall = .read } };
         }
 
-        const bytes_read: usize = @intCast(rc.int());
+        const bytes_read: usize = @intCast(req.result.int());
         total_read += bytes_read;
 
         // If we read less than requested, we're done (EOF or partial read)
@@ -375,7 +377,9 @@ pub fn pwritev(fd: FD, bufs: []const bun.PlatformIOVecConst, position: i64) Mayb
         var req: uv.fs_t = uv.fs_t.uninitialized;
         defer req.deinit();
 
-        const rc = uv.uv_fs_write(
+        // The int return value of uv_fs_write truncates req.result (ssize_t) and
+        // wraps negative when bytes written > INT_MAX, so use req.result directly.
+        _ = uv.uv_fs_write(
             uv.Loop.get(),
             &req,
             uv_fd,
@@ -388,14 +392,14 @@ pub fn pwritev(fd: FD, bufs: []const bun.PlatformIOVecConst, position: i64) Mayb
         const chunk_capacity = sumBufsLen(chunk_bufs);
 
         if (Environment.isDebug) {
-            log("uv write({}, {d} total bytes) = {d} ({f})", .{ uv_fd, chunk_capacity, rc.int(), debug_timer });
+            log("uv write({}, {d} total bytes) = {d} ({f})", .{ uv_fd, chunk_capacity, req.result.int(), debug_timer });
         }
 
-        if (rc.errno()) |errno| {
-            return .{ .err = .{ .errno = errno, .fd = fd, .syscall = .write } };
+        if (req.result.errEnum()) |e| {
+            return .{ .err = .{ .errno = @intFromEnum(e), .fd = fd, .syscall = .write } };
         }
 
-        const bytes_written: usize = @intCast(rc.int());
+        const bytes_written: usize = @intCast(req.result.int());
         total_written += bytes_written;
 
         // If we wrote less than requested, we're done (partial write)

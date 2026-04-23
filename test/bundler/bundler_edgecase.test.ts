@@ -1364,6 +1364,74 @@ describe("bundler", () => {
       `,
     },
   });
+  // #29590: a catch-all `paths` entry (common for ambient .d.ts stubs)
+  // whose target doesn't exist must not defeat `packages=external`.
+  itBundled("edgecase/PackageExternalStarPathsDoesNotBundleNodeModules#29590", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { a } from "foo";
+        console.log(a);
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": { "*": ["./types/*"] }
+          }
+        }
+      `,
+    },
+    packages: "external",
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/foo/index.js": `export const a = "Hello World";`,
+      "/node_modules/foo/package.json": /* json */ `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    onAfterBundle(api) {
+      // If this regresses, `foo` gets inlined via __commonJS(...) instead.
+      api.expectFile("/out.js").toContain(`from "foo"`);
+    },
+    run: {
+      stdout: `
+        Hello World
+      `,
+    },
+  });
+  // #29590: an explicit --external wildcard must win over a tsconfig `paths`
+  // alias, even when the alias resolves to a real local file.
+  itBundled("edgecase/ExternalWildcardBeatsTSConfigPaths#29590", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { add } from "@/src/adder";
+        console.log(add(1, 2));
+      `,
+      "/src/adder.ts": /* ts */ `
+        export const add = (a: number, b: number) => a + b;
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": { "@/*": ["./*"] }
+          }
+        }
+      `,
+    },
+    packages: "external",
+    external: ["@/src/*"],
+    target: "bun",
+    onAfterBundle(api) {
+      // If this regresses, `add` gets inlined from src/adder.ts.
+      api.expectFile("/out.js").toContain(`from "@/src/adder"`);
+      api.expectFile("/out.js").not.toContain(`= (a, b) => a + b`);
+    },
+  });
   itBundled("edgecase/EntrypointWithoutPrefixSlashOrDotIsNotConsideredExternal#12734", {
     files: {
       "/src/entry.ts": /* ts */ `

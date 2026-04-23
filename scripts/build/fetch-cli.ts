@@ -27,6 +27,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
+import { writeIfChanged } from "./fs.ts";
 import { fetchZig } from "./zig.ts";
 
 /**
@@ -52,6 +53,27 @@ async function main(): Promise<void> {
       assert(name !== undefined && repo !== undefined && commit !== undefined, "dep: missing name/repo/commit");
       assert(dest !== undefined && cache !== undefined, "dep: missing dest/cache");
       return fetchDep(name, repo, commit, dest, cache, patches);
+    }
+
+    case "subst": {
+      // fetch-cli.ts subst <in> <out> [<from> <to>]...
+      // Replaces every literal occurrence of <from> with <to>. Used by
+      // DirectBuild deps to materialize *.h.in templates without running
+      // the upstream configure (e.g. zlib-ng's zlib.h.in → zlib.h, where
+      // the only substitution is `@ZLIB_SYMBOL_PREFIX@` → ``).
+      const [inPath, outPath, ...pairs] = args;
+      assert(inPath !== undefined && outPath !== undefined, "subst: missing in/out");
+      assert(pairs.length % 2 === 0, "subst: replacements must be <from> <to> pairs");
+      let text = await readFile(inPath, "utf8");
+      for (let i = 0; i + 1 < pairs.length; i += 2) {
+        assert(pairs[i]!.length > 0, `subst: empty <from> at index ${i}`);
+        text = text.split(pairs[i]!).join(pairs[i + 1]!);
+      }
+      // dep_subst is restat=1 — preserve mtime when the rendered text is
+      // unchanged so depfile-tracked .o files (libarchive ← zlib.h) don't
+      // recompile after a no-op re-fetch.
+      writeIfChanged(outPath, text);
+      return;
     }
 
     case "prebuilt": {
@@ -89,6 +111,7 @@ Usage: bun fetch-cli.ts <kind> <args...>
 Kinds:
   dep      <name> <repo> <commit> <dest> <cache> [...patches]
   prebuilt <name> <url> <dest> <identity> [...rm_paths]
+  subst    <in> <out> [<from> <to>]...
   zig      <url> <dest> <commit>
 
 This is invoked by ninja build rules. You shouldn't need to call it

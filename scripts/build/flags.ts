@@ -100,6 +100,17 @@ export const globalFlags: Flag[] = [
 
   // ─── Optimization ───
   {
+    // cmake's Release/RelWithDebInfo build types append this to
+    // CMAKE_<LANG>_FLAGS_<TYPE> automatically; nested-cmake deps got it
+    // from there. Direct deps only see globalFlags, so it must be here
+    // too — otherwise every assert() in zstd/boringssl/mimalloc/etc.
+    // stays live in release. (bun's own NDEBUG in `defines` below is
+    // redundant after this, but harmless.)
+    flag: "-DNDEBUG",
+    when: c => c.release,
+    desc: "Disable libc assert() (release builds, direct deps included)",
+  },
+  {
     flag: "-O0",
     when: c => c.unix && c.debug,
     desc: "No optimization (debug)",
@@ -367,6 +378,14 @@ export const globalFlags: Flag[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const bunOnlyFlags: Flag[] = [
+  // ─── Build profiling ───
+  {
+    flag: "-ftime-trace",
+    when: c => c.timeTrace,
+    lang: "cxx",
+    desc: "Emit per-TU Chrome-trace JSON next to each .o (analyze with ClangBuildAnalyzer)",
+  },
+
   // ─── Language standard ───
   // WebKit uses gnu++ extensions on Linux; if we don't match, the first
   // memory allocation crashes (ABI mismatch in sized delete).
@@ -707,6 +726,7 @@ export const linkerFlags: Flag[] = [
       "-Wl,--wrap=exp2",
       "-Wl,--wrap=expf",
       "-Wl,--wrap=fcntl64",
+      "-Wl,--wrap=getrandom",
       "-Wl,--wrap=gettid",
       "-Wl,--wrap=log",
       "-Wl,--wrap=log2",
@@ -714,9 +734,10 @@ export const linkerFlags: Flag[] = [
       "-Wl,--wrap=logf",
       "-Wl,--wrap=pow",
       "-Wl,--wrap=powf",
+      "-Wl,--wrap=quick_exit",
     ],
     when: c => c.linux && c.abi !== "musl",
-    desc: "Wrap glibc 2.29+ symbols (portable to older glibc)",
+    desc: "Wrap glibc 2.18+ symbols (portable down to glibc 2.17)",
   },
   {
     flag: ["-static-libstdc++", "-static-libgcc"],

@@ -29,6 +29,7 @@
 #include "ZigGlobalObject.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMExceptionHandling.h"
+#include "JSDOMConvertResult.h"
 #include <JavaScriptCore/Error.h>
 
 namespace WebCore {
@@ -94,6 +95,12 @@ template<typename T, typename ExceptionThrower> inline typename Converter<T>::Re
 template<typename T, typename ExceptionThrower> inline typename Converter<T>::ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, ExceptionThrower&& exceptionThrower)
 {
     return Converter<T>::convert(lexicalGlobalObject, value, globalObject, std::forward<ExceptionThrower>(exceptionThrower));
+}
+
+// New code can opt into ConversionResult<> explicitly until call sites are migrated.
+template<typename T> inline ConversionResult<T> convertResult(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+{
+    return Converter<T>::convert(lexicalGlobalObject, value);
 }
 
 // Conversion from Implementation -> JSValue

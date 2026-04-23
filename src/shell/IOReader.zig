@@ -19,6 +19,7 @@ evtloop: jsc.EventLoopHandle,
 concurrent_task: jsc.EventLoopTask,
 async_deinit: AsyncDeinitReader,
 is_reading: if (bun.Environment.isWindows) bool else u0 = if (bun.Environment.isWindows) false else 0,
+started: bool = false,
 
 pub const ChildPtr = IOReaderChildPtr;
 pub const ReaderImpl = bun.io.BufferedReader;
@@ -79,6 +80,7 @@ pub fn init(fd: bun.FD, evtloop: jsc.EventLoopHandle) *IOReader {
 
 /// Idempotent function to start the reading
 pub fn start(this: *IOReader) Yield {
+    this.started = true;
     if (bun.Environment.isPosix) {
         if (this.reader.handle == .closed or !this.reader.handle.poll.isRegistered()) {
             if (this.reader.start(this.fd, true).asErr()) |e| {
@@ -194,6 +196,13 @@ pub fn onReaderDone(this: *IOReader) void {
 
 fn asyncDeinit(this: *@This()) void {
     log("IOReader(0x{x}) asyncDeinit", .{@intFromPtr(this)});
+    // The async hop guards against being deref'd from inside a read callback while
+    // BufferedReader is still iterating. If we never started reading, no callback can be
+    // in flight, so close synchronously to avoid holding the fd until the next tick.
+    if (!this.started) {
+        this.asyncDeinitCallback();
+        return;
+    }
     this.async_deinit.enqueue(); // calls `asyncDeinitCallback`
 }
 
@@ -205,10 +214,18 @@ fn asyncDeinitCallback(this: *@This()) void {
                 this.reader.closeImpl(false);
             }
         } else {
+            // We set reader.flags.close_handle=false in init(), so reader.deinit() will not
+            // return the FilePoll to its pool. Do it explicitly (without closing the fd —
+            // we own that and close it ourselves below).
+            if (this.reader.handle == .poll) {
+                this.reader.handle.closeImpl(null, {}, false);
+            }
             log("IOReader(0x{x}) __deinit fd={f}", .{ @intFromPtr(this), this.fd });
             this.fd.close();
         }
     }
+    if (this.err) |*e| e.deref();
+    this.readers.deinit();
     this.buf.deinit(bun.default_allocator);
     this.reader.disableKeepingProcessAlive({});
     this.reader.deinit();

@@ -358,20 +358,40 @@ pub const BunxCommand = struct {
         // 1. Install TypeScript
         // 2. Run tsc
         // BUT: Skip this transformation if --package was explicitly specified
-        if (opts.specified_package == null and strings.eqlComptime(update_request.name, "tsc")) {
-            update_request.name = "typescript";
+        if (opts.specified_package == null) {
+            if (strings.eqlComptime(update_request.name, "tsc")) {
+                update_request.name = "typescript";
+            } else if (strings.eqlComptime(update_request.name, "claude")) {
+                // The npm package "claude" is an unrelated squatter with no bin;
+                // `bunx claude` is much more likely to mean the actual CLI.
+                update_request.name = "@anthropic-ai/claude-code";
+            }
         }
 
+        // When the user types a scoped package like `@foo/bar`, the initial bin
+        // name ("bar") is only a guess — the package's actual bin may be named
+        // something else entirely. In that case we must not search the original
+        // system $PATH with the guessed name, or we may match an unrelated system
+        // binary (e.g. `bunx @uidotsh/install` would otherwise run /usr/bin/install).
+        // We still search local node_modules/.bin directories, since many scoped
+        // packages do link their bin under the unscoped name.
+        //
+        // Only the branch that strips the scope from the package name is a guess;
+        // explicit `--package` bins and hardcoded aliases like `tsc`/`claude` are
+        // known-good bin names and should still be searchable in the system $PATH.
+        var initial_bin_name_is_a_guess = false;
         const initial_bin_name = if (opts.binary_name) |bin_name|
             bin_name
         else if (strings.eqlComptime(update_request.name, "typescript"))
             "tsc"
+        else if (strings.eqlComptime(update_request.name, "@anthropic-ai/claude-code"))
+            "claude"
         else if (update_request.version.tag == .github)
             update_request.version.value.github.repo.slice(update_request.version_buf)
-        else if (strings.lastIndexOfChar(update_request.name, '/')) |index|
-            update_request.name[index + 1 ..]
-        else
-            update_request.name;
+        else if (strings.lastIndexOfChar(update_request.name, '/')) |index| blk: {
+            initial_bin_name_is_a_guess = true;
+            break :blk update_request.name[index + 1 ..];
+        } else update_request.name;
         debug("initial_bin_name: {s}", .{initial_bin_name});
 
         // fast path: they're actually using this interchangeably with `bun run`
@@ -413,6 +433,19 @@ pub const BunxCommand = struct {
         }
 
         var PATH = this_transpiler.env.get("PATH").?;
+
+        // `configurePathForRun` builds PATH by appending ORIGINAL_PATH to a set of
+        // `*/node_modules/.bin` directories (plus the bun-node shim dir). Capture just
+        // that prepended portion here — it is used below to search for guessed bin
+        // names without risking a collision with an unrelated binary in the user's
+        // system $PATH. A trailing delimiter may remain; `bun.which` tokenizes on the
+        // delimiter so empty segments are ignored.
+        const local_bin_dirs: []const u8 = if (ORIGINAL_PATH.len > 0 and
+            strings.endsWith(PATH, ORIGINAL_PATH))
+            PATH[0 .. PATH.len - ORIGINAL_PATH.len]
+        else
+            PATH;
+
         const display_version = if (update_request.version.literal.isEmpty())
             "latest"
         else
@@ -553,9 +586,12 @@ pub const BunxCommand = struct {
 
             // Only use the system-installed version if there is no version specified
             if (update_request.version.literal.isEmpty()) {
+                // If the bin name is a guess derived from a scoped package name,
+                // exclude the original system $PATH so we don't match unrelated
+                // system binaries. Only search local node_modules/.bin directories.
                 destination_ = bun.which(
                     &path_buf,
-                    PATH_FOR_BIN_DIRS,
+                    if (initial_bin_name_is_a_guess) local_bin_dirs else PATH_FOR_BIN_DIRS,
                     if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
                     initial_bin_name,
                 );
@@ -636,16 +672,22 @@ pub const BunxCommand = struct {
             const root_dir_fd = root_dir_info.getFileDescriptor();
             bun.assert(root_dir_fd.isValid());
             if (opts.binary_name == null) {
-                if (getBinName(&this_transpiler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
+                if (getBinName(&this_transpiler, root_dir_fd, bunx_cache_dir, result_package_name)) |package_name_for_bin| {
                     // if we check the bin name and its actually the same, we don't need to check $PATH here again
                     if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                         absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, bun.pathLiteral("{s}/node_modules/.bin/{s}{s}"), .{ bunx_cache_dir, package_name_for_bin, bun.exe_suffix }) catch unreachable;
 
-                        // Only use the system-installed version if there is no version specified
+                        // Only use the system-installed version if there is no version specified.
+                        // `package_name_for_bin` is the real bin name from the target package's
+                        // own package.json. Search only local node_modules/.bin directories for
+                        // it — not the system $PATH, because the real bin name may itself collide
+                        // with an unrelated system binary when the package lives only in the bunx
+                        // cache (handled by the `orelse` absolute-path probe below) and not in a
+                        // local node_modules.
                         if (update_request.version.literal.isEmpty()) {
                             destination_ = bun.which(
                                 &path_buf,
-                                bunx_cache_dir,
+                                local_bin_dirs,
                                 if (ignore_cwd.len > 0) "" else this_transpiler.fs.top_level_dir,
                                 package_name_for_bin,
                             );

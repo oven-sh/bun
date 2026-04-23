@@ -9,7 +9,7 @@ import { dedent, ESBUILD_PATH, itBundled } from "../expectBundled";
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/default
 
-describe("bundler", () => {
+describe.concurrent("bundler", () => {
   itBundled("default/SimpleES6", {
     files: {
       "/entry.js": /* js */ `

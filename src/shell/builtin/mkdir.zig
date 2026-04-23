@@ -112,6 +112,7 @@ pub fn onShellMkdirTaskDone(this: *Mkdir, task: *ShellMkdirTask) void {
 
     if (err) |e| {
         const error_string = this.bltn().taskErrorToString(.mkdir, e);
+        if (this.state.exec.err) |prev| prev.deref();
         this.state.exec.err = e;
         output_task.start(error_string).run();
         return;
@@ -256,7 +257,7 @@ pub const ShellMkdirTask = struct {
             switch (node_fs.mkdirRecursiveImpl(args, *MkdirVerboseVTable, &vtable)) {
                 .result => {},
                 .err => |e| {
-                    this.err = e.withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
+                    this.err = e.withPath(filepath).toShellSystemError();
                     std.mem.doNotOptimizeAway(&node_fs);
                 },
             }
@@ -274,7 +275,7 @@ pub const ShellMkdirTask = struct {
                     }
                 },
                 .err => |e| {
-                    this.err = e.withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
+                    this.err = e.withPath(filepath).toShellSystemError();
                     std.mem.doNotOptimizeAway(&node_fs);
                 },
             }

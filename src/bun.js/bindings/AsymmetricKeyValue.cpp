@@ -127,6 +127,9 @@ AsymmetricKeyValue::AsymmetricKeyValue(WebCore::CryptoKey& cryptoKey)
     case CryptoAlgorithmIdentifier::SHA_256:
     case CryptoAlgorithmIdentifier::SHA_384:
     case CryptoAlgorithmIdentifier::SHA_512:
+    case CryptoAlgorithmIdentifier::SHA3_256:
+    case CryptoAlgorithmIdentifier::SHA3_384:
+    case CryptoAlgorithmIdentifier::SHA3_512:
     case CryptoAlgorithmIdentifier::HKDF:
     case CryptoAlgorithmIdentifier::PBKDF2:
     case CryptoAlgorithmIdentifier::None:

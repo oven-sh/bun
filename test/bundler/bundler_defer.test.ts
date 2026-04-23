@@ -98,7 +98,7 @@ describe("defer", () => {
           setup(build) {
             build.onStart(async () => {
               action.push("onStart 1 setup");
-              await Bun.sleep(1000);
+              await Bun.sleep(50);
               action.push("onStart 1 complete");
             });
           },
@@ -108,7 +108,7 @@ describe("defer", () => {
           setup(build) {
             build.onStart(async () => {
               action.push("onStart 2 setup");
-              await Bun.sleep(1000);
+              await Bun.sleep(50);
               action.push("onStart 2 complete");
             });
           },
@@ -118,7 +118,7 @@ describe("defer", () => {
           setup(build) {
             build.onStart(async () => {
               action.push("onStart 3 setup");
-              await Bun.sleep(1000);
+              await Bun.sleep(50);
               action.push("onStart 3 complete");
             });
           },
@@ -159,7 +159,7 @@ describe("defer", () => {
               setup(build) {
                 build.onStart(async () => {
                   action.push("onStart 2 setup");
-                  await Bun.sleep(1000);
+                  await Bun.sleep(50);
                   action.push("onStart 2 complete");
                 });
               },
@@ -169,7 +169,7 @@ describe("defer", () => {
               setup(build) {
                 build.onStart(async () => {
                   action.push("onStart 3 setup");
-                  await Bun.sleep(1000);
+                  await Bun.sleep(50);
                   action.push("onStart 3 complete");
                 });
               },

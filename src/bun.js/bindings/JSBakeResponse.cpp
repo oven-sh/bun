@@ -111,7 +111,7 @@ JSBakeResponse* JSBakeResponse::create(JSC::VM& vm, Zig::GlobalObject* globalObj
     JSBakeResponse* ptr = new (NotNull, JSC::allocateCell<JSBakeResponse>(vm)) JSBakeResponse(vm, structure, ctx);
     ptr->finishCreation(vm);
 
-    auto builtinNames = WebCore::builtinNames(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
 
     // $$typeof = Symbol.for("react.transitional.element")
     ptr->putDirect(vm, builtinNames.$$typeofPublicName(), JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("react.transitional.element"_s)), 0);

@@ -537,6 +537,8 @@ pub const ByteRangeMapping = struct {
             @memset(line_hits_slice, 0);
             errdefer line_hits.deinit(allocator);
 
+            var cur_: ?bun.SourceMap.InternalSourceMap.Cursor = parsed_mapping.internalCursor();
+
             for (blocks, 0..) |block, i| {
                 if (block.endOffset < 0 or block.startOffset < 0) continue; // does not map to anything
 
@@ -554,7 +556,11 @@ pub const ByteRangeMapping = struct {
                     }
                     const column_position = byte_offset -| line_start_byte_offset;
 
-                    if (parsed_mapping.mappings.find(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)))) |*point| {
+                    const found = if (cur_) |*c|
+                        c.moveTo(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)))
+                    else
+                        parsed_mapping.findMapping(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)));
+                    if (found) |*point| {
                         if (point.original.lines.zeroBased() < 0) continue;
 
                         const line: u32 = @as(u32, @intCast(point.original.lines.zeroBased()));
@@ -598,7 +604,11 @@ pub const ByteRangeMapping = struct {
 
                     const column_position = byte_offset -| line_start_byte_offset;
 
-                    if (parsed_mapping.mappings.find(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)))) |point| {
+                    const found = if (cur_) |*c|
+                        c.moveTo(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)))
+                    else
+                        parsed_mapping.findMapping(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)));
+                    if (found) |point| {
                         if (point.original.lines.zeroBased() < 0) continue;
 
                         const line: u32 = @as(u32, @intCast(point.original.lines.zeroBased()));

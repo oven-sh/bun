@@ -314,6 +314,7 @@ void us_loop_run(struct us_loop_t *loop) {
 
     /* While we have non-fallthrough polls we shouldn't fall through */
     while (loop->num_polls) {
+        loop->data.tick_depth++;
         /* Emit pre callback */
         us_internal_loop_pre(loop);
 
@@ -331,6 +332,7 @@ void us_loop_run(struct us_loop_t *loop) {
 
         /* Emit post callback */
         us_internal_loop_post(loop);
+        loop->data.tick_depth--;
     }
 }
 
@@ -339,6 +341,8 @@ extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm);
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
     if (loop->num_polls == 0)
         return;
+
+    loop->data.tick_depth++;
 
     struct us_internal_callback_t *timer_callback = (struct us_internal_callback_t*)loop->data.sweep_timer;
 
@@ -381,6 +385,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     /* Emit post callback */
     us_internal_loop_post(loop);
+    loop->data.tick_depth--;
 }
 
 void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct us_poll_t *old_poll, struct us_poll_t *new_poll, int old_events, int new_events) {

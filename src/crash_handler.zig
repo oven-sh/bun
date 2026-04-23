@@ -1340,10 +1340,10 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
             try writer.writeByte('0');
 
             var compressed_bytes: [2048]u8 = undefined;
-            var len: usize = compressed_bytes.len;
-            const ret: bun.zlib.ReturnCode = @enumFromInt(bun.zlib.compress2(&compressed_bytes, &len, message.ptr, message.len, 9));
+            var len: bun.zlib.uLong = compressed_bytes.len;
+            const ret: bun.zlib.ReturnCode = @enumFromInt(bun.zlib.compress2(&compressed_bytes, &len, message.ptr, @intCast(message.len), 9));
             const compressed = switch (ret) {
-                .Ok => compressed_bytes[0..len],
+                .Ok => compressed_bytes[0..@intCast(len)],
                 // Insufficient memory.
                 .MemError => return error.OutOfMemory,
                 // The buffer dest was not large enough to hold the compressed data.

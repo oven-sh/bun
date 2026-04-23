@@ -170,6 +170,25 @@ describe("issue #29636 — resolveCommand", () => {
     });
   });
 
+  test("strips surrounding double-quotes from PATH segments (matches libuv/node-which)", () => {
+    // Windows PATH entries can be double-quoted — required when the
+    // directory itself contains `;`, and sometimes added by installers or
+    // manual System-Properties edits. libuv's `search_path`, npm's
+    // `node-which` (used by cross-spawn), and cmd.exe all strip a wrapping
+    // pair before probing. Without the strip, `path.join('"…"', 'bun.cmd')`
+    // retains the literal quotes and `existsSync` misses.
+    using dir = tempDir("issue-29636-quoted", { "bun.cmd": "@echo off\r\n" });
+    const result = resolveCommand(
+      "bun",
+      { PATH: `"${String(dir)}"`, PATHEXT: ".cmd" },
+      "win32",
+    );
+    expect(result).toEqual({
+      command: join(String(dir), "bun.cmd"),
+      useShell: true,
+    });
+  });
+
   test("accepts case-variant env keys (`Path`, `path`, `Pathext`)", () => {
     // Windows env vars are case-insensitive at the OS layer but JS exposes
     // them as-is. Node's process.env preserves whatever casing the launching

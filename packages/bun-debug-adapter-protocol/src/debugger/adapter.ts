@@ -82,7 +82,15 @@ export function resolveCommand(
     const pathExt = lookupEnvCaseInsensitive(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD";
     const extensions = pathExt.split(";").filter(Boolean);
 
-    outer: for (const dir of pathVar.split(";")) {
+    outer: for (const rawDir of pathVar.split(";")) {
+      if (!rawDir) continue;
+      // Windows PATH entries can be double-quoted (required when the
+      // directory itself contains a `;`, and sometimes added by installers
+      // or manual System-Properties edits). node-which, libuv's
+      // `search_path`, and cmd.exe all strip a wrapping pair before
+      // probing, so we do the same — otherwise `path.join('"C:\\...\\dir"',
+      // 'bun.exe')` retains the literal quotes and `existsSync` misses.
+      const dir = rawDir.replace(/^"(.*)"$/, "$1");
       if (!dir) continue;
       for (const ext of extensions) {
         const candidate = path.join(dir, command + ext);

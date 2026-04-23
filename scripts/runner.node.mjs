@@ -1387,6 +1387,8 @@ async function spawnBunTestParallelBatch(execPath, testPaths) {
   const start = Date.now();
 
   for (const [i, chunk] of chunks.entries()) {
+    const remaining = batchTimeout - (Date.now() - start);
+    if (remaining <= 0) break;
     const junitFile = join(junitDir, `batch-${i}.xml`);
     const args = [
       "test",
@@ -1407,7 +1409,7 @@ async function spawnBunTestParallelBatch(execPath, testPaths) {
     await spawnBun(execPath, {
       args,
       cwd,
-      timeout: batchTimeout,
+      timeout: remaining,
       env,
       stdout: chunk => process.stdout.write(chunk),
       stderr: chunk => process.stderr.write(chunk),

@@ -117,12 +117,19 @@ class DockerComposeHelper {
       }
     }
 
-    // Start the service and wait for it to be healthy
-    // Remove --quiet-pull to see pull progress and avoid confusion
-    const { exitCode, stderr } = await this.exec(["up", "-d", "--wait", service]);
+    // Start the service and wait for it to be healthy.
+    // --wait-timeout: without it `--wait` blocks until the engine reports
+    // healthy, which with `interval: 1h` and an engine that doesn't honor the
+    // 5s start_interval default means "hang until the test's beforeAll times
+    // out with no error message". 60 covers cold mysql init on tmpfs.
+    const { exitCode, stderr } = await this.exec(["up", "-d", "--wait", "--wait-timeout", "60", service]);
 
     if (exitCode !== 0) {
-      throw new Error(`Failed to start service ${service}: ${stderr}`);
+      const ps = await this.exec(["ps", "-a", service]);
+      const logs = await this.exec(["logs", "--tail", "50", service]);
+      throw new Error(
+        `Failed to start service ${service}: ${stderr}\n` + `--- ps ---\n${ps.stdout}\n--- logs ---\n${logs.stdout}`,
+      );
     }
 
     this.runningServices.add(service);

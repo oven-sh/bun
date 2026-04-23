@@ -19,6 +19,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 5s
+      start_interval: 1s
 
   postgres_tls:
     build:
@@ -72,6 +73,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 5s
+      start_interval: 1s
 
   # MySQL Services
   mysql_plain:
@@ -91,6 +93,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 10s
+      start_interval: 1s
 
   mysql_native_password:
     image: mysql:8.0
@@ -111,6 +114,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 10s
+      start_interval: 1s
 
   mysql_tls:
     build:
@@ -134,6 +138,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 10s
+      start_interval: 1s
 
   # Redis/Valkey Services
   redis_plain:
@@ -189,6 +194,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 5s
+      start_interval: 1s
 
   # WebSocket Autobahn Test Suite
   # NOTE: Autobahn requires port 9002 to match both internal and external ports
@@ -222,6 +228,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 10s
+      start_interval: 1s
 
 volumes:
   redis-unix:

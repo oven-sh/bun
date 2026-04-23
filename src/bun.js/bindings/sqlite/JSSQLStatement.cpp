@@ -134,10 +134,10 @@ public:
 
 static void initializeSQLite()
 {
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
+    [[maybe_unused]] static auto initialized = []() {
         enableFastMallocForSQLite();
-    });
+        return nullptr;
+    }();
 }
 
 static WTF::String sqliteString(const char* str)

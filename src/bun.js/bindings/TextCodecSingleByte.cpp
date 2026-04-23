@@ -180,24 +180,25 @@ static constexpr SingleByteDecodeTable ibm866 {
 
 template<const SingleByteDecodeTable& decodeTable> SingleByteEncodeTable tableForEncoding()
 {
-    // Allocate this at runtime because building it at compile time would make the binary much larger and this is often not used.
+    // Heap-allocated to avoid bloating BSS segment
     static constexpr auto size = std::size(decodeTable) - std::count(std::begin(decodeTable), std::end(decodeTable), replacementCharacter);
-    static const std::array<SingleByteEncodeTableEntry, size>* entries;
-    static std::once_flag once;
-    std::call_once(once, [&] {
-        auto* mutableEntries = new std::array<SingleByteEncodeTableEntry, size>();
+    using TableType = std::array<SingleByteEncodeTableEntry, size>;
+
+    static std::unique_ptr<TableType> table = [] {
+        auto result = std::make_unique<TableType>();
         size_t j = 0;
         for (size_t i = 0; i < std::size(decodeTable); ++i) {
             if (decodeTable[i] != replacementCharacter)
-                (*mutableEntries)[j++] = { decodeTable[i], i + 0x80 };
+                (*result)[j++] = { decodeTable[i], i + 0x80 };
         }
         ASSERT(j == size);
-        auto collection = std::span { *mutableEntries };
+        auto collection = std::span { *result };
         sortByFirst(collection);
         ASSERT(sortedFirstsAreUnique(collection));
-        entries = mutableEntries;
-    });
-    return std::span { *entries };
+        return result;
+    }();
+
+    return std::span { *table };
 }
 
 static SingleByteEncodeTable tableForEncoding(TextCodecSingleByte::Encoding encoding)

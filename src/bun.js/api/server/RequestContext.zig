@@ -60,6 +60,9 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         request_body: ?*WebCore.Body.Value.HiveRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
         request_body_content_len: usize = 0,
+        /// Tracks total bytes received for chunked/streaming request bodies
+        /// to enforce max_request_body_size limits.
+        streamed_body_bytes_received: usize = 0,
 
         sink: ?*ResponseStream.JSSink = null,
         byte_stream: ?*jsc.WebCore.ByteStream = null,
@@ -1246,6 +1249,27 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             }
             return false;
         }
+        /// Rejects a request that has exceeded max_request_body_size during
+        /// chunked/streaming transfer. Sends a 413 response and closes the
+        /// connection. The ReadableStream (if active) is errored via
+        /// endWithoutBody → endRequestStreaming → Body.Value.toErrorInstance,
+        /// which handles both the pending body promise and the stream.
+        fn rejectRequestBodyAsEntityTooLarge(this: *RequestContext, resp: *App.Response) void {
+            ctxLog("rejectRequestBodyAsEntityTooLarge", .{});
+
+            // Signal the abort so request.signal.aborted becomes true
+            this.setSignalAborted(.ConnectionClosed);
+
+            if (!this.flags.has_written_status) {
+                resp.writeStatus("413 Request Entity Too Large");
+                this.flags.has_written_status = true;
+            }
+            // endWithoutBody calls endRequestStreaming which errors the
+            // ReadableStream via Body.Value.toErrorInstance when the body
+            // is still in .Locked state.
+            this.endWithoutBody(true);
+        }
+
         fn detachResponse(this: *RequestContext) void {
             this.request_body_buf.clearAndFree(bun.default_allocator);
 
@@ -2270,6 +2294,17 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const vm = this.server.?.vm;
             const globalThis = this.server.?.globalThis;
 
+            // Enforce max_request_body_size for chunked/streaming requests.
+            // Content-Length requests are checked upfront, but chunked requests
+            // must be validated as data arrives.
+            this.streamed_body_bytes_received += chunk.len;
+            if (this.server) |server| {
+                if (this.streamed_body_bytes_received > server.config.max_request_body_size) {
+                    this.rejectRequestBodyAsEntityTooLarge(resp);
+                    return;
+                }
+            }
+
             // After the user does request.body,
             // if they then do .text(), .arrayBuffer(), etc
             // we can no longer hold the strong reference from the body value ref.
@@ -2372,6 +2407,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             // This means we have received part of the body but not the whole thing
             if (this.request_body_buf.items.len > 0) {
+                // Initialize the streaming byte counter with the pre-buffered
+                // amount so that the max_request_body_size check in
+                // onBufferedBodyChunk accounts for data already received before
+                // the handler started consuming the stream.
+                this.streamed_body_bytes_received = this.request_body_buf.items.len;
                 var emptied = this.request_body_buf;
                 this.request_body_buf = .{};
                 return .{

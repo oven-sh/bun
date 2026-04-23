@@ -421,7 +421,25 @@ pub fn populateLinkedNamesCache(this: *PackageManager) void {
     if (this.linked_names_populated) return;
     this.linked_names_populated = true;
 
-    const dir_path = this.globalLinkDirPath();
+    // Best-effort: for users who have never run `bun link`, the global
+    // link dir may not exist (or may be unreadable). `globalLinkDirPath`
+    // would `Global.exit(1)` on setup failure — treat that same failure
+    // here as "no links on this machine" instead, and leave the cache
+    // empty so `linkedPackagePath` short-circuits to null. If a later
+    // code path really does need the global dir (e.g. `bun link`
+    // itself), `globalLinkDirPath` will be called on that path and
+    // surface the error there.
+    const dir_path = dir_path: {
+        if (this.global_link_dir_path.len != 0) break :dir_path this.global_link_dir_path;
+        var global_dir = Options.openGlobalDir(this.options.explicit_global_directory) catch return;
+        const link_dir = global_dir.makeOpenPath("node_modules", .{}) catch return;
+        this.global_dir = global_dir;
+        this.global_link_dir = link_dir;
+        var buf: bun.PathBuffer = undefined;
+        const path_slice = bun.getFdPath(.fromStdDir(link_dir), &buf) catch return;
+        this.global_link_dir_path = bun.handleOom(Fs.FileSystem.DirnameStore.instance.append([]const u8, path_slice));
+        break :dir_path this.global_link_dir_path;
+    };
     const root_fd = switch (bun.openDirForIteration(bun.FD.cwd(), dir_path)) {
         .result => |fd| fd,
         // Dir missing / unreadable → empty set. Every linkedPackagePath
@@ -453,15 +471,15 @@ pub fn populateLinkedNamesCache(this: *PackageManager) void {
             while (scope_iter.next().unwrap() catch null) |scope_entry| {
                 const sub_name = scope_entry.name.slice();
                 if (sub_name.len == 0) continue;
-                const full = std.fmt.allocPrint(this.allocator, "{s}/{s}", .{ name, sub_name }) catch continue;
-                this.linked_names.put(this.allocator, full, {}) catch continue;
+                const full = bun.handleOom(std.fmt.allocPrint(this.allocator, "{s}/{s}", .{ name, sub_name }));
+                bun.handleOom(this.linked_names.put(this.allocator, full, {}));
             }
             continue;
         }
 
         if (comptime bun.Environment.isWindows) continue;
-        const dup = this.allocator.dupe(u8, name) catch continue;
-        this.linked_names.put(this.allocator, dup, {}) catch continue;
+        const dup = bun.handleOom(this.allocator.dupe(u8, name));
+        bun.handleOom(this.linked_names.put(this.allocator, dup, {}));
     }
 }
 

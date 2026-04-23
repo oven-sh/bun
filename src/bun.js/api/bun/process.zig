@@ -1509,8 +1509,12 @@ pub fn spawnProcessPosix(
             },
             .pipe => |fd| {
                 try actions.dup2(fd, fileno);
-
-                try extra_fds.append(fd);
+                // This file descriptor was passed in by the user (e.g. a
+                // number in the stdio array). It is not owned by Bun.spawn,
+                // so we must not close it in finalizeStreams. Store
+                // invalid_fd to keep the positional slot for
+                // subprocess.stdio without taking ownership.
+                try extra_fds.append(bun.invalid_fd);
             },
         }
     }

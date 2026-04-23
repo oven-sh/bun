@@ -2629,6 +2629,113 @@ pub const Resolver = struct {
         return result;
     }
 
+    /// Resolves the "extends" field of a tsconfig.json file, approximating
+    /// TypeScript's resolution algorithm:
+    /// - Relative/absolute paths: resolved relative to the tsconfig's directory.
+    ///   If not found and missing .json extension, tries appending .json.
+    /// - Package paths (e.g., "@hypernym/tsconfig", "foo"): resolved through
+    ///   node_modules, walking up ancestor directories.
+    ///   - Bare package names (no subpath): tries <pkg>/tsconfig.json
+    ///   - Subpaths (e.g., "@scope/pkg/strict"): tries exact path, then with .json
+    ///
+    /// Note: TypeScript uses full NodeNext module resolution with package.json
+    /// "exports" and "tsconfig" field support. We approximate this with direct
+    /// file existence checks, which covers the vast majority of real-world usage.
+    fn resolveTSConfigExtends(r: *ThisResolver, current: *const TSConfigJSON) ?string {
+        const ts_dir_name = Dirname.dirname(current.abs_path);
+        const extends = current.extends;
+
+        // For relative or absolute paths, join directly (existing behavior).
+        // If the file doesn't exist and the path doesn't end in .json, try appending .json.
+        if (!isPackagePath(extends)) {
+            const abs_path = ResolvePath.joinAbsStringBuf(
+                ts_dir_name,
+                bufs(.tsconfig_path_abs),
+                &[_]string{ ts_dir_name, extends },
+                .auto,
+            );
+            if (r.statFile(abs_path)) return r.storeString(abs_path);
+            if (!strings.hasSuffixComptime(extends, ".json")) {
+                const with_json = ResolvePath.joinAbsStringBuf(
+                    ts_dir_name,
+                    bufs(.tsconfig_path_abs),
+                    &[_]string{ abs_path, ".json" },
+                    .auto,
+                );
+                if (r.statFile(with_json)) return r.storeString(with_json);
+            }
+            // Return original path for error reporting
+            return r.storeString(abs_path);
+        }
+
+        // For package paths, walk up directories looking for node_modules.
+        //
+        // IMPORTANT: We cannot use readDirInfo/dirInfoCached/readDirectory here because
+        // this function is called from within dirInfoUncached, which holds both r.mutex
+        // and rfs.entries_mutex. Using those APIs would cause a deadlock. Instead, we
+        // use bun.sys.stat to check file existence directly.
+        const has_json_ext = strings.hasSuffixComptime(extends, ".json");
+        const has_subpath = hasPackageSubpath(extends);
+
+        var current_dir = ts_dir_name;
+        while (true) {
+            if (has_json_ext) {
+                // Explicit .json path: try exactly as given
+                const candidate = ResolvePath.joinAbsStringBuf(current_dir, bufs(.tsconfig_path_abs), &[_]string{ current_dir, "node_modules", extends }, .auto);
+                if (r.statFile(candidate)) return r.storeString(candidate);
+            } else if (has_subpath) {
+                // Subpath (e.g., "@scope/pkg/strict"): try exact path, then with .json appended.
+                // TypeScript does NOT append /tsconfig.json for subpaths.
+                const candidate = ResolvePath.joinAbsStringBuf(current_dir, bufs(.tsconfig_path_abs), &[_]string{ current_dir, "node_modules", extends }, .auto);
+                if (r.statFile(candidate)) return r.storeString(candidate);
+                const with_json = ResolvePath.joinAbsStringBuf(current_dir, bufs(.tsconfig_path_abs), &[_]string{ candidate, ".json" }, .auto);
+                if (r.statFile(with_json)) return r.storeString(with_json);
+            } else {
+                // Bare package name (e.g., "@scope/pkg" or "my-config"):
+                // try <pkg>/tsconfig.json (TypeScript's index file fallback for config lookups)
+                const candidate = ResolvePath.joinAbsStringBuf(current_dir, bufs(.tsconfig_path_abs), &[_]string{ current_dir, "node_modules", extends, "tsconfig.json" }, .auto);
+                if (r.statFile(candidate)) return r.storeString(candidate);
+            }
+
+            // Move to parent directory
+            const parent = Dirname.dirname(current_dir);
+            if (strings.eql(parent, current_dir)) break;
+            current_dir = parent;
+        }
+
+        return null;
+    }
+
+    /// Returns true if the given package specifier has a subpath beyond the package name.
+    /// "@scope/pkg" → false, "@scope/pkg/strict" → true, "foo" → false, "foo/bar" → true
+    fn hasPackageSubpath(specifier: string) bool {
+        if (specifier.len == 0) return false;
+        var idx: usize = 0;
+        // For scoped packages, skip past @scope/name
+        if (specifier[0] == '@') {
+            idx = strings.indexOfChar(specifier, '/') orelse return false;
+            idx += 1; // skip past the first /
+        }
+        // Find the next / after the package name
+        if (strings.indexOf(specifier[idx..], "/")) |_| return true;
+        return false;
+    }
+
+    /// Check if a file exists at the given path using stat.
+    fn statFile(_: *ThisResolver, path: string) bool {
+        var buf: bun.PathBuffer = undefined;
+        const path_z = bun.path.z(path, &buf);
+        switch (bun.sys.stat(path_z)) {
+            .result => |stat| return bun.S.ISREG(@intCast(stat.mode)),
+            .err => return false,
+        }
+    }
+
+    /// Store a string in the dirname_store for persistent ownership.
+    fn storeString(r: *ThisResolver, s: string) ?string {
+        return r.fs.dirname_store.append(string, s) catch null;
+    }
+
     pub fn binDirs(_: *const ThisResolver) []const string {
         if (!bin_folders_loaded) return &[_]string{};
         return bin_folders.constSlice();
@@ -4259,8 +4366,7 @@ pub const Resolver = struct {
                     try parent_configs.append(tsconfig_json);
                     var current = tsconfig_json;
                     while (current.extends.len > 0) {
-                        const ts_dir_name = Dirname.dirname(current.abs_path);
-                        const abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
+                        const abs_path = r.resolveTSConfigExtends(current) orelse break;
                         const parent_config_maybe = r.parseTSConfig(abs_path, bun.invalid_fd) catch |err| {
                             r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {f}", .{
                                 @errorName(err),

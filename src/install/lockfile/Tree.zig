@@ -343,30 +343,30 @@ pub fn isFilteredDependencyOrWorkspace(
     workspace_filters: []const WorkspaceFilter,
     install_root_dependencies: bool,
     manager: *const PackageManager,
-    lockfile: *const Lockfile,
+    pkg_names: []const String,
+    pkg_metas: []const Lockfile.Package.Meta,
+    pkg_resolutions: []const Resolution,
+    buf_resolutions: []const PackageID,
+    buf_dependencies: []const Dependency,
+    string_bytes: []const u8,
 ) bool {
-    const pkg_id = lockfile.buffers.resolutions.items[dep_id];
-    if (pkg_id >= lockfile.packages.len) {
-        const dep = lockfile.buffers.dependencies.items[dep_id];
+    const pkg_id = buf_resolutions[dep_id];
+    if (pkg_id >= pkg_names.len) {
+        const dep = buf_dependencies[dep_id];
         if (dep.behavior.isOptionalPeer()) {
             return false;
         }
         return true;
     }
 
-    const pkgs = lockfile.packages.slice();
-    const pkg_names = pkgs.items(.name);
-    const pkg_metas = pkgs.items(.meta);
-    const pkg_resolutions = pkgs.items(.resolution);
-
-    const dep = lockfile.buffers.dependencies.items[dep_id];
+    const dep = buf_dependencies[dep_id];
     const res = &pkg_resolutions[pkg_id];
     const parent_res = &pkg_resolutions[parent_pkg_id];
 
     if (pkg_metas[pkg_id].isDisabled(manager.options.cpu, manager.options.os)) {
         if (manager.options.log_level.isVerbose()) {
             const meta = &pkg_metas[pkg_id];
-            const name = lockfile.str(&pkg_names[pkg_id]);
+            const name = pkg_names[pkg_id].slice(string_bytes);
             if (!meta.os.isMatch(manager.options.os) and !meta.arch.isMatch(manager.options.cpu)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu & os mismatch<r>", .{name});
             } else if (!meta.os.isMatch(manager.options.os)) {
@@ -418,14 +418,14 @@ pub fn isFilteredDependencyOrWorkspace(
             },
             .name => |name_pattern| .{
                 name_pattern,
-                pkg_names[pkg_id].slice(lockfile.buffers.string_bytes.items),
+                pkg_names[pkg_id].slice(string_bytes),
             },
             .path => |path_pattern| path_pattern: {
                 if (res.tag != .workspace) {
                     return false;
                 }
 
-                filter_path.join(&.{res.value.workspace.slice(lockfile.buffers.string_bytes.items)});
+                filter_path.join(&.{res.value.workspace.slice(string_bytes)});
 
                 break :path_pattern .{ path_pattern, filter_path.slice() };
             },
@@ -480,6 +480,9 @@ pub fn processSubtree(
 
     const pkgs = builder.lockfile.packages.slice();
     const pkg_resolutions = pkgs.items(.resolution);
+    const pkg_names = pkgs.items(.name);
+    const pkg_metas = pkgs.items(.meta);
+    const string_bytes = builder.lockfile.buffers.string_bytes.items;
 
     builder.sort_buf.clearRetainingCapacity();
     try builder.sort_buf.ensureUnusedCapacity(builder.allocator, resolution_list.len);
@@ -508,7 +511,12 @@ pub fn processSubtree(
                 builder.workspace_filters,
                 builder.install_root_dependencies,
                 builder.manager,
-                builder.lockfile,
+                pkg_names,
+                pkg_metas,
+                pkg_resolutions,
+                builder.resolutions,
+                builder.dependencies,
+                string_bytes,
             )) {
                 continue;
             }

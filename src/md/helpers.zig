@@ -27,7 +27,7 @@ pub inline fn isNewlineOrNul(c: u8) bool {
 /// the very short scans the markdown parser does on every line/block.
 pub inline fn indexOfAnyInline(slice: []const u8, comptime needles: []const u8) usize {
     var i: usize = 0;
-    if (comptime !@import("builtin").target.cpu.arch.isWasm()) {
+    if (comptime !builtin.target.cpu.arch.isWasm()) {
         const V = @Vector(16, u8);
         while (i + 16 <= slice.len) : (i += 16) {
             const vec: V = slice[i..][0..16].*;
@@ -511,6 +511,7 @@ pub const HeadingIdTracker = struct {
     }
 };
 
+const builtin = @import("builtin");
 const bun = @import("bun");
 const entity_mod = @import("./entity.zig");
 const std = @import("std");

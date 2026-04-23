@@ -46,6 +46,20 @@ describe("S3Client error paths do not double-free the path", () => {
     expect(() => client.write(nonAsciiPath)).toThrow();
   });
 
+  test.each(["exists", "size", "stat", "unlink"] as const)(
+    "instance %s() throwing before blob creation",
+    method => {
+      const client = new Bun.S3Client();
+      expect(() =>
+        client[method](nonAsciiPath, {
+          get type() {
+            throw new Error("boom");
+          },
+        }),
+      ).toThrow("boom");
+    },
+  );
+
   test("static presign() throwing after blob creation", () => {
     expect(() =>
       Bun.S3Client.presign(nonAsciiPath, {
@@ -86,4 +100,17 @@ describe("S3Client error paths do not double-free the path", () => {
       }),
     ).toThrow("boom");
   });
+
+  test.each(["exists", "size", "stat", "unlink"] as const)(
+    "static %s() throwing before blob creation",
+    method => {
+      expect(() =>
+        Bun.S3Client[method](nonAsciiPath, {
+          get type() {
+            throw new Error("boom");
+          },
+        }),
+      ).toThrow("boom");
+    },
+  );
 });

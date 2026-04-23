@@ -1119,7 +1119,7 @@ pub export fn Bun__transpileFile(
     return promise;
 }
 
-export fn Bun__runVirtualModule(globalObject: *JSGlobalObject, specifier_ptr: *const bun.String) JSValue {
+export fn Bun__runVirtualModule(globalObject: *JSGlobalObject, specifier_ptr: *const bun.String, referrer_ptr: ?*const bun.String) JSValue {
     jsc.markBinding(@src());
     if (globalObject.bunVM().plugin_runner == null) return JSValue.zero;
 
@@ -1137,7 +1137,9 @@ export fn Bun__runVirtualModule(globalObject: *JSGlobalObject, specifier_ptr: *c
     else
         specifier[@min(namespace.len + 1, specifier.len)..];
 
-    return globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), .bun) catch {
+    const importer: ?bun.String = if (referrer_ptr) |r| r.* else null;
+
+    return globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), importer, .bun) catch {
         return JSValue.zero;
     } orelse return .zero;
 }

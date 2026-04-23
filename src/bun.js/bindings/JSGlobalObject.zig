@@ -267,12 +267,13 @@ pub const JSGlobalObject = opaque {
         node = 1,
         browser = 2,
     };
-    extern fn Bun__runOnLoadPlugins(*jsc.JSGlobalObject, ?*const bun.String, *const bun.String, BunPluginTarget) JSValue;
+    extern fn Bun__runOnLoadPlugins(*jsc.JSGlobalObject, ?*const bun.String, *const bun.String, ?*const bun.String, BunPluginTarget) JSValue;
     extern fn Bun__runOnResolvePlugins(*jsc.JSGlobalObject, ?*const bun.String, *const bun.String, *const String, BunPluginTarget) JSValue;
 
-    pub fn runOnLoadPlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, target: BunPluginTarget) bun.JSError!?JSValue {
+    pub fn runOnLoadPlugins(this: *JSGlobalObject, namespace_: bun.String, path: bun.String, importer: ?bun.String, target: BunPluginTarget) bun.JSError!?JSValue {
         jsc.markBinding(@src());
-        const result = try bun.jsc.fromJSHostCall(this, @src(), Bun__runOnLoadPlugins, .{ this, if (namespace_.length() > 0) &namespace_ else null, &path, target });
+        const importer_ptr: ?*const bun.String = if (importer) |*i| i else null;
+        const result = try bun.jsc.fromJSHostCall(this, @src(), Bun__runOnLoadPlugins, .{ this, if (namespace_.length() > 0) &namespace_ else null, &path, importer_ptr, target });
         if (result.isUndefinedOrNull()) return null;
         return result;
     }

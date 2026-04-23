@@ -671,7 +671,7 @@ JSValue fetchCommonJSModule(
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest) {
-        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, referrer, wasModuleMock);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
             JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, &specifier, referrer, wasModuleMock, target);
@@ -721,7 +721,7 @@ JSValue fetchCommonJSModule(
 
     // When "bun test" is NOT enabled, disable users from overriding builtin modules
     if (!isBunTest) {
-        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, referrer, wasModuleMock);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
             JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, &specifier, referrer, wasModuleMock, target);
@@ -961,7 +961,7 @@ static JSValue fetchESMSourceCode(
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest) {
-        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, referrer, wasModuleMock);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
             RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));
@@ -1041,7 +1041,7 @@ static JSValue fetchESMSourceCode(
 
     // When "bun test" is NOT enabled, disable users from overriding builtin modules
     if (!isBunTest) {
-        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, referrer, wasModuleMock);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
             RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));

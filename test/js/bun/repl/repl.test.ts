@@ -1052,4 +1052,29 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       await waitFor("99");
     });
   });
+
+  test("recalling multi-line history and editing works correctly", async () => {
+    // Regression test for https://github.com/oven-sh/bun/issues/27560
+    // When recalling multi-line history with up arrow and then pressing backspace,
+    // the remaining code was reprinted in its entirety after each deletion because
+    // refreshLine() didn't clear previous multi-line rendering.
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      // Enter multi-line code
+      send("if (true) {\n");
+      await waitFor("...");
+      send("111\n");
+      send("}\n");
+      await waitFor(/\u276f|> /);
+
+      // Press up arrow to recall the multi-line history entry
+      send("\x1b[A");
+      await waitFor("if (true)");
+
+      // Delete all content with Ctrl+U (delete to start of line) and type new code
+      send("\x15"); // Ctrl+U - clear line
+      await waitFor(/\u276f|> /);
+      send("222 + 333\n");
+      await waitFor("555");
+    });
+  });
 });

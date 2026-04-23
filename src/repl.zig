@@ -181,6 +181,10 @@ const History = struct {
         }
     }
 
+    /// Record separator character used to delimit multi-line history entries in the file.
+    /// Single-line entries are still delimited by '\n' for backward compatibility.
+    const RECORD_SEP: u8 = 0x1e;
+
     pub fn load(self: *History) !void {
         const home_path = bun.env_var.HOME.get() orelse return;
         if (home_path.len == 0) return;
@@ -195,11 +199,24 @@ const History = struct {
         };
         defer self.allocator.free(content);
 
-        var lines = std.mem.splitScalar(u8, content, '\n');
-        while (lines.next()) |line| {
-            if (line.len > 0) {
-                const entry = try self.allocator.dupe(u8, line);
-                try self.entries.append(entry);
+        // Detect format: if the file contains RECORD_SEP, use it as the entry delimiter.
+        // Otherwise fall back to newline-delimited (legacy format, single-line entries only).
+        if (std.mem.indexOfScalar(u8, content, RECORD_SEP) != null) {
+            var records = std.mem.splitScalar(u8, content, RECORD_SEP);
+            while (records.next()) |record| {
+                const trimmed = strings.trim(record, "\n");
+                if (trimmed.len > 0) {
+                    const entry = try self.allocator.dupe(u8, trimmed);
+                    try self.entries.append(entry);
+                }
+            }
+        } else {
+            var lines = std.mem.splitScalar(u8, content, '\n');
+            while (lines.next()) |line| {
+                if (line.len > 0) {
+                    const entry = try self.allocator.dupe(u8, line);
+                    try self.entries.append(entry);
+                }
             }
         }
 
@@ -222,11 +239,27 @@ const History = struct {
         else
             0;
 
+        // Check if any entry contains a newline (multi-line). If so, use record separator format.
+        var has_multiline = false;
+        for (self.entries.items[start..]) |entry| {
+            if (std.mem.indexOfScalar(u8, entry, '\n') != null) {
+                has_multiline = true;
+                break;
+            }
+        }
+
         var content = ArrayList(u8).init(self.allocator);
         defer content.deinit();
-        for (self.entries.items[start..]) |entry| {
-            content.appendSlice(entry) catch return;
-            content.append('\n') catch return;
+        if (has_multiline) {
+            for (self.entries.items[start..]) |entry| {
+                content.appendSlice(entry) catch return;
+                content.append(RECORD_SEP) catch return;
+            }
+        } else {
+            for (self.entries.items[start..]) |entry| {
+                content.appendSlice(entry) catch return;
+                content.append('\n') catch return;
+            }
         }
 
         const file = switch (bun.sys.openA(path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
@@ -681,6 +714,7 @@ use_colors: bool = false,
 terminal_width: u16 = 80,
 terminal_height: u16 = 24,
 ctrl_c_pressed: bool = false,
+prev_extra_lines: usize = 0, // number of extra terminal lines from previous refreshLine render
 
 // Buffered stdin
 stdin_buf: [256]u8 = .{0} ** 256,
@@ -959,32 +993,106 @@ fn refreshLine(self: *Repl) void {
     const prompt = self.getPrompt();
     const prompt_len = self.getPromptLength();
     const line = self.line_editor.getLine();
+    var buf: [32]u8 = undefined;
 
-    // Move to beginning of line
+    // If previous render spanned multiple lines, move cursor up and clear them
+    if (self.prev_extra_lines > 0) {
+        var i: usize = 0;
+        while (i < self.prev_extra_lines) : (i += 1) {
+            // Move cursor up one line and clear it
+            self.write(CSI ++ "1A");
+            self.write("\r");
+            self.write(Cursor.clear_line);
+        }
+    }
+
+    // Move to beginning of line and clear it
     self.write("\r");
     self.write(Cursor.clear_line);
+
+    // Count newlines in the current line to know how many extra terminal lines we'll render
+    var extra_lines: usize = 0;
+    for (line) |c| {
+        if (c == '\n') extra_lines += 1;
+    }
 
     // Write prompt
     self.write(prompt);
 
-    // Write line with syntax highlighting
-    if (self.use_colors and line.len > 0 and line.len <= 2048) {
-        self.writeHighlighted(line);
-    } else {
-        self.write(line);
-    }
+    if (extra_lines == 0) {
+        // Single-line content: use original fast path
+        if (self.use_colors and line.len > 0 and line.len <= 2048) {
+            self.writeHighlighted(line);
+        } else {
+            self.write(line);
+        }
 
-    // Position cursor
-    const cursor_pos = prompt_len + self.line_editor.cursor;
-    if (cursor_pos < self.terminal_width) {
+        // Position cursor
+        const cursor_pos = prompt_len + self.line_editor.cursor;
+        if (cursor_pos < self.terminal_width) {
+            self.write("\r");
+            if (cursor_pos > 0) {
+                const seq = std.fmt.bufPrint(&buf, CSI ++ "{d}C", .{cursor_pos}) catch return;
+                self.write(seq);
+            }
+        }
+    } else {
+        // Multi-line content: write each line with continuation prompts and clear to end
+        const cont_prompt = if (self.use_colors)
+            Color.dim ++ "... " ++ Color.reset
+        else
+            "... ";
+        const cont_prompt_len: usize = 4; // "... "
+
+        var line_iter = std.mem.splitScalar(u8, line, '\n');
+        var line_num: usize = 0;
+        // Track cursor position across lines
+        var cursor_line: usize = 0;
+        var cursor_col: usize = 0;
+
+        // Find which line and column the cursor is on
+        var pos: usize = 0;
+        for (line) |c| {
+            if (pos == self.line_editor.cursor) break;
+            if (c == '\n') {
+                cursor_line += 1;
+                cursor_col = 0;
+            } else {
+                cursor_col += 1;
+            }
+            pos += 1;
+        }
+
+        while (line_iter.next()) |segment| {
+            if (line_num > 0) {
+                // Move to new line and clear it, then write continuation prompt
+                self.write("\r\n");
+                self.write(Cursor.clear_line);
+                self.write(cont_prompt);
+            }
+            // Write this line segment (no highlighting for multi-line recalled history to avoid issues)
+            self.write(segment);
+            self.write(Cursor.clear_to_end);
+            line_num += 1;
+        }
+
+        // Position cursor: move up from last line to the cursor's line, then set column
+        const total_lines = extra_lines + 1;
+        const lines_to_move_up = total_lines - 1 - cursor_line;
+        if (lines_to_move_up > 0) {
+            const seq = std.fmt.bufPrint(&buf, CSI ++ "{d}A", .{lines_to_move_up}) catch return;
+            self.write(seq);
+        }
+        const col_offset = if (cursor_line == 0) prompt_len else cont_prompt_len;
+        const abs_col = col_offset + cursor_col;
         self.write("\r");
-        if (cursor_pos > 0) {
-            var buf: [16]u8 = undefined;
-            const seq = std.fmt.bufPrint(&buf, CSI ++ "{d}C", .{cursor_pos}) catch return;
+        if (abs_col > 0) {
+            const seq = std.fmt.bufPrint(&buf, CSI ++ "{d}C", .{abs_col}) catch return;
             self.write(seq);
         }
     }
 
+    self.prev_extra_lines = extra_lines;
     Output.flush();
 }
 
@@ -1705,6 +1813,7 @@ pub fn runWithVM(self: *Repl, vm: ?*jsc.VirtualMachine) !void {
                 }
             },
             .ctrl_l => {
+                self.prev_extra_lines = 0;
                 self.write(Cursor.clear_screen);
                 self.write(Cursor.home);
                 self.refreshLine();
@@ -1795,7 +1904,34 @@ pub fn runWithVM(self: *Repl, vm: ?*jsc.VirtualMachine) !void {
     self.history.save();
 }
 
+/// Move cursor to the end of the last displayed line of the current multi-line content,
+/// so that subsequent output (newline, evaluation result) appears below it.
+fn movePastMultilineContent(self: *Repl) void {
+    if (self.prev_extra_lines > 0) {
+        const line = self.line_editor.getLine();
+        // Find which line the cursor is currently on
+        var cursor_line: usize = 0;
+        var pos: usize = 0;
+        for (line) |c| {
+            if (pos == self.line_editor.cursor) break;
+            if (c == '\n') cursor_line += 1;
+            pos += 1;
+        }
+        const lines_below = self.prev_extra_lines - cursor_line;
+        if (lines_below > 0) {
+            var buf: [32]u8 = undefined;
+            const seq = std.fmt.bufPrint(&buf, CSI ++ "{d}B", .{lines_below}) catch return;
+            self.write(seq);
+        }
+        // Move to end of the last line
+        self.write("\r");
+        self.write(Cursor.clear_to_end);
+        self.prev_extra_lines = 0;
+    }
+}
+
 fn handleEnter(self: *Repl) !void {
+    self.movePastMultilineContent();
     self.print("\n", .{});
 
     const line = self.line_editor.getLine();
@@ -1886,6 +2022,7 @@ fn handleEnter(self: *Repl) !void {
 }
 
 fn handleCtrlC(self: *Repl) void {
+    self.movePastMultilineContent();
     if (self.editor_mode) {
         self.print("\n{s}// Editor mode cancelled{s}\n", .{ Color.dim, Color.reset });
         self.editor_mode = false;

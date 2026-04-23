@@ -404,3 +404,26 @@ describe("MatcherContext", () => {
     });
   });
 });
+
+describe("asymmetricMatch exception propagation", () => {
+  it("propagates exceptions thrown by the matcher function", () => {
+    expect.extend({
+      _alwaysThrows() {
+        throw new Error("boom from matcher");
+      },
+    });
+
+    const matcher = expect._alwaysThrows();
+    expect(() => matcher.asymmetricMatch(1)).toThrow("boom from matcher");
+  });
+
+  it("propagates exceptions when the matcher function is a native host function that throws", () => {
+    // expect.extend itself throws when called with a non-object first argument.
+    // Registering it as a matcher means asymmetricMatch will invoke it with the
+    // received value as the first arg.
+    expect.extend({ _callsExtend: expect.extend });
+
+    const matcher = expect._callsExtend();
+    expect(() => matcher.asymmetricMatch(1)).toThrow();
+  });
+});

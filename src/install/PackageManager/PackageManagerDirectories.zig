@@ -251,7 +251,7 @@ pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, n
         const visible_hostname = scope.url.hostname[0..@min(scope.url.hostname.len, 12)];
         end = std.fmt.bufPrint(available, "@@{s}__{f}{f}{f}", .{
             visible_hostname,
-            bun.fmt.hexIntLower(String.Builder.stringHash(scope.url.href)),
+            bun.fmt.hexIntLower(scope.url_hash),
             CacheVersion.Formatter{ .version_number = CacheVersion.current },
             PatchHashFmt{ .hash = patch_hash },
         }) catch unreachable;

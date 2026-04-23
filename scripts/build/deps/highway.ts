@@ -47,9 +47,7 @@ export const highway: Dependency = {
       // "unknown argument ignored"). Match upstream's MSVC branch instead:
       // /EHs-c- overrides globalFlags' /EHsc (later flag wins) so highway
       // is built without exceptions like it was under nested-cmake.
-      cflags: cfg.windows
-        ? ["/EHs-c-", "-D_HAS_EXCEPTIONS=0"]
-        : ["-fno-exceptions", "-fmath-errno"],
+      cflags: cfg.windows ? ["/EHs-c-", "-D_HAS_EXCEPTIONS=0"] : ["-fno-exceptions", "-fmath-errno"],
     };
 
     // clang-cl on arm64-windows doesn't define __ARM_NEON even though NEON

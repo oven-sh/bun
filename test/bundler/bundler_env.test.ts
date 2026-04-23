@@ -65,6 +65,23 @@ for (let backend of ["api", "cli"] as const) {
       },
     });
 
+    // #19508 - env: "disable" should also prevent NODE_ENV from being inlined
+    itBundled("env/disable-node-env", {
+      backend: backend,
+      dotenv: "disable",
+      files: {
+        "/a.js": `console.log(process.env.NODE_ENV);`,
+      },
+      onAfterBundle(api) {
+        const content = api.readFile("/out.js");
+        if (!content.includes("process.env.NODE_ENV")) {
+          throw new Error(
+            "process.env.NODE_ENV was inlined but should have been preserved with env: 'disable'. Output:\n" + content,
+          );
+        }
+      },
+    });
+
     // TODO: make this work as expected with process.env isntead of relying on the initial env vars.
     // Test pattern matching - only vars with prefix are inlined
     if (backend === "cli")

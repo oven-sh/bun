@@ -1,9 +1,11 @@
-import { marked } from "marked";
-import { remark } from "remark";
-import remarkHtml from "remark-html";
 import { bench, run, summary } from "../runner.mjs";
 
-const remarkProcessor = remark().use(remarkHtml);
+// marked/remark are optional — when not installed (e.g. fresh checkout) the
+// Bun.markdown benches still run so before/after numbers can be collected.
+const marked = await import("marked").then(m => m.marked).catch(() => null);
+const remarkProcessor = await import("remark")
+  .then(async ({ remark }) => remark().use((await import("remark-html")).default))
+  .catch(() => null);
 
 const small = `# Hello World
 
@@ -111,13 +113,15 @@ summary(() => {
     });
   }
 
-  bench(`small (${small.length} chars) - marked`, () => {
-    return marked(small);
-  });
+  if (marked)
+    bench(`small (${small.length} chars) - marked`, () => {
+      return marked(small);
+    });
 
-  bench(`small (${small.length} chars) - remark`, () => {
-    return remarkProcessor.processSync(small).toString();
-  });
+  if (remarkProcessor)
+    bench(`small (${small.length} chars) - remark`, () => {
+      return remarkProcessor.processSync(small).toString();
+    });
 });
 
 summary(() => {
@@ -135,13 +139,15 @@ summary(() => {
     });
   }
 
-  bench(`medium (${medium.length} chars) - marked`, () => {
-    return marked(medium);
-  });
+  if (marked)
+    bench(`medium (${medium.length} chars) - marked`, () => {
+      return marked(medium);
+    });
 
-  bench(`medium (${medium.length} chars) - remark`, () => {
-    return remarkProcessor.processSync(medium).toString();
-  });
+  if (remarkProcessor)
+    bench(`medium (${medium.length} chars) - remark`, () => {
+      return remarkProcessor.processSync(medium).toString();
+    });
 });
 
 summary(() => {
@@ -159,13 +165,15 @@ summary(() => {
     });
   }
 
-  bench(`large (${large.length} chars) - marked`, () => {
-    return marked(large);
-  });
+  if (marked)
+    bench(`large (${large.length} chars) - marked`, () => {
+      return marked(large);
+    });
 
-  bench(`large (${large.length} chars) - remark`, () => {
-    return remarkProcessor.processSync(large).toString();
-  });
+  if (remarkProcessor)
+    bench(`large (${large.length} chars) - remark`, () => {
+      return remarkProcessor.processSync(large).toString();
+    });
 });
 
 await run();

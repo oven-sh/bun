@@ -74,24 +74,7 @@ pub fn processLink(self: *Parser, content: []const u8, start: usize, base_off: O
             if (pos < content.len) pos += 1; // skip >
         } else {
             // Bare destination — balance parentheses
-            var paren_depth: u32 = 0;
-            while (pos < content.len) {
-                pos += helpers.indexOfAnyInline(content[pos..], " \t\n\r\x0b\x0c()\\");
-                if (pos >= content.len) break;
-                switch (content[pos]) {
-                    '(' => paren_depth += 1,
-                    ')' => {
-                        if (paren_depth == 0) break;
-                        paren_depth -= 1;
-                    },
-                    '\\' => {
-                        pos = @min(pos + 2, content.len);
-                        continue;
-                    },
-                    else => break, // whitespace
-                }
-                pos += 1;
-            }
+            pos = scanBareDestination(content, pos);
             dest_end = pos;
         }
 
@@ -257,24 +240,7 @@ pub fn tryMatchBracketLink(self: *Parser, content: []const u8, start: usize) str
             }
             if (p < content.len and content[p] == '>') p += 1 else return .{ .is_link = false, .label_end = label_end, .link_end = label_end + 1 };
         } else {
-            var paren_depth: u32 = 0;
-            while (p < content.len) {
-                p += helpers.indexOfAnyInline(content[p..], " \t\n\r\x0b\x0c()\\");
-                if (p >= content.len) break;
-                switch (content[p]) {
-                    '(' => paren_depth += 1,
-                    ')' => {
-                        if (paren_depth == 0) break;
-                        paren_depth -= 1;
-                    },
-                    '\\' => {
-                        p = @min(p + 2, content.len);
-                        continue;
-                    },
-                    else => break, // whitespace
-                }
-                p += 1;
-            }
+            p = scanBareDestination(content, p);
         }
         // Skip whitespace
         while (p < content.len and (helpers.isBlank(content[p]) or content[p] == '\n' or content[p] == '\r')) p += 1;
@@ -513,6 +479,32 @@ pub fn findAutolink(self: *const Parser, content: []const u8, start: usize) ?str
     }
 
     return null;
+}
+
+/// Scan a bare (non-`<>`-wrapped) link destination starting at `start`,
+/// balancing nested `()` and honouring backslash escapes. Returns the index
+/// of the first unbalanced `)` / whitespace or `content.len`.
+inline fn scanBareDestination(content: []const u8, start: usize) usize {
+    var pos = start;
+    var paren_depth: u32 = 0;
+    while (pos < content.len) {
+        pos += helpers.indexOfAnyInline(content[pos..], " \t\n\r\x0b\x0c()\\");
+        if (pos >= content.len) break;
+        switch (content[pos]) {
+            '(' => paren_depth += 1,
+            ')' => {
+                if (paren_depth == 0) break;
+                paren_depth -= 1;
+            },
+            '\\' => {
+                pos = @min(pos + 2, content.len);
+                continue;
+            },
+            else => break, // whitespace
+        }
+        pos += 1;
+    }
+    return pos;
 }
 
 pub fn renderAutolink(self: *Parser, url: []const u8, is_email: bool) bun.JSError!void {

@@ -276,6 +276,7 @@ pub const AnyRoute = union(enum) {
 pub const ServerConfig = @import("./server/ServerConfig.zig");
 pub const ServerWebSocket = @import("./server/ServerWebSocket.zig");
 pub const NodeHTTPResponse = @import("./server/NodeHTTPResponse.zig");
+pub const UnixSocketCleanup = @import("./server/UnixSocketCleanup.zig");
 
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 const ServePlugins = struct {
@@ -534,6 +535,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub const App = uws.NewApp(ssl_enabled);
         app: ?*App = null,
         listener: ?*App.ListenSocket = null,
+        /// Registration in the process-global unix socket cleanup list. Non-null
+        /// only while a unix-socket listener is active — see UnixSocketCleanup.zig.
+        #unix_cleanup_handle: ?UnixSocketCleanup.Handle = null,
         js_value: jsc.JSRef = jsc.JSRef.empty(),
         /// Potentially null before listen() is called, and once .destroy() is called.
         vm: *jsc.VirtualMachine,
@@ -1553,6 +1557,13 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.notifyInspectorServerStopped();
 
             if (this.config.address == .unix) {
+                // Tombstone the cleanup registration BEFORE unlinking: a
+                // signal delivered between the two calls would otherwise
+                // see this node as still live and could re-unlink the path
+                // after another process races in and binds a new socket.
+                UnixSocketCleanup.unregister(this.#unix_cleanup_handle);
+                this.#unix_cleanup_handle = null;
+
                 const path = this.config.address.unix;
                 if (path.len > 0 and path[0] != 0) {
                     _ = bun.sys.unlink(path);
@@ -1807,6 +1818,15 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn onListen(this: *ThisServer, socket: ?*App.ListenSocket) void {
             if (socket == null) {
                 return this.onListenFailed();
+            }
+
+            // Register the unix socket path for cleanup as the very first
+            // thing — a signal delivered between uSockets returning from
+            // bind(2) and this callback running would already be after the
+            // socket file exists on disk, so we want the registry entry
+            // installed before we do any other work.
+            if (this.config.address == .unix) {
+                this.#unix_cleanup_handle = UnixSocketCleanup.register(this.config.address.unix);
             }
 
             this.listener = socket;

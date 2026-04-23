@@ -153,7 +153,14 @@ pub const InternalMsgHolder = struct {
         bun.assert(this.isReady());
         var messages = this.messages;
         this.messages = .{};
-        for (messages.items) |*strong| {
+        var i: usize = 0;
+        errdefer {
+            // Clean up remaining Strong refs and the array on error.
+            for (messages.items[i..]) |*s| s.deinit();
+            messages.deinit(bun.default_allocator);
+        }
+        while (i < messages.items.len) : (i += 1) {
+            var strong = &messages.items[i];
             if (strong.get()) |message| {
                 try this.dispatchUnsafe(message, globalThis);
             }
@@ -214,37 +221,13 @@ pub fn onInternalMessagePrimary(globalThis: *jsc.JSGlobalObject, callframe: *jsc
     // TODO: remove these strongs.
     ipc_data.internal_msg_queue.worker = .create(arguments[1], globalThis);
     ipc_data.internal_msg_queue.cb = .create(arguments[2], globalThis);
+    try ipc_data.internal_msg_queue.flush(globalThis);
     return .js_undefined;
 }
 
 pub fn handleInternalMessagePrimary(globalThis: *jsc.JSGlobalObject, subprocess: *jsc.Subprocess, message: jsc.JSValue) bun.JSError!void {
     const ipc_data = subprocess.ipc() orelse return;
-
-    const event_loop = globalThis.bunVM().eventLoop();
-
-    // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
-    if (try message.get(globalThis, "ack")) |p| {
-        if (!p.isUndefined()) {
-            const ack = p.toInt32();
-            if (ipc_data.internal_msg_queue.callbacks.getEntry(ack)) |entry| {
-                var cbstrong = entry.value_ptr.*;
-                defer cbstrong.deinit();
-                _ = ipc_data.internal_msg_queue.callbacks.swapRemove(ack);
-                const cb = cbstrong.get().?;
-                event_loop.runCallback(cb, globalThis, ipc_data.internal_msg_queue.worker.get().?, &.{
-                    message,
-                    .null, // handle
-                });
-                return;
-            }
-        }
-    }
-    const cb = ipc_data.internal_msg_queue.cb.get().?;
-    event_loop.runCallback(cb, globalThis, ipc_data.internal_msg_queue.worker.get().?, &.{
-        message,
-        .null, // handle
-    });
-    return;
+    try ipc_data.internal_msg_queue.dispatch(message, globalThis);
 }
 
 //

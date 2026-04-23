@@ -233,22 +233,47 @@ function fakeParentPort() {
     }
   }
 
-  // Wrap `addEventListener` / `removeEventListener` so we can track user
-  // listener lifetime on `parentPortTarget` and install / uninstall the
-  // forwarders on the global scope accordingly. Each (listener, type, capture)
-  // triple gets wrapped exactly once — duplicate adds are no-ops per the DOM
-  // spec — and the original listener object is the map key so that a
-  // `remove(type, original, {capture})` call finds the wrapped copy.
-  type TrackEntry = { wrapped: EventListener; once: boolean };
-  // `${type}:${capture ? 1 : 0}` — a listener registered with different
-  // (type, capture) combinations lives in separate slots, matching spec.
-  const trackedByListener = new WeakMap<object, Map<string, TrackEntry>>();
+  // Listener tracking.
+  //
+  // Every user-registered listener is wrapped before it's handed to
+  // `parentPortTarget.addEventListener`, so we can (a) release the
+  // event-loop ref held by our capture forwarder when the listener is
+  // removed — including the implicit removal done by `{ once: true }`
+  // after firing — and (b) pre-transform the event for Node-style
+  // emitter listeners (`on`/`once`/`addListener`) which receive
+  // `event.data` / `event.error` rather than the raw `MessageEvent`.
+  //
+  // Entries are grouped by the ORIGINAL user listener (the function or
+  // handleEvent-bearing object the user handed us). Keying by the
+  // wrapped callback would break `off(type, fn)`: the removal path only
+  // sees the original `fn`, not the wrapper we internally created.
+  //
+  // `on` / `addEventListener` share a single registration list per
+  // `(listener, type, capture)` triple, matching Node's behavior where
+  // `removeListener` and `removeEventListener` are aliases operating on
+  // the same underlying list. A registration records the "style" used at
+  // register time so the right calling convention is used when it fires.
+  // Node's EventEmitter-style `on` allows duplicate registrations of the
+  // same `fn` — each `removeListener` call removes at most one (LIFO).
+  type EntryStyle = "dom" | "emitter";
+  type TrackEntry = {
+    wrapped: EventListener;
+    style: EntryStyle;
+    once: boolean;
+    forwarderType: "message" | "messageerror" | null;
+    // Set to `true` once the entry has been evicted, so the wrapper is
+    // a no-op if it's scheduled to fire after eviction and the
+    // forwarder-release bookkeeping is idempotent against repeat calls.
+    removed: boolean;
+  };
+  // slot key: `${type}:${capture ? 1 : 0}`
+  const trackedByListener = new WeakMap<object, Map<string, TrackEntry[]>>();
 
   function listenerSlot(type: string, capture: boolean): string {
-    return capture ? type + ":1" : type + ":0";
+    return type + ":" + (capture ? "1" : "0");
   }
 
-  function invokeListener(listener: EventListener | EventListenerObject, event: Event): void {
+  function invokeDomListener(listener: EventListener | EventListenerObject, event: Event): void {
     // DOM EventTarget accepts either a bare function or an object with a
     // `handleEvent` method. Dispatch correctly for both forms.
     if (typeof listener === "function") {
@@ -258,7 +283,68 @@ function fakeParentPort() {
     }
   }
 
-  function parentPortAddEventListener(
+  // `on`/`once`/`addListener`-registered listeners receive the unwrapped
+  // payload (`event.data` for message events, `event.error` for error
+  // events) instead of the raw Event — emulating Node's EventEmitter
+  // calling convention on a MessagePort-like object.
+  function invokeEmitterListener(
+    type: string,
+    listener: EventListener | EventListenerObject,
+    event: Event,
+  ): void {
+    let payload: unknown;
+    if (type === "error" || type === "messageerror") {
+      payload = (event as ErrorEvent).error;
+    } else {
+      payload = (event as MessageEvent).data;
+    }
+    if (typeof listener === "function") {
+      (listener as any).$call(fake, payload);
+    } else if (listener !== null && typeof listener === "object" && typeof (listener as any).handleEvent === "function") {
+      (listener as any).handleEvent.$call(listener, payload);
+    }
+  }
+
+  function getBucket(listener: object): Map<string, TrackEntry[]> | undefined {
+    return trackedByListener.get(listener);
+  }
+
+  function getOrCreateBucket(listener: object): Map<string, TrackEntry[]> {
+    let bucket = trackedByListener.get(listener);
+    if (!bucket) {
+      bucket = new Map<string, TrackEntry[]>();
+      trackedByListener.set(listener, bucket);
+    }
+    return bucket;
+  }
+
+  // Remove exactly the entry `target` from `listener`'s bucket at `slot`,
+  // release the forwarder, and clean up the bucket if it becomes empty.
+  // Idempotent — a no-op if the entry is already gone.
+  function evictEntry(
+    listener: object,
+    slot: string,
+    target: TrackEntry,
+  ): boolean {
+    if (target.removed) return false;
+    const bucket = trackedByListener.get(listener);
+    if (!bucket) return false;
+    const list = bucket.$get(slot);
+    if (!list) return false;
+    const idx = list.indexOf(target);
+    if (idx < 0) return false;
+    list.splice(idx, 1);
+    if (list.length === 0) {
+      bucket.$delete(slot);
+      if (bucket.$size === 0) trackedByListener.delete(listener);
+    }
+    target.removed = true;
+    if (target.forwarderType !== null) releaseListener(target.forwarderType);
+    return true;
+  }
+
+  function addListenerGeneric(
+    style: EntryStyle,
     type: string,
     listener: EventListener | EventListenerObject | null,
     options?: boolean | AddEventListenerOptions,
@@ -267,10 +353,10 @@ function fakeParentPort() {
     const capture = typeof options === "boolean" ? options : !!options?.capture;
     const once = typeof options === "object" && options !== null && !!options.once;
     // `AbortSignal` auto-removal is driven from the native EventTarget in C++,
-    // so it would bypass our JS `parentPortRemoveEventListener` wrapper and
-    // leak the event-loop refcount our capture forwarder holds on `self`.
-    // Strip the signal from the options we pass inward and re-implement abort
-    // ourselves via an abort listener that routes through the JS remove path.
+    // so it would bypass our JS remove wrapper and leak the event-loop
+    // refcount our capture forwarder holds on `self`. Strip the signal from
+    // the options we pass inward and re-implement abort ourselves via an
+    // abort listener that routes through the JS remove path.
     const signal =
       typeof options === "object" && options !== null ? ((options as AddEventListenerOptions).signal ?? null) : null;
     if (signal && signal.aborted) return;
@@ -280,44 +366,84 @@ function fakeParentPort() {
     // at all.
     const forwarderType: "message" | "messageerror" | null =
       type === "message" ? "message" : type === "messageerror" ? "messageerror" : null;
+
     const slot = listenerSlot(type, capture);
-    let bucket = trackedByListener.get(listener as object);
-    if (bucket?.$has(slot)) {
-      // Duplicate add — EventTarget already dedupes, so no-op.
+    const bucket = getOrCreateBucket(listener as object);
+    let list = bucket.$get(slot);
+    if (style === "dom" && list && list.length > 0) {
+      // DOM `addEventListener` dedupes (type, listener, capture) triples —
+      // matching WHATWG spec. Emitter-style `on` allows duplicates.
       return;
     }
-    // Wrap so we can release the loop ref when the listener is removed,
-    // including the implicit removal done by `{ once: true }` after firing.
+    // `entry` is referenced by `wrapped` below via closure; the assignment
+    // happens after `wrapped` is defined.
+    let entry: TrackEntry;
     const wrapped: EventListener = function (event) {
+      if (entry.removed) return;
       if (once) {
-        const bucketNow = trackedByListener.get(listener as object);
-        if (bucketNow?.$get(slot) === entry) {
-          bucketNow.$delete(slot);
-          if (bucketNow.$size === 0) trackedByListener.delete(listener as object);
-          if (forwarderType !== null) releaseListener(forwarderType);
-        }
+        evictEntry(listener as object, slot, entry);
       }
-      invokeListener(listener, event);
+      if (entry.style === "emitter") {
+        invokeEmitterListener(type, listener, event);
+      } else {
+        invokeDomListener(listener, event);
+      }
     };
-    const entry: TrackEntry = { wrapped, once };
-    if (!bucket) {
-      bucket = new Map();
-      trackedByListener.set(listener as object, bucket);
+    entry = { wrapped, style, once, forwarderType, removed: false };
+    if (!list) {
+      list = [];
+      bucket.$set(slot, list);
     }
-    bucket.$set(slot, entry);
+    list.push(entry);
     const innerOptions: boolean | AddEventListenerOptions =
       typeof options === "object" && options !== null ? { ...options, signal: undefined } : (options ?? false);
     parentPortTarget.addEventListener(type, wrapped, innerOptions);
     if (forwarderType !== null) acquireListener(forwarderType);
     if (signal) {
+      // Capture THIS entry, not just the (listener, slot) pair — so that
+      // `remove` → `add-with-no-signal` → abort doesn't silently evict the
+      // new registration.
+      const capturedEntry = entry;
       signal.addEventListener(
         "abort",
         () => {
-          parentPortRemoveEventListener(type, listener, { capture });
+          if (capturedEntry.removed) return;
+          parentPortTarget.removeEventListener(type, capturedEntry.wrapped, innerOptions);
+          evictEntry(listener as object, slot, capturedEntry);
         },
         { once: true },
       );
     }
+  }
+
+  function removeListenerGeneric(
+    type: string,
+    listener: EventListener | EventListenerObject | null,
+    options?: boolean | EventListenerOptions,
+  ): void {
+    if (listener === null || listener === undefined) return;
+    const capture = typeof options === "boolean" ? options : !!options?.capture;
+    const bucket = getBucket(listener as object);
+    if (!bucket) return;
+    const slot = listenerSlot(type, capture);
+    const list = bucket.$get(slot);
+    if (!list || list.length === 0) return;
+    // Remove the most-recently-added entry for this listener (LIFO),
+    // matching Node's `removeListener`. `removeEventListener` hits the
+    // same path: since DOM adds dedupe, at most one entry is ever present
+    // via `addEventListener`, and Node's `removeEventListener` and
+    // `removeListener` are aliases operating on the shared list.
+    const entry = list[list.length - 1];
+    parentPortTarget.removeEventListener(type, entry.wrapped, options);
+    evictEntry(listener as object, slot, entry);
+  }
+
+  function parentPortAddEventListener(
+    type: string,
+    listener: EventListener | EventListenerObject | null,
+    options?: boolean | AddEventListenerOptions,
+  ): void {
+    addListenerGeneric("dom", type, listener, options);
   }
 
   function parentPortRemoveEventListener(
@@ -325,18 +451,22 @@ function fakeParentPort() {
     listener: EventListener | EventListenerObject | null,
     options?: boolean | EventListenerOptions,
   ): void {
-    if (listener === null || listener === undefined) return;
-    const capture = typeof options === "boolean" ? options : !!options?.capture;
-    const bucket = trackedByListener.get(listener as object);
-    if (!bucket) return;
-    const slot = listenerSlot(type, capture);
-    const entry = bucket.$get(slot);
-    if (!entry) return;
-    bucket.$delete(slot);
-    if (bucket.$size === 0) trackedByListener.delete(listener as object);
-    parentPortTarget.removeEventListener(type, entry.wrapped, options);
-    if (type === "message") releaseListener("message");
-    else if (type === "messageerror") releaseListener("messageerror");
+    removeListenerGeneric(type, listener, options);
+  }
+
+  function parentPortOn(type: string, listener: EventListener) {
+    addListenerGeneric("emitter", type, listener);
+    return fake;
+  }
+
+  function parentPortOnce(type: string, listener: EventListener) {
+    addListenerGeneric("emitter", type, listener, { once: true });
+    return fake;
+  }
+
+  function parentPortOff(type: string, listener: EventListener) {
+    removeListenerGeneric(type, listener);
+    return fake;
   }
 
   Object.defineProperty(fake, "onmessage", {
@@ -441,23 +571,54 @@ function fakeParentPort() {
     value: parentPortTarget.dispatchEvent.bind(parentPortTarget),
   });
 
-  // `addListener`/`removeListener` must NOT bypass the `injectFakeEmitter`
-  // wrapping layer: `parentPort.on('message', fn)` wraps `fn` into a callback
-  // and stores `fn[wrappedListener] = callback`. A matching
-  // `parentPort.removeListener('message', fn)` has to resolve the wrapped
-  // callback before calling `removeEventListener`, otherwise it would try to
-  // remove `fn` itself (which was never registered) and silently leak the
-  // event-loop refcount held by our capture forwarder. `fake.on`/`fake.off`
-  // — inherited from `MessagePort.prototype` via `injectFakeEmitter` — do
-  // that resolution correctly, so we alias to them.
-  Object.defineProperty(fake, "addListener", {
-    value: (MessagePort.prototype as any).on,
-    enumerable: false,
+  // Node-style emitter methods. These OVERRIDE the inherited
+  // `MessagePort.prototype.{on,off,once,...}` methods installed by
+  // `injectFakeEmitter`, because those:
+  //
+  // - store their per-registration wrapper on the user listener itself
+  //   (`listener[wrappedListener] = cb`), which gets clobbered when the
+  //   same listener is registered twice — leaking the earlier entries
+  //   and pinning the forwarder-held event-loop ref forever, and
+  // - can't coordinate with the forwarder / abort-signal bookkeeping
+  //   that parentPort needs to exit cleanly.
+  //
+  // The overrides route through `addListenerGeneric` / `removeListenerGeneric`
+  // which handle duplicates, Node-style `removeListener` semantics (LIFO
+  // removal), and forwarder refcounting in one place.
+  Object.defineProperty(fake, "on", {
+    value: parentPortOn,
+    writable: true,
+    configurable: true,
   });
-
+  Object.defineProperty(fake, "addListener", {
+    value: parentPortOn,
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(fake, "prependListener", {
+    value: parentPortOn,
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(fake, "once", {
+    value: parentPortOnce,
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(fake, "prependOnceListener", {
+    value: parentPortOnce,
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(fake, "off", {
+    value: parentPortOff,
+    writable: true,
+    configurable: true,
+  });
   Object.defineProperty(fake, "removeListener", {
-    value: (MessagePort.prototype as any).off,
-    enumerable: false,
+    value: parentPortOff,
+    writable: true,
+    configurable: true,
   });
 
   return fake;

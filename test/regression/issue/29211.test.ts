@@ -502,6 +502,188 @@ test.concurrent("parentPort.removeListener unsubscribes through the wrapped-list
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("parentPort.on twice + off once leaves exactly one listener firing (#29211)", async () => {
+  // Registering the same `fn` twice with `on` registers two listeners (Node
+  // `EventEmitter` semantics — duplicates allowed). `removeListener(fn)`
+  // removes ONE instance per call. Pre-fix, `injectFakeEmitter.on` stashed
+  // the wrapped callback on the listener function itself; the second `on`
+  // overwrote that slot, orphaning the first wrapper. After one `off`,
+  // only the second wrapper was evicted, the orphan kept firing, AND the
+  // forwarder-held loop ref could never be released.
+  using dir = tempDir("issue-29211-dup-on", {
+    "worker.mjs": String.raw`
+      import { parentPort } from 'node:worker_threads';
+      let fired = 0;
+      function handler() { fired++; }
+      parentPort.on('message', handler);
+      parentPort.on('message', handler);
+      parentPort.on('message', (msg) => {
+        if (msg && msg.cmd === 'remove-one') {
+          parentPort.removeListener('message', handler);
+          parentPort.postMessage({ removed: true });
+        } else if (msg && msg.cmd === 'report') {
+          parentPort.postMessage({ fired });
+        }
+      });
+    `,
+    "main.mjs": String.raw`
+      import { Worker } from 'node:worker_threads';
+      const w = new Worker(new URL('./worker.mjs', import.meta.url));
+      const result = await new Promise((resolve, reject) => {
+        let removed = false;
+        w.on('error', reject);
+        w.on('message', (msg) => {
+          if (msg && msg.removed) {
+            removed = true;
+            w.postMessage({ n: 1 });
+            w.postMessage({ cmd: 'report' });
+          } else if (removed && msg && typeof msg.fired === 'number') {
+            resolve(msg);
+          }
+        });
+        // Two pre-removal messages: 'handler' fires twice (x2 registrations) = 4
+        w.postMessage({ n: 1 });
+        w.postMessage({ n: 2 });
+        w.postMessage({ cmd: 'remove-one' });
+        // After removal ack, main posts two more — handler should fire once
+        // each (only one registration left). Final total: 4 + 2 = 6.
+      });
+      await w.terminate();
+      console.log(JSON.stringify(result));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), String(dir) + "/main.mjs"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Count per message while both registrations of `handler` are active:
+  //   {n:1} → 2, {n:2} → 4, {cmd:'remove-one'} → 6 (then one reg removed).
+  // After the removal ack, main posts {n:1} and {cmd:'report'}, each firing
+  // the single remaining registration: → 7 → 8.
+  //
+  // Pre-fix: the second `on(handler)` overwrote the first wrapper slot and
+  // orphaned the first registration; the only `removeListener` call deleted
+  // the second wrapper, leaving the orphan still firing forever. Post-fix:
+  // Node-style LIFO removal leaves exactly one live registration.
+  expect(JSON.parse(stdout.trim())).toEqual({ fired: 8 });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("parentPort.addEventListener with signal, then remove + re-add without signal, abort doesn't evict new (#29211)", async () => {
+  // The AbortSignal abort handler must capture the specific registration
+  // it was created for — not just (type, listener). Otherwise: add-with-signal,
+  // explicit remove, add-without-signal, abort → the stale abort handler
+  // silently removes the UNSIGNALED listener.
+  using dir = tempDir("issue-29211-abort-stale", {
+    "worker.mjs": String.raw`
+      import { parentPort } from 'node:worker_threads';
+      let fired = 0;
+      function handler() { fired++; }
+
+      const ac = new AbortController();
+      // 1. Register with signal.
+      parentPort.addEventListener('message', handler, { signal: ac.signal });
+      // 2. Explicitly remove it.
+      parentPort.removeEventListener('message', handler);
+      // 3. Re-register WITHOUT a signal.
+      parentPort.addEventListener('message', handler);
+      // 4. Now abort. The stale closure from step 1 must not touch step 3.
+      ac.abort();
+
+      parentPort.addEventListener('message', (event) => {
+        if (event.data && event.data.cmd === 'report') {
+          parentPort.postMessage({ fired });
+        }
+      });
+    `,
+    "main.mjs": String.raw`
+      import { Worker } from 'node:worker_threads';
+      const w = new Worker(new URL('./worker.mjs', import.meta.url));
+      const result = await new Promise((resolve, reject) => {
+        w.on('error', reject);
+        w.on('message', (msg) => {
+          if (msg && typeof msg.fired === 'number') resolve(msg);
+        });
+        w.postMessage({ n: 1 });
+        w.postMessage({ n: 2 });
+        w.postMessage({ n: 3 });
+        w.postMessage({ cmd: 'report' });
+      });
+      await w.terminate();
+      console.log(JSON.stringify(result));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), String(dir) + "/main.mjs"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // All 4 messages reach 'handler' (the unsignaled re-registration). Pre-fix,
+  // fired would be 0 because the stale abort handler from step 1 evicted
+  // the step-3 registration.
+  expect(JSON.parse(stdout.trim())).toEqual({ fired: 4 });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("parentPort addEventListener after on/off does not leak via wrappedListener slot (#29211)", async () => {
+  // Cross-API interaction: `on` → `off` → `addEventListener` → `removeListener`
+  // must cleanly remove the direct registration. Pre-fix, `removeListener`
+  // followed the stale `fn[wrappedListener]` slot from the earlier `on`
+  // cycle, missed the direct `addEventListener` registration, and left
+  // the forwarder pinning the event loop.
+  using dir = tempDir("issue-29211-cross-api-remove", {
+    "worker.mjs": String.raw`
+      import { parentPort } from 'node:worker_threads';
+      function handler() {}
+      // Go through the emitter wrapping layer first so (with the old code)
+      // handler[wrappedListener] would be set to a stale wrapper.
+      parentPort.on('message', handler);
+      parentPort.off('message', handler);
+      // Register directly via addEventListener.
+      parentPort.addEventListener('message', handler);
+      // Remove via the EventEmitter-style API — should still find and
+      // remove the direct registration.
+      parentPort.removeListener('message', handler);
+    `,
+    "main.mjs": String.raw`
+      import { Worker } from 'node:worker_threads';
+      const w = new Worker(new URL('./worker.mjs', import.meta.url));
+      const exitCode = await new Promise((resolve, reject) => {
+        w.on('error', reject);
+        w.on('exit', resolve);
+        setTimeout(() => { w.terminate(); resolve(-1); }, 3000).unref();
+      });
+      console.log(JSON.stringify({ exitCode }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), String(dir) + "/main.mjs"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Worker must exit naturally (exit code 0). Pre-fix, the forwarder
+  // pinned the event loop because removeListener followed a stale slot
+  // and never decremented the listener count for the direct registration.
+  expect(JSON.parse(stdout.trim())).toEqual({ exitCode: 0 });
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("parentPort.onmessageerror alone does not keep the event loop alive (#29211)", async () => {
   // Registering only a `messageerror` handler on parentPort must NOT install
   // the capture-phase `message` forwarder on `self`. Pre-fix, both forwarders

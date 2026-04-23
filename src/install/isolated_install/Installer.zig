@@ -586,65 +586,88 @@ pub const Installer = struct {
                                             &.{"package.json"},
                                             .auto,
                                         );
-                                        switch (manager.workspace_package_json_cache.getWithPath(
-                                            manager.allocator,
-                                            manager.log,
-                                            pkg_path,
-                                            .{},
-                                        )) {
-                                            .entry => |json_entry| blk: {
-                                                var files_iter = json_entry.root.getArray("files") orelse break :blk;
-
-                                                var whitelist: std.StringHashMapUnmanaged(void) = .{};
-                                                // Only ASCII exact-match entries plus a
-                                                // separate always-include check below.
-                                                while (files_iter.next()) |item| {
-                                                    const s = item.asString(manager.allocator) orelse continue;
-                                                    if (s.len == 0) continue;
-                                                    // Collapse "dist/bundle.js" → "dist":
-                                                    // whitelist the top-level segment so
-                                                    // we keep enough of the tree for the
-                                                    // nested entry to land.
-                                                    const slash = std.mem.indexOfAny(u8, s, "/\\") orelse s.len;
-                                                    const top = s[0..slash];
-                                                    if (top.len == 0) continue;
-                                                    whitelist.put(extra_alloc, top, {}) catch continue;
-                                                }
-
-                                                // Iterate on a *separate* fd so we don't
-                                                // consume `folder_dir`'s dir stream —
-                                                // Hardlinker's Walker will `getdents`
-                                                // that same fd and rely on it being at
-                                                // the start.
-                                                const scan_fd = switch (bun.openDirForIteration(FD.cwd(), producer_path)) {
-                                                    .result => |fd| fd,
-                                                    .err => break :blk,
-                                                };
-                                                defer scan_fd.close();
-
-                                                var root_iter = bun.DirIterator.iterate(scan_fd, if (Environment.isWindows) .u16 else .u8);
-                                                root_loop: while (root_iter.next().unwrap() catch null) |root_entry| {
-                                                    const name_slice = root_entry.name.slice();
-                                                    // Auto-included regardless of `files`:
-                                                    if (bun.strings.eqlComptime(name_slice, "package.json")) continue;
-                                                    inline for (.{ "README", "CHANGELOG", "LICENSE", "LICENCE" }) |prefix| {
-                                                        if (name_slice.len >= prefix.len and
-                                                            bun.strings.eqlCaseInsensitiveASCII(name_slice[0..prefix.len], prefix, true) and
-                                                            (name_slice.len == prefix.len or name_slice[prefix.len] == '.'))
-                                                        {
-                                                            continue :root_loop;
-                                                        }
+                                        // The cache is shared across install
+                                        // worker threads and returns a
+                                        // `*MapEntry` pointer that is
+                                        // invalidated if another thread grows
+                                        // the underlying hashmap. Hold the
+                                        // cache lock for the entry lookup and
+                                        // the whitelist build (both read the
+                                        // entry), then release before the
+                                        // scan-fd section, which only touches
+                                        // process-local data.
+                                        const cache = &manager.workspace_package_json_cache;
+                                        cache.lock.lock();
+                                        var whitelist: std.StringHashMapUnmanaged(void) = .{};
+                                        var have_whitelist = false;
+                                        switch (cache.getWithPath(manager.allocator, manager.log, pkg_path, .{})) {
+                                            .entry => |json_entry| {
+                                                if (json_entry.root.getArray("files")) |files_array_const| {
+                                                    var files_iter = files_array_const;
+                                                    while (files_iter.next()) |item| {
+                                                        const s = item.asString(manager.allocator) orelse continue;
+                                                        if (s.len == 0) continue;
+                                                        // npm `files` supports `!pattern`
+                                                        // negation to exclude from the
+                                                        // otherwise-included set. We only
+                                                        // implement positive top-segment
+                                                        // whitelisting; skip negated
+                                                        // entries so `!dist/internal`
+                                                        // doesn't get turned into a
+                                                        // whitelist key `!dist`.
+                                                        if (s[0] == '!') continue;
+                                                        // Collapse "dist/bundle.js" → "dist":
+                                                        // whitelist the top-level segment so
+                                                        // we keep enough of the tree for the
+                                                        // nested entry to land.
+                                                        const slash = std.mem.indexOfAny(u8, s, "/\\") orelse s.len;
+                                                        const top = s[0..slash];
+                                                        if (top.len == 0) continue;
+                                                        // `top` is a slice into the cached
+                                                        // parsed source, which outlives the
+                                                        // install. Safe to store as-is.
+                                                        whitelist.put(extra_alloc, top, {}) catch continue;
                                                     }
-                                                    if (whitelist.contains(name_slice)) continue;
-                                                    const stored = extra_alloc.dupe(bun.OSPathChar, name_slice) catch continue;
-                                                    const stored_slice: bun.OSPathSlice = stored;
-                                                    switch (root_entry.kind) {
-                                                        .directory => extra_skip_dirs.append(extra_alloc, stored_slice) catch {},
-                                                        else => extra_skip_files.append(extra_alloc, stored_slice) catch {},
-                                                    }
+                                                    have_whitelist = true;
                                                 }
                                             },
                                             else => {},
+                                        }
+                                        cache.lock.unlock();
+
+                                        if (have_whitelist) blk: {
+                                            // Iterate on a *separate* fd so we don't
+                                            // consume `folder_dir`'s dir stream —
+                                            // Hardlinker's Walker will `getdents`
+                                            // that same fd and rely on it being at
+                                            // the start.
+                                            const scan_fd = switch (bun.openDirForIteration(FD.cwd(), producer_path)) {
+                                                .result => |fd| fd,
+                                                .err => break :blk,
+                                            };
+                                            defer scan_fd.close();
+
+                                            var root_iter = bun.DirIterator.iterate(scan_fd, if (Environment.isWindows) .u16 else .u8);
+                                            root_loop: while (root_iter.next().unwrap() catch null) |root_entry| {
+                                                const name_slice = root_entry.name.slice();
+                                                // Auto-included regardless of `files`:
+                                                if (bun.strings.eqlComptime(name_slice, "package.json")) continue;
+                                                inline for (.{ "README", "CHANGELOG", "LICENSE", "LICENCE" }) |prefix| {
+                                                    if (name_slice.len >= prefix.len and
+                                                        bun.strings.eqlCaseInsensitiveASCII(name_slice[0..prefix.len], prefix, true) and
+                                                        (name_slice.len == prefix.len or name_slice[prefix.len] == '.'))
+                                                    {
+                                                        continue :root_loop;
+                                                    }
+                                                }
+                                                if (whitelist.contains(name_slice)) continue;
+                                                const stored = extra_alloc.dupe(bun.OSPathChar, name_slice) catch continue;
+                                                const stored_slice: bun.OSPathSlice = stored;
+                                                switch (root_entry.kind) {
+                                                    .directory => extra_skip_dirs.append(extra_alloc, stored_slice) catch {},
+                                                    else => extra_skip_files.append(extra_alloc, stored_slice) catch {},
+                                                }
+                                            }
                                         }
                                     }
 
@@ -684,6 +707,17 @@ pub const Installer = struct {
                                         var final: bun.AbsPath(.{ .sep = .auto }) = .init();
                                         defer final.deinit();
                                         installer.appendGlobalStoreEntryPath(&final, this.entry_id, .final);
+                                        FD.cwd().deleteTree(final.slice()) catch {};
+                                    } else {
+                                        // Non-global linked entries write straight to
+                                        // the project-local final path (no staging).
+                                        // Re-hardlinking would layer atop whatever
+                                        // was left from the previous install, so
+                                        // files the producer has since deleted would
+                                        // remain. Wipe the entry dir first.
+                                        var final: bun.Path(.{ .sep = .auto }) = .init();
+                                        defer final.deinit();
+                                        installer.appendRealStorePath(&final, this.entry_id, .final);
                                         FD.cwd().deleteTree(final.slice()) catch {};
                                     }
 

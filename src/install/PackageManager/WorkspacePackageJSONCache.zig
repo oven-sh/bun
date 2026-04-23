@@ -27,6 +27,15 @@ pub const GetResult = union(enum) {
 };
 
 map: Map = .{},
+/// `getWithPath` / `getWithSource` mutate `map` (which invalidates
+/// previously-returned `*MapEntry` pointers on grow) and call
+/// `initializeStore()` + the JSON parser — none of which are
+/// thread-safe. Multi-threaded callers (currently only the isolated
+/// installer's `Task.run`) must hold this mutex across both the call
+/// *and* any use of the returned entry pointer, since a concurrent
+/// call would otherwise grow the map and invalidate the pointer.
+/// Single-threaded callers can ignore it.
+lock: bun.Mutex = .{},
 
 /// Given an absolute path to a workspace package.json, return the AST
 /// and contents of the file. If the package.json is not present in the

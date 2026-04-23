@@ -529,6 +529,8 @@ pub fn Package(comptime SemverIntType: type) type {
                 add: u32 = 0,
                 remove: u32 = 0,
                 update: u32 = 0,
+                /// Workspace dependencies removed (subset of `remove`).
+                workspace_remove: u32 = 0,
                 overrides_changed: bool = false,
                 catalogs_changed: bool = false,
 
@@ -543,6 +545,7 @@ pub fn Package(comptime SemverIntType: type) type {
                     this.add += that.add;
                     this.remove += that.remove;
                     this.update += that.update;
+                    this.workspace_remove += that.workspace_remove;
                 }
 
                 pub inline fn hasDiffs(this: Summary) bool {
@@ -550,6 +553,21 @@ pub fn Package(comptime SemverIntType: type) type {
                         this.added_trusted_dependencies.count() > 0 or
                         this.removed_trusted_dependencies.count() > 0 or
                         this.patched_dependencies_changed;
+                }
+
+                /// Returns true when the only differences are removed workspace
+                /// dependencies (no additions, updates, non-workspace removals,
+                /// or other changes). This is the case when workspaces have been
+                /// pruned (e.g., by `turbo prune`) — the lockfile is a superset
+                /// of what's needed and should be accepted by --frozen-lockfile.
+                pub inline fn hasOnlyWorkspaceRemovals(this: Summary) bool {
+                    return this.workspace_remove > 0 and
+                        this.workspace_remove == this.remove and
+                        this.add == 0 and this.update == 0 and
+                        !this.overrides_changed and !this.catalogs_changed and
+                        this.added_trusted_dependencies.count() == 0 and
+                        this.removed_trusted_dependencies.count() == 0 and
+                        !this.patched_dependencies_changed;
                 }
             };
 
@@ -823,6 +841,9 @@ pub fn Package(comptime SemverIntType: type) type {
                         // We don't need to remove it
                         // It will be cleaned up later
                         summary.remove += 1;
+                        if (from_dep.behavior.isWorkspace()) {
+                            summary.workspace_remove += 1;
+                        }
                         continue;
                     }
                     defer to_i += 1;

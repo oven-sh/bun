@@ -73,10 +73,13 @@ export function resolveCommand(
 
   let resolved = command;
   if (!hasSeparator && !hasExtension) {
-    const pathVar = env.PATH ?? env.Path ?? env.path ?? "";
+    // Windows env vars are case-insensitive at the OS layer but JS exposes
+    // `process.env` with whatever casing the launching shell used. Scan the
+    // env object for any casing variant of these two.
+    const pathVar = lookupEnvCaseInsensitive(env, "PATH") ?? "";
     // PATHEXT drives extension resolution on Windows. Fall back to the
     // typical default if the environment doesn't define it.
-    const pathExt = env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD";
+    const pathExt = lookupEnvCaseInsensitive(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD";
     const extensions = pathExt.split(";").filter(Boolean);
 
     outer: for (const dir of pathVar.split(";")) {
@@ -100,6 +103,27 @@ export function resolveCommand(
 }
 
 /**
+ * Case-insensitive lookup of `name` in `env`. Windows env vars are
+ * case-insensitive at the OS layer, but JS exposes `process.env` with the
+ * casing the launching shell used — so `env.PATH` vs `env.Path` vs
+ * `env.path` all need to be considered. Returns the first match, or
+ * `undefined` if no key matches.
+ */
+function lookupEnvCaseInsensitive(
+  env: Record<string, string | undefined> | NodeJS.ProcessEnv,
+  name: string,
+): string | undefined {
+  const target = name.toUpperCase();
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === target) {
+      const value = (env as Record<string, string | undefined>)[key];
+      if (typeof value === "string") return value;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Build the argument string for `cmd.exe /d /s /c "<...>"` that invokes
  * `command` with `args`, quoting each token so that paths and arguments
  * containing spaces survive cmd.exe's tokenizer intact.
@@ -110,17 +134,32 @@ export function resolveCommand(
  *     ...,
  *   });
  *
- * Quoting rules: each token is wrapped in `"…"`. Any literal `"` inside a
- * token is doubled (`""`) — cmd.exe's `/c` processor reads `""` as a single
- * literal quote. The outermost `"…"` pair is the one `/s` strips before
- * handing the inner text back to cmd.exe for tokenization, so the
- * per-token quotes survive and cmd.exe splits on whitespace only outside
- * them. Caret-escaping of shell metacharacters (`&`, `|`, `<`, `>`, `^`)
- * is not required inside double-quoted regions — those bytes are taken
- * literally by the cmd.exe parser once it's inside a quoted token.
+ * Quoting rules:
+ *
+ * - Each token is wrapped in `"…"`. Any literal `"` inside a token is
+ *   doubled (`""`) — cmd.exe's `/c` processor reads `""` as a single
+ *   literal quote. The outermost `"…"` pair is the one `/s` strips before
+ *   handing the inner text back to cmd.exe for tokenization, so the
+ *   per-token quotes survive and cmd.exe splits on whitespace only outside
+ *   them.
+ *
+ * - Caret-escaping of cmd metacharacters like `&`, `|`, `<`, `>`, `^` is
+ *   not required inside double-quoted regions — those bytes are taken
+ *   literally by cmd.exe once it is inside a quoted token.
+ *
+ * - `%` is the exception: cmd.exe performs `%VAR%` expansion in phase 1 of
+ *   its parser, BEFORE quote recognition in phase 2. So `"--flag=%PATH%"`
+ *   is expanded to the user's PATH before our quotes ever take effect.
+ *   Caret-escaping (`^%`) defeats the expansion by breaking the var-name
+ *   match without introducing a literal character, and the caret is then
+ *   consumed by the parser. Matches the approach cross-spawn uses.
  */
 export function buildShellCommand(command: string, args: readonly string[]): string {
-  const quote = (token: string) => `"${token.replace(/"/g, '""')}"`;
+  const quote = (token: string) => {
+    // Escape `%` first so our own `"` wrapping isn't accidentally expanded
+    // if the arg happens to look like `%x"y%`. Then double embedded `"`.
+    return `"${token.replace(/%/g, "^%").replace(/"/g, '""')}"`;
+  };
   const body = [command, ...args].map(quote).join(" ");
   // Wrapping in an outer pair of quotes gives `cmd.exe /s` something to
   // strip — what remains is exactly `"token1" "token2" ...`, which cmd.exe
@@ -2184,6 +2223,12 @@ export class NodeSocketDebugAdapter extends BaseDebugAdapter<NodeSocketInspector
  */
 export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> {
   #process?: ChildProcess;
+  // True when `#process` is `cmd.exe` wrapping a `.cmd`/`.bat` via
+  // `buildShellCommand`. A plain `kill()` on Windows terminates `cmd.exe`
+  // only — the child (`bun.exe` launched by the batch file) is reparented
+  // and keeps running. We use `taskkill /T /F` to tear down the whole tree
+  // instead; see `#killProcess`.
+  #processUsesShell = false;
 
   public constructor(url?: string | URL, untitledDocPath?: string, bunEvalPath?: string) {
     super(new WebSocketInspector(url), untitledDocPath, bunEvalPath);
@@ -2198,11 +2243,41 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
   }
 
   protected exitJSProcess() {
-    if (!this.#process?.kill()) {
+    if (!this.#killProcess()) {
       this.evaluateInternal({
         expression: "process.exit(0)",
       });
     }
+  }
+
+  /**
+   * Terminate the debuggee process. Returns `true` if a termination signal
+   * was delivered, `false` if there's no process to kill — matching the
+   * return convention of `ChildProcess.kill()` so callers can fall back to
+   * an in-process `process.exit()` RPC when this returns false.
+   *
+   * On Windows, when we spawned via `cmd.exe /d /s /c <bun.cmd>`, the
+   * `#process` handle is `cmd.exe` and its child (`bun.exe`) is NOT killed
+   * by `TerminateProcess`. Use `taskkill /T /F` to walk the process tree
+   * instead. `taskkill` is in System32 which is always on the adapter
+   * process's own PATH, so a bare invocation is safe here.
+   */
+  #killProcess(): boolean {
+    const proc = this.#process;
+    if (!proc || proc.exitCode !== null) return false;
+
+    if (this.#processUsesShell && process.platform === "win32" && typeof proc.pid === "number") {
+      try {
+        // Fire-and-forget: the inherited pipe output is discarded.
+        spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
+        return true;
+      } catch {
+        // Fall through to the usual kill() if taskkill isn't reachable —
+        // at worst we revert to the pre-fix behaviour of orphaning bun.exe.
+      }
+    }
+
+    return proc.kill();
   }
 
   /**
@@ -2215,7 +2290,7 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
   }
 
   close() {
-    this.#process?.kill();
+    this.#killProcess();
     super.close();
   }
 
@@ -2374,7 +2449,12 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
     let subprocess: ChildProcess;
     try {
       if (useShell) {
-        subprocess = spawn("cmd.exe", ["/d", "/s", "/c", buildShellCommand(resolvedCommand, args)], {
+        // Resolve the shell via %ComSpec% first. libuv's search_path uses the
+        // child's env PATH, not the extension host's, so in `strictEnv: true`
+        // launch configs a bare `"cmd.exe"` could miss System32. Matches
+        // Node's own shell:true resolution (lib/child_process.js).
+        const comSpec = lookupEnvCaseInsensitive(env ?? {}, "ComSpec") ?? process.env.ComSpec ?? "cmd.exe";
+        subprocess = spawn(comSpec, ["/d", "/s", "/c", buildShellCommand(resolvedCommand, args)], {
           ...request,
           stdio: ["ignore", "pipe", "pipe"],
           windowsVerbatimArguments: true,
@@ -2395,6 +2475,9 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
 
       if (isDebugee) {
         this.#process = subprocess;
+        // Remember whether this process is the cmd.exe wrapper so
+        // `#killProcess` knows to tear down the whole tree on Windows.
+        this.#processUsesShell = useShell;
         this.emitAdapterEvent("process", {
           name: `${command} ${args.join(" ")}`,
           systemProcessId: subprocess.pid,
@@ -2409,6 +2492,7 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
 
       if (isDebugee) {
         this.#process = undefined;
+        this.#processUsesShell = false;
         this.emitAdapterEvent("exited", {
           exitCode: code ?? -1,
         });

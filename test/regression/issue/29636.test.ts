@@ -168,16 +168,27 @@ describe("issue #29636 — resolveCommand", () => {
     });
   });
 
-  test("accepts case-variant env keys (`Path`, `path`)", () => {
+  test("accepts case-variant env keys (`Path`, `path`, `Pathext`)", () => {
     // Windows env vars are case-insensitive at the OS layer but JS exposes
     // them as-is. Node's process.env preserves whatever casing the launching
-    // shell used, so we must check all three common spellings.
+    // shell used, so we must scan for any case variant.
     using dir = tempDir("issue-29636", { "bun.exe": "MZ" });
     expect(resolveCommand("bun", { Path: String(dir), PATHEXT: ".exe" }, "win32")).toEqual({
       command: join(String(dir), "bun.exe"),
       useShell: false,
     });
     expect(resolveCommand("bun", { path: String(dir), PATHEXT: ".exe" }, "win32")).toEqual({
+      command: join(String(dir), "bun.exe"),
+      useShell: false,
+    });
+    // PATHEXT needs the same treatment — a mixed-case Pathext key from a
+    // shell that folds casing should still drive extension resolution,
+    // otherwise we silently fall back to the default list.
+    expect(resolveCommand("bun", { PATH: String(dir), Pathext: ".exe" }, "win32")).toEqual({
+      command: join(String(dir), "bun.exe"),
+      useShell: false,
+    });
+    expect(resolveCommand("bun", { PATH: String(dir), pathext: ".exe" }, "win32")).toEqual({
       command: join(String(dir), "bun.exe"),
       useShell: false,
     });
@@ -239,5 +250,15 @@ describe("issue #29636 — buildShellCommand", () => {
     // `[].map(...).join(" ")` = `""`, so the `command + " " + ""` case must
     // still emit a well-formed wrapper with just the command.
     expect(buildShellCommand("bun.cmd", [])).toBe('""bun.cmd""');
+  });
+
+  test("caret-escapes `%` to defeat cmd.exe variable expansion", () => {
+    // cmd.exe expands `%VAR%` in phase 1 of parsing, BEFORE quote
+    // recognition in phase 2 — so plain `"--flag=%PATH%"` would be
+    // expanded to the user's PATH value before quotes take effect.
+    // Prefixing each `%` with `^` breaks the var-name scan; the caret is
+    // then consumed by the parser, leaving a literal `%`. Matches the
+    // approach cross-spawn uses.
+    expect(buildShellCommand("foo.cmd", ["--flag=%PATH%"])).toBe('""foo.cmd" "--flag=^%PATH^%""');
   });
 });

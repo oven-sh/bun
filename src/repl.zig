@@ -120,8 +120,16 @@ const Key = union(enum) {
     // Regular printable character
     char: u8,
 
+    // Multi-byte UTF-8 character (2-4 bytes)
+    multibyte: Multibyte,
+
     // Unknown/unhandled
     unknown,
+
+    const Multibyte = struct {
+        bytes: [4]u8,
+        len: u3,
+    };
 
     pub fn fromByte(byte: u8) Key {
         return switch (byte) {
@@ -319,7 +327,7 @@ const History = struct {
 
 const LineEditor = struct {
     buffer: ArrayList(u8),
-    cursor: usize = 0,
+    cursor: usize = 0, // byte position in buffer
     allocator: Allocator,
 
     pub fn init(allocator: Allocator) LineEditor {
@@ -362,21 +370,66 @@ const LineEditor = struct {
         self.cursor += slice.len;
     }
 
+    /// Returns the byte length of the UTF-8 character at the given byte position.
+    /// Returns 1 for invalid/truncated sequences to ensure forward progress.
+    fn charLenAt(self: *const LineEditor, pos: usize) usize {
+        if (pos >= self.buffer.items.len) return 0;
+        const seq_len = strings.codepointSize(u8, self.buffer.items[pos]);
+        if (seq_len < 2) return 1; // ASCII or invalid lead byte
+        const len: usize = @as(usize, seq_len);
+        // Validate: enough bytes remain and all continuation bytes are 10xxxxxx
+        if (pos + len > self.buffer.items.len) return 1;
+        for (1..len) |i| {
+            if (self.buffer.items[pos + i] & 0xC0 != 0x80) return 1;
+        }
+        return len;
+    }
+
+    /// Returns the byte length of the UTF-8 character ending at or before the given byte position.
+    /// Returns 1 for invalid sequences to ensure backward progress.
+    fn charLenBefore(self: *const LineEditor, pos: usize) usize {
+        if (pos == 0) return 0;
+        // Walk backward over continuation bytes (10xxxxxx), up to 3 continuation bytes
+        var i = pos;
+        const limit = pos -| 4; // don't scan more than 4 bytes back
+        while (i > limit) {
+            i -= 1;
+            if (self.buffer.items[i] & 0xC0 != 0x80) {
+                // Found a start byte; validate the sequence length matches
+                const expected_len = strings.codepointSize(u8, self.buffer.items[i]);
+                if (expected_len >= 2 and @as(usize, expected_len) == pos - i) {
+                    return pos - i;
+                }
+                // Mismatch: treat as single byte
+                return 1;
+            }
+        }
+        return 1; // fallback: step back one byte
+    }
+
     pub fn deleteChar(self: *LineEditor) void {
         if (self.cursor < self.buffer.items.len) {
-            _ = self.buffer.orderedRemove(self.cursor);
+            const char_len = self.charLenAt(self.cursor);
+            var i: usize = 0;
+            while (i < char_len and self.cursor < self.buffer.items.len) : (i += 1) {
+                _ = self.buffer.orderedRemove(self.cursor);
+            }
         }
     }
 
     pub fn backspace(self: *LineEditor) void {
         if (self.cursor > 0) {
-            self.cursor -= 1;
-            _ = self.buffer.orderedRemove(self.cursor);
+            const char_len = self.charLenBefore(self.cursor);
+            self.cursor -= char_len;
+            var i: usize = 0;
+            while (i < char_len and self.cursor < self.buffer.items.len) : (i += 1) {
+                _ = self.buffer.orderedRemove(self.cursor);
+            }
         }
     }
 
     pub fn deleteWord(self: *LineEditor) void {
-        // Delete word forward
+        // Delete word forward — skip whitespace, then non-whitespace
         while (self.cursor < self.buffer.items.len and
             std.ascii.isWhitespace(self.buffer.items[self.cursor]))
         {
@@ -385,23 +438,31 @@ const LineEditor = struct {
         while (self.cursor < self.buffer.items.len and
             !std.ascii.isWhitespace(self.buffer.items[self.cursor]))
         {
-            _ = self.buffer.orderedRemove(self.cursor);
+            const char_len = self.charLenAt(self.cursor);
+            var i: usize = 0;
+            while (i < char_len and self.cursor < self.buffer.items.len) : (i += 1) {
+                _ = self.buffer.orderedRemove(self.cursor);
+            }
         }
     }
 
     pub fn backspaceWord(self: *LineEditor) void {
-        // Delete word backward
+        // Delete word backward — skip whitespace, then non-whitespace
         while (self.cursor > 0 and
             std.ascii.isWhitespace(self.buffer.items[self.cursor - 1]))
         {
             self.cursor -= 1;
             _ = self.buffer.orderedRemove(self.cursor);
         }
-        while (self.cursor > 0 and
-            !std.ascii.isWhitespace(self.buffer.items[self.cursor - 1]))
-        {
-            self.cursor -= 1;
-            _ = self.buffer.orderedRemove(self.cursor);
+        while (self.cursor > 0) {
+            const start = self.prevCharStart();
+            if (std.ascii.isWhitespace(self.buffer.items[start])) break;
+            const char_len = self.cursor - start;
+            self.cursor = start;
+            var i: usize = 0;
+            while (i < char_len and self.cursor < self.buffer.items.len) : (i += 1) {
+                _ = self.buffer.orderedRemove(self.cursor);
+            }
         }
     }
 
@@ -419,40 +480,48 @@ const LineEditor = struct {
 
     pub fn moveLeft(self: *LineEditor) void {
         if (self.cursor > 0) {
-            self.cursor -= 1;
+            self.cursor -= self.charLenBefore(self.cursor);
         }
     }
 
     pub fn moveRight(self: *LineEditor) void {
         if (self.cursor < self.buffer.items.len) {
-            self.cursor += 1;
+            self.cursor += self.charLenAt(self.cursor);
         }
     }
 
     pub fn moveWordLeft(self: *LineEditor) void {
+        // Skip whitespace, then skip non-whitespace
         while (self.cursor > 0 and
             std.ascii.isWhitespace(self.buffer.items[self.cursor - 1]))
         {
             self.cursor -= 1;
         }
         while (self.cursor > 0 and
-            !std.ascii.isWhitespace(self.buffer.items[self.cursor - 1]))
+            !std.ascii.isWhitespace(self.buffer.items[self.prevCharStart()]))
         {
-            self.cursor -= 1;
+            self.cursor -= self.charLenBefore(self.cursor);
         }
     }
 
     pub fn moveWordRight(self: *LineEditor) void {
+        // Skip non-whitespace, then skip whitespace
         while (self.cursor < self.buffer.items.len and
             !std.ascii.isWhitespace(self.buffer.items[self.cursor]))
         {
-            self.cursor += 1;
+            self.cursor += self.charLenAt(self.cursor);
         }
         while (self.cursor < self.buffer.items.len and
             std.ascii.isWhitespace(self.buffer.items[self.cursor]))
         {
             self.cursor += 1;
         }
+    }
+
+    /// Returns the byte offset of the start of the character before cursor.
+    fn prevCharStart(self: *const LineEditor) usize {
+        if (self.cursor == 0) return 0;
+        return self.cursor - self.charLenBefore(self.cursor);
     }
 
     pub fn moveToStart(self: *LineEditor) void {
@@ -464,16 +533,64 @@ const LineEditor = struct {
     }
 
     pub fn swap(self: *LineEditor) void {
+        // Swap operates on the two UTF-8 characters around the cursor.
         if (self.cursor > 0 and self.cursor < self.buffer.items.len) {
-            const temp = self.buffer.items[self.cursor - 1];
-            self.buffer.items[self.cursor - 1] = self.buffer.items[self.cursor];
-            self.buffer.items[self.cursor] = temp;
-            self.cursor += 1;
-        } else if (self.cursor > 1 and self.cursor == self.buffer.items.len) {
-            const temp = self.buffer.items[self.cursor - 2];
-            self.buffer.items[self.cursor - 2] = self.buffer.items[self.cursor - 1];
-            self.buffer.items[self.cursor - 1] = temp;
+            const left_len = self.charLenBefore(self.cursor);
+            const right_len = self.charLenAt(self.cursor);
+            const left_start = self.cursor - left_len;
+            const right_end = self.cursor + right_len;
+            if (right_end <= self.buffer.items.len) {
+                // Copy left char to temp
+                var tmp: [4]u8 = undefined;
+                @memcpy(tmp[0..left_len], self.buffer.items[left_start..self.cursor]);
+                // Shift right char into left position
+                std.mem.copyForwards(u8, self.buffer.items[left_start..], self.buffer.items[self.cursor..right_end]);
+                // Copy temp (left char) after right char
+                @memcpy(self.buffer.items[left_start + right_len ..][0..left_len], tmp[0..left_len]);
+                self.cursor = right_end;
+            }
+        } else if (self.cursor > 0 and self.cursor == self.buffer.items.len) {
+            // At end of line: swap the two characters before cursor
+            const right_len = self.charLenBefore(self.cursor);
+            const right_start = self.cursor - right_len;
+            if (right_start > 0) {
+                const left_len = self.charLenBefore(right_start);
+                const left_start = right_start - left_len;
+                var tmp: [4]u8 = undefined;
+                @memcpy(tmp[0..left_len], self.buffer.items[left_start..right_start]);
+                std.mem.copyForwards(u8, self.buffer.items[left_start..], self.buffer.items[right_start..self.cursor]);
+                @memcpy(self.buffer.items[left_start + right_len ..][0..left_len], tmp[0..left_len]);
+            }
         }
+    }
+
+    /// Calculate display width of buffer content up to the given byte position.
+    pub fn displayWidth(self: *const LineEditor, end_pos: usize) usize {
+        var width: usize = 0;
+        var pos: usize = 0;
+        const buf = self.buffer.items;
+        const limit = @min(end_pos, buf.len);
+        while (pos < limit) {
+            const byte_len = strings.codepointSize(u8, buf[pos]);
+            if (byte_len == 0 or pos + byte_len > buf.len) {
+                // Invalid UTF-8 or truncated: treat as 1-wide
+                width += 1;
+                pos += 1;
+            } else if (byte_len == 1) {
+                width += 1;
+                pos += 1;
+            } else {
+                // Pad to 4 bytes for decodeWTF8RuneT
+                var tmp: [4]u8 = .{ 0, 0, 0, 0 };
+                for (0..@as(usize, byte_len)) |i| {
+                    tmp[i] = buf[pos + i];
+                }
+                const cp = strings.decodeWTF8RuneT(&tmp, byte_len, u32, 0xFFFD);
+                width += @as(usize, strings.visibleCodepointWidth(cp, false));
+                pos += @as(usize, byte_len);
+            }
+        }
+        return width;
     }
 
     pub fn getLine(self: *const LineEditor) []const u8 {
@@ -922,6 +1039,20 @@ fn readKey(self: *Repl) ?Key {
         return .escape;
     }
 
+    // Handle UTF-8 multi-byte sequences
+    const seq_len = strings.codepointSize(u8, byte);
+    if (seq_len >= 2 and seq_len <= 4) {
+        const len: u3 = @intCast(seq_len);
+        var mb = Key.Multibyte{ .bytes = .{ byte, 0, 0, 0 }, .len = len };
+        for (1..seq_len) |i| {
+            const cont = self.readByte() orelse return .unknown;
+            // Validate continuation byte (must be 10xxxxxx)
+            if (cont & 0xC0 != 0x80) return .unknown;
+            mb.bytes[i] = cont;
+        }
+        return .{ .multibyte = mb };
+    }
+
     return Key.fromByte(byte);
 }
 
@@ -974,8 +1105,9 @@ fn refreshLine(self: *Repl) void {
         self.write(line);
     }
 
-    // Position cursor
-    const cursor_pos = prompt_len + self.line_editor.cursor;
+    // Position cursor using display width (not byte count)
+    const cursor_display_width = self.line_editor.displayWidth(self.line_editor.cursor);
+    const cursor_pos = prompt_len + cursor_display_width;
     if (cursor_pos < self.terminal_width) {
         self.write("\r");
         if (cursor_pos > 0) {
@@ -1786,6 +1918,10 @@ pub fn runWithVM(self: *Repl, vm: ?*jsc.VirtualMachine) !void {
             },
             .char => |c| {
                 self.line_editor.insert(c) catch {};
+                self.refreshLine();
+            },
+            .multibyte => |mb| {
+                self.line_editor.insertSlice(mb.bytes[0..mb.len]) catch {};
                 self.refreshLine();
             },
             else => {},

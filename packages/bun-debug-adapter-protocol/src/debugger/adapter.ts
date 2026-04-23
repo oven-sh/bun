@@ -1,5 +1,6 @@
 import { ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
 import { AddressInfo, createServer, Socket } from "node:net";
 import * as path from "node:path";
 import { remoteObjectToString, WebSocketInspector } from "../../../bun-inspector-protocol/index.ts";
@@ -21,6 +22,52 @@ export async function getAvailablePort(): Promise<number> {
       });
     });
   });
+}
+
+/**
+ * Resolve a bare command name (e.g. `"bun"`) to an absolute executable path on
+ * Windows by walking `PATH` and trying the extensions in `PATHEXT`.
+ *
+ * Node's `child_process.spawn` does not perform `PATHEXT` resolution, and since
+ * the CVE-2024-27980 hardening it refuses to spawn `.cmd`/`.bat` files without
+ * `shell: true`. When Bun is installed via the npm wrapper on Windows it lives
+ * on `PATH` as `bun.cmd`, not `bun.exe`, so `spawn("bun", ...)` fails with
+ * `EINVAL`. Resolving to the actual file here avoids both issues and sidesteps
+ * the `shell: true` argument-escaping surface entirely.
+ *
+ * If `command` is already absolute, or already has an extension, or cannot be
+ * located, the original string is returned unchanged so `spawn` produces its
+ * usual error.
+ *
+ * `platform` defaults to `process.platform` so the helper becomes a no-op on
+ * POSIX where the native PATH lookup already handles bare names. It's an
+ * explicit parameter so tests can exercise the Windows path on any host.
+ */
+export function resolveCommand(
+  command: string,
+  env: Record<string, string | undefined> | NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== "win32") return command;
+  // Absolute or relative paths are used as-is. Only bare names need PATH lookup.
+  if (command.includes("/") || command.includes("\\")) return command;
+  if (path.extname(command) !== "") return command;
+
+  const pathVar = env.PATH ?? env.Path ?? env.path ?? "";
+  // PATHEXT drives extension resolution on Windows. Fall back to the typical
+  // default if the environment doesn't define it.
+  const pathExt = env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD";
+  const extensions = pathExt.split(";").filter(Boolean);
+
+  for (const dir of pathVar.split(";")) {
+    if (!dir) continue;
+    for (const ext of extensions) {
+      const candidate = path.join(dir, command + ext);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+
+  return command;
 }
 
 const capabilities: DAP.Capabilities = {
@@ -2260,9 +2307,13 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
     const request = { command, args, cwd, env };
     this.emit("Process.requested", request);
 
+    // On Windows, resolve a bare command name (e.g. `"bun"`) to its absolute
+    // path via `PATH`/`PATHEXT` before spawning — see `resolveCommand`.
+    const resolvedCommand = resolveCommand(command, env);
+
     let subprocess: ChildProcess;
     try {
-      subprocess = spawn(command, args, {
+      subprocess = spawn(resolvedCommand, args, {
         ...request,
         stdio: ["ignore", "pipe", "pipe"],
       });

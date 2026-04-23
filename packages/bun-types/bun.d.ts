@@ -5149,6 +5149,7 @@ declare module "bun" {
      * Larger values of this parameter result in better compression at the expense of memory usage.
      *
      * The following value ranges are supported:
+     * - `0`: (inflateSync only) read the window size from the zlib header of the compressed stream
      * - `9..15`: The output will have a zlib header and footer (Deflate)
      * - `-9..-15`: The output will **not** have a zlib header or footer (Raw Deflate)
      * - `25..31` (16+`9..15`): The output will have a gzip header and footer (gzip)
@@ -5156,6 +5157,7 @@ declare module "bun" {
      * The gzip header will have no file name, no extra data, no comment, no modification time (set to zero) and no header CRC.
      */
     windowBits?:
+      | 0
       | -9
       | -10
       | -11

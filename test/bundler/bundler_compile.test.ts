@@ -226,6 +226,56 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
+  // https://github.com/oven-sh/bun/issues/27936
+  itBundled("compile/WorkerNewURLImportMetaESM", {
+    backend: "cli",
+    compile: true,
+    format: "esm",
+    files: {
+      "/entry.ts": /* js */ `
+        import {rmSync} from 'fs';
+        // Verify we're not just importing from the filesystem
+        rmSync("./worker.ts", {force: true});
+        console.log("Hello, world!");
+        new Worker(new URL("./worker.ts", import.meta.url));
+      `,
+      "/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+    `.trim(),
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: {
+      stdout: "Hello, world!\nWorker loaded!\n",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
+  itBundled("compile/WorkerNewURLImportMetaBytecodeESM", {
+    backend: "cli",
+    compile: true,
+    bytecode: true,
+    format: "esm",
+    files: {
+      "/entry.ts": /* js */ `
+        import {rmSync} from 'fs';
+        // Verify we're not just importing from the filesystem
+        rmSync("./worker.ts", {force: true});
+        console.log("Hello, world!");
+        new Worker(new URL("./worker.ts", import.meta.url));
+      `,
+      "/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+    `.trim(),
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: {
+      stdout: "Hello, world!\nWorker loaded!\n",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
   // https://github.com/oven-sh/bun/issues/8697
   itBundled("compile/EmbeddedFileOutfile", {
     compile: true,

@@ -177,6 +177,46 @@ export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
     return true;
 }
 
+/// Try to remap file extensions to `.js` for standalone module graph lookup.
+/// `base` is the full path to look up, `pathbuf` must contain the same bytes
+/// (at least up to `base.len`). Returns the graph entry name on match.
+fn tryExtensionRemap(graph: *const bun.StandaloneModuleGraph, base: []const u8, pathbuf: *bun.PathBuffer) ?[]const u8 {
+    const extname = std.fs.path.extension(base);
+
+    // foo -> foo.js
+    if (extname.len == 0) {
+        pathbuf[base.len..][0..3].* = ".js".*;
+        if (graph.find(pathbuf[0 .. base.len + 3])) |js_file| {
+            return js_file.name;
+        }
+        return null;
+    }
+
+    // foo.ts -> foo.js
+    if (bun.strings.eqlComptime(extname, ".ts")) {
+        pathbuf[base.len - 3 .. base.len][0..3].* = ".js".*;
+        if (graph.find(pathbuf[0..base.len])) |js_file| {
+            return js_file.name;
+        }
+        return null;
+    }
+
+    if (extname.len == 4) {
+        inline for (.{ ".tsx", ".jsx", ".mjs", ".mts", ".cts", ".cjs" }) |ext| {
+            if (bun.strings.eqlComptime(extname, ext)) {
+                pathbuf[base.len - ext.len ..][0..".js".len].* = ".js".*;
+                const as_js = pathbuf[0 .. base.len - ext.len + ".js".len];
+                if (graph.find(as_js)) |js_file| {
+                    return js_file.name;
+                }
+                return null;
+            }
+        }
+    }
+
+    return null;
+}
+
 fn resolveEntryPointSpecifier(
     parent: *jsc.VirtualMachine,
     str: []const u8,
@@ -201,45 +241,33 @@ fn resolveEntryPointSpecifier(
         //   new Worker("./foo.cts") -> new Worker("./foo.js")
         //   new Worker("./foo.tsx") -> new Worker("./foo.js")
         //
+        // When --format=esm is used, import.meta.url resolves to a
+        // bunfs path (e.g. /$bunfs/root/app), so
+        //   new Worker(new URL("./worker.ts", import.meta.url))
+        // produces an absolute bunfs path like /$bunfs/root/worker.ts.
+        // We need to handle extension remapping for these paths too.
+        //
         if (bun.strings.hasPrefixComptime(str, "./") or bun.strings.hasPrefixComptime(str, "../")) try_from_extension: {
             var pathbuf: bun.PathBuffer = undefined;
             var base = str;
 
             base = bun.path.joinAbsStringBuf(bun.StandaloneModuleGraph.base_public_path_with_default_suffix, &pathbuf, &.{str}, .loose);
-            const extname = std.fs.path.extension(base);
-
-            // ./foo -> ./foo.js
-            if (extname.len == 0) {
-                pathbuf[base.len..][0..3].* = ".js".*;
-                if (graph.find(pathbuf[0 .. base.len + 3])) |js_file| {
-                    return js_file.name;
-                }
-
-                break :try_from_extension;
+            if (tryExtensionRemap(graph, base, &pathbuf)) |js_file| {
+                return js_file;
             }
 
-            // ./foo.ts -> ./foo.js
-            if (bun.strings.eqlComptime(extname, ".ts")) {
-                pathbuf[base.len - 3 .. base.len][0..3].* = ".js".*;
-                if (graph.find(pathbuf[0..base.len])) |js_file| {
-                    return js_file.name;
-                }
-
-                break :try_from_extension;
+            break :try_from_extension;
+        } else if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(str)) try_bunfs_extension: {
+            // The specifier is already an absolute bunfs path (e.g. from
+            // new URL("./worker.ts", import.meta.url) with --format=esm).
+            // Try extension remapping directly on this path.
+            var pathbuf: bun.PathBuffer = undefined;
+            @memcpy(pathbuf[0..str.len], str);
+            if (tryExtensionRemap(graph, str, &pathbuf)) |js_file| {
+                return js_file;
             }
 
-            if (extname.len == 4) {
-                inline for (.{ ".tsx", ".jsx", ".mjs", ".mts", ".cts", ".cjs" }) |ext| {
-                    if (bun.strings.eqlComptime(extname, ext)) {
-                        pathbuf[base.len - ext.len ..][0..".js".len].* = ".js".*;
-                        const as_js = pathbuf[0 .. base.len - ext.len + ".js".len];
-                        if (graph.find(as_js)) |js_file| {
-                            return js_file.name;
-                        }
-                        break :try_from_extension;
-                    }
-                }
-            }
+            break :try_bunfs_extension;
         }
     }
 

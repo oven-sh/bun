@@ -10,11 +10,14 @@ preload = "./test/preload.ts"
 
 [install]
 linker = "isolated"
-# The CI test runner points BUN_INSTALL_CACHE_DIR at a per-call tmpdir and
-# deletes it between the root and test/ installs. With the global store
-# enabled, `node_modules/.bun/<pkg>` is an absolute symlink into that
-# now-deleted cache, so `test/`'s `file:../node_modules/react` dep dangles.
-# The feature is exercised by test/cli/install/isolated-install.test.ts.
+# globalStore symlinks node_modules/.bun/<pkg> into BUN_INSTALL_CACHE_DIR.
+# The CI runner now uses a persistent shared cache for the setup install
+# (see scripts/runner.node.mjs spawnBunInstall), so the original "cache is
+# deleted between root and test/ installs" concern no longer applies — but
+# per-test spawns still get a throwaway cache, and test/bunfig.toml keeps
+# this off for verdaccio's phantom deps. Leaving it disabled here until
+# someone verifies enabling it is safe end-to-end; the feature itself is
+# exercised by test/cli/install/isolated-install.test.ts.
 globalStore = false
 minimumReleaseAge = 259200 # three days
 minimumReleaseAgeExcludes = ["typescript"]

@@ -1543,16 +1543,38 @@ function parseTestStdout(stdout, testPath) {
   };
 }
 
+// Persistent macOS test runners run several buildkite-agent workers per box
+// (spawn=N). spawnBun() points BUN_INSTALL_CACHE_DIR at a fresh mkdtemp that
+// it deletes after the call, so every worker's setup `bun install` is a cold
+// download + extract of the full test/ dependency tree. With N concurrent
+// installs each spawning ncpu extraction threads, the box spends minutes in
+// openat/mkdirat contention and the 3-minute timeout fires.
+//
+// For the setup install only, override the cache to a fixed per-box path so
+// all workers share warm tarballs/extracts. The path lives under tmpdir(),
+// which the daily com.buildkite.cleanup wipe clears, so it doesn't grow
+// unbounded. Per-test spawns still get isolated tmpdir caches via spawnBun().
+const sharedInstallCache = join(tmpdir(), "bun-ci-shared-install-cache");
+
 /**
  * @param {string} execPath
  * @param {SpawnOptions} options
  * @returns {Promise<TestResult>}
  */
 async function spawnBunInstall(execPath, options) {
+  mkdirSync(sharedInstallCache, { recursive: true });
   let { ok, error, stdout, duration, crashes } = await spawnBun(execPath, {
     args: ["install"],
     timeout: testTimeout,
     ...options,
+    env: {
+      ...options.env,
+      BUN_INSTALL_CACHE_DIR: sharedInstallCache,
+      // Bound bun's worker pool so N concurrent installs don't multiply to
+      // N*ncpu extraction threads on the first cold run after the daily wipe.
+      // bun.getThreadCount() honors GOMAXPROCS.
+      GOMAXPROCS: "8",
+    },
   });
   if (crashes) stdout += crashes;
   const relativePath = relative(cwd, options.cwd);

@@ -99,14 +99,29 @@ pub const Fs = struct {
     ) !Entry {
         var rfs = _fs.fs;
 
-        const file_handle: std.fs.File = if (cached_file_descriptor) |fd| handle: {
-            const handle = std.fs.File{ .handle = fd };
-            try handle.seekTo(0);
-            break :handle handle;
-        } else try std.fs.openFileAbsoluteZ(path, .{ .mode = .read_only });
+        var file_handle: std.fs.File = undefined;
+        var opened_file = false;
+
+        // When needToCloseFiles() is true (e.g., in HMR mode), cached FDs may be stale
+        // because they were closed after a previous bundle. Always open fresh in this case.
+        const should_use_cached_fd = !rfs.needToCloseFiles();
+
+        if (cached_file_descriptor != null and should_use_cached_fd) {
+            file_handle = std.fs.File{ .handle = cached_file_descriptor.? };
+            // The cached file descriptor may still be stale in edge cases.
+            // If seek fails, fallback to reopening the file.
+            file_handle.seekTo(0) catch {
+                // FD might be stale from previous operation
+                file_handle = try std.fs.openFileAbsoluteZ(path, .{ .mode = .read_only });
+                opened_file = true;
+            };
+        } else {
+            file_handle = try std.fs.openFileAbsoluteZ(path, .{ .mode = .read_only });
+            opened_file = true;
+        }
 
         defer {
-            if (rfs.needToCloseFiles() and cached_file_descriptor == null) {
+            if (rfs.needToCloseFiles() and opened_file) {
                 file_handle.close();
             }
         }
@@ -154,9 +169,15 @@ pub const Fs = struct {
     ) !Entry {
         var rfs = _fs.fs;
 
-        var file_handle: std.fs.File = if (_file_handle) |__file| __file.stdFile() else undefined;
+        var file_handle: std.fs.File = undefined;
+        // Track whether we opened a new file, so we know if we need to close it.
+        var opened_file = false;
 
-        if (_file_handle == null) {
+        // When needToCloseFiles() is true (e.g., in HMR mode), cached FDs may be stale
+        // because they were closed after a previous bundle. Always open fresh in this case.
+        const should_use_cached_fd = !rfs.needToCloseFiles();
+
+        if (_file_handle == null or !should_use_cached_fd) {
             if (FeatureFlags.store_file_descriptors and dirname_fd.isValid()) {
                 file_handle = (bun.sys.openatA(dirname_fd, std.fs.path.basename(path), bun.O.RDONLY, 0).unwrap() catch |err| brk: {
                     switch (err) {
@@ -174,14 +195,21 @@ pub const Fs = struct {
             } else {
                 file_handle = try bun.openFile(path, .{ .mode = .read_only });
             }
+            opened_file = true;
         } else {
-            try file_handle.seekTo(0);
+            file_handle = _file_handle.?.stdFile();
+            // The cached file descriptor may still be stale in edge cases.
+            // If seek fails, fallback to reopening the file.
+            file_handle.seekTo(0) catch {
+                file_handle = try bun.openFile(path, .{ .mode = .read_only });
+                opened_file = true;
+            };
         }
 
         if (comptime !Environment.isWindows) // skip on Windows because NTCreateFile will do it.
             debug("openat({f}, {s}) = {f}", .{ dirname_fd, path, bun.FD.fromStdFile(file_handle) });
 
-        const will_close = rfs.needToCloseFiles() and _file_handle == null;
+        const will_close = rfs.needToCloseFiles() and opened_file;
         defer {
             if (will_close) {
                 debug("readFileWithAllocator close({f})", .{bun.fs.printHandle(file_handle.handle)});

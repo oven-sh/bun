@@ -1208,6 +1208,28 @@ const Parser = struct {
     }
 };
 
+/// Parse a .env file contents string into the given map.
+/// Public wrapper around the private Parser for use by process.loadEnvFile.
+pub fn parseEnvBuf(
+    contents: []const u8,
+    file_path: []const u8,
+    allocator: std.mem.Allocator,
+    map: *Map,
+) OOM!void {
+    const source = logger.Source.initPathString(file_path, contents);
+    var value_buffer = std.array_list.Managed(u8).init(allocator);
+    defer value_buffer.deinit();
+    try Parser.parse(
+        &source,
+        allocator,
+        map,
+        &value_buffer,
+        true, // override
+        false, // is_process
+        true, // expand
+    );
+}
+
 pub const Map = struct {
     pub const HashTableValue = struct {
         value: string,

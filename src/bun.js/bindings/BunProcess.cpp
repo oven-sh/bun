@@ -158,6 +158,12 @@ extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
+BUN_DECLARE_HOST_FUNCTION(Bun__Process__loadEnvFile);
+
+extern "C" EncodedJSValue Bun__getProcessEnvObject(JSGlobalObject* globalObject)
+{
+    return JSValue::encode(defaultGlobalObject(globalObject)->processEnvObject());
+}
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
 extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value);
@@ -949,6 +955,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt, (JSC::JSGlobalObject * gl
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
     return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readOriginTimer(globalObject->bunVM()))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionLoadEnvFile, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return Bun__Process__loadEnvFile(globalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -4034,6 +4045,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2
+  loadEnvFile                      Process_functionLoadEnvFile                         Function 1
   mainModule                       constructMainModuleProperty                         PropertyCallback
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback

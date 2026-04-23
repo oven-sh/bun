@@ -3524,8 +3524,7 @@ static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)
 JSC_DEFINE_HOST_FUNCTION(jsFunctionReportUncaughtException, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSValue arg0 = callFrame->argument(0);
-    Bun__reportUnhandledError(globalObject, JSValue::encode(arg0));
-    return JSValue::encode(jsUndefined());
+    return Bun__reportUnhandledError(globalObject, JSValue::encode(arg0));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDrainMicrotaskQueue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

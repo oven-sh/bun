@@ -211,7 +211,11 @@ const OutgoingMessagePrototype = {
   _closed: false,
   _headerNames: undefined,
   appendHeader(name, value) {
-    validateString(name, "name");
+    if ((this._header !== undefined && this._header !== null) || this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
+      throw $ERR_HTTP_HEADERS_SENT("append");
+    }
+    validateHeaderName(name);
+    validateHeaderValue(name, value);
     var headers = (this[headersSymbol] ??= new Headers());
     headers.append(name, value);
     return this;

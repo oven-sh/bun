@@ -17,6 +17,8 @@ void WorkerGlobalScope::onDidChangeListenerImpl(EventTarget& self, const AtomStr
 {
     if (eventType == eventNames().messageEvent) {
         auto& global = static_cast<WorkerGlobalScope&>(self);
+        if (!global.scriptExecutionContext()->isWorker)
+            return;
         switch (kind) {
         case Add:
             if (global.m_messageEventCount == 0) {

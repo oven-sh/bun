@@ -108,4 +108,4 @@ Then, run index.ts
 bun --hot ./index.ts
 ```
 
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+For more information, read the Bun API docs at https://bun.com/docs.

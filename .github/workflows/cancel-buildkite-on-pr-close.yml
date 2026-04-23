@@ -21,7 +21,7 @@ jobs:
     steps:
       - name: Cancel running/scheduled BuildKite builds for this branch
         env:
-          BUILDKITE_API_TOKEN: ${{ secrets.BUILDKITE_API_TOKEN }}
+          BUILDKITE_BUILDS_TOKEN: ${{ secrets.BUILDKITE_BUILDS_TOKEN }}
           # Same-repo PRs build under the bare branch name; fork PRs build
           # under "owner:branch" (head.label). Pick accordingly. head.repo can
           # be null if the fork was deleted before close — fall back to label.
@@ -30,8 +30,8 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
-          if [ -z "${BUILDKITE_API_TOKEN}" ]; then
-            echo "BUILDKITE_API_TOKEN secret not set; skipping."
+          if [ -z "${BUILDKITE_BUILDS_TOKEN}" ]; then
+            echo "BUILDKITE_BUILDS_TOKEN secret not set; skipping."
             exit 0
           fi
 
@@ -53,7 +53,7 @@ jobs:
           enc=$(jq -rn --arg b "$BK_BRANCH" '$b|@uri')
           api="https://api.buildkite.com/v2/organizations/bun/pipelines/bun"
 
-          builds=$(curl -fsS -H "Authorization: Bearer ${BUILDKITE_API_TOKEN}" \
+          builds=$(curl -fsS -H "Authorization: Bearer ${BUILDKITE_BUILDS_TOKEN}" \
             "${api}/builds?branch=${enc}&state[]=running&state[]=scheduled&state[]=failing&per_page=30")
 
           count=$(jq 'length' <<<"$builds")
@@ -62,6 +62,6 @@ jobs:
 
           jq -r '.[].number' <<<"$builds" | while read -r num; do
             echo "Cancelling build #${num}"
-            curl -fsS -X PUT -H "Authorization: Bearer ${BUILDKITE_API_TOKEN}" \
+            curl -fsS -X PUT -H "Authorization: Bearer ${BUILDKITE_BUILDS_TOKEN}" \
               "${api}/builds/${num}/cancel" >/dev/null
           done

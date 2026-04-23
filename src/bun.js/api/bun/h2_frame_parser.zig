@@ -673,6 +673,10 @@ pub const H2FrameParser = struct {
     queuedDataSize: u64 = 0, // this is in bytes
     maxOutstandingPings: u64 = 10,
     outStandingPings: u64 = 0,
+    /// 8-byte opaque payloads of PING frames we sent that are still awaiting an
+    /// ACK. RFC 9113 §6.7 requires the ACK to echo the exact payload, so we
+    /// must remember what we sent in order to reject unsolicited/mismatched ACKs.
+    outstandingPingPayloads: std.ArrayListUnmanaged([8]u8) = .{},
     maxSendHeaderBlockLength: u32 = 0,
     lastStreamID: u32 = 0,
     isServer: bool = false,
@@ -1432,6 +1436,10 @@ pub const H2FrameParser = struct {
         const writer = stream.writer();
         if (!ack) {
             this.outStandingPings += 1;
+            var stored: [8]u8 = .{0} ** 8;
+            const len = @min(payload.len, 8);
+            @memcpy(stored[0..len], payload[0..len]);
+            bun.handleOom(this.outstandingPingPayloads.append(this.allocator, stored));
         }
         var frame = FrameHeader{
             .type = @intFromEnum(FrameType.HTTP_FRAME_PING),
@@ -2258,7 +2266,20 @@ pub const H2FrameParser = struct {
             if (isNotACK) {
                 this.sendPing(true, payload);
             } else {
-                this.outStandingPings -|= 1;
+                // RFC 9113 §6.7: a PING ACK MUST contain the exact opaque data
+                // of a PING we previously sent. Reject ACKs that do not match
+                // any outstanding PING payload (including the case where no
+                // PINGs are outstanding at all).
+                const matched_index: ?usize = for (this.outstandingPingPayloads.items, 0..) |stored, i| {
+                    if (strings.eql(stored[0..], payload)) break i;
+                } else null;
+                if (matched_index) |i| {
+                    _ = this.outstandingPingPayloads.orderedRemove(i);
+                    this.outStandingPings -= 1;
+                } else {
+                    this.sendGoAway(0, ErrorCode.PROTOCOL_ERROR, "Unsolicited PING ACK", this.lastStreamID, true);
+                    return data.len;
+                }
             }
             const buffer = this.handlers.binary_type.toJS(payload, this.handlers.globalObject) catch .zero; // TODO: properly propagate exception upwards
             this.dispatchWithExtra(.onPing, buffer, jsc.JSValue.jsBoolean(!isNotACK));
@@ -4781,6 +4802,7 @@ pub const H2FrameParser = struct {
         this.readBuffer.deinit();
         this.writeBuffer.clearAndFree(this.allocator);
         this.writeBufferOffset = 0;
+        this.outstandingPingPayloads.clearAndFree(this.allocator);
 
         if (this.hpack) |hpack| {
             hpack.deinit();

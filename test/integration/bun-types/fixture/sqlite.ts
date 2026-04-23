@@ -1,4 +1,4 @@
-import { type Changes, Database, constants } from "bun:sqlite";
+import { type BackupOptions, type Changes, Database, DatabaseBackup, constants } from "bun:sqlite";
 import { expectType } from "./utilities";
 
 expectType(constants.SQLITE_FCNTL_BEGIN_ATOMIC_WRITE).is<number>();
@@ -50,3 +50,50 @@ insertManyCats([
   // @ts-expect-error - Should fail
   { fail: true },
 ]);
+
+// DatabaseBackup API
+const backupToFile = db.backupTo("backup.db");
+expectType<DatabaseBackup>(backupToFile);
+
+const dest = new Database(":memory:");
+const backupToDb = db.backupTo(dest);
+expectType<DatabaseBackup>(backupToDb);
+
+// DatabaseBackup methods
+const stepResult = backupToDb.step();
+expectType<boolean>(stepResult);
+
+const stepWithPages = backupToDb.step(50);
+expectType<boolean>(stepWithPages);
+
+const finishResult = backupToDb.finish();
+expectType<boolean>(finishResult);
+
+backupToDb.abort();
+backupToDb[Symbol.dispose]();
+
+const jsonResult = backupToDb.toJSON();
+expectType<{ finished: boolean; success: boolean; pageCount: number; remaining: number }>(jsonResult);
+
+const strResult = backupToDb.toString();
+expectType<string>(strResult);
+
+// @ts-expect-error - Should fail: number is not a valid destination
+db.backupTo(123);
+
+// BackupOptions usage
+const opts: BackupOptions = { incremental: true, sourceSchema: "main", destSchema: "temp" };
+const incrementalBackup = db.backupTo("backup-incr.db", opts);
+expectType<DatabaseBackup>(incrementalBackup);
+
+const backupWithOpts = db.backupTo(dest, { sourceSchema: "main" });
+expectType<DatabaseBackup>(backupWithOpts);
+
+// pageCount and remaining getters
+expectType<number>(incrementalBackup.pageCount);
+expectType<number>(incrementalBackup.remaining);
+
+// toJSON includes progress fields
+const jsonWithProgress = incrementalBackup.toJSON();
+expectType<number>(jsonWithProgress.pageCount);
+expectType<number>(jsonWithProgress.remaining);

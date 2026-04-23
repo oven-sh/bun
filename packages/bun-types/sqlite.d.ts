@@ -563,6 +563,144 @@ declare module "bun:sqlite" {
      * @link https://www.sqlite.org/c3ref/file_control.html
      */
     fileControl(zDbName: string, op: number, arg?: ArrayBufferView | number): number;
+
+    /**
+     * Back up this database to another location.
+     *
+     * Uses the SQLite Online Backup API to safely copy this database.
+     * By default the backup completes synchronously before returning.
+     * Pass `{ incremental: true }` to drive the backup manually via `step()`/`finish()`.
+     *
+     * @param destination File path or Database instance to back up to
+     * @param options Backup options
+     * @returns A `DatabaseBackup` handle
+     * @throws {TypeError} If destination is not a string or Database instance
+     * @throws {Error} If the source or destination database is closed
+     *
+     * @example
+     * ```ts
+     * // One-shot backup (default)
+     * using backup = db.backupTo("backup.db");
+     * // backup is already complete
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Incremental backup with progress tracking
+     * const backup = db.backupTo("backup.db", { incremental: true });
+     * while (backup.step(100)) {
+     *   console.log(`${backup.remaining} pages remaining of ${backup.pageCount}`);
+     * }
+     * ```
+     *
+     * @example
+     * ```ts
+     * // Backup an attached database
+     * db.run("ATTACH 'other.db' AS aux");
+     * db.backupTo("backup.db", { sourceSchema: "aux" });
+     * ```
+     *
+     * @link https://www.sqlite.org/backup.html
+     */
+    backupTo(destination: string | Database, options?: BackupOptions): DatabaseBackup;
+  }
+
+  /**
+   * Options for {@link Database.backupTo}.
+   */
+  export interface BackupOptions {
+    /**
+     * When `true`, `backupTo()` returns without auto-finishing.
+     * The caller drives the backup via `step()` and/or `finish()`.
+     *
+     * @default false
+     */
+    incremental?: boolean;
+
+    /**
+     * Source schema name (e.g. `"main"`, `"temp"`, or an attached database name).
+     *
+     * @default "main"
+     */
+    sourceSchema?: "main" | "temp" | (string & {});
+
+    /**
+     * Destination schema name.
+     *
+     * @default "main"
+     */
+    destSchema?: "main" | "temp" | (string & {});
+  }
+
+  /**
+   * A handle to a SQLite backup operation.
+   *
+   * Created by {@link Database.backupTo}. Uses the SQLite Online Backup API
+   * to safely copy a database while it is in use.
+   *
+   * @example
+   * ```ts
+   * // One-shot backup (completes immediately)
+   * using backup = db.backupTo("backup.db");
+   * ```
+   *
+   * @link https://www.sqlite.org/backup.html
+   */
+  export class DatabaseBackup implements Disposable {
+    /**
+     * Total number of pages in the source database.
+     * Updated after each {@link step} call. `0` before the first step.
+     */
+    readonly pageCount: number;
+
+    /**
+     * Number of pages still to be copied.
+     * Updated after each {@link step} call. `0` when the backup is complete.
+     */
+    readonly remaining: number;
+
+    /**
+     * Copy pages from source to destination.
+     *
+     * Returns `true` when more pages remain, `false` when the backup is
+     * complete. Use the {@link pageCount} and {@link remaining} getters
+     * to track progress.
+     *
+     * @param pageCount Number of pages to copy per step (default 100)
+     * @returns `true` if more pages remain, `false` if complete
+     */
+    step(pageCount?: number): boolean;
+
+    /**
+     * Complete the backup. Copies all remaining pages and releases resources.
+     * Idempotent -- safe to call multiple times.
+     *
+     * @returns `true` if the backup completed successfully
+     */
+    finish(): boolean;
+
+    /**
+     * Abort the backup, discarding any partial progress.
+     * After calling abort(), finish() and step() become no-ops.
+     */
+    abort(): void;
+
+    /**
+     * Cleans up the backup with the `using` declaration. If the backup is still
+     * in progress, equivalent to calling {@link abort}. If already completed
+     * or aborted, this is a no-op.
+     */
+    [Symbol.dispose](): void;
+
+    /**
+     * Returns a JSON-friendly representation of the backup state.
+     */
+    toJSON(): { finished: boolean; success: boolean; pageCount: number; remaining: number };
+
+    /**
+     * Returns a string representation of the backup state for debugging.
+     */
+    toString(): string;
   }
 
   /**

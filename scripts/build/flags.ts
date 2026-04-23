@@ -682,7 +682,6 @@ export const linkerFlags: Flag[] = [
       "/delayload:ole32.dll",
       "/delayload:WINMM.dll",
       "/delayload:dbghelp.dll",
-      "/delayload:VCRUNTIME140_1.dll",
       "/delayload:WS2_32.dll",
       "/delayload:WSOCK32.dll",
       "/delayload:ADVAPI32.dll",

@@ -109,6 +109,7 @@ pub fn listObjects(
     callback: *const fn (S3ListObjectsResult, *anyopaque) bun.JSTerminated!void,
     callback_context: *anyopaque,
     proxy_url: ?[]const u8,
+    request_payer: bool,
 ) bun.JSTerminated!void {
     var search_params: bun.ByteList = .{};
 
@@ -177,6 +178,7 @@ pub fn listObjects(
         .path = "",
         .method = .GET,
         .search_params = search_params.slice(),
+        .request_payer = request_payer,
     }, true, null) catch |sign_err| {
         search_params.deinit(bun.default_allocator);
 

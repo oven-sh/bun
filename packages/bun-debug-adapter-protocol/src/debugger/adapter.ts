@@ -1,8 +1,7 @@
 import { ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { AddressInfo, createServer, Socket } from "node:net";
-import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { remoteObjectToString, WebSocketInspector } from "../../../bun-inspector-protocol/index.ts";
 import type { Inspector, InspectorEventMap } from "../../../bun-inspector-protocol/src/inspector/index.d.ts";
@@ -240,29 +239,40 @@ export function buildShellCommand(command: string, args: readonly string[]): str
  *
  * The only place the debug adapter generates multi-line argv content is
  * `--eval <source>` for VS Code's "Run/Debug Unsaved Code" feature. When
- * that fires, write the source to a temp file and rewrite `--eval src`
- * → the temp file path. Bun then runs the file as a program, which is
- * observationally equivalent (errors reference the temp path rather than
- * an eval context, but the code runs end-to-end).
+ * that fires, spill the source to a file and rewrite `--eval src` → the
+ * file path. Bun then runs the file as a program.
+ *
+ * The file is written at `path.join(cwd, "[eval]")` — the exact path the
+ * VS Code extension's source-mapping layer (`bun-vscode/src/features/
+ * debug.ts`) derives from `cwd` and compares against Bun's reported
+ * script URL. Bun uses `[eval]` as the synthetic name for `--eval` source,
+ * so the file on disk and the debuggee's self-reported URL match, which
+ * lets the extension round-trip breakpoints between the untitled editor
+ * and the running script. Placing the file in `cwd` also keeps relative
+ * imports (`import './lib'`) resolving the same way they would with
+ * `--eval` (relative to `cwd`). An `os.tmpdir()` location would break both.
  *
  * Returns the (possibly rewritten) argv along with a cleanup function
- * that removes any temp files once the spawned process exits. Throws if
+ * that removes the temp file once the spawned process exits. Throws if
  * a multi-line arg appears outside the `--eval <source>` pattern — we
  * have no safe transformation for that, and silent truncation is worse
  * than a clear error.
  */
-export function escapeMultilineArgsForCmd(args: readonly string[]): {
+export function escapeMultilineArgsForCmd(
+  args: readonly string[],
+  cwd?: string,
+): {
   args: string[];
   cleanup: () => void;
 } {
   const hasMultiline = (s: string) => s.includes("\n") || s.includes("\r");
   if (!args.some(hasMultiline)) return { args: [...args], cleanup: () => {} };
 
-  const tempDirs: string[] = [];
+  const tempFiles: string[] = [];
   const cleanup = () => {
-    for (const dir of tempDirs) {
+    for (const file of tempFiles) {
       try {
-        rmSync(dir, { recursive: true, force: true });
+        rmSync(file, { force: true });
       } catch {}
     }
   };
@@ -275,8 +285,8 @@ export function escapeMultilineArgsForCmd(args: readonly string[]): {
       continue;
     }
     // Only `--eval <multiline>` has a safe transformation: write the source
-    // to a temp file and run that. Any other multi-line arg we have no
-    // way to losslessly forward through cmd.exe.
+    // to a file named `[eval]` in `cwd` and run that. Any other multi-line
+    // arg we have no way to losslessly forward through cmd.exe.
     if (rewritten[rewritten.length - 1] !== "--eval" && rewritten[rewritten.length - 1] !== "-e") {
       cleanup();
       throw new Error(
@@ -287,11 +297,23 @@ export function escapeMultilineArgsForCmd(args: readonly string[]): {
           "PATH directly, or pass single-line arguments only.",
       );
     }
-    // Found --eval <multiline>: replace the pair with a temp .ts file.
-    const dir = mkdtempSync(path.join(tmpdir(), "bun-debug-eval-"));
-    tempDirs.push(dir);
-    const file = path.join(dir, "eval.ts");
-    writeFileSync(file, arg);
+    // A cwd is required so the on-disk path matches the extension's
+    // derived `bunEvalPath = join(cwd, "[eval]")`. Without one the
+    // generated file would live elsewhere and breakpoints wouldn't bind.
+    const effectiveCwd = cwd ?? process.cwd();
+    const file = path.join(effectiveCwd, "[eval]");
+    try {
+      writeFileSync(file, arg);
+    } catch (cause) {
+      cleanup();
+      throw new Error(
+        `Failed to materialise multi-line --eval source for the cmd.exe path ` +
+          `(could not write to ${file}). Install Bun via the official installer ` +
+          `so bun.exe is on PATH directly and avoid the cmd.exe routing.`,
+        { cause },
+      );
+    }
+    tempFiles.push(file);
     // Drop the preceding `--eval`/`-e` flag and push the file path.
     rewritten.pop();
     rewritten.push(file);
@@ -2583,14 +2605,16 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
 
     // When routing through cmd.exe, multi-line argv content would silently
     // truncate the script at the first newline. Spill the source to a temp
-    // file in that case and remember cleanup for process exit.
+    // file in that case and remember cleanup for process exit. Pass `cwd`
+    // so the temp file lands at `<cwd>/[eval]` — the exact path the VS Code
+    // extension's source-mapping layer expects for `--eval` scripts.
     let spawnArgs = args;
     let cleanupTempFiles = () => {};
     let subprocess: ChildProcess;
     try {
       if (useShell) {
         try {
-          const prepared = escapeMultilineArgsForCmd(args);
+          const prepared = escapeMultilineArgsForCmd(args, cwd);
           spawnArgs = prepared.args;
           cleanupTempFiles = prepared.cleanup;
         } catch (cause) {
@@ -2656,6 +2680,12 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
         this.emitAdapterEvent("terminated");
       }
     });
+
+    // Async spawn failures (ENOENT/EACCES on `cmd.exe`, etc.) surface via
+    // `error` and never emit `exit`, so the `exit` cleanup above would
+    // leak the temp file. `rmSync(..., {force: true})` inside `cleanup`
+    // is idempotent so double-firing across `error` and `exit` is safe.
+    subprocess.on("error", cleanupTempFiles);
 
     subprocess.stdout?.on("data", data => {
       this.emit("Process.stdout", data.toString());

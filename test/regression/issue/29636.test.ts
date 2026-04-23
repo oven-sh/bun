@@ -332,8 +332,12 @@ describe("issue #29636 — escapeMultilineArgsForCmd", () => {
   // multi-line content in argv would be silently truncated at the first
   // newline. This helper spots the only case the debug adapter produces
   // multi-line argv (VS Code's "Run/Debug Unsaved Code" → `--eval <src>`)
-  // and rewrites it into a temp-file program path, or rejects the spawn
-  // with a clear error when no safe transformation exists.
+  // and rewrites it into a file named `[eval]` in `cwd` — matching the
+  // exact path the VS Code extension's source-mapping layer expects, so
+  // breakpoints set in the untitled editor still bind to the running
+  // script and relative imports resolve from `cwd` like they would with
+  // `--eval` inline. Files outside the `--eval <source>` pattern have no
+  // safe transformation and throw with a clear error.
 
   test("passes single-line args through unchanged and returns a no-op cleanup", () => {
     const { args, cleanup } = escapeMultilineArgsForCmd(["--watch", "app.ts"]);
@@ -342,33 +346,34 @@ describe("issue #29636 — escapeMultilineArgsForCmd", () => {
     expect(() => cleanup()).not.toThrow();
   });
 
-  test("rewrites `--eval <multi-line-source>` to a temp file path", () => {
+  test("rewrites `--eval <multi-line-source>` to `<cwd>/[eval]`", () => {
     // The npm-wrapper Windows + Unsaved Code scenario. Before this helper
-    // the multi-line source reached cmd.exe intact and silenced truncated
-    // at the first `\n`. After: bun gets a concrete file to run.
+    // the multi-line source reached cmd.exe intact and silently truncated
+    // at the first `\n`. After: bun runs `<cwd>/[eval]` instead — exactly
+    // the path VS Code's debug-adapter source-mapping layer expects for
+    // `--eval` scripts, so breakpoints still bind.
+    using dir = tempDir("issue-29636-eval", {});
     const source = "console.log(1);\nconsole.log(2);\n";
-    const { args, cleanup } = escapeMultilineArgsForCmd(["--watch", "--eval", source]);
+    const { args, cleanup } = escapeMultilineArgsForCmd(["--watch", "--eval", source], String(dir));
     try {
-      expect(args.length).toBe(2); // --watch + <tempfile>
-      expect(args[0]).toBe("--watch");
-      expect(args[1]).not.toBe("--eval");
-      expect(args[1]).toMatch(/eval\.ts$/);
+      expect(args).toEqual(["--watch", join(String(dir), "[eval]")]);
       expect(existsSync(args[1])).toBe(true);
       expect(readFileSync(args[1], "utf8")).toBe(source);
     } finally {
       cleanup();
       // After cleanup the temp file must be gone — leaking would accumulate
-      // eval sources in the OS temp dir over repeated debug sessions.
+      // `[eval]` files in user project directories over repeated sessions.
       expect(existsSync(args[1])).toBe(false);
     }
   });
 
   test("accepts `-e` as an alias for `--eval`", () => {
     // bun's short-flag form. Handle it the same way.
+    using dir = tempDir("issue-29636-eval-e", {});
     const source = "throw new Error('oops');\nprocess.exit(1);\n";
-    const { args, cleanup } = escapeMultilineArgsForCmd(["-e", source]);
+    const { args, cleanup } = escapeMultilineArgsForCmd(["-e", source], String(dir));
     try {
-      expect(args.length).toBe(1);
+      expect(args).toEqual([join(String(dir), "[eval]")]);
       expect(readFileSync(args[0], "utf8")).toBe(source);
     } finally {
       cleanup();
@@ -379,20 +384,41 @@ describe("issue #29636 — escapeMultilineArgsForCmd", () => {
     // A multi-line arg without a preceding `--eval`/`-e` has no safe
     // transformation — we'd be guessing at bun's semantics. Refuse with a
     // message that points users toward the official installer fix.
-    expect(() => escapeMultilineArgsForCmd(["app.ts", "line1\nline2"])).toThrow(/cmd\.exe/);
-    // Should not leak any temp files when it throws. (Difficult to assert
-    // directly without listing tmpdir; the helper's implementation cleans
-    // up its own dirs on failure — see the throw path.)
+    using dir = tempDir("issue-29636-throw", {});
+    expect(() => escapeMultilineArgsForCmd(["app.ts", "line1\nline2"], String(dir))).toThrow(/cmd\.exe/);
+    // The helper cleans up any already-created files on the throw path;
+    // no `[eval]` should be left behind in the cwd.
+    expect(existsSync(join(String(dir), "[eval]"))).toBe(false);
   });
 
   test("handles `\\r\\n` line endings, not just `\\n`", () => {
     // Windows-style line endings should trigger the same rewrite —
     // phase 1.5 of cmd strips `<CR>` but the `<LF>` still ends the line.
+    using dir = tempDir("issue-29636-crlf", {});
     const source = "line1\r\nline2\r\n";
-    const { args, cleanup } = escapeMultilineArgsForCmd(["--eval", source]);
+    const { args, cleanup } = escapeMultilineArgsForCmd(["--eval", source], String(dir));
     try {
-      expect(args.length).toBe(1);
+      expect(args).toEqual([join(String(dir), "[eval]")]);
       expect(readFileSync(args[0], "utf8")).toBe(source);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("rewrite path matches the VS Code extension's `bunEvalPath` derivation", () => {
+    // This is the whole point of placing the file at `<cwd>/[eval]`.
+    // bun-vscode/src/features/debug.ts:314 derives:
+    //     bunEvalPath = join(cwd, "[eval]")
+    // and exact-string-compares against Bun's reported script URL. The
+    // file we materialise must sit at that exact path, otherwise the
+    // extension's outgoing `setBreakpoints` rewrite (untitled-doc → eval
+    // path) and incoming `scriptParsed` rewrite (eval path → untitled
+    // doc) both miss and breakpoints go unverified.
+    using dir = tempDir("issue-29636-bunevalpath", {});
+    const expectedBunEvalPath = join(String(dir), "[eval]");
+    const { args, cleanup } = escapeMultilineArgsForCmd(["--eval", "x\ny"], String(dir));
+    try {
+      expect(args[0]).toBe(expectedBunEvalPath);
     } finally {
       cleanup();
     }

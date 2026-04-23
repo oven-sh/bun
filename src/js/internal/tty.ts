@@ -31,6 +31,7 @@ const TERM_ENVS = {
   "rxvt-unicode-24bit": COLORS_16m,
   // https://gist.github.com/XVilka/8346728#gistcomment-2823421
   "terminator": COLORS_16m,
+  "xterm-ghostty": COLORS_16m,
 };
 
 const TERM_ENVS_REG_EXP = [/ansi/, /color/, /linux/, /^con[0-9]*x[0-9]/, /^rxvt/, /^screen/, /^xterm/, /^vt100/];
@@ -105,6 +106,12 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
     return COLORS_16;
   }
 
+  const COLORTERM = env.COLORTERM;
+
+  if (COLORTERM === "truecolor" || COLORTERM === "24bit") {
+    return COLORS_16m;
+  }
+
   if (env.TMUX) {
     return COLORS_256;
   }
@@ -141,16 +148,10 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
       return COLORS_256;
   }
 
-  const COLORTERM = env.COLORTERM;
-
-  if (COLORTERM === "truecolor" || COLORTERM === "24bit") {
-    return COLORS_16m;
-  }
-
   const TERM = env.TERM;
 
   if (TERM) {
-    if (TERM.startsWith("xterm-256") !== null) {
+    if (TERM.startsWith("xterm-256")) {
       return COLORS_256;
     }
 
@@ -159,13 +160,16 @@ function getColorDepth(env: NodeJS.ProcessEnv) {
     if (TERM_ENVS[termEnv]) {
       return TERM_ENVS[termEnv];
     }
+    if (termEnv.includes("-256")) {
+      return COLORS_256;
+    }
     if (TERM_ENVS_REG_EXP.some(term => term.test(termEnv))) {
       return COLORS_16;
     }
   }
 
   // Move 16 color COLORTERM below 16m and 256
-  if (env.COLORTERM) {
+  if (COLORTERM) {
     return COLORS_16;
   }
   return COLORS_2;

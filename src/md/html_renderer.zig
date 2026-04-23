@@ -31,8 +31,14 @@ pub const HtmlRenderer = struct {
     };
 
     pub fn init(allocator: Allocator, src_text: []const u8, render_opts: RenderOptions) HtmlRenderer {
+        var out: OutputBuffer = .{ .list = .{}, .allocator = allocator, .oom = false };
+        // HTML output is typically ~1.2-1.8x the source markdown; reserving up
+        // front avoids repeated reallocs of the output buffer in the hot path.
+        out.list.ensureTotalCapacityPrecise(allocator, src_text.len * 2 + 64) catch {
+            out.oom = true;
+        };
         return .{
-            .out = .{ .list = .{}, .allocator = allocator, .oom = false },
+            .out = out,
             .allocator = allocator,
             .src_text = src_text,
             .tag_filter = render_opts.tag_filter,
@@ -487,25 +493,20 @@ pub const HtmlRenderer = struct {
 
     pub fn writeHtmlEscaped(self: *HtmlRenderer, txt: []const u8) void {
         var i: usize = 0;
-        const needle = "&<>\"";
 
-        while (true) {
-            const next = bun.strings.indexOfAny(txt[i..], needle) orelse {
-                self.write(txt[i..]);
-                return;
-            };
-            const pos = i + next;
-            if (pos > i)
-                self.write(txt[i..pos]);
-            const c = txt[pos];
-            switch (c) {
+        while (i < txt.len) {
+            const next = helpers.indexOfAnyInline(txt[i..], "&<>\"");
+            if (next > 0) self.write(txt[i..][0..next]);
+            i += next;
+            if (i >= txt.len) return;
+            switch (txt[i]) {
                 '&' => self.write("&amp;"),
                 '<' => self.write("&lt;"),
                 '>' => self.write("&gt;"),
                 '"' => self.write("&quot;"),
                 else => unreachable,
             }
-            i = pos + 1;
+            i += 1;
         }
     }
 

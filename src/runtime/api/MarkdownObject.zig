@@ -89,8 +89,8 @@ pub fn renderToHTML(
         return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
     }
 
-    var arena: bun.ArenaAllocator = .init(bun.default_allocator);
-    defer arena.deinit();
+    const arena = scratchArena();
+    defer _ = arena.reset(.{ .retain_with_limit = 1 << 20 });
 
     const buffer = try jsc.Node.StringOrBuffer.fromJS(globalThis, arena.allocator(), input_value) orelse {
         return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
@@ -105,6 +105,17 @@ pub fn renderToHTML(
     };
 
     return bun.String.createUTF8ForJS(globalThis, result);
+}
+
+threadlocal var scratch_arena: ?bun.ArenaAllocator = null;
+
+/// Returns a per-thread scratch arena reused across markdown renders. The
+/// caller is responsible for resetting it (with a size limit) after use.
+fn scratchArena() *bun.ArenaAllocator {
+    if (scratch_arena == null) {
+        scratch_arena = bun.ArenaAllocator.init(bun.default_allocator);
+    }
+    return &scratch_arena.?;
 }
 
 fn parseOptions(globalThis: *jsc.JSGlobalObject, opts_value: JSValue) bun.JSError!md.Options {

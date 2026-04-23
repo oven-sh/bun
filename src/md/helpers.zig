@@ -21,6 +21,45 @@ pub inline fn isNewlineOrNul(c: u8) bool {
     return c == '\n' or c == '\r' or c == 0;
 }
 
+/// Find the index of the first byte in `slice` matching any of `needles`, or
+/// `slice.len` if none. The needle set is comptime-known so each comparison is
+/// fully inlined; this avoids the call overhead of going through highway for
+/// the very short scans the markdown parser does on every line/block.
+pub inline fn indexOfAnyInline(slice: []const u8, comptime needles: []const u8) usize {
+    var i: usize = 0;
+    if (comptime !@import("builtin").target.cpu.arch.isWasm()) {
+        const V = @Vector(16, u8);
+        while (i + 16 <= slice.len) : (i += 16) {
+            const vec: V = slice[i..][0..16].*;
+            var bits: u16 = 0;
+            inline for (needles) |n| {
+                bits |= @as(u16, @bitCast(@as(@Vector(16, u1), @bitCast(vec == @as(V, @splat(n))))));
+            }
+            if (bits != 0) return i + @ctz(bits);
+        }
+    }
+    // Scalar tail. With many needles a comptime LUT is cheaper than N
+    // comparisons per byte; with few needles direct compares win on i-cache.
+    if (comptime needles.len > 4) {
+        const lut = comptime blk: {
+            var t: [256]bool = @splat(false);
+            for (needles) |n| t[n] = true;
+            break :blk t;
+        };
+        while (i < slice.len) : (i += 1) {
+            if (lut[slice[i]]) return i;
+        }
+    } else {
+        while (i < slice.len) : (i += 1) {
+            const c = slice[i];
+            inline for (needles) |n| {
+                if (c == n) return i;
+            }
+        }
+    }
+    return slice.len;
+}
+
 /// Check if byte is ASCII alphanumeric.
 pub inline fn isAlphaNum(c: u8) bool {
     return std.ascii.isAlphanumeric(c);

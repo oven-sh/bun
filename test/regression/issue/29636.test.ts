@@ -26,9 +26,11 @@
 
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { existsSync, readFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import {
   buildShellCommand,
+  escapeMultilineArgsForCmd,
   resolveCommand,
 } from "../../../packages/bun-debug-adapter-protocol/src/debugger/adapter.ts";
 
@@ -278,5 +280,79 @@ describe("issue #29636 — buildShellCommand", () => {
     // so the debuggee receives the byte unchanged.
     expect(buildShellCommand("foo.cmd", ["file%20name"])).toBe(`"foo.cmd ^"file^%20name^""`);
     expect(buildShellCommand("foo.cmd", ["80%"])).toBe(`"foo.cmd ^"80^%^""`);
+  });
+});
+
+describe("issue #29636 — escapeMultilineArgsForCmd", () => {
+  // cmd.exe's phase-2 parser ends the command at any unescaped `\n`, and
+  // there's no caret sequence that produces a literal LF in a cmd command
+  // line (`^<LF>` is line continuation, which removes both bytes). So any
+  // multi-line content in argv would be silently truncated at the first
+  // newline. This helper spots the only case the debug adapter produces
+  // multi-line argv (VS Code's "Run/Debug Unsaved Code" → `--eval <src>`)
+  // and rewrites it into a temp-file program path, or rejects the spawn
+  // with a clear error when no safe transformation exists.
+
+  test("passes single-line args through unchanged and returns a no-op cleanup", () => {
+    const { args, cleanup } = escapeMultilineArgsForCmd(["--watch", "app.ts"]);
+    expect(args).toEqual(["--watch", "app.ts"]);
+    // cleanup is safe to call even when nothing needs cleaning up.
+    expect(() => cleanup()).not.toThrow();
+  });
+
+  test("rewrites `--eval <multi-line-source>` to a temp file path", () => {
+    // The npm-wrapper Windows + Unsaved Code scenario. Before this helper
+    // the multi-line source reached cmd.exe intact and silenced truncated
+    // at the first `\n`. After: bun gets a concrete file to run.
+    const source = "console.log(1);\nconsole.log(2);\n";
+    const { args, cleanup } = escapeMultilineArgsForCmd(["--watch", "--eval", source]);
+    try {
+      expect(args.length).toBe(2); // --watch + <tempfile>
+      expect(args[0]).toBe("--watch");
+      expect(args[1]).not.toBe("--eval");
+      expect(args[1]).toMatch(/eval\.ts$/);
+      expect(existsSync(args[1])).toBe(true);
+      expect(readFileSync(args[1], "utf8")).toBe(source);
+    } finally {
+      cleanup();
+      // After cleanup the temp file must be gone — leaking would accumulate
+      // eval sources in the OS temp dir over repeated debug sessions.
+      expect(existsSync(args[1])).toBe(false);
+    }
+  });
+
+  test("accepts `-e` as an alias for `--eval`", () => {
+    // bun's short-flag form. Handle it the same way.
+    const source = "throw new Error('oops');\nprocess.exit(1);\n";
+    const { args, cleanup } = escapeMultilineArgsForCmd(["-e", source]);
+    try {
+      expect(args.length).toBe(1);
+      expect(readFileSync(args[0], "utf8")).toBe(source);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("throws a clear error for multi-line args outside the `--eval` pattern", () => {
+    // A multi-line arg without a preceding `--eval`/`-e` has no safe
+    // transformation — we'd be guessing at bun's semantics. Refuse with a
+    // message that points users toward the official installer fix.
+    expect(() => escapeMultilineArgsForCmd(["app.ts", "line1\nline2"])).toThrow(/cmd\.exe/);
+    // Should not leak any temp files when it throws. (Difficult to assert
+    // directly without listing tmpdir; the helper's implementation cleans
+    // up its own dirs on failure — see the throw path.)
+  });
+
+  test("handles `\\r\\n` line endings, not just `\\n`", () => {
+    // Windows-style line endings should trigger the same rewrite —
+    // phase 1.5 of cmd strips `<CR>` but the `<LF>` still ends the line.
+    const source = "line1\r\nline2\r\n";
+    const { args, cleanup } = escapeMultilineArgsForCmd(["--eval", source]);
+    try {
+      expect(args.length).toBe(1);
+      expect(readFileSync(args[0], "utf8")).toBe(source);
+    } finally {
+      cleanup();
+    }
   });
 });

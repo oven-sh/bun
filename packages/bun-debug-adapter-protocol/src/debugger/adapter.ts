@@ -1,7 +1,8 @@
 import { ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { AddressInfo, createServer, Socket } from "node:net";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { remoteObjectToString, WebSocketInspector } from "../../../bun-inspector-protocol/index.ts";
 import type { Inspector, InspectorEventMap } from "../../../bun-inspector-protocol/src/inspector/index.d.ts";
@@ -192,6 +193,76 @@ export function buildShellCommand(command: string, args: readonly string[]): str
   // (because every `"` in the body is `^"`), so every caret is consumed as
   // an escape — no carets leak to the debuggee.
   return `"${body}"`;
+}
+
+/**
+ * Rewrite an argv array to avoid multi-line content when we're about to
+ * route it through `cmd.exe /d /s /c`. cmd.exe's phase 2 parser ends the
+ * command at the first unescaped `\n` — and there is no caret sequence
+ * that produces a literal LF in a cmd command line (`^<LF>` is line
+ * continuation, which *removes* both bytes). So multi-line argv entries
+ * silently truncate the script at the first newline.
+ *
+ * The only place the debug adapter generates multi-line argv content is
+ * `--eval <source>` for VS Code's "Run/Debug Unsaved Code" feature. When
+ * that fires, write the source to a temp file and rewrite `--eval src`
+ * → the temp file path. Bun then runs the file as a program, which is
+ * observationally equivalent (errors reference the temp path rather than
+ * an eval context, but the code runs end-to-end).
+ *
+ * Returns the (possibly rewritten) argv along with a cleanup function
+ * that removes any temp files once the spawned process exits. Throws if
+ * a multi-line arg appears outside the `--eval <source>` pattern — we
+ * have no safe transformation for that, and silent truncation is worse
+ * than a clear error.
+ */
+export function escapeMultilineArgsForCmd(args: readonly string[]): {
+  args: string[];
+  cleanup: () => void;
+} {
+  const hasMultiline = (s: string) => s.includes("\n") || s.includes("\r");
+  if (!args.some(hasMultiline)) return { args: [...args], cleanup: () => {} };
+
+  const tempDirs: string[] = [];
+  const cleanup = () => {
+    for (const dir of tempDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {}
+    }
+  };
+
+  const rewritten: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (!hasMultiline(arg)) {
+      rewritten.push(arg);
+      continue;
+    }
+    // Only `--eval <multiline>` has a safe transformation: write the source
+    // to a temp file and run that. Any other multi-line arg we have no
+    // way to losslessly forward through cmd.exe.
+    if (rewritten[rewritten.length - 1] !== "--eval" && rewritten[rewritten.length - 1] !== "-e") {
+      cleanup();
+      throw new Error(
+        "Cannot spawn Bun through cmd.exe with a multi-line argument. " +
+          "The VS Code debugger resolved Bun to a `.cmd` shim (usually from `npm i -g bun`) " +
+          "which routes through cmd.exe; cmd.exe's parser ends the command line at any " +
+          "unescaped newline. Install Bun via the official installer so `bun.exe` lives on " +
+          "PATH directly, or pass single-line arguments only.",
+      );
+    }
+    // Found --eval <multiline>: replace the pair with a temp .ts file.
+    const dir = mkdtempSync(path.join(tmpdir(), "bun-debug-eval-"));
+    tempDirs.push(dir);
+    const file = path.join(dir, "eval.ts");
+    writeFileSync(file, arg);
+    // Drop the preceding `--eval`/`-e` flag and push the file path.
+    rewritten.pop();
+    rewritten.push(file);
+  }
+
+  return { args: rewritten, cleanup };
 }
 
 const capabilities: DAP.Capabilities = {
@@ -2475,26 +2546,40 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
     // — see `resolveCommand` and `buildShellCommand` for the reasoning.
     const { command: resolvedCommand, useShell } = resolveCommand(command, env);
 
+    // When routing through cmd.exe, multi-line argv content would silently
+    // truncate the script at the first newline. Spill the source to a temp
+    // file in that case and remember cleanup for process exit.
+    let spawnArgs = args;
+    let cleanupTempFiles = () => {};
     let subprocess: ChildProcess;
     try {
       if (useShell) {
+        try {
+          const prepared = escapeMultilineArgsForCmd(args);
+          spawnArgs = prepared.args;
+          cleanupTempFiles = prepared.cleanup;
+        } catch (cause) {
+          this.emit("Process.exited", cause, null);
+          return false;
+        }
         // Resolve the shell via %ComSpec% first. libuv's search_path uses the
         // child's env PATH, not the extension host's, so in `strictEnv: true`
         // launch configs a bare `"cmd.exe"` could miss System32. Matches
         // Node's own shell:true resolution (lib/child_process.js).
         const comSpec = lookupEnvCaseInsensitive(env ?? {}, "ComSpec") ?? process.env.ComSpec ?? "cmd.exe";
-        subprocess = spawn(comSpec, ["/d", "/s", "/c", buildShellCommand(resolvedCommand, args)], {
+        subprocess = spawn(comSpec, ["/d", "/s", "/c", buildShellCommand(resolvedCommand, spawnArgs)], {
           ...request,
           stdio: ["ignore", "pipe", "pipe"],
           windowsVerbatimArguments: true,
         });
       } else {
-        subprocess = spawn(resolvedCommand, args, {
+        subprocess = spawn(resolvedCommand, spawnArgs, {
           ...request,
           stdio: ["ignore", "pipe", "pipe"],
         });
       }
     } catch (cause) {
+      cleanupTempFiles();
       this.emit("Process.exited", new Error("Failed to spawn process", { cause }), null);
       return false;
     }
@@ -2508,7 +2593,7 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
         // `#killProcess` knows to tear down the whole tree on Windows.
         this.#processUsesShell = useShell;
         this.emitAdapterEvent("process", {
-          name: `${command} ${args.join(" ")}`,
+          name: `${command} ${spawnArgs.join(" ")}`,
           systemProcessId: subprocess.pid,
           isLocalProcess: true,
           startMethod: "launch",
@@ -2517,6 +2602,7 @@ export class WebSocketDebugAdapter extends BaseDebugAdapter<WebSocketInspector> 
     });
 
     subprocess.on("exit", (code, signal) => {
+      cleanupTempFiles();
       this.emit("Process.exited", code, signal);
 
       if (isDebugee) {

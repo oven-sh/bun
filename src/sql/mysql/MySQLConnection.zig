@@ -355,7 +355,18 @@ pub fn processPackets(this: *MySQLConnection, comptime Context: type, reader: Ne
 
         // Process packet based on connection state
         switch (this.status) {
-            .handshaking => try this.handleHandshake(Context, reader),
+            .handshaking => {
+                try this.handleHandshake(Context, reader);
+                // After a TLS upgrade, we must stop processing packets from the
+                // current (plaintext) read buffer. The next data must come from the
+                // newly established TLS socket. This mirrors how the PostgreSQL
+                // implementation returns from its packet loop after setupTLS.
+                if (this.#tls_status == .message_sent or this.#tls_status == .ssl_ok) {
+                    this.#read_buffer.clear();
+                    this.#last_message_start = 0;
+                    return;
+                }
+            },
             .authenticating, .authentication_awaiting_pk => try this.handleAuth(Context, reader, header_length),
             .connected => try this.handleCommand(Context, reader, header_length),
             else => {

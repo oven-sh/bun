@@ -61,8 +61,8 @@ inline fn toHaveReturnedTimesFn(this: *Expect, globalThis: *JSGlobalObject, call
             return this.throw(globalThis, signature,
                 \\
                 \\
-                \\Expected number of succesful returns: {s}<green>{d}<r>
-                \\Received number of succesful returns: {s}<red>{d}<r>
+                \\Expected number of successful returns: {s}<green>{d}<r>
+                \\Received number of successful returns: {s}<red>{d}<r>
                 \\Received number of calls:             {s}<red>{d}<r>
                 \\
             , .{ str, expected_success_count, spc, actual_success_count, spc, total_call_count });

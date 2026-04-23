@@ -101,7 +101,7 @@ pub fn next(this: *If) Yield {
                         .then => {
                             return this.parent.childDone(this, this.state.exec.last_exit_code);
                         },
-                        // if succesful, execute the elif's then branch
+                        // if successful, execute the elif's then branch
                         // otherwise, move to the next elif, or to the final else if it exists
                         .elif => {
                             if (this.state.exec.last_exit_code == 0) {

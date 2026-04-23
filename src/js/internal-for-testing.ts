@@ -240,3 +240,9 @@ export const hostedGitInfo = {
   parseUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsParseUrl", 1),
   fromUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsFromUrl", 1),
 };
+
+export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $newZigFunction(
+  "sys/Error.zig",
+  "TestingAPIs.sysErrorNameFromLibuv",
+  1,
+);

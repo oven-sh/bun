@@ -62,6 +62,66 @@ fn trySlice(slice: []const u8, count: usize) []const u8 {
     if (slice.len <= count) return "";
     return slice[count..];
 }
+
+/// Binary 1-D numeric array with one or more NULL elements. Typed arrays
+/// can't represent holes, so build a regular JS array of per-element cells.
+/// Element stream layout (after the 20-byte header):
+///     { i32 length, [length]u8 data }*   // length = -1 → NULL element
+fn decodeBinaryNumericArrayWithNulls(bytes: []const u8, comptime tag: types.Tag) !SQLDataCell {
+    // Caller has already validated bytes.len >= 12 and dimensions == 1.
+    if (bytes.len < 20) return error.InvalidBinaryData;
+    const dim_size_raw: int4 = @bitCast(bytes[12..16].*);
+    const dim_size: u32 = @bitCast(@byteSwap(dim_size_raw));
+
+    // Reject impossibly-large `dim_size` up front: every element carries at
+    // least a 4-byte length prefix. Without this a malformed header could
+    // drive an allocation far larger than the payload can justify.
+    if (dim_size > (bytes.len - 20) / 4) return error.InvalidBinaryData;
+
+    const element_bytes = @sizeOf(try tag.byteArrayType());
+
+    var array: std.ArrayListUnmanaged(SQLDataCell) = .empty;
+    errdefer if (array.capacity > 0) array.deinit(bun.default_allocator);
+    try array.ensureTotalCapacityPrecise(bun.default_allocator, dim_size);
+
+    var cursor: usize = 20;
+    var i: u32 = 0;
+    while (i < dim_size) : (i += 1) {
+        if (cursor + 4 > bytes.len) return error.InvalidBinaryData;
+        const len_raw: i32 = @bitCast(bytes[cursor..][0..4].*);
+        const len: i32 = @byteSwap(len_raw);
+        cursor += 4;
+
+        if (len < 0) {
+            array.appendAssumeCapacity(SQLDataCell{ .tag = .null, .value = .{ .null = 0 } });
+            continue;
+        }
+
+        if (len != element_bytes) return error.InvalidBinaryData;
+        if (cursor + element_bytes > bytes.len) return error.InvalidBinaryData;
+        const value_bytes = bytes[cursor..][0..element_bytes];
+        cursor += element_bytes;
+
+        switch (tag) {
+            .int4_array => {
+                const raw: i32 = @bitCast(value_bytes[0..4].*);
+                array.appendAssumeCapacity(SQLDataCell{ .tag = .int4, .value = .{ .int4 = @byteSwap(raw) } });
+            },
+            .float4_array => {
+                const raw: u32 = @bitCast(value_bytes[0..4].*);
+                const f: f32 = @bitCast(@byteSwap(raw));
+                array.appendAssumeCapacity(SQLDataCell{ .tag = .float8, .value = .{ .float8 = @floatCast(f) } });
+            },
+            else => comptime unreachable,
+        }
+    }
+
+    return SQLDataCell{
+        .tag = .array,
+        .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } },
+        .free_value = 1,
+    };
+}
 fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, globalObject: *jsc.JSGlobalObject, offset: ?*usize, comptime is_json_sub_array: bool) !SQLDataCell {
     const closing_brace = if (is_json_sub_array) ']' else '}';
     const opening_brace = if (is_json_sub_array) '[' else '{';
@@ -215,6 +275,7 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                     .aclitem_array,
                     .pg_database_array,
                     .pg_database_array2,
+                    .uuid_array,
                     => {
                         // this is also a string until we reach "," or "}" but a single word string like Bun
                         var current_idx: usize = 0;
@@ -473,10 +534,6 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
                     return error.MultidimensionalArrayNotSupportedYet;
                 }
 
-                if (contains_nulls != 0) {
-                    return error.NullsInArrayNotSupportedYet;
-                }
-
                 if (dimensions == 0) {
                     return SQLDataCell{
                         .tag = .typed_array,
@@ -489,6 +546,10 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
                             },
                         },
                     };
+                }
+
+                if (contains_nulls != 0) {
+                    return try decodeBinaryNumericArrayWithNulls(bytes, tag);
                 }
 
                 const elements = (try tag.pgArrayType()).init(bytes).slice();
@@ -693,6 +754,8 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
         .timestamp_array,
         .timestamptz_array,
         .interval_array,
+
+        .uuid_array,
         => |tag| {
             return try parseArray(bytes, bigint, tag, globalObject, null, false);
         },

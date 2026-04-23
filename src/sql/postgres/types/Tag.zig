@@ -105,6 +105,7 @@ pub const Tag = enum(short) {
     varbit = 1562,
     numeric = 1700,
     uuid = 2950,
+    uuid_array = 2951,
 
     bool_array = 1000,
     bytea_array = 1001,
@@ -182,6 +183,28 @@ pub const Tag = enum(short) {
         }
 
         return 0;
+    }
+
+    /// Returns true for `*_array` type OIDs (e.g. `text_array`, `int4_array`).
+    pub fn isArray(this: Tag) bool {
+        return switch (this) {
+            .pg_database_array2 => true,
+            _ => false,
+            inline else => |t| comptime std.mem.endsWith(u8, @tagName(t), "_array"),
+        };
+    }
+
+    /// Element tag the array serializer needs to special-case; everything
+    /// else falls through to the `.text` → `String.fromJS` path.
+    pub fn arrayElementTag(this: Tag) Tag {
+        return switch (this) {
+            .bool_array => .bool,
+            .bytea_array => .bytea,
+            .json_array => .json,
+            .jsonb_array => .jsonb,
+            .box_array => .box,
+            else => .text,
+        };
     }
 
     fn PostgresBinarySingleDimensionArray(comptime T: type) type {

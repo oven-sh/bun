@@ -38,6 +38,8 @@ pub fn writeBind(
         const force_text = is_custom_type or (tag.isBinaryFormatSupported() and brk: {
             iter.to(@truncate(i));
             if (try iter.next()) |value| {
+                // JS array bound to a PG array param → text-format literal below.
+                if (value.isArray() and tag.isArray()) break :brk true;
                 break :brk value.isString();
             }
             if (iter.anyFailed()) {
@@ -93,6 +95,14 @@ pub fn writeBind(
         }
         if (comptime bun.Environment.enable_logs) {
             debug("  -> {s}", .{tag.tagName() orelse "(unknown)"});
+        }
+
+        // JS array bound to a PG array param → emit a text-format array
+        // literal. Falling through to `String.fromJS` would produce the
+        // comma-joined `Array.prototype.toString` result, which PG rejects.
+        if (value.isArray() and tag.isArray()) {
+            try types.array_serializer.writeTo(globalObject, value, tag.arrayElementTag(), Context, writer);
+            continue;
         }
 
         switch (

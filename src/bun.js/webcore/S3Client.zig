@@ -151,12 +151,39 @@ pub const S3Client = struct {
             }
             return globalThis.throwInvalidArguments("Expected a path to presign", .{});
         };
-        errdefer path.deinit();
+        defer path.deinit();
 
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class, ptr.request_payer);
-        defer blob.detach();
-        return S3File.getPresignUrlFrom(&blob, globalThis, options);
+
+        // Compute credentials and sign the request directly without
+        // constructing a temporary blob. Creating and then cleaning up
+        // a blob store while an error is being thrown from signRequest
+        // corrupts the exception scope chain and crashes during GC.
+        //
+        // Match getPresignUrlFrom behavior: acl/storage_class are only
+        // used as defaults when extra options are provided (the old code
+        // only called s3.getCredentialsWithOptions when extra_options
+        // was non-null). Without options, they default to null.
+        const has_options = options != null and options.?.isObject();
+        var aws_options = try S3Credentials.getCredentialsWithOptions(
+            ptr.credentials.*,
+            ptr.options,
+            options,
+            if (has_options) ptr.acl else null,
+            if (has_options) ptr.storage_class else null,
+            ptr.request_payer,
+            globalThis,
+        );
+        defer aws_options.deinit();
+
+        // Normalize the path the same way Store.S3.path() does:
+        // URL.parse().s3Path(), strip trailing backslash, strip leading slash.
+        var s3_path = bun.URL.parse(path.slice()).s3Path();
+        if (s3_path.len > 0 and s3_path[s3_path.len - 1] == '\\')
+            s3_path = s3_path[0 .. s3_path.len - 1];
+        if (s3_path.len > 0 and (s3_path[0] == '/' or s3_path[0] == '\\'))
+            s3_path = s3_path[1..];
+        return S3File.presignFromCredentials(globalThis, s3_path, options, &aws_options);
     }
 
     pub fn exists(ptr: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

@@ -1192,11 +1192,15 @@ pub fn Parse(
                                         isDirectivePrologue = true;
 
                                         if (str.eqlComptime("use strict")) {
-                                            skip = true;
                                             // Track "use strict" directives
                                             p.current_scope.strict_mode = .explicit_strict_mode;
                                             if (p.current_scope == p.module_scope)
                                                 p.module_scope_directive_loc = stmt.loc;
+                                            // Emit as .s_directive so fnBodyContainsUseStrict can
+                                            // find it and report errors for non-simple parameter lists
+                                            stmt = Stmt.alloc(S.Directive, S.Directive{
+                                                .value = str.slice(p.allocator),
+                                            }, stmt.loc);
                                         } else if (str.eqlComptime("use asm")) {
                                             skip = true;
                                             stmt.data = Prefill.Data.SEmpty;

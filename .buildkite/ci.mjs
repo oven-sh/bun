@@ -347,7 +347,8 @@ function getLinkBunAgent(platform, options) {
   }
 
   return getEc2Agent(platform, options, {
-    instanceType: arch === "aarch64" ? "r8g.xlarge" : "r7i.xlarge",
+    // Full LTO with bun-zig.o as bitcode peaks >31 GiB on aarch64; xlarge OOMs.
+    instanceType: arch === "aarch64" ? "r8g.2xlarge" : "r7i.2xlarge",
   });
 }
 

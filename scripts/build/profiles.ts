@@ -49,15 +49,14 @@ export const profiles = {
 
   /**
    * Android aarch64 cross-compile. Requires ANDROID_NDK_ROOT.
-   * webkit:local until -android prebuilts are published. Sanitizers are
-   * forced off in resolveConfig() regardless of profile.
+   * Sanitizers are forced off in resolveConfig() regardless of profile.
    */
   android: {
     buildType: "Debug",
     os: "linux",
     arch: "aarch64",
     abi: "android",
-    webkit: "local",
+    webkit: "prebuilt",
   },
 
   "android-release": {
@@ -65,7 +64,7 @@ export const profiles = {
     os: "linux",
     arch: "aarch64",
     abi: "android",
-    webkit: "local",
+    webkit: "prebuilt",
   },
 
   /** Release build for local testing. No LTO (that's CI-only). */

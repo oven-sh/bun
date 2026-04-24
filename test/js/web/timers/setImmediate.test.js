@@ -71,8 +71,13 @@ it("clearImmediate then GC does not crash when the queued immediate is skipped",
     stderr: "pipe",
   });
 
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrLines).toBe("");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
 });

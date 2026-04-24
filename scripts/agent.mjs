@@ -28,10 +28,21 @@ import {
   writeFile,
 } from "./utils.mjs";
 
-// The macOS major version that constitutes the `release-tier=latest` pool for
-// darwin test agents. Anything older self-tags as `release-tier=previous`.
-// Bump when a new macOS ships and the first runner on it is online.
+// macOS major-version thresholds for the `release-tier` agent tag.
+//   >= LATEST   -> "latest"   (current macOS; arm64-only in practice)
+//   >= PREVIOUS -> "previous" (recent-but-not-current; 14/15 today)
+//   else        -> "oldest"   (min-supported; 13 today)
+// Bump LATEST when a new macOS ships and the first runner on it is online.
+// Bump PREVIOUS when the floor of "recent" moves.
 const LATEST_DARWIN_RELEASE = 26;
+const PREVIOUS_DARWIN_RELEASE = 14;
+
+function darwinReleaseTier(distroVersion) {
+  const major = parseInt(distroVersion?.split(".")[0] || "0");
+  if (major >= LATEST_DARWIN_RELEASE) return "latest";
+  if (major >= PREVIOUS_DARWIN_RELEASE) return "previous";
+  return "oldest";
+}
 
 /**
  * @param {"install" | "start"} action
@@ -340,16 +351,10 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
       "distro": getDistro(),
       "distro-version": distroVersion,
       "release": isMacOS ? distroVersion?.split(".")[0] : undefined,
-      // ci.mjs targets darwin test jobs by `release-tier` so each PR runs once
-      // on the current macOS (`latest`) and once on whatever older version the
-      // remaining fleet has (`previous`). Bump LATEST_DARWIN_RELEASE here when
-      // a new macOS ships and the first runner on it is online; existing boxes
-      // automatically fall into `previous` without reconfiguration.
-      "release-tier": isMacOS
-        ? parseInt(distroVersion?.split(".")[0] || "0") >= LATEST_DARWIN_RELEASE
-          ? "latest"
-          : "previous"
-        : undefined,
+      // ci.mjs targets darwin test jobs by `release-tier` so each PR runs on
+      // distinct OS-age pools without needing per-box config. arm64 uses
+      // latest+previous; x64 uses previous+oldest (Intel can't run latest).
+      "release-tier": isMacOS ? darwinReleaseTier(distroVersion) : undefined,
       "ephemeral": ephemeral || false,
       "cloud": cloud,
     };

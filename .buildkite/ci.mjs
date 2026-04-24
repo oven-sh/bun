@@ -139,15 +139,14 @@ const buildPlatforms = [
  */
 const testPlatforms = [
   // Darwin test agents are targeted by `release-tier` (see getTestAgent), not
-  // by exact `release`. arm64 runs once on the current macOS (`latest`, the
-  // 26 pool) and once on whatever older version the rest of the static fleet
-  // happens to be on (`previous` — currently a mix of 13/14/15). x64 has no
-  // `latest` pool — Intel Macs cap at macOS 15 and MacStadium no longer
-  // stocks them — so it runs once, in the `previous` pool only. The `release`
+  // by exact `release`. arm64 runs on `latest` (current macOS, 26 today) and
+  // `previous` (14/15). x64 runs on `previous` (14/15) and `oldest` (13) —
+  // Intel can't run `latest`, and 13 is the min-supported floor. The `release`
   // field below only labels the step; routing is by `tier`.
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "previous" },
+  { os: "darwin", arch: "x64", release: "13", tier: "oldest" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "13", tier: "latest" },

@@ -172,6 +172,7 @@ test("catalog: peer dependency produces same lockfile as equivalent npm range", 
     expect(idx).toBeGreaterThan(-1);
     const section = text.slice(idx);
     const keys = [...section.matchAll(/^\s{4}"([^"]+)": \[/gm)].map(m => m[1]).sort();
+    expect(keys.length).toBeGreaterThan(0);
     return keys;
   }
 

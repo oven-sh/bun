@@ -102,13 +102,15 @@ export const globalFlags: Flag[] = [
     desc: "Android: platform define + 64-bit off_t (bionic defaults to 32-bit on LP32)",
   },
   {
-    // FreeBSD ships libc++ in base under usr/include/c++/v1. With --sysroot
-    // clang finds it automatically, but explicit -isystem keeps the search
-    // order deterministic when host clang's own libc++ headers are newer.
-    flag: c => ["-isystem", join(c.sysroot!, "usr", "include", "c++", "v1")],
+    // FreeBSD ships libc++ in base under usr/include/c++/v1. On hosts where
+    // clang detects a GCC install (amazonlinux), the driver leaks the host's
+    // /usr/include/c++/N into the search list even with --sysroot. -nostdinc++
+    // drops ALL default C++ paths (host GCC + host libc++); -isystem then adds
+    // only the sysroot's. -stdlib=libc++ stays at link only (linkFlags below).
+    flag: c => ["-nostdinc++", "-isystem", join(c.sysroot!, "usr", "include", "c++", "v1")],
     when: c => c.freebsd && c.sysroot !== undefined,
     lang: "cxx",
-    desc: "FreeBSD: sysroot libc++ headers (cross-compile)",
+    desc: "FreeBSD: sysroot libc++ headers only (suppress host GCC/libc++ paths)",
   },
 
   // ─── CPU target ───

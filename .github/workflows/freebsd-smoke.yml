@@ -14,13 +14,6 @@ on:
         description: 'URL to bun-freebsd-x64.zip (from BuildKite artifacts)'
         required: true
         type: string
-  push:
-    branches:
-      - jarred/freebsd
-      - claude/freebsd-*
-    paths:
-      - 'src/**/freebsd*'
-      - '.github/workflows/freebsd-smoke.yml'
 
 jobs:
   smoke:
@@ -29,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['14.3', '15.0']
+        version: ['14.3']
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,13 +31,19 @@ jobs:
             test/harness.ts
 
       - name: Download bun-freebsd-x64
-        if: inputs.artifact_url
+        if: inputs.artifact_url != ''
         env:
           ARTIFACT_URL: ${{ inputs.artifact_url }}
         run: |
           curl -fsSL "$ARTIFACT_URL" -o bun-freebsd.zip
+          mkdir -p ./bin
           unzip -j bun-freebsd.zip -d ./bin
-          chmod +x ./bin/bun*
+          # Normalize whatever name was in the zip to ./bin/bun.
+          for f in ./bin/bun-freebsd-* ./bin/bun-profile; do
+            [ -f "$f" ] && mv "$f" ./bin/bun && break
+          done
+          chmod +x ./bin/bun
+          file ./bin/bun
 
       - name: Run in FreeBSD VM
         uses: vmactions/freebsd-vm@v1
@@ -52,13 +51,10 @@ jobs:
           release: ${{ matrix.version }}
           usesh: true
           copyback: false
-          prepare: |
-            pkg install -y bash
           run: |
             set -e
-            if [ -x ./bin/bun-profile ]; then BUN=./bin/bun-profile;
-            elif [ -x ./bin/bun ]; then BUN=./bin/bun;
-            else echo "no bun binary found; build artifact required for smoke"; exit 0; fi
+            if [ -x ./bin/bun ]; then BUN=./bin/bun;
+            else echo "::error::no bun binary found; pass artifact_url"; exit 1; fi
             echo "=== version ==="
             $BUN --revision
             echo "=== eval ==="

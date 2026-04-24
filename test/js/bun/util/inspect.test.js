@@ -451,6 +451,31 @@ const fixture = [
         },
       },
     ),
+  () => {
+    class Foo {
+      get bar() {
+        throw new Error("getter throws");
+      }
+    }
+    const v = new Foo();
+    Object.setPrototypeOf(v, new Proxy(Object.getPrototypeOf(v), {}));
+    return v;
+  },
+  () => {
+    const v = {};
+    Object.setPrototypeOf(
+      v,
+      new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error("getPrototypeOf throws");
+          },
+        },
+      ),
+    );
+    return v;
+  },
 ];
 
 describe("crash testing", () => {
@@ -469,6 +494,46 @@ describe("crash testing", () => {
 
 it("possibly formatted emojis log", () => {
   expect(Bun.inspect("✔")).toBe('"✔"');
+});
+
+describe("object with Proxy prototype", () => {
+  it("throwing getter through Proxy prototype", () => {
+    class Foo {
+      get bar() {
+        throw new Error("getter throws");
+      }
+    }
+    const v = new Foo();
+    Object.setPrototypeOf(v, new Proxy(Object.getPrototypeOf(v), {}));
+    expect(() => Bun.inspect(v)).not.toThrow();
+  });
+
+  it("throwing getPrototypeOf trap", () => {
+    const v = {};
+    Object.setPrototypeOf(
+      v,
+      new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error("getPrototypeOf throws");
+          },
+        },
+      ),
+    );
+    expect(() => Bun.inspect(v)).not.toThrow();
+  });
+
+  it("non-throwing getter through Proxy prototype still works", () => {
+    class Foo {
+      get bar() {
+        return 42;
+      }
+    }
+    const v = new Foo();
+    Object.setPrototypeOf(v, new Proxy(Object.getPrototypeOf(v), {}));
+    expect(Bun.inspect(v)).toContain("42");
+  });
 });
 
 it("new Date(..)", () => {

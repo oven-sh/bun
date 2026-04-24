@@ -1,5 +1,8 @@
 [toolchain]
 channel = "nightly-2025-12-10"
 # rust-src is needed for -Zbuild-std (Tier 3 targets like
-# aarch64-unknown-freebsd have no prebuilt std).
+# aarch64-unknown-freebsd have no prebuilt std). targets ensures the
+# Tier 2 cross-targets' prebuilt std is installed for THIS toolchain
+# (bootstrap.sh installs for the default toolchain only).
 components = ["rust-src"]
+targets = ["x86_64-unknown-freebsd", "aarch64-linux-android", "x86_64-linux-android"]

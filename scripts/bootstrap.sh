@@ -1284,6 +1284,23 @@ install_android_ndk() {
 	execute_sudo "$unzip" -q "$ndk_zip" -d /opt
 	execute_sudo mv "/opt/android-ndk-${ndk_version}" "$ndk_home"
 	append_to_profile "export ANDROID_NDK_ROOT=$ndk_home"
+
+	# Symlink NDK compiler-rt builtins + libunwind into host clang's resource
+	# dir. clang's driver hardcodes <resource-dir>/lib/<triple>/libclang_rt.*
+	# with no -L fallback, so the file must exist there for any android link.
+	# Done here (as root) so the build user doesn't need write access to /usr.
+	clang="$(which clang-$(llvm_version) || which clang)"
+	if [ -x "$clang" ]; then
+		res_dir="$("$clang" -print-resource-dir)"
+		ndk_clang_ver="$(ls "$ndk_home/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/" | head -1)"
+		ndk_rt="$ndk_home/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/$ndk_clang_ver/lib/linux"
+		for ndk_arch in aarch64 x86_64; do
+			triple_dir="$res_dir/lib/${ndk_arch}-unknown-linux-android28"
+			execute_sudo mkdir -p "$triple_dir"
+			execute_sudo ln -sf "$ndk_rt/libclang_rt.builtins-${ndk_arch}-android.a" "$triple_dir/libclang_rt.builtins.a"
+			execute_sudo ln -sf "$ndk_rt/${ndk_arch}/libunwind.a" "$triple_dir/libunwind.a"
+		done
+	fi
 }
 
 install_docker() {

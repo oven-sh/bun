@@ -449,13 +449,16 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
       if (!existsSync(dst)) symlinkSync(src, dst);
     }
   } catch (cause) {
+    // Don't throw — zig-only mode doesn't need these, and on CI bootstrap.sh
+    // creates them as root during image build. The actual link step will fail
+    // loudly later if they're genuinely missing where needed.
     const lnCmds = Object.entries(links)
       .map(([name, src]) => `sudo ln -sf "${src}" "${join(targetDir, name)}"`)
       .join(" && ");
-    throw new BuildError(`Could not link NDK compiler-rt into ${targetDir}`, {
-      hint: `Run once with write access: sudo mkdir -p "${targetDir}" && ${lnCmds}`,
-      cause,
-    });
+    console.warn(
+      `warning: could not link NDK compiler-rt into ${targetDir} (${(cause as NodeJS.ErrnoException).code}). ` +
+        `If the final link fails on libclang_rt.builtins.a, run: sudo mkdir -p "${targetDir}" && ${lnCmds}`,
+    );
   }
 }
 

@@ -1086,4 +1086,90 @@ describe("perMessageDeflate upgrade header", () => {
       server.close();
     }
   });
+
+  // Protect the proxy plumbing: the flag has to thread through the proxied
+  // WebSocket code path too (CONNECT tunnel → upgrade). The proxy server
+  // accepts CONNECT, bridges it to the upgrade server, and the upgrade server
+  // captures the tunneled upgrade request bytes — which must match what the
+  // direct path produces.
+  it("suppresses Sec-WebSocket-Extensions through an HTTP CONNECT proxy", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let acceptedUpstream: import("net").Socket | undefined;
+    let acceptedDownstream: import("net").Socket | undefined;
+
+    // Upgrade server: same handshake logic as captureUpgradeRequest.
+    const upgrade = createNetServer(socket => {
+      acceptedUpstream = socket;
+      let buf = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        const end = buf.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        const request = buf.subarray(0, end).toString("utf8");
+        const keyLine = request.split("\r\n").find(l => l.toLowerCase().startsWith("sec-websocket-key:"))!;
+        const key = keyLine.slice(keyLine.indexOf(":") + 1).trim();
+        const accept = crypto
+          .createHash("sha1")
+          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+        );
+        resolve(request);
+      });
+      socket.on("error", reject);
+    });
+    await new Promise<void>(r => upgrade.listen(0, "127.0.0.1", r));
+    const upgradePort = (upgrade.address() as AddressInfo).port;
+
+    // CONNECT proxy: accept `CONNECT host:port HTTP/1.1`, reply 200, then pipe
+    // the client socket to a fresh TCP connection to the upgrade server. Any
+    // WebSocket upgrade bytes the client writes after the 200 response flow
+    // through the pipe and hit `upgrade`'s data handler above.
+    const proxy = createNetServer(socket => {
+      acceptedDownstream = socket;
+      let head = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        head = Buffer.concat([head, chunk]);
+        const end = head.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        const connectLine = head.subarray(0, end).toString("utf8").split("\r\n")[0];
+        if (!connectLine.startsWith("CONNECT ")) {
+          socket.destroy();
+          reject(new Error(`expected CONNECT, got ${connectLine}`));
+          return;
+        }
+        const upstream = connect(upgradePort, "127.0.0.1", () => {
+          socket.write("HTTP/1.1 200 OK\r\n\r\n");
+          const leftover = head.subarray(end + 4);
+          if (leftover.length > 0) upstream.write(leftover);
+          socket.pipe(upstream);
+          upstream.pipe(socket);
+        });
+        upstream.on("error", err => socket.destroy(err));
+        socket.on("error", err => upstream.destroy(err));
+      });
+    });
+    await new Promise<void>(r => proxy.listen(0, "127.0.0.1", r));
+    const proxyPort = (proxy.address() as AddressInfo).port;
+
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${upgradePort}/`, {
+        proxy: `http://127.0.0.1:${proxyPort}`,
+        perMessageDeflate: false,
+      });
+      ws.on("open", () => ws.close());
+      ws.on("error", () => {});
+      const request = await promise;
+      expect(request.toLowerCase()).not.toContain("sec-websocket-extensions");
+    } finally {
+      acceptedUpstream?.destroy();
+      acceptedDownstream?.destroy();
+      upgrade.close();
+      proxy.close();
+    }
+  });
 });

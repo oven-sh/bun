@@ -1328,7 +1328,7 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   const args: string[] = ["--locked", "--target-dir", targetDir];
   if (cfg.release) args.push("--release");
   if (spec.rustTarget) args.push("--target", spec.rustTarget);
-  if (spec.buildStd) args.push("-Zbuild-std=std,panic_abort", "-Zbuild-std-features=panic_immediate_abort");
+  if (spec.buildStd) args.push("-Zbuild-std=std,panic_abort");
 
   // ─── Environment ───
   // CARGO_ENCODED_RUSTFLAGS: the separator is U+001F (unit separator), not

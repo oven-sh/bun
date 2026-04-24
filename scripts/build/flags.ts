@@ -117,7 +117,16 @@ export const globalFlags: Flag[] = [
       join(c.sysroot!, "usr", "include"),
     ],
     when: c => c.freebsd && c.sysroot !== undefined,
-    desc: "FreeBSD: explicit sysroot include paths only (suppress host GCC detection)",
+    lang: "cxx",
+    desc: "FreeBSD: explicit sysroot include paths only (suppress host GCC C++ detection)",
+  },
+  {
+    // C compiles don't have the host-C++-path leak, so --sysroot's default
+    // search is fine — but it omits __BSD_VISIBLE when no feature-test macro
+    // is set on some clang configs. Match what FreeBSD's own cc does.
+    flag: "-D__BSD_VISIBLE=1",
+    when: c => c.freebsd,
+    desc: "FreeBSD: expose BSD typedefs (u_long etc.) in <sys/types.h>",
   },
 
   // ─── CPU target ───

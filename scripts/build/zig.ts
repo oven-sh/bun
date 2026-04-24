@@ -71,27 +71,24 @@ export function zigFastCompiler(opts: { ci: boolean; pr: boolean }): boolean {
  * the parallel-sema speedup) and still emit a single object. Forced to 1:
  *   - STABLE compiler: no shard support in upgrade-0.15.2.
  *   - Windows targets: COFF shard emission is unimplemented in the fork.
- *   - zigLto: zig_llvm.cpp gates SplitModule on !lto, so cg>1 would emit
- *     one .o instead of N and the no_merge_shards path would expect missing
- *     files. (Distinct from cfg.lto — FAST builds keep C++ LTO but skip
- *     zig-side LTO so this gate doesn't fire.)
+ *   - LTO: zig_llvm.cpp gates SplitModule on !lto, so cg>1 would emit one
+ *     .o instead of N and the no_merge_shards path would expect missing files.
+ *   - Non-ASAN CI: getZigAgent only provisions the wide box (r8g.2xlarge)
+ *     for ASAN; everything else gets 2 vCPU. Sharding there would thrash.
  *
- * CI shards at a FIXED count so zig-only and link-only — which run on
- * different machines — agree on artifact names. The count matches
- * getZigAgent's provisioned vCPU: 8 for ASAN (r8g.2xlarge), 2 for
- * everything else (r8g.large). Local dev shards at availableParallelism().
+ * ASAN CI shards at a FIXED count (CI_ASAN_CODEGEN_THREADS) so zig-only
+ * and link-only — which run on different machines — agree on artifact
+ * names. Local dev shards at availableParallelism().
  */
 function codegenThreads(cfg: Config): number {
   if (!cfg.zigFast) return 1;
   if (cfg.windows) return 1;
-  if (cfg.zigLto) return 1;
-  if (cfg.ci) return cfg.asan ? CI_ASAN_CODEGEN_THREADS : CI_CODEGEN_THREADS;
+  if (cfg.lto) return 1;
+  if (cfg.ci) return cfg.asan ? CI_ASAN_CODEGEN_THREADS : 1;
   return availableParallelism();
 }
 
-/** Fixed shard count for non-ASAN CI builds. Matches getZigAgent's r8g.large (2 vCPU). */
-export const CI_CODEGEN_THREADS = 2;
-/** Fixed shard count for ASAN CI builds. Matches getZigAgent's r8g.2xlarge (8 vCPU). */
+/** Fixed shard count for CI ASAN builds. Matches getZigAgent's instance size. */
 export const CI_ASAN_CODEGEN_THREADS = 8;
 
 /**
@@ -548,10 +545,7 @@ function zigBuildArgs(cfg: Config): string[] {
     `-Denable_fuzzilli=${bool(cfg.fuzzilli)}`,
     `-Denable_valgrind=${bool(cfg.valgrind)}`,
     `-Denable_tinycc=${bool(cfg.tinycc)}`,
-    // zigLto, not lto: FAST builds emit machine code (so codegenThreads()
-    // can shard) while the C++/link side keeps full LTO. lld handles the
-    // mixed bitcode + machine-code link.
-    `-Dlto=${bool(cfg.zigLto)}`,
+    `-Dlto=${bool(cfg.lto)}`,
     // Always ON — bun uses mimalloc as its default allocator. The flag
     // exists for experimentation; in practice it's never OFF.
     `-Duse_mimalloc=true`,

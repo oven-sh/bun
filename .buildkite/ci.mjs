@@ -402,10 +402,8 @@ function getZigAgent(platform, options) {
   }
 
   // Everything else cross-compiles from Linux aarch64. ASAN gets a wider
-  // box (8 vCPU) to match cg=CI_ASAN_CODEGEN_THREADS=8; non-ASAN gets
-  // 2 vCPU to match cg=CI_CODEGEN_THREADS=2 (or cg=1 under LTO/Windows).
-  // cg must equal vCPU count — the fork spawns cg OS threads + cg LLVM
-  // contexts (zig_llvm.cpp StdThreadPool), so oversubscribing OOMs.
+  // box: it builds with cg=CI_ASAN_CODEGEN_THREADS (8) so it can use the
+  // parallel backend; non-ASAN stays at cg=1 so 2 vCPU suffice.
   return getEc2Agent(getZigPlatform(), options, {
     instanceType: platform.profile === "asan" ? "r8g.2xlarge" : "r8g.large",
   });

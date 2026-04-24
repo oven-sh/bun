@@ -1411,8 +1411,8 @@ async function spawnBunTestParallelBatch(execPath, testPaths) {
       cwd,
       timeout: remaining,
       env,
-      stdout: chunk => process.stdout.write(chunk),
-      stderr: chunk => process.stderr.write(chunk),
+      stdout: chunk => pipeTestStdout(process.stdout, chunk),
+      stderr: chunk => pipeTestStdout(process.stderr, chunk),
     });
 
     if (existsSync(junitFile)) {

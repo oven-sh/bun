@@ -703,6 +703,9 @@ function getTestBunStep(platform, options, testOptions = {}) {
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }
+  if (os !== "windows") {
+    args.push("--parallel-batch");
+  }
 
   if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));

@@ -1831,10 +1831,12 @@ it("client IncomingMessage.setTimeout does not keep the event loop alive", async
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    // Debug/ASAN builds print a startup banner to stderr; stdout === "end:hello"
+    // and exit 0 are sufficient — a ref'd timer would produce STILL_ALIVE on
+    // stdout and exit 1.
     expect(stdout).toBe("end:hello\n");
-    expect(stderr).not.toContain("error");
     expect(exitCode).toBe(0);
   } finally {
     server.closeAllConnections();

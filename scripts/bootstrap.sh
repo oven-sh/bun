@@ -1298,7 +1298,12 @@ install_android_ndk() {
 		res_dir="$("$clang" -print-resource-dir)"
 		ndk_clang_ver="$(ls "$ndk_home/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/" | head -1)"
 		ndk_rt="$ndk_home/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/$ndk_clang_ver/lib/linux"
+		execute_sudo mkdir -p "$res_dir/lib/linux"
 		for ndk_arch in aarch64 x86_64; do
+			# Old-style flat layout (apt.llvm.org clang) AND new-style per-triple.
+			execute_sudo ln -sf "$ndk_rt/libclang_rt.builtins-${ndk_arch}-android.a" "$res_dir/lib/linux/"
+			execute_sudo mkdir -p "$res_dir/lib/linux/${ndk_arch}"
+			execute_sudo ln -sf "$ndk_rt/${ndk_arch}/libunwind.a" "$res_dir/lib/linux/${ndk_arch}/"
 			triple_dir="$res_dir/lib/${ndk_arch}-unknown-linux-android28"
 			execute_sudo mkdir -p "$triple_dir"
 			execute_sudo ln -sf "$ndk_rt/libclang_rt.builtins-${ndk_arch}-android.a" "$triple_dir/libclang_rt.builtins.a"

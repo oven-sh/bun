@@ -436,17 +436,25 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
   }
   const arch = triple.startsWith("x86_64") ? "x86_64" : "aarch64";
   const ndkRtLinux = join(ndkClangLib, ndkClangVer, "lib", "linux");
-  // NDK r27 keeps builtins in the old-style flat dir (arch in filename) but
-  // libunwind in the new-style per-arch subdir.
+  // Populate BOTH layouts: apt.llvm.org clang uses old-style flat
+  // (lib/linux/libclang_rt.builtins-<arch>-android.a) while tarball builds use
+  // per-triple (lib/<triple>/libclang_rt.builtins.a). NDK r27 keeps builtins in
+  // the flat dir but libunwind in the per-arch subdir.
+  const flatDir = join(resourceDir, "lib", "linux");
   const links = {
-    "libclang_rt.builtins.a": join(ndkRtLinux, `libclang_rt.builtins-${arch}-android.a`),
-    "libunwind.a": join(ndkRtLinux, arch, "libunwind.a"),
+    [join(targetDir, "libclang_rt.builtins.a")]: join(ndkRtLinux, `libclang_rt.builtins-${arch}-android.a`),
+    [join(targetDir, "libunwind.a")]: join(ndkRtLinux, arch, "libunwind.a"),
+    [join(flatDir, `libclang_rt.builtins-${arch}-android.a`)]: join(
+      ndkRtLinux,
+      `libclang_rt.builtins-${arch}-android.a`,
+    ),
+    [join(flatDir, arch, "libunwind.a")]: join(ndkRtLinux, arch, "libunwind.a"),
   };
-  if (Object.keys(links).every(n => existsSync(join(targetDir, n)))) return;
+  if (Object.keys(links).every(dst => existsSync(dst))) return;
   try {
     mkdirSync(targetDir, { recursive: true });
-    for (const [name, src] of Object.entries(links)) {
-      const dst = join(targetDir, name);
+    mkdirSync(join(flatDir, arch), { recursive: true });
+    for (const [dst, src] of Object.entries(links)) {
       if (!existsSync(dst)) symlinkSync(src, dst);
     }
   } catch (cause) {
@@ -454,11 +462,11 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
     // creates them as root during image build. The actual link step will fail
     // loudly later if they're genuinely missing where needed.
     const lnCmds = Object.entries(links)
-      .map(([name, src]) => `sudo ln -sf "${src}" "${join(targetDir, name)}"`)
+      .map(([dst, src]) => `sudo ln -sf "${src}" "${dst}"`)
       .join(" && ");
     console.warn(
-      `warning: could not link NDK compiler-rt into ${targetDir} (${(cause as NodeJS.ErrnoException).code}). ` +
-        `If the final link fails on libclang_rt.builtins.a, run: sudo mkdir -p "${targetDir}" && ${lnCmds}`,
+      `warning: could not link NDK compiler-rt into ${resourceDir} (${(cause as NodeJS.ErrnoException).code}). ` +
+        `If the final link fails on libclang_rt.builtins.a, run: sudo mkdir -p "${targetDir}" "${join(flatDir, arch)}" && ${lnCmds}`,
     );
   }
 }

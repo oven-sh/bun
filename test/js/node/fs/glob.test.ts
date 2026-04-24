@@ -3,7 +3,7 @@
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isWindows, tempDirWithFiles, tmpdirSync } from "harness";
+import { isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -236,35 +236,33 @@ describe("fs.promises.glob", () => {
 
 // https://github.com/oven-sh/bun/issues/29699
 describe.skipIf(isWindows)("does not descend into directory symlinks (matches Node)", () => {
+  let dir: ReturnType<typeof tempDir>;
   let root: string;
 
   beforeAll(() => {
     // pnpm-style symlink cycle: a/node_modules/b -> b, b/node_modules/c -> c,
     //                           c/node_modules/a -> a. If glob followed directory
     // symlinks, a `**/*.test.ts` search rooted at `a/` would loop indefinitely.
-    root = tmpdirSync();
-    for (const p of ["a/src", "b/src", "a/node_modules", "b/node_modules", "c/node_modules"]) {
-      fs.mkdirSync(path.join(root, p), { recursive: true });
-    }
-    fs.writeFileSync(path.join(root, "a/src/foo.test.ts"), "export {}");
-    fs.writeFileSync(path.join(root, "b/src/bar.test.ts"), "export {}");
+    dir = tempDir("fs-glob-symlink", {
+      a: { src: { "foo.test.ts": "export {}" }, node_modules: {} },
+      b: { src: { "bar.test.ts": "export {}" }, node_modules: {} },
+      c: { node_modules: {} },
+      // Plus a flat symlink pointing at a sibling directory (exercises the
+      // non-cycle case where Node still does not descend).
+      flat: { dir: { "inside.txt": "x" } },
+      // A symlink pointing directly at a file (Node does match these).
+      "target.txt": "t",
+    });
+    root = String(dir);
     fs.symlinkSync("../../b", path.join(root, "a/node_modules/b"), "dir");
     fs.symlinkSync("../../c", path.join(root, "b/node_modules/c"), "dir");
     fs.symlinkSync("../../a", path.join(root, "c/node_modules/a"), "dir");
-
-    // Plus a flat symlink pointing at a sibling directory (exercises the
-    // non-cycle case where Node still does not descend).
-    fs.mkdirSync(path.join(root, "flat/dir"), { recursive: true });
-    fs.writeFileSync(path.join(root, "flat/dir/inside.txt"), "x");
     fs.symlinkSync("dir", path.join(root, "flat/link"), "dir");
-
-    // A symlink pointing directly at a file (Node does match these).
-    fs.writeFileSync(path.join(root, "target.txt"), "t");
     fs.symlinkSync("target.txt", path.join(root, "alias.txt"), "file");
   });
 
   afterAll(() => {
-    fs.rmSync(root, { recursive: true, force: true });
+    dir[Symbol.dispose]();
   });
 
   it("fs.promises.glob does not loop on a pnpm-style symlink cycle", async () => {

@@ -516,6 +516,9 @@ function getBuildArgs(target, options, mode) {
   }
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
+  // PR builds use the FAST zig compiler (sharded codegen, no zig-side LTO);
+  // main-branch builds (canary + production) use STABLE with full LTO.
+  if (!isMainBranch()) args.push("--pr=on");
 
   // canary: options.canary can be number (revision count) or undefined
   // (default on). Old system used CANARY_REVISION as a counter; build.ts

@@ -18,7 +18,7 @@
  *   bun scripts/prefetch-deps.ts <prefetchDir>
  *
  * Enumerates variants on the dimensions that affect download URLs (asan, lto,
- * baseline, musl, canary) for the current host os/arch. Variants without a
+ * baseline, musl, pr) for the current host os/arch. Variants without a
  * published artifact are skipped — better to over-enumerate and 404 than to
  * miss one.
  */
@@ -45,7 +45,7 @@ const extractedDir = resolve(dest, "extracted");
 //
 // github-archive sources are config-independent, so one base config covers
 // them. WebKit prebuilt URL varies by (musl, baseline, debug|lto, asan); zig
-// by host + safe + canary (canary picks STABLE vs FAST commit). Iterate the
+// by host + safe + pr (pr picks STABLE vs FAST commit). Iterate the
 // cross-product, dedupe URLs.
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -58,8 +58,8 @@ for (const asan of [false, true]) {
   for (const lto of [false, true]) {
     for (const baseline of baseCfg.x64 ? [false, true] : [false]) {
       for (const abi of baseCfg.linux ? (["gnu", "musl"] as const) : [undefined]) {
-        for (const canary of [false, true]) {
-          variants.push({ ...base, asan, lto, baseline, canary, ...(abi !== undefined && { abi }) });
+        for (const pr of [false, true]) {
+          variants.push({ ...base, asan, lto, baseline, pr, ...(abi !== undefined && { abi }) });
         }
       }
     }
@@ -128,7 +128,7 @@ for (const partial of variants) {
   // so only one safe-variant can match an extracted tree); both safe URLs go
   // into by-url/ so a safe-flag flip still avoids the network. The extract
   // name follows zigVendorBasename so extracted/zig/ and extracted/zig-stable/
-  // both populate (canary loop covers both commits).
+  // both populate (pr loop covers both commits).
   const ciSafe = zigCompilerSafe(cfg);
   const zigName = zigVendorBasename(cfg);
   for (const safe of [false, true]) {

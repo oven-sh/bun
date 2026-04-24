@@ -39,8 +39,8 @@ import { streamPath } from "./stream.ts";
  *   FAST    oven-sh/zig branch `upgrade-0.15.2-fast`. STABLE + the
  *           parallel-sema/shard-codegen patchset. ~8× faster on a
  *           16-core box but the parallelisation is not yet proven
- *           bit-identical across runs, so tagged production releases
- *           stay on STABLE; everything else uses this.
+ *           bit-identical across runs, so main-branch CI (canary +
+ *           production) stays on STABLE; local dev and PR CI use this.
  *
  * `cfg.zigFast` (resolved in config.ts via zigFastCompiler) picks which.
  * Override via `--zig-commit=<hash>` to test something else.
@@ -53,14 +53,13 @@ export const ZIG_COMMIT_FAST = "af6e006bec4494b5f716b1508e7113fc2210ed67";
  * true → FAST, false → STABLE. Called from config.ts during resolution
  * (before the full Config exists, hence the narrow input shape).
  *
- * STABLE is reserved for tagged production releases: CI with `--canary=off`
- * (buildkite only passes that for the publish pipeline). Local dev, PR CI,
- * and canary CI all use FAST. Windows/LTO are NOT gated here — they use
- * the FAST binary too (for the parallel-sema speedup); only the shard
- * count is forced to 1 there, see codegenThreads().
+ * FAST for local dev (`!ci`) and PR CI (`pr`, set by ci.mjs when
+ * `!isMainBranch()`). STABLE for main-branch CI — both canary nightly and
+ * tagged production — so anything that ships to users gets the proven
+ * compiler with full cross-language LTO.
  */
-export function zigFastCompiler(opts: { ci: boolean; canary: boolean }): boolean {
-  return !(opts.ci && !opts.canary);
+export function zigFastCompiler(opts: { ci: boolean; pr: boolean }): boolean {
+  return !opts.ci || opts.pr;
 }
 
 /**

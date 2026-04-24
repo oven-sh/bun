@@ -50,8 +50,8 @@ export interface Host {
  * Overridable via PartialConfig for testing (e.g. trying a WebKit branch).
  *
  * Zig is NOT here: there are two pins (STABLE/FAST) and which one applies
- * depends on resolved build options (ci/canary), so the default is
- * computed inside resolveConfig via zigFastCompiler().
+ * depends on resolved build options (ci/pr), so the default is computed
+ * inside resolveConfig via zigFastCompiler().
  */
 const versionDefaults = {
   nodejsVersion: NODEJS_VERSION,
@@ -142,6 +142,13 @@ export interface Config {
   // ─── Environment ───
   ci: boolean;
   buildkite: boolean;
+  /**
+   * True for pull-request CI builds (`!isMainBranch()` in ci.mjs). Distinct
+   * from `canary`: canary nightly builds run on main with `pr=false`. Gates
+   * the FAST zig compiler — only PR CI uses it; canary/production stay on
+   * STABLE with full cross-language LTO.
+   */
+  pr: boolean;
 
   // ─── Dependency modes ───
   webkit: WebKitMode;
@@ -237,7 +244,7 @@ export interface Config {
   /**
    * Which zig compiler line this build uses — true = `upgrade-0.15.2-fast`
    * (parallel sema + sharded codegen), false = `upgrade-0.15.2` (stable).
-   * Derived from {ci, canary} via zigFastCompiler(), or from an explicit
+   * Derived from {ci, pr} via zigFastCompiler(), or from an explicit
    * `--zig-commit` matching a known pin. Gates ZIG_PARALLEL_SEMA and
    * codegenThreads() in zig.ts.
    */
@@ -283,6 +290,7 @@ export interface PartialConfig {
   timeTrace?: boolean;
   ci?: boolean;
   buildkite?: boolean;
+  pr?: boolean;
   webkit?: WebKitMode;
   buildDir?: string;
   cacheDir?: string;
@@ -581,6 +589,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // detection in ci.ts instead, so running a non-CI profile on a CI machine
   // still gets collapsible logs but not CI build flags.
   const ci = partial.ci ?? false;
+  const pr = partial.pr ?? false;
   const buildkite = partial.buildkite ?? false;
 
   // ─── Features ───
@@ -756,19 +765,19 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
-  // Zig: STABLE only for tagged production releases (ci + --canary=off);
-  // local dev, PR CI, and canary CI all use FAST (parallel sema + sharded
-  // codegen on the upgrade-0.15.2-fast fork). An explicit --zig-commit
-  // matching a known pin overrides the {ci,canary} default so e.g.
-  // `--zig-commit=$STABLE` doesn't leave zigFast=true (which would make
-  // ninja declare bun-zig.{0..N-1}.o that the stable compiler can't emit).
-  const zigFastDefault = zigFastCompiler({ ci, canary });
+  // Zig: FAST (parallel sema + sharded codegen) for local dev and PR CI;
+  // STABLE for main-branch CI (canary nightly + tagged production). An
+  // explicit --zig-commit matching a known pin overrides the {ci,pr}
+  // default so e.g. `--zig-commit=$STABLE` doesn't leave zigFast=true
+  // (which would make ninja declare bun-zig.{0..N-1}.o that the stable
+  // compiler can't emit).
+  const zigFastDefault = zigFastCompiler({ ci, pr });
   const zigCommit = partial.zigCommit ?? (zigFastDefault ? ZIG_COMMIT_FAST : ZIG_COMMIT_STABLE);
   const zigFast = zigCommit === ZIG_COMMIT_STABLE ? false : zigCommit === ZIG_COMMIT_FAST ? true : zigFastDefault;
-  // FAST builds (PR/canary CI, local) skip LTO on the zig side so
-  // codegenThreads()>1 can shard the LLVM emit; the C++/link side keeps
-  // `lto` and lld handles the mixed bitcode + machine-code link. STABLE
-  // (production) keeps full cross-language LTO.
+  // FAST builds skip LTO on the zig side so codegenThreads()>1 can shard
+  // the LLVM emit; the C++/link side keeps `lto` and lld handles the mixed
+  // bitcode + machine-code link. STABLE (canary + production) keeps full
+  // cross-language LTO including the zig object.
   const zigLto = lto && !zigFast;
 
   // ─── macOS SDK ───
@@ -823,6 +832,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     timeTrace: partial.timeTrace ?? false,
     ci,
     buildkite,
+    pr,
     webkit: partial.webkit ?? "prebuilt",
     cwd,
     buildDir,

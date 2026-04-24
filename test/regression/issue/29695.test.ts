@@ -17,11 +17,11 @@
 // LD_PRELOAD doesn't reach the same code path, musl's loader ignores
 // LD_PRELOAD for setuid binaries and has its own getaddrinfo, and we need
 // ::1 for the dual-stack listener to actually bind.
-import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
-import { bunEnv, bunExe, isGlibc, isLinux, tempDir } from "harness";
-import { join } from "node:path";
 import { which } from "bun";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isGlibc, isLinux, tempDir } from "harness";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const CC = which("cc") ?? which("gcc");
 
@@ -115,35 +115,33 @@ void freeaddrinfo(struct addrinfo *res) {
 }
 `;
 
-test.skipIf(!canRun)(
-  "fetch() respects OS getaddrinfo() ordering instead of forcing IPv6 first",
-  async () => {
-    // Compile the shim into the test's tempDir so the .so is torn down with
-    // the directory and never pollutes a shared location.
-    using dir = tempDir("issue-29695", { "shim.c": SHIM_C });
-    const shimSo = join(String(dir), "shim.so");
-    await using cc = Bun.spawn({
-      cmd: [CC!, "-shared", "-fPIC", "-ldl", "-o", shimSo, join(String(dir), "shim.c")],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [ccStdout, ccStderr, ccExit] = await Promise.all([cc.stdout.text(), cc.stderr.text(), cc.exited]);
-    // If the compile failed the exitCode assertion below will surface the
-    // full diagnostic through the ccStderr value. The printed object keeps
-    // that message in scope for the failure message.
-    expect({ ccStdout, ccStderr, ccExit }).toMatchObject({ ccExit: 0 });
+test.skipIf(!canRun)("fetch() respects OS getaddrinfo() ordering instead of forcing IPv6 first", async () => {
+  // Compile the shim into the test's tempDir so the .so is torn down with
+  // the directory and never pollutes a shared location.
+  using dir = tempDir("issue-29695", { "shim.c": SHIM_C });
+  const shimSo = join(String(dir), "shim.so");
+  await using cc = Bun.spawn({
+    cmd: [CC!, "-shared", "-fPIC", "-ldl", "-o", shimSo, join(String(dir), "shim.c")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [ccStdout, ccStderr, ccExit] = await Promise.all([cc.stdout.text(), cc.stderr.text(), cc.exited]);
+  // If the compile failed the exitCode assertion below will surface the
+  // full diagnostic through the ccStderr value. The printed object keeps
+  // that message in scope for the failure message.
+  expect({ ccStdout, ccStderr, ccExit }).toMatchObject({ ccExit: 0 });
 
-    // Run the fetch in a fresh subprocess so LD_PRELOAD / the feature flag
-    // are isolated. `Bun.serve({ hostname: "::" })` listens on a dual-stack
-    // socket, so an IPv4 connection shows up as `::ffff:127.0.0.1` and a
-    // native IPv6 connection shows up as `::1` — a one-bit signal for which
-    // family the internal DNS cache picked.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        /* ts */ `
+  // Run the fetch in a fresh subprocess so LD_PRELOAD / the feature flag
+  // are isolated. `Bun.serve({ hostname: "::" })` listens on a dual-stack
+  // socket, so an IPv4 connection shows up as `::ffff:127.0.0.1` and a
+  // native IPv6 connection shows up as `::1` — a one-bit signal for which
+  // family the internal DNS cache picked.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* ts */ `
           using server = Bun.serve({
             hostname: "::",
             port: 0,
@@ -154,32 +152,31 @@ test.skipIf(!canRun)(
           const body = await fetch(\`http://mock29695:\${server.port}/\`, { keepalive: false }).then(r => r.json());
           console.log(JSON.stringify(body));
         `,
-      ],
-      env: {
-        ...bunEnv,
-        LD_PRELOAD: shimSo,
-        // DISABLE_ADDRCONFIG bypasses AI_ADDRCONFIG in the uws DNS path so the
-        // shim's AAAA record isn't filtered out on containers whose only IPv6
-        // route is loopback.
-        BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG: "1",
-        // Egress proxy in some CI sandboxes refuses to forward arbitrary
-        // hostnames; keep the mock hostname local.
-        NO_PROXY: "mock29695,localhost,127.0.0.1,::1",
-        no_proxy: "mock29695,localhost,127.0.0.1,::1",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    ],
+    env: {
+      ...bunEnv,
+      LD_PRELOAD: shimSo,
+      // DISABLE_ADDRCONFIG bypasses AI_ADDRCONFIG in the uws DNS path so the
+      // shim's AAAA record isn't filtered out on containers whose only IPv6
+      // route is loopback.
+      BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG: "1",
+      // Egress proxy in some CI sandboxes refuses to forward arbitrary
+      // hostnames; keep the mock hostname local.
+      NO_PROXY: "mock29695,localhost,127.0.0.1,::1",
+      no_proxy: "mock29695,localhost,127.0.0.1,::1",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Parse the one JSON line the child printed.
-    const body = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  // Parse the one JSON line the child printed.
+  const body = JSON.parse(stdout.trim().split("\n").at(-1)!);
 
-    // With the shim, getaddrinfo() returns [127.0.0.1, ::1] in that order.
-    // After the fix, the internal DNS cache preserves that order and the
-    // dual-stack server sees the IPv4-mapped address. Before the fix, the
-    // cache forced AAAA to the front and the server saw pure ::1.
-    expect(body).toMatchObject({ address: "::ffff:127.0.0.1", family: "IPv6" });
-    expect(exitCode).toBe(0);
-  },
-);
+  // With the shim, getaddrinfo() returns [127.0.0.1, ::1] in that order.
+  // After the fix, the internal DNS cache preserves that order and the
+  // dual-stack server sees the IPv4-mapped address. Before the fix, the
+  // cache forced AAAA to the front and the server saw pure ::1.
+  expect(body).toMatchObject({ address: "::ffff:127.0.0.1", family: "IPv6" });
+  expect(exitCode).toBe(0);
+});

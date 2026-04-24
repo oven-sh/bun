@@ -240,14 +240,22 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
   }
 
   // ─── Phase 1: upload dep libs (before we rm anything) ───
-  const depPaths: string[] = [];
-  for (const dep of output.deps) {
-    for (const lib of dep.libs) {
-      depPaths.push(relative(cfg.buildDir, lib));
+  // In Buildkite, ninja already uploaded these via the bk_upload edge in
+  // bun.ts (overlapped with the cxx compile). The stamp is the witness; if
+  // it's missing (agent unavailable mid-build, or running cpp-only outside
+  // a real BK job), fall back to uploading here so link-only still gets them.
+  if (existsSync(resolve(cfg.buildDir, ".dep-libs-uploaded"))) {
+    console.log("Dep libs already uploaded during build");
+  } else {
+    const depPaths: string[] = [];
+    for (const dep of output.deps) {
+      for (const lib of dep.libs) {
+        depPaths.push(relative(cfg.buildDir, lib));
+      }
     }
+    console.log(`Uploading ${depPaths.length} dep libs...`);
+    upload(depPaths, cfg.buildDir);
   }
-  console.log(`Uploading ${depPaths.length} dep libs...`);
-  upload(depPaths, cfg.buildDir);
 
   // ─── Phase 2: free disk, gzip (posix only), upload archive ───
   // CI agents are disk-constrained. Free what we no longer need: codegen/
@@ -451,7 +459,7 @@ function makeZip(cfg: Config, name: string, files: string[]): string {
  *
  * Call BEFORE ninja — the downloaded files are ninja's link inputs.
  */
-export function downloadArtifacts(cfg: Config): void {
+export async function downloadArtifacts(cfg: Config): Promise<void> {
   if (cfg.mode !== "link-only") return;
 
   const stepKey = process.env.BUILDKITE_STEP_KEY;
@@ -470,22 +478,30 @@ export function downloadArtifacts(cfg: Config): void {
   }
   const targetKey = m[1]!;
 
-  for (const suffix of ["cpp", "zig"]) {
+  // Both downloads at once (buildkite-agent already parallelizes within a
+  // step's artifact set; this overlaps the two STEPS). The .a.gz comes from
+  // build-cpp, so gunzip can start as soon as that one finishes — concurrent
+  // with the build-zig download still streaming.
+  const dl = (suffix: "cpp" | "zig") => {
     const step = `${targetKey}-build-${suffix}`;
     console.log(`Downloading artifacts from ${step}...`);
-    // '*' glob — download everything that step uploaded.
-    run(["buildkite-agent", "artifact", "download", "*", ".", "--step", step], cfg.buildDir);
-  }
+    return runAsync(["buildkite-agent", "artifact", "download", "*", ".", "--step", step], cfg.buildDir);
+  };
+  const cppDone = dl("cpp");
+  const zigDone = dl("zig");
 
-  // Gunzip any compressed archives (libbun-*.a.gz → libbun-*.a).
-  // -f: overwrite if already decompressed (idempotent re-run).
+  await cppDone;
   const gzFiles = existsSync(cfg.buildDir)
     ? readdirSync(cfg.buildDir).filter(f => f.endsWith(".gz") && statSync(resolve(cfg.buildDir, f)).isFile())
     : [];
-  for (const gz of gzFiles) {
-    console.log(`Decompressing ${gz}...`);
-    run(["gunzip", "-f", gz], cfg.buildDir);
-  }
+  const gunzipDone = Promise.all(
+    gzFiles.map(gz => {
+      console.log(`Decompressing ${gz}...`);
+      return runAsync(["gunzip", "-f", gz], cfg.buildDir);
+    }),
+  );
+
+  await Promise.all([zigDone, gunzipDone]);
 }
 
 /** Run a command synchronously, throw BuildError on non-zero exit. */
@@ -503,4 +519,16 @@ function run(argv: string[], cwd: string, env?: Record<string, string>): void {
       hint: `Command: ${argv.join(" ")}`,
     });
   }
+}
+
+/** Async variant of `run()` for overlapping independent steps. */
+function runAsync(argv: string[], cwd: string): Promise<void> {
+  return new Promise((res, rej) => {
+    const child = nodeSpawn(argv[0]!, argv.slice(1), { cwd, stdio: "inherit" });
+    child.on("error", (err: Error) => rej(new BuildError(`Failed to spawn ${argv[0]}`, { cause: err })));
+    child.on("close", (code: number | null) => {
+      if (code === 0) res();
+      else rej(new BuildError(`${argv[0]} exited with code ${code}`, { hint: `Command: ${argv.join(" ")}` }));
+    });
+  });
 }

@@ -5,44 +5,36 @@
  * launch. PR #15186 introduced the dynamic linking; earlier Bun releases
  * linked these statically (as glibc builds still do).
  *
- * The fix (scripts/build/flags.ts) collapses the separate musl branch and
- * always emits `-static-libstdc++ -static-libgcc` on Linux. This test
- * evaluates the linker-flag table directly so a future regression that
- * reintroduces `-lstdc++ -lgcc` for musl — or drops the static flags —
- * fails here instead of at distro-install time.
+ * The fix (scripts/build/flags.ts) drops the musl-only `-lstdc++ -lgcc`
+ * branch and always emits `-static-libstdc++ -static-libgcc` on Linux.
+ *
+ * This test evaluates the linker-flag table by reading `flags.ts` as
+ * source and running the `linkerFlags` array literal through a minimal
+ * fake config for each {gnu, musl} × {x64, aarch64} combination. The
+ * array is parsed + transpiled rather than `import`ed directly because
+ * the debug build's module loader mis-handles the transitive `config.ts`
+ * import graph (unrelated to this fix).
+ *
+ * If a future edit re-introduces `-lstdc++` / `-lgcc` for musl, or drops
+ * the `-static-*` flags, this test fails here instead of at Alpine
+ * install time.
  */
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { linkerFlags } from "../../../scripts/build/flags.ts";
 
-// Minimal Config shape covering every field referenced by linkerFlags
-// predicates. We don't import resolveConfig — it would require a real
-// toolchain/cwd — and we don't need the unrelated fields.
-interface FakeConfig {
-  linux: boolean;
-  darwin: boolean;
-  windows: boolean;
-  unix: boolean;
-  x64: boolean;
-  arm64: boolean;
-  debug: boolean;
-  release: boolean;
-  abi: "gnu" | "musl" | undefined;
-  lto: boolean;
-  asan: boolean;
-  smol: boolean;
-  assertions: boolean;
-  valgrind: boolean;
-  fuzzilli: boolean;
-  ci: boolean;
-  pgoGenerate: string | undefined;
-  pgoUse: string | undefined;
-  osxDeploymentTarget: string | undefined;
-  osxSysroot: string | undefined;
-  cwd: string;
-  buildDir: string;
-  ld: string;
+// Only the fields the linkerFlags predicates read. Extra booleans default
+// to `false`/`undefined` so unrelated predicates (windows, macOS, etc.)
+// simply don't fire.
+type FakeConfig = Record<string, unknown>;
+
+interface FlagEntry {
+  flag: string | string[] | ((cfg: FakeConfig) => string | string[]);
+  when?: (cfg: FakeConfig) => boolean;
+  desc: string;
 }
+
+const FLAGS_TS = join(import.meta.dir, "..", "..", "..", "scripts", "build", "flags.ts");
 
 function makeLinuxConfig(abi: "gnu" | "musl", arch: "x64" | "aarch64"): FakeConfig {
   const cwd = join(import.meta.dir, "..", "..", "..");
@@ -73,13 +65,70 @@ function makeLinuxConfig(abi: "gnu" | "musl", arch: "x64" | "aarch64"): FakeConf
   };
 }
 
-function resolveLinkerFlags(cfg: FakeConfig): string[] {
+/**
+ * Parse out the `linkerFlags` array literal from flags.ts and evaluate it
+ * as JS. Returns the Flag[] table. See the file-level comment for why
+ * we avoid a plain `import`.
+ */
+function loadLinkerFlags(): FlagEntry[] {
+  const src = readFileSync(FLAGS_TS, "utf8");
+
+  // Find the declaration. The type annotation `Flag[]` contains a `[`
+  // too, so start the array search from after the `=`.
+  const declIdx = src.indexOf("export const linkerFlags");
+  if (declIdx < 0) throw new Error("linkerFlags declaration not found");
+  const eqIdx = src.indexOf("=", declIdx);
+  const arrStart = src.indexOf("[", eqIdx);
+  if (arrStart < 0) throw new Error("linkerFlags array not found");
+
+  // Walk to the matching close bracket, respecting string literals and
+  // line comments. The array has no nested `/* */` blocks, no template
+  // literals with `${}` nesting, and no regex literals, so this is safe.
+  let depth = 0;
+  let inStr: string | null = null;
+  let end = arrStart;
+  for (; end < src.length; end++) {
+    const c = src[end]!;
+    if (inStr !== null) {
+      if (c === "\\") end++;
+      else if (c === inStr) inStr = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") inStr = c;
+    else if (c === "/" && src[end + 1] === "/") {
+      while (end < src.length && src[end] !== "\n") end++;
+    } else if (c === "[") depth++;
+    else if (c === "]" && --depth === 0) break;
+  }
+  if (depth !== 0) throw new Error("linkerFlags array did not close");
+
+  const arrayLiteral = src.slice(arrStart, end + 1);
+
+  // Transpile TS → JS (strips `as Foo` casts, arrow param type annots).
+  const js = new Bun.Transpiler({ loader: "ts" }).transformSync(`globalThis.__t__ = ${arrayLiteral};`);
+
+  // Stub the helpers referenced inside the array (imported at the top
+  // of flags.ts). None of them matter for the musl-libstdc++ check;
+  // they just need to resolve so eval doesn't throw.
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  new Function("bunExeName", "slash", "join", js)(
+    () => "bun",
+    (p: string) => p,
+    (...parts: string[]) => parts.join("/"),
+  );
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g = globalThis as any;
+  const arr = g.__t__ as FlagEntry[];
+  delete g.__t__;
+  return arr;
+}
+
+function resolveLinkerFlags(cfg: FakeConfig, table: FlagEntry[]): string[] {
   const out: string[] = [];
-  for (const f of linkerFlags) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if (f.when && !f.when(cfg as any)) continue;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const v = typeof f.flag === "function" ? f.flag(cfg as any) : f.flag;
+  for (const f of table) {
+    if (f.when && !f.when(cfg)) continue;
+    const v = typeof f.flag === "function" ? f.flag(cfg) : f.flag;
     out.push(...(Array.isArray(v) ? v : [v]));
   }
   return out;
@@ -91,9 +140,9 @@ test.each([
   ["gnu", "x64"],
   ["gnu", "aarch64"],
 ] as const)("linux-%s-%s links libstdc++/libgcc statically", (abi, arch) => {
-  const flags = resolveLinkerFlags(makeLinuxConfig(abi, arch));
+  const flags = resolveLinkerFlags(makeLinuxConfig(abi, arch), loadLinkerFlags());
 
-  // Must opt into static C++ runtime.
+  // Must opt into the static C++ runtime.
   expect(flags).toContain("-static-libstdc++");
   expect(flags).toContain("-static-libgcc");
 

@@ -74,22 +74,23 @@ export function zigFastCompiler(opts: { ci: boolean; canary: boolean }): boolean
  *   - Windows targets: COFF shard emission is unimplemented in the fork.
  *   - LTO: zig_llvm.cpp gates SplitModule on !lto, so cg>1 would emit one
  *     .o instead of N and the no_merge_shards path would expect missing files.
- *   - Non-ASAN CI: getZigAgent only provisions the wide box (r8g.2xlarge)
- *     for ASAN; everything else gets 2 vCPU. Sharding there would thrash.
  *
- * ASAN CI shards at a FIXED count (CI_ASAN_CODEGEN_THREADS) so zig-only
- * and link-only — which run on different machines — agree on artifact
- * names. Local dev shards at availableParallelism().
+ * CI shards at a FIXED count so zig-only and link-only — which run on
+ * different machines — agree on artifact names. The count matches
+ * getZigAgent's provisioned vCPU: 8 for ASAN (r8g.2xlarge), 2 for
+ * everything else (r8g.large). Local dev shards at availableParallelism().
  */
 function codegenThreads(cfg: Config): number {
   if (!cfg.zigFast) return 1;
   if (cfg.windows) return 1;
   if (cfg.lto) return 1;
-  if (cfg.ci) return cfg.asan ? CI_ASAN_CODEGEN_THREADS : 1;
+  if (cfg.ci) return cfg.asan ? CI_ASAN_CODEGEN_THREADS : CI_CODEGEN_THREADS;
   return availableParallelism();
 }
 
-/** Fixed shard count for CI ASAN builds. Matches getZigAgent's instance size. */
+/** Fixed shard count for non-ASAN CI builds. Matches getZigAgent's r8g.large (2 vCPU). */
+export const CI_CODEGEN_THREADS = 2;
+/** Fixed shard count for ASAN CI builds. Matches getZigAgent's r8g.2xlarge (8 vCPU). */
 export const CI_ASAN_CODEGEN_THREADS = 8;
 
 /**

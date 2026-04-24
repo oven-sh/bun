@@ -1102,7 +1102,7 @@ fn openDirAtWindowsNtPath(
         0,
     );
 
-    if (comptime Environment.allow_assert) {
+    if (Environment.allow_assert and Environment.enable_logs) {
         if (rc == .INVALID_PARAMETER) {
             // Double check what flags you are passing to this
             //
@@ -1113,7 +1113,11 @@ fn openDirAtWindowsNtPath(
         } else if (rc == .OBJECT_PATH_SYNTAX_BAD or rc == .OBJECT_NAME_INVALID) {
             bun.Output.debugWarn("NtCreateFile({f}, {f}) = {s} (dir) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
         } else {
-            log("NtCreateFile({f}, {f}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
+            // NtCreateFile may return NTSTATUS codes that are not named in Zig's
+            // non-exhaustive NTSTATUS enum (e.g. STATUS_UNTRUSTED_MOUNT_POINT = 0xC00004BC
+            // on newer Windows 11 builds). `@tagName` on an unnamed tag panics with
+            // "invalid enum value", so use the default formatter which handles them.
+            log("NtCreateFile({f}, {f}) = {} (dir) = {d}", .{ dirFd, bun.fmt.utf16(path), rc, @intFromPtr(fd) });
         }
     }
 
@@ -1319,7 +1323,10 @@ pub fn openFileAtWindowsNtPath(
                 if (rc == .SUCCESS) {
                     log("NtCreateFile({f}, {f}) = {s} (file) = {f}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.FD.fromNative(result) });
                 } else {
-                    log("NtCreateFile({f}, {f}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), rc });
+                    // Use the default formatter instead of `@tagName` here: `rc` may
+                    // be an NTSTATUS not named in Zig's non-exhaustive enum, and
+                    // `@tagName` on an unnamed tag panics with "invalid enum value".
+                    log("NtCreateFile({f}, {f}) = {} (file)", .{ dir, bun.fmt.utf16(path), rc });
                 }
             }
         }
@@ -3120,6 +3127,17 @@ pub const MemfdFlags = enum(u32) {
     const MFD_ALLOW_SEALING: u32 = std.os.linux.MFD.ALLOW_SEALING;
 };
 
+/// memfd_create requires kernel ≥ 3.17. Latched true on first ENOSYS so
+/// callers can take their existing fallback (heap buffer / pipe / socketpair)
+/// without retrying the syscall on every Blob/spawn.
+var memfd_enosys = std.atomic.Value(bool).init(false);
+
+pub fn canUseMemfd() bool {
+    if (comptime !Environment.isLinux) return false;
+    if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_MEMFD.get()) return false;
+    return !memfd_enosys.load(.monotonic);
+}
+
 pub fn memfd_create(name: [:0]const u8, flags_: MemfdFlags) Maybe(bun.FD) {
     if (comptime !Environment.isLinux) @compileError("linux only!");
     var flags: u32 = @intFromEnum(flags_);
@@ -3138,6 +3156,7 @@ pub fn memfd_create(name: [:0]const u8, flags_: MemfdFlags) Maybe(bun.FD) {
                         continue;
                     }
                 },
+                .NOSYS => memfd_enosys.store(true, .monotonic),
                 else => {},
             }
 
@@ -4455,6 +4474,23 @@ pub const umask = switch (Environment.os) {
     // Using the same typedef and define for `mode_t` and `umask` as node on windows.
     // https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
     .windows => @extern(*const fn (mode: u16) callconv(.c) u16, .{ .name = "_umask" }),
+};
+
+pub const TestingAPIs = struct {
+    /// Exposes libuv -> `bun.sys.E` translation so tests can feed out-of-range
+    /// negative values and verify it does not panic. Windows-only.
+    pub fn translateUVErrorToE(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const arguments = callframe.arguments();
+        if (arguments.len < 1 or !arguments[0].isNumber()) {
+            return globalThis.throw("translateUVErrorToE: expected 1 number argument", .{});
+        }
+        if (comptime !Environment.isWindows) {
+            return .js_undefined;
+        }
+        const code: c_int = arguments[0].toInt32();
+        const result = bun.windows.libuv.translateUVErrorToE(code);
+        return bun.String.createUTF8ForJS(globalThis, @tagName(result));
+    }
 };
 
 pub const File = @import("./sys/File.zig");

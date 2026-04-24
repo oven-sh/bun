@@ -31,6 +31,7 @@
 #include "ReadableStreamDefaultController.h"
 
 #include "WebCoreJSClientData.h"
+#include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/IdentifierInlines.h>

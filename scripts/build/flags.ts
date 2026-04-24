@@ -100,6 +100,17 @@ export const globalFlags: Flag[] = [
 
   // ─── Optimization ───
   {
+    // cmake's Release/RelWithDebInfo build types append this to
+    // CMAKE_<LANG>_FLAGS_<TYPE> automatically; nested-cmake deps got it
+    // from there. Direct deps only see globalFlags, so it must be here
+    // too — otherwise every assert() in zstd/boringssl/mimalloc/etc.
+    // stays live in release. (bun's own NDEBUG in `defines` below is
+    // redundant after this, but harmless.)
+    flag: "-DNDEBUG",
+    when: c => c.release,
+    desc: "Disable libc assert() (release builds, direct deps included)",
+  },
+  {
     flag: "-O0",
     when: c => c.unix && c.debug,
     desc: "No optimization (debug)",
@@ -175,7 +186,7 @@ export const globalFlags: Flag[] = [
     desc: "Disable C++ exceptions",
   },
   {
-    flag: "/EHsc",
+    flag: "/EHs-c-",
     when: c => c.windows,
     desc: "Disable C++ exceptions (MSVC: s- disables C++, c- disables C)",
   },
@@ -367,6 +378,14 @@ export const globalFlags: Flag[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const bunOnlyFlags: Flag[] = [
+  // ─── Build profiling ───
+  {
+    flag: "-ftime-trace",
+    when: c => c.timeTrace,
+    lang: "cxx",
+    desc: "Emit per-TU Chrome-trace JSON next to each .o (analyze with ClangBuildAnalyzer)",
+  },
+
   // ─── Language standard ───
   // WebKit uses gnu++ extensions on Linux; if we don't match, the first
   // memory allocation crashes (ABI mismatch in sized delete).
@@ -663,7 +682,6 @@ export const linkerFlags: Flag[] = [
       "/delayload:ole32.dll",
       "/delayload:WINMM.dll",
       "/delayload:dbghelp.dll",
-      "/delayload:VCRUNTIME140_1.dll",
       "/delayload:WS2_32.dll",
       "/delayload:WSOCK32.dll",
       "/delayload:ADVAPI32.dll",
@@ -707,6 +725,7 @@ export const linkerFlags: Flag[] = [
       "-Wl,--wrap=exp2",
       "-Wl,--wrap=expf",
       "-Wl,--wrap=fcntl64",
+      "-Wl,--wrap=getrandom",
       "-Wl,--wrap=gettid",
       "-Wl,--wrap=log",
       "-Wl,--wrap=log2",
@@ -714,9 +733,10 @@ export const linkerFlags: Flag[] = [
       "-Wl,--wrap=logf",
       "-Wl,--wrap=pow",
       "-Wl,--wrap=powf",
+      "-Wl,--wrap=quick_exit",
     ],
     when: c => c.linux && c.abi !== "musl",
-    desc: "Wrap glibc 2.29+ symbols (portable to older glibc)",
+    desc: "Wrap glibc 2.18+ symbols (portable down to glibc 2.17)",
   },
   {
     flag: ["-static-libstdc++", "-static-libgcc"],
@@ -793,7 +813,7 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: c => [
-      "-Bsymbolics-functions",
+      "-Wl,-Bsymbolic-functions",
       "-rdynamic",
       `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
       `-Wl,--version-script=${c.cwd}/src/linker.lds`,
@@ -850,7 +870,11 @@ export const stripFlags: Flag[] = [
     // musl: no eh_frame handling differences, but CMake gates on NOT musl so we do too.
     // Strip only runs on plain release (shouldStrip gates debug/asan/valgrind/assertions)
     // which in CI always has LTO on — in practice paired with --no-eh-frame-hdr.
-    flag: ["-R", ".eh_frame", "-R", ".gcc_except_table"],
+    //
+    // GNU strip does not rewrite the program header table — so any
+    // PT_GNU_EH_FRAME phdr entry also survives as an orphan. See the
+    // --no-eh-frame-hdr rationale in linkFlags above.
+    flag: ["-R", ".eh_frame", "-R", ".eh_frame_hdr", "-R", ".gcc_except_table"],
     when: c => c.linux && c.abi !== "musl",
     desc: "Remove unwind sections (GNU strip required — llvm-strip leaves [LOAD #2 [R]])",
   },
@@ -928,6 +952,12 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: ["-fno-lto", "-fno-whole-program-vtables"],
     when: c => c.linux && c.lto && c.abi !== "musl",
     desc: "Disable LTO: LLD 21 emits glibc versioned symbols (exp@GLIBC_2.17) into .lto_discard which fails to parse '@'",
+  },
+  {
+    file: "src/bun.js/bindings/windows/rescle.cpp",
+    extraFlags: "/EHsc",
+    when: c => c.windows,
+    desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
   },
 ];
 
@@ -1036,8 +1066,9 @@ export function computeCpuTargetFlags(cfg: Config): string[] {
  * specific source. Returns extra flags to append (may be empty).
  */
 export function extraFlagsFor(cfg: Config, srcRelPath: string): string[] {
+  const key = srcRelPath.replaceAll("\\", "/");
   for (const o of fileOverrides) {
-    if (o.file !== srcRelPath) continue;
+    if (o.file !== key) continue;
     if (o.when && !o.when(cfg)) continue;
     return resolveFlagValue(o.extraFlags, cfg);
   }

@@ -118,7 +118,7 @@ it("Blob inspect", () => {
   headers: Headers {},
   redirected: false,
   bodyUsed: false,
-  [Blob detached]
+  Blob (0 KB)
 }`);
   expect(Bun.inspect(new Response("Hello"))).toBe(`Response (5 bytes) {
   ok: true,
@@ -606,6 +606,38 @@ it("console.log on a Blob shows name", () => {
   expect(Bun.inspect(file)).toBe(
     `File (3 bytes) {\n  name: "",\n  type: "text/plain;charset=utf-8",\n  lastModified: ${file.lastModified}\n}`,
   );
+});
+
+// https://github.com/oven-sh/bun/issues/29637
+// An empty `new Blob([])` or `new File([])` has `store == null` internally,
+// but that's identical to the state after the blob was transferred away. The
+// inspect output used to call both "detached" — the empty case should render
+// as a normal zero-byte blob/file instead.
+it("empty Blob and File inspect as zero-byte, not detached", () => {
+  expect(Bun.inspect(new Blob([]))).toBe("Blob (0 KB)");
+  expect(Bun.inspect(new Blob())).toBe("Blob (0 KB)");
+
+  const emptyFile = new File([], "empty.txt");
+  expect(Bun.inspect(emptyFile)).toBe(
+    `File (0 KB) {\n  name: "empty.txt",\n  lastModified: ${emptyFile.lastModified}\n}`,
+  );
+
+  // structuredClone round-trips through serialization that leaves the store
+  // null when contents are empty — make sure the cloned form also renders
+  // cleanly.
+  const clonedBlob = structuredClone(new Blob([]));
+  expect(Bun.inspect(clonedBlob)).toBe("Blob (0 KB)");
+
+  const cloned = structuredClone({
+    file: new File([], "example.txt"),
+    blob: new Blob([]),
+  });
+  expect(Bun.inspect(cloned.blob)).toBe("Blob (0 KB)");
+  expect(cloned.file).toBeInstanceOf(File);
+  expect(cloned.file.name).toBe("example.txt");
+  expect(cloned.file.size).toBe(0);
+  // Make sure nothing in the combined output is flagged as detached.
+  expect(Bun.inspect(cloned)).not.toContain("detached");
 });
 
 it("console.log on a arguments shows list", () => {

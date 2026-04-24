@@ -17,9 +17,9 @@
 
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { availableParallelism } from "node:os";
-import { resolve } from "node:path";
-import type { Config, OS } from "./config.ts";
+import { availableParallelism, homedir } from "node:os";
+import { join, resolve } from "node:path";
+import type { Config } from "./config.ts";
 import { downloadWithRetry, extractZip } from "./download.ts";
 import { assert } from "./error.ts";
 import { fetchCliPath } from "./fetch-cli.ts";
@@ -31,42 +31,52 @@ import { streamPath } from "./stream.ts";
  * Zig compiler commit — determines compiler download + bundled stdlib.
  * Override via `--zig-commit=<hash>` to test a new compiler.
  * From https://github.com/oven-sh/zig releases.
- *
- * TEMPORARY SPLIT: local dev uses a newer compiler with parallel sema +
- * sharded LLVM codegen (big speedup, still being proven correct). CI
- * stays on the last known-good commit so release builds aren't affected
- * by compiler bugs we haven't shaken out yet. Once the parallel compiler
- * is trusted, collapse both back to one constant.
  */
-export const ZIG_COMMIT = "365343af4fc5a1a632e6b54aadd0b87be30edd81";
-export const ZIG_COMMIT_PARALLEL = "445fc0cbba4eea579e5c846f2b8be7c9bdc4e1cc";
+export const ZIG_COMMIT = "04e7f6ac1e009525bc00934f20199c68f04e0a24";
 
 /**
- * The one place that picks which compiler to use. Everything coupled to
- * the parallel compiler (ZIG_PARALLEL_SEMA, -Dllvm_codegen_threads) keys
- * on the resolved cfg.zigCommit via usingParallelCompiler(), so changing
- * this — or passing --zigCommit=<hash> — is sufficient.
+ * Number of LLVM codegen units. >1 splits the build into N independent
+ * LLVM modules — parallelises emit, but cross-unit calls become
+ * `linkonce_odr` externs so LLVM can't inline or IPO across them.
  *
- * Parallel compiler is darwin-local only for now. Linux is gated off
- * because oven-sh/zig's self-hosted ELF `-r` merge (used to combine
- * sharded codegen output when no_link_obj=true) currently emits an
- * incomplete bun-zig.o — link fails with every Zig symbol undefined on
- * a fresh build. macOS's Mach-O merge path works. See #29132. CI and
- * Windows stay on the stable compiler regardless.
+ * Sharding is gated off for:
+ *   - Non-ASAN CI: shipped releases want full IPO; cg=1 keeps that and
+ *     keeps the upload/download contract a single file.
+ *   - Windows targets: COFF shard emission is unimplemented in oven-sh/zig.
+ *   - LTO: zig_llvm.cpp gates SplitModule on !lto, so cg>1 would emit one
+ *     .o instead of N and the no_merge_shards path would expect missing files.
+ *
+ * ASAN CI uses a FIXED count (CI_ASAN_CODEGEN_THREADS) so zig-only and
+ * link-only — which run on different machines — agree on the artifact
+ * names. Local builds shard at availableParallelism(); benchmark against
+ * a non-ASAN CI artifact if cross-unit inlining matters.
  */
-export function defaultZigCommit(ci: boolean, hostOs: OS): string {
-  if (ci || hostOs !== "darwin") return ZIG_COMMIT;
-  return ZIG_COMMIT_PARALLEL;
+function codegenThreads(cfg: Config): number {
+  if (cfg.windows) return 1;
+  if (cfg.lto) return 1;
+  if (cfg.ci) {
+    // ASAN is a test-only build (not shipped), so cross-shard IPO loss is
+    // fine and the speedup is worth it. The count is FIXED so zig-only and
+    // link-only — which run on different machines — agree on the artifact
+    // names. Non-asan CI stays at 1: shipped releases want full IPO.
+    return cfg.asan ? CI_ASAN_CODEGEN_THREADS : 1;
+  }
+  return availableParallelism();
 }
 
+/** Fixed shard count for CI ASAN builds. Matches getZigAgent's instance size. */
+export const CI_ASAN_CODEGEN_THREADS = 8;
+
 /**
- * True iff `cfg` is using the parallel-sema compiler. All parallel-only
- * build knobs (ZIG_PARALLEL_SEMA env, -Dllvm_codegen_threads>0) must key
- * on this — the stable compiler emits N sharded .o files under those
- * options but leaves getEmittedBin() as a 0-byte stub, so link fails.
+ * Output object file names for the zig step, matching what build.zig emits.
+ * Shared between emitZig (zig-only/full) and emitLinkOnly so both sides of
+ * the CI artifact split agree on filenames.
  */
-function usingParallelCompiler(cfg: Config): boolean {
-  return cfg.zigCommit !== ZIG_COMMIT;
+export function zigObjectPaths(cfg: Config): string[] {
+  const cg = codegenThreads(cfg);
+  return cg > 1
+    ? Array.from({ length: cg }, (_, i) => resolve(cfg.buildDir, `bun-zig.${i}.o`))
+    : [resolve(cfg.buildDir, "bun-zig.o")];
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -160,11 +170,23 @@ export function codegenEmbed(cfg: Config): boolean {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Where zig lives. In vendor/ (gitignored), shared across profiles — the
- * commit pin is global and changing it affects everything.
+ * Where zig lives. Defaults to vendor/zig (gitignored), shared across
+ * profiles — the commit pin is global and changing it affects everything.
+ *
+ * Override via $BUN_ZIG_PATH to point at an existing zig install (e.g.
+ * share one compiler across worktrees, test a zig fork build, or pre-fetch
+ * in an air-gapped environment). When set, the fetch edge is skipped and
+ * the path must already contain a zig/ + lib/ layout. Mirrors the
+ * $BUN_WEBKIT_PATH override.
  */
 function zigPath(cfg: Config): string {
-  return resolve(cfg.vendorDir, "zig");
+  const env = process.env.BUN_ZIG_PATH;
+  if (!env) return resolve(cfg.vendorDir, "zig");
+  // Shells don't expand ~ inside quotes; handle it here so a quoted export works.
+  if (env === "~" || env.startsWith("~/") || env.startsWith("~\\")) return join(homedir(), env.slice(1));
+  // Anchor relative paths to the repo root so ninja's regen rule (which runs
+  // from buildDir) resolves the same path as the initial configure.
+  return resolve(cfg.cwd, env);
 }
 
 function zigExecutable(cfg: Config): string {
@@ -224,9 +246,10 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
     restat: true,
   });
 
-  // Zig build — the big one. One invocation produces bun-zig.o. Zig's
-  // own build system handles per-file tracking; restat prunes downstream
-  // when zig's cache says nothing changed.
+  // Zig build — the big one. One invocation produces bun-zig.o (or
+  // bun-zig.{0..N-1}.o when codegenThreads()>1). Zig's own build system
+  // handles per-file tracking; restat prunes downstream when zig's cache
+  // says nothing changed.
   //
   // Default: --console + pool=console. Zig gets direct TTY, its native
   // spinner works. Ninja defers [N/M] while the console job owns the
@@ -240,10 +263,11 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
   // our fork (upstream added Feb 2026, not backported).
   const interleave = false;
   const consoleMode = !interleave || hostWin;
-  const parallelSema = usingParallelCompiler(cfg) ? " --env=ZIG_PARALLEL_SEMA=1" : "";
+  const parallelSema = " --env=ZIG_PARALLEL_SEMA=1";
   n.rule("zig_build", {
     command: `${stream} ${consoleMode ? "--console" : "--zig-progress"} --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache${parallelSema} $zig build $step $args`,
-    description: "zig $step → $out",
+    // $out can be 16 shard paths; the build edge sets a compact $label.
+    description: "zig $step → $label",
     ...(consoleMode && { pool: "console" }),
     restat: true,
   });
@@ -253,7 +277,7 @@ export function registerZigRules(n: Ninja, cfg: Config): void {
   // ninja can track completion. Same cache dirs as the main zig build —
   // zig keys by hash, the two coexist cleanly.
   n.rule("zig_check", {
-    command: `${stream} --console --stamp=$out --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache $zig build $step $args`,
+    command: `${stream} --console --stamp=$out --env=ZIG_LOCAL_CACHE_DIR=$zig_local_cache --env=ZIG_GLOBAL_CACHE_DIR=$zig_global_cache${parallelSema} $zig build $step $args`,
     description: "zig $step",
     pool: "console",
     restat: true,
@@ -299,9 +323,9 @@ export interface ZigBuildInputs {
 /**
  * Emit the zig download + zig build steps. Returns the output object file(s).
  *
- * For normal builds: one `bun-zig.o`. For test builds (future): `bun-test.o`.
- * Threaded codegen (LLVM_ZIG_CODEGEN_THREADS > 1) would produce multiple .o
- * files, but that's always 0 in practice — deferred.
+ * Single `bun-zig.o` when codegenThreads()<=1 (non-ASAN CI, Windows
+ * targets); `bun-zig.{0..N-1}.o` shards otherwise (ASAN CI, local dev).
+ * The link step spreads the returned array into its inputs either way.
  */
 export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[] {
   n.comment("─── Zig ───");
@@ -310,38 +334,56 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
   // ─── Download compiler ───
   const zigDest = zigPath(cfg);
   const zigExe = zigExecutable(cfg);
-  const safe = zigCompilerSafe(cfg);
-  const url = zigDownloadUrl(cfg, safe);
-  // Commit + safe go into the stamp content, so switching either retriggers.
-  const stamp = resolve(zigDest, ".zig-commit");
+  const envOverride = process.env.BUN_ZIG_PATH;
+  if (envOverride) {
+    // User-provided compiler — no fetch edge. Validate at configure time
+    // that the path has a usable layout; commit mismatch is the user's
+    // problem. zig build will error loudly if the compiler is too old.
+    assert(existsSync(zigExe), `BUN_ZIG_PATH='${envOverride}' but no zig executable at ${zigExe}`, {
+      hint: "Point $BUN_ZIG_PATH at an extracted zig install (the dir containing zig + lib/), or unset it to use the bundled compiler",
+    });
+    assert(existsSync(resolve(zigDest, "lib")), `BUN_ZIG_PATH='${envOverride}' but no lib/ dir at ${zigDest}`, {
+      hint: "zig needs its bundled stdlib at <path>/lib/ — make sure the extract wasn't partial",
+    });
+  } else {
+    const safe = zigCompilerSafe(cfg);
+    const url = zigDownloadUrl(cfg, safe);
+    // Commit + safe go into the stamp content, so switching either retriggers.
+    const stamp = resolve(zigDest, ".zig-commit");
 
-  n.build({
-    outputs: [stamp],
-    implicitOutputs: [zigExe],
-    rule: "zig_fetch",
-    inputs: [],
-    // Only fetch-cli.ts. This file (zig.ts) has emitZig and other logic
-    // unrelated to download — editing those shouldn't re-download the
-    // compiler. The URL/commit are in the rule's vars so changing those
-    // already retriggers via ninja's command tracking.
-    implicitInputs: [fetchCliPath],
-    vars: {
-      url,
-      dest: zigDest,
-      // Safe is encoded in the commit stamp (not just URL) so the CLI
-      // can short-circuit correctly when safe doesn't change.
-      commit: `${cfg.zigCommit}${safe ? "-safe" : ""}`,
-    },
-  });
+    n.build({
+      outputs: [stamp],
+      implicitOutputs: [zigExe],
+      rule: "zig_fetch",
+      inputs: [],
+      // Only fetch-cli.ts. This file (zig.ts) has emitZig and other logic
+      // unrelated to download — editing those shouldn't re-download the
+      // compiler. The URL/commit are in the rule's vars so changing those
+      // already retriggers via ninja's command tracking.
+      implicitInputs: [fetchCliPath],
+      vars: {
+        url,
+        dest: zigDest,
+        // Safe is encoded in the commit stamp (not just URL) so the CLI
+        // can short-circuit correctly when safe doesn't change.
+        commit: `${cfg.zigCommit}${safe ? "-safe" : ""}`,
+      },
+    });
+  }
   n.phony("zig-compiler", [zigExe]);
 
   // ─── Build ───
   const cacheDirs = zigCacheDirs(cfg);
-  const output = resolve(cfg.buildDir, "bun-zig.o");
+  // With the parallel compiler at >1 codegen threads, build.zig sets
+  // `llvm_no_merge_shards` and installs `bun-zig.{i}.o` per shard instead
+  // of one merged `bun-zig.o` (zig's single-threaded ELF -r merge of the
+  // shards dominated wall time). Declare every shard so ninja tracks them
+  // and the link step gets all of them; lld merges in parallel.
+  const outputs = zigObjectPaths(cfg);
   const args = zigBuildArgs(cfg);
 
   n.build({
-    outputs: [output],
+    outputs,
     rule: "zig_build",
     inputs: [],
     implicitInputs: zigBuildImplicitInputs(cfg, inputs),
@@ -352,12 +394,13 @@ export function emitZig(n: Ninja, cfg: Config, inputs: ZigBuildInputs): string[]
       args: quoteArgs(args, cfg.host.os === "windows"),
       zig_local_cache: cacheDirs.local,
       zig_global_cache: cacheDirs.global,
+      label: outputs.length > 1 ? `bun-zig.{0..${outputs.length - 1}}.o` : "bun-zig.o",
     },
   });
-  n.phony("bun-zig", [output]);
+  n.phony("bun-zig", outputs);
   n.blank();
 
-  return [output];
+  return outputs;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -398,13 +441,14 @@ function zigBuildArgs(cfg: Config): string[] {
     `-Denable_fuzzilli=${bool(cfg.fuzzilli)}`,
     `-Denable_valgrind=${bool(cfg.valgrind)}`,
     `-Denable_tinycc=${bool(cfg.tinycc)}`,
+    `-Dlto=${bool(cfg.lto)}`,
     // Always ON — bun uses mimalloc as its default allocator. The flag
     // exists for experimentation; in practice it's never OFF.
     `-Duse_mimalloc=true`,
     // Sharded LLVM codegen — one shard per host core on the parallel
     // compiler. Zig has no "auto" value (0 = single-threaded). MUST be 0
-    // on the stable compiler — see usingParallelCompiler().
-    `-Dllvm_codegen_threads=${usingParallelCompiler(cfg) ? availableParallelism() : 0}`,
+    // on the stable compiler — see codegenThreads().
+    `-Dllvm_codegen_threads=${codegenThreads(cfg)}`,
 
     // Versioning
     `-Dversion=${cfg.version}`,

@@ -347,7 +347,8 @@ function getLinkBunAgent(platform, options) {
   }
 
   return getEc2Agent(platform, options, {
-    instanceType: arch === "aarch64" ? "r8g.xlarge" : "r7i.xlarge",
+    // Full LTO with bun-zig.o as bitcode peaks >31 GiB on aarch64; xlarge OOMs.
+    instanceType: arch === "aarch64" ? "r8g.2xlarge" : "r7i.2xlarge",
   });
 }
 
@@ -379,9 +380,11 @@ function getZigAgent(platform, options) {
     });
   }
 
-  // Everything else cross-compiles from Linux aarch64
+  // Everything else cross-compiles from Linux aarch64. ASAN gets a wider
+  // box: it builds with cg=CI_ASAN_CODEGEN_THREADS (8) so it can use the
+  // parallel backend; release stays at cg=1 (full IPO) so 2 vCPU suffice.
   return getEc2Agent(getZigPlatform(), options, {
-    instanceType: "r8g.large",
+    instanceType: platform.profile === "asan" ? "r8g.2xlarge" : "r8g.large",
   });
 }
 
@@ -701,8 +704,11 @@ function getTestBunStep(platform, options, testOptions = {}) {
     args.push(`--build-id=${buildId}`);
   }
 
-  if (testFiles) {
+  if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
+  } else {
+    // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead
+    args.push("--exclude=integration/bun-types");
   }
 
   const depends = [];
@@ -827,6 +833,7 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
   const targets = releasePlatforms.map(p => ({ triplet: getTargetTriplet(p) }));
   const args = [`--targets '${JSON.stringify(targets)}'`, `--threshold-mb ${BINARY_SIZE_THRESHOLD_MB}`];
   if (recordOnly) args.push("--no-fail");
+  if (!options.canary) args.push("--release");
 
   return {
     key: "binary-size",

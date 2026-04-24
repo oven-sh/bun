@@ -21,6 +21,7 @@
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/Heap.h"
+#include "JavaScriptCore/DeferGCInlines.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/InitializeThreading.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
@@ -574,6 +575,18 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     JSC::VM& vm = oldGlobal->vm();
     JSC::JSLockHolder locker(vm);
 
+    // `JSGlobalObject::finishCreation` → `init()` performs hundreds of allocations
+    // before every lazy/write-barrier member of the Bun subclass has been wired up.
+    // Unlike the initial VM global (created before any user code can run and
+    // therefore before any concurrent GC is in flight), this one is created while
+    // the previous global's graph is live and the heap is warm, so the concurrent
+    // marker is far more likely to pick the half-initialized object off the stack
+    // and walk it. Deferring GC across the swap keeps the marker from observing the
+    // new global (or the mid-swap pair) until both are in a consistent state; the
+    // deferred collection fires on scope exit, by which point the new global is
+    // gcProtect()'d and the old one is cleanly unprotected.
+    JSC::DeferGC deferGC(vm);
+
     // The new global must inherit the old one's ScriptExecutionContext identifier so that
     // `Bun.isMainThread` (identifier == 1) and cross-thread task dispatch keep working.
     // Move the old context to a fresh identifier first to free the slot.
@@ -740,6 +753,10 @@ using namespace WebCore;
 static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    // Same reasoning as Zig__GlobalObject__createForTestIsolation: keep the
+    // concurrent marker from walking the new global while finishCreation/init
+    // is still populating it.
+    JSC::DeferGC deferGC(vm);
     Zig::GlobalObject* shadow = Zig::GlobalObject::create(
         vm,
         Zig::GlobalObject::createStructure(vm),
@@ -829,7 +846,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
     , m_worldIsNormal(true)
-    , m_builtinInternalFunctions(vm)
+    , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this))
     , globalEventScope(adoptRef(*new Bun::WorkerGlobalScope(m_scriptExecutionContext)))
 {
@@ -844,7 +861,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
     , m_worldIsNormal(true)
-    , m_builtinInternalFunctions(vm)
+    , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
     , globalEventScope(adoptRef(*new Bun::WorkerGlobalScope(m_scriptExecutionContext)))
 {
@@ -2697,7 +2714,7 @@ JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    m_builtinInternalFunctions.initialize(*this);
+    m_builtinInternalFunctions->initialize(*this);
 
     auto clientData = WebCore::clientData(vm);
     auto& builtinNames = WebCore::builtinNames(vm);
@@ -2925,7 +2942,15 @@ template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& vi
 
 template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& visitor, std::unique_ptr<T>& ptr)
 {
-    ptr->visit(visitor);
+    // The two unique_ptr members (m_builtinInternalFunctions, m_constructors) are
+    // populated in the constructor initializer list, so in steady state this is
+    // never null. The guard exists because the concurrent marker can visit a
+    // Zig::GlobalObject picked up via conservative stack scan while its own
+    // IsoSubspace slot is being recycled from a previously-destroyed global whose
+    // unique_ptr members were reset to null by ~unique_ptr(); until placement-new
+    // re-initializes them there is a brief window where the pointer reads as null.
+    if (ptr) [[likely]]
+        ptr->visit(visitor);
 }
 
 template<class Visitor, class T, size_t n> static void visitGlobalObjectMember(Visitor& visitor, std::array<WriteBarrier<T>, n>& barriers)
@@ -2986,10 +3011,14 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
     auto& vm = JSC::getVM(globalObject);
     // Clear the request for the termination exception to be thrown
     vm.clearHasTerminationRequest();
-    // In case it actually has been thrown, clear the exception itself as well
+    // In case it actually has been thrown, clear the exception itself as well.
+    // tryClearException() refuses to clear termination exceptions, so use
+    // TopExceptionScope::clearException() which clears unconditionally —
+    // this function's whole purpose is to clear that specific exception so
+    // execution can resume (e.g. for process.on('exit') after terminate()).
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (scope.exception() && vm.isTerminationException(scope.exception())) {
-        (void)scope.tryClearException();
+        scope.clearException();
     }
 }
 

@@ -45,7 +45,7 @@ async function runTests(dir: string, extraArgs: string[], files = ["./a-leaker.t
   return { stdout, stderr, exitCode };
 }
 
-describe("bun test --isolate", () => {
+describe.concurrent("bun test --isolate", () => {
   test("without --isolate, leaked global is visible to next file", async () => {
     using dir = tempDir("isolate-off", fixtures);
     const { stderr, exitCode } = await runTests(String(dir), []);
@@ -312,7 +312,7 @@ describe("bun test --isolate", () => {
 // b sees stale v1 → cache hit) and that delete require.cache evicts it
 // (treatment: b sees fresh v2). A/B timing was removed as flaky; this is the
 // deterministic behavioral proof.
-test("--isolate: delete require.cache evicts the SourceProvider cache", async () => {
+test.concurrent("--isolate: delete require.cache evicts the SourceProvider cache", async () => {
   const sharedV1 = `export const v = "v1";\n`;
   const sharedV2 = `export const v = "v2";\n`;
   const aBody = (doDelete: boolean) => `
@@ -333,50 +333,53 @@ test("--isolate: delete require.cache evicts the SourceProvider cache", async ()
     });
   `;
 
-  // Control: without delete, the SourceProvider cache returns the v1 provider
-  // even though the file on disk is now v2.
-  {
-    using dir = tempDir("isolate-spcache-evict-ctrl", {
-      "shared.ts": sharedV1,
-      "a.test.ts": aBody(false),
-      "b.test.ts": bBody("v1"),
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("2 pass");
-    expect(stderr).toContain("0 fail");
-    expect(exitCode).toBe(0);
-  }
-
-  // With delete: the cache entry is evicted, so b's import re-transpiles and
-  // sees v2 from disk.
-  {
-    using dir = tempDir("isolate-spcache-evict", {
-      "shared.ts": sharedV1,
-      "a.test.ts": aBody(true),
-      "b.test.ts": bBody("v2"),
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("2 pass");
-    expect(stderr).toContain("0 fail");
-    expect(exitCode).toBe(0);
-  }
+  // Control (without delete) and treatment (with delete) are independent — run
+  // both subprocesses in parallel.
+  await Promise.all([
+    // Control: without delete, the SourceProvider cache returns the v1 provider
+    // even though the file on disk is now v2.
+    (async () => {
+      using dir = tempDir("isolate-spcache-evict-ctrl", {
+        "shared.ts": sharedV1,
+        "a.test.ts": aBody(false),
+        "b.test.ts": bBody("v1"),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("2 pass");
+      expect(stderr).toContain("0 fail");
+      expect(exitCode).toBe(0);
+    })(),
+    // With delete: the cache entry is evicted, so b's import re-transpiles and
+    // sees v2 from disk.
+    (async () => {
+      using dir = tempDir("isolate-spcache-evict", {
+        "shared.ts": sharedV1,
+        "a.test.ts": aBody(true),
+        "b.test.ts": bBody("v2"),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("2 pass");
+      expect(stderr).toContain("0 fail");
+      expect(exitCode).toBe(0);
+    })(),
+  ]);
 });
 
-test("--isolate: SourceProvider cache covers CommonJS modules", async () => {
+test.concurrent("--isolate: SourceProvider cache covers CommonJS modules", async () => {
   const sharedV1 = `module.exports = { v: "v1" };\n`;
   const sharedV2 = `module.exports = { v: "v2" };\n`;
   const aBody = (doDelete: boolean) => `
@@ -410,51 +413,53 @@ test("--isolate: SourceProvider cache covers CommonJS modules", async () => {
     });
   `;
 
-  // Control: without delete, the cached Program-type SourceProvider is reused
-  // across files for both require() and import-of-CJS, so b and c see stale v1.
-  {
-    using dir = tempDir("isolate-spcache-cjs-ctrl", {
-      "shared.cjs": sharedV1,
-      "a.test.cjs": aBody(false),
-      "b.test.cjs": bBody("v1"),
-      "c.test.ts": cBody("v1"),
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", "./a.test.cjs", "./b.test.cjs", "./c.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("3 pass");
-    expect(stderr).toContain("0 fail");
-    expect(exitCode).toBe(0);
-  }
-
-  // With delete: b and c re-transpile and see v2.
-  {
-    using dir = tempDir("isolate-spcache-cjs", {
-      "shared.cjs": sharedV1,
-      "a.test.cjs": aBody(true),
-      "b.test.cjs": bBody("v2"),
-      "c.test.ts": cBody("v2"),
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", "./a.test.cjs", "./b.test.cjs", "./c.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("3 pass");
-    expect(stderr).toContain("0 fail");
-    expect(exitCode).toBe(0);
-  }
+  // Control and treatment are independent — run both subprocesses in parallel.
+  await Promise.all([
+    // Control: without delete, the cached Program-type SourceProvider is reused
+    // across files for both require() and import-of-CJS, so b and c see stale v1.
+    (async () => {
+      using dir = tempDir("isolate-spcache-cjs-ctrl", {
+        "shared.cjs": sharedV1,
+        "a.test.cjs": aBody(false),
+        "b.test.cjs": bBody("v1"),
+        "c.test.ts": cBody("v1"),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", "./a.test.cjs", "./b.test.cjs", "./c.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("3 pass");
+      expect(stderr).toContain("0 fail");
+      expect(exitCode).toBe(0);
+    })(),
+    // With delete: b and c re-transpile and see v2.
+    (async () => {
+      using dir = tempDir("isolate-spcache-cjs", {
+        "shared.cjs": sharedV1,
+        "a.test.cjs": aBody(true),
+        "b.test.cjs": bBody("v2"),
+        "c.test.ts": cBody("v2"),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", "./a.test.cjs", "./b.test.cjs", "./c.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("3 pass");
+      expect(stderr).toContain("0 fail");
+      expect(exitCode).toBe(0);
+    })(),
+  ]);
 });
 
-test("--isolate: SourceProvider cache covers node_modules .mjs and type:commonjs packages", async () => {
+test.concurrent("--isolate: SourceProvider cache covers node_modules .mjs and type:commonjs packages", async () => {
   // Regression: insert was gated on tag == JavaScript || PackageJSONTypeModule,
   // so .mjs files from `"type":"module"` packages and .ts from `"type":"commonjs"`
   // packages (PackageJSONTypeCommonJS / ESM tags) bypassed the cache and were
@@ -517,7 +522,7 @@ test("--isolate: SourceProvider cache covers node_modules .mjs and type:commonjs
   expect(exitCode).toBe(0);
 });
 
-test("--isolate: cached SourceProvider's module_info rebuilds correct exports", async () => {
+test.concurrent("--isolate: cached SourceProvider's module_info rebuilds correct exports", async () => {
   // A wide module so the printer-generated module_info has thousands of
   // export entries. Under --isolate, file b hits the SourceProvider cache and
   // rebuilds JSModuleRecord from the cached module_info (Bun__analyzeTranspiledModule)
@@ -560,16 +565,18 @@ test("--isolate: cached SourceProvider's module_info rebuilds correct exports", 
   expect(exitCode).toBe(0);
 });
 
-test("--isolate: cached module_info handles `import * as ns; export { ns }` as a Namespace export", async () => {
-  // The zod pattern: re-exporting a namespace import binding. Bun's module_info
-  // must record this as a [Namespace] export entry (not [Local]) so the cached
-  // analyze result matches JSC's ModuleAnalyzer. The debug build's
-  // fallbackParse diff would print "BEGIN analyzeTranspiledModule" + a DIFF
-  // and assert if they disagree.
-  using dir = tempDir("isolate-ns-reexport", {
-    "external.ts": `export const a = 1;\nexport const b = 2;\n`,
-    "re.ts": `import * as ns from "./external";\nexport { ns };\nexport default ns;\nexport * from "./external";\n`,
-    "t1.test.ts": `import {test,expect} from "bun:test";
+test.concurrent(
+  "--isolate: cached module_info handles `import * as ns; export { ns }` as a Namespace export",
+  async () => {
+    // The zod pattern: re-exporting a namespace import binding. Bun's module_info
+    // must record this as a [Namespace] export entry (not [Local]) so the cached
+    // analyze result matches JSC's ModuleAnalyzer. The debug build's
+    // fallbackParse diff would print "BEGIN analyzeTranspiledModule" + a DIFF
+    // and assert if they disagree.
+    using dir = tempDir("isolate-ns-reexport", {
+      "external.ts": `export const a = 1;\nexport const b = 2;\n`,
+      "re.ts": `import * as ns from "./external";\nexport { ns };\nexport default ns;\nexport * from "./external";\n`,
+      "t1.test.ts": `import {test,expect} from "bun:test";
 import { ns } from "./re";
 import def, * as all from "./re";
 test("t1", () => {
@@ -581,7 +588,7 @@ test("t1", () => {
   expect(Object.keys(ns).sort()).toEqual(["a","b"]);
 });
 `,
-    "t2.test.ts": `import {test,expect} from "bun:test";
+      "t2.test.ts": `import {test,expect} from "bun:test";
 import { ns } from "./re";
 test("t2", () => {
   // Isolation sentinel: system bun ignores --isolate, so t2 would see t1's
@@ -591,24 +598,25 @@ test("t2", () => {
   expect(ns.b).toBe(2);
 });
 `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--isolate", "./t1.test.ts", "./t2.test.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("BEGIN analyzeTranspiledModule");
-  expect(stderr).not.toContain("DIFF:");
-  expect(stderr).toContain("2 pass");
-  expect(stderr).toContain("0 fail");
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./t1.test.ts", "./t2.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("BEGIN analyzeTranspiledModule");
+    expect(stderr).not.toContain("DIFF:");
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  },
+);
 
-test("--isolate: leaked AbortSignal.timeout does not fire in next file", async () => {
+test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next file", async () => {
   using dir = tempDir("isolate-abort-timeout", {
     "a-leak.test.ts": `
       import { test, expect } from "bun:test";

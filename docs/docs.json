@@ -44,7 +44,7 @@
     ]
   },
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "mcp", "cursor", "vscode"]
+    "options": ["copy", "view", "claude", "mcp", "vscode"]
   },
   "styling": {
     "codeblocks": {
@@ -215,6 +215,7 @@
               "/pm/cli/patch",
               "/pm/filter",
               "/pm/global-cache",
+              "/pm/global-store",
               "/pm/isolated-installs",
               "/pm/lockfile",
               "/pm/lifecycle",

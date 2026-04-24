@@ -2472,6 +2472,9 @@ pub const uv_process_options_t = extern struct {
     stdio: [*]uv_stdio_container_t,
     uid: uv_uid_t,
     gid: uv_gid_t,
+    /// Windows only: HPCON from CreatePseudoConsole. When non-null, the child
+    /// is attached to the pseudoconsole and stdio[] is not inherited.
+    pseudoconsole: ?*anyopaque = null,
 };
 pub const UV_PROCESS_SETUID: c_int = 1;
 pub const UV_PROCESS_SETGID: c_int = 2;
@@ -2841,7 +2844,11 @@ pub fn translateUVErrorToE(code_in: anytype) bun.sys.E {
         UV_ECHARSET => bun.sys.E.CHARSET,
         UV_EOF => bun.sys.E.EOF,
         UV_UNKNOWN => bun.sys.E.UNKNOWN,
-        else => @enumFromInt(-code),
+        // libuv can return codes not explicitly mapped above (e.g. Windows-specific
+        // codes in the -4000s). `bun.sys.E` is exhaustive, so a strict @enumFromInt
+        // on an unmapped value panics in safe builds. Fall back to UNKNOWN instead.
+        // Wrapping negation so minInt(c_int) maps to UNKNOWN instead of overflowing.
+        else => std.meta.intToEnum(bun.sys.E, -%code) catch bun.sys.E.UNKNOWN,
     };
 }
 

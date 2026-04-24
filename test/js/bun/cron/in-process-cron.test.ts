@@ -231,26 +231,73 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
         });
       `,
     });
+    // Wait for "close" before forcing GC so main-VM destruct-on-exit (ASAN
+    // CI sets BUN_DESTRUCT_VM_ON_EXIT=1) does not race the worker thread's
+    // own teardown — terminate() returns before the worker finishes.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
         const w = new Worker("./worker.ts");
-        w.onmessage = () => {
-          w.terminate();
+        w.onmessage = () => w.terminate();
+        w.addEventListener("close", () => {
           Bun.gc(true);
           console.log("ok");
-          process.exit(0);
-        };
+        });
       `,
       ],
       env: bunEnv,
       cwd: String(dir),
       stderr: "pipe",
     });
-    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error(stderr);
     expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  }, 130_000);
+
+  test("worker terminate mid-callback does not report TerminationException as uncaught", async () => {
+    // The callback busy-spins after postMessage so terminate() interrupts
+    // cb.call() with a TerminationException while it's still on the JS stack.
+    // When the VMEntryScope unwinds, JSC clears hasTerminationRequest but
+    // leaves the exception pending; cron's catch block must not hand that to
+    // uncaughtException(), or the lazy process-object init asserts in
+    // VMTraps::deferTerminationSlow. Use several workers so the timing lines
+    // up at least once per minute-boundary.
+    using dir = tempDir("cron-worker-term", {
+      "worker.ts": `
+        Bun.cron("* * * * *", () => {
+          self.postMessage("fired");
+          while (true) { for (let i = 0; i < 1e6; i++); }
+        });
+      `,
+      "main.ts": `
+        const N = 20;
+        let closed = 0, errors = 0;
+        for (let i = 0; i < N; i++) {
+          const w = new Worker("./worker.ts");
+          w.addEventListener("message", () => w.terminate());
+          // Any worker 'error' here means cron routed the TerminationException
+          // through uncaughtException → WebWorker__dispatchError — the
+          // regression this test guards against, independent of whether
+          // VMTraps asserts are compiled in.
+          w.addEventListener("error", () => errors++);
+          w.addEventListener("close", () => {
+            if (++closed === N) console.log("errors=" + errors);
+          });
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error(stderr);
+    expect(stdout.trim()).toBe("errors=0");
     expect(exitCode).toBe(0);
   }, 130_000);
 

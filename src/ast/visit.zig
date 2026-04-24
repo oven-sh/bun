@@ -1043,6 +1043,12 @@ pub fn Visit(
                         switch (stmt.data) {
                             .s_empty, .s_comment, .s_directive, .s_debugger, .s_type_script => continue,
                             .s_local => |local| {
+                                // "using" / "await using" declarations have disposal
+                                // side-effects on scope exit. Their refs can end up in
+                                // `const_values` via the macro path in `visitDecl`
+                                // (`could_be_macro`), so skip them here to avoid
+                                // silently dropping the declaration.
+                                if (local.kind.isUsing()) continue;
                                 if (!local.is_export and !local.was_commonjs_export) {
                                     var decls: []Decl = local.decls.slice();
                                     var end: usize = 0;
@@ -1131,7 +1137,10 @@ pub fn Visit(
                         switch (prev_statement.data) {
                             .s_local => {
                                 var local = prev_statement.data.s_local;
-                                if (local.decls.len == 0 or local.kind == .k_var or local.is_export) {
+                                // "using" / "await using" declarations have disposal
+                                // side-effects on scope exit, so they must not be
+                                // removed by inlining their initializer into the use.
+                                if (local.decls.len == 0 or local.kind == .k_var or local.kind.isUsing() or local.is_export) {
                                     break;
                                 }
 

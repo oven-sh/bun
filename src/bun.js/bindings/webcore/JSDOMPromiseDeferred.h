@@ -41,7 +41,7 @@ enum class RejectAsHandled : uint8_t { No,
 #define DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, globalObject)           \
     do {                                                                               \
         if (scope.exception()) [[unlikely]] {                                          \
-            handleUncaughtException(scope, *jsCast<JSDOMGlobalObject*>(globalObject)); \
+            handleUncaughtException(scope, *uncheckedDowncast<JSDOMGlobalObject>(globalObject)); \
             return;                                                                    \
         }                                                                              \
     } while (false)
@@ -354,7 +354,7 @@ inline JSC::JSValue callPromiseFunction(JSC::JSGlobalObject& lexicalGlobalObject
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    auto& globalObject = *JSC::jsSecureCast<JSDOMGlobalObject*>(&lexicalGlobalObject);
+    auto& globalObject = *downcast<JSDOMGlobalObject>(&lexicalGlobalObject);
     auto* promise = JSC::JSPromise::create(vm, globalObject.promiseStructure());
     ASSERT(promise);
 
@@ -373,7 +373,7 @@ inline JSC::JSValue callPromiseFunction(JSC::JSGlobalObject& lexicalGlobalObject
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    auto& globalObject = *JSC::jsSecureCast<JSDOMGlobalObject*>(&lexicalGlobalObject);
+    auto& globalObject = *downcast<JSDOMGlobalObject>(&lexicalGlobalObject);
     auto* promise = JSC::JSPromise::create(vm, globalObject.promiseStructure());
     ASSERT(promise);
 

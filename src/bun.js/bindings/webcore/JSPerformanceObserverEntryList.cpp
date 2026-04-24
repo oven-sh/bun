@@ -153,7 +153,7 @@ JSObject* JSPerformanceObserverEntryList::prototype(VM& vm, JSDOMGlobalObject& g
 
 JSValue JSPerformanceObserverEntryList::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSPerformanceObserverEntryListDOMConstructor, DOMConstructorID::PerformanceObserverEntryList>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSPerformanceObserverEntryListDOMConstructor, DOMConstructorID::PerformanceObserverEntryList>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSPerformanceObserverEntryList::destroy(JSC::JSCell* cell)
@@ -166,7 +166,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverEntryListConstructor, (JSGlobalObj
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSPerformanceObserverEntryListPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSPerformanceObserverEntryListPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSPerformanceObserverEntryList::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -242,7 +242,7 @@ JSC::GCClient::IsoSubspace* JSPerformanceObserverEntryList::subspaceForImpl(JSC:
 
 void JSPerformanceObserverEntryList::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSPerformanceObserverEntryList*>(cell);
+    auto* thisObject = uncheckedDowncast<JSPerformanceObserverEntryList>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -306,7 +306,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 PerformanceObserverEntryList* JSPerformanceObserverEntryList::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSPerformanceObserverEntryList*>(value))
+    if (auto* wrapper = dynamicDowncast<JSPerformanceObserverEntryList>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

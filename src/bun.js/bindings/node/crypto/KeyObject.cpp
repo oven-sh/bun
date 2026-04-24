@@ -364,7 +364,7 @@ JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& sc
 
     ASSERT(type() != CryptoKeyType::Secret);
 
-    if (JSObject* options = jsDynamicCast<JSObject*>(optionsValue)) {
+    if (JSObject* options = dynamicDowncast<JSObject>(optionsValue)) {
         JSValue formatValue = options->get(globalObject, Identifier::fromString(vm, "format"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -426,7 +426,7 @@ JSValue KeyObject::exportSecret(JSGlobalObject* lexicalGlobalObject, ThrowScope&
     if (!optionsValue.isUndefined()) {
         V::validateObject(scope, lexicalGlobalObject, optionsValue, "options"_s);
         RETURN_IF_EXCEPTION(scope, {});
-        JSObject* options = jsDynamicCast<JSObject*>(optionsValue);
+        JSObject* options = dynamicDowncast<JSObject>(optionsValue);
 
         JSValue formatValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "format"_s));
         RETURN_IF_EXCEPTION(scope, {});
@@ -734,7 +734,7 @@ JSArrayBufferView* decodeJwkString(JSGlobalObject* globalObject, ThrowScope& sco
 {
     JSValue decoded = JSValue::decode(constructFromEncoding(globalObject, strView, BufferEncodingType::base64));
     RETURN_IF_EXCEPTION(scope, {});
-    auto* decodedBuf = jsDynamicCast<JSArrayBufferView*>(decoded);
+    auto* decodedBuf = dynamicDowncast<JSArrayBufferView>(decoded);
     if (!decodedBuf) {
         ERR::INVALID_ARG_TYPE(scope, globalObject, keyName, "string"_s, decoded);
         return {};
@@ -1205,14 +1205,14 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         }
     };
 
-    if (JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(keyValue)) {
+    if (JSKeyObject* keyObject = dynamicDowncast<JSKeyObject>(keyValue)) {
         auto& handle = keyObject->handle();
         checkKeyObject(handle, keyValue);
         RETURN_IF_EXCEPTION(scope, {});
         return { .keyData = handle.data() };
     }
 
-    if (JSCryptoKey* cryptoKey = jsDynamicCast<JSCryptoKey*>(keyValue)) {
+    if (JSCryptoKey* cryptoKey = dynamicDowncast<JSCryptoKey>(keyValue)) {
         auto& key = cryptoKey->wrapped();
         checkCryptoKey(key, keyValue);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1237,7 +1237,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             JSValue decoded = JSValue::decode(constructFromEncoding(globalObject, keyView, BufferEncodingType::utf8));
             RETURN_IF_EXCEPTION(scope, {});
 
-            auto* decodedBuf = jsDynamicCast<JSArrayBufferView*>(decoded);
+            auto* decodedBuf = dynamicDowncast<JSArrayBufferView>(decoded);
             if (!decodedBuf) {
                 ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, "string"_s, decoded);
                 return {};
@@ -1249,14 +1249,14 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             };
         }
 
-        if (auto* view = jsDynamicCast<JSArrayBufferView*>(keyValue)) {
+        if (auto* view = dynamicDowncast<JSArrayBufferView>(keyValue)) {
             return {
                 .keyDataView = { view, view->span() },
                 .formatType = EVPKeyPointer::PKFormatType::PEM,
             };
         }
 
-        if (auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(keyValue)) {
+        if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(keyValue)) {
             auto* buffer = arrayBuffer->impl();
             return {
                 .keyDataView = { arrayBuffer, buffer->span() },
@@ -1265,7 +1265,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         }
     }
 
-    if (JSObject* keyObj = jsDynamicCast<JSObject*>(keyValue)) {
+    if (JSObject* keyObj = dynamicDowncast<JSObject>(keyValue)) {
         JSValue dataValue = keyObj->get(globalObject, Identifier::fromString(vm, "key"_s));
         RETURN_IF_EXCEPTION(scope, {});
         JSValue encodingValue = keyObj->get(globalObject, Identifier::fromString(vm, "encoding"_s));
@@ -1273,14 +1273,14 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         JSValue formatValue = keyObj->get(globalObject, Identifier::fromString(vm, "format"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(dataValue)) {
+        if (JSKeyObject* keyObject = dynamicDowncast<JSKeyObject>(dataValue)) {
             auto& handle = keyObject->handle();
             checkKeyObject(handle, dataValue);
             RETURN_IF_EXCEPTION(scope, {});
             return { .keyData = handle.data() };
         }
 
-        if (JSCryptoKey* cryptoKey = jsDynamicCast<JSCryptoKey*>(dataValue)) {
+        if (JSCryptoKey* cryptoKey = dynamicDowncast<JSCryptoKey>(dataValue)) {
             auto& key = cryptoKey->wrapped();
             checkCryptoKey(key, dataValue);
             RETURN_IF_EXCEPTION(scope, {});
@@ -1333,7 +1333,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
 
             JSValue decoded = JSValue::decode(constructFromEncoding(globalObject, dataView, encoding));
             RETURN_IF_EXCEPTION(scope, {});
-            if (auto* decodedView = jsDynamicCast<JSArrayBufferView*>(decoded)) {
+            if (auto* decodedView = dynamicDowncast<JSArrayBufferView>(decoded)) {
                 EVPKeyPointer::PrivateKeyEncodingConfig config;
                 parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, WTF::nullStringView(), config);
                 RETURN_IF_EXCEPTION(scope, {});
@@ -1348,7 +1348,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             }
         }
 
-        if (auto* view = jsDynamicCast<JSArrayBufferView*>(dataValue)) {
+        if (auto* view = dynamicDowncast<JSArrayBufferView>(dataValue)) {
             auto buffer = view->span();
 
             EVPKeyPointer::PrivateKeyEncodingConfig config;
@@ -1364,7 +1364,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             };
         }
 
-        if (auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(dataValue)) {
+        if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(dataValue)) {
             auto* buffer = arrayBuffer->impl();
             auto data = buffer->span();
 
@@ -1411,14 +1411,14 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::preparePublicOrPrivateKey(JSGlo
 KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyValue, JSValue encodingValue, bool bufferOnly)
 {
     if (!bufferOnly) {
-        if (JSKeyObject* keyObject = jsDynamicCast<JSKeyObject*>(keyValue)) {
+        if (JSKeyObject* keyObject = dynamicDowncast<JSKeyObject>(keyValue)) {
             auto& handle = keyObject->handle();
             if (handle.type() != CryptoKeyType::Secret) {
                 ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, handle.type(), "secret"_s);
                 return {};
             }
             return handle;
-        } else if (JSCryptoKey* cryptoKey = jsDynamicCast<JSCryptoKey*>(keyValue)) {
+        } else if (JSCryptoKey* cryptoKey = dynamicDowncast<JSCryptoKey>(keyValue)) {
             auto& key = cryptoKey->wrapped();
             if (key.type() != CryptoKeyType::Secret) {
                 ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, key.type(), "secret"_s);
@@ -1452,7 +1452,7 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
             return {};
         }
 
-        auto* view = jsDynamicCast<JSArrayBufferView*>(buffer);
+        auto* view = dynamicDowncast<JSArrayBufferView>(buffer);
         if (!view) {
             ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, keyValue, "must be a valid encoding"_s);
             return {};
@@ -1464,14 +1464,14 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
     }
 
     // TODO(dylan-conway): avoid copying by keeping the buffer alive
-    if (auto* view = jsDynamicCast<JSArrayBufferView*>(keyValue)) {
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(keyValue)) {
         Vector<uint8_t> copy;
         copy.append(view->span());
         return create(WTF::move(copy));
     }
 
     // TODO(dylan-conway): avoid copying by keeping the buffer alive
-    if (auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(keyValue)) {
+    if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(keyValue)) {
         auto* impl = arrayBuffer->impl();
         Vector<uint8_t> copy;
         copy.append(impl->span());

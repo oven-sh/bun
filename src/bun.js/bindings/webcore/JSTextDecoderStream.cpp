@@ -144,7 +144,7 @@ JSObject* JSTextDecoderStream::prototype(VM& vm, JSDOMGlobalObject& globalObject
 
 JSValue JSTextDecoderStream::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSTextDecoderStreamDOMConstructor, DOMConstructorID::TextDecoderStream>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSTextDecoderStreamDOMConstructor, DOMConstructorID::TextDecoderStream>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSTextDecoderStream::destroy(JSC::JSCell* cell)
@@ -157,7 +157,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamConstructor, (JSGlobalObject * lexic
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSTextDecoderStreamPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSTextDecoderStreamPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSTextDecoderStream::getConstructor(vm, prototype->globalObject()));

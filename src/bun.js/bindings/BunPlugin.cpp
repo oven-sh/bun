@@ -66,7 +66,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
     RETURN_IF_EXCEPTION(scope, {});
     if (filterValue) {
         if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
-            filter = jsCast<JSC::RegExpObject*>(filterValue);
+            filter = uncheckedDowncast<JSC::RegExpObject>(filterValue);
     }
 
     if (!filter) {
@@ -150,7 +150,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     }
     auto* virtualModules = global->onLoadPlugins.virtualModules;
 
-    virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, jsCast<JSC::JSObject*>(functionValue) });
+    virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, uncheckedDowncast<JSC::JSObject>(functionValue) });
 
     auto* requireMap = global->requireMap();
     RETURN_IF_EXCEPTION(scope, {});
@@ -184,7 +184,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
     if (filterValue) {
         RETURN_IF_EXCEPTION(scope, {});
         if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
-            filter = jsCast<JSC::RegExpObject*>(filterValue);
+            filter = uncheckedDowncast<JSC::RegExpObject>(filterValue);
     }
 
     if (!filter) {
@@ -216,7 +216,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
     }
 
     RETURN_IF_EXCEPTION(scope, {});
-    plugin.append(vm, filter->regExp(), jsCast<JSObject*>(func), namespaceString);
+    plugin.append(vm, filter->regExp(), uncheckedDowncast<JSObject>(func), namespaceString);
     callback(ctx, globalObject);
 
     return JSValue::encode(callframe->thisValue());
@@ -346,13 +346,13 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
     JSC::MarkedArgumentBuffer args;
     args.append(builderObject);
 
-    JSObject* function = jsCast<JSObject*>(setupFunctionValue);
+    JSObject* function = uncheckedDowncast<JSObject>(setupFunctionValue);
     JSC::CallData callData = JSC::getCallData(function);
     JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), args);
 
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    if (auto* promise = JSC::jsDynamicCast<JSC::JSPromise*>(result)) {
+    if (auto* promise = dynamicDowncast<JSC::JSPromise>(result)) {
         RELEASE_AND_RETURN(throwScope, JSValue::encode(promise));
     }
 
@@ -600,7 +600,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         RETURN_IF_EXCEPTION(scope, {});
 
         if (result && result.isObject()) {
-            while (JSC::JSPromise* promise = jsDynamicCast<JSC::JSPromise*>(result)) {
+            while (JSC::JSPromise* promise = dynamicDowncast<JSC::JSPromise>(result)) {
                 switch (promise->status()) {
                 case JSC::JSPromise::Status::Rejected: {
                     result = promise->result();
@@ -637,7 +637,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
             // namespace to patch — drop the stale entry so the mock takes over
             // on the next import.
             bool linked = true;
-            if (auto* cyclic = jsDynamicCast<JSC::CyclicModuleRecord*>(mod))
+            if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(mod))
                 linked = cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked;
             if (linked) {
                 {
@@ -685,7 +685,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     RETURN_IF_EXCEPTION(scope, {});
     if (entryValue) {
         removeFromCJS = true;
-        if (auto* moduleObject = entryValue ? jsDynamicCast<Bun::JSCommonJSModule*>(entryValue) : nullptr) {
+        if (auto* moduleObject = entryValue ? dynamicDowncast<Bun::JSCommonJSModule>(entryValue) : nullptr) {
             JSValue exportsValue = getJSValue();
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -712,7 +712,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 template<typename Visitor>
 void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSModuleMock* mock = jsCast<JSModuleMock*>(cell);
+    JSModuleMock* mock = uncheckedDowncast<JSModuleMock>(cell);
     ASSERT_GC_OBJECT_INHERITS(mock, info());
     Base::visitChildren(mock, visitor);
 
@@ -751,7 +751,7 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
     auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
+    if (auto* promise = dynamicDowncast<JSPromise>(result)) {
         switch (promise->status()) {
         case JSPromise::Status::Rejected:
         case JSPromise::Status::Pending: {
@@ -841,7 +841,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
             continue;
         }
 
-        if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
+        if (auto* promise = dynamicDowncast<JSPromise>(result)) {
             switch (promise->status()) {
             case JSPromise::Status::Pending: {
                 JSC::throwTypeError(globalObject, scope, "onResolve() doesn't support pending promises yet"_s);
@@ -913,7 +913,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 
         JSValue result;
 
-        if (Zig::JSModuleMock* moduleMock = jsDynamicCast<Zig::JSModuleMock*>(function)) {
+        if (Zig::JSModuleMock* moduleMock = dynamicDowncast<Zig::JSModuleMock>(function)) {
             wasModuleMock = true;
             // module mock
             result = moduleMock->executeOnce(globalObject);
@@ -928,7 +928,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 
         RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
 
-        if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
+        if (auto* promise = dynamicDowncast<JSPromise>(result)) {
             switch (promise->status()) {
             case JSPromise::Status::Rejected:
             case JSPromise::Status::Pending: {

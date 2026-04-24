@@ -23,7 +23,7 @@ AsyncContextFrame* AsyncContextFrame::create(JSGlobalObject* global, JSValue cal
 {
     auto& vm = global->vm();
     ASSERT(callback.isCallable());
-    auto* structure = jsCast<Zig::GlobalObject*>(global)->AsyncContextFrameStructure();
+    auto* structure = uncheckedDowncast<Zig::GlobalObject>(global)->AsyncContextFrameStructure();
     AsyncContextFrame* asyncContextData = new (NotNull, allocateCell<AsyncContextFrame>(vm)) AsyncContextFrame(vm, structure, callback, context);
     asyncContextData->finishCreation(vm);
     return asyncContextData;
@@ -44,7 +44,7 @@ JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject
     }
 
     // If already wrapped in an AsyncContextFrame, return as-is to avoid double-wrapping.
-    if (jsDynamicCast<AsyncContextFrame*>(callback)) {
+    if (dynamicDowncast<AsyncContextFrame>(callback)) {
         return callback;
     }
 
@@ -52,7 +52,7 @@ JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject
     auto& vm = JSC::getVM(globalObject);
     return AsyncContextFrame::create(
         vm,
-        jsCast<Zig::GlobalObject*>(globalObject)->AsyncContextFrameStructure(),
+        uncheckedDowncast<Zig::GlobalObject>(globalObject)->AsyncContextFrameStructure(),
         callback,
         context);
 }
@@ -60,7 +60,7 @@ JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject
 template<typename Visitor>
 void AsyncContextFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<AsyncContextFrame*>(cell);
+    auto* thisObject = uncheckedDowncast<AsyncContextFrame>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->callback);
@@ -102,8 +102,8 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     auto& vm = global->vm();                                                 \
     JSValue restoreAsyncContext;                                             \
     InternalFieldTuple* asyncContextData = nullptr;                          \
-    if (auto* wrapper = jsDynamicCast<AsyncContextFrame*>(functionObject)) { \
-        functionObject = jsCast<JSC::JSObject*>(wrapper->callback.get());    \
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(functionObject)) { \
+        functionObject = uncheckedDowncast<JSC::JSObject>(wrapper->callback.get());    \
         asyncContextData = global->m_asyncContextData.get();                 \
         restoreAsyncContext = asyncContextData->getInternalField(0);         \
         asyncContextData->putInternalField(vm, 0, wrapper->context.get());   \

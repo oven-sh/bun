@@ -147,7 +147,7 @@ static inline JSC::EncodedJSValue jsWritableStreamSinkPrototypeFunction_writeBod
     auto& impl = castedThis->wrapped();
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-    auto* context = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)->scriptExecutionContext();
+    auto* context = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext();
     if (!context) [[unlikely]]
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
@@ -208,7 +208,7 @@ JSC::GCClient::IsoSubspace* JSWritableStreamSink::subspaceForImpl(JSC::VM& vm)
 
 void JSWritableStreamSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSWritableStreamSink*>(cell);
+    auto* thisObject = uncheckedDowncast<JSWritableStreamSink>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -242,7 +242,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 WritableStreamSink* JSWritableStreamSink::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSWritableStreamSink*>(value))
+    if (auto* wrapper = dynamicDowncast<JSWritableStreamSink>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

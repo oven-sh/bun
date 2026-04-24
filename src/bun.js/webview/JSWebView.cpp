@@ -38,7 +38,7 @@ using namespace WebViewProto;
 class JSWebViewWeakOwner final : public JSC::WeakHandleOwner {
     bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor&, ASCIILiteral* reason) final
     {
-        auto* view = jsCast<JSWebView*>(handle.slot()->asCell());
+        auto* view = uncheckedDowncast<JSWebView>(handle.slot()->asCell());
         if (view->m_pendingActivityCount.load(std::memory_order_acquire) == 0)
             return false;
         if (reason) [[unlikely]]
@@ -144,7 +144,7 @@ Structure* JSWebView::createStructure(VM& vm, JSGlobalObject* globalObject, JSVa
 template<typename Visitor>
 void JSWebView::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSWebView* thisObject = jsCast<JSWebView*>(cell);
+    JSWebView* thisObject = uncheckedDowncast<JSWebView>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     // Base::visitChildren → JSEventTarget::visitAdditionalChildren →
     // wrapped().visitJSEventListeners(visitor) — marks all registered

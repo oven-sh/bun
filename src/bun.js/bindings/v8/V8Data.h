@@ -27,7 +27,7 @@ public:
     T* localToObjectPointer()
     {
         static_assert(std::is_base_of<JSC::JSCell, T>::value, "localToObjectPointer can only be used when T is a JSCell subclass");
-        return JSC::jsDynamicCast<T*>(localToCell());
+        return dynamicDowncast<T>(localToCell());
     }
 
     // Get this as a JSValue when this is a v8::Local containing a boolean, null, or undefined
@@ -75,7 +75,7 @@ public:
     const T* localToObjectPointer() const
     {
         static_assert(std::is_base_of<JSC::JSCell, T>::value, "localToObjectPointer can only be used when T is a JSCell subclass");
-        return JSC::jsDynamicCast<const T*>(localToCell());
+        return dynamicDowncast<const T>(localToCell());
     }
 
 private:

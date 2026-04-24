@@ -326,7 +326,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         if (!fromValue.isString()) {
             if (
                 // fast path: it's a real CommonJS module object.
-                auto* cjs = jsDynamicCast<Bun::JSCommonJSModule*>(fromValue)) {
+                auto* cjs = dynamicDowncast<Bun::JSCommonJSModule>(fromValue)) {
                 fromValue = cjs->filename();
             } else if (fromValue.isObject()) {
                 // slow path: userland code did something weird. Try filename first, then id
@@ -480,7 +480,7 @@ PathResolveModule getParent(VM& vm, JSGlobalObject* global, JSValue maybe_parent
     JSValue paths = parent->get(global, builtinNames.pathsPublicName());
     RETURN_IF_EXCEPTION(scope, value);
     if (paths.isCell()) {
-        value.paths = jsDynamicCast<JSArray*>(paths);
+        value.paths = dynamicDowncast<JSArray>(paths);
     }
 
     JSValue filename = parent->get(global, builtinNames.filenamePublicName());
@@ -582,7 +582,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
     RETURN_IF_EXCEPTION(scope, {});
     BunString request_bun_str = Bun::toString(request);
 
-    JSArray* paths = paths_value.isCell() ? jsDynamicCast<JSArray*>(paths_value) : nullptr;
+    JSArray* paths = paths_value.isCell() ? dynamicDowncast<JSArray>(paths_value) : nullptr;
 
     return NodeModuleModule__findPath(globalObject, request_bun_str, paths);
 }
@@ -622,13 +622,13 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
 
 static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
 {
-    return jsCast<Zig::GlobalObject*>(moduleObject->globalObject())
+    return uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())
         ->lazyRequireCacheObject();
 }
 
 static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)
 {
-    return jsCast<Zig::GlobalObject*>(moduleObject->globalObject())
+    return uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())
         ->lazyRequireExtensionsObject();
 }
 
@@ -647,7 +647,7 @@ static JSValue getPathCacheObject(VM& vm, JSObject* moduleObject)
 static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* zigGlobalObject = globalObject;
 
     // Return the actual SourceMap constructor from code generation
     return zigGlobalObject->JSSourceMapConstructor();
@@ -798,7 +798,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     auto arg1 = callFrame->argument(0);
     auto name = makeAtomString(arg1.toWTFString(globalObject));
 
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, name, nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
     Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), promise);
 
@@ -820,7 +820,7 @@ JSC_DEFINE_CUSTOM_GETTER(moduleRunMain,
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMain(void* bunVM, bool isOriginal);
 extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSValue argv1)
 {
-    auto overrideHandler = jsCast<JSObject*>(global->m_moduleRunMainFunction.get(global));
+    auto overrideHandler = uncheckedDowncast<JSObject>(global->m_moduleRunMainFunction.get(global));
     MarkedArgumentBuffer args;
     args.append(argv1);
     return JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), global, args));

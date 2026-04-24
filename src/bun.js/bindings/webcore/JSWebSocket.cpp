@@ -150,7 +150,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket1(JSGlobalObject* lexicalG
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSWebSocketDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSWebSocketDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
     if (!context) [[unlikely]]
@@ -177,7 +177,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket2(JSGlobalObject* lexicalG
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSWebSocketDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSWebSocketDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
     if (!context) [[unlikely]]
@@ -204,7 +204,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto* context = globalObject->scriptExecutionContext();
     if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
@@ -290,7 +290,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                         RETURN_IF_EXCEPTION(throwScope, {});
                         if (proxyHeadersValue && !proxyHeadersValue.isUndefinedOrNull()) {
                             // Check if it's already a Headers instance (like fetch does)
-                            if (auto* jsHeaders = jsDynamicCast<JSFetchHeaders*>(proxyHeadersValue)) {
+                            if (auto* jsHeaders = dynamicDowncast<JSFetchHeaders>(proxyHeadersValue)) {
                                 // Convert FetchHeaders to the Init variant
                                 auto& headers = jsHeaders->wrapped();
                                 Vector<KeyValuePair<String, String>> pairs;
@@ -436,14 +436,14 @@ JSObject* JSWebSocket::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSWebSocket::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSWebSocketDOMConstructor, DOMConstructorID::WebSocket>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSWebSocketDOMConstructor, DOMConstructorID::WebSocket>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsWebSocketConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSWebSocketPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSWebSocketPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSWebSocket::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -715,7 +715,7 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_sendOverloadDispa
         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSArrayBufferView>())
             RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_send2Body(lexicalGlobalObject, callFrame, castedThis)));
         if (distinguishingArg.isObject()) {
-            if (auto* blob = jsDynamicCast<JSBlob*>(distinguishingArg)) {
+            if (auto* blob = dynamicDowncast<JSBlob>(distinguishingArg)) {
                 RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return castedThis->wrapped().send(blob); })));
             }
         }
@@ -816,7 +816,7 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pingOverloadDispa
         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSArrayBufferView>())
             RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_ping3Body(lexicalGlobalObject, callFrame, castedThis)));
         if (distinguishingArg.isObject()) {
-            if (auto* blob = jsDynamicCast<JSBlob*>(distinguishingArg)) {
+            if (auto* blob = dynamicDowncast<JSBlob>(distinguishingArg)) {
                 RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return castedThis->wrapped().ping(blob); })));
             }
         }
@@ -895,7 +895,7 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pongOverloadDispa
         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSArrayBufferView>())
             RELEASE_AND_RETURN(throwScope, (jsWebSocketPrototypeFunction_pong3Body(lexicalGlobalObject, callFrame, castedThis)));
         if (distinguishingArg.isObject()) {
-            if (auto* blob = jsDynamicCast<JSBlob*>(distinguishingArg)) {
+            if (auto* blob = dynamicDowncast<JSBlob>(distinguishingArg)) {
                 RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return castedThis->wrapped().pong(blob); })));
             }
         }
@@ -936,13 +936,13 @@ JSC::GCClient::IsoSubspace* JSWebSocket::subspaceForImpl(JSC::VM& vm)
 
 size_t JSWebSocket::estimatedSize(JSCell* cell, JSC::VM& vm)
 {
-    auto* thisObject = jsCast<JSWebSocket*>(cell);
+    auto* thisObject = uncheckedDowncast<JSWebSocket>(cell);
     return Base::estimatedSize(cell, vm) + thisObject->wrapped().memoryCost();
 }
 
 void JSWebSocket::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSWebSocket*>(cell);
+    auto* thisObject = uncheckedDowncast<JSWebSocket>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -951,7 +951,7 @@ void JSWebSocket::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 
 bool JSWebSocketOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    auto* jsWebSocket = jsCast<JSWebSocket*>(handle.slot()->asCell());
+    auto* jsWebSocket = uncheckedDowncast<JSWebSocket>(handle.slot()->asCell());
     auto& wrapped = jsWebSocket->wrapped();
     if (wrapped.hasPendingActivity()) {
         if (reason) [[unlikely]]
@@ -1017,7 +1017,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 WebSocket* JSWebSocket::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSWebSocket*>(value))
+    if (auto* wrapper = dynamicDowncast<JSWebSocket>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

@@ -47,7 +47,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    JSCipher* cipher = jsDynamicCast<JSCipher*>(callFrame->thisValue());
+    JSCipher* cipher = dynamicDowncast<JSCipher>(callFrame->thisValue());
     if (!cipher) {
         throwThisTypeError(*lexicalGlobalObject, scope, "Cipher"_s, "update"_s);
         return {};
@@ -135,7 +135,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
 
     MarkPopErrorOnReturn popError;
 
-    JSCipher* cipher = jsDynamicCast<JSCipher*>(callFrame->thisValue());
+    JSCipher* cipher = dynamicDowncast<JSCipher>(callFrame->thisValue());
     if (!cipher) {
         throwThisTypeError(*lexicalGlobalObject, scope, "Cipher"_s, "final"_s);
         return {};
@@ -200,7 +200,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAutoPadding, (JSC::JSGlobalObject * globalOb
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSCipher* cipher = jsDynamicCast<JSCipher*>(callFrame->thisValue());
+    JSCipher* cipher = dynamicDowncast<JSCipher>(callFrame->thisValue());
     if (!cipher) {
         throwThisTypeError(*globalObject, scope, "Cipher"_s, "setAutoPadding"_s);
         return {};
@@ -224,7 +224,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherGetAuthTag, (JSC::JSGlobalObject * lexicalGloba
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSCipher* cipher = jsDynamicCast<JSCipher*>(callFrame->thisValue());
+    JSCipher* cipher = dynamicDowncast<JSCipher>(callFrame->thisValue());
     if (!cipher) {
         throwThisTypeError(*lexicalGlobalObject, scope, "Cipher"_s, "getAuthTag"_s);
         return {};
@@ -253,7 +253,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAuthTag, (JSC::JSGlobalObject * globalObject
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSCipher* cipher = jsDynamicCast<JSCipher*>(callFrame->thisValue());
+    JSCipher* cipher = dynamicDowncast<JSCipher>(callFrame->thisValue());
     if (!cipher) {
         throwThisTypeError(*globalObject, scope, "Cipher"_s, "setAuthTag"_s);
         return {};
@@ -310,7 +310,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAAD, (JSC::JSGlobalObject * globalObject, JS
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSCipher* cipher = jsDynamicCast<JSCipher*>(callFrame->thisValue());
+    JSCipher* cipher = dynamicDowncast<JSCipher>(callFrame->thisValue());
     if (!cipher) {
         throwThisTypeError(*globalObject, scope, "Cipher"_s, "setAAD"_s);
         return {};

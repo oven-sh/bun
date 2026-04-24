@@ -44,7 +44,7 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* gl
 
   RELEASE_ASSERT(fnValue);
 
-  JSC::JSFunction* fn = jsCast<JSC::JSFunction*>(fnValue);
+  JSC::JSFunction* fn = uncheckedDowncast<JSC::JSFunction>(fnValue);
   JSC::CallData callData = JSC::getCallData(fn);
 
   JSC::MarkedArgumentBuffer args;
@@ -55,7 +55,7 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* gl
 }
 
 extern "C" JSC::JSPromise* BakeLoadModuleByKey(GlobalObject* global, JSC::JSString* key) {
-  return JSC::loadAndEvaluateModule(global, key->getString(global), JSC::jsUndefined(), JSC::jsUndefined());
+  return JSC::loadAndEvaluateModule(global, key->getString(global), nullptr, nullptr);
 }
 
 extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunString source) {
@@ -112,7 +112,7 @@ extern "C" JSC::EncodedJSValue BakeGetModuleNamespace(
   JSC::JSGlobalObject* global,
   JSC::JSValue keyValue
 ) {
-  JSC::JSString* key = JSC::jsCast<JSC::JSString*>(keyValue);
+  JSC::JSString* key = uncheckedDowncast<JSC::JSString>(keyValue);
   auto& vm = JSC::getVM(global);
   auto keyIdent = JSC::Identifier::fromString(vm, key->value(global));
   auto* entry = global->moduleLoader()->registryEntry(keyIdent);
@@ -129,7 +129,7 @@ extern "C" JSC::EncodedJSValue BakeGetDefaultExportFromModule(
   JSC::JSValue keyValue
 ) {
   auto& vm = JSC::getVM(global);
-  return JSC::JSValue::encode(jsCast<JSC::JSModuleNamespaceObject*>(JSC::JSValue::decode(BakeGetModuleNamespace(global, keyValue)))->get(global, vm.propertyNames->defaultKeyword));
+  return JSC::JSValue::encode(uncheckedDowncast<JSC::JSModuleNamespaceObject>(JSC::JSValue::decode(BakeGetModuleNamespace(global, keyValue)))->get(global, vm.propertyNames->defaultKeyword));
 }
 
 // There were issues when trying to use JSValue.get from zig

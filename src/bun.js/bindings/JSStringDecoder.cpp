@@ -83,7 +83,7 @@ static ALWAYS_INLINE JSString* encodingToString(const uint8_t* input, size_t len
 static inline JSStringDecoder* jsStringDecoderCast(JSGlobalObject* globalObject, JSValue stringDecoderValue, WTF::ASCIILiteral functionName)
 {
     ASSERT(stringDecoderValue);
-    if (auto cast = jsDynamicCast<JSStringDecoder*>(stringDecoderValue); cast) [[likely]] {
+    if (auto cast = dynamicDowncast<JSStringDecoder>(stringDecoderValue); cast) [[likely]] {
         return cast;
     }
 
@@ -95,7 +95,7 @@ static inline JSStringDecoder* jsStringDecoderCast(JSGlobalObject* globalObject,
         JSValue existingDecoderValue = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().decodePrivateName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (existingDecoderValue) [[likely]] {
-            if (auto cast = jsDynamicCast<JSStringDecoder*>(existingDecoderValue); cast) [[likely]] {
+            if (auto cast = dynamicDowncast<JSStringDecoder>(existingDecoderValue); cast) [[likely]] {
                 return cast;
             }
         }
@@ -411,7 +411,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
     }
 
     auto buffer = callFrame->uncheckedArgument(0);
-    JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
+    JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
     if (!view || view->isDetached()) [[unlikely]] {
         // What node does:
         // StringDecoder.prototype.write = function write(buf) {
@@ -434,7 +434,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::
     }
 
     auto buffer = callFrame->uncheckedArgument(0);
-    JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
+    JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
     if (!view || view->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return {};
@@ -451,7 +451,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
     }
 
     auto buffer = callFrame->uncheckedArgument(0);
-    JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
+    JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
     if (!view || view->isDetached()) [[unlikely]] {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return {};
@@ -579,7 +579,7 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
         }
     }
     JSValue thisValue = callFrame->newTarget();
-    auto* globalObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     JSObject* newTarget = asObject(thisValue);
     auto* constructor = globalObject->JSStringDecoder();
     Structure* structure = globalObject->JSStringDecoderStructure();

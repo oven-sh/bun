@@ -41,7 +41,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_export, (JSGlobalObject * g
     VM& vm = globalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    JSPrivateKeyObject* privateKeyObject = jsDynamicCast<JSPrivateKeyObject*>(callFrame->thisValue());
+    JSPrivateKeyObject* privateKeyObject = dynamicDowncast<JSPrivateKeyObject>(callFrame->thisValue());
     if (!privateKeyObject) {
         throwThisTypeError(*globalObject, scope, "PrivateKeyObject"_s, "export"_s);
         return {};
@@ -57,7 +57,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_asymmetricKeyType, (JSGloba
     VM& vm = globalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    JSPrivateKeyObject* privateKeyObject = jsDynamicCast<JSPrivateKeyObject*>(JSValue::decode(thisValue));
+    JSPrivateKeyObject* privateKeyObject = dynamicDowncast<JSPrivateKeyObject>(JSValue::decode(thisValue));
     if (!privateKeyObject) {
         return JSValue::encode(jsUndefined());
     }
@@ -71,7 +71,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_asymmetricKeyDetails, (JSGl
     VM& vm = globalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    JSPrivateKeyObject* privateKeyObject = jsDynamicCast<JSPrivateKeyObject*>(JSValue::decode(thisValue));
+    JSPrivateKeyObject* privateKeyObject = dynamicDowncast<JSPrivateKeyObject>(JSValue::decode(thisValue));
     if (!privateKeyObject) {
         return JSValue::encode(jsUndefined());
     }
@@ -93,7 +93,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPrivateKeyObjectPrototype_asymmetricKeyDetails, (JSGl
 //     VM& vm = globalObject->vm();
 //     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-//     JSPrivateKeyObject* privateKeyObject = jsDynamicCast<JSPrivateKeyObject*>(callFrame->thisValue());
+//     JSPrivateKeyObject* privateKeyObject = dynamicDowncast<JSPrivateKeyObject>(callFrame->thisValue());
 //     if (!privateKeyObject) {
 //         throwThisTypeError(*globalObject, scope, "PrivateKeyObject"_s, "toCryptoKey"_s);
 //         return {};

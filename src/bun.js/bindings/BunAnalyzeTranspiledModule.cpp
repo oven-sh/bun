@@ -173,7 +173,7 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     // Under --isolate the same SourceProvider is reused across globals via the
     // IsolatedModuleCache, so module_info must remain alive on the provider;
     // ~SourceProvider frees it. Otherwise, free now.
-    if (!Bun::IsolatedModuleCache::canUse(vm, jsCast<Zig::GlobalObject*>(globalObject)->bunVM())) {
+    if (!Bun::IsolatedModuleCache::canUse(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject)->bunVM())) {
         zig__ModuleInfoDeserialized__deinit(moduleInfo);
         provider->m_resolvedSource.module_info = nullptr;
     }

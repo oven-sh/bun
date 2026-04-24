@@ -1447,6 +1447,8 @@ pub inline fn assertStdioResult(result: StdioResult) void {
     }
 }
 
+extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
+
 const std = @import("std");
 const util = @import("./util.zig");
 const Allocator = std.mem.Allocator;
@@ -1465,5 +1467,3 @@ const FileSink = jsc.WebCore.FileSink;
 
 const sh = bun.shell;
 const Yield = bun.shell.Yield;
-
-extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;

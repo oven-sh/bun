@@ -919,10 +919,10 @@ export const linkerFlags: Flag[] = [
       "-Wl,-Bsymbolic-functions",
       "-rdynamic",
       `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
-      `-Wl,--version-script=${c.cwd}/src/linker.lds`,
+      `-Wl,--version-script=${c.cwd}/src/linker-freebsd.lds`,
     ],
     when: c => c.freebsd,
-    desc: "Dynamic symbol list + version script",
+    desc: "Dynamic symbol list + version script (FreeBSD adds environ/__progname)",
   },
 ];
 
@@ -932,6 +932,7 @@ export const linkerFlags: Flag[] = [
  * CMake tracks these via set_target_properties LINK_DEPENDS.
  */
 export function linkDepends(cfg: Config): string[] {
+  if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
   if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
   // linux + freebsd: ELF dynamic-list + version script

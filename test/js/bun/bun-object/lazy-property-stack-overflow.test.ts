@@ -6,7 +6,7 @@ import { bunEnv, bunExe } from "harness";
 // (e.g. RangeError from stack exhaustion), the callback must still return a
 // valid JSValue so that reifyStaticProperty does not pass an empty value to
 // putDirect.
-test.each(["sql", "SQL", "$", "Glob"])("accessing Bun.%s near stack overflow does not crash", async prop => {
+test.concurrent.each(["sql", "SQL", "$", "Glob"])("accessing Bun.%s near stack overflow does not crash", async prop => {
   const src = `
       function F() {
         try { new this.constructor(); } catch {}

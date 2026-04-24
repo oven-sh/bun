@@ -698,7 +698,10 @@ pub const ShellSubprocess = struct {
                     .inherit,
                 },
                 .lazy = false,
-                .PATH = event_loop.env().get("PATH") orelse "",
+                .PATH = if (event_loop.env().get("PATH")) |p|
+                    if (p.len > 0) p else bun.sliceTo(BUN_DEFAULT_PATH_FOR_SPAWN, 0)
+                else
+                    bun.sliceTo(BUN_DEFAULT_PATH_FOR_SPAWN, 0),
                 .detached = false,
                 .cmd_parent = cmd_parent,
                 // .ipc_mode = IPCMode.none,
@@ -1462,3 +1465,5 @@ const FileSink = jsc.WebCore.FileSink;
 
 const sh = bun.shell;
 const Yield = bun.shell.Yield;
+
+extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;

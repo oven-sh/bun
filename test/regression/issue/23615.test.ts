@@ -168,7 +168,9 @@ test("catalog: peer dependency produces same lockfile as equivalent npm range", 
     const text = await file(join(packageDir, "bun.lock")).text();
     // bun.lock uses trailing commas (not strict JSON); just extract the
     // top-level keys from the "packages" section.
-    const section = text.slice(text.indexOf('"packages": {'));
+    const idx = text.indexOf('"packages": {');
+    expect(idx).toBeGreaterThan(-1);
+    const section = text.slice(idx);
     const keys = [...section.matchAll(/^\s{4}"([^"]+)": \[/gm)].map(m => m[1]).sort();
     return keys;
   }

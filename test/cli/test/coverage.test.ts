@@ -57,6 +57,47 @@ export class Y {
   );
 });
 
+// https://github.com/oven-sh/bun/issues/29691
+//
+// `class Foo extends Something() {}` has no user-written constructor, so JSC
+// synthesizes one from `(function (...args) { super(...args); })`. JSC also
+// records that synthetic function in its control-flow profiler indexed by the
+// USER's source ID, even though the offsets it records live in the synthetic
+// source. Coverage then reported the 37-byte range `[1, 38)` straddling the
+// import line and the class declaration line as an uncovered "function" —
+// marking line 1 (the import) as `DA:1,0` even though the module loaded.
+test("derived class with no explicit constructor (issue #29691)", () => {
+  const dir = tempDirWithFiles("cov-29691", {
+    "dep.ts": `export const Base = () => class {};\n`,
+    "subject.ts": `import { Base } from "./dep";
+export class Derived extends Base() {}
+`,
+    "subject.test.ts": `import { expect, test } from "bun:test";
+import { Derived } from "./subject";
+test("loads the class", () => {
+  expect(Derived.name).toBe("Derived");
+});
+`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov"], {
+    cwd: dir,
+    env: bunEnv,
+    stdio: [null, null, "pipe"],
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+
+  const lcov = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
+
+  // subject.ts should not report the import on line 1 as uncovered (DA:1,0),
+  // and should not count the synthetic default constructor as a function.
+  const subjectRecord = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"))!;
+  expect(subjectRecord).toContain("FNF:1");
+  expect(subjectRecord).toContain("FNH:1");
+  expect(subjectRecord).toContain("DA:2,"); // class declaration line was evaluated
+  expect(subjectRecord).not.toContain("DA:1,0"); // import line is not bogusly marked unexecuted
+});
+
 test("coverage excludes node_modules directory", () => {
   const dir = tempDirWithFiles("cov", {
     "node_modules/pi/index.js": `

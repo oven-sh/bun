@@ -860,3 +860,100 @@ describe.concurrent("wildcard exports with extensionless target", () => {
     });
   });
 });
+
+// https://github.com/oven-sh/bun/issues/10001
+// Wildcard `imports`/`exports` that point at a `.js` target should also
+// pick up `.ts`/`.tsx`/`.mts` the same way Bun already does for plain
+// file loads (e.g. `import './foo.js'` finds `./foo.ts`). The rewrite
+// is gated on wildcard patterns only — users writing an explicit
+// `"./foo": "./foo.js"` target still get exactly what they asked for.
+describe.concurrent("wildcard imports/exports with `.js` → `.ts` rewrite", () => {
+  function stripAsanWarning(stderr: string): string {
+    return stderr
+      .split("\n")
+      .filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+  }
+
+  async function runScript(dir: string, entry: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr: stripAsanWarning(stderr), exitCode };
+  }
+
+  test("package.json `imports` wildcard with `.js` target resolves `.ts` file", async () => {
+    using dir = tempDir("wildcard-imports-ts", {
+      "package.json": JSON.stringify({
+        name: "imports-ts",
+        type: "module",
+        imports: {
+          "#app/*": "./app/*.js",
+        },
+      }),
+      "app/main.ts": `export const foo = "ts file";`,
+      "index.ts": `
+        import { foo } from "#app/main";
+        console.log(foo);
+      `,
+    });
+
+    expect(await runScript(String(dir), "index.ts")).toEqual({
+      stdout: "ts file",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("`.mjs` target resolves `.mts` file", async () => {
+    using dir = tempDir("wildcard-mjs-mts", {
+      "package.json": JSON.stringify({
+        name: "mjs-pkg",
+        type: "module",
+        imports: {
+          "#src/*": "./src/*.mjs",
+        },
+      }),
+      "src/thing.mts": `export const thing = "mts file";`,
+      "index.ts": `
+        import { thing } from "#src/thing";
+        console.log(thing);
+      `,
+    });
+
+    expect(await runScript(String(dir), "index.ts")).toEqual({
+      stdout: "mts file",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("actual `.js` file takes precedence over `.ts`", async () => {
+    using dir = tempDir("wildcard-js-wins", {
+      "package.json": JSON.stringify({
+        name: "js-wins",
+        type: "module",
+        imports: {
+          "#app/*": "./app/*.js",
+        },
+      }),
+      "app/main.js": `export const src = "js file";`,
+      "app/main.ts": `export const src = "ts file";`,
+      "index.ts": `
+        import { src } from "#app/main";
+        console.log(src);
+      `,
+    });
+
+    expect(await runScript(String(dir), "index.ts")).toEqual({
+      stdout: "js file",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

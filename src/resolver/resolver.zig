@@ -2489,48 +2489,25 @@ pub const Resolver = struct {
                     const ends_with_star = esm_resolution.status == .ExactEndsWithStar;
                     esm_resolution.status = .ModuleNotFound;
 
-                    // When the exports target came from a wildcard expansion like
-                    // `"./*": "./dist/*"` and the substituted path (e.g.
-                    // `./dist/server/stdio`) has no extension on disk, probe the
-                    // configured extensions (`.js`, `.mjs`, `.ts`, ...) and return
-                    // the match. This matches bundler-style resolution and keeps
-                    // packages like `@modelcontextprotocol/sdk` — whose wildcard
-                    // target intentionally omits `.js` — importable without the
-                    // caller having to add it.
+                    // When the exports/imports target came from a wildcard expansion
+                    // like `"./*": "./dist/*"` and the substituted path doesn't
+                    // exist as-is, try a couple of friendly fallbacks that bundlers
+                    // (TypeScript `moduleResolution: "bundler"`, Vite, webpack)
+                    // already do:
+                    //
+                    //   1. Append a configured extension (`.js`, `.mjs`, `.ts`, ...) —
+                    //      makes `@modelcontextprotocol/sdk/server/stdio` resolve
+                    //      to `stdio.js` when the wildcard target has no extension
+                    //      (oven-sh/bun#29679).
+                    //   2. Rewrite a trailing `.js`/`.jsx`/`.mjs` in the target to
+                    //      `.ts`/`.tsx`/`.mts` — makes `#app/*` → `./app/*.js` pick
+                    //      up `app/main.ts` (oven-sh/bun#10001). Same rewrite is
+                    //      applied to plain file loads in `loadAsFile` below.
+                    //
+                    // Exact (non-wildcard) keys are untouched.
                     if (ends_with_star) {
-                        bun.copy(u8, bufs(.load_as_file), base);
-                        for (extension_order) |ext| {
-                            var file_name = bufs(.load_as_file)[0 .. base.len + ext.len];
-                            bun.copy(u8, file_name[base.len..], ext);
-                            if (entries.get(file_name)) |ext_query| {
-                                if (ext_query.entry.kind(&r.fs.fs, r.store_fd) == .file) {
-                                    if (r.debug_logs) |*debug| {
-                                        debug.addNoteFmt("Resolved to \"{s}\" by adding extension \"{s}\"", .{ file_name, ext });
-                                    }
-
-                                    const abs_ext_path = brk: {
-                                        if (ext_query.entry.abs_path.isEmpty()) {
-                                            const abs_ext_parts = [_]string{ ext_query.entry.dir, ext_query.entry.base() };
-                                            ext_query.entry.abs_path = PathString.init(r.fs.dirname_store.append(string, r.fs.absBuf(&abs_ext_parts, bufs(.load_as_file))) catch unreachable);
-                                        }
-                                        break :brk ext_query.entry.abs_path.slice();
-                                    };
-                                    const ext_module_type = if (resolved_dir_info.package_json) |pkg| pkg.module_type else .unknown;
-
-                                    return MatchResult{
-                                        .path_pair = PathPair{
-                                            .primary = Path.initWithNamespace(abs_ext_path, "file"),
-                                        },
-                                        .dirname_fd = entries.fd,
-                                        .file_fd = ext_query.entry.cache.fd,
-                                        .dir_info = resolved_dir_info,
-                                        .diff_case = ext_query.diff_case,
-                                        .is_node_module = true,
-                                        .package_json = resolved_dir_info.package_json orelse package_json,
-                                        .module_type = ext_module_type,
-                                    };
-                                }
-                            }
+                        if (r.probeWildcardExtensions(entries, resolved_dir_info, package_json, base, extension_order)) |match| {
+                            return match;
                         }
                     }
                     return null;
@@ -2604,6 +2581,113 @@ pub const Resolver = struct {
             },
             else => unreachable,
         }
+    }
+
+    /// Probe the filesystem for a file that a wildcard `exports`/`imports`
+    /// pattern almost named. Called when the substituted path doesn't exist
+    /// on disk as-is. Two cases:
+    ///
+    ///   * Target has no extension (`"./*": "./dist/*"`) → append each
+    ///     configured extension and return the first hit.
+    ///   * Target ends with `.js`/`.jsx`/`.mjs` (`"#foo/*": "./foo/*.js"`) →
+    ///     swap it for the TypeScript counterpart and return the first hit,
+    ///     same rewrite `loadAsFile` applies to plain file loads.
+    ///
+    /// Caller has already confirmed the resolution came from a wildcard
+    /// expansion (`.ExactEndsWithStar`).
+    fn probeWildcardExtensions(
+        r: *ThisResolver,
+        entries: *Fs.FileSystem.DirEntry,
+        resolved_dir_info: *DirInfo,
+        package_json: *PackageJSON,
+        base: string,
+        extension_order: []const string,
+    ) ?MatchResult {
+        const rfs = &r.fs.fs;
+
+        // Case 1: no extension → append extension_order.
+        bun.copy(u8, bufs(.load_as_file), base);
+        for (extension_order) |ext| {
+            const file_name = bufs(.load_as_file)[0 .. base.len + ext.len];
+            bun.copy(u8, file_name[base.len..], ext);
+            if (entries.get(file_name)) |ext_query| {
+                if (ext_query.entry.kind(rfs, r.store_fd) == .file) {
+                    if (r.debug_logs) |*debug| {
+                        debug.addNoteFmt("Resolved to \"{s}\" by adding extension \"{s}\"", .{ file_name, ext });
+                    }
+                    return buildWildcardMatch(r, entries, resolved_dir_info, package_json, ext_query);
+                }
+            }
+        }
+
+        // Case 2: `.js`/`.jsx`/`.mjs` → `.ts`/`.tsx`/`.mts`. Mirrors the
+        // TypeScript rewrite loadAsFile does for plain file loads. Only
+        // fires for wildcard keys — users writing an explicit `"./foo":
+        // "./foo.js"` target get exactly what they asked for. Skipped
+        // under node_modules (oven-sh/bun#5426) — published packages ship
+        // the compiled `.js` and any sibling `.ts` is almost always typings
+        // the user doesn't want to execute.
+        const in_node_modules = strings.pathContainsNodeModulesFolder(entries.dir);
+        if (!in_node_modules) {
+            if (strings.lastIndexOfChar(base, '.')) |last_dot| {
+                const ext = base[last_dot..base.len];
+                const ts_exts: []const string = if (strings.eqlComptime(ext, ".mjs"))
+                    &.{".mts"}
+                else if (strings.eqlComptime(ext, ".js") or strings.eqlComptime(ext, ".jsx"))
+                    &.{ ".ts", ".tsx", ".mts" }
+                else
+                    &.{};
+
+                if (ts_exts.len > 0) {
+                    const segment = base[0..last_dot];
+                    bun.copy(u8, bufs(.load_as_file), segment);
+                    for (ts_exts) |replacement| {
+                        const file_name = bufs(.load_as_file)[0 .. segment.len + replacement.len];
+                        bun.copy(u8, file_name[segment.len..], replacement);
+                        if (entries.get(file_name)) |ts_query| {
+                            if (ts_query.entry.kind(rfs, r.store_fd) == .file) {
+                                if (r.debug_logs) |*debug| {
+                                    debug.addNoteFmt("Rewrote \"{s}\" to \"{s}\"", .{ base, file_name });
+                                }
+                                return buildWildcardMatch(r, entries, resolved_dir_info, package_json, ts_query);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    fn buildWildcardMatch(
+        r: *ThisResolver,
+        entries: *Fs.FileSystem.DirEntry,
+        resolved_dir_info: *DirInfo,
+        package_json: *PackageJSON,
+        query: Fs.FileSystem.Entry.Lookup,
+    ) MatchResult {
+        const abs_path = brk: {
+            if (query.entry.abs_path.isEmpty()) {
+                const parts = [_]string{ query.entry.dir, query.entry.base() };
+                query.entry.abs_path = PathString.init(r.fs.dirname_store.append(string, r.fs.absBuf(&parts, bufs(.load_as_file))) catch unreachable);
+            }
+            break :brk query.entry.abs_path.slice();
+        };
+        const module_type = if (resolved_dir_info.package_json) |pkg| pkg.module_type else .unknown;
+
+        return MatchResult{
+            .path_pair = PathPair{
+                .primary = Path.initWithNamespace(abs_path, "file"),
+            },
+            .dirname_fd = entries.fd,
+            .file_fd = query.entry.cache.fd,
+            .dir_info = resolved_dir_info,
+            .diff_case = query.diff_case,
+            .is_node_module = true,
+            .package_json = resolved_dir_info.package_json orelse package_json,
+            .module_type = module_type,
+        };
     }
 
     pub fn resolveWithoutRemapping(

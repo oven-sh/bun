@@ -124,8 +124,16 @@ ARG BUILDKITE_AGENT_TAGS
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && export PATH=$HOME/.cargo/bin:$PATH \
     && rustup install nightly \
-    && rustup default nightly
+    && rustup default nightly \
+    && rustup target add aarch64-linux-android x86_64-linux-android
 
+# Android NDK — sysroot/libc++/compiler-rt for --abi=android cross-compile.
+ARG ANDROID_NDK_VERSION="r27c"
+RUN curl -fsSL "https://dl.google.com/android/repository/android-ndk-${ANDROID_NDK_VERSION}-linux.zip" -o /tmp/ndk.zip \
+    && unzip -q /tmp/ndk.zip -d /opt \
+    && mv /opt/android-ndk-${ANDROID_NDK_VERSION} /opt/android-ndk \
+    && rm /tmp/ndk.zip
+ENV ANDROID_NDK_ROOT=/opt/android-ndk
 
 RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     echo "Downloading buildkite" && \
@@ -190,7 +198,8 @@ COPY . /workspace/bun
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && export PATH=$HOME/.cargo/bin:$PATH \
     && rustup install nightly \
-    && rustup default nightly
+    && rustup default nightly \
+    && rustup target add aarch64-linux-android x86_64-linux-android
 
 ENV PATH=/root/.cargo/bin:$PATH
 

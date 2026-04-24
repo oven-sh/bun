@@ -1091,6 +1091,7 @@ install_build_essentials() {
 	install_osxcross
 	install_gcc
 	install_rust
+	install_android_ndk
 	install_ccache
 	install_docker
 }
@@ -1249,6 +1250,37 @@ install_rust() {
 		execute_as_user "$rustup" target add x86_64-apple-darwin
 		;;
 	esac
+
+	case "$os" in
+	linux)
+		rustup="$(require rustup)"
+		execute_as_user "$rustup" target add aarch64-linux-android
+		execute_as_user "$rustup" target add x86_64-linux-android
+		;;
+	esac
+}
+
+android_ndk_version() {
+	print "r27c"
+}
+
+install_android_ndk() {
+	case "$os" in
+	linux) ;;
+	*) return ;;
+	esac
+
+	ndk_version="$(android_ndk_version)"
+	ndk_home="/opt/android-ndk"
+	if [ -d "$ndk_home" ]; then
+		return
+	fi
+
+	ndk_zip=$(download_file "https://dl.google.com/android/repository/android-ndk-${ndk_version}-linux.zip")
+	unzip="$(require unzip)"
+	execute_sudo "$unzip" -q "$ndk_zip" -d /opt
+	execute_sudo mv "/opt/android-ndk-${ndk_version}" "$ndk_home"
+	append_to_profile "export ANDROID_NDK_ROOT=$ndk_home"
 }
 
 install_docker() {

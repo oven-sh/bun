@@ -134,6 +134,9 @@ pub const FilePoll = struct {
     /// Darwin uses the extended `kevent64_s` (extra `ext` field carries our
     /// generation number); FreeBSD only has the plain `struct kevent`.
     const KQueueEvent = if (Environment.isFreeBSD) std.c.Kevent else std.posix.system.kevent64_s;
+    /// Zig std's `.freebsd` `EV` struct omits EOF; the kernel value is the
+    /// same as Darwin/OpenBSD (sys/event.h: `#define EV_EOF 0x8000`).
+    const EV_EOF: u16 = if (@hasDecl(std.c.EV, "EOF")) std.c.EV.EOF else 0x8000;
 
     const ShellBufferedWriter = bun.shell.Interpreter.IOWriter.Poll;
     // const ShellBufferedWriter = bun.shell.Interpreter.WriterImpl;
@@ -515,12 +518,12 @@ pub const FilePoll = struct {
             var flags = Flags.Set{};
             if (kqueue_event.filter == std.c.EVFILT.READ) {
                 flags.insert(Flags.readable);
-                if (kqueue_event.flags & std.c.EV.EOF != 0) {
+                if (kqueue_event.flags & EV_EOF != 0) {
                     flags.insert(Flags.hup);
                 }
             } else if (kqueue_event.filter == std.c.EVFILT.WRITE) {
                 flags.insert(Flags.writable);
-                if (kqueue_event.flags & std.c.EV.EOF != 0) {
+                if (kqueue_event.flags & EV_EOF != 0) {
                     flags.insert(Flags.hup);
                 }
             } else if (kqueue_event.filter == std.c.EVFILT.PROC) {

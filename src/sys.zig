@@ -2499,6 +2499,7 @@ pub fn renameat2(from_dir: bun.FD, from: [:0]const u8, to_dir: bun.FD, to: [:0]c
         const rc = switch (comptime Environment.os) {
             .linux => std.os.linux.renameat2(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
             .mac => bun.c.renameatx_np(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
+            .freebsd => unreachable, // returned above
             .windows, .wasm => @compileError("renameat2() is not implemented on this platform"),
         };
 

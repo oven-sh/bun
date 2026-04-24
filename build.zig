@@ -453,19 +453,25 @@ pub fn build(b: *Build) !void {
             .{ .os = .linux, .arch = .aarch64 },
         }, &.{.Debug});
     }
-    {
-        const step = b.step("check-freebsd", "Check for semantic analysis errors on FreeBSD");
-        addMultiCheck(b, step, build_options, &.{
-            .{ .os = .freebsd, .arch = .x86_64 },
-            .{ .os = .freebsd, .arch = .aarch64 },
-        }, &.{ .Debug, .ReleaseFast });
-    }
-    {
-        const step = b.step("check-freebsd-debug", "Check for semantic analysis errors on FreeBSD");
-        addMultiCheck(b, step, build_options, &.{
-            .{ .os = .freebsd, .arch = .x86_64 },
-            .{ .os = .freebsd, .arch = .aarch64 },
-        }, &.{.Debug});
+    // check-freebsd needs the sysroot for translate-c (zig doesn't bundle
+    // FreeBSD libc headers). Skip step creation entirely when none was
+    // passed, so plain `zig build check` doesn't try to construct a
+    // translate-c step that would panic.
+    if (freebsd_sysroot != null) {
+        {
+            const step = b.step("check-freebsd", "Check for semantic analysis errors on FreeBSD");
+            addMultiCheck(b, step, build_options, &.{
+                .{ .os = .freebsd, .arch = .x86_64 },
+                .{ .os = .freebsd, .arch = .aarch64 },
+            }, &.{ .Debug, .ReleaseFast });
+        }
+        {
+            const step = b.step("check-freebsd-debug", "Check for semantic analysis errors on FreeBSD");
+            addMultiCheck(b, step, build_options, &.{
+                .{ .os = .freebsd, .arch = .x86_64 },
+                .{ .os = .freebsd, .arch = .aarch64 },
+            }, &.{.Debug});
+        }
     }
 
     // zig build translate-c-headers

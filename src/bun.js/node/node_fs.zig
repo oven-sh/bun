@@ -3602,7 +3602,7 @@ pub const NodeFS = struct {
             const dest = args.dest.sliceZ(&dest_buf);
 
             if (args.mode.isForceClone()) {
-                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.ENOTSUP), .syscall = .copyfile } };
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EOPNOTSUPP), .syscall = .copyfile } };
             }
 
             const src_fd = switch (Syscall.open(src, bun.O.RDONLY, 0)) {
@@ -3616,7 +3616,7 @@ pub const NodeFS = struct {
                 .err => |err| return Maybe(Return.CopyFile){ .err = err },
             };
             if (!posix.S.ISREG(stat_.mode)) {
-                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.ENOTSUP), .syscall = .copyfile } };
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EOPNOTSUPP), .syscall = .copyfile } };
             }
 
             var flags: i32 = bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC;
@@ -3629,9 +3629,8 @@ pub const NodeFS = struct {
             };
             defer dest_fd.close();
 
-            var size: usize = @intCast(@max(stat_.size, 0));
-            var wrote: usize = 0;
-            if (this.copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, if (size != 0) size else 0, &wrote).asErr()) |err| {
+            var wrote: u64 = 0;
+            if (copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, @intCast(@max(stat_.size, 0)), &wrote).asErr()) |err| {
                 _ = bun.sys.unlink(dest);
                 return Maybe(Return.CopyFile){ .err = err };
             }

@@ -6,8 +6,9 @@ const isWindows = process.platform === "win32";
 
 // Glob metacharacters — a path segment containing any of these is a wildcard
 // segment. A segment with none is matched literally and can be treated as part
-// of the cwd. Backslash is an escape on POSIX, so we flag it too (conservative;
-// on Windows it's already been normalized to `/` by `validatePattern`).
+// of the cwd. Backslash is a glob escape on POSIX, so we flag it conservatively
+// (on Windows `validatePattern` converts `/` → `sep` before we see the pattern,
+// and segments are split on `sep` here, so they never contain separators).
 // Written as a char-code scan to sidestep the builtin bundler's custom regex
 // parser, which doesn't like `]` inside regex character classes.
 function hasGlobMeta(seg: string): boolean {
@@ -45,7 +46,7 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
     try {
       scanner = new Bun.Glob(scanPattern).scan({ ...globOptions, cwd: scanCwd });
     } catch (err) {
-      if ((err as any)?.code === "ENOENT") continue;
+      if (isMissingPath(err)) continue;
       throw err;
     }
     try {
@@ -62,7 +63,7 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
         yield full;
       }
     } catch (err) {
-      if ((err as any)?.code === "ENOENT") continue;
+      if (isMissingPath(err)) continue;
       throw err;
     }
   }
@@ -82,7 +83,7 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
     try {
       iter = new Bun.Glob(scanPattern).scanSync({ ...globOptions, cwd: scanCwd });
     } catch (err) {
-      if ((err as any)?.code === "ENOENT") continue;
+      if (isMissingPath(err)) continue;
       throw err;
     }
     try {
@@ -99,10 +100,18 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
         yield full;
       }
     } catch (err) {
-      if ((err as any)?.code === "ENOENT") continue;
+      if (isMissingPath(err)) continue;
       throw err;
     }
   }
+}
+
+// When a literal prefix gets folded into `cwd`, opening that cwd can fail if
+// the path is missing (ENOENT) or names a regular file rather than a directory
+// (ENOTDIR). Node and pre-PR Bun both return `[]` in these cases.
+function isMissingPath(err: unknown): boolean {
+  const code = (err as any)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 /**
@@ -121,16 +130,23 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
 function splitLiteralPrefix(pattern: string, cwd: string): { pattern: string; cwd: string; prefix: string } {
   const separator = isWindows ? sep : "/";
   // Absolute patterns: anchor scanning at the filesystem root and consume the
-  // full leading literal run. On Windows this also handles drive letters and
-  // UNC paths, since `pathJoin` normalizes them.
-  const isAbsolute = pattern.startsWith("/") || (isWindows && /^([a-zA-Z]:|\\\\)/.test(pattern));
+  // full leading literal run. `validatePattern` has already swapped `/` for
+  // `sep` on Windows, so we test against the platform separator (and the
+  // Windows drive-letter / UNC shapes `C:...` and `\\host\share\...`).
+  const isAbsolute =
+    pattern.startsWith(separator) || (isWindows && (/^[a-zA-Z]:/.test(pattern) || pattern.startsWith("\\\\")));
 
-  const parts = pattern.split(separator);
+  // A trailing separator turns `split` into `[..., '']` — the empty tail would
+  // become our "final segment" and leave `Bun.Glob` scanning an empty pattern,
+  // so drop any trailing separators before splitting. `a/` is a match on the
+  // directory `a`; Node and pre-PR Bun both treat it that way.
+  const trimmed = stripTrailingSep(pattern, separator);
+  const parts = trimmed.split(separator);
   // Find the first segment that contains glob metacharacters. Everything
   // strictly before it is the literal prefix; the wildcard segment and
-  // everything after is the remainder pattern handed to Bun.Glob.
-  // We never consume the final segment — it must go to the matcher so that
-  // Bun.Glob performs the actual directory read / match.
+  // everything after is the remainder pattern handed to Bun.Glob. We never
+  // consume the final segment — it must go to the matcher so Bun.Glob performs
+  // the actual directory read / match.
   let stop = 0;
   for (; stop < parts.length - 1; stop++) {
     if (hasGlobMeta(parts[stop])) break;
@@ -149,6 +165,13 @@ function splitLiteralPrefix(pattern: string, cwd: string): { pattern: string; cw
   // paths, relative patterns keep their literal prefix visible (matching Node).
   const prefix = literalSegs.length === 0 ? "" : literalSegs.join(separator) + separator;
   return { pattern: remainder, cwd: newCwd, prefix };
+}
+
+function stripTrailingSep(s: string, sep: string): string {
+  let end = s.length;
+  while (end > 0 && s[end - 1] === sep) end--;
+  // Keep a leading separator (rooted path) — don't strip down to empty.
+  return end === 0 ? s : s.slice(0, end);
 }
 
 function validatePattern(pattern: string | string[]): string[] {

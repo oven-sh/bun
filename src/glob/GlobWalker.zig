@@ -908,7 +908,11 @@ pub fn GlobWalker_(
                                     continue;
                                 },
                                 .sym_link => {
-                                    if (this.walker.follow_symlinks) {
+                                    // Descend through a symlink when either `follow_symlinks`
+                                    // is set (legacy callers) or the pattern segment pointing at
+                                    // the symlink is a literal (Node's rule: wildcards don't
+                                    // cross symlinks, literals do).
+                                    if (this.walker.follow_symlinks or this.walker.hasLiteralMatch(active, entry_name)) {
                                         if (!this.walker.evalImpl(active, entry_name)) continue;
 
                                         const subdir_parts: []const []const u8 = &[_][]const u8{
@@ -972,7 +976,7 @@ pub fn GlobWalker_(
                                             }
                                         },
                                         .sym_link => {
-                                            if (this.walker.follow_symlinks) {
+                                            if (this.walker.follow_symlinks or this.walker.hasLiteralMatch(active, entry_name)) {
                                                 const subdir_parts: []const []const u8 = &[_][]const u8{
                                                     dir.dir_path[0..dir.dir_path.len],
                                                     entry_name,
@@ -1468,6 +1472,26 @@ pub fn GlobWalker_(
             var it = active.iterator(.{});
             while (it.next()) |idx| {
                 if (this.matchPatternImpl(&this.patternComponents.items[idx], entry_name)) return true;
+            }
+            return false;
+        }
+
+        /// Returns true if any active component matches `entry_name` via a
+        /// **literal** (non-wildcard) comparison. Node's `fs.glob` (and typical
+        /// shell globs) descend into a directory symlink only when the pattern
+        /// segment naming it is a literal; wildcard components (`*`, `**`, or
+        /// anything with glob syntax) stop at the symlink boundary.
+        fn hasLiteralMatch(this: *GlobWalker, active: ComponentSet, entry_name: []const u8) bool {
+            const comps = this.patternComponents.items;
+            var it = active.iterator(.{});
+            while (it.next()) |i| {
+                const idx: u32 = @intCast(i);
+                const comp = &comps[idx];
+                if (comp.syntax_hint == .Literal and
+                    bun.strings.eql(comp.patternSlice(this.pattern), entry_name))
+                {
+                    return true;
+                }
             }
             return false;
         }

@@ -298,4 +298,30 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     const cwd = path.join(root, "flat");
     expect(fs.globSync(path.join(cwd, "link/*.txt"))).toStrictEqual([path.join(cwd, "link/inside.txt")]);
   });
+
+  it("literal segments after a wildcard still traverse symlinks", () => {
+    // Previously `*/link/*.txt` returned [] because the JS transform only
+    // handles *leading* literal prefixes. With the walker-level fix (literal
+    // matches may descend into symlinks even mid-pattern), this now matches
+    // Node's behavior: `*` matches `flat` (real dir), then the literal `link`
+    // descends through the symlink.
+    expect(fs.globSync("*/link/*.txt", { cwd: root })).toStrictEqual(["flat/link/inside.txt"]);
+    // But `**/link/*.txt` still returns [] — globstar is a wildcard, so it
+    // can't cross the symlink even if the next segment is literal.
+    expect(fs.globSync("**/link/*.txt", { cwd: root })).toStrictEqual([]);
+  });
+
+  it("trailing slashes match the named directory", () => {
+    // `a/` is Node-idiomatic for "match directory `a`"; split-on-sep yields
+    // an empty trailing segment that mustn't be fed to the matcher as an
+    // empty pattern.
+    expect(fs.globSync("a/", { cwd: root })).toStrictEqual(["a"]);
+    expect(fs.globSync("a/src/", { cwd: root })).toStrictEqual(["a/src"]);
+  });
+
+  it("literal prefix naming a regular file returns []", () => {
+    // Opening `target.txt/` as a directory would throw ENOTDIR; Node returns
+    // `[]` silently and so do we.
+    expect(fs.globSync("target.txt/*.js", { cwd: root })).toStrictEqual([]);
+  });
 }); // </symlink behavior>

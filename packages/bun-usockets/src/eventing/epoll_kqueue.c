@@ -138,7 +138,7 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
             ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, &mask);
         } while (ret == -EINTR);
 
-        if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP)) {
+        if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP && ret != -EACCES)) {
             return ret;
         }
 
@@ -564,7 +564,7 @@ size_t us_internal_accept_poll_event(struct us_poll_t *p) {
 struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
     struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_internal_callback_t) + ext_size);
     memset(p, 0, sizeof(struct us_internal_callback_t) + ext_size);
-    int timerfd = timerfd_create(CLOCK_REALTIME, TFD_NONBLOCK | TFD_CLOEXEC);
+    int timerfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     if (timerfd == -1) {
       return NULL;
     }

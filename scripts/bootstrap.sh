@@ -1355,27 +1355,9 @@ install_tailscale() {
 	darwin)
 		# Homebrew-managed tailscale: a single upgrade path (`brew upgrade`),
 		# proper version reporting (the go-install build shows ERR-BuildInfo),
-		# and the same layout `tailscaled install-system-daemon` expects.
+		# and `install-system-daemon` writes the launchd plist for us.
 		install_packages tailscale
 		brew_prefix="$(execute_as_user brew --prefix)"
-		# Some boxes were previously go-installed straight into /usr/local/bin,
-		# which blocks `brew link` on Intel and shadows brew on arm64. Clear
-		# any non-symlink leftovers so brew's link wins.
-		for bin in /usr/local/bin/tailscale /usr/local/bin/tailscaled; do
-			if [ -e "$bin" ] && [ ! -L "$bin" ]; then
-				execute_sudo rm -f "$bin"
-			fi
-		done
-		execute_as_user "$brew_prefix/bin/brew" link --overwrite tailscale
-		# On arm64 the brew prefix is /opt/homebrew but the launchd plist (and
-		# root's PATH) look in /usr/local/bin — bridge it.
-		if [ "$brew_prefix" != "/usr/local" ]; then
-			execute_sudo ln -sf "$brew_prefix/bin/tailscale" /usr/local/bin/tailscale
-			execute_sudo ln -sf "$brew_prefix/bin/tailscaled" /usr/local/bin/tailscaled
-		fi
-		# Register the system daemon (writes /Library/LaunchDaemons/com.tailscale.tailscaled.plist).
-		# State at /Library/Tailscale/ carries over, so re-running on an
-		# already-authed box is a no-op for connectivity.
 		execute_sudo "$brew_prefix/bin/tailscaled" install-system-daemon
 		;;
 	esac

@@ -25,7 +25,7 @@ RUN echo "Acquire::Queue-Mode \"host\";" > /etc/apt/apt.conf.d/99-apt-queue-mode
 RUN apt-get update && apt-get install -y --no-install-recommends \
    wget curl git python3 python3-pip ninja-build \
    software-properties-common apt-transport-https \
-   ca-certificates gnupg lsb-release unzip \
+   ca-certificates gnupg lsb-release unzip xz-utils \
    libxml2-dev ruby ruby-dev bison gawk perl make golang ccache qemu-user-static \
    && add-apt-repository ppa:ubuntu-toolchain-r/test \
    && apt-get update \
@@ -143,7 +143,7 @@ ARG FREEBSD_VERSION="14.3"
 RUN FBSD_ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64"; fi) \
     && mkdir -p /opt/freebsd-sysroot \
     && curl -fsSL "https://download.freebsd.org/releases/${FBSD_ARCH}/${FREEBSD_VERSION}-RELEASE/base.txz" -o /tmp/base.txz \
-    && tar -C /opt/freebsd-sysroot -xJf /tmp/base.txz ./usr/include ./usr/lib ./lib \
+    && tar -C /opt/freebsd-sysroot --no-same-owner -xJf /tmp/base.txz ./usr/include ./usr/lib ./lib \
     && rm /tmp/base.txz
 ENV FREEBSD_SYSROOT=/opt/freebsd-sysroot
 

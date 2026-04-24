@@ -141,7 +141,9 @@ extern "C" ssize_t posix_spawn_bun(
 
     sigfillset(&blockall);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
+#if !OS(ANDROID)
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
+#endif
 
 #if OS(LINUX)
     // On Linux, use vfork() for performance. The parent is suspended until
@@ -380,7 +382,11 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     sigprocmask(SIG_SETMASK, &oldmask, 0);
+#if !OS(ANDROID)
     pthread_setcancelstate(cs, 0);
+#else
+    (void)cs;
+#endif
 
     return res;
 }

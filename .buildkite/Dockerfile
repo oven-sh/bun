@@ -133,6 +133,15 @@ RUN curl -fsSL "https://dl.google.com/android/repository/android-ndk-${ANDROID_N
     && unzip -q /tmp/ndk.zip -d /opt \
     && mv /opt/android-ndk-${ANDROID_NDK_VERSION} /opt/android-ndk \
     && rm /tmp/ndk.zip \
+    # Trim ~1.1GB we don't use (NDK clang/lld, lldb, non-android runtimes) —
+    # we only need sysroot + android compiler-rt. Dramatically shrinks the
+    # docker layer / AMI size.
+    && rm -rf /opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin \
+              /opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/python3 \
+              /opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/lib/liblldb.so \
+              /opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/lib/*-gnu \
+              /opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/lib/*-musl* \
+              /opt/android-ndk/simpleperf /opt/android-ndk/shader-tools /opt/android-ndk/sources \
     # Symlink NDK compiler-rt builtins + libunwind into host clang's resource
     # dir — clang's driver hardcodes <resource-dir>/lib/<triple>/libclang_rt.*
     # with no -L fallback. Done at image-build time (root) since the build

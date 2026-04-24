@@ -59,8 +59,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         expected_accept: [28]u8 = .{0} ** 28,
 
         // Whether the upgrade request offered `permessage-deflate`. When this is
-        // false (opt-out via `perMessageDeflate: false`), any `permessage-deflate`
-        // the server returns anyway is ignored.
+        // false (opt-out via `perMessageDeflate: false`) and the server responds
+        // with a `Sec-WebSocket-Extensions` header anyway, `processResponse`
+        // fails the handshake per RFC 6455 §9.1 — matching upstream `ws`.
         offered_permessage_deflate: bool = true,
 
         const State = enum {

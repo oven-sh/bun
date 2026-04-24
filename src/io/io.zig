@@ -16,6 +16,10 @@ pub const Loop = struct {
     pending: Request.Queue = .{},
     waker: bun.Async.Waker,
     epoll_fd: if (Environment.isLinux) bun.FD else void = if (Environment.isLinux) .invalid,
+    /// FreeBSD's `Waker` is `LinuxWaker` (an eventfd), so unlike macOS the
+    /// waker fd is NOT itself a kqueue. We create one here and register the
+    /// eventfd on it, mirroring how Linux registers the eventfd on epoll_fd.
+    kqueue_fd: if (Environment.isFreeBSD) bun.FD else void = if (Environment.isFreeBSD) .invalid,
 
     cached_now: posix.timespec = .{
         .nsec = 0,
@@ -42,6 +46,22 @@ pub const Loop = struct {
                     .SUCCESS => {},
                     else => |err| bun.Output.panic("Failed to wait on epoll {s}", .{@tagName(err)}),
                 }
+            }
+        }
+        if (comptime Environment.isFreeBSD) {
+            loop.kqueue_fd = .fromNative(std.posix.kqueue() catch @panic("Failed to create kqueue"));
+            // Register the eventfd waker. udata = 0 → Pollable.tag() == .empty,
+            // which onUpdateKQueue treats as a no-op (the wakeup just unblocks
+            // the kevent() wait so the pending queue gets drained). EV_CLEAR
+            // makes it edge-triggered so we never need to read() the eventfd.
+            var change = std.mem.zeroes(KEvent);
+            change.ident = @intCast(loop.waker.getFd().cast());
+            change.filter = std.c.EVFILT.READ;
+            change.flags = std.c.EV.ADD | std.c.EV.CLEAR;
+            const rc = std.c.kevent(loop.kqueue_fd.cast(), @as([*]const KEvent, @ptrCast(&change)), 1, undefined, 0, null);
+            switch (bun.sys.getErrno(rc)) {
+                .SUCCESS => {},
+                else => |err| bun.Output.panic("Failed to register waker on kqueue: {s}", .{@tagName(err)}),
             }
         }
         var thread = std.Thread.spawn(.{
@@ -177,6 +197,9 @@ pub const Loop = struct {
     pub fn pollfd(this: *const Loop) bun.FD {
         if (comptime Environment.isLinux) {
             return this.epoll_fd;
+        }
+        if (comptime Environment.isFreeBSD) {
+            return this.kqueue_fd;
         }
 
         return this.waker.getFd();

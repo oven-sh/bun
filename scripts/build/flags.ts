@@ -89,12 +89,24 @@ export const globalFlags: Flag[] = [
     desc: "Cross-compile sysroot (target libc headers + libs)",
   },
   {
-    // The NDK's libc++ headers live outside the sysroot's default search.
-    // The NDK clang wrappers add this; with our own clang we must too.
-    flag: c => ["-isystem", join(c.sysroot!, "usr", "include", "c++", "v1")],
+    // Same host-GCC #include_next leak as the FreeBSD block below: on
+    // amazonlinux, clang's driver injects /usr/include/c++/N even with
+    // --sysroot. -nostdlibinc drops all default system include paths
+    // (keeping clang's resource dir) and we add back only the NDK's three
+    // dirs in the order #include_next expects: libc++ → per-arch bionic
+    // → generic bionic.
+    flag: c => [
+      "-nostdlibinc",
+      "-isystem",
+      join(c.sysroot!, "usr", "include", "c++", "v1"),
+      "-isystem",
+      join(c.sysroot!, "usr", "include", c.arm64 ? "aarch64-linux-android" : "x86_64-linux-android"),
+      "-isystem",
+      join(c.sysroot!, "usr", "include"),
+    ],
     when: c => c.abi === "android",
     lang: "cxx",
-    desc: "Android: NDK libc++ headers (not in default sysroot include path)",
+    desc: "Android: explicit NDK include paths only (suppress host GCC C++ detection)",
   },
   {
     flag: ["-DANDROID", "-D_FILE_OFFSET_BITS=64"],

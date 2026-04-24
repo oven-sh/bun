@@ -756,8 +756,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // ninja declare bun-zig.{0..N-1}.o that the stable compiler can't emit).
   const zigFastDefault = zigFastCompiler({ ci, canary });
   const zigCommit = partial.zigCommit ?? (zigFastDefault ? ZIG_COMMIT_FAST : ZIG_COMMIT_STABLE);
-  const zigFast =
-    zigCommit === ZIG_COMMIT_STABLE ? false : zigCommit === ZIG_COMMIT_FAST ? true : zigFastDefault;
+  const zigFast = zigCommit === ZIG_COMMIT_STABLE ? false : zigCommit === ZIG_COMMIT_FAST ? true : zigFastDefault;
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.

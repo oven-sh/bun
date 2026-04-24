@@ -35,6 +35,12 @@ typedef SSIZE_T ssize_t;
 #include <mach/mach.h>
 #endif
 
+#if defined(__FreeBSD__)
+/* arm64 FreeBSD's <machine/_align.h> casts to u_long but <sys/socket.h>
+ * (via <sys/_types.h>) reaches it without including <sys/types.h> first. */
+#include <sys/types.h>
+#endif
+
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 #define LIBUS_MAX_READY_POLLS 1024
 

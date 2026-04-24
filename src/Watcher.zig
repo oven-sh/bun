@@ -36,9 +36,13 @@ thread_lock: bun.safety.ThreadLock = .initUnlocked(),
 
 pub const max_count = 128;
 pub const requires_file_descriptors = switch (Environment.os) {
-    .mac => true,
+    .mac, .freebsd => true,
     else => false,
 };
+/// Open flags for an fd that exists only to receive kqueue VNODE events.
+/// Darwin has O_EVTONLY (no read/write access requested); FreeBSD has no
+/// equivalent, so the watch fd is a plain O_RDONLY.
+pub const watch_open_flags: i32 = if (Environment.isMac) bun.c.O_EVTONLY else bun.O.RDONLY;
 
 pub const Event = WatchEvent;
 pub const Item = WatchItem;
@@ -301,7 +305,7 @@ pub fn flushEvictions(this: *Watcher) void {
         // carries its old `udata` (= pre-swap index). Rewrite it so subsequent kevents
         // route to the right module; EV_ADD on an existing (ident, filter) replaces in
         // place. See #29524.
-        if (comptime Environment.isMac) {
+        if (comptime Environment.isKqueue) {
             if (item < this.watchlist.len) {
                 const moved_fd = this.watchlist.items(.fd)[item];
                 if (moved_fd.isValid()) {
@@ -407,7 +411,7 @@ fn appendFileAssumeCapacity(
         .kind = .file,
     };
 
-    if (comptime Environment.isMac) {
+    if (comptime Environment.isKqueue) {
         this.addFileDescriptorToKQueueWithoutChecks(fd, watchlist_id);
     } else if (comptime Environment.isLinux) {
         // var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
@@ -469,7 +473,7 @@ fn appendDirectoryAssumeCapacity(
         .package_json = null,
     };
 
-    if (Environment.isMac) {
+    if (Environment.isKqueue) {
         const KEvent = std.c.Kevent;
 
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
@@ -673,9 +677,9 @@ pub fn addFileByPathSlow(
 
     // Only open fd if we might need it
     var fd: bun.FD = bun.invalid_fd;
-    if (Environment.isMac) {
+    if (Environment.isKqueue) {
         const path_z = std.posix.toPosixPath(file_path) catch return false;
-        switch (bun.sys.open(&path_z, bun.c.O_EVTONLY, 0)) {
+        switch (bun.sys.open(&path_z, watch_open_flags, 0)) {
             .result => |opened| fd = opened,
             .err => return false,
         }
@@ -684,9 +688,10 @@ pub fn addFileByPathSlow(
     const res = this.addFile(fd, file_path, hash, loader, bun.invalid_fd, null, true);
     switch (res) {
         .result => {
-            // On macOS, addFile may have found the file already watched (race)
-            // and returned success without using our fd. Close it if unused.
-            if ((comptime Environment.isMac) and fd.isValid()) {
+            // On kqueue platforms, addFile may have found the file already
+            // watched (race) and returned success without using our fd.
+            // Close it if unused.
+            if ((comptime Environment.isKqueue) and fd.isValid()) {
                 this.mutex.lock();
                 const maybe_idx = this.indexOf(hash);
                 const stored_fd = if (maybe_idx) |idx|

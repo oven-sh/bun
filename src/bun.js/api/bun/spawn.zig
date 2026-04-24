@@ -111,12 +111,12 @@ pub const BunSpawn = struct {
         pub fn set(self: *Attr, flags: u16) !void {
             self.flags = flags;
             // FreeBSD's <spawn.h> has no POSIX_SPAWN_SETSID; bun-spawn.cpp
-            // calls setsid() in the child unconditionally for `detached` so
-            // the flag plumbing is a no-op there.
-            self.detached = if (comptime @hasDecl(bun.c, "POSIX_SPAWN_SETSID"))
-                (flags & bun.c.POSIX_SPAWN_SETSID) != 0
-            else
-                false;
+            // calls setsid() in the child for `detached`, which process.zig
+            // sets directly on this struct BEFORE calling set(). Preserve
+            // that value when the flag bit isn't available.
+            if (comptime @hasDecl(bun.c, "POSIX_SPAWN_SETSID")) {
+                self.detached = (flags & bun.c.POSIX_SPAWN_SETSID) != 0;
+            }
         }
 
         pub fn resetSignals(self: *Attr) !void {

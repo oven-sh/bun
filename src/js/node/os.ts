@@ -133,8 +133,9 @@ function bound(binding) {
     machine: function () {
       // TODO: linux arm64 should also return "aarch64" (Node/uname compat) —
       // separate PR to avoid behavior change in the Android port.
+      // FreeBSD: uname -m returns MACHINE ("arm64"/"amd64"), not MACHINE_ARCH.
       return process.arch === "arm64"
-        ? process.platform === "android" || process.platform === "freebsd"
+        ? process.platform === "android"
           ? "aarch64"
           : "arm64"
         : process.arch === "x64"

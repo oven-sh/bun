@@ -296,10 +296,14 @@ const FreebsdImpl = struct {
     }
 
     fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
+        // The kernel reads n_wake as `int`; passing maxInt(u32) truncates to
+        // -1 and umtxq_signal_queue's `++ret >= n_wake` returns after one
+        // wakeup. _umtx_op(2): "Specify INT_MAX to wake up all waiters."
+        const n: c_ulong = @min(max_waiters, std.math.maxInt(c_int));
         const rc = c._umtx_op(
             @intFromPtr(&ptr.raw),
             @intFromEnum(c.UMTX_OP.WAKE_PRIVATE),
-            @as(c_ulong, max_waiters),
+            n,
             0, // there is no timeout struct
             0, // there is no timeout struct pointer
         );

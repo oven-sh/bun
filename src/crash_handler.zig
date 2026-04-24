@@ -978,6 +978,8 @@ pub fn printMetadata(writer: anytype) !void {
         } else if (bun.Environment.isAndroid) {
             const kernel_version = bun.analytics.GenerateHeader.GeneratePlatform.kernelVersion();
             try writer.print("Android Kernel v{d}.{d}.{d} | bionic\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch });
+        } else if (bun.Environment.isFreeBSD) {
+            try writer.print("FreeBSD Kernel v{s}\n", .{platform.version});
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
         } else if (bun.Environment.isWindows) {

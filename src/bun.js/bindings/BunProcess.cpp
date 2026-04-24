@@ -114,6 +114,12 @@ typedef int mode_t;
 #include <fcntl.h>
 #endif
 
+#if defined(__FreeBSD__)
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#include <sys/user.h>
+#endif
+
 #if !defined(_MSC_VER)
 #include <unistd.h> // setuid, getuid
 #endif
@@ -3311,12 +3317,15 @@ extern "C" int getRSS(size_t* rss)
 err:
     return EINVAL;
 #elif defined(__FreeBSD__)
-    struct rusage usage;
-    if (getrusage(RUSAGE_SELF, &usage) == 0) {
-        *rss = static_cast<size_t>(usage.ru_maxrss) * 1024;
-        return 0;
-    }
-    return errno;
+    // ru_maxrss is the high-water mark, not current RSS. Match Node/libuv:
+    // sysctl({KERN_PROC_PID, getpid()}) → kinfo_proc.ki_rssize.
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+    struct kinfo_proc kinfo;
+    size_t len = sizeof(kinfo);
+    if (sysctl(mib, 4, &kinfo, &len, nullptr, 0) != 0)
+        return errno;
+    *rss = static_cast<size_t>(kinfo.ki_rssize) * static_cast<size_t>(getpagesize());
+    return 0;
 #elif OS(WINDOWS)
     return uv_resident_set_memory(rss);
 #else

@@ -80,7 +80,7 @@ pub const Loop = struct {
 
         if (comptime Environment.isLinux) {
             this.tickEpoll();
-        } else if (comptime Environment.isMac) {
+        } else if (comptime Environment.isKqueue) {
             this.tickKqueue();
         } else {
             @panic("TODO on this platform");
@@ -187,8 +187,8 @@ pub const Loop = struct {
     }
 
     pub fn tickKqueue(this: *Loop) void {
-        if (comptime !Environment.isMac) {
-            @compileError("Kqueue is MacOS-Only");
+        if (comptime !Environment.isKqueue) {
+            @compileError("Kqueue is macOS/FreeBSD-only");
         }
 
         this.updateNow();
@@ -255,7 +255,7 @@ pub const Loop = struct {
 
             const change_count = events_list.items.len;
 
-            const rc = posix.system.kevent64(
+            const rc = keventCall(
                 this.pollfd().cast(),
                 events_list.items.ptr,
                 @intCast(change_count),
@@ -264,20 +264,19 @@ pub const Loop = struct {
                 // we set 0 here so that if we get an error on
                 // registration, it becomes errno
                 @intCast(events_list.capacity),
-                0,
                 null,
             );
 
             switch (bun.sys.getErrno(rc)) {
                 .INTR => continue,
                 .SUCCESS => {},
-                else => |e| bun.Output.panic("kevent64 failed: {s}", .{@tagName(e)}),
+                else => |e| bun.Output.panic("kevent failed: {s}", .{@tagName(e)}),
             }
 
             this.updateNow();
 
             assert(rc <= events_list.capacity);
-            const current_events: []std.posix.system.kevent64_s = events_list.items.ptr[0..@intCast(rc)];
+            const current_events: []KEvent = events_list.items.ptr[0..@intCast(rc)];
 
             for (current_events) |event| {
                 Poll.onUpdateKQueue(event);
@@ -310,7 +309,33 @@ pub const Loop = struct {
     }
 };
 
-const EventType = if (Environment.isLinux) linux.epoll_event else std.posix.system.kevent64_s;
+/// Zig std's `.freebsd` `EV` struct lacks `.EOF`; the value (0x8000) is the
+/// same on Darwin and FreeBSD (sys/event.h: `#define EV_EOF 0x8000`).
+const EV_EOF: u16 = if (@hasDecl(std.c.EV, "EOF")) std.c.EV.EOF else 0x8000;
+
+/// Kqueue event struct. Darwin's kevent64_s carries a 2-slot ext[] used for
+/// the optional generation-number assertion; FreeBSD's plain `struct kevent`
+/// has `_ext[4]` but no public accessor, and we don't use it. See
+/// `keventCall` for the syscall difference.
+const KEvent = if (Environment.isFreeBSD) std.c.Kevent else std.posix.system.kevent64_s;
+
+/// Thin shim over kevent64() vs kevent(). Darwin's kevent64 takes an extra
+/// `flags` arg between nevents and timeout; FreeBSD's kevent does not.
+inline fn keventCall(
+    kq: i32,
+    changes: [*]const KEvent,
+    nchanges: c_int,
+    events: [*]KEvent,
+    nevents: c_int,
+    timeout: ?*const std.posix.timespec,
+) isize {
+    if (comptime Environment.isFreeBSD) {
+        return std.c.kevent(kq, changes, nchanges, events, nevents, timeout);
+    }
+    return posix.system.kevent64(kq, changes, nchanges, events, nevents, 0, timeout);
+}
+
+const EventType = if (Environment.isLinux) linux.epoll_event else KEvent;
 
 pub const Request = struct {
     next: ?*Request = null,
@@ -440,28 +465,30 @@ pub const Poll = struct {
         pub const Set = std.EnumSet(Flags);
         pub const Struct = std.enums.EnumFieldStruct(Flags, bool, false);
 
-        pub fn fromKQueueEvent(kqueue_event: std.posix.system.kevent64_s) Flags.Set {
+        pub fn fromKQueueEvent(kqueue_event: KEvent) Flags.Set {
             var flags = Flags.Set{};
             if (kqueue_event.filter == std.posix.system.EVFILT.READ) {
                 flags.insert(Flags.readable);
                 log("readable", .{});
-                if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
+                if (kqueue_event.flags & EV_EOF != 0) {
                     flags.insert(Flags.hup);
                     log("hup", .{});
                 }
             } else if (kqueue_event.filter == std.posix.system.EVFILT.WRITE) {
                 flags.insert(Flags.writable);
                 log("writable", .{});
-                if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
+                if (kqueue_event.flags & EV_EOF != 0) {
                     flags.insert(Flags.hup);
                     log("hup", .{});
                 }
             } else if (kqueue_event.filter == std.posix.system.EVFILT.PROC) {
                 log("proc", .{});
                 flags.insert(Flags.process);
-            } else if (kqueue_event.filter == std.posix.system.EVFILT.MACHPORT) {
-                log("machport", .{});
-                flags.insert(Flags.machport);
+            } else if (comptime Environment.isMac) {
+                if (kqueue_event.filter == std.posix.system.EVFILT.MACHPORT) {
+                    log("machport", .{});
+                    flags.insert(Flags.machport);
+                }
             }
             return flags;
         }
@@ -492,7 +519,7 @@ pub const Poll = struct {
             tag: Pollable.Tag,
             poll: *Poll,
             fd: bun.FD,
-            kqueue_event: *std.posix.system.kevent64_s,
+            kqueue_event: *KEvent,
         ) void {
             log("register({s}, {f})", .{ @tagName(action), fd });
             defer {
@@ -511,53 +538,38 @@ pub const Poll = struct {
                     else => @compileError("unreachable"),
                 }
 
-                if (comptime Environment.allow_assert and action != .cancel) {
+                // The generation-number sanity check rides in kevent64_s.ext[0],
+                // which only exists on Darwin (GenerationNumberInt is u0 elsewhere).
+                if (comptime Environment.isMac and Environment.allow_assert and action != .cancel) {
                     generation_number_monotonic += 1;
                     poll.generation_number = generation_number_monotonic;
                 }
             }
 
             const one_shot_flag = std.posix.system.EV.ONESHOT;
-
-            kqueue_event.* = switch (comptime action) {
-                .readable => .{
-                    .ident = @as(u64, @intCast(fd.native())),
-                    .filter = std.posix.system.EVFILT.READ,
-                    .data = 0,
-                    .fflags = 0,
-                    .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
-                    .flags = std.c.EV.ADD | one_shot_flag,
-                    .ext = .{ generation_number_monotonic, 0 },
-                },
-                .writable => .{
-                    .ident = @as(u64, @intCast(fd.native())),
-                    .filter = std.posix.system.EVFILT.WRITE,
-                    .data = 0,
-                    .fflags = 0,
-                    .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
-                    .flags = std.c.EV.ADD | one_shot_flag,
-                    .ext = .{ generation_number_monotonic, 0 },
-                },
-                .cancel => if (poll.flags.contains(.poll_readable)) .{
-                    .ident = @as(u64, @intCast(fd.native())),
-                    .filter = std.posix.system.EVFILT.READ,
-                    .data = 0,
-                    .fflags = 0,
-                    .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
-                    .flags = std.c.EV.DELETE,
-                    .ext = .{ poll.generation_number, 0 },
-                } else if (poll.flags.contains(.poll_writable)) .{
-                    .ident = @as(u64, @intCast(fd.native())),
-                    .filter = std.posix.system.EVFILT.WRITE,
-                    .data = 0,
-                    .fflags = 0,
-                    .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
-                    .flags = std.c.EV.DELETE,
-                    .ext = .{ poll.generation_number, 0 },
-                } else unreachable,
-
+            const udata: usize = @intFromPtr(Pollable.init(tag, poll).ptr());
+            const filter: i16, const flags_: u16 = switch (comptime action) {
+                .readable => .{ std.posix.system.EVFILT.READ, std.c.EV.ADD | one_shot_flag },
+                .writable => .{ std.posix.system.EVFILT.WRITE, std.c.EV.ADD | one_shot_flag },
+                .cancel => if (poll.flags.contains(.poll_readable))
+                    .{ std.posix.system.EVFILT.READ, std.c.EV.DELETE }
+                else if (poll.flags.contains(.poll_writable))
+                    .{ std.posix.system.EVFILT.WRITE, std.c.EV.DELETE }
+                else
+                    unreachable,
                 else => @compileError("invalid action: " ++ @tagName(action)),
             };
+            kqueue_event.* = std.mem.zeroes(KEvent);
+            kqueue_event.ident = @intCast(fd.native());
+            kqueue_event.filter = filter;
+            kqueue_event.flags = flags_;
+            kqueue_event.udata = udata;
+            // Darwin's kevent64_s.ext[0] carries the generation number for the
+            // optional sanity assertion (GenerationNumberInt is u0 elsewhere).
+            if (comptime @hasField(KEvent, "ext")) {
+                const gen: u64 = if (comptime action == .cancel) poll.generation_number else generation_number_monotonic;
+                kqueue_event.ext = .{ gen, 0 };
+            }
         }
     };
 
@@ -572,10 +584,12 @@ pub const Poll = struct {
     }
 
     pub fn onUpdateKQueue(
-        event: std.posix.system.kevent64_s,
+        event: KEvent,
     ) void {
-        if (event.filter == std.c.EVFILT.MACHPORT)
-            return;
+        if (comptime Environment.isMac) {
+            if (event.filter == std.c.EVFILT.MACHPORT)
+                return;
+        }
 
         const pollable = Pollable.from(event.udata);
         const tag = pollable.tag();

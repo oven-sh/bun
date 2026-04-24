@@ -3629,6 +3629,25 @@ pub const NodeFS = struct {
             };
             defer dest_fd.close();
 
+            // FreeBSD 13+ has copy_file_range(2). Try the kernel-side copy
+            // first; fall back to read/write on cross-device or unsupported
+            // fd types.
+            cfr: while (true) {
+                const rc = std.c.copy_file_range(src_fd.native(), null, dest_fd.native(), null, std.math.maxInt(i32) - 1, 0);
+                switch (bun.sys.getErrno(rc)) {
+                    .SUCCESS => if (rc == 0) {
+                        _ = Syscall.fchmod(dest_fd, stat_.mode);
+                        return ret.success;
+                    },
+                    .INTR => continue,
+                    .XDEV, .INVAL, .OPNOTSUPP, .BADF => break :cfr,
+                    else => |e| {
+                        _ = bun.sys.unlink(dest);
+                        return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(e), .syscall = .copyfile } };
+                    },
+                }
+            }
+
             var wrote: u64 = 0;
             if (copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, @intCast(@max(stat_.size, 0)), &wrote).asErr()) |err| {
                 _ = bun.sys.unlink(dest);

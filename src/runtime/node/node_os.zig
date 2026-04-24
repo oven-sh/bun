@@ -76,7 +76,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     // pseudo-filesystem, so regression tests can cover non-contiguous CPU
     // numbering without needing such hardware.
     const procfs_root: []const u8 = bun.env_var.BUN_DEBUG_CPUS_PROCFS_ROOT.get() orelse "";
-    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var path_buf: bun.PathBuffer = undefined;
 
     // Read /proc/stat to get number of CPUs and times
     {
@@ -135,11 +135,13 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             _ = try (toks.next() orelse error.eol); // skip iowait
             times.irq = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
 
-            // Actually create the JS object representing the CPU.
-            // `model` is seeded to "unknown" so CPUs whose IDs don't appear in
-            // /proc/cpuinfo — or where /proc/cpuinfo is unreadable — still end
-            // up with a valid string, and the cpuinfo pass can overwrite it.
-            const cpu = jsc.JSValue.createEmptyObject(globalThis, 2);
+            // Actually create the JS object representing the CPU. Capacity 3
+            // matches the final shape (`times`, `model`, `speed`) and the
+            // Darwin/Windows implementations. `model` is seeded to "unknown"
+            // so CPUs whose IDs don't appear in /proc/cpuinfo — or where
+            // /proc/cpuinfo is unreadable — still end up with a valid string,
+            // and the cpuinfo pass can overwrite it.
+            const cpu = jsc.JSValue.createEmptyObject(globalThis, 3);
             cpu.put(globalThis, jsc.ZigString.static("times"), times.toValue(globalThis));
             cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
             try values.putIndex(globalThis, num_cpus, cpu);

@@ -158,16 +158,25 @@ it("cpus", () => {
 it.skipIf(!isLinux)("cpus() handles non-contiguous CPU IDs (#29689)", async () => {
   // Simulated 8-CPU EPYC-style layout: IDs 0..3 then 8..11. The crash
   // reproduces with any ID >= total CPU count; 8 with count 8 is enough.
+  //
+  // Per-id-distinct values in every stage (`times.user` in /proc/stat,
+  // model suffix in /proc/cpuinfo, kHz in scaling_cur_freq) let the test
+  // prove each JS slot is populated from the right CPU ID — if any of
+  // the three passes mis-mapped `cpu_id → array_index` and silently wrote
+  // to the wrong slot, the per-slot toEqual below would catch it.
   const cpuIds = [0, 1, 2, 3, 8, 9, 10, 11];
 
+  // /proc/stat user ticks encode the id: `id + 1` × 10 (after the ×10
+  // scale applied by cpusImplLinux this lands at 10, 20, …, 120).
   const statBody =
     "cpu  100 0 100 1000 0 0 0 0 0 0\n" +
-    cpuIds.map(id => `cpu${id} 10 0 10 100 0 0 0 0 0 0`).join("\n") +
+    cpuIds.map(id => `cpu${id} ${id + 1} 0 10 100 0 0 0 0 0 0`).join("\n") +
     "\nintr 0\nctxt 0\n";
 
+  // /proc/cpuinfo model encodes the id.
   const cpuinfoBody =
     cpuIds
-      .map(id => `processor\t: ${id}\n` + `model name\t: AMD EPYC 7713 64-Core Processor\n` + `cpu MHz\t\t: 2000.000\n`)
+      .map(id => `processor\t: ${id}\n` + `model name\t: AMD EPYC 7713 (core ${id})\n` + `cpu MHz\t\t: 2000.000\n`)
       .join("\n") + "\n";
 
   using dir = tempDir("cpus-noncontiguous", {
@@ -175,13 +184,12 @@ it.skipIf(!isLinux)("cpus() handles non-contiguous CPU IDs (#29689)", async () =
     "proc/cpuinfo": cpuinfoBody,
   });
 
-  // Stage a scaling_cur_freq for every real CPU ID under the fake sysfs
-  // tree so the frequency pass has something to read at the sparse paths.
+  // scaling_cur_freq encodes the id as (id + 1) × 1000 kHz, which the
+  // /1000 conversion in cpusImplLinux turns into (id + 1) MHz.
   for (const id of cpuIds) {
     const freqDir = join(String(dir), "sys/devices/system/cpu", `cpu${id}`, "cpufreq");
     mkdirSync(freqDir, { recursive: true });
-    // 2,000,000 kHz -> 2000 MHz after /1000
-    writeFileSync(join(freqDir, "scaling_cur_freq"), "2000000\n");
+    writeFileSync(join(freqDir, "scaling_cur_freq"), `${(id + 1) * 1000}\n`);
   }
 
   // os.cpus() returns a lazy-populated array sized to the *real* host's
@@ -201,27 +209,28 @@ it.skipIf(!isLinux)("cpus() handles non-contiguous CPU IDs (#29689)", async () =
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Released bun (USE_SYSTEM_BUN=1) without the fix dies here with
-  // `Failed to get CPU information` (ERR_SYSTEM_ERROR) on stderr and a
-  // non-zero exit. Check exitCode + parsed stdout; ignore ASAN-build
-  // noise on stderr.
-  expect(exitCode, `stderr: ${stderr}`).toBe(0);
-
+  // Pass 1 packs array slots in /proc/stat order, so slot i corresponds
+  // to cpuIds[i]. Assert the full per-slot shape so a mis-mapping in any
+  // of the three passes would fail a specific entry, not just length.
   const cpus = JSON.parse(stdout);
-  expect(cpus).toHaveLength(cpuIds.length);
-  for (const cpu of cpus) {
-    expect(cpu).toEqual({
-      model: "AMD EPYC 7713 64-Core Processor",
-      speed: 2000,
+  expect(cpus).toEqual(
+    cpuIds.map(id => ({
+      model: `AMD EPYC 7713 (core ${id})`,
+      speed: id + 1,
       times: {
-        user: 100, // 10 ticks * scale 10
+        user: (id + 1) * 10, // raw ticks × scale 10
         nice: 0,
         sys: 100,
         idle: 1000,
         irq: 0,
       },
-    });
-  }
+    })),
+  );
+
+  // Released bun (USE_SYSTEM_BUN=1) without the fix dies here with
+  // `Failed to get CPU information` (ERR_SYSTEM_ERROR) on stderr and a
+  // non-zero exit. Ignore ASAN-build noise on stderr.
+  expect(exitCode, `stderr: ${stderr}`).toBe(0);
 });
 
 it("networkInterfaces", () => {

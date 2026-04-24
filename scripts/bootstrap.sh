@@ -1260,8 +1260,13 @@ install_rust() {
 		fi
 		execute_as_user "$rustup" target add aarch64-linux-android
 		execute_as_user "$rustup" target add x86_64-linux-android
+		# x86_64-unknown-freebsd is Tier 2 (prebuilt std). aarch64 is Tier 3
+		# (no prebuilt) — lolhtml.ts uses -Zbuild-std for that, so the
+		# rustup target add is best-effort.
 		execute_as_user "$rustup" target add x86_64-unknown-freebsd
-		execute_as_user "$rustup" target add aarch64-unknown-freebsd
+		execute_as_user "$rustup" target add aarch64-unknown-freebsd || true
+		# rust-src for -Zbuild-std (Tier 3 targets without prebuilt std).
+		execute_as_user "$rustup" component add rust-src || true
 		;;
 	esac
 }

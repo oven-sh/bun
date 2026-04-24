@@ -362,6 +362,12 @@ export interface CargoBuild {
    * unit-separator (\x1f) encoding so multi-word flags work.
    */
   rustflags?: string[];
+  /**
+   * Tier 3 targets (e.g. aarch64-unknown-freebsd) have no prebuilt std.
+   * When true, passes `-Zbuild-std=std,panic_abort` so cargo builds std
+   * from source. Requires nightly cargo + `rustup component add rust-src`.
+   */
+  buildStd?: boolean;
 }
 
 /**
@@ -1322,6 +1328,7 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   const args: string[] = ["--locked", "--target-dir", targetDir];
   if (cfg.release) args.push("--release");
   if (spec.rustTarget) args.push("--target", spec.rustTarget);
+  if (spec.buildStd) args.push("-Zbuild-std=std,panic_abort", "-Zbuild-std-features=panic_immediate_abort");
 
   // ─── Environment ───
   // CARGO_ENCODED_RUSTFLAGS: the separator is U+001F (unit separator), not

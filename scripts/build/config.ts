@@ -50,8 +50,8 @@ export interface Host {
  * Overridable via PartialConfig for testing (e.g. trying a WebKit branch).
  *
  * Zig is NOT here: there are two pins (STABLE/FAST) and which one applies
- * depends on resolved build options (ci/asan/windows/lto), so the default
- * is computed inside resolveConfig via zigFastCompiler().
+ * depends on resolved build options (ci/canary), so the default is
+ * computed inside resolveConfig via zigFastCompiler().
  */
 const versionDefaults = {
   nodejsVersion: NODEJS_VERSION,
@@ -237,8 +237,9 @@ export interface Config {
   /**
    * Which zig compiler line this build uses — true = `upgrade-0.15.2-fast`
    * (parallel sema + sharded codegen), false = `upgrade-0.15.2` (stable).
-   * Derived from {windows, lto, ci, asan} via zigFastCompiler(); also gates
-   * ZIG_PARALLEL_SEMA and codegenThreads() in zig.ts.
+   * Derived from {ci, canary} via zigFastCompiler(), or from an explicit
+   * `--zig-commit` matching a known pin. Gates ZIG_PARALLEL_SEMA and
+   * codegenThreads() in zig.ts.
    */
   zigFast: boolean;
   /** WebKit commit. Default in versions.ts; override to test a WebKit branch. */
@@ -749,9 +750,14 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
   // Zig: STABLE only for tagged production releases (ci + --canary=off);
   // local dev, PR CI, and canary CI all use FAST (parallel sema + sharded
-  // codegen on the upgrade-0.15.2-fast fork).
-  const zigFast = zigFastCompiler({ ci, canary });
-  const zigCommit = partial.zigCommit ?? (zigFast ? ZIG_COMMIT_FAST : ZIG_COMMIT_STABLE);
+  // codegen on the upgrade-0.15.2-fast fork). An explicit --zig-commit
+  // matching a known pin overrides the {ci,canary} default so e.g.
+  // `--zig-commit=$STABLE` doesn't leave zigFast=true (which would make
+  // ninja declare bun-zig.{0..N-1}.o that the stable compiler can't emit).
+  const zigFastDefault = zigFastCompiler({ ci, canary });
+  const zigCommit = partial.zigCommit ?? (zigFastDefault ? ZIG_COMMIT_FAST : ZIG_COMMIT_STABLE);
+  const zigFast =
+    zigCommit === ZIG_COMMIT_STABLE ? false : zigCommit === ZIG_COMMIT_FAST ? true : zigFastDefault;
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.

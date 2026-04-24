@@ -251,8 +251,11 @@ export function codegenEmbed(cfg: Config): boolean {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Where zig lives. Defaults to vendor/zig (gitignored), shared across
- * profiles — the commit pin is global and changing it affects everything.
+ * Where zig lives. Defaults to vendor/zig (STABLE) or vendor/zig-fast
+ * (FAST), per-variant so flipping between a `zigFast=true` config and a
+ * `--canary=off` / `--zig-commit=$STABLE` config doesn't wipe and
+ * re-download the other compiler (fetchZig nukes the dest on commit
+ * mismatch). Both dirs are gitignored.
  *
  * Override via $BUN_ZIG_PATH to point at an existing zig install (e.g.
  * share one compiler across worktrees, test a zig fork build, or pre-fetch
@@ -262,12 +265,17 @@ export function codegenEmbed(cfg: Config): boolean {
  */
 function zigPath(cfg: Config): string {
   const env = process.env.BUN_ZIG_PATH;
-  if (!env) return resolve(cfg.vendorDir, "zig");
+  if (!env) return resolve(cfg.vendorDir, zigVendorBasename(cfg));
   // Shells don't expand ~ inside quotes; handle it here so a quoted export works.
   if (env === "~" || env.startsWith("~/") || env.startsWith("~\\")) return join(homedir(), env.slice(1));
   // Anchor relative paths to the repo root so ninja's regen rule (which runs
   // from buildDir) resolves the same path as the initial configure.
   return resolve(cfg.cwd, env);
+}
+
+/** vendor/ subdirectory name — `zig` (STABLE) or `zig-fast` (FAST). Exported for prefetch-deps.ts. */
+export function zigVendorBasename(cfg: Config): string {
+  return cfg.zigFast ? "zig-fast" : "zig";
 }
 
 function zigExecutable(cfg: Config): string {

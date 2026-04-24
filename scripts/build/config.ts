@@ -747,9 +747,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
-  // Zig: STABLE for shipped builds (non-ASAN CI, Windows, LTO), FAST
-  // (parallel sema + sharded codegen) for local dev and ASAN CI.
-  const zigFast = zigFastCompiler({ windows, lto, ci, asan });
+  // Zig: STABLE only for tagged production releases (ci + --canary=off);
+  // local dev, PR CI, and canary CI all use FAST (parallel sema + sharded
+  // codegen on the upgrade-0.15.2-fast fork).
+  const zigFast = zigFastCompiler({ ci, canary });
   const zigCommit = partial.zigCommit ?? (zigFast ? ZIG_COMMIT_FAST : ZIG_COMMIT_STABLE);
 
   // ─── macOS SDK ───

@@ -172,17 +172,22 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // compiled source files (deps like picohttpparser that provide .c files
   // instead of a .a — we compile those alongside bun's own sources).
   const depLibs: string[] = [];
+  const depObjects: string[] = [];
   const depIncludes: string[] = [];
   // Outputs of deps that provide headers — used as implicit inputs on PCH/cc/
   // no-PCH cxx so a dep rebuild invalidates compiles that #include its headers
   // (the .a is the signal — see comment at the PCH step). Deps with no provided
   // includes (tinycc, lolhtml) are skipped: nothing to invalidate, and a tinycc
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
-  // rebuild. Link still gets every dep via depLibs.
+  // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
   for (const d of deps) {
     depLibs.push(...d.libs);
+    depObjects.push(...d.objects);
     depIncludes.push(...d.includes);
+    // d.outputs is the "headers are ready" signal: for nested-cmake/
+    // prebuilt that's the .a/stamp (headers are undeclared side-effects),
+    // for direct deps it's the generated-header set + source stamp.
     if (d.includes.length > 0) depHeaderSignal.push(...d.outputs);
   }
 
@@ -239,12 +244,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // ─── Step 5: PCH ───
   // In CI, only the cpp-only job uses PCH — full mode skips it since the
   // cpp-only artifacts are what actually get used downstream.
-  //
-  // Not on Windows: matches cmake (BuildBun.cmake:868 gated on NOT WIN32).
-  // clang-cl's /Yc//Yu flags exist but the wrapper+stub mechanism here
-  // is built around clang's -emit-pch model. If Windows PCH is wanted
-  // later, see compile.ts TODO(windows) for what needs wiring.
-  const usePch = !cfg.windows && (!cfg.ci || cfg.mode === "cpp-only");
+  const usePch = !cfg.ci || cfg.mode === "cpp-only";
   let pchOut: { pch: string; wrapperHeader: string } | undefined;
 
   if (usePch) {
@@ -285,12 +285,21 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const cxxSources = [...split.unified, ...split.standalone];
   const cSources = [...sources.c];
 
+  // Sources that must NOT use the PCH. Anything that needs to set defines
+  // before <Windows.h> (UNICODE, WIN32_LEAN_AND_MEAN opt-outs, etc.) goes
+  // here — root-pch.h transitively includes Windows.h via WTF, so the
+  // force-include would lock those in before the source can speak.
+  const noPchSources = new Set<string>();
+
   // Windows-only cpp sources (rescle — PE resource editor for --compile).
   if (cfg.windows) {
-    cxxSources.push(
-      resolve(cfg.cwd, "src/bun.js/bindings/windows/rescle.cpp"),
-      resolve(cfg.cwd, "src/bun.js/bindings/windows/rescle-binding.cpp"),
-    );
+    // rescle.h does `#define UNICODE` before including ATL; with PCH the
+    // headers are already past in MBCS mode and ATL's TCHAR mismatches.
+    const rescle = resolve(cfg.cwd, "src/bun.js/bindings/windows/rescle.cpp");
+    const rescleBinding = resolve(cfg.cwd, "src/bun.js/bindings/windows/rescle-binding.cpp");
+    cxxSources.push(rescle, rescleBinding);
+    noPchSources.add(rescle);
+    noPchSources.add(rescleBinding);
   }
 
   // Deps with provides.sources compiled in the loop below so each dep's
@@ -307,7 +316,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // effect of the edge whose declared outputs are only lib*.a. Depfiles record
   // those headers, but ninja stats them BEFORE the sub-build runs — so with
   // order-only, any compile that #includes a dep header lags one build behind
-  // a dep rebuild (observed: asan-config.c / uv-posix-*.c → wtf/Compiler.h).
+  // a dep rebuild (observed: uv-posix-*.c → wtf/Compiler.h).
   // Implicit deps on the libs make "dep rebuilt" itself the invalidation
   // signal. Cost is negligible: if the libs changed you're relinking anyway.
   //
@@ -339,13 +348,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     const opts: Parameters<typeof cxx>[3] = {
       flags: [...cxxFlagsFull, ...extraFlags],
     };
-    if (pchOut !== undefined) {
+    if (pchOut !== undefined && !noPchSources.has(src)) {
       // PCH has implicit deps on depHeaderSignal. cxx has implicit dep on PCH.
       // Transitively: cxx waits for deps. No need to repeat them here.
       opts.pch = pchOut.pch;
       opts.pchHeader = pchOut.wrapperHeader;
     } else {
-      // No PCH (windows) — each cxx needs the dep signal directly.
+      // No PCH (CI full mode, or per-file opt-out) — each cxx needs the dep
+      // signal directly.
       opts.implicitInputs = depHeaderSignal;
       opts.orderOnlyInputs = codegenOrderOnly;
     }
@@ -375,7 +385,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     n.phony(d.name, d.sources.map(compileC));
   }
 
-  const allObjects = [...cxxObjects, ...cObjects];
+  // Dep objects (when !cfg.archiveDeps) are linked alongside bun's own
+  // objects — same response file, same archive in cpp-only mode. With
+  // cfg.archiveDeps they live in depLibs as .a files instead.
+  const allObjects = [...cxxObjects, ...cObjects, ...depObjects];
 
   // ─── Step 7: cpp-only → archive and return ───
   // CI's build-cpp step: archive all .o into libbun.a, stop. The sibling

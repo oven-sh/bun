@@ -1961,13 +1961,15 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
 
         1 => {
             const msg = log.msgs.items[0];
+            const referrer_utf8 = referrer.toUTF8(bun.default_allocator);
+            defer referrer_utf8.deinit();
             ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
                 .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)),
                 .resolve => (bun.api.ResolveMessage.create(
                     globalThis,
                     globalThis.allocator(),
                     msg,
-                    referrer.toUTF8(bun.default_allocator).slice(),
+                    referrer_utf8.slice(),
                 ) catch |e| globalThis.takeException(e)),
             });
             return;
@@ -1979,6 +1981,9 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
             const errors = errors_stack[0..len];
             const logs = log.msgs.items[0..len];
 
+            const referrer_utf8 = referrer.toUTF8(bun.default_allocator);
+            defer referrer_utf8.deinit();
+
             for (logs, errors) |msg, *current| {
                 current.* = switch (msg.metadata) {
                     .build => bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e),
@@ -1986,7 +1991,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                         globalThis,
                         globalThis.allocator(),
                         msg,
-                        referrer.toUTF8(bun.default_allocator).slice(),
+                        referrer_utf8.slice(),
                     ) catch |e| globalThis.takeException(e),
                 };
             }

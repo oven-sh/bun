@@ -9,7 +9,7 @@
 // force-includes it). If they lived in root.h itself, a TU whose first
 // explicit include is BunClientData.h would re-enter root.h mid-parse and
 // reach ZigGlobalObject.h before WebCore::clientData() is declared. The PCH
-// path is fine; Windows (no PCH yet) and --unifiedSources=false would not be.
+// path is fine; --unifiedSources=false would not be.
 
 #include "root.h"
 

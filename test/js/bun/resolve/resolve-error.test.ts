@@ -60,6 +60,22 @@ describe("ResolveMessage", () => {
       await import(":://filesystem");
     }).toThrow("Cannot find module");
   });
+
+  it("referrer is not freed before it is read", () => {
+    // Non-ASCII in the source path forces resolveMaybeNeedsTrailingSlash to
+    // allocate a new UTF-8 buffer which is freed on return. ResolveMessage
+    // used to borrow that buffer for .referrer, causing a use-after-free
+    // when the property was read later.
+    let err: any;
+    try {
+      Bun.resolveSync("./does-not-exist", "/tmp/caf\u00e9-tr\u00e8s-long-\u{1F389}/file.js");
+    } catch (e) {
+      err = e;
+    }
+    Bun.gc(true);
+    expect(err.referrer).toStartWith("/tmp/caf");
+    expect(err.referrer).toEndWith("/file.js");
+  });
 });
 
 // These tests reproduce panics where the module resolver wrote past fixed-size

@@ -401,6 +401,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             defer current_task.enqueue();
 
             for (events) |event| {
+                // Stale udata: kevent.udata can outlive a swapRemove in flushEvictions.
+                if (event.index >= file_paths.len) continue;
                 const file_path = file_paths[event.index];
                 const update_count = counts[event.index] + 1;
                 counts[event.index] = update_count;

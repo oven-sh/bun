@@ -278,6 +278,8 @@ pub fn flushEvictions(this: *Watcher) void {
     for (this.evict_list[0..this.evict_list_i]) |item| {
         // catch duplicates, since the list is sorted, duplicates will appear right after each other
         if (item == last_item) continue;
+        // Stale udata from a kevent can point past the compacted watchlist; match the second pass's guard.
+        if (item >= fds.len) continue;
 
         if (!Environment.isWindows) {
             // on mac and linux we can just close the file descriptor
@@ -294,6 +296,20 @@ pub fn flushEvictions(this: *Watcher) void {
     for (this.evict_list[0..this.evict_list_i]) |item| {
         if (item == last_item or this.watchlist.len <= item) continue;
         this.watchlist.swapRemove(item);
+
+        // swapRemove put a different entry at `item`, but its kqueue registration still
+        // carries its old `udata` (= pre-swap index). Rewrite it so subsequent kevents
+        // route to the right module; EV_ADD on an existing (ident, filter) replaces in
+        // place. See #29524.
+        if (comptime Environment.isMac) {
+            if (item < this.watchlist.len) {
+                const moved_fd = this.watchlist.items(.fd)[item];
+                if (moved_fd.isValid()) {
+                    this.addFileDescriptorToKQueueWithoutChecks(moved_fd, item);
+                }
+            }
+        }
+
         last_item = item;
     }
 }
@@ -313,11 +329,14 @@ fn watchLoop(this: *Watcher) bun.sys.Maybe(void) {
 ///
 /// Preconditions (caller must ensure):
 /// - `fd` is a valid, open file descriptor
-/// - `fd` is not already registered with this kqueue
 /// - `watchlist_id` matches the entry's index in the watchlist
 ///
-/// Note: This function does not propagate kevent registration errors.
-/// If registration fails, the file will not be watched but no error is returned.
+/// Safe to call on an already-registered `fd`: `EV_ADD` on an existing
+/// `(ident, filter)` replaces the registration in place, which `flushEvictions`
+/// relies on to rewrite `udata` after `swapRemove`. Adding a
+/// skip-if-registered guard here silently reintroduces #29524.
+///
+/// Does not propagate kevent registration errors.
 pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FD, watchlist_id: usize) void {
     const KEvent = std.c.Kevent;
 
@@ -469,7 +488,7 @@ fn appendDirectoryAssumeCapacity(
         // id
         event.ident = @intCast(fd.native());
 
-        // Store the hash for fast filtering later
+        // Store the index for fast filtering later
         event.udata = @as(usize, @intCast(watchlist_id));
         var events: [1]KEvent = .{event};
 

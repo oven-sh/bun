@@ -1,11 +1,18 @@
 /**
  * mimalloc — Microsoft's memory allocator. Bun's global malloc replacement
  * on Linux, and the JS heap allocator everywhere.
+ *
+ * DirectBuild: compiles only `src/static.c`, mimalloc's unity TU that
+ * #includes every other source. The cmake build also produced a per-file
+ * `.a`, but linking that on apple/linux-release tripped duplicate-symbol
+ * errors (microsoft/mimalloc#512) because the archive ended up containing
+ * both static.c.o and the individual .o files. With one TU there's nothing
+ * to duplicate, so the old object-vs-archive workaround is gone.
  */
 
-import type { Dependency, NestedCmakeBuild, Provides } from "../source.ts";
+import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "57029fb1f193e633462e76af745599e1dbfd4b58";
+const MIMALLOC_COMMIT = "dbbb9a0819d00d521f9f58ad4d0a336efa4ce53a";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -18,149 +25,107 @@ export const mimalloc: Dependency = {
   }),
 
   build: cfg => {
-    const args: Record<string, string> = {
-      // Always build both the static lib AND the object-library target.
-      // We link the object file directly on some platforms (see provides()).
-      MI_BUILD_STATIC: "ON",
-      MI_BUILD_OBJECT: "ON",
-      MI_BUILD_SHARED: "OFF",
-      MI_BUILD_TESTS: "OFF",
+    // ─── Override behavior (global malloc replacement) ───
+    //   ASAN:    OFF — ASAN interceptors must see the real malloc.
+    //   macOS:   OFF — overriding via zone/interpose breaks NAPI addons and
+    //            system frameworks (SecureTransport etc.).
+    //   Linux:   ON — the main win. All malloc/free routes through mimalloc,
+    //            including WebKit's bmalloc when it falls back to system malloc.
+    //   Windows: OFF — Bun links the static CRT and calls mi_* directly;
+    //            alloc-override.c emits _expand/_msize/free which duplicate
+    //            against libucrt(d) at link time.
+    const override = cfg.linux && !cfg.asan;
 
-      // Compile mimalloc's .c files as C++. Required because we link against
-      // C++ code that uses mimalloc types, and C/C++ ABI can differ (notably
-      // around structs with trailing flexible arrays).
-      MI_USE_CXX: "ON",
+    const defines: Record<string, string | number | true> = {
+      // The .a path; gates symbol visibility in mimalloc/internal.h.
+      MI_STATIC_LIB: true,
 
       // Don't walk all heaps on exit. Bun's shutdown is already complicated
       // enough without mimalloc traversing every live allocation.
-      MI_SKIP_COLLECT_ON_EXIT: "ON",
+      MI_SKIP_COLLECT_ON_EXIT: 1,
 
       // Go further: skip mi_process_done entirely. It exists for the
       // dlopen/dlclose-a-static-mimalloc case (issue #281); Bun is a static
       // exe that exits via _exit, so the OS reclaims everything. Running it
       // tears down locks/TLS while other static destructors may still call
       // free(). MI_SKIP_COLLECT_ON_EXIT only skips the heap walk inside it.
-      MI_NO_PROCESS_DETACH: "ON",
+      MI_NO_PROCESS_DETACH: 1,
 
-      // Disable Transparent Huge Pages. Measured impact:
-      //   bun --eval 1:  THP off = 30MB peak,  THP on = 52MB peak
-      //   http-hello.js: THP off = 52MB peak,  THP on = 74MB peak
-      // THP trades memory for (sometimes) latency; for a JS runtime the
-      // memory cost isn't worth it.
-      MI_NO_THP: "1",
+      ...(cfg.release && { MI_BUILD_RELEASE: true }),
     };
 
-    const extraCFlags: string[] = [];
-    const extraCxxFlags: string[] = [];
+    // Disable Transparent Huge Pages. Measured impact:
+    //   bun --eval 1:  THP off = 30MB peak,  THP on = 52MB peak
+    //   http-hello.js: THP off = 52MB peak,  THP on = 74MB peak
+    // THP trades memory for (sometimes) latency; for a JS runtime the
+    // memory cost isn't worth it. The cmake option only applies on Linux.
+    if (cfg.linux) defines.MI_DEFAULT_ALLOW_THP = 0;
 
-    if (cfg.abi === "musl") {
-      args.MI_LIBC_MUSL = "ON";
-    }
-
-    // ─── Override behavior (global malloc replacement) ───
-    // The decision matrix:
-    //   ASAN:    always OFF — ASAN interceptors must see the real malloc.
-    //   macOS:   OFF — macOS's malloc zones are sufficient and overriding
-    //            causes issues with system frameworks (SecureTransport, etc.)
-    //            that have their own allocator expectations.
-    //   Linux:   ON — this is the main win. All malloc/free goes through
-    //            mimalloc, including WebKit's bmalloc when it falls back
-    //            to system malloc.
-    //   Windows: OFF — Bun links the static CRT and calls mi_* directly;
-    //            dev3's alloc-override.c emits _expand/_msize/free which
-    //            duplicate against libucrt(d) at link time.
-    if (cfg.asan) {
-      args.MI_TRACK_ASAN = "ON";
-      args.MI_OVERRIDE = "OFF";
-      args.MI_OSX_ZONE = "OFF";
-      args.MI_OSX_INTERPOSE = "OFF";
-      // Mimalloc's UBSan integration: sets up shadow memory annotations
-      // so UBSan doesn't false-positive on mimalloc's type punning.
-      args.MI_DEBUG_UBSAN = "ON";
-    } else if (cfg.darwin) {
-      // We cannot use MI_OSX_ZONE because it breaks NAPI addons.
-      args.MI_OVERRIDE = "OFF";
-      args.MI_OSX_ZONE = "OFF";
-      args.MI_OSX_INTERPOSE = "OFF";
-    } else if (cfg.linux) {
-      args.MI_OVERRIDE = "ON";
-      args.MI_OSX_ZONE = "OFF";
-      args.MI_OSX_INTERPOSE = "OFF";
-    } else if (cfg.windows) {
-      // mimalloc's *default* is ON, so this must be explicit.
-      args.MI_OVERRIDE = "OFF";
-    }
+    if (cfg.abi === "musl") defines.MI_LIBC_MUSL = 1;
+    if (override) defines.MI_MALLOC_OVERRIDE = true;
 
     if (cfg.debug) {
       // Heavy debug checks: guard bytes, freed-memory poisoning, double-free
-      // detection. Slow but catches memory bugs early.
-      args.MI_DEBUG_FULL = "ON";
+      // detection. Slow but catches memory bugs early. The cmake build sets
+      // MI_DEBUG=2 for plain Debug; MI_DEBUG_FULL=ON bumps to 3.
+      defines.MI_DEBUG = 3;
     }
 
-    if (cfg.valgrind) {
-      // Mimalloc annotations so valgrind understands its arena layout
-      // (without this, every mimalloc alloc looks like a leak).
-      args.MI_TRACK_VALGRIND = "ON";
+    if (cfg.asan) {
+      defines.MI_TRACK_ASAN = 1;
+      // Shadow-memory annotations so UBSan doesn't false-positive on
+      // mimalloc's internal type punning.
+      defines.MI_UBSAN = 1;
     }
 
-    // dev3 grew MI_OPT_ARCH which sets -march=armv8.1-a on arm64 — that
-    // SIGILLs on ARMv8.0 CPUs. Explicitly disable it; our global
-    // -march=armv8-a+crc (via CMAKE_CXX_FLAGS) is sufficient.
-    args.MI_NO_OPT_ARCH = "ON";
+    // Mimalloc annotations so valgrind understands its arena layout
+    // (without this, every mimalloc alloc looks like a leak).
+    if (cfg.valgrind) defines.MI_TRACK_VALGRIND = 1;
+
+    const cflags = [
+      "-fvisibility=hidden",
+      "-Wno-deprecated",
+      "-Wno-static-in-inline",
+      // Bare token (mi_stringify() pastes it into the banner string), so
+      // it can't go through DirectBuild.defines which would quote it.
+      `-DMI_CMAKE_BUILD_TYPE=${cfg.buildType.toLowerCase()}`,
+    ];
+
+    // TLS model: initial-exec for the static link into bun's executable
+    // (one DTV slot, no __tls_get_addr indirection). musl static needs
+    // local-dynamic — initial-exec there can SIGSEGV on dlopen of native
+    // addons because musl's static TLS block is fixed-size. ELF/Mach-O
+    // only — clang-cl doesn't recognize -ftls-model (COFF has no TLS
+    // models; mimalloc's cmake gates it behind NOT WIN32 too).
+    if (!cfg.windows) {
+      cflags.push(cfg.abi === "musl" ? "-ftls-model=local-dynamic" : "-ftls-model=initial-exec");
+    }
+
+    if (override) cflags.push("-fno-builtin-malloc");
 
     // ─── Windows: silence the vendored-C-as-C++ warning flood ───
-    // MI_USE_CXX=ON means .c files compile as C++. clang-cl then complains
-    // about every C-ism: old-style casts, zero-as-null, C++98 compat, etc.
-    // It's noise — mimalloc is correct C, just not idiomatic C++.
-    if (cfg.windows) {
-      extraCFlags.push("-w");
-      extraCxxFlags.push("-w");
-    }
+    // lang:"c++" means .c compiles as C++; clang-cl then complains about
+    // every C-ism (old-style casts, zero-as-null, C++98 compat). Noise —
+    // mimalloc is correct C, just not idiomatic C++.
+    if (cfg.windows) cflags.push("-w");
 
-    const spec: NestedCmakeBuild = {
-      kind: "nested-cmake",
-      targets: ["mimalloc-static", "mimalloc-obj"],
-      args,
+    const spec: DirectBuild = {
+      kind: "direct",
+      // Compile as C++. Required because we link against C++ code that uses
+      // mimalloc types, and C/C++ ABI can differ (notably around structs
+      // with trailing flexible arrays).
+      lang: "cxx",
+      sources: ["src/static.c"],
+      includes: ["include"],
+      defines,
+      cflags,
+      pic: true,
     };
-    if (extraCFlags.length > 0) spec.extraCFlags = extraCFlags;
-    if (extraCxxFlags.length > 0) spec.extraCxxFlags = extraCxxFlags;
     return spec;
   },
 
-  provides: cfg => {
-    // mimalloc's output library name depends on config flags passed to its
-    // CMake. It appends suffixes based on what's enabled — there's no way
-    // to override this, so we have to mirror its naming logic.
-    let libname: string;
-    if (cfg.windows) {
-      libname = cfg.debug ? "mimalloc-debug" : "mimalloc";
-    } else if (cfg.debug) {
-      libname = cfg.asan ? "mimalloc-asan-debug" : "mimalloc-debug";
-    } else {
-      libname = "mimalloc";
-    }
-
-    // WORKAROUND: Link the object file directly, not the .a.
-    //
-    // Linking libmimalloc.a on macOS (and Linux release) produces duplicate
-    // symbol errors at link time — mimalloc's static.c is a "unity build"
-    // TU that #includes all other .c files, and libmimalloc.a ALSO contains
-    // the individually-compiled .o files. The linker pulls both and barfs.
-    // See https://github.com/microsoft/mimalloc/issues/512.
-    //
-    // The fix: link mimalloc-obj's single static.c.o directly. One TU, all
-    // symbols, no archive index to confuse the linker.
-    //
-    // We only do this on apple + linux-release because the CMake build has
-    // been working this way for years. Debug Linux uses the .a successfully
-    // (possibly because -g changes symbol visibility in a way that dodges
-    // the issue, or the debug .a is built differently — haven't dug into it).
-    const useObjectFile = cfg.darwin || (cfg.linux && cfg.release);
-
-    const provides: Provides = {
-      libs: useObjectFile ? ["CMakeFiles/mimalloc-obj.dir/src/static.c.o"] : [libname],
-      includes: ["include"],
-    };
-    return provides;
-  },
+  provides: () => ({
+    libs: [],
+    includes: ["include"],
+  }),
 };

@@ -116,7 +116,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
             var toks = std.mem.tokenizeAny(u8, line, " \t");
             const cpu_name = toks.next() orelse break;
-            if (!std.mem.startsWith(u8, cpu_name, "cpu")) break; // done with CPUs
+            if (!strings.hasPrefixComptime(cpu_name, "cpu")) break; // done with CPUs
 
             // Parse the real CPU ID from the `cpuN` prefix, not the array slot.
             // On non-contiguous systems these are sparse (`cpu0..cpu63, cpu128..`).

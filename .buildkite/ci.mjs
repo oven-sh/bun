@@ -138,10 +138,14 @@ const buildPlatforms = [
  * @type {Platform[]}
  */
 const testPlatforms = [
+  // Darwin test agents are targeted by queue + arch only (see getTestAgent),
+  // not by `release` — so a second release entry per arch just runs the suite
+  // twice on whatever agent is free, it doesn't pin a specific macOS version.
+  // We used to list "13" here as `tier: previous`; dropping it halves the
+  // per-PR darwin job count with no coverage loss. New macOS 26 runners pick
+  // up these jobs without needing a separate entry.
   { os: "darwin", arch: "aarch64", release: "14", tier: "latest" },
-  { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
-  { os: "darwin", arch: "x64", release: "13", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "13", tier: "latest" },

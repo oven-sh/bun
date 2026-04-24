@@ -137,7 +137,7 @@ RUN curl -fsSL "https://dl.google.com/android/repository/android-ndk-${ANDROID_N
     # dir — clang's driver hardcodes <resource-dir>/lib/<triple>/libclang_rt.*
     # with no -L fallback. Done at image-build time (root) since the build
     # user can't write to /usr.
-    && RES=$(clang-${LLVM_VERSION} -print-resource-dir) \
+    && RES=$(clang -print-resource-dir) \
     && NDK_RT=/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/$(ls /opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/)/lib/linux \
     && for A in aarch64 x86_64; do \
          DIR=$RES/lib/${A}-unknown-linux-android28; \

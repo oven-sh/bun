@@ -89,12 +89,15 @@ export const globalFlags: Flag[] = [
     desc: "Cross-compile sysroot (target libc headers + libs)",
   },
   {
-    // The NDK's libc++ headers live outside the sysroot's default search.
-    // The NDK clang wrappers add this; with our own clang we must too.
-    flag: c => ["-isystem", join(c.sysroot!, "usr", "include", "c++", "v1")],
+    // -nostdinc++ first: distro-packaged clang (apt.llvm.org) bakes in the
+    // host's /usr/include/c++/N which must NOT be searched — NDK libc++'s
+    // #include_next would find host libstdc++ headers and break (ldiv_t etc).
+    // Then explicitly add the NDK libc++ path (it's outside the sysroot's
+    // default search; NDK's clang wrappers add this, we must too).
+    flag: c => ["-nostdinc++", "-isystem", join(c.sysroot!, "usr", "include", "c++", "v1")],
     when: c => c.abi === "android",
     lang: "cxx",
-    desc: "Android: NDK libc++ headers (not in default sysroot include path)",
+    desc: "Android: drop host libstdc++ paths, use only NDK libc++",
   },
   {
     flag: ["-DANDROID", "-D_FILE_OFFSET_BITS=64"],

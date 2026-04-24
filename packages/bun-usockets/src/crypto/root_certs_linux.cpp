@@ -24,12 +24,14 @@ static void load_certs_from_directory(const char* dir_path, STACK_OF(X509)* cert
       continue;
     }
     
-    // Accept .crt/.pem/.cer, plus OpenSSL c_rehash-style names (^[0-9a-f]{8}\.[0-9]+$)
-    // — Android's /system/etc/security/cacerts/ and Debian's /etc/ssl/certs/
-    // both use the hashed format.
+    // Accept .crt/.pem/.cer. On Android also accept OpenSSL c_rehash-style names
+    // (^[0-9a-f]{8}\.[0-9]+$) since /system/etc/security/cacerts/ uses ONLY that
+    // format. On Debian /etc/ssl/certs/ has both *.pem and <hash>.0 symlinks to
+    // the same files, so accepting both there would just double-load.
     const char* ext = strrchr(entry->d_name, '.');
     if (!ext) continue;
     bool ok = strcmp(ext, ".crt") == 0 || strcmp(ext, ".pem") == 0 || strcmp(ext, ".cer") == 0;
+#ifdef __ANDROID__
     if (!ok) {
       size_t prefix = (size_t)(ext - entry->d_name);
       if (prefix == 8) {
@@ -42,6 +44,7 @@ static void load_certs_from_directory(const char* dir_path, STACK_OF(X509)* cert
         if (ext[1] == '\0') ok = false;
       }
     }
+#endif
     if (!ok) continue;
     
     // Build full path

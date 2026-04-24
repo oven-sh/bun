@@ -21,6 +21,8 @@ pub const isAarch64 = builtin.target.cpu.arch.isAARCH64();
 pub const isX86 = builtin.target.cpu.arch.isX86();
 pub const isX64 = builtin.target.cpu.arch == .x86_64;
 pub const isMusl = builtin.target.abi.isMusl();
+pub const isAndroid = builtin.target.abi.isAndroid();
+pub const isGlibc = isLinux and builtin.target.abi.isGnu();
 pub const allow_assert = isDebug or isTest or std.builtin.OptimizeMode.ReleaseSafe == builtin.mode;
 pub const ci_assert = isDebug or isTest or enable_asan or (std.builtin.OptimizeMode.ReleaseSafe == builtin.mode and is_canary);
 pub const show_crash_trace = isDebug or isTest or enable_asan;

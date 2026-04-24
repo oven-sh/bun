@@ -3859,6 +3859,11 @@ pub const NodeFS = struct {
         if (comptime Environment.isWindows) {
             return Maybe(Return.Lchmod).todo();
         }
+        if (comptime Environment.isAndroid) {
+            // bionic has no lchmod(); symlink modes are meaningless on Linux
+            // anyway. Match glibc's stub behaviour.
+            return .{ .err = .{ .errno = @intFromEnum(bun.sys.E.OPNOTSUPP), .syscall = .lchmod, .path = args.path.slice() } };
+        }
 
         const path = args.path.sliceZ(&this.sync_error_buf);
         return Maybe(Return.Lchmod).errnoSysP(c.lchmod(path, @truncate(args.mode)), .lchmod, path) orelse

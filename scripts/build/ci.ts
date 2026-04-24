@@ -335,6 +335,7 @@ function upload(paths: string[], cwd: string): void {
 function computeBunTriplet(cfg: Config): string {
   let t = `bun-${cfg.os}-${cfg.arch}`;
   if (cfg.abi === "musl") t += "-musl";
+  if (cfg.abi === "android") t += "-android";
   if (cfg.baseline) t += "-baseline";
   return t;
 }

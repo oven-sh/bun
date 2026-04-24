@@ -352,4 +352,19 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     // `[]` silently and so do we.
     expect(fs.globSync("target.txt/*.js", { cwd: root })).toStrictEqual([]);
   });
+
+  it("exclude callback errors propagate (are not swallowed by our ENOENT/ENOTDIR handling)", async () => {
+    // The wrapper catches ENOENT/ENOTDIR from the *scanner* (missing literal
+    // prefix) and returns `[]` to match Node. A user-supplied `exclude`
+    // callback that throws — even if the thrown value has `.code === 'ENOENT'`
+    // (e.g. a stat on a vanished entry) — must propagate to the caller.
+    const boom = Object.assign(new Error("exclude blew up"), { code: "ENOENT" });
+    const exclude = () => {
+      throw boom;
+    };
+    expect(() => fs.globSync("*.txt", { cwd: root, exclude })).toThrow(boom);
+    expect(async () => {
+      for await (const _ of fs.promises.glob("*.txt", { cwd: root, exclude })) break;
+    }).toThrow(boom);
+  });
 }); // </symlink behavior>

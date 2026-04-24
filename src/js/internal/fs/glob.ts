@@ -42,29 +42,34 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
 
   for (const pat of patterns) {
     const { pattern: scanPattern, cwd: scanCwd, prefix } = splitLiteralPrefix(pat, globOptions.cwd as string);
-    let scanner: AsyncIterable<string>;
+    let iter: AsyncIterator<string>;
     try {
-      scanner = new Bun.Glob(scanPattern).scan({ ...globOptions, cwd: scanCwd });
+      iter = new Bun.Glob(scanPattern).scan({ ...globOptions, cwd: scanCwd })[Symbol.asyncIterator]();
     } catch (err) {
       if (isMissingPath(err)) continue;
       throw err;
     }
-    try {
-      for await (const ent of scanner) {
-        const full = prefix ? prefix + ent : ent;
-        if (typeof exclude === "function") {
-          if (exclude(full)) continue;
-        } else if (excludeGlobs) {
-          if (excludeGlobs.some(glob => glob.match(full))) {
-            continue;
-          }
-        }
-
-        yield full;
+    while (true) {
+      // Only swallow ENOENT/ENOTDIR from the scanner's own readdir/open —
+      // not from user-provided `exclude` callbacks, which should propagate.
+      let step: IteratorResult<string>;
+      try {
+        step = await iter.next();
+      } catch (err) {
+        if (isMissingPath(err)) break;
+        throw err;
       }
-    } catch (err) {
-      if (isMissingPath(err)) continue;
-      throw err;
+      if (step.done) break;
+      const full = prefix ? prefix + step.value : step.value;
+      if (typeof exclude === "function") {
+        if (exclude(full)) continue;
+      } else if (excludeGlobs) {
+        if (excludeGlobs.some(glob => glob.match(full))) {
+          continue;
+        }
+      }
+
+      yield full;
     }
   }
 }
@@ -79,6 +84,9 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
 
   for (const pat of patterns) {
     const { pattern: scanPattern, cwd: scanCwd, prefix } = splitLiteralPrefix(pat, globOptions.cwd as string);
+    // `scanSync` eagerly walks, so any ENOENT/ENOTDIR from opening `scanCwd`
+    // is thrown here and caught; the yield loop below never sees a scanner
+    // error, which keeps user-thrown `exclude` errors propagating.
     let iter: Iterable<string>;
     try {
       iter = new Bun.Glob(scanPattern).scanSync({ ...globOptions, cwd: scanCwd });
@@ -86,22 +94,17 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
       if (isMissingPath(err)) continue;
       throw err;
     }
-    try {
-      for (const ent of iter) {
-        const full = prefix ? prefix + ent : ent;
-        if (typeof exclude === "function") {
-          if (exclude(full)) continue;
-        } else if (excludeGlobs) {
-          if (excludeGlobs.some(glob => glob.match(full))) {
-            continue;
-          }
+    for (const ent of iter) {
+      const full = prefix ? prefix + ent : ent;
+      if (typeof exclude === "function") {
+        if (exclude(full)) continue;
+      } else if (excludeGlobs) {
+        if (excludeGlobs.some(glob => glob.match(full))) {
+          continue;
         }
-
-        yield full;
       }
-    } catch (err) {
-      if (isMissingPath(err)) continue;
-      throw err;
+
+      yield full;
     }
   }
 }

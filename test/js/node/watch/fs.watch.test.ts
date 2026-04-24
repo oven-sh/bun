@@ -204,18 +204,16 @@ describe("fs.watch", () => {
     const subdir = path.join(root, "subdir1");
     fs.mkdirSync(subdir);
 
-    // Wait for the new-subdir event to land and the inotify watch on the
-    // subdirectory to register. Without this, the write can race ahead of
-    // our registration and never be reported.
-    for (let i = 0; i < 50; i++) {
-      if (filenames.includes("subdir1")) break;
-      await Bun.sleep(20);
-    }
-
+    // The user-visible `rename: subdir1` event fires synchronously during
+    // `onFileUpdate` — seeing it only tells us the `NewSubdirTask` is
+    // *scheduled*, not that `inotify_add_watch` has actually completed on
+    // the new subdir. Only a write-poll inside `subdir1/` truly gates on
+    // registration: each write fires an event via the newly-installed
+    // watch, breaking the loop as soon as it lands. 50 iterations (~1s)
+    // gives generous headroom for the WorkPool hop + open(O_DIRECTORY) +
+    // inotify_add_watch.
     const nested = path.join(subdir, "nested.txt");
-    // Spam a handful of writes — the first may still race registration on
-    // slow kernels; subsequent ones are what we really care about.
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 50; i++) {
       fs.writeFileSync(nested, `v${i}\n`);
       if (filenames.some(n => n.endsWith("nested.txt"))) break;
       await Bun.sleep(20);

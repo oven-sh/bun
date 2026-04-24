@@ -412,16 +412,25 @@ function ClientRequest(input, options, cb) {
           res.req = this;
           let timer;
           res.setTimeout = (msecs, callback) => {
+            if (callback) {
+              res.on("timeout", callback);
+            }
             if (timer) {
               clearTimeout(timer);
+              timer = undefined;
             }
-            timer = setTimeout(() => {
-              if (res.complete) {
-                return;
-              }
-              res.emit("timeout");
-              callback?.();
-            }, msecs);
+            if (msecs > 0) {
+              // Use an unref'd timer so an idle response timeout does not keep
+              // the event loop alive (matches Node's socket.setTimeout semantics).
+              timer = setTimeout(() => {
+                timer = undefined;
+                if (res.complete) {
+                  return;
+                }
+                res.emit("timeout");
+              }, msecs).unref();
+            }
+            return res;
           };
           process.nextTick(
             (self, res) => {

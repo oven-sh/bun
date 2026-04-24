@@ -501,13 +501,8 @@ export const bunOnlyFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-fno-pie"],
-    when: c => c.unix && c.abi !== "android" && !c.freebsd,
+    when: c => c.unix && c.abi !== "android",
     desc: "No position-independent code (we're a final executable)",
-  },
-  {
-    flag: "-fPIC",
-    when: c => c.freebsd,
-    desc: "FreeBSD: lld defaults to PIE; non-PIC objects fail R_X86_64_32 relocation",
   },
   {
     flag: "-fPIC",
@@ -895,9 +890,9 @@ export const linkerFlags: Flag[] = [
     desc: "Use lld instead of system ld",
   },
   {
-    flag: ["-fPIC", "-pie"],
+    flag: ["-fno-pic", "-no-pie"],
     when: c => c.freebsd,
-    desc: "FreeBSD: PIE (default since FreeBSD 13)",
+    desc: "FreeBSD 13+ clang defaults to PIE; opt out (matches Linux, avoids -fPIC rebuild of WebKit/deps)",
   },
   {
     flag: [

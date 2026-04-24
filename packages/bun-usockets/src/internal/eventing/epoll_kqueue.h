@@ -41,6 +41,7 @@
  * FreeBSD (vs uint64_t on Darwin), and ext[2] doesn't exist (the trailing
  * macro args are dropped). */
 #include <stdint.h>
+#include <time.h>
 #define kevent64_s kevent
 #define EV_SET64(kevp, a, b, c, d, e, f, g, h) \
     EV_SET((kevp), (a), (b), (c), (d), (e), ((void *)(uintptr_t)(f)))

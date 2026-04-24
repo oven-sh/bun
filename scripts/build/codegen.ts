@@ -94,10 +94,6 @@ function readPackageDeps(pkgDir: string): string[] {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Register ninja rules shared by all codegen steps. Call once before
- * emitCodegen().
- */
-/**
  * Node-style platform/arch strings for the TARGET (not the host running
  * codegen). Passed as TARGET_PLATFORM/TARGET_ARCH so scripts that inline
  * `process.platform` into bundled JS use the target's value.
@@ -109,6 +105,10 @@ function codegenTarget(cfg: Config): { platform: string; arch: string } {
   return { platform, arch };
 }
 
+/**
+ * Register ninja rules shared by all codegen steps. Call once before
+ * emitCodegen().
+ */
 export function registerCodegenRules(n: Ninja, cfg: Config): void {
   // Shell syntax: HOST platform, not target. zig-only cross-compiles on
   // a linux box for darwin/windows; these rules run on the linux box.

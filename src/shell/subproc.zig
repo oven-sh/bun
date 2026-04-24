@@ -699,9 +699,11 @@ pub const ShellSubprocess = struct {
                 },
                 .lazy = false,
                 .PATH = if (event_loop.env().get("PATH")) |p|
-                    if (p.len > 0) p else bun.sliceTo(BUN_DEFAULT_PATH_FOR_SPAWN, 0)
+                    if (p.len > 0 or !bun.Environment.isPosix) p else bun.sliceTo(BUN_DEFAULT_PATH_FOR_SPAWN, 0)
+                else if (bun.Environment.isPosix)
+                    bun.sliceTo(BUN_DEFAULT_PATH_FOR_SPAWN, 0)
                 else
-                    bun.sliceTo(BUN_DEFAULT_PATH_FOR_SPAWN, 0),
+                    "",
                 .detached = false,
                 .cmd_parent = cmd_parent,
                 // .ipc_mode = IPCMode.none,

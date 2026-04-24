@@ -449,8 +449,11 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
       if (!existsSync(dst)) symlinkSync(src, dst);
     }
   } catch (cause) {
+    const lnCmds = Object.entries(links)
+      .map(([name, src]) => `sudo ln -sf "${src}" "${join(targetDir, name)}"`)
+      .join(" && ");
     throw new BuildError(`Could not link NDK compiler-rt into ${targetDir}`, {
-      hint: `Run once with write access: sudo mkdir -p "${targetDir}" && sudo ln -s "${links["libclang_rt.builtins.a"]}" "${links["libunwind.a"]}" "${targetDir}/"`,
+      hint: `Run once with write access: sudo mkdir -p "${targetDir}" && ${lnCmds}`,
       cause,
     });
   }

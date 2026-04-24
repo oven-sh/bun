@@ -318,6 +318,14 @@ pub const PathWatcherManager = struct {
                         // such filter).
                         const skip_emit = changed_name[0] == '~' or changed_name[0] == '.';
 
+                        // Fast path: the common noisy case (every `.foo.swp` write, every
+                        // `~backup` save) never needs to compute `path_slice` or iterate
+                        // watchers because neither the emit nor the subdir-register gate
+                        // will fire. `is_new_subdir` is loop-invariant, so this branch
+                        // only short-circuits events that would have produced no
+                        // observable effect.
+                        if (skip_emit and !is_new_subdir) continue;
+
                         const file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
 
                         @memcpy(_on_file_update_path_buf[0..file_path_without_trailing_slash.len], file_path_without_trailing_slash);

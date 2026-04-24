@@ -100,6 +100,34 @@ it("when prototype defines the same property, don't print the same property twic
   expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456",\n}'.trim());
 });
 
+it("Proxy prototype with throwing getter does not crash", () => {
+  const obj = {};
+  const proto = {
+    get foo() {
+      throw new Error("getter threw");
+    },
+    bar: 1,
+  };
+  Object.setPrototypeOf(obj, new Proxy(proto, {}));
+  expect(Bun.inspect(obj)).toContain("bar: 1");
+});
+
+it("Proxy prototype with throwing getPrototypeOf trap does not crash", () => {
+  const obj = {};
+  Object.setPrototypeOf(
+    obj,
+    new Proxy(
+      { foo: 1 },
+      {
+        getPrototypeOf() {
+          throw new Error("getPrototypeOf threw");
+        },
+      },
+    ),
+  );
+  expect(Bun.inspect(obj)).toContain("foo: 1");
+});
+
 it("Blob inspect", () => {
   expect(Bun.inspect(new Blob(["123"]))).toBe(`Blob (3 bytes)`);
   expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (2.70 KB)`);
@@ -451,6 +479,32 @@ const fixture = [
         },
       },
     ),
+  () => {
+    const obj = {};
+    const proto = {
+      get foo() {
+        throw new Error("getter threw");
+      },
+      bar: 1,
+    };
+    Object.setPrototypeOf(obj, new Proxy(proto, {}));
+    return obj;
+  },
+  () => {
+    const obj = {};
+    Object.setPrototypeOf(
+      obj,
+      new Proxy(
+        { foo: 1 },
+        {
+          getPrototypeOf() {
+            throw new Error("getPrototypeOf threw");
+          },
+        },
+      ),
+    );
+    return obj;
+  },
 ];
 
 describe("crash testing", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync } from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 describe.concurrent("run-shell", () => {
@@ -40,16 +40,15 @@ describe.concurrent("run-shell", () => {
 
   // https://github.com/oven-sh/bun/issues/29669
   test("CRLF line endings are normalized (no command-not-found, no \\r in args)", async () => {
-    const dir = tmpdirSync("bun-shell-crlf");
-    mkdirSync(dir, { recursive: true });
     // Each line ends in CRLF. Before the fix, `export\r` wasn't a known
     // builtin so bun emitted "command not found: export", and `echo $X\r`
     // passed a trailing \r through to stdout.
-    const shellScript = 'export VITE_PARAM=value\r\necho "[$VITE_PARAM]"\r\necho done\r\n';
-    await Bun.write(join(dir, "crlf.sh"), shellScript);
+    using dir = tempDir("bun-shell-crlf", {
+      "crlf.sh": 'export VITE_PARAM=value\r\necho "[$VITE_PARAM]"\r\necho done\r\n',
+    });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), join(dir, "crlf.sh")],
-      cwd: dir,
+      cmd: [bunExe(), join(String(dir), "crlf.sh")],
+      cwd: String(dir),
       env: bunEnv,
       stderr: "pipe",
       stdout: "pipe",
@@ -57,6 +56,28 @@ describe.concurrent("run-shell", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("[value]\ndone\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/29669 — backslash line-continuation
+  // in a CRLF-encoded script (`cmd arg1 \<CR><LF>arg2`). Without the escaped-CR
+  // handler, the `\<CR>` was swallowed but `\r` got glued onto the previous
+  // word and the `<LF>` emitted a real Newline — so `arg2` ran as a separate
+  // command instead of continuing the line.
+  test("CRLF with backslash line continuation", async () => {
+    using dir = tempDir("bun-shell-crlf-cont", {
+      "cont.sh": "echo first \\\r\n  second \\\r\n  third\r\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "cont.sh")],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("first second third\n");
     expect(exitCode).toBe(0);
   });
 });

@@ -38,6 +38,7 @@ pub const RunCommand = struct {
             "/usr/bin/sh", // don't think this is a real one
             "/usr/bin/zsh",
             "/usr/local/bin/zsh",
+            "/system/bin/sh", // Android
         };
         inline for (hardcoded_popular_ones) |shell| {
             if (Try.shell(shell)) {
@@ -607,7 +608,7 @@ pub const RunCommand = struct {
         .windows => @compileError("Do not use RunCommand.bun_node_dir on Windows"),
 
         .mac => "/private/tmp",
-        else => "/tmp",
+        else => if (Environment.isAndroid) "/data/local/tmp" else "/tmp",
     } ++ if (!Environment.isDebug)
         "/bun-node" ++ if (Environment.git_sha_short.len > 0) "-" ++ Environment.git_sha_short else ""
     else

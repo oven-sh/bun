@@ -474,7 +474,7 @@ export const bunOnlyFlags: Flag[] = [
       "-fsanitize=returns-nonnull-attribute",
       "-fsanitize=unreachable",
     ],
-    when: c => c.unix && ((c.debug && c.abi === "gnu") || (c.release && c.asan)),
+    when: c => c.unix && ((c.debug && c.abi !== "musl" && c.abi !== "android") || (c.release && c.asan)),
     desc: "Undefined-behavior sanitizers",
   },
   {
@@ -657,7 +657,7 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: "-fsanitize=null",
-    when: c => c.unix && c.debug && c.abi === "gnu",
+    when: c => c.unix && c.debug && c.abi !== "musl" && c.abi !== "android",
     desc: "Link UBSan runtime",
   },
   {

@@ -109,8 +109,11 @@ pub fn renderToHTML(
 
 threadlocal var scratch_arena: ?bun.ArenaAllocator = null;
 
-/// Returns a per-thread scratch arena reused across markdown renders. The
-/// caller is responsible for resetting it (with a size limit) after use.
+/// Per-thread scratch arena reused across markdown renders. The parser treats
+/// its allocator as a bump arena (no individual frees), so a `MimallocArena`
+/// here would force a `mi_heap_new`/`mi_heap_destroy` pair per call which
+/// dominates short inputs; resetting a retained `std.heap.ArenaAllocator` is
+/// effectively free by comparison.
 fn scratchArena() *bun.ArenaAllocator {
     if (scratch_arena == null) {
         scratch_arena = bun.ArenaAllocator.init(bun.default_allocator);

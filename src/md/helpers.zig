@@ -22,18 +22,26 @@ pub inline fn isNewlineOrNul(c: u8) bool {
 }
 
 /// Find the index of the first byte in `slice` matching any of `needles`, or
-/// `slice.len` if none. The needle set is comptime-known so each comparison is
-/// fully inlined; this avoids the call overhead of going through highway for
-/// the very short scans the markdown parser does on every line/block.
+/// `slice.len` if none.
+///
+/// This intentionally does NOT defer to `bun.strings.indexOfAny` (highway):
+/// the markdown parser feeds it very short slices (a single line, a table
+/// cell, the gap between two `*`) where the highway call + dynamic dispatch +
+/// per-needle broadcast setup measurably dominates. Benchmarked on the
+/// parse+render path, going through highway unconditionally is -11% throughput
+/// and even a >=128-byte threshold leaves ~-4% on the table because the
+/// newline scan passes the whole remaining buffer but the hit is almost always
+/// in the first few dozen bytes.
 pub inline fn indexOfAnyInline(slice: []const u8, comptime needles: []const u8) usize {
     var i: usize = 0;
-    if (comptime !builtin.target.cpu.arch.isWasm()) {
-        const V = @Vector(16, u8);
-        while (i + 16 <= slice.len) : (i += 16) {
-            const vec: V = slice[i..][0..16].*;
-            var bits: u16 = 0;
+    if (comptime bun.Environment.enableSIMD) {
+        const V = bun.strings.AsciiVector;
+        const N = bun.strings.ascii_vector_size;
+        while (i + N <= slice.len) : (i += N) {
+            const vec: V = slice[i..][0..N].*;
+            var bits: bun.strings.AsciiVectorInt = 0;
             inline for (needles) |n| {
-                bits |= @as(u16, @bitCast(@as(@Vector(16, u1), @bitCast(vec == @as(V, @splat(n))))));
+                bits |= @bitCast(@as(bun.strings.AsciiVectorU1, @bitCast(vec == @as(V, @splat(n)))));
             }
             if (bits != 0) return i + @ctz(bits);
         }
@@ -511,7 +519,6 @@ pub const HeadingIdTracker = struct {
     }
 };
 
-const builtin = @import("builtin");
 const bun = @import("bun");
 const entity_mod = @import("./entity.zig");
 const std = @import("std");

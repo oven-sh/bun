@@ -956,7 +956,7 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
 
     const zlib_internal_path = switch (os) {
         .windows => "src/deps/zlib.win32.zig",
-        .linux, .mac => "src/deps/zlib.posix.zig",
+        .linux, .mac, .freebsd => "src/deps/zlib.posix.zig",
         else => null,
     };
     if (zlib_internal_path) |path| {
@@ -966,7 +966,7 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
     }
 
     const async_path = switch (os) {
-        .linux, .mac => "src/async/posix_event_loop.zig",
+        .linux, .mac, .freebsd => "src/async/posix_event_loop.zig",
         .windows => "src/async/windows_event_loop.zig",
         else => "src/async/stub_event_loop.zig",
     };

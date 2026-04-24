@@ -52,11 +52,16 @@
 #include <sys/sysinfo.h>
 #elif FREEBSD
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <net/if_dl.h>
+#include <sys/event.h>
 #include <sys/mount.h>
+#include <sys/resource.h>
 #include <sys/sysctl.h>
+#include <sys/time.h>
 #include <sys/umtx.h>
 #include <sys/user.h>
+#include <sys/utsname.h>
 #endif
 
 #if WINDOWS

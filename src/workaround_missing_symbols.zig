@@ -116,9 +116,12 @@ pub const windows = struct {
 
 pub const freebsd = struct {
     pub const memmem = bun.c.memmem;
-    pub const lstat = std.c.lstat;
-    pub const fstat = std.c.fstat;
-    pub const stat = std.c.stat;
+    // FreeBSD has plain stat/fstat/lstat (no 64-suffix; off_t is always
+    // 64-bit). Zig's std.c only exports darwin's `stat$INODE64`, so bind
+    // them directly.
+    pub extern "c" fn lstat(noalias path: [*:0]const u8, noalias buf: *std.c.Stat) c_int;
+    pub extern "c" fn fstat(fd: c_int, buf: *std.c.Stat) c_int;
+    pub extern "c" fn stat(noalias path: [*:0]const u8, noalias buf: *std.c.Stat) c_int;
 };
 
 pub const current = switch (bun.Environment.os) {

@@ -358,10 +358,11 @@ pub const GenerateHeader = struct {
             return analytics.Platform{ .os = analytics.OperatingSystem.linux, .version = release, .arch = platform_arch };
         }
 
-        var freebsd_os_name: std.c.utsname = undefined;
+        // Zig std's `std.c.utsname` has no FreeBSD branch; use translate-c's.
+        var freebsd_os_name: if (Environment.isFreeBSD) bun.c.struct_utsname else void = undefined;
         fn forFreeBSD() analytics.Platform {
             freebsd_os_name = std.mem.zeroes(@TypeOf(freebsd_os_name));
-            _ = std.c.uname(&freebsd_os_name);
+            _ = bun.c.uname(&freebsd_os_name);
             return analytics.Platform{
                 .os = analytics.OperatingSystem.freebsd,
                 .version = bun.sliceTo(&freebsd_os_name.release, 0),

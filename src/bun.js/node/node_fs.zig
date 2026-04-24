@@ -3595,6 +3595,50 @@ pub const NodeFS = struct {
             return ret.errnoSysP(c.copyfile(src, dest, null, mode), .copyfile, src) orelse ret.success;
         }
 
+        if (comptime Environment.isFreeBSD) {
+            var src_buf: bun.PathBuffer = undefined;
+            var dest_buf: bun.PathBuffer = undefined;
+            const src = args.src.sliceZ(&src_buf);
+            const dest = args.dest.sliceZ(&dest_buf);
+
+            if (args.mode.isForceClone()) {
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.ENOTSUP), .syscall = .copyfile } };
+            }
+
+            const src_fd = switch (Syscall.open(src, bun.O.RDONLY, 0)) {
+                .result => |result| result,
+                .err => |err| return .{ .err = err.withPath(args.src.slice()) },
+            };
+            defer src_fd.close();
+
+            const stat_: bun.Stat = switch (Syscall.fstat(src_fd)) {
+                .result => |result| result,
+                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+            };
+            if (!posix.S.ISREG(stat_.mode)) {
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.ENOTSUP), .syscall = .copyfile } };
+            }
+
+            var flags: i32 = bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC;
+            if (args.mode.shouldntOverwrite()) {
+                flags |= bun.O.EXCL;
+            }
+            const dest_fd = switch (Syscall.open(dest, flags, jsc.Node.fs.default_permission)) {
+                .result => |result| result,
+                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+            };
+            defer dest_fd.close();
+
+            var size: usize = @intCast(@max(stat_.size, 0));
+            var wrote: usize = 0;
+            if (this.copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, if (size != 0) size else 0, &wrote).asErr()) |err| {
+                _ = bun.sys.unlink(dest);
+                return Maybe(Return.CopyFile){ .err = err };
+            }
+            _ = Syscall.fchmod(dest_fd, stat_.mode);
+            return ret.success;
+        }
+
         if (comptime Environment.isLinux) {
             var src_buf: bun.PathBuffer = undefined;
             var dest_buf: bun.PathBuffer = undefined;

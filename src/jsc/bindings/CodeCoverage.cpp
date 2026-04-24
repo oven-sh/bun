@@ -31,7 +31,8 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
 
     size_t functionStartOffset = basicBlocks.size();
 
-    // Collect byte-offset ranges of synthetic functions reachable from this source.
+    // Classify function byte-offset ranges reachable from this source as synthetic
+    // vs. same-source, so we can drop only the synthetic ones from the range list.
     //
     // JSC emits a synthetic default class constructor for `class Foo extends Bar() {}`
     // (and plain `class Foo {}`) by linking a *separate* builtin SourceProvider —
@@ -44,9 +45,13 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
     //
     // The synthetic case is identifiable because `functionExecutable->sourceID()`
     // resolves to the synthetic provider's ID (via `linkedSourceCode`), not the
-    // owner's. Collect those (start, end) pairs so we can drop them from the range
-    // list returned to Bun's coverage reporter.
+    // owner's. But a real user function CAN have offsets that numerically collide
+    // with a synthetic constructor's `[1, N)` range (e.g. a user file starting with
+    // `!function(){}` where the function begins at offset 1). So also collect
+    // same-source ranges and skip only when a range is synthetic and NOT also
+    // present in the same-source set.
     HashSet<std::pair<unsigned, unsigned>> syntheticFunctionRanges;
+    HashSet<std::pair<unsigned, unsigned>> sameSourceFunctionRanges;
     vm.heap.forEachCodeBlock([&](CodeBlock* codeBlock) {
         auto* owner = codeBlock->ownerExecutable();
         if (!owner || owner->sourceID() != sourceID)
@@ -55,12 +60,14 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
         auto collect = [&](FunctionExecutable* fnExec) {
             if (!fnExec)
                 return;
-            if (fnExec->sourceID() == sourceID)
-                return;
             auto* unlinked = fnExec->unlinkedExecutable();
             if (!unlinked)
                 return;
-            syntheticFunctionRanges.add({ unlinked->unlinkedFunctionStart(), unlinked->unlinkedFunctionEnd() });
+            std::pair<unsigned, unsigned> range { unlinked->unlinkedFunctionStart(), unlinked->unlinkedFunctionEnd() };
+            if (fnExec->sourceID() == sourceID)
+                sameSourceFunctionRanges.add(range);
+            else
+                syntheticFunctionRanges.add(range);
         };
 
         for (const auto& fn : codeBlock->functionDecls())
@@ -76,7 +83,8 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
     for (const auto& functionRange : functionRanges) {
         unsigned start = std::get<1>(functionRange);
         unsigned end = std::get<2>(functionRange);
-        if (syntheticFunctionRanges.contains({ start, end }))
+        std::pair<unsigned, unsigned> key { start, end };
+        if (syntheticFunctionRanges.contains(key) && !sameSourceFunctionRanges.contains(key))
             continue;
 
         BasicBlockRange range;

@@ -331,11 +331,7 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
       },
     });
     expect(fs.globSync("a/*/", { cwd: String(dir) }).sort()).toStrictEqual(["a/sub1", "a/sub2"]);
-    expect(fs.globSync("a/*", { cwd: String(dir) }).sort()).toStrictEqual([
-      "a/file.txt",
-      "a/sub1",
-      "a/sub2",
-    ]);
+    expect(fs.globSync("a/*", { cwd: String(dir) }).sort()).toStrictEqual(["a/file.txt", "a/sub1", "a/sub2"]);
   });
 
   it("literal prefix naming a regular file returns []", () => {

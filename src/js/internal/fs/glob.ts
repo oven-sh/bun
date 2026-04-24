@@ -136,8 +136,7 @@ function splitLiteralPrefix(pattern: string, cwd: string): { pattern: string; cw
   // `C:foo` (no separator after the colon) is drive-*relative*, not absolute.
   const isAbsolute =
     pattern.startsWith(separator) ||
-    (isWindows &&
-      (pattern.startsWith("\\\\") || (pattern.length >= 3 && /^[a-zA-Z]:[\\/]/.test(pattern))));
+    (isWindows && (pattern.startsWith("\\\\") || (pattern.length >= 3 && /^[a-zA-Z]:[\\/]/.test(pattern))));
 
   // A trailing separator turns `split` into `[..., '']` — the empty tail would
   // become our "final segment" and leave `Bun.Glob` scanning an empty pattern,

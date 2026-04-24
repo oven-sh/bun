@@ -1,5 +1,5 @@
 import { pathToFileURL } from "bun";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 import { join, resolve, sep } from "path";
@@ -719,5 +719,144 @@ describe("resolving external URL specifiers with non-ASCII characters", () => {
     expect(stderr).toBe("");
     expect(stdout).toContain("caught");
     expect(exitCode).toBe(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/29679
+// Packages like @modelcontextprotocol/sdk ship a wildcard `exports` entry
+// whose target has no extension, e.g. `"./*": { "import": "./dist/esm/*" }`.
+// Node.js requires the caller to write `pkg/foo.js` (with the extension).
+// Bun probes configured extensions so `pkg/foo` resolves to `./dist/esm/foo.js`.
+describe.concurrent("wildcard exports with extensionless target", () => {
+  function makeFixture(extra: Record<string, string> = {}) {
+    return tempDir("wildcard-exports", {
+      "node_modules/wildcard-pkg/package.json": JSON.stringify({
+        name: "wildcard-pkg",
+        type: "module",
+        exports: {
+          ".": "./dist/esm/index.js",
+          "./exact": "./dist/esm/exact/index.js",
+          "./*": {
+            types: "./dist/esm/*.d.ts",
+            import: "./dist/esm/*",
+            require: "./dist/cjs/*",
+          },
+        },
+      }),
+      "node_modules/wildcard-pkg/dist/esm/index.js": "export const root = 'root';",
+      "node_modules/wildcard-pkg/dist/esm/exact/index.js": "export const exact = 'exact';",
+      "node_modules/wildcard-pkg/dist/esm/server/stdio.js": "export const stdio = 'stdio';",
+      "node_modules/wildcard-pkg/dist/esm/server/http.mjs": "export const http = 'http';",
+      "node_modules/wildcard-pkg/dist/cjs/server/stdio.js": "module.exports = { stdio: 'cjs-stdio' };",
+      ...extra,
+    });
+  }
+
+  // ASAN builds print a warning on stderr that has nothing to do with resolution.
+  function stripAsanWarning(stderr: string): string {
+    return stderr
+      .split("\n")
+      .filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+  }
+
+  async function runScript(dir: string, entry: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr: stripAsanWarning(stderr), exitCode };
+  }
+
+  test("resolves import without extension to `.js`", async () => {
+    using dir = makeFixture({
+      "index.ts": `
+        import { stdio } from "wildcard-pkg/server/stdio";
+        console.log(stdio);
+      `,
+    });
+
+    expect(await runScript(String(dir), "index.ts")).toEqual({
+      stdout: "stdio",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("resolves import without extension to `.mjs`", async () => {
+    using dir = makeFixture({
+      "index.ts": `
+        import { http } from "wildcard-pkg/server/http";
+        console.log(http);
+      `,
+    });
+
+    expect(await runScript(String(dir), "index.ts")).toEqual({
+      stdout: "http",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("explicit `.js` extension still works", async () => {
+    using dir = makeFixture({
+      "index.ts": `
+        import { stdio } from "wildcard-pkg/server/stdio.js";
+        console.log(stdio);
+      `,
+    });
+
+    expect(await runScript(String(dir), "index.ts")).toEqual({
+      stdout: "stdio",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("exact-key exports are not affected", async () => {
+    using dir = makeFixture({
+      "index.ts": `
+        import { exact } from "wildcard-pkg/exact";
+        console.log(exact);
+      `,
+    });
+
+    expect(await runScript(String(dir), "index.ts")).toEqual({
+      stdout: "exact",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("truly missing subpath still errors", async () => {
+    using dir = makeFixture({
+      "index.ts": `
+        import { nope } from "wildcard-pkg/server/does-not-exist";
+        console.log(nope);
+      `,
+    });
+
+    const result = await runScript(String(dir), "index.ts");
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("Cannot find module");
+  });
+
+  test("CJS require of extensionless wildcard target also resolves", async () => {
+    using dir = makeFixture({
+      "index.cjs": `
+        const { stdio } = require("wildcard-pkg/server/stdio");
+        console.log(stdio);
+      `,
+    });
+
+    expect(await runScript(String(dir), "index.cjs")).toEqual({
+      stdout: "cjs-stdio",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

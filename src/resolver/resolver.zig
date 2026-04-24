@@ -2489,20 +2489,47 @@ pub const Resolver = struct {
                     const ends_with_star = esm_resolution.status == .ExactEndsWithStar;
                     esm_resolution.status = .ModuleNotFound;
 
-                    // Try to have a friendly error message if people forget the extension
+                    // When the exports target came from a wildcard expansion like
+                    // `"./*": "./dist/*"` and the substituted path (e.g.
+                    // `./dist/server/stdio`) has no extension on disk, probe the
+                    // configured extensions (`.js`, `.mjs`, `.ts`, ...) and return
+                    // the match. This matches bundler-style resolution and keeps
+                    // packages like `@modelcontextprotocol/sdk` — whose wildcard
+                    // target intentionally omits `.js` — importable without the
+                    // caller having to add it.
                     if (ends_with_star) {
                         bun.copy(u8, bufs(.load_as_file), base);
                         for (extension_order) |ext| {
                             var file_name = bufs(.load_as_file)[0 .. base.len + ext.len];
                             bun.copy(u8, file_name[base.len..], ext);
-                            if (entries.get(file_name) != null) {
-                                if (r.debug_logs) |*debug| {
-                                    const parts = [_]string{ package_json.name, package_subpath };
-                                    debug.addNoteFmt("The import {s} is missing the extension {s}", .{ ResolvePath.join(parts, .auto), ext });
+                            if (entries.get(file_name)) |ext_query| {
+                                if (ext_query.entry.kind(&r.fs.fs, r.store_fd) == .file) {
+                                    if (r.debug_logs) |*debug| {
+                                        debug.addNoteFmt("Resolved to \"{s}\" by adding extension \"{s}\"", .{ file_name, ext });
+                                    }
+
+                                    const abs_ext_path = brk: {
+                                        if (ext_query.entry.abs_path.isEmpty()) {
+                                            const abs_ext_parts = [_]string{ ext_query.entry.dir, ext_query.entry.base() };
+                                            ext_query.entry.abs_path = PathString.init(r.fs.dirname_store.append(string, r.fs.absBuf(&abs_ext_parts, bufs(.load_as_file))) catch unreachable);
+                                        }
+                                        break :brk ext_query.entry.abs_path.slice();
+                                    };
+                                    const ext_module_type = if (resolved_dir_info.package_json) |pkg| pkg.module_type else .unknown;
+
+                                    return MatchResult{
+                                        .path_pair = PathPair{
+                                            .primary = Path.initWithNamespace(abs_ext_path, "file"),
+                                        },
+                                        .dirname_fd = entries.fd,
+                                        .file_fd = ext_query.entry.cache.fd,
+                                        .dir_info = resolved_dir_info,
+                                        .diff_case = ext_query.diff_case,
+                                        .is_node_module = true,
+                                        .package_json = resolved_dir_info.package_json orelse package_json,
+                                        .module_type = ext_module_type,
+                                    };
                                 }
-                                esm_resolution.status = .ModuleNotFoundMissingExtension;
-                                missing_suffix = ext;
-                                break;
                             }
                         }
                     }

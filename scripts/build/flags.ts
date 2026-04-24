@@ -799,11 +799,15 @@ export const linkerFlags: Flag[] = [
       `--target=${c.crossTarget!}`,
       `--sysroot=${c.sysroot!}`,
       "--rtlib=compiler-rt",
+      "--unwindlib=libunwind",
       "-stdlib=libc++",
       "-static-libstdc++",
+      // -l:libunwind.a (driver-emitted) searches -L paths; point at the NDK's
+      // own per-arch runtime dir so it resolves regardless of resource-dir layout.
+      `-L${join(c.androidNdkRuntimeDir!, c.arm64 ? "aarch64" : "x86_64")}`,
     ],
     when: c => c.linux && c.abi === "android",
-    desc: "Android link: target/sysroot + static libc++ (NDK ships libc++, not libstdc++)",
+    desc: "Android link: target/sysroot + compiler-rt/libunwind + static libc++",
   },
   {
     // Paired with compile-side -fno-unwind-tables above.

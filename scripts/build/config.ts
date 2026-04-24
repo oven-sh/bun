@@ -212,6 +212,8 @@ export interface Config {
   androidNdk: string | undefined;
   /** Android API level (the N in `__ANDROID_API__=N`). undefined when abi != "android". */
   androidApiLevel: number | undefined;
+  /** NDK compiler-rt/libunwind dir: `<ndk>/toolchains/llvm/prebuilt/<host>/lib/clang/<ver>/lib/linux`. */
+  androidNdkRuntimeDir: string | undefined;
 
   // ─── Versioning ───
   /** Bun's own version (from package.json). */
@@ -615,6 +617,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   let sysroot: string | undefined;
   let androidNdk: string | undefined;
   let androidApiLevel: number | undefined;
+  let androidNdkRuntimeDir: string | undefined;
   if (abi === "android") {
     androidNdk = partial.androidNdk ?? detectAndroidNdk();
     if (androidNdk === undefined) {
@@ -623,12 +626,20 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       });
     }
     androidApiLevel = partial.androidApiLevel ?? ANDROID_API_LEVEL_DEFAULT;
-    sysroot = join(androidNdk, "toolchains", "llvm", "prebuilt", ndkHostTag(host), "sysroot");
+    const ndkPrebuilt = join(androidNdk, "toolchains", "llvm", "prebuilt", ndkHostTag(host));
+    sysroot = join(ndkPrebuilt, "sysroot");
     if (!existsSync(sysroot)) {
       throw new BuildError(`Android NDK sysroot not found at ${sysroot}`, {
         hint: `Is ANDROID_NDK_ROOT (${androidNdk}) a valid NDK? Expected r26 or newer.`,
       });
     }
+    // NDK ships exactly one clang version per release.
+    const ndkClangLib = join(ndkPrebuilt, "lib", "clang");
+    const ndkClangVer = readdirSync(ndkClangLib)[0];
+    if (ndkClangVer === undefined) {
+      throw new BuildError(`NDK clang resource dir not found under ${ndkClangLib}`);
+    }
+    androidNdkRuntimeDir = join(ndkClangLib, ndkClangVer, "lib", "linux");
     const llvmArch = arch === "x64" ? "x86_64" : "aarch64";
     crossTarget = `${llvmArch}-unknown-linux-android${androidApiLevel}`;
     linkNdkRuntimesIntoClang(toolchain.cc, androidNdk, host, crossTarget);
@@ -730,6 +741,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     sysroot,
     androidNdk,
     androidApiLevel,
+    androidNdkRuntimeDir,
     version,
     revision,
     nodejsVersion,

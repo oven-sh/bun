@@ -89,15 +89,21 @@ export const globalFlags: Flag[] = [
     desc: "Cross-compile sysroot (target libc headers + libs)",
   },
   {
-    // -nostdinc++ first: distro-packaged clang (apt.llvm.org) bakes in the
-    // host's /usr/include/c++/N which must NOT be searched — NDK libc++'s
-    // #include_next would find host libstdc++ headers and break (ldiv_t etc).
-    // Then explicitly add the NDK libc++ path (it's outside the sysroot's
-    // default search; NDK's clang wrappers add this, we must too).
-    flag: c => ["-nostdinc++", "-isystem", join(c.sysroot!, "usr", "include", "c++", "v1")],
+    // -nostdlibinc drops ALL builtin system include dirs (keeping only the
+    // compiler resource dir), then we add back exactly the NDK paths.
+    // -nostdinc++ alone is insufficient on distro-packaged clang (apt.llvm.org
+    // on Ubuntu): the GCC-install detection still leaks /usr/include/c++/N,
+    // and NDK libc++'s #include_next <math.h> finds host libstdc++ → ldiv_t/
+    // cmath breakage. Order matters: libc++ first so its #include_next falls
+    // through to bionic.
+    flag: c => {
+      const inc = join(c.sysroot!, "usr", "include");
+      const triple = `${c.x64 ? "x86_64" : "aarch64"}-linux-android`;
+      return ["-nostdlibinc", "-isystem", join(inc, "c++", "v1"), "-isystem", join(inc, triple), "-isystem", inc];
+    },
     when: c => c.abi === "android",
     lang: "cxx",
-    desc: "Android: drop host libstdc++ paths, use only NDK libc++",
+    desc: "Android: drop all builtin includes, use only NDK libc++ + bionic",
   },
   {
     flag: ["-DANDROID", "-D_FILE_OFFSET_BITS=64"],

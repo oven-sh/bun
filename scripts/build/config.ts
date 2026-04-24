@@ -419,7 +419,8 @@ function ndkHostTag(host: Host): string {
  * compiler-rt; the NDK does. This is the standard "bring your own clang"
  * setup for NDK cross-builds (Chromium does the same).
  *
- * Idempotent. Throws with a sudo hint if the resource dir isn't writable.
+ * Idempotent. Warns with a sudo hint if the resource dir isn't writable
+ * (CI build images create the symlinks as root in bootstrap.sh/Dockerfile).
  */
 function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: string): void {
   const resourceDir = execSync(`"${cc}" -print-resource-dir`, { encoding: "utf8" }).trim();

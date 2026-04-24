@@ -213,6 +213,16 @@ services:
       - target: 9002
         published: 0 # Dynamic port
         protocol: tcp
+    healthcheck:
+      # wstest needs a moment to load its config and bind 9002; without a
+      # healthcheck `up --wait` returns at "running" and the test's
+      # /getCaseCount fetch can hit before the listener exists.
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 9002), 1).close()"]
+      interval: 1h
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+      start_interval: 1s
 
   # Squid proxy for WebSocket proxy testing
   squid:

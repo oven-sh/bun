@@ -224,7 +224,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
             if (moduleDeclaration->isImportDeclarationNode()) {
                 ImportDeclarationNode* importDeclaration = static_cast<ImportDeclarationNode*>(moduleDeclaration);
                 ASSERT_WITH_MESSAGE(attributesNodes.size() < requests.size(), "More attributes nodes than requests");
-                ASSERT_WITH_MESSAGE(importDeclaration->moduleName()->moduleName().string().string() == WTF::String(*requests.at(attributesNodes.size()).m_specifier), "Module name mismatch");
+                ASSERT_WITH_MESSAGE(importDeclaration->moduleName()->moduleName().string().string() == requests.at(attributesNodes.size()).m_specifier.string(), "Module name mismatch");
                 attributesNodes.append(importDeclaration->attributesList());
             } else if (moduleDeclaration->hasAttributesList()) {
                 // Necessary to make the indices of `attributesNodes` and `requests` match up
@@ -238,7 +238,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     for (unsigned i = 0; i < requests.size(); ++i) {
         const auto& request = requests[i];
 
-        JSString* specifierValue = JSC::jsString(vm, WTF::String(*request.m_specifier));
+        JSString* specifierValue = JSC::jsString(vm, request.m_specifier.string());
 
         JSObject* requestObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
         requestObject->putDirect(vm, specifierIdentifier, specifierValue);
@@ -291,7 +291,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         }
 
         requestObject->putDirect(vm, attributesIdentifier, attributesObject);
-        addModuleRequest({ WTF::String(*request.m_specifier), WTF::move(attributeMap) });
+        addModuleRequest({ request.m_specifier.string(), WTF::move(attributeMap) });
         requestsArray->putDirectIndex(globalObject, i, requestObject);
     }
 
@@ -329,6 +329,7 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     JSModuleRecord* record = m_moduleRecord.get();
 
     if (length != 0) {
+        const auto& requested = record->requestedModules();
         for (unsigned i = 0; i < length; i++) {
             JSValue specifierValue = specifiers->getDirectIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, {});
@@ -345,32 +346,62 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             AbstractModuleRecord* resolvedRecord = jsCast<NodeVMModule*>(moduleNative)->moduleRecord(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
-            record->setImportedModule(globalObject, Identifier::fromString(vm, specifier), resolvedRecord);
+            // innerModuleLinking asserts every visited cyclic record is past
+            // Status::New. Records produced by node:vm never go through the
+            // loader's continueModuleLoading (which is what flips New ->
+            // Unlinked for the whole graph), so do it for each dependency as
+            // we wire it in.
+            if (auto* cyclic = jsDynamicCast<JSC::CyclicModuleRecord*>(resolvedRecord); cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::New)
+                cyclic->status(JSC::CyclicModuleRecord::Status::Unlinked);
+
+            // specifiers/moduleNatives were built from requestedModules() in
+            // [kLink], so the indices line up — pass the original ModuleRequest
+            // (specifier + attributes) so a `with { type: "json" }` /
+            // HostDefined import ends up in the right (specifier, type) bucket
+            // for innerModuleLinking's typed lookup.
+            if (i < requested.size()) [[likely]]
+                record->setImportedModule(globalObject, requested[i], resolvedRecord);
+            else
+                record->setImportedModule(globalObject, JSC::AbstractModuleRecord::ModuleRequest { Identifier::fromString(vm, specifier), nullptr }, resolvedRecord);
             RETURN_IF_EXCEPTION(scope, {});
             m_resolveCache.set(WTF::move(specifier), WriteBarrier<JSObject> { vm, this, moduleNative });
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
-    NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (nodeVmGlobalObject) {
-        globalObject = nodeVmGlobalObject;
-    }
+    // CyclicModuleRecord::link asserts every visited record is past
+    // Status::New. Records built directly here never go through the loader's
+    // continueModuleLoading (which is what flips New -> Unlinked for the
+    // graph), so move this one off New manually. The actual record->link()
+    // call is deferred to instantiate(): we are inside a recursive [kLink]
+    // walk and the parent's loadedModules are not populated yet, so calling
+    // innerModuleLinking now would walk into a record whose loadedModules()
+    // are still empty (cyclic case).
+    if (record->status() == JSC::CyclicModuleRecord::Status::New)
+        record->status(JSC::CyclicModuleRecord::Status::Unlinked);
 
-    Synchronousness sync = record->link(globalObject, scriptFetcher);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (sync == Synchronousness::Async) {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO(@heimskr): async SourceTextModule linking");
-    }
-
+    UNUSED_PARAM(scriptFetcher);
     status(Status::Linked);
     return jsUndefined();
 }
 
 JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSModuleRecord* record = m_moduleRecord.get();
+    if (!record)
+        return jsUndefined();
+
+    NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (nodeVmGlobalObject)
+        globalObject = nodeVmGlobalObject;
+
+    record->link(globalObject, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+
     return jsUndefined();
 }
 

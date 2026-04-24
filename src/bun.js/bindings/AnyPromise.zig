@@ -14,8 +14,7 @@ pub const AnyPromise = union(enum) {
     }
     pub fn result(this: AnyPromise, vm: *VM) JSValue {
         return switch (this) {
-            .normal => |promise| promise.result(vm),
-            .internal => |promise| promise.result(),
+            inline else => |promise| promise.result(vm),
         };
     }
     pub fn isHandled(this: AnyPromise) bool {
@@ -24,9 +23,9 @@ pub const AnyPromise = union(enum) {
         };
     }
     pub fn setHandled(this: AnyPromise, vm: *VM) void {
+        _ = vm;
         switch (this) {
-            .normal => |promise| promise.setHandled(),
-            .internal => |promise| promise.setHandled(vm),
+            inline else => |promise| promise.setHandled(),
         }
     }
 
@@ -62,14 +61,13 @@ pub const AnyPromise = union(enum) {
 
     pub fn rejectAsHandled(this: AnyPromise, globalThis: *JSGlobalObject, value: JSValue) bun.JSTerminated!void {
         switch (this) {
-            inline else => |promise| promise.rejectAsHandled(globalThis, value),
+            inline else => |promise| try promise.rejectAsHandled(globalThis, value),
         }
     }
 
     pub fn asValue(this: AnyPromise) JSValue {
         return switch (this) {
-            .normal => |promise| promise.toJS(),
-            .internal => |promise| promise.asValue(),
+            inline else => |promise| promise.toJS(),
         };
     }
 

@@ -12,7 +12,7 @@
 
 # ----------------------------------------------------------------------------
 # simdutf AVX2 (Haswell). Gate: set_best() dispatcher — CPUID at first call, cached in atomic ptr.
-# (89 symbols)
+# (91 symbols)
 # ----------------------------------------------------------------------------
 _ZN7simdutf7haswell12_GLOBAL__N_128convert_masked_utf8_to_utf16ILNS_10endiannessE0EEEmPKcmRPDs                                                                   [AVX, AVX2]
 _ZN7simdutf7haswell12_GLOBAL__N_128convert_masked_utf8_to_utf16ILNS_10endiannessE1EEEmPKcmRPDs                                                                   [AVX, AVX2]
@@ -66,6 +66,10 @@ _ZNK7simdutf7haswell14implementation24convert_utf32_to_utf16beEPKDimPDs         
 _ZNK7simdutf7haswell14implementation24convert_utf32_to_utf16leEPKDimPDs                                                                                          [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation24utf8_length_from_utf16beEPKDsm                                                                                             [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation24utf8_length_from_utf16leEPKDsm                                                                                             [AVX, AVX2]
+_ZNK7simdutf7haswell14implementation41utf8_length_from_utf16be_with_replacementEPKDsm                                                                            [AVX, AVX2]
+_ZNK7simdutf7haswell14implementation41utf8_length_from_utf16le_with_replacementEPKDsm                                                                            [AVX, AVX2]
+_ZNK7simdutf7haswell14implementation25binary_length_from_base64EPKDsm                                                                                            [AVX, AVX2]
+_ZNK7simdutf7haswell14implementation25binary_length_from_base64EPKcm                                                                                             [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation25convert_latin1_to_utf16beEPKcmPDs                                                                                          [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation25convert_latin1_to_utf16leEPKcmPDs                                                                                          [AVX, AVX2]
 _ZNK7simdutf7haswell14implementation25convert_utf16be_to_latin1EPKDsmPc                                                                                          [AVX, AVX2]
@@ -159,8 +163,12 @@ _ZNK7simdutf7icelake14implementation24convert_utf16be_to_utf32EPKDsmPDi         
 _ZNK7simdutf7icelake14implementation24convert_utf16le_to_utf32EPKDsmPDi                                                                                   [AVX, AVX512BW, AVX512F, BMI2]
 _ZNK7simdutf7icelake14implementation24convert_utf32_to_utf16beEPKDimPDs                                                                                   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI2, BMI2]
 _ZNK7simdutf7icelake14implementation24convert_utf32_to_utf16leEPKDimPDs                                                                                   [AVX, AVX512BW, AVX512F, AVX512_VBMI2, BMI2]
-_ZNK7simdutf7icelake14implementation24utf8_length_from_utf16beEPKDsm                                                                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
-_ZNK7simdutf7icelake14implementation24utf8_length_from_utf16leEPKDsm                                                                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZNK7simdutf7icelake14implementation24utf8_length_from_utf16beEPKDsm                                                                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+_ZNK7simdutf7icelake14implementation24utf8_length_from_utf16leEPKDsm                                                                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
+_ZNK7simdutf7icelake14implementation25binary_length_from_base64EPKDsm                                                                                     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZNK7simdutf7icelake14implementation25binary_length_from_base64EPKcm                                                                                      [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+_ZNK7simdutf7icelake14implementation41utf8_length_from_utf16be_with_replacementEPKDsm                                                                     [AVX, AVX512BW, AVX512F, BMI2]
+_ZNK7simdutf7icelake14implementation41utf8_length_from_utf16le_with_replacementEPKDsm                                                                     [AVX, AVX512BW, AVX512F, BMI2]
 _ZNK7simdutf7icelake14implementation25convert_latin1_to_utf16beEPKcmPDs                                                                                   [AVX, AVX512BW, AVX512F, AVX512VL, BMI2]
 _ZNK7simdutf7icelake14implementation25convert_latin1_to_utf16leEPKcmPDs                                                                                   [AVX, AVX512BW, AVX512F, AVX512VL, BMI2]
 _ZNK7simdutf7icelake14implementation25convert_utf16be_to_latin1EPKDsmPc                                                                                   [AVX, AVX512BW, AVX512F, AVX512_VBMI, BMI2]
@@ -403,6 +411,15 @@ ipint_simd_v128_load8_splat_mem           [AVX]
 ipint_simd_v128_not                       [AVX]
 ipint_simd_v128_or                        [AVX]
 ipint_simd_v128_xor                       [AVX]
+
+
+# ----------------------------------------------------------------------------
+# JSC IPInt atomics. cmpxchg loop reloads the SIMD accumulator with vmovdqu
+# after the IPInt metadata removal in upstream ef40cabc28d2; gated behind
+# Options::useWasmSIMD().
+# (1 symbols)
+# ----------------------------------------------------------------------------
+ipint_i64_atomic_rmw32_cmpxchg_u          [AVX]
 
 
 # ----------------------------------------------------------------------------

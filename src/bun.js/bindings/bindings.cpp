@@ -54,7 +54,7 @@
 
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSClassRef.h"
-#include "JavaScriptCore/JSInternalPromise.h"
+#include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMapIterator.h"
 #include "JavaScriptCore/JSModuleLoader.h"
@@ -2657,10 +2657,10 @@ void JSC__JSValue__putRecord(JSC::EncodedJSValue objectValue, JSC::JSGlobalObjec
     scope.release();
 }
 
-JSC::JSInternalPromise* JSC__JSValue__asInternalPromise(JSC::EncodedJSValue JSValue0)
+JSC::JSPromise* JSC__JSValue__asInternalPromise(JSC::EncodedJSValue JSValue0)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return JSC::jsDynamicCast<JSC::JSInternalPromise*>(value);
+    return JSC::jsDynamicCast<JSC::JSPromise*>(value);
 }
 
 JSC::JSPromise* JSC__JSValue__asPromise(JSC::EncodedJSValue JSValue0)
@@ -2672,7 +2672,7 @@ JSC::JSPromise* JSC__JSValue__asPromise(JSC::EncodedJSValue JSValue0)
 JSC::EncodedJSValue JSC__JSValue__createInternalPromise(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    return JSC::JSValue::encode(JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure()));
+    return JSC::JSValue::encode(JSC::JSPromise::create(vm, globalObject->promiseStructure()));
 }
 
 void JSC__JSFunction__optimizeSoon(JSC::EncodedJSValue JSValue0)
@@ -2762,8 +2762,6 @@ void JSC__JSValue___then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1
 
     if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(cell)) {
         handlePromise<JSC::JSPromise, false>(promise, arg1, arg2, ArgFn3, ArgFn4);
-    } else if (JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
-        RELEASE_ASSERT(false);
     }
 }
 
@@ -2791,12 +2789,8 @@ JSC::EncodedJSValue JSC__JSGlobalObject__putCachedObject(JSC::JSGlobalObject* gl
 
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global, ZigString* arg1)
 {
-    auto& vm = global->vm();
-    JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(global->moduleLoader()->getDirect(vm, JSC::Identifier::fromString(vm, "registry"_s)));
-    if (!map) return;
     const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
-    JSC::JSValue val = JSC::identifierToJSValue(vm, identifier);
-    map->remove(global, val);
+    global->moduleLoader()->removeEntry(identifier);
 }
 
 void JSC__VM__collectAsync(JSC::VM* vm)
@@ -3057,11 +3051,11 @@ JSC::JSObject* JSC__JSString__toObject(JSC::JSString* arg0, JSC::JSGlobalObject*
 // JSC::JSGlobalObject* arg1, JSC__JSModuleRecord* arg2) {
 //     arg2->depen
 // }
-extern "C" JSC::JSInternalPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObject, const BunString* moduleNameStr)
+extern "C" JSC::JSPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObject, const BunString* moduleNameStr)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), jsUndefined(), jsUndefined(), jsUndefined());
+    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, moduleNameStr->toWTFString()), JSC::Identifier(), jsUndefined(), jsUndefined());
 
     EXCEPTION_ASSERT(!!scope.exception() == !promise);
     return promise;
@@ -3080,8 +3074,8 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     JSC::SourceCode sourceCode = JSC::makeSource(
         src, JSC::SourceOrigin { origin }, JSC::SourceTaintedOrigin::Untainted, origin.fileSystemPath(),
         WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
-    globalObject->moduleLoader()->provideFetch(globalObject, jsString(vm, origin.fileSystemPath()), WTF::move(sourceCode));
-    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSValue(jsString(vm, referrer.fileSystemPath())), JSValue(), JSValue());
+    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSC::ScriptFetchParameters::Type::JavaScript, WTF::move(sourceCode));
+    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSC::Identifier::fromString(vm, referrer.fileSystemPath()), JSValue(), JSValue());
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -3485,7 +3479,7 @@ static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalO
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC::JSInternalPromise*
+JSC::JSPromise*
 JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
     const BunString* arg1)
 {
@@ -3495,14 +3489,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
     EXCEPTION_ASSERT(!!promise == !scope.exception());
-    if (!promise) return nullptr;
-
-    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
-        vm, globalObject, 1, String(), resolverFunctionCallback);
-
-    auto* newPromise = promise->then(globalObject, resolverFunction, globalObject->promiseEmptyOnRejectedFunction());
-    EXCEPTION_ASSERT(!!scope.exception() == !newPromise);
-    return newPromise;
+    return promise;
 }
 #pragma mark - JSC::JSPromise
 
@@ -3525,12 +3512,6 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
             return;
         }
 
-        if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
-            promise->reject(vm, globalObject, exception->value());
-            RETURN_IF_EXCEPTION(scope, );
-            return;
-        }
-
         ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
     }
 
@@ -3541,21 +3522,10 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
             return;
         }
 
-        if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
-            promise->reject(vm, globalObject, errorInstance);
-            RETURN_IF_EXCEPTION(scope, );
-            return;
-        }
-
         ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
     }
 
     if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
-        promise->resolve(globalObject, vm, result);
-        RETURN_IF_EXCEPTION(scope, );
-        return;
-    }
-    if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
         promise->resolve(globalObject, vm, result);
         RETURN_IF_EXCEPTION(scope, );
         return;
@@ -3752,16 +3722,16 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
     promise->markAsHandled();
 }
 
-#pragma mark - JSC::JSInternalPromise
+#pragma mark - JSC::JSInternalPromise (now aliased to JSPromise)
 
-JSC::JSInternalPromise* JSC__JSInternalPromise__create(JSC::JSGlobalObject* globalObject)
+JSC::JSPromise* JSC__JSInternalPromise__create(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    return JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    return JSC::JSPromise::create(vm, globalObject->promiseStructure());
 }
 
 [[ZIG_EXPORT(check_slow)]]
-void JSC__JSInternalPromise__reject(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue2)
+void JSC__JSInternalPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue2)
 {
     JSValue value = JSC::JSValue::decode(JSValue2);
     auto& vm = JSC::getVM(globalObject);
@@ -3774,13 +3744,13 @@ void JSC__JSInternalPromise__reject(JSC::JSInternalPromise* arg0, JSC::JSGlobalO
 
     arg0->reject(vm, globalObject, exception);
 }
-void JSC__JSInternalPromise__rejectAsHandled(JSC::JSInternalPromise* arg0,
+void JSC__JSInternalPromise__rejectAsHandled(JSC::JSPromise* arg0,
     JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
     auto& vm = JSC::getVM(arg1);
     arg0->rejectAsHandled(vm, arg1, JSC::JSValue::decode(JSValue2));
 }
-void JSC__JSInternalPromise__rejectAsHandledException(JSC::JSInternalPromise* arg0,
+void JSC__JSInternalPromise__rejectAsHandledException(JSC::JSPromise* arg0,
     JSC::JSGlobalObject* arg1,
     JSC::Exception* arg2)
 {
@@ -3788,52 +3758,46 @@ void JSC__JSInternalPromise__rejectAsHandledException(JSC::JSInternalPromise* ar
     arg0->rejectAsHandled(vm, arg1, arg2);
 }
 
-JSC::JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC::JSGlobalObject* arg0,
+JSC::JSPromise* JSC__JSInternalPromise__rejectedPromise(JSC::JSGlobalObject* arg0,
     JSC::EncodedJSValue JSValue1)
 {
-    auto& vm = arg0->vm();
-    auto* promise = JSC::JSInternalPromise::create(vm, arg0->internalPromiseStructure());
-    promise->reject(vm, arg0, JSC::JSValue::decode(JSValue1));
-    return promise;
+    return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
 }
 
 [[ZIG_EXPORT(check_slow)]]
-void JSC__JSInternalPromise__resolve(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
+void JSC__JSInternalPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
 {
     arg0->resolve(arg1, arg1->vm(), JSC::JSValue::decode(JSValue2));
 }
 
-JSC::JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC::JSGlobalObject* arg0,
+JSC::JSPromise* JSC__JSInternalPromise__resolvedPromise(JSC::JSGlobalObject* arg0,
     JSC::EncodedJSValue JSValue1)
 {
-    auto& vm = arg0->vm();
-    auto* promise = JSC::JSInternalPromise::create(vm, arg0->internalPromiseStructure());
-    promise->resolve(arg0, vm, JSC::JSValue::decode(JSValue1));
-    return promise;
+    return JSC::JSPromise::resolvedPromise(arg0, JSC::JSValue::decode(JSValue1));
 }
 
-JSC::EncodedJSValue JSC__JSInternalPromise__result(const JSC::JSInternalPromise* arg0)
+JSC::EncodedJSValue JSC__JSInternalPromise__result(const JSC::JSPromise* arg0)
 {
     return JSC::JSValue::encode(arg0->result());
 }
-uint32_t JSC__JSInternalPromise__status(const JSC::JSInternalPromise* arg0)
+uint32_t JSC__JSInternalPromise__status(const JSC::JSPromise* arg0)
 {
     switch (arg0->status()) {
-    case JSC::JSInternalPromise::Status::Pending:
+    case JSC::JSPromise::Status::Pending:
         return 0;
-    case JSC::JSInternalPromise::Status::Fulfilled:
+    case JSC::JSPromise::Status::Fulfilled:
         return 1;
-    case JSC::JSInternalPromise::Status::Rejected:
+    case JSC::JSPromise::Status::Rejected:
         return 2;
     default:
         return 255;
     }
 }
-bool JSC__JSInternalPromise__isHandled(const JSC::JSInternalPromise* arg0)
+bool JSC__JSInternalPromise__isHandled(const JSC::JSPromise* arg0)
 {
     return arg0->isHandled();
 }
-void JSC__JSInternalPromise__setHandled(JSC::JSInternalPromise* promise, JSC::VM* arg1)
+void JSC__JSInternalPromise__setHandled(JSC::JSPromise* promise, JSC::VM* arg1)
 {
     auto& vm = *arg1;
     auto flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
@@ -4853,11 +4817,7 @@ void JSC__VM__deleteAllCode(JSC::VM* arg1, JSC::JSGlobalObject* globalObject)
     JSC::JSLockHolder locker(globalObject->vm());
 
     arg1->drainMicrotasks();
-    if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(globalObject->moduleLoader())) {
-        auto id = JSC::Identifier::fromString(globalObject->vm(), "registry"_s);
-        JSC::JSMap* map = JSC::JSMap::create(globalObject->vm(), globalObject->mapStructure());
-        obj->putDirect(globalObject->vm(), id, map);
-    }
+    globalObject->moduleLoader()->clearAll();
     arg1->deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
     arg1->heap.reportAbandonedObjectGraph();
 }

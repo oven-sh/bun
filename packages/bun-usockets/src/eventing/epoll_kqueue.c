@@ -679,8 +679,11 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
 
     int efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (efd == -1) {
-        us_poll_free(p, loop);
-        return NULL;
+        // eventfd only fails on EMFILE/ENFILE — the loop is unusable without
+        // wakeup_async, and the sole caller doesn't NULL-check. Crash loudly
+        // rather than NULL-deref or store -1 as a poll fd.
+        fprintf(stderr, "FATAL: eventfd() failed during loop init: %s\n", strerror(errno));
+        abort();
     }
     us_poll_init(p, efd, POLL_TYPE_CALLBACK);
 

@@ -2,7 +2,8 @@
 
 // An agent that starts buildkite-agent and runs others services.
 
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -114,6 +115,17 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
         mkdir(dir);
       }
 
+      // Copy this script and its imports into homePath so the launchd plist
+      // doesn't depend on the checkout that ran `install` sticking around.
+      const srcDir = fileURLToPath(new URL(".", import.meta.url));
+      for (const f of ["agent.mjs", "utils.mjs"]) {
+        copyFileSync(join(srcDir, f), join(homePath, f));
+      }
+      // Stable node path (the Homebrew/usr-local symlink, not a Cellar version
+      // path that breaks on `brew upgrade node`).
+      const nodePath = which("node") || process.execPath;
+      const installedScript = join(homePath, "agent.mjs");
+
       // Preserve an existing token line if we're re-installing on a box that
       // already has one and BUILDKITE_AGENT_TOKEN wasn't supplied this time.
       let tokenLine = token ? `token=${escape(token)}` : undefined;
@@ -146,14 +158,15 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>/opt/rust/bin:${homedir()}/go/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>ProcessType</key><string>Interactive</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${command}</string>
-${args.map(a => `    <string>${a}</string>`).join("\n")}
+    <string>${nodePath}</string>
+    <string>${installedScript}</string>
+    <string>start</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>${agentLogPath}</string>
@@ -165,7 +178,17 @@ ${args.map(a => `    <string>${a}</string>`).join("\n")}
 `;
       writeFile(plistPath, plist, { mode: 0o644 });
 
+      // Matches the script already deployed on the fleet: covers both the
+      // Homebrew-agent layout (older x64 boxes) and the Library layout (this
+      // installer), fixes ownership, then reboots.
       const cleanupPlistPath = "/Library/LaunchDaemons/com.buildkite.cleanup.plist";
+      const cleanupScript =
+        `PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin; ` +
+        `BASE_PREFIX=$([ "$(uname -m)" = "arm64" ] && echo "/opt/homebrew" || echo "/usr/local"); ` +
+        `{ rm -rf $BASE_PREFIX/{var,etc}/buildkite-agent/{builds,cache}/* ${homePath}/{builds,cache}/* /tmp/* /var/tmp/* || true; } && ` +
+        `{ chown -R ${process.env.USER || "administrator"}:admin $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
+        `{ chmod -R 755 $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
+        `{ shutdown -r now || reboot; }`;
       const cleanupPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -174,10 +197,10 @@ ${args.map(a => `    <string>${a}</string>`).join("\n")}
   <key>ProgramArguments</key>
   <array>
     <string>/bin/sh</string><string>-c</string>
-    <string>rm -rf ${homePath}/builds/* ${homePath}/cache/* /tmp/* /private/var/tmp/* || true; shutdown -r now</string>
+    <string><![CDATA[${cleanupScript}]]></string>
   </array>
   <key>StartCalendarInterval</key>
-  <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+  <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>27</integer></dict>
 </dict>
 </plist>
 `;
@@ -247,11 +270,13 @@ ${args.map(a => `    <string>${a}</string>`).join("\n")}
       shell = `${sh} -elc`;
     }
 
+    const distroVersion = getDistroVersion();
     const flags = ["enable-job-log-tmpfile", "no-feature-reporting"];
     const options = {
-      // %spawn lets buildkite-agent number workers when spawn>1, and is a
-      // harmless "-1" suffix at spawn=1 (matching the existing fleet's names).
-      "name": `${getHostname()}-%spawn`,
+      // On macOS the hostname is often a meaningless asset ID (e.g. 66783.local),
+      // so name the agent by what it actually is. %spawn yields the existing
+      // fleet's "-1" suffix at spawn=1.
+      "name": isMacOS ? `${getOs()}-${getArch()}-${distroVersion}-%spawn` : `${getHostname()}-%spawn`,
       "shell": shell,
       "job-log-path": logsPath,
       "build-path": join(homePath, "builds"),
@@ -286,7 +311,6 @@ ${args.map(a => `    <string>${a}</string>`).join("\n")}
       options["git-mirrors-path"] = join(cachePath, "git");
     }
 
-    const distroVersion = getDistroVersion();
     const tags = {
       "os": getOs(),
       "arch": getArch(),

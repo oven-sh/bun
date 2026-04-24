@@ -366,6 +366,12 @@ pub fn watchEventFromInotifyEvent(event: *align(1) const INotifyWatcher.Event, i
             .move_to = (event.mask & IN.MOVED_TO) > 0,
             .write = (event.mask & IN.MODIFY) > 0,
             .create = (event.mask & IN.CREATE) > 0,
+            // IN_ISDIR is a kernel-set flag in the event mask (not one you
+            // pass to inotify_add_watch). It is set when the event concerns
+            // a subdirectory of the watched directory. Recursive fs.watch
+            // needs this to know when a newly-created entry is itself a
+            // directory that should get its own inotify watch.
+            .is_dir = (event.mask & IN.ISDIR) > 0,
         },
         .index = index,
     };

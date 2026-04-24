@@ -180,7 +180,11 @@ pub const WatchEvent = struct {
         write: bool = false,
         move_to: bool = false,
         create: bool = false,
-        _padding: u2 = 0,
+        /// True when the event concerns a directory (inotify IN_ISDIR).
+        /// Used by recursive fs.watch to know when to register a new
+        /// inotify watch on a newly-created subdirectory.
+        is_dir: bool = false,
+        _padding: u1 = 0,
 
         pub fn merge(before: Op, after: Op) Op {
             return .{
@@ -190,6 +194,7 @@ pub const WatchEvent = struct {
                 .rename = before.rename or after.rename,
                 .move_to = before.move_to or after.move_to,
                 .create = before.create or after.create,
+                .is_dir = before.is_dir or after.is_dir,
             };
         }
 

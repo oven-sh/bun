@@ -159,6 +159,15 @@ pub const PathWatcherManager = struct {
 
         const timestamp = std.time.milliTimestamp();
 
+        // Subdirectories created or moved into a watched tree during this
+        // batch. Registering a new inotify watch touches manager.mutex and
+        // Watcher.mutex, both of which are held (transitively) right now —
+        // onFileUpdate runs inside INotifyWatcher.watchLoopCycle with
+        // Watcher.mutex held. Defer registration to a WorkPool task that
+        // runs after both locks are released.
+        var new_subdirs: NewSubdirTask.List = .{};
+        defer if (new_subdirs.count > 0) NewSubdirTask.schedule(this, new_subdirs);
+
         this.mutex.lock();
         defer this.mutex.unlock();
 
@@ -256,6 +265,12 @@ pub const PathWatcherManager = struct {
                         }
                     }
 
+                    // IN_ISDIR is set on the event mask when the event concerns
+                    // a subdirectory. Pair with IN_CREATE/IN_MOVED_TO to detect
+                    // a newly-created subdirectory that recursive watchers need
+                    // to start watching.
+                    const is_new_subdir = Environment.isLinux and event.op.is_dir and (event.op.create or event.op.move_to);
+
                     for (affected) |changed_name_| {
                         const changed_name: []const u8 = bun.asByteSlice(changed_name_.?);
                         if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
@@ -300,6 +315,19 @@ pub const PathWatcherManager = struct {
                                 // Do not emit events from subdirectories (without option set)
                                 if (path.len == 0 or (bun.strings.containsChar(path, '/') and !watcher.recursive)) {
                                     continue;
+                                }
+
+                                // A new subdirectory appeared under a recursive watcher's tree.
+                                // Queue a task that will open it and register a fresh inotify
+                                // watch — without this, events for files created inside the new
+                                // subdirectory would never fire (#29677).
+                                if (is_new_subdir and watcher.recursive and watcher.refPendingDirectory()) {
+                                    if (new_subdirs.add(watcher, path_slice)) {
+                                        // refPendingDirectory succeeded; ownership of the ref
+                                        // transfers to NewSubdirTask which will unref on completion.
+                                    } else {
+                                        watcher.unrefPendingDirectory();
+                                    }
                                 }
 
                                 watcher.emit(event_type.toEvent(path), hash, timestamp, false);
@@ -552,6 +580,153 @@ pub const PathWatcherManager = struct {
 
         fn deinit(this: *DirectoryRegisterTask) void {
             bun.default_allocator.destroy(this);
+        }
+    };
+
+    /// WorkPool task that registers inotify watches for subdirectories that
+    /// appeared inside a recursive `fs.watch()` tree after the watcher started.
+    ///
+    /// Created inside `onFileUpdate` (which runs holding Watcher.mutex and
+    /// takes manager.mutex). Actual registration — `_fdFromAbsolutePathZ`,
+    /// `main_watcher.addDirectory` — takes both of those mutexes, so it must
+    /// run on a WorkPool thread after `onFileUpdate` returns and both locks
+    /// are released.
+    pub const NewSubdirTask = struct {
+        manager: *PathWatcherManager,
+        entries: List,
+        task: jsc.WorkPoolTask = .{ .callback = callback },
+
+        /// Small inline list that holds a handful of (watcher, absolute path)
+        /// pairs. Onefileupdate can produce a burst of these when a directory
+        /// tree is moved in, but typical batches have 0–1.
+        pub const List = struct {
+            /// Heap-allocated entries. Null when count == 0 to avoid
+            /// allocating on the common empty path.
+            items: ?[*]Entry = null,
+            count: u32 = 0,
+            capacity: u32 = 0,
+
+            pub const Entry = struct {
+                watcher: *PathWatcher,
+                path: [:0]u8,
+            };
+
+            /// Attempt to append. Returns true on success, false on OOM (in
+            /// which case the caller must undo any ref it took for the watcher).
+            pub fn add(this: *List, watcher: *PathWatcher, abs_path: []const u8) bool {
+                if (this.count == this.capacity) {
+                    const new_cap: u32 = if (this.capacity == 0) 4 else this.capacity * 2;
+                    if (this.items) |p| {
+                        const old_slice = p[0..this.capacity];
+                        const resized = bun.default_allocator.realloc(old_slice, new_cap) catch return false;
+                        this.items = resized.ptr;
+                    } else {
+                        const fresh = bun.default_allocator.alloc(Entry, new_cap) catch return false;
+                        this.items = fresh.ptr;
+                    }
+                    this.capacity = new_cap;
+                }
+                const dup = bun.default_allocator.dupeZ(u8, abs_path) catch return false;
+                this.items.?[this.count] = .{ .watcher = watcher, .path = dup };
+                this.count += 1;
+                return true;
+            }
+
+            pub fn slice(this: *const List) []Entry {
+                return if (this.items) |p| p[0..this.count] else &[_]Entry{};
+            }
+
+            pub fn deinit(this: *List) void {
+                if (this.items) |p| {
+                    bun.default_allocator.free(p[0..this.capacity]);
+                    this.items = null;
+                    this.count = 0;
+                    this.capacity = 0;
+                }
+            }
+        };
+
+        pub fn schedule(manager: *PathWatcherManager, entries: List) void {
+            // Keep the manager alive until the task runs. If refPendingTask
+            // fails (manager is shutting down), skip registration but still
+            // release the per-watcher refs we took in onFileUpdate.
+            if (!manager.refPendingTask()) {
+                for (entries.slice()) |entry| {
+                    entry.watcher.unrefPendingDirectory();
+                    bun.default_allocator.free(entry.path);
+                }
+                var mut_entries = entries;
+                mut_entries.deinit();
+                return;
+            }
+            const task = bun.handleOom(bun.default_allocator.create(NewSubdirTask));
+            task.* = .{ .manager = manager, .entries = entries };
+            jsc.WorkPool.schedule(&task.task);
+        }
+
+        fn callback(task: *jsc.WorkPoolTask) void {
+            const self: *NewSubdirTask = @fieldParentPtr("task", task);
+            defer {
+                var entries = self.entries;
+                entries.deinit();
+                self.manager.unrefPendingTask();
+                bun.default_allocator.destroy(self);
+            }
+            for (self.entries.slice()) |entry| {
+                defer {
+                    entry.watcher.unrefPendingDirectory();
+                    bun.default_allocator.free(entry.path);
+                }
+                // Watcher may have been closed between queueing and now.
+                if (entry.watcher.isClosed()) continue;
+
+                // Resolve the absolute path to a directory PathInfo. The
+                // lookup may fail if the new subdirectory was deleted or
+                // replaced by a non-directory before we got here — that's a
+                // benign race, just skip.
+                const path_info = switch (self.manager._fdFromAbsolutePathZ(entry.path)) {
+                    .result => |p| p,
+                    .err => |err| {
+                        log("[watch] _registerNewSubdirectory({s}) lookup: {f}", .{ entry.path, err });
+                        continue;
+                    },
+                };
+                if (path_info.is_file) {
+                    // Race: the name referred to a directory when IN_CREATE
+                    // fired but is now a regular file. Drop the ref we just
+                    // took and move on.
+                    self.manager._decrementPathRef(path_info.path);
+                    continue;
+                }
+
+                // Track this subdirectory against the watcher so its path
+                // reference is released when the watcher is unregistered.
+                var append_failed = false;
+                {
+                    entry.watcher.mutex.lock();
+                    defer entry.watcher.mutex.unlock();
+                    entry.watcher.file_paths.append(bun.default_allocator, path_info.path) catch {
+                        append_failed = true;
+                    };
+                }
+                if (append_failed) {
+                    // Must release manager-side path ref AFTER dropping
+                    // watcher.mutex: _decrementPathRef takes manager.mutex,
+                    // and unregisterWatcher takes manager.mutex first then
+                    // watcher.mutex — inverting here would AB/BA deadlock.
+                    self.manager._decrementPathRef(path_info.path);
+                    continue;
+                }
+
+                switch (self.manager._addDirectory(entry.watcher, path_info)) {
+                    .err => |err| {
+                        log("[watch] _registerNewSubdirectory({s}) addDirectory: {f}", .{ entry.path, err });
+                        // Leave the ref + file_paths entry in place; the watcher's
+                        // deinit path walks file_paths and decrements refs correctly.
+                    },
+                    .result => {},
+                }
+            }
         }
     };
 

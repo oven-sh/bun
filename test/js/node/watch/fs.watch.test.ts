@@ -170,6 +170,67 @@ describe("fs.watch", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/29677
+  // When a subdirectory is created inside a recursive watcher AFTER the
+  // watcher started, changes to files inside that subdirectory must fire
+  // events whose filename is the full relative path (e.g. "subdir1/nested.txt"),
+  // not the bare basename. Before the fix, Linux never registered an inotify
+  // watch on the new subdirectory, so events either dropped entirely or
+  // arrived with inconsistent filenames depending on kernel/fs behavior.
+  test.skipIf(isWindows)("recursive watch reports new subdirectory contents with full relative path", async () => {
+    const root = path.join(testDir, "new-subdir-relpath");
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch {}
+    fs.mkdirSync(root, { recursive: true });
+
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const filenames: string[] = [];
+    const watcher = fs.watch(root, { recursive: true, signal: AbortSignal.timeout(5000) });
+    watcher.on("change", (_event, filename) => {
+      const name = filename as string;
+      filenames.push(name);
+      // Resolve as soon as we've seen an event for the nested file.
+      if (name.endsWith("nested.txt")) {
+        watcher.close();
+      }
+    });
+    watcher.on("error", reject);
+    watcher.on("close", () => resolve());
+
+    // Give the inotify watch a moment to be wired up before we start mutating.
+    await Bun.sleep(50);
+
+    const subdir = path.join(root, "subdir1");
+    fs.mkdirSync(subdir);
+
+    // Wait for the new-subdir event to land and the inotify watch on the
+    // subdirectory to register. Without this, the write can race ahead of
+    // our registration and never be reported.
+    for (let i = 0; i < 50; i++) {
+      if (filenames.includes("subdir1")) break;
+      await Bun.sleep(20);
+    }
+
+    const nested = path.join(subdir, "nested.txt");
+    // Spam a handful of writes — the first may still race registration on
+    // slow kernels; subsequent ones are what we really care about.
+    for (let i = 0; i < 10; i++) {
+      fs.writeFileSync(nested, `v${i}\n`);
+      if (filenames.some(n => n.endsWith("nested.txt"))) break;
+      await Bun.sleep(20);
+    }
+
+    await promise;
+
+    // The nested file MUST have been reported with the full relative path.
+    // We explicitly reject the bare basename — that was the bug.
+    const nestedEvents = filenames.filter(n => n.endsWith("nested.txt"));
+    expect(nestedEvents.length).toBeGreaterThan(0);
+    expect(nestedEvents).toContain(path.join("subdir1", "nested.txt"));
+    expect(nestedEvents).not.toContain("nested.txt");
+  });
+
   test("should emit event when file is deleted", done => {
     const testsubdir = tempDirWithFiles("subdir", {
       "deleted.txt": "hello",

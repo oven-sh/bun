@@ -32,7 +32,7 @@ namespace WebCore {
 
 bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    auto& abortSignal = JSC::jsCast<JSAbortSignal*>(handle.slot()->asCell())->wrapped();
+    auto& abortSignal = uncheckedDowncast<JSAbortSignal>(handle.slot()->asCell())->wrapped();
     if (abortSignal.isFiringEventListeners()) {
         if (reason) [[unlikely]]
             *reason = "EventTarget firing event listeners"_s;

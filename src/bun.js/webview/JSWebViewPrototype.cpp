@@ -116,10 +116,10 @@ const ClassInfo JSWebViewPrototype::s_info = { "WebView"_s, &Base::s_info, nullp
 JSObject* createJSWebViewPrototype(VM& vm, JSGlobalObject* globalObject)
 {
     // Chain to EventTarget.prototype — addEventListener/removeEventListener/
-    // dispatchEvent live there and unwrap `this` via jsDynamicCast<JSEventTarget*>,
+    // dispatchEvent live there and unwrap `this` via dynamicDowncast<JSEventTarget>,
     // which succeeds for JSWebView : JSEventTarget. WebView.prototype.__proto__
     // === EventTarget.prototype; `view instanceof EventTarget` is true.
-    auto* domGlobal = jsCast<WebCore::JSDOMGlobalObject*>(globalObject);
+    auto* domGlobal = uncheckedDowncast<WebCore::JSDOMGlobalObject>(globalObject);
     auto* etProto = WebCore::JSEventTarget::prototype(vm, *domGlobal);
     auto* structure = JSWebViewPrototype::createStructure(vm, globalObject, etProto);
     return JSWebViewPrototype::create(vm, globalObject, structure);
@@ -131,7 +131,7 @@ using WebViewProto::VirtualKey;
 
 static JSWebView* unwrapThis(JSGlobalObject* globalObject, ThrowScope& scope, CallFrame* callFrame, ASCIILiteral method)
 {
-    auto* thisObject = jsDynamicCast<JSWebView*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<JSWebView>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         Bun::ERR::INVALID_THIS(scope, globalObject, "WebView"_s);
         return nullptr;
@@ -158,7 +158,7 @@ static uint8_t parseModifiers(JSGlobalObject* g, ThrowScope& scope, JSValue v)
 {
     using namespace WebViewProto;
     if (!v.isObject()) return 0;
-    auto* arr = jsDynamicCast<JSArray*>(v);
+    auto* arr = dynamicDowncast<JSArray>(v);
     if (!arr) return 0;
     uint8_t mods = 0;
     unsigned len = arr->length();
@@ -652,7 +652,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncReload, (JSGlobalObject * globalObjec
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto* thisObject = jsDynamicCast<JSWebView*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<JSWebView>(callFrame->thisValue());
     if (!thisObject || thisObject->m_closed) return JSValue::encode(jsUndefined());
     thisObject->doClose();
     return JSValue::encode(jsUndefined());
@@ -662,21 +662,21 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClose, (JSGlobalObject * globalObject
 
 JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_url, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
-    auto* thisObject = jsDynamicCast<JSWebView*>(JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSWebView>(JSValue::decode(thisValue));
     if (!thisObject) return JSValue::encode(jsEmptyString(globalObject->vm()));
     return JSValue::encode(jsString(globalObject->vm(), thisObject->m_url));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_title, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
-    auto* thisObject = jsDynamicCast<JSWebView*>(JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSWebView>(JSValue::decode(thisValue));
     if (!thisObject) return JSValue::encode(jsEmptyString(globalObject->vm()));
     return JSValue::encode(jsString(globalObject->vm(), thisObject->m_title));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_loading, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))
 {
-    auto* thisObject = jsDynamicCast<JSWebView*>(JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSWebView>(JSValue::decode(thisValue));
     return JSValue::encode(jsBoolean(thisObject && thisObject->m_loading));
 }
 
@@ -685,7 +685,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_loading, (JSGlobalObject*, EncodedJSVal
 #define WEBVIEW_CALLBACK_ACCESSOR(Name, field)                                                                  \
     JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_##Name, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName)) \
     {                                                                                                           \
-        auto* thisObject = jsDynamicCast<JSWebView*>(JSValue::decode(thisValue));                               \
+        auto* thisObject = dynamicDowncast<JSWebView>(JSValue::decode(thisValue));                               \
         if (!thisObject) return JSValue::encode(jsUndefined());                                                 \
         JSObject* cb = thisObject->field.get();                                                                 \
         return JSValue::encode(cb ? JSValue(cb) : jsNull());                                                    \
@@ -693,7 +693,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_loading, (JSGlobalObject*, EncodedJSVal
     JSC_DEFINE_CUSTOM_SETTER(jsWebViewSetter_##Name,                                                            \
         (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))   \
     {                                                                                                           \
-        auto* thisObject = jsDynamicCast<JSWebView*>(JSValue::decode(thisValue));                               \
+        auto* thisObject = dynamicDowncast<JSWebView>(JSValue::decode(thisValue));                               \
         if (!thisObject) return false;                                                                          \
         JSValue value = JSValue::decode(encodedValue);                                                          \
         if (value.isUndefinedOrNull()) {                                                                        \

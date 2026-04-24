@@ -124,7 +124,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMExceptionDOMConstru
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSDOMExceptionDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSDOMExceptionDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto message = argument0.value().isUndefined() ? emptyString() : convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
@@ -257,7 +257,7 @@ JSObject* JSDOMException::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSDOMException::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSDOMExceptionDOMConstructor, DOMConstructorID::DOMException>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSDOMExceptionDOMConstructor, DOMConstructorID::DOMException>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSDOMException::destroy(JSC::JSCell* cell)
@@ -270,7 +270,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMExceptionConstructor, (JSGlobalObject * lexicalGlo
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSDOMExceptionPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSDOMExceptionPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSDOMException::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -327,7 +327,7 @@ JSC::GCClient::IsoSubspace* JSDOMException::subspaceForImpl(JSC::VM& vm)
 
 void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSDOMException*>(cell);
+    auto* thisObject = uncheckedDowncast<JSDOMException>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     // if (thisObject->scriptExecutionContext())
     //     analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -391,7 +391,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 DOMException* JSDOMException::toWrapped(JSC::VM& vm, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSDOMException*>(value))
+    if (auto* wrapper = dynamicDowncast<JSDOMException>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

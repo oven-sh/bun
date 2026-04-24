@@ -55,7 +55,7 @@ void JSNextTickQueue::finishCreation(VM& vm)
 template<typename Visitor>
 void JSNextTickQueue::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSNextTickQueue*>(cell);
+    auto* thisObject = uncheckedDowncast<JSNextTickQueue>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }

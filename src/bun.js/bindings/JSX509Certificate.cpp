@@ -109,13 +109,13 @@ static JSValue createX509Certificate(JSC::VM& vm, JSGlobalObject* globalObject, 
         view = arg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         data = std::span(reinterpret_cast<const uint8_t*>(view.span().data()), view.span().size());
-    } else if (auto* typedArray = jsDynamicCast<JSArrayBufferView*>(arg)) {
+    } else if (auto* typedArray = dynamicDowncast<JSArrayBufferView>(arg)) {
         if (typedArray->isDetached()) [[unlikely]] {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "TypedArray is detached"_s);
             return {};
         }
         data = typedArray->span();
-    } else if (auto* buffer = jsDynamicCast<JSArrayBuffer*>(arg)) {
+    } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(arg)) {
         auto* impl = buffer->impl();
         if (!impl) [[unlikely]] {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "Buffer is detached"_s);
@@ -300,7 +300,7 @@ JSX509Certificate::~JSX509Certificate()
 template<typename Visitor>
 void JSX509Certificate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSX509Certificate* thisObject = jsCast<JSX509Certificate*>(cell);
+    JSX509Certificate* thisObject = uncheckedDowncast<JSX509Certificate>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
@@ -323,7 +323,7 @@ DEFINE_VISIT_CHILDREN(JSX509Certificate);
 
 size_t JSX509Certificate::estimatedSize(JSCell* cell, VM& vm)
 {
-    JSX509Certificate* thisObject = jsCast<JSX509Certificate*>(cell);
+    JSX509Certificate* thisObject = uncheckedDowncast<JSX509Certificate>(cell);
     size_t size = i2d_X509(thisObject->m_x509.get(), nullptr);
     return Base::estimatedSize(cell, vm) + size;
 }
@@ -399,7 +399,7 @@ static JSObject* GetX509NameObject(JSGlobalObject* globalObject, const X509* cer
         JSValue existing = result->getIfPropertyExists(globalObject, Identifier::fromString(vm, key));
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (existing) {
-            JSArray* array = jsDynamicCast<JSArray*>(existing);
+            JSArray* array = dynamicDowncast<JSArray>(existing);
             if (!array) {
                 array = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 2);
                 if (!array) {
@@ -1087,7 +1087,7 @@ JSValue JSX509Certificate::computeInfoAccess(ncrypto::X509View view, JSGlobalObj
         JSValue existingValue = object->getIfPropertyExists(globalObject, identifier);
         RETURN_IF_EXCEPTION(scope, {});
         if (existingValue) {
-            JSArray* array = jsCast<JSArray*>(existingValue);
+            JSArray* array = uncheckedDowncast<JSArray>(existingValue);
             array->push(globalObject, jsString(vm, value));
         } else {
             JSArray* array = constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), 1);

@@ -22,7 +22,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
 
     auto buffer = callframe->argument(0);
-    auto* bufferView = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
+    auto* bufferView = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
     const char* ptr = nullptr;
     size_t byteLength = 0;
     if (bufferView) {
@@ -39,7 +39,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
         }
 
         ptr = reinterpret_cast<const char*>(bufferView->vector());
-    } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(buffer)) {
+    } else if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(buffer)) {
         auto* impl = arrayBuffer->impl();
 
         if (!impl) {
@@ -76,7 +76,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
 
     auto buffer = callframe->argument(0);
-    auto* bufferView = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
+    auto* bufferView = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
     const char* ptr = nullptr;
     size_t byteLength = 0;
     if (bufferView) {
@@ -93,7 +93,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
         }
 
         ptr = reinterpret_cast<const char*>(bufferView->vector());
-    } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(buffer)) {
+    } else if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(buffer)) {
         auto* impl = arrayBuffer->impl();
         if (impl->isDetached()) [[unlikely]] {
             return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,

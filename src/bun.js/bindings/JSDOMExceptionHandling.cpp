@@ -58,8 +58,8 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     (void)scope.tryClearException();
     vm.clearLastException();
 
-    auto* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
-    // if (auto* window = jsDynamicCast<JSDOMWindow*>( globalObject)) {
+    auto* globalObject = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject);
+    // if (auto* window = dynamicDowncast<JSDOMWindow>( globalObject)) {
     //     if (!window->wrapped().isCurrentlyDisplayedInFrame())
     //         return;
     // }
@@ -88,7 +88,7 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
-    auto* exception = jsDynamicCast<JSC::Exception*>(exceptionValue);
+    auto* exception = dynamicDowncast<JSC::Exception>(exceptionValue);
     if (!exception) {
         exception = vm.lastException();
         if (!exception)
@@ -103,9 +103,9 @@ String retrieveErrorMessageWithoutName(JSGlobalObject& lexicalGlobalObject, VM& 
     // FIXME: <http://webkit.org/b/115087> Web Inspector: WebCore::reportException should not evaluate JavaScript handling exceptions
     // If this is a custom exception object, call toString on it to try and get a nice string representation for the exception.
     String errorMessage;
-    if (auto* error = jsDynamicCast<ErrorInstance*>(exception))
+    if (auto* error = dynamicDowncast<ErrorInstance>(exception))
         errorMessage = error->sanitizedMessageString(&lexicalGlobalObject);
-    else if (auto* error = jsDynamicCast<JSDOMException*>(exception))
+    else if (auto* error = dynamicDowncast<JSDOMException>(exception))
         errorMessage = error->wrapped().message();
     else
         errorMessage = exception.toWTFString(&lexicalGlobalObject);
@@ -122,7 +122,7 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
     // FIXME: <http://webkit.org/b/115087> Web Inspector: WebCore::reportException should not evaluate JavaScript handling exceptions
     // If this is a custom exception object, call toString on it to try and get a nice string representation for the exception.
     String errorMessage;
-    if (auto* error = jsDynamicCast<ErrorInstance*>(exception))
+    if (auto* error = dynamicDowncast<ErrorInstance>(exception))
         errorMessage = error->sanitizedToString(&lexicalGlobalObject);
     else
         errorMessage = exception.toWTFString(&lexicalGlobalObject);

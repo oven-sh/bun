@@ -203,7 +203,7 @@ JSC::GCClient::IsoSubspace* JSReadableStreamSink::subspaceForImpl(JSC::VM& vm)
 
 void JSReadableStreamSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSReadableStreamSink*>(cell);
+    auto* thisObject = uncheckedDowncast<JSReadableStreamSink>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -237,7 +237,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 ReadableStreamSink* JSReadableStreamSink::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSReadableStreamSink*>(value))
+    if (auto* wrapper = dynamicDowncast<JSReadableStreamSink>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

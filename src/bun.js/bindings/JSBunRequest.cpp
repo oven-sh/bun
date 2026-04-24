@@ -129,10 +129,10 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
     }
 
     if (auto* cookiesObject = cookies()) {
-        if (auto* wrapper = jsDynamicCast<JSCookieMap*>(cookiesObject)) {
+        if (auto* wrapper = dynamicDowncast<JSCookieMap>(cookiesObject)) {
             auto cookieMap = wrapper->protectedWrapped();
             auto cookieMapClone = cookieMap->clone();
-            auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTF::move(cookieMapClone));
+            auto cookies = WebCore::toJSNewlyCreated(globalObject, uncheckedDowncast<JSDOMGlobalObject>(globalObject), WTF::move(cookieMapClone));
             clone->setCookies(cookies.getObject());
         }
     }
@@ -167,7 +167,7 @@ void JSBunRequest::finishCreation(JSC::VM& vm)
 template<typename Visitor>
 void JSBunRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSBunRequest* thisCallSite = jsCast<JSBunRequest*>(cell);
+    JSBunRequest* thisCallSite = uncheckedDowncast<JSBunRequest>(cell);
     Base::visitChildren(thisCallSite, visitor);
     visitor.append(thisCallSite->m_params);
     visitor.append(thisCallSite->m_cookies);
@@ -221,7 +221,7 @@ const JSC::ClassInfo JSBunRequest::s_info = { "BunRequest"_s, &Base::s_info, nul
 
 JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetParams, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    JSBunRequest* request = jsDynamicCast<JSBunRequest*>(JSValue::decode(thisValue));
+    JSBunRequest* request = dynamicDowncast<JSBunRequest>(JSValue::decode(thisValue));
     if (!request)
         return JSValue::encode(jsUndefined());
 
@@ -237,7 +237,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetParams, (JSC::JSGlobalObject * globalO
 
 JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    JSBunRequest* request = jsDynamicCast<JSBunRequest*>(JSValue::decode(thisValue));
+    JSBunRequest* request = dynamicDowncast<JSBunRequest>(JSValue::decode(thisValue));
     if (!request)
         return JSValue::encode(jsUndefined());
 
@@ -248,7 +248,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * global
         auto& names = builtinNames(vm);
         JSC::JSValue headersValue = request->get(globalObject, names.headersPublicName());
         RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-        auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(headersValue);
+        auto* headers = dynamicDowncast<WebCore::JSFetchHeaders>(headersValue);
         if (!headers) return JSValue::encode(jsUndefined());
 
         auto& fetchHeaders = headers->wrapped();
@@ -266,7 +266,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * global
         auto cookieMap = cookieMapResult.releaseReturnValue();
 
         // Convert to JS
-        auto cookies = WebCore::toJSNewlyCreated(globalObject, jsCast<JSDOMGlobalObject*>(globalObject), WTF::move(cookieMap));
+        auto cookies = WebCore::toJSNewlyCreated(globalObject, uncheckedDowncast<JSDOMGlobalObject>(globalObject), WTF::move(cookieMap));
         RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
         request->setCookies(cookies.getObject());
         return JSValue::encode(cookies);
@@ -280,7 +280,7 @@ JSC_DEFINE_HOST_FUNCTION(jsJSBunRequestClone, (JSC::JSGlobalObject * globalObjec
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    auto* request = jsDynamicCast<JSBunRequest*>(callFrame->thisValue());
+    auto* request = dynamicDowncast<JSBunRequest>(callFrame->thisValue());
     if (!request) {
         throwScope.throwException(globalObject, Bun::createInvalidThisError(globalObject, request, "BunRequest"));
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -300,7 +300,7 @@ Structure* createJSBunRequestStructure(JSC::VM& vm, Zig::GlobalObject* globalObj
 
 extern "C" EncodedJSValue Bun__getParamsIfBunRequest(JSC::EncodedJSValue thisValue)
 {
-    if (auto* request = jsDynamicCast<JSBunRequest*>(JSValue::decode(thisValue))) {
+    if (auto* request = dynamicDowncast<JSBunRequest>(JSValue::decode(thisValue))) {
         auto* params = request->params();
         if (!params) {
             return JSValue::encode(jsUndefined());

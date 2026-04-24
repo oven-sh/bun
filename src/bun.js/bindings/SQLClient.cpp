@@ -135,7 +135,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         return jsNull();
         break;
     case DataCellTag::Raw: {
-        Zig::GlobalObject* zigGlobal = jsCast<Zig::GlobalObject*>(globalObject);
+        Zig::GlobalObject* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
         auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
         auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.raw.length);
         RETURN_IF_EXCEPTION(scope, {});
@@ -175,7 +175,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         break;
     }
     case DataCellTag::Bytea: {
-        Zig::GlobalObject* zigGlobal = jsCast<Zig::GlobalObject*>(globalObject);
+        Zig::GlobalObject* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
         auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
         auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.bytea[1]);
         RETURN_IF_EXCEPTION(scope, {});
@@ -425,8 +425,8 @@ extern "C" EncodedJSValue JSC__constructObjectFromDataCell(
 {
     JSValue arrayValue = JSValue::decode(encodedArrayValue);
     JSValue structureValue = JSValue::decode(encodedStructureValue);
-    auto* array = arrayValue ? jsDynamicCast<JSC::JSArray*>(arrayValue) : nullptr;
-    auto* structure = jsDynamicCast<JSC::Structure*>(structureValue);
+    auto* array = arrayValue ? dynamicDowncast<JSC::JSArray>(arrayValue) : nullptr;
+    auto* structure = dynamicDowncast<JSC::Structure>(structureValue);
     return JSValue::encode(toJS(array, structure, cells, count, globalObject, Bun::BunStructureFlags(flags), BunResultMode(result_mode), namesPtr, namesCount));
 }
 

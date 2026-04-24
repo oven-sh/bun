@@ -162,7 +162,7 @@ const JSC::ClassInfo ServerRouteList::s_info = { "ServerRouteList"_s, &Base::s_i
 template<typename Visitor>
 void ServerRouteList::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    ServerRouteList* thisCallSite = jsCast<ServerRouteList*>(cell);
+    ServerRouteList* thisCallSite = uncheckedDowncast<ServerRouteList>(cell);
     Base::visitChildren(thisCallSite, visitor);
 
     for (unsigned i = 0; i < thisCallSite->m_routes.size(); i++) {
@@ -270,7 +270,7 @@ extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRoute(
     uWS::HttpRequest* req)
 {
     JSValue routeListValue = JSValue::decode(routeListObject);
-    ServerRouteList* routeList = jsCast<ServerRouteList*>(routeListValue);
+    ServerRouteList* routeList = uncheckedDowncast<ServerRouteList>(routeListValue);
     return JSValue::encode(routeList->callRoute(globalObject, index, requestPtr, serverObject, requestObject, req));
 }
 

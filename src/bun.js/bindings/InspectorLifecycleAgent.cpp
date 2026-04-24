@@ -179,7 +179,7 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
     Ref<JSON::ArrayOf<String>> argv = JSON::ArrayOf<String>::create();
     {
 
-        auto* array = jsCast<JSC::JSArray*>(process->getArgv(global));
+        auto* array = uncheckedDowncast<JSC::JSArray>(process->getArgv(global));
         RETURN_IF_EXCEPTION(scope, makeUnexpected(ErrorString("Failed to get argv"_s)));
         for (size_t i = 0, length = array->length(); i < length; i++) {
             auto value = array->getIndex(global, i);

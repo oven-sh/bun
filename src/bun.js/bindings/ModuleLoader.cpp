@@ -93,7 +93,7 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
                Vector<JSC::Identifier, 4>& exportNames,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
         auto& vm = JSC::getVM(lexicalGlobalObject);
-        GlobalObject* globalObject = jsCast<GlobalObject*>(lexicalGlobalObject);
+        GlobalObject* globalObject = uncheckedDowncast<GlobalObject>(lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
         JSValue requireResult = globalObject->internalModuleRegistry()->requireId(globalObject, vm, moduleId);
@@ -159,7 +159,7 @@ static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JS
 
 JSC::JSPromise* PendingVirtualModuleResult::internalPromise()
 {
-    return jsCast<JSC::JSPromise*>(internalField(2).get());
+    return uncheckedDowncast<JSC::JSPromise>(internalField(2).get());
 }
 
 const ClassInfo PendingVirtualModuleResult::s_info = { "PendingVirtualModule"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PendingVirtualModuleResult) };
@@ -190,7 +190,7 @@ void PendingVirtualModuleResult::finishCreation(VM& vm, const WTF::String& speci
 template<typename Visitor>
 void PendingVirtualModuleResult::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<PendingVirtualModuleResult*>(cell);
+    auto* thisObject = uncheckedDowncast<PendingVirtualModuleResult>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }
@@ -214,7 +214,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     auto scope = DECLARE_THROW_SCOPE(vm);
     BunLoaderType loader = Bun__getDefaultLoader(globalObject, specifier);
 
-    if (JSC::Exception* exception = JSC::jsDynamicCast<JSC::Exception*>(objectValue)) {
+    if (JSC::Exception* exception = dynamicDowncast<JSC::Exception>(objectValue)) {
         result.value.error = exception->value();
         scope.release();
         return result;
@@ -300,7 +300,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
                 result.value.sourceText.string = Zig::toZigString(contentsJSString, globalObject);
                 result.value.sourceText.value = contentsValue;
             }
-        } else if (JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(contentsValue)) {
+        } else if (JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(contentsValue)) {
             result.value.sourceText.string = ZigString { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() };
             result.value.sourceText.value = contentsValue;
         }
@@ -319,7 +319,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
 
 static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, bool wasModuleMock = false)
 {
-    if (JSC::jsDynamicCast<JSC::JSPromise*>(objectValue)) {
+    if (dynamicDowncast<JSC::JSPromise>(objectValue)) {
         OnLoadResult result = {};
         result.type = OnLoadResultTypePromise;
         result.value.promise = objectValue;
@@ -432,7 +432,7 @@ static JSValue handleVirtualModuleResult(
     }
 
     case OnLoadResultTypePromise: {
-        JSC::JSPromise* promise = jsCast<JSC::JSPromise*>(onLoadResult.value.promise);
+        JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(onLoadResult.value.promise);
         JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
         auto callData = JSC::getCallData(performPromiseThenFunction);
         ASSERT(callData.type != CallData::Type::None);
@@ -467,7 +467,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     ResolvedSourceCodeHolder sourceCodeHolder(res);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSPromise* promise = jsCast<JSC::JSPromise*>(JSC::JSValue::decode(encodedPromiseValue));
+    JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(JSC::JSValue::decode(encodedPromiseValue));
 
     if (!res->success) {
         RELEASE_AND_RETURN(scope, promise->reject(vm, globalObject, JSValue::decode(res->result.err.value)));
@@ -492,7 +492,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     // instead of each round-tripping through the embedder.
 
     if (res->result.value.isCommonJSModule) {
-        auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), specifierValue, res->result.value);
+        auto created = Bun::createCommonJSModule(globalObject, specifierValue, res->result.value);
         EXCEPTION_ASSERT(created.has_value() == !scope.exception());
         if (created.has_value()) {
             JSSourceCode* code = JSSourceCode::create(vm, WTF::move(created.value()));
@@ -507,7 +507,7 @@ extern "C" void Bun__onFulfillAsyncModule(
             }
         }
     } else {
-        auto provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
+        auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
         if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
             Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
         }
@@ -673,7 +673,7 @@ JSValue fetchCommonJSModule(
             if (promiseOrCommonJSModule == target) {
                 RELEASE_AND_RETURN(scope, target);
             }
-            JSPromise* promise = jsCast<JSPromise*>(promiseOrCommonJSModule);
+            JSPromise* promise = uncheckedDowncast<JSPromise>(promiseOrCommonJSModule);
             switch (promise->status()) {
             case JSPromise::Status::Rejected: {
                 promise->markAsHandled();
@@ -690,7 +690,7 @@ JSValue fetchCommonJSModule(
                     RELEASE_AND_RETURN(scope, {});
                 }
                 if (!wasModuleMock) {
-                    auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result());
+                    auto* jsSourceCode = uncheckedDowncast<JSSourceCode>(promise->result());
                     JSC::VM::SynchronousModuleQueue queue;
                     queue.prev = vm.m_synchronousModuleQueue;
                     vm.m_synchronousModuleQueue = &queue;
@@ -728,7 +728,7 @@ JSValue fetchCommonJSModule(
             if (promiseOrCommonJSModule == target) {
                 RELEASE_AND_RETURN(scope, target);
             }
-            JSPromise* promise = jsCast<JSPromise*>(promiseOrCommonJSModule);
+            JSPromise* promise = uncheckedDowncast<JSPromise>(promiseOrCommonJSModule);
             switch (promise->status()) {
             case JSPromise::Status::Rejected: {
                 promise->markAsHandled();
@@ -745,7 +745,7 @@ JSValue fetchCommonJSModule(
                     RELEASE_AND_RETURN(scope, {});
                 }
                 if (!wasModuleMock) {
-                    auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result());
+                    auto* jsSourceCode = uncheckedDowncast<JSSourceCode>(promise->result());
                     JSC::VM::SynchronousModuleQueue queue;
                     queue.prev = vm.m_synchronousModuleQueue;
                     vm.m_synchronousModuleQueue = &queue;
@@ -1229,7 +1229,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
     res.success = false;
     memset(&res.result, 0, sizeof res.result);
     JSC::JSValue objectResult = callFrame->argument(0);
-    PendingVirtualModuleResult* pendingModule = JSC::jsCast<PendingVirtualModuleResult*>(callFrame->argument(1));
+    PendingVirtualModuleResult* pendingModule = uncheckedDowncast<PendingVirtualModuleResult>(callFrame->argument(1));
     JSC::JSValue specifierString = pendingModule->internalField(0).get();
     JSC::JSValue referrerString = pendingModule->internalField(1).get();
     pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());
@@ -1261,7 +1261,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObjec
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSValue reason = callFrame->argument(0);
-    PendingVirtualModuleResult* pendingModule = JSC::jsCast<PendingVirtualModuleResult*>(callFrame->argument(1));
+    PendingVirtualModuleResult* pendingModule = uncheckedDowncast<PendingVirtualModuleResult>(callFrame->argument(1));
     pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
     JSC::JSPromise* promise = pendingModule->internalPromise();

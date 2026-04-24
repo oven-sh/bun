@@ -28,7 +28,7 @@ void JSDiffieHellmanGroup::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* glob
 template<typename Visitor>
 void JSDiffieHellmanGroup::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSDiffieHellmanGroup* thisObject = jsCast<JSDiffieHellmanGroup*>(cell);
+    JSDiffieHellmanGroup* thisObject = uncheckedDowncast<JSDiffieHellmanGroup>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
@@ -58,7 +58,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellmanGroupGetter_verifyError, (JSC::JSGlobalO
 
     JSValue thisValue = callFrame->thisValue();
 
-    JSDiffieHellmanGroup* thisObject = jsDynamicCast<JSDiffieHellmanGroup*>(thisValue);
+    JSDiffieHellmanGroup* thisObject = dynamicDowncast<JSDiffieHellmanGroup>(thisValue);
     if (!thisObject) [[unlikely]] {
         return ERR::INVALID_THIS(scope, globalObject, "DiffieHellmanGroup"_s);
     }

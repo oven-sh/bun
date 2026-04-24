@@ -249,7 +249,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
         throwTypeError(globalObject, scope, "Module._extensions['.js'] must be called with a CommonJS module object"_s);
         return {};
     }
-    Bun::JSCommonJSModule* mod = jsDynamicCast<Bun::JSCommonJSModule*>(modValue);
+    Bun::JSCommonJSModule* mod = dynamicDowncast<Bun::JSCommonJSModule>(modValue);
     if (!mod) {
         throwTypeError(globalObject, scope, "Module._extensions['.js'] must be called with a CommonJS module object"_s);
         return {};
@@ -299,7 +299,7 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
 template<typename Visitor>
 void JSCommonJSExtensions::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSCommonJSExtensions* thisObject = jsCast<JSCommonJSExtensions*>(cell);
+    JSCommonJSExtensions* thisObject = uncheckedDowncast<JSCommonJSExtensions>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 

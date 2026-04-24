@@ -153,7 +153,7 @@ JSObject* JSPerformanceServerTiming::prototype(VM& vm, JSDOMGlobalObject& global
 
 JSValue JSPerformanceServerTiming::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSPerformanceServerTimingDOMConstructor, DOMConstructorID::PerformanceServerTiming>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSPerformanceServerTimingDOMConstructor, DOMConstructorID::PerformanceServerTiming>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSPerformanceServerTiming::destroy(JSC::JSCell* cell)
@@ -166,7 +166,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceServerTimingConstructor, (JSGlobalObject *
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSPerformanceServerTimingPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSPerformanceServerTimingPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSPerformanceServerTiming::getConstructor(vm, prototype->globalObject()));
@@ -242,7 +242,7 @@ JSC::GCClient::IsoSubspace* JSPerformanceServerTiming::subspaceForImpl(JSC::VM& 
 
 void JSPerformanceServerTiming::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSPerformanceServerTiming*>(cell);
+    auto* thisObject = uncheckedDowncast<JSPerformanceServerTiming>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -306,7 +306,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 PerformanceServerTiming* JSPerformanceServerTiming::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSPerformanceServerTiming*>(value))
+    if (auto* wrapper = dynamicDowncast<JSPerformanceServerTiming>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

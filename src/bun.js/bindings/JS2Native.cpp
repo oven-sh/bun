@@ -31,7 +31,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDollarLazy, (JSC::JSGlobalObject * lexicalGlobalObjec
         id <= JS2NATIVE_COUNT && id >= 0,
         "In call to $lazy, got invalid id '%d'. This is a bug in Bun's JS2Native code generator.",
         id);
-    Zig::GlobalObject* ptr = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Zig::GlobalObject* ptr = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     return JSValue::encode(JS2NativeGenerated::callJS2Native(id, ptr));
 }
 

@@ -287,10 +287,10 @@ fn updateCounts(this: *EventLoop) void {
     } else {
         if (delta > 0) {
             loop.num_polls += @intCast(delta);
-            loop.active += @intCast(delta);
+            loop.active +|= @as(u32, @intCast(delta));
         } else {
             loop.num_polls -= @intCast(-delta);
-            loop.active -= @intCast(-delta);
+            loop.active -|= @as(u32, @intCast(-delta));
         }
     }
 }

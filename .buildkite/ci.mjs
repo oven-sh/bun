@@ -138,10 +138,15 @@ const buildPlatforms = [
  * @type {Platform[]}
  */
 const testPlatforms = [
-  { os: "darwin", arch: "aarch64", release: "14", tier: "latest" },
-  { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
-  { os: "darwin", arch: "x64", release: "14", tier: "latest" },
-  { os: "darwin", arch: "x64", release: "13", tier: "previous" },
+  // Darwin test agents are targeted by `release-tier` (see getTestAgent), not
+  // by exact `release`. arm64 runs on `latest` (current macOS, 26 today) and
+  // `previous` (14/15). x64 runs on `previous` (14/15) and `oldest` (13) —
+  // Intel can't run `latest`, and 13 is the min-supported floor. The `release`
+  // field below only labels the step; routing is by `tier`.
+  { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
+  { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
+  { os: "darwin", arch: "x64", release: "14", tier: "previous" },
+  { os: "darwin", arch: "x64", release: "13", tier: "oldest" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "13", tier: "latest" },
@@ -394,13 +399,18 @@ function getZigAgent(platform, options) {
  * @returns {Agent}
  */
 function getTestAgent(platform, options) {
-  const { os, arch, profile } = platform;
+  const { os, arch, profile, tier } = platform;
 
   if (os === "darwin") {
+    // `release-tier` is emitted by scripts/agent.mjs based on the box's macOS
+    // major version (>= LATEST_DARWIN_RELEASE → "latest", else "previous").
+    // Targeting by tier instead of exact release lets the `previous` job land
+    // on whichever 13/14/15 box is free without per-box config.
     return {
       queue: `test-${os}`,
       os,
       arch,
+      "release-tier": tier,
     };
   }
 

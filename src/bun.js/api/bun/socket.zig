@@ -9,16 +9,79 @@ pub const SocketAddress = @import("./socket/SocketAddress.zig");
 // The cache is keyed on `SSLConfig.contentHash()`, so two upgrades with
 // matching TLS options share a single `SSL_CTX` across the process lifetime.
 // Per-connection state lives in the per-`us_socket_t` SSL object, never the
-// shared `SSL_CTX`. This matches the pattern Node.js uses via its reusable
-// `SecureContext`.
-const SSLCtxCache = std.AutoHashMapUnmanaged(u64, *anyopaque);
+// shared `SSL_CTX`. This matches the Chromium model (one `SSL_CTX` singleton
+// per process) and the `rust-openssl` docs' "single SslContext shared by all
+// SslStreams" pattern.
+//
+// Bounded with an LRU + TTL eviction policy matching `src/http/HTTPThread.zig`
+// (60 entries, 30 min idle TTL), so a pathological workload that generates
+// many distinct `SSLConfig`s can't grow the cache indefinitely.
+const SSLCtxCacheEntry = struct {
+    ssl_ctx: *anyopaque,
+    last_used_ns: u64,
+};
+const SSLCtxCache = std.AutoArrayHashMapUnmanaged(u64, SSLCtxCacheEntry);
+const ssl_ctx_cache_max_size = 60;
+const ssl_ctx_cache_ttl_ns: u64 = 30 * std.time.ns_per_min;
 var ssl_ctx_cache: SSLCtxCache = .{};
 var ssl_ctx_cache_lock: bun.Mutex = .{};
+var ssl_ctx_cache_timer: ?std.time.Timer = null;
+
+fn sslCtxCacheNowNs() u64 {
+    if (ssl_ctx_cache_timer == null) ssl_ctx_cache_timer = std.time.Timer.start() catch return 0;
+    return ssl_ctx_cache_timer.?.read();
+}
+
+fn releaseCachedSSLCtx(ssl_ctx: *anyopaque) void {
+    // Drop the cache's SSL_CTX_up_ref. `SSL_CTX_free` is a refcount decrement
+    // in BoringSSL; it only fully frees when the last wrapper also releases.
+    bun.BoringSSL.c.SSL_CTX_free(@ptrCast(@alignCast(ssl_ctx)));
+}
+
+/// Evict expired (idle > TTL) entries. Caller must hold ssl_ctx_cache_lock.
+fn evictStaleSSLCtxEntriesLocked(now_ns: u64) void {
+    var i: usize = 0;
+    while (i < ssl_ctx_cache.count()) {
+        const entry = ssl_ctx_cache.values()[i];
+        // Saturating sub: if the clock went backwards (now_ns < last_used_ns)
+        // we get 0, not a 2^64 wrap, so we don't false-evict. Matches the
+        // pattern in src/http/HTTPThread.zig's evictStaleSslContexts.
+        if (now_ns -| entry.last_used_ns > ssl_ctx_cache_ttl_ns) {
+            releaseCachedSSLCtx(entry.ssl_ctx);
+            ssl_ctx_cache.swapRemoveAt(i);
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Evict the oldest entry by last_used_ns. Caller must hold ssl_ctx_cache_lock.
+fn evictOldestSSLCtxLocked() void {
+    if (ssl_ctx_cache.count() == 0) return;
+    var oldest_idx: usize = 0;
+    var oldest_ns: u64 = ssl_ctx_cache.values()[0].last_used_ns;
+    var i: usize = 1;
+    while (i < ssl_ctx_cache.count()) : (i += 1) {
+        const t = ssl_ctx_cache.values()[i].last_used_ns;
+        if (t < oldest_ns) {
+            oldest_ns = t;
+            oldest_idx = i;
+        }
+    }
+    releaseCachedSSLCtx(ssl_ctx_cache.values()[oldest_idx].ssl_ctx);
+    ssl_ctx_cache.swapRemoveAt(oldest_idx);
+}
 
 fn lookupCachedSSLCtx(hash: u64) ?*anyopaque {
     ssl_ctx_cache_lock.lock();
     defer ssl_ctx_cache_lock.unlock();
-    return ssl_ctx_cache.get(hash);
+    const now_ns = sslCtxCacheNowNs();
+    evictStaleSSLCtxEntriesLocked(now_ns);
+    if (ssl_ctx_cache.getPtr(hash)) |entry| {
+        entry.last_used_ns = now_ns;
+        return entry.ssl_ctx;
+    }
+    return null;
 }
 
 fn storeCachedSSLCtx(hash: u64, ssl_ctx: *anyopaque) void {
@@ -31,9 +94,19 @@ fn storeCachedSSLCtx(hash: u64, ssl_ctx: *anyopaque) void {
     // decrement the refcount cleanly).
     if (ssl_ctx_cache.contains(hash)) return;
     // Bump the BoringSSL refcount so the cache entry keeps the SSL_CTX alive
-    // independently of any one wrapped SocketContext's lifetime.
-    _ = bun.BoringSSL.c.SSL_CTX_up_ref(@ptrCast(@alignCast(ssl_ctx)));
-    bun.handleOom(ssl_ctx_cache.put(bun.default_allocator, hash, ssl_ctx));
+    // independently of any one wrapped SocketContext's lifetime. BoringSSL's
+    // SSL_CTX_up_ref is an atomic inc that returns 1; on the vanishingly
+    // unlikely failure (refcount overflow) we skip the cache insert rather
+    // than risk an underflowed SSL_CTX_free later.
+    if (bun.BoringSSL.c.SSL_CTX_up_ref(@ptrCast(@alignCast(ssl_ctx))) != 1) return;
+    const now_ns = sslCtxCacheNowNs();
+    bun.handleOom(ssl_ctx_cache.put(bun.default_allocator, hash, .{
+        .ssl_ctx = ssl_ctx,
+        .last_used_ns = now_ns,
+    }));
+    if (ssl_ctx_cache.count() > ssl_ctx_cache_max_size) {
+        evictOldestSSLCtxLocked();
+    }
 }
 
 const WrappedType = enum {

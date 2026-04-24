@@ -2256,6 +2256,11 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls_using_ssl_ctx(
     struct us_socket_t *s, void *shared_ssl_ctx,
     struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size) {
+  /* Callers must have an SSL_CTX; a NULL here would silently fall through to
+   * `SSL_CTX_new`, which is the opposite of what this function promises. */
+  if (UNLIKELY(!shared_ssl_ctx)) {
+    return NULL;
+  }
   struct us_bun_socket_context_options_t unused_options = {0};
   return us_internal_ssl_socket_wrap_with_tls_impl(s, unused_options, (SSL_CTX *)shared_ssl_ctx, events, old_socket_ext_size, socket_ext_size);
 }

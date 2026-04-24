@@ -12,7 +12,8 @@ var tmpdir = function () {
       }
       return path;
     }
-    var path = env["TMPDIR"] || env["TMP"] || env["TEMP"] || "/tmp";
+    var path =
+      env["TMPDIR"] || env["TMP"] || env["TEMP"] || (process.platform === "android" ? "/data/local/tmp" : "/tmp");
     const length = path.length;
     if (length > 1 && path[length - 1] === "/") path = path.slice(0, -1);
     return path;
@@ -120,7 +121,7 @@ function bound(binding) {
         ? "Windows_NT"
         : process.platform === "darwin"
           ? "Darwin"
-          : process.platform === "linux"
+          : process.platform === "linux" || process.platform === "android"
             ? "Linux"
             : $bundleError("TODO: type");
     },
@@ -128,8 +129,10 @@ function bound(binding) {
     userInfo: binding.userInfo,
     version: binding.version,
     machine: function () {
-      return process.arch === "arm64" //
-        ? "arm64"
+      return process.arch === "arm64"
+        ? process.platform === "linux" || process.platform === "android"
+          ? "aarch64"
+          : "arm64"
         : process.arch === "x64"
           ? "x86_64"
           : $bundleError("TODO: machine");

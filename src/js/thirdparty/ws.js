@@ -153,13 +153,15 @@ class BunWebSocket extends EventEmitter {
     // Mirrors ws's `const opts = { perMessageDeflate: true, ...options }` + truthy check:
     // omitted keeps the default (offer the extension); any own `perMessageDeflate` key
     // whose value is falsy (`false`, `null`, `0`, `''`, explicit `undefined`) disables it.
+    // ws uses spread (`...options`), so only own enumerable properties count — use
+    // `hasOwnProperty` rather than `in` to skip prototype lookups.
     let disableDeflate = false;
     // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L741-L747
     if ($isObject(options)) {
       headers = options?.headers;
       proxy = options?.proxy;
       tlsOptions = options?.tls;
-      if ("perMessageDeflate" in options && !options.perMessageDeflate) {
+      if (Object.prototype.hasOwnProperty.$call(options, "perMessageDeflate") && !options.perMessageDeflate) {
         disableDeflate = true;
       }
 

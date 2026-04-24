@@ -998,20 +998,35 @@ describe("perMessageDeflate upgrade header", () => {
 
   // npm ws uses a truthy check after merging defaults (`const opts = { perMessageDeflate: true, ...options }`),
   // so any own-key falsy value — not just literal `false` — suppresses the extension offer.
-  for (const falsy of [null, 0, "", undefined] as const) {
-    it(`omits Sec-WebSocket-Extensions for perMessageDeflate: ${JSON.stringify(falsy)}`, async () => {
+  it.each([null, 0, "", undefined] as const)(
+    "omits Sec-WebSocket-Extensions for perMessageDeflate: %p",
+    async falsy => {
       const request = await captureUpgradeRequest(url => {
         const ws = new WebSocket(url, { perMessageDeflate: falsy as unknown as boolean });
         ws.on("open", () => ws.close());
         ws.on("error", () => {});
       });
       expect(request.toLowerCase()).not.toContain("sec-websocket-extensions");
-    });
-  }
+    },
+  );
 
   it("keeps the offer when perMessageDeflate is truthy (e.g. empty object)", async () => {
     const request = await captureUpgradeRequest(url => {
       const ws = new WebSocket(url, { perMessageDeflate: {} });
+      ws.on("open", () => ws.close());
+      ws.on("error", () => {});
+    });
+    expect(request).toContain("Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits");
+  });
+
+  // ws merges with `...options`, which only spreads own enumerable properties.
+  // An inherited `perMessageDeflate: false` on the prototype must not disable
+  // the offer — otherwise a caller accidentally using an object with Options
+  // on its prototype would get surprisingly different wire bytes.
+  it("ignores prototype-only perMessageDeflate properties", async () => {
+    const request = await captureUpgradeRequest(url => {
+      const options = Object.create({ perMessageDeflate: false });
+      const ws = new WebSocket(url, options);
       ws.on("open", () => ws.close());
       ws.on("error", () => {});
     });

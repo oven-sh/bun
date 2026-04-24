@@ -307,7 +307,16 @@ pub const PathWatcherManager = struct {
 
                     for (affected) |changed_name_| {
                         const changed_name: []const u8 = bun.asByteSlice(changed_name_.?);
-                        if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
+                        if (changed_name.len == 0) continue;
+
+                        // Pre-existing: suppress editor swap/backup files (`.foo.swp`,
+                        // `~foo`) from user-visible events. We still have to *register*
+                        // dotfile-named subdirectories for recursive watchers below
+                        // though, otherwise `.next/`, `.nuxt/`, `.cache/` created at
+                        // runtime would be blind spots (inconsistent with the initial
+                        // scan in `DirectoryRegisterTask.processWatcher`, which has no
+                        // such filter).
+                        const skip_emit = changed_name[0] == '~' or changed_name[0] == '.';
 
                         const file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
 
@@ -359,11 +368,18 @@ pub const PathWatcherManager = struct {
                                 // infallible (aborts on OOM) so there is no rollback path that
                                 // would re-enter `manager.mutex` via `unrefPendingDirectory →
                                 // PathWatcher.deinit → unregisterWatcher`.
+                                //
+                                // Runs even when `skip_emit` is true so dot-prefixed build
+                                // output dirs (`.next`, `.nuxt`, `.cache`) are registered —
+                                // matches `processWatcher`'s unconditional initial-scan
+                                // registration.
                                 if (is_new_subdir and watcher.recursive and watcher.refPendingDirectory()) {
                                     new_subdirs.add(watcher, path_slice);
                                 }
 
-                                watcher.emit(event_type.toEvent(path), hash, timestamp, false);
+                                if (!skip_emit) {
+                                    watcher.emit(event_type.toEvent(path), hash, timestamp, false);
+                                }
                             }
                         }
                     }

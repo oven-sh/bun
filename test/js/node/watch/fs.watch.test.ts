@@ -231,6 +231,59 @@ describe("fs.watch", () => {
     expect(nestedEvents).not.toContain("nested.txt");
   });
 
+  // A recursive watcher must register inotify watches on dot-prefixed
+  // subdirectories created at runtime (`.next`, `.nuxt`, `.cache`), so files
+  // written inside them fire events. Pre-fix, the dotfile filter at the top
+  // of onFileUpdate's directory branch short-circuited before the new-subdir
+  // queueing ran, making dev servers watching build-tool output directories
+  // a blind spot. The user-visible "create" event for the dotfile parent is
+  // still suppressed (consistent with pre-existing behavior), but the write
+  // inside it MUST fire.
+  test.skipIf(isWindows)("recursive watch registers dot-prefixed subdirectories created at runtime", async () => {
+    const root = path.join(testDir, "new-dotsubdir");
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch {}
+    fs.mkdirSync(root, { recursive: true });
+
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const filenames: string[] = [];
+    const watcher = fs.watch(root, { recursive: true, signal: AbortSignal.timeout(5000) });
+    watcher.on("change", (_event, filename) => {
+      const name = filename as string;
+      filenames.push(name);
+      if (name.endsWith("build.js")) {
+        watcher.close();
+      }
+    });
+    watcher.on("error", reject);
+    watcher.on("close", () => resolve());
+
+    await Bun.sleep(50);
+
+    const dotdir = path.join(root, ".next");
+    fs.mkdirSync(dotdir);
+
+    // Give the watcher time to register an inotify watch on the new .next/
+    // directory. No user-visible "rename: .next" event will ever fire
+    // (existing dotfile suppression), so we just wait for registration by
+    // timeout rather than waiting on an event.
+    await Bun.sleep(200);
+
+    const nested = path.join(dotdir, "build.js");
+    for (let i = 0; i < 10; i++) {
+      fs.writeFileSync(nested, `v${i}\n`);
+      if (filenames.some(n => n.endsWith("build.js"))) break;
+      await Bun.sleep(20);
+    }
+
+    await promise;
+
+    const nestedEvents = filenames.filter(n => n.endsWith("build.js"));
+    expect(nestedEvents.length).toBeGreaterThan(0);
+    expect(nestedEvents).toContain(path.join(".next", "build.js"));
+  });
+
   test("should emit event when file is deleted", done => {
     const testsubdir = tempDirWithFiles("subdir", {
       "deleted.txt": "hello",

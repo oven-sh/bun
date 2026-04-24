@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isArm64, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
-import { chmodSync } from "node:fs";
+import { chmodSync, truncateSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -280,6 +280,44 @@ if (isLinux) {
 
       expect(stdout).toContain("large-exec-only-20000");
       expect(exitCode).toBe(0);
+    });
+
+    test("truncated compiled binary fails gracefully instead of SIGBUS", async () => {
+      // The kernel maps PT_LOAD without checking p_offset+p_filesz <= st_size,
+      // so a binary cut short past the .bun segment header used to SIGBUS on
+      // first access to the trailer (e.g. after an incomplete download/copy).
+      const largeString = Buffer.alloc(64 * 1024, "z").toString();
+      using dir = tempDir("build-compile-truncated", {
+        "app.js": `const data = "${largeString}"; console.log("never-runs-" + data.length);`,
+      });
+
+      const outfile = join(dir + "", "app-truncated");
+      const result = await Bun.build({
+        entrypoints: [join(dir + "", "app.js")],
+        compile: { outfile },
+      });
+      expect(result.success).toBe(true);
+      const exe = result.outputs[0].path;
+
+      // Chop off 16KB — enough that the page containing the trailer lies
+      // entirely past EOF (whole-page-past-EOF is what delivers SIGBUS;
+      // a partial last page is silently zero-filled). The first page of
+      // the segment, holding the length header, stays intact.
+      const size = (await Bun.file(exe).stat()).size;
+      truncateSync(exe, size - 16 * 1024);
+
+      await using proc = Bun.spawn({
+        cmd: [exe],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("single-file executable is incomplete");
+      expect(stderr).toContain("Re-download or reinstall");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
     });
 
     test("compiled binary has .bun ELF section", async () => {

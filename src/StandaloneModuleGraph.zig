@@ -156,6 +156,9 @@ pub const StandaloneModuleGraph = struct {
 
     const ELF = struct {
         pub extern "C" fn Bun__getStandaloneModuleGraphELFVaddr() ?*align(1) u64;
+        extern "c" fn getauxval(auxv_type: c_ulong) c_ulong;
+        const AT_PHDR = 3;
+        const AT_PHNUM = 5;
 
         pub fn getData() ?[]const u8 {
             const vaddr = (Bun__getStandaloneModuleGraphELFVaddr() orelse return null).*;
@@ -163,10 +166,75 @@ pub const StandaloneModuleGraph = struct {
             // BUN_COMPILED.size holds the virtual address of the appended data.
             // The kernel mapped it via PT_LOAD, so we can dereference directly.
             // Format at target: [u64 payload_len][payload bytes]
+            //
+            // The kernel does not validate p_offset + p_filesz <= st_size at
+            // execve time; a truncated executable maps fine and only SIGBUSes
+            // on first access to a page past EOF. The pre-#26923 read() path
+            // surfaced a short file as an I/O error — restore that gracefulness
+            // by checking the on-disk size against the segment header before
+            // touching the mapping.
+            const seg = findLoadSegment(vaddr) orelse {
+                // No auxv (static? unusual loader). Fall back to the unchecked
+                // path rather than fail closed.
+                return getDataUnchecked(vaddr);
+            };
+            const required = seg.p_offset + seg.p_filesz;
+            switch (bun.sys.stat("/proc/self/exe")) {
+                .result => |st| {
+                    const have: u64 = @intCast(@max(st.size, 0));
+                    if (have < required) reportTruncated(have, required);
+                },
+                // /proc unavailable (rare: minimal chroot). Best-effort skip.
+                .err => {},
+            }
+
+            const target: [*]const u8 = @ptrFromInt(vaddr);
+            const payload_len = std.mem.readInt(u64, target[0..8], .little);
+            if (payload_len < 8) return null;
+
+            // Clamp to the segment so a corrupted length header cannot walk
+            // off the end of the mapping into adjacent (or absent) pages.
+            const seg_avail = seg.p_memsz -| (vaddr - seg.p_vaddr) -| 8;
+            if (payload_len > seg_avail) {
+                Output.debugWarn("bun standalone payload_len {d} exceeds segment {d}", .{ payload_len, seg_avail });
+                return null;
+            }
+            return target[8..][0..payload_len];
+        }
+
+        fn getDataUnchecked(vaddr: u64) ?[]const u8 {
             const target: [*]const u8 = @ptrFromInt(vaddr);
             const payload_len = std.mem.readInt(u64, target[0..8], .little);
             if (payload_len < 8) return null;
             return target[8..][0..payload_len];
+        }
+
+        /// Locate the PT_LOAD covering `vaddr` in the kernel-supplied program
+        /// header table (AT_PHDR/AT_PHNUM). Returns null only if auxv itself
+        /// is missing — vaddr-not-in-any-segment is treated as truncation.
+        fn findLoadSegment(vaddr: u64) ?std.elf.Elf64_Phdr {
+            const phdr_addr = getauxval(AT_PHDR);
+            const phnum = getauxval(AT_PHNUM);
+            if (phdr_addr == 0 or phnum == 0) return null;
+            const phdrs: [*]align(1) const std.elf.Elf64_Phdr = @ptrFromInt(phdr_addr);
+            for (0..phnum) |i| {
+                const ph = phdrs[i];
+                if (ph.p_type != std.elf.PT_LOAD) continue;
+                if (vaddr >= ph.p_vaddr and vaddr < ph.p_vaddr +| ph.p_memsz) return ph;
+            }
+            // vaddr is set but lies outside every PT_LOAD: the segment was
+            // dropped (e.g. by an aggressive ELF rewriter) while BUN_COMPILED
+            // kept its stale pointer. Treat as truncation.
+            reportTruncated(0, vaddr);
+        }
+
+        fn reportTruncated(have: u64, required: u64) noreturn {
+            Output.errGeneric(
+                "this single-file executable is incomplete — its embedded module data is not fully present on disk (have {d} bytes, need at least {d}).\n" ++
+                    "  This usually means the binary was only partially downloaded or copied. Re-download or reinstall and try again.",
+                .{ have, required },
+            );
+            bun.Global.exit(1);
         }
     };
 

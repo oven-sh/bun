@@ -281,4 +281,21 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
   it("fs.globSync still matches symlinks that point at files", () => {
     expect(fs.globSync("*.txt", { cwd: root }).sort()).toStrictEqual(["alias.txt", "target.txt"]);
   });
+
+  it("literal path segments still traverse symlinks", () => {
+    // Node's nuance: *wildcard* segments don't descend into symlinks, but
+    // *literal* path segments do. Dropping that distinction regresses common
+    // patterns like `src/*.ts` where `src` could itself be a symlink.
+    const cwd = path.join(root, "flat");
+    expect(fs.globSync("link/*.txt", { cwd }).sort()).toStrictEqual(["link/inside.txt"]);
+    expect(fs.globSync("link/inside.txt", { cwd }).sort()).toStrictEqual(["link/inside.txt"]);
+    // But a wildcard segment that happens to match the symlink name still
+    // does not descend.
+    expect(fs.globSync("l*/*.txt", { cwd })).toStrictEqual([]);
+  });
+
+  it("absolute patterns with a literal prefix through a symlink", () => {
+    const cwd = path.join(root, "flat");
+    expect(fs.globSync(path.join(cwd, "link/*.txt"))).toStrictEqual([path.join(cwd, "link/inside.txt")]);
+  });
 }); // </symlink behavior>

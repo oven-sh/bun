@@ -1,8 +1,25 @@
 import type { GlobScanOptions } from "bun";
 const { validateObject, validateString, validateFunction, validateArray } = require("internal/validators");
-const { sep } = require("node:path");
+const { join: pathJoin, sep } = require("node:path");
 
 const isWindows = process.platform === "win32";
+
+// Glob metacharacters — a path segment containing any of these is a wildcard
+// segment. A segment with none is matched literally and can be treated as part
+// of the cwd. Backslash is an escape on POSIX, so we flag it too (conservative;
+// on Windows it's already been normalized to `/` by `validatePattern`).
+// Written as a char-code scan to sidestep the builtin bundler's custom regex
+// parser, which doesn't like `]` inside regex character classes.
+function hasGlobMeta(seg: string): boolean {
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg.charCodeAt(i);
+    //  *       ?       [       ]       {       }       !       \
+    if (c === 42 || c === 63 || c === 91 || c === 93 || c === 123 || c === 125 || c === 33 || c === 92) {
+      return true;
+    }
+  }
+  return false;
+}
 
 interface GlobOptions {
   /** @default process.cwd() */
@@ -23,16 +40,30 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
     : null;
 
   for (const pat of patterns) {
-    for await (const ent of new Bun.Glob(pat).scan(globOptions)) {
-      if (typeof exclude === "function") {
-        if (exclude(ent)) continue;
-      } else if (excludeGlobs) {
-        if (excludeGlobs.some(glob => glob.match(ent))) {
-          continue;
+    const { pattern: scanPattern, cwd: scanCwd, prefix } = splitLiteralPrefix(pat, globOptions.cwd as string);
+    let scanner: AsyncIterable<string>;
+    try {
+      scanner = new Bun.Glob(scanPattern).scan({ ...globOptions, cwd: scanCwd });
+    } catch (err) {
+      if ((err as any)?.code === "ENOENT") continue;
+      throw err;
+    }
+    try {
+      for await (const ent of scanner) {
+        const full = prefix ? prefix + ent : ent;
+        if (typeof exclude === "function") {
+          if (exclude(full)) continue;
+        } else if (excludeGlobs) {
+          if (excludeGlobs.some(glob => glob.match(full))) {
+            continue;
+          }
         }
-      }
 
-      yield ent;
+        yield full;
+      }
+    } catch (err) {
+      if ((err as any)?.code === "ENOENT") continue;
+      throw err;
     }
   }
 }
@@ -46,18 +77,78 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
     : null;
 
   for (const pat of patterns) {
-    for (const ent of new Bun.Glob(pat).scanSync(globOptions)) {
-      if (typeof exclude === "function") {
-        if (exclude(ent)) continue;
-      } else if (excludeGlobs) {
-        if (excludeGlobs.some(glob => glob.match(ent))) {
-          continue;
+    const { pattern: scanPattern, cwd: scanCwd, prefix } = splitLiteralPrefix(pat, globOptions.cwd as string);
+    let iter: Iterable<string>;
+    try {
+      iter = new Bun.Glob(scanPattern).scanSync({ ...globOptions, cwd: scanCwd });
+    } catch (err) {
+      if ((err as any)?.code === "ENOENT") continue;
+      throw err;
+    }
+    try {
+      for (const ent of iter) {
+        const full = prefix ? prefix + ent : ent;
+        if (typeof exclude === "function") {
+          if (exclude(full)) continue;
+        } else if (excludeGlobs) {
+          if (excludeGlobs.some(glob => glob.match(full))) {
+            continue;
+          }
         }
-      }
 
-      yield ent;
+        yield full;
+      }
+    } catch (err) {
+      if ((err as any)?.code === "ENOENT") continue;
+      throw err;
     }
   }
+}
+
+/**
+ * Node's `fs.glob` follows directory symlinks only for **literal** path
+ * segments (no wildcards). `Bun.Glob` has a single `followSymlinks` boolean,
+ * which can't express that — so we do it here: peel off the contiguous literal
+ * prefix into the cwd and pass only the wildcard portion to `Bun.Glob`, with
+ * `followSymlinks: false`. The original prefix is prepended back to each yield
+ * so the output paths match what the user wrote (absolute for absolute
+ * patterns, relative for relative ones).
+ *
+ * The final path segment is never consumed — it always goes to `Bun.Glob` so
+ * the native matcher drives the actual `readdir`/`match`. This keeps the
+ * no-wildcard case (`foo/bar.txt`) indistinguishable from pre-fix behavior.
+ */
+function splitLiteralPrefix(pattern: string, cwd: string): { pattern: string; cwd: string; prefix: string } {
+  const separator = isWindows ? sep : "/";
+  // Absolute patterns: anchor scanning at the filesystem root and consume the
+  // full leading literal run. On Windows this also handles drive letters and
+  // UNC paths, since `pathJoin` normalizes them.
+  const isAbsolute = pattern.startsWith("/") || (isWindows && /^([a-zA-Z]:|\\\\)/.test(pattern));
+
+  const parts = pattern.split(separator);
+  // Find the first segment that contains glob metacharacters. Everything
+  // strictly before it is the literal prefix; the wildcard segment and
+  // everything after is the remainder pattern handed to Bun.Glob.
+  // We never consume the final segment — it must go to the matcher so that
+  // Bun.Glob performs the actual directory read / match.
+  let stop = 0;
+  for (; stop < parts.length - 1; stop++) {
+    if (hasGlobMeta(parts[stop])) break;
+  }
+
+  // Nothing to peel off for a relative pattern with a wildcard in segment 0.
+  if (stop === 0 && !isAbsolute) {
+    return { pattern, cwd, prefix: "" };
+  }
+
+  const literalSegs = parts.slice(0, stop);
+  const remainder = parts.slice(stop).join(separator);
+  const literalPath = literalSegs.join(separator) || (isAbsolute ? separator : ".");
+  const newCwd = isAbsolute ? literalPath : pathJoin(cwd, literalPath);
+  // Prefix preserves what the user wrote: absolute patterns emit absolute
+  // paths, relative patterns keep their literal prefix visible (matching Node).
+  const prefix = literalSegs.length === 0 ? "" : literalSegs.join(separator) + separator;
+  return { pattern: remainder, cwd: newCwd, prefix };
 }
 
 function validatePattern(pattern: string | string[]): string[] {
@@ -95,10 +186,10 @@ function mapOptions(options: GlobOptions): GlobScanOptions & { exclude: GlobOpti
     // `process.cwd()` may be overridden by JS code, but native code will used the
     // cached `getcwd` on BunProcess.
     cwd: options?.cwd ?? process.cwd(),
-    // Node's `fs.glob` does not descend into directory symlinks by default —
-    // it only `lstat`s matched entries for the `withFileTypes` option. Following
-    // symlinks produces duplicate matches (e.g. `**/*.test.ts`) and loops on
-    // pnpm-style node_modules cycles until ENAMETOOLONG.
+    // Node's `fs.glob` does not descend into directory symlinks through
+    // wildcard segments; the literal prefix is pre-peeled into `cwd` by
+    // `splitLiteralPrefix`, and everything after the first wildcard is
+    // scanned without following symlinks.
     // https://github.com/oven-sh/bun/issues/29699
     followSymlinks: false,
     // https://github.com/oven-sh/bun/issues/20507

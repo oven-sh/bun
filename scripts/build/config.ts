@@ -568,8 +568,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // build:asan always set ENABLE_ASSERTIONS=ON for this reason.
   const assertions = partial.assertions ?? (debug || asan);
 
-  // LTO: default on only for CI release linux non-asan non-assertions
-  const ltoDefault = release && linux && ci && !assertions && !asan;
+  // LTO: default on only for CI release linux non-asan non-assertions.
+  // Android/FreeBSD: off — no -lto WebKit prebuilt is published for either.
+  const ltoDefault = release && linux && abi !== "android" && ci && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit)
   if (asan && lto) {

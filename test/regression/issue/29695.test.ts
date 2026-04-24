@@ -65,18 +65,24 @@ struct mock_bundle {
     struct sockaddr_in6 sa6;
 };
 
-/* Live bundles we handed out. The registry is tiny and protected by a
+/* Live bundles we handed out, paired with the addrinfo head pointer the
+ * caller actually received. The registry is tiny and protected by a
  * mutex — the test only makes a handful of DNS calls, so walking this
  * is fine. Slots that match freeaddrinfo()'s res are cleared and freed;
  * anything else falls through to the real freeaddrinfo. */
-static struct mock_bundle *g_registry[MOCK_REGISTRY_SIZE];
+struct mock_slot {
+    struct mock_bundle *bundle;
+    struct addrinfo *head;
+};
+static struct mock_slot g_registry[MOCK_REGISTRY_SIZE];
 static pthread_mutex_t g_registry_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static void registry_add(struct mock_bundle *b) {
+static void registry_add(struct mock_bundle *b, struct addrinfo *head) {
     pthread_mutex_lock(&g_registry_mutex);
     for (int i = 0; i < MOCK_REGISTRY_SIZE; i++) {
-        if (g_registry[i] == NULL) {
-            g_registry[i] = b;
+        if (g_registry[i].bundle == NULL) {
+            g_registry[i].bundle = b;
+            g_registry[i].head = head;
             break;
         }
     }
@@ -87,9 +93,10 @@ static struct mock_bundle *registry_take(const struct addrinfo *res) {
     struct mock_bundle *found = NULL;
     pthread_mutex_lock(&g_registry_mutex);
     for (int i = 0; i < MOCK_REGISTRY_SIZE; i++) {
-        if (g_registry[i] != NULL && res == &g_registry[i]->a4) {
-            found = g_registry[i];
-            g_registry[i] = NULL;
+        if (g_registry[i].bundle != NULL && g_registry[i].head == res) {
+            found = g_registry[i].bundle;
+            g_registry[i].bundle = NULL;
+            g_registry[i].head = NULL;
             break;
         }
     }
@@ -100,6 +107,11 @@ static struct mock_bundle *registry_take(const struct addrinfo *res) {
 int getaddrinfo(const char *node, const char *service,
                 const struct addrinfo *hints, struct addrinfo **res) {
     if (node && strcmp(node, MOCK_HOST) == 0) {
+        int family = hints ? hints->ai_family : AF_UNSPEC;
+        if (family != AF_UNSPEC && family != AF_INET && family != AF_INET6) {
+            return EAI_FAMILY;
+        }
+
         unsigned short port = service ? (unsigned short)atoi(service) : 0;
         struct mock_bundle *b = calloc(1, sizeof(*b));
         if (!b) return EAI_MEMORY;
@@ -118,15 +130,28 @@ int getaddrinfo(const char *node, const char *service,
         b->a4.ai_socktype = socktype;
         b->a4.ai_addrlen = sizeof(b->sa4);
         b->a4.ai_addr = (struct sockaddr *)&b->sa4;
-        b->a4.ai_next = &b->a6;
 
         b->a6.ai_family = AF_INET6;
         b->a6.ai_socktype = socktype;
         b->a6.ai_addrlen = sizeof(b->sa6);
         b->a6.ai_addr = (struct sockaddr *)&b->sa6;
 
-        registry_add(b);
-        *res = &b->a4;
+        /* Honor hints->ai_family so this shim doesn't violate the libc
+         * contract if the caller ever restricts the family. AF_UNSPEC
+         * keeps both entries in the IPv4-first order this regression
+         * guard depends on. */
+        struct addrinfo *head;
+        if (family == AF_INET) {
+            head = &b->a4;
+        } else if (family == AF_INET6) {
+            head = &b->a6;
+        } else {
+            b->a4.ai_next = &b->a6;
+            head = &b->a4;
+        }
+
+        registry_add(b, head);
+        *res = head;
         return 0;
     }
 

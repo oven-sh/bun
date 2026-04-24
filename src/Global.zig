@@ -37,14 +37,19 @@ else if (Environment.is_canary)
 else
     std.fmt.comptimePrint(version_string ++ "+{s}", .{Environment.git_sha_short});
 
-pub const os_name = Environment.os.nameString();
+// Node-style platform string. Distinct from Environment.os.nameString() on
+// Android: the kernel-level OS enum stays .linux (so syscall switches keep
+// working), but user-facing strings — npm user-agent, process.platform —
+// must be "android" so native-addon postinstalls don't fetch glibc binaries.
+pub const os_name = if (Environment.isAndroid) "android" else Environment.os.nameString();
+pub const os_display = if (Environment.isAndroid) "Android" else Environment.os.displayString();
 
 // Bun v1.0.0 (Linux x64 baseline)
 // Bun v1.0.0-debug (Linux x64)
 // Bun v1.0.0-canary.0+44e09bb7f (Linux x64)
 pub const unhandled_error_bun_version_string = "Bun v" ++
     (if (Environment.is_canary) package_json_version_with_revision else package_json_version) ++
-    " (" ++ Environment.os.displayString() ++ " " ++ arch_name ++
+    " (" ++ os_display ++ " " ++ arch_name ++
     (if (Environment.baseline) " baseline)" else ")");
 
 pub const arch_name = if (Environment.isX64)

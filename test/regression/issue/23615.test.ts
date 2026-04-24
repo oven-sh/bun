@@ -9,7 +9,7 @@
 // With the isolated linker this surfaces as the workspace package linking
 // to a different copy of the peer than its consumer, breaking dedup.
 
-import { spawn, file } from "bun";
+import { file, spawn } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { readlinkSync } from "fs";
 import { rm } from "fs/promises";

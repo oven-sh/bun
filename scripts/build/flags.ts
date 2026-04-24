@@ -43,8 +43,13 @@ export const cpuTargetFlags: Flag[] = [
   },
   {
     flag: ["-march=armv8-a+crc", "-mtune=ampere1"],
-    when: c => c.linux && c.arm64,
+    when: c => c.linux && c.arm64 && c.abi !== "android",
     desc: "ARM64 Linux: ARMv8-A base + CRC, tuned for Ampere (Graviton-like)",
+  },
+  {
+    flag: ["-march=armv8-a+crc", "-mtune=cortex-a78"],
+    when: c => c.linux && c.arm64 && c.abi === "android",
+    desc: "ARM64 Android: ARMv8-A base + CRC, tuned for Cortex-A78 (common big core)",
   },
   {
     flag: ["/clang:-march=armv8-a+crc", "/clang:-mtune=ampere1"],
@@ -70,6 +75,33 @@ export const cpuTargetFlags: Flag[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const globalFlags: Flag[] = [
+  // ─── Cross-compilation target/sysroot ───
+  // Generic — currently only Android sets these. Kept first so the
+  // target triple is in effect before any arch-dependent flags.
+  {
+    flag: c => `--target=${c.crossTarget!}`,
+    when: c => c.crossTarget !== undefined,
+    desc: "Cross-compile target triple (clang is inherently a cross-compiler)",
+  },
+  {
+    flag: c => `--sysroot=${c.sysroot!}`,
+    when: c => c.sysroot !== undefined,
+    desc: "Cross-compile sysroot (target libc headers + libs)",
+  },
+  {
+    // The NDK's libc++ headers live outside the sysroot's default search.
+    // The NDK clang wrappers add this; with our own clang we must too.
+    flag: c => ["-isystem", join(c.sysroot!, "usr", "include", "c++", "v1")],
+    when: c => c.abi === "android",
+    lang: "cxx",
+    desc: "Android: NDK libc++ headers (not in default sysroot include path)",
+  },
+  {
+    flag: ["-DANDROID", "-D_FILE_OFFSET_BITS=64"],
+    when: c => c.abi === "android",
+    desc: "Android: platform define + 64-bit off_t (bionic defaults to 32-bit on LP32)",
+  },
+
   // ─── CPU target ───
   ...cpuTargetFlags,
   {
@@ -735,18 +767,23 @@ export const linkerFlags: Flag[] = [
       "-Wl,--wrap=powf",
       "-Wl,--wrap=quick_exit",
     ],
-    when: c => c.linux && c.abi !== "musl",
+    when: c => c.linux && c.abi === "gnu",
     desc: "Wrap glibc 2.18+ symbols (portable down to glibc 2.17)",
   },
   {
     flag: ["-static-libstdc++", "-static-libgcc"],
-    when: c => c.linux && c.abi !== "musl",
+    when: c => c.linux && c.abi === "gnu",
     desc: "Static C++ runtime (don't depend on host libstdc++)",
   },
   {
     flag: ["-lstdc++", "-lgcc"],
     when: c => c.linux && c.abi === "musl",
     desc: "Dynamic C++ runtime on musl (static unavailable)",
+  },
+  {
+    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++", "-static-libstdc++"],
+    when: c => c.linux && c.abi === "android",
+    desc: "Android link: target/sysroot + static libc++ (NDK ships libc++, not libstdc++)",
   },
   {
     // Paired with compile-side -fno-unwind-tables above.
@@ -875,7 +912,7 @@ export const stripFlags: Flag[] = [
     // PT_GNU_EH_FRAME phdr entry also survives as an orphan. See the
     // --no-eh-frame-hdr rationale in linkFlags above.
     flag: ["-R", ".eh_frame", "-R", ".eh_frame_hdr", "-R", ".gcc_except_table"],
-    when: c => c.linux && c.abi !== "musl",
+    when: c => c.linux && c.abi === "gnu",
     desc: "Remove unwind sections (GNU strip required — llvm-strip leaves [LOAD #2 [R]])",
   },
 ];
@@ -950,7 +987,7 @@ export const fileOverrides: FileOverride[] = [
     // -fwhole-program-vtables requires -flto; disabling one requires
     // disabling the other or clang errors.
     extraFlags: ["-fno-lto", "-fno-whole-program-vtables"],
-    when: c => c.linux && c.lto && c.abi !== "musl",
+    when: c => c.linux && c.lto && c.abi === "gnu",
     desc: "Disable LTO: LLD 21 emits glibc versioned symbols (exp@GLIBC_2.17) into .lto_discard which fails to parse '@'",
   },
   {

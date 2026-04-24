@@ -53,6 +53,7 @@ const BunBuildOptions = struct {
     no_llvm: bool,
     lto: bool,
     override_no_export_cpp_apis: bool,
+    android_ndk_sysroot: ?[]const u8 = null,
 
     cached_options_module: ?*Module = null,
     windows_shim: ?WindowsShim = null,
@@ -204,6 +205,14 @@ pub fn build(b: *Build) !void {
     const no_llvm = b.option(bool, "no_llvm", "Experiment with Zig self hosted backends. No stability guaranteed") orelse false;
     const lto = b.option(bool, "lto", "Emit LLVM bitcode for full LTO instead of a native object") orelse false;
     const override_no_export_cpp_apis = b.option(bool, "override-no-export-cpp-apis", "Override the default export_cpp_apis logic to disable exports") orelse false;
+    // Zig does not bundle bionic headers, so translate-c needs the NDK
+    // sysroot include paths explicitly. The obj's linkLibC() gets bionic
+    // via `zig build --libc <file>` (b.libc_file), which the build script
+    // also passes when targeting Android.
+    const android_ndk_sysroot = b.option([]const u8, "android_ndk_sysroot", "Android NDK sysroot for translate-c headers");
+    if (abi.isAndroid() and android_ndk_sysroot == null) {
+        std.debug.panic("-Dandroid_ndk_sysroot is required when targeting Android (zig does not bundle bionic headers)", .{});
+    }
 
     var build_options = BunBuildOptions{
         .target = target,
@@ -267,6 +276,7 @@ pub fn build(b: *Build) !void {
         .enable_tinycc = b.option(bool, "enable_tinycc", "Enable TinyCC for FFI JIT compilation") orelse true,
         .use_mimalloc = b.option(bool, "use_mimalloc", "Use mimalloc as default allocator") orelse false,
         .llvm_codegen_threads = b.option(u32, "llvm_codegen_threads", "Number of threads to use for LLVM codegen") orelse 1,
+        .android_ndk_sysroot = android_ndk_sysroot,
     };
 
     // zig build obj
@@ -443,7 +453,7 @@ pub fn build(b: *Build) !void {
         }) |t| {
             const resolved = t.resolveTarget(b);
             step.dependOn(
-                &b.addInstallFile(getTranslateC(b, resolved, .Debug), b.fmt("translated-c-headers/{s}.zig", .{
+                &b.addInstallFile(getTranslateC(b, resolved, .Debug, null), b.fmt("translated-c-headers/{s}.zig", .{
                     resolved.result.zigTriple(b.allocator) catch @panic("OOM"),
                 })).step,
             );
@@ -608,6 +618,7 @@ const TargetDescription = struct {
     os: OperatingSystem,
     arch: Arch,
     musl: bool = false,
+    android: bool = false,
 
     fn resolveTarget(desc: TargetDescription, b: *Build) std.Build.ResolvedTarget {
         return b.resolveTargetQuery(.{
@@ -615,7 +626,8 @@ const TargetDescription = struct {
             .cpu_arch = desc.arch,
             .cpu_model = getCpuModel(desc.os, desc.arch) orelse .determined_by_arch_os,
             .os_version_min = getOSVersionMin(desc.os),
-            .glibc_version = if (desc.musl) null else getOSGlibCVersion(desc.os),
+            .glibc_version = if (desc.musl or desc.android) null else getOSGlibCVersion(desc.os),
+            .abi = if (desc.android) .android else null,
         });
     }
 };
@@ -659,7 +671,7 @@ fn addMultiCheck(
     }
 }
 
-fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) LazyPath {
+fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, android_ndk_sysroot: ?[]const u8) LazyPath {
     const target = b.resolveTargetQuery(q: {
         var query = initial_target.query;
         if (query.os_tag == .windows)
@@ -683,6 +695,18 @@ fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: 
     }
 
     translate_c.addIncludePath(b.path("vendor/zstd/lib"));
+
+    if (target.result.abi.isAndroid()) {
+        const sysroot = android_ndk_sysroot orelse
+            std.debug.panic("translate-c for Android requires -Dandroid_ndk_sysroot", .{});
+        const arch_triple = switch (target.result.cpu.arch) {
+            .aarch64 => "aarch64-linux-android",
+            .x86_64 => "x86_64-linux-android",
+            else => |a| std.debug.panic("unsupported Android arch: {s}", .{@tagName(a)}),
+        };
+        translate_c.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sysroot}) });
+        translate_c.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include/{s}", .{ sysroot, arch_triple }) });
+    }
 
     if (target.result.os.tag == .windows) {
         // translate-c is unable to translate the unsuffixed windows functions
@@ -888,7 +912,7 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
 
     mod.addImport("build_options", opts.buildOptionsModule(b));
 
-    const translate_c = getTranslateC(b, opts.target, opts.optimize);
+    const translate_c = getTranslateC(b, opts.target, opts.optimize, opts.android_ndk_sysroot);
     mod.addImport("translated-c-headers", b.createModule(.{ .root_source_file = translate_c }));
 
     const zlib_internal_path = switch (os) {

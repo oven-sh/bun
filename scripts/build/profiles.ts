@@ -47,6 +47,29 @@ export const profiles = {
     asan: false,
   },
 
+  /**
+   * Android aarch64 cross-compile. Requires ANDROID_NDK_ROOT.
+   * webkit:local until -android prebuilts are published. ASAN off:
+   * the host clang's compiler-rt doesn't ship Android ASAN runtimes.
+   */
+  android: {
+    buildType: "Debug",
+    os: "linux",
+    arch: "aarch64",
+    abi: "android",
+    webkit: "local",
+    asan: false,
+  },
+
+  "android-release": {
+    buildType: "Release",
+    os: "linux",
+    arch: "aarch64",
+    abi: "android",
+    webkit: "local",
+    asan: false,
+  },
+
   /** Release build for local testing. No LTO (that's CI-only). */
   release: {
     buildType: "Release",

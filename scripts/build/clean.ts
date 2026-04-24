@@ -85,6 +85,7 @@ const presets: Record<string, () => string[]> = {
   deep: () => [
     resolve(cwd, "build"),
     resolve(cwd, "vendor", "zig"),
+    resolve(cwd, "vendor", "zig-stable"),
     resolve(cwd, ".zig-cache"),
     resolve(cwd, "zig-out"),
     ...allDeps.filter(d => !userManagedDeps.has(d.name)).map(d => resolve(cwd, "vendor", d.name)),

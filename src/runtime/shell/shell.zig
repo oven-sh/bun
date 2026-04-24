@@ -3708,8 +3708,11 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
                 .Double => {
                     const peeked = self.src.indexNext() orelse return null;
                     switch (peeked.char) {
-                        // Backslash only applies to these characters
-                        '$', '`', '"', '\\', '\n', '#' => {
+                        // Backslash only applies to these characters.
+                        // `\r` is included so `\<CR><LF>` in a CRLF script
+                        // reaches the escaped-`\r` line-continuation handler
+                        // in the main lexer (parity with `\<LF>`).
+                        '$', '`', '"', '\\', '\n', '\r', '#' => {
                             char = peeked.char;
                         },
                         else => return .{ .char = char, .escaped = false },

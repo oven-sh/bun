@@ -80,4 +80,26 @@ describe.concurrent("run-shell", () => {
     expect(stdout).toBe("first second third\n");
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/29669 — backslash line-continuation
+  // inside a double-quoted string. CRLF and LF must behave the same: the
+  // `\<newline>` pair is consumed. Before adding `\r` to the Double-state
+  // escape list, CRLF left a literal backslash + CR + LF embedded in the
+  // string value while LF produced a single joined string.
+  test("CRLF with backslash line continuation inside double quotes", async () => {
+    using dir = tempDir("bun-shell-crlf-dq", {
+      "dq.sh": 'MSG="hello \\\r\nworld"\r\necho "$MSG"\r\n',
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "dq.sh")],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("hello world\n");
+    expect(exitCode).toBe(0);
+  });
 });

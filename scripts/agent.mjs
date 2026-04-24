@@ -111,6 +111,12 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
         throw new Error("BUILDKITE_AGENT_TOKEN not set and no existing buildkite-agent.cfg to reuse");
       }
 
+      // `install` runs via sudo, so process.env.USER is "root". The launchd
+      // service must run as the real login user (whose ~/Library the cfg and
+      // build dirs live under), and the files we write here must be owned by
+      // them so the service can read them.
+      const runAsUser = process.env.SUDO_USER || process.env.USER || "administrator";
+
       for (const dir of [homePath, cachePath, logsPath]) {
         mkdir(dir);
       }
@@ -154,7 +160,7 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
 <plist version="1.0">
 <dict>
   <key>Label</key><string>buildkite-agent</string>
-  <key>UserName</key><string>${process.env.USER || "administrator"}</string>
+  <key>UserName</key><string>${runAsUser}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
@@ -186,7 +192,7 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
         `PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin; ` +
         `BASE_PREFIX=$([ "$(uname -m)" = "arm64" ] && echo "/opt/homebrew" || echo "/usr/local"); ` +
         `{ rm -rf $BASE_PREFIX/{var,etc}/buildkite-agent/{builds,cache}/* ${homePath}/{builds,cache}/* /tmp/* /var/tmp/* || true; } && ` +
-        `{ chown -R ${process.env.USER || "administrator"}:admin $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
+        `{ chown -R ${runAsUser}:admin $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
         `{ chmod -R 755 $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
         `{ shutdown -r now || reboot; }`;
       const cleanupPlist = `<?xml version="1.0" encoding="UTF-8"?>
@@ -205,6 +211,13 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
 </plist>
 `;
       writeFile(cleanupPlistPath, cleanupPlist, { mode: 0o644 });
+
+      // install runs as root, so everything above is root-owned. The service
+      // runs as runAsUser and needs to read the cfg (mode 0600) and write to
+      // the build/log/cache dirs.
+      await spawnSafe(["chown", "-R", `${runAsUser}:staff`, cfgPath, homePath, cachePath, logsPath], {
+        stdio: "inherit",
+      });
 
       // Best-effort: replace any previously-loaded service. bootout fails if
       // not loaded, which is fine.

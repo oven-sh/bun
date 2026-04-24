@@ -251,11 +251,12 @@ export function codegenEmbed(cfg: Config): boolean {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Where zig lives. Defaults to vendor/zig (STABLE) or vendor/zig-fast
- * (FAST), per-variant so flipping between a `zigFast=true` config and a
- * `--canary=off` / `--zig-commit=$STABLE` config doesn't wipe and
- * re-download the other compiler (fetchZig nukes the dest on commit
- * mismatch). Both dirs are gitignored.
+ * Where zig lives. Defaults to vendor/zig (FAST — the local-dev default,
+ * also hardcoded in package.json/.vscode/.claude/docs so don't rename) or
+ * vendor/zig-stable (STABLE). Per-variant so flipping between a
+ * `zigFast=true` config and a `--canary=off` / `--zig-commit=$STABLE`
+ * config doesn't wipe and re-download the other compiler (fetchZig nukes
+ * the dest on commit mismatch). Both dirs are gitignored.
  *
  * Override via $BUN_ZIG_PATH to point at an existing zig install (e.g.
  * share one compiler across worktrees, test a zig fork build, or pre-fetch
@@ -273,9 +274,14 @@ function zigPath(cfg: Config): string {
   return resolve(cfg.cwd, env);
 }
 
-/** vendor/ subdirectory name — `zig` (STABLE) or `zig-fast` (FAST). Exported for prefetch-deps.ts. */
+/**
+ * vendor/ subdirectory name — `zig` (FAST) or `zig-stable` (STABLE).
+ * FAST keeps the plain `zig` name because it's the local-dev default and
+ * package.json/.vscode/.claude hardcode `vendor/zig/`. Exported for
+ * prefetch-deps.ts.
+ */
 export function zigVendorBasename(cfg: Config): string {
-  return cfg.zigFast ? "zig-fast" : "zig";
+  return cfg.zigFast ? "zig" : "zig-stable";
 }
 
 function zigExecutable(cfg: Config): string {

@@ -127,7 +127,7 @@ for (const partial of variants) {
   // uses on this host (the build's dest is per-{stable,fast} but not per-safe,
   // so only one safe-variant can match an extracted tree); both safe URLs go
   // into by-url/ so a safe-flag flip still avoids the network. The extract
-  // name follows zigVendorBasename so extracted/zig/ and extracted/zig-fast/
+  // name follows zigVendorBasename so extracted/zig/ and extracted/zig-stable/
   // both populate (canary loop covers both commits).
   const ciSafe = zigCompilerSafe(cfg);
   const zigName = zigVendorBasename(cfg);

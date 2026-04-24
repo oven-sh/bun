@@ -1284,6 +1284,29 @@ async function getPipelineOptions() {
 async function getPipeline(options = {}) {
   const priority = getPriority();
 
+  // One-shot recovery branch: emit only a fix-up step that runs on every
+  // macOS-13 x64 test box (idempotent). Used to restore darwin-test-x64-1's
+  // tailscale binary + add release-tier=oldest via its still-working
+  // buildkite-agent. Delete this block (and the branch) once it's run.
+  if (getEnv("BUILDKITE_BRANCH", false) === "claude/fix-darwin-test-x64-1") {
+    return {
+      priority,
+      steps: [
+        {
+          key: "recover-darwin-x64",
+          label: ":hammer_and_wrench: recover darwin-test-x64",
+          // Run on each macOS-13 x64 test box; the script is a no-op on the
+          // two that are already healthy.
+          parallelism: 3,
+          agents: { queue: "test-darwin", os: "darwin", arch: "x64", release: "13" },
+          command: "bash .buildkite/recover-darwin-x64.sh",
+          timeout_in_minutes: 5,
+        },
+      ],
+    };
+  }
+
+
   if (isBuildManual() && !Object.keys(options).length) {
     return {
       priority,

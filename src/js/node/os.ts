@@ -129,8 +129,10 @@ function bound(binding) {
     userInfo: binding.userInfo,
     version: binding.version,
     machine: function () {
+      // TODO: linux arm64 should also return "aarch64" (Node/uname compat) —
+      // separate PR to avoid behavior change in the Android port.
       return process.arch === "arm64"
-        ? process.platform === "linux" || process.platform === "android"
+        ? process.platform === "android"
           ? "aarch64"
           : "arm64"
         : process.arch === "x64"

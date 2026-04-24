@@ -53,12 +53,17 @@ export const ZIG_COMMIT_FAST = "af6e006bec4494b5f716b1508e7113fc2210ed67";
  * true → FAST, false → STABLE. Called from config.ts during resolution
  * (before the full Config exists, hence the narrow input shape).
  *
- * FAST for local dev (`!ci`) and PR CI (`pr`, set by ci.mjs when
- * `!isMainBranch()`). STABLE for main-branch CI — both canary nightly and
- * tagged production — so anything that ships to users gets the proven
- * compiler with full cross-language LTO.
+ * STABLE is used for:
+ *   - Windows targets (local + CI): the FAST fork's Windows-side
+ *     allocator/condvar fixes (oven-sh/zig#20) haven't landed yet.
+ *   - Main-branch CI (canary nightly + tagged production): anything that
+ *     ships to users gets the proven compiler with full cross-language LTO.
+ *
+ * FAST for everything else: non-Windows local dev and non-Windows PR CI
+ * (`pr` set by ci.mjs when `!isMainBranch()`).
  */
-export function zigFastCompiler(opts: { ci: boolean; pr: boolean }): boolean {
+export function zigFastCompiler(opts: { windows: boolean; ci: boolean; pr: boolean }): boolean {
+  if (opts.windows) return false;
   return !opts.ci || opts.pr;
 }
 

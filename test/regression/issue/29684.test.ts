@@ -231,7 +231,7 @@ describe("perMessageDeflate upgrade header", () => {
     const proxy = createNetServer(socket => {
       acceptedDownstream = socket;
       let head = Buffer.alloc(0);
-      socket.on("data", chunk => {
+      const onData = (chunk: Buffer) => {
         head = Buffer.concat([head, chunk]);
         const end = head.indexOf("\r\n\r\n");
         if (end === -1) return;
@@ -241,6 +241,12 @@ describe("perMessageDeflate upgrade header", () => {
           reject(new Error(`expected CONNECT, got ${connectLine}`));
           return;
         }
+        // Remove the CONNECT parser before wiring up pipes — otherwise the
+        // WebSocket upgrade bytes arriving after the 200 response would
+        // re-enter this handler, match CONNECT again, and open a second
+        // upstream socket. `.pipe()` adds its own listener but doesn't
+        // remove ours.
+        socket.off("data", onData);
         const upstream = connect(upgradePort, "127.0.0.1", () => {
           socket.write("HTTP/1.1 200 OK\r\n\r\n");
           const leftover = head.subarray(end + 4);
@@ -250,7 +256,8 @@ describe("perMessageDeflate upgrade header", () => {
         });
         upstream.on("error", err => socket.destroy(err));
         socket.on("error", err => upstream.destroy(err));
-      });
+      };
+      socket.on("data", onData);
     });
     await new Promise<void>(r => proxy.listen(0, "127.0.0.1", r));
     const proxyPort = (proxy.address() as AddressInfo).port;

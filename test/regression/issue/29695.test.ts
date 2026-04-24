@@ -37,28 +37,65 @@ const canRun =
 
 // A libc `getaddrinfo`/`freeaddrinfo` shim: for the host `mock29695` it
 // returns a two-element linked list [127.0.0.1, ::1] in that exact order,
-// packed into a single allocation so `freeaddrinfo` can be a single free().
-// Everything else is forwarded to the real implementations via dlsym.
+// packed into a single allocation. Everything else is forwarded to the
+// real implementations via dlsym.
+//
+// Identifying "our" bundles in freeaddrinfo is done through a small
+// registry of live bundle head pointers rather than by reading memory
+// behind the caller-supplied addrinfo — the real glibc getaddrinfo()
+// (called for Bun.serve({hostname: "::"})) hands back allocations we do
+// not own, and reading bytes outside those would be undefined behavior.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <stddef.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 
 #define MOCK_HOST "mock29695"
-#define MOCK_MAGIC 0xBEEFCAFE12345678ULL
+#define MOCK_REGISTRY_SIZE 32
 
 struct mock_bundle {
-    unsigned long long magic;
     struct addrinfo a4;
     struct addrinfo a6;
     struct sockaddr_in sa4;
     struct sockaddr_in6 sa6;
 };
+
+/* Live bundles we handed out. The registry is tiny and protected by a
+ * mutex — the test only makes a handful of DNS calls, so walking this
+ * is fine. Slots that match freeaddrinfo()'s res are cleared and freed;
+ * anything else falls through to the real freeaddrinfo. */
+static struct mock_bundle *g_registry[MOCK_REGISTRY_SIZE];
+static pthread_mutex_t g_registry_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void registry_add(struct mock_bundle *b) {
+    pthread_mutex_lock(&g_registry_mutex);
+    for (int i = 0; i < MOCK_REGISTRY_SIZE; i++) {
+        if (g_registry[i] == NULL) {
+            g_registry[i] = b;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_registry_mutex);
+}
+
+static struct mock_bundle *registry_take(const struct addrinfo *res) {
+    struct mock_bundle *found = NULL;
+    pthread_mutex_lock(&g_registry_mutex);
+    for (int i = 0; i < MOCK_REGISTRY_SIZE; i++) {
+        if (g_registry[i] != NULL && res == &g_registry[i]->a4) {
+            found = g_registry[i];
+            g_registry[i] = NULL;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_registry_mutex);
+    return found;
+}
 
 int getaddrinfo(const char *node, const char *service,
                 const struct addrinfo *hints, struct addrinfo **res) {
@@ -66,7 +103,6 @@ int getaddrinfo(const char *node, const char *service,
         unsigned short port = service ? (unsigned short)atoi(service) : 0;
         struct mock_bundle *b = calloc(1, sizeof(*b));
         if (!b) return EAI_MEMORY;
-        b->magic = MOCK_MAGIC;
 
         b->sa4.sin_family = AF_INET;
         b->sa4.sin_port = htons(port);
@@ -89,6 +125,7 @@ int getaddrinfo(const char *node, const char *service,
         b->a6.ai_addrlen = sizeof(b->sa6);
         b->a6.ai_addr = (struct sockaddr *)&b->sa6;
 
+        registry_add(b);
         *res = &b->a4;
         return 0;
     }
@@ -99,16 +136,10 @@ int getaddrinfo(const char *node, const char *service,
 }
 
 void freeaddrinfo(struct addrinfo *res) {
-    if (res) {
-        /* Recover the bundle head: .a4 lives at offsetof(mock_bundle, a4)
-         * inside the bundle, so subtracting that from res gets us back to
-         * the magic word. */
-        char *p = (char *)res - offsetof(struct mock_bundle, a4);
-        struct mock_bundle *b = (struct mock_bundle *)p;
-        if (b->magic == MOCK_MAGIC) {
-            free(b);
-            return;
-        }
+    struct mock_bundle *b = registry_take(res);
+    if (b) {
+        free(b);
+        return;
     }
     void (*real)(struct addrinfo *) = dlsym(RTLD_NEXT, "freeaddrinfo");
     real(res);
@@ -135,8 +166,18 @@ test.skipIf(!canRun)("fetch() respects OS getaddrinfo() ordering instead of forc
   // Run the fetch in a fresh subprocess so LD_PRELOAD / the feature flag
   // are isolated. `Bun.serve({ hostname: "::" })` listens on a dual-stack
   // socket, so an IPv4 connection shows up as `::ffff:127.0.0.1` and a
-  // native IPv6 connection shows up as `::1` — a one-bit signal for which
-  // family the internal DNS cache picked.
+  // native IPv6 connection shows up as `::1`.
+  //
+  // uws' start_connections() opens up to CONCURRENT_CONNECTIONS=4 sockets
+  // in the same tick (packages/bun-usockets/src/context.c:596), so strictly
+  // this test observes *which loopback connect won the happy-eyeballs
+  // race* — not which entry `processResults()` placed first. On glibc
+  // Linux loopback the first connect syscall wins deterministically in
+  // practice: the fix makes it pass 10/10 and the buggy IPv6-first
+  // interleave fails 10/10 on the same host. If this ever flakes in CI,
+  // the right fix is a stronger probe (eBPF socket trace, or reducing
+  // CONCURRENT_CONNECTIONS via an env flag) rather than loosening the
+  // assertion.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -168,7 +209,13 @@ test.skipIf(!canRun)("fetch() respects OS getaddrinfo() ordering instead of forc
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Surface the subprocess's stderr before we try to parse stdout — if the
+  // child failed (LD_PRELOAD rejected, `::` bind failed, fetch threw) the
+  // real error lives in stderr and JSON.parse("") would otherwise mask it
+  // with a useless "Unexpected end of JSON input".
+  expect({ exitCode, stderr }).toMatchObject({ exitCode: 0 });
 
   // Parse the one JSON line the child printed.
   const body = JSON.parse(stdout.trim().split("\n").at(-1)!);
@@ -178,5 +225,4 @@ test.skipIf(!canRun)("fetch() respects OS getaddrinfo() ordering instead of forc
   // dual-stack server sees the IPv4-mapped address. Before the fix, the
   // cache forced AAAA to the front and the server saw pure ::1.
   expect(body).toMatchObject({ address: "::ffff:127.0.0.1", family: "IPv6" });
-  expect(exitCode).toBe(0);
 });

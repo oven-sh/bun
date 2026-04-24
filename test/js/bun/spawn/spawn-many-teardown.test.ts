@@ -11,12 +11,13 @@ import { bunEnv, bunExe } from "harness";
 // this test also passes there; it is kept enabled everywhere as a general
 // stress check of the many-subprocess teardown path.
 test("tearing down hundreds of spawned subprocesses at exit does not overflow the loop active-handle counter", async () => {
+  const N = 350;
   const fixture = /* js */ `
     const cmd = process.platform === "win32"
       ? [process.env.comspec || "cmd.exe", "/c", "exit", "0"]
       : ["/bin/sh", "-c", "exit 0"];
 
-    const N = 350;
+    const N = ${N};
     const procs = [];
     for (let i = 0; i < N; i++) {
       procs.push(
@@ -55,7 +56,7 @@ test("tearing down hundreds of spawned subprocesses at exit does not overflow th
   if (exitCode !== 0) {
     console.error(stderr);
   }
-  expect(stdout.trim()).toBe("spawned=350");
+  expect(stdout.trim()).toBe(`spawned=${N}`);
   // A panic during process teardown (after the script body has run) would
   // surface as a non-zero exit code.
   expect(exitCode).toBe(0);

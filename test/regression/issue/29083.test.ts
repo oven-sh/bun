@@ -184,11 +184,6 @@ async function runLeakFixture(method: Method, contentType: string, bodyLiteral: 
   expect(exitCode).toBe(0);
 }
 
-// The reported bug is Linux-specific (OOM in a capped Linux container).
-// On Windows the child-process RSS sampling is flakier (different memory
-// model, larger page granularity) and localhost port 0 + process.env
-// HTTP_PROXY semantics diverge from POSIX, so keep the regression scoped
-// to POSIX where the original issue actually reproduces.
 // The reported bug is Linux-x64-specific (OOM in a 1 GiB container on
 // linux/amd64). On macOS/Windows the RSS sampling and HTTP_PROXY
 // semantics diverge from Linux. On aarch64, RSS growth has

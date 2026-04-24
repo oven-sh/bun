@@ -89,6 +89,17 @@ export const globalFlags: Flag[] = [
     desc: "Cross-compile sysroot (target libc headers + libs)",
   },
   {
+    // On hosts with a GCC install (amazonlinux), clang's driver auto-detects
+    // it and prepends /usr/include/c++/N to the search list — even when
+    // --sysroot points elsewhere. That breaks #include_next in the sysroot's
+    // libc++ headers (they find the host's libstdc++ stdlib.h instead of the
+    // sysroot's C stdlib.h). Pointing --gcc-toolchain at the sysroot disables
+    // host-GCC detection without affecting anything else.
+    flag: c => [`--gcc-toolchain=${c.sysroot!}`, "-Wno-unused-command-line-argument"],
+    when: c => c.freebsd && c.sysroot !== undefined,
+    desc: "FreeBSD: disable host GCC include-path detection (warning suppressed: flag is a no-op on hosts without GCC)",
+  },
+  {
     // The NDK's libc++ headers live outside the sysroot's default search.
     // The NDK clang wrappers add this; with our own clang we must too.
     flag: c => ["-isystem", join(c.sysroot!, "usr", "include", "c++", "v1")],

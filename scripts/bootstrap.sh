@@ -1353,9 +1353,12 @@ install_tailscale() {
 		execute "$sh" "$tailscale_script"
 		;;
 	darwin)
-		install_packages go
-		execute_as_user go install tailscale.com/cmd/tailscale{,d}@latest
-		append_to_path "$home/go/bin"
+		# Homebrew-managed tailscale: a single upgrade path (`brew upgrade`),
+		# proper version reporting (the go-install build shows ERR-BuildInfo),
+		# and `install-system-daemon` writes the launchd plist for us.
+		install_packages tailscale
+		brew_prefix="$(execute_as_user brew --prefix)"
+		execute_sudo "$brew_prefix/bin/tailscaled" install-system-daemon
 		;;
 	esac
 }

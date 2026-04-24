@@ -58,11 +58,45 @@ pub const PathWatcherManager = struct {
         this: *PathWatcherManager,
         path: [:0]const u8,
     ) bun.sys.Maybe(PathInfo) {
+        return this._fdFromAbsolutePathZImpl(path, .allow_file);
+    }
+
+    /// Directory-only variant of `_fdFromAbsolutePathZ`. Returns `ENOTDIR`
+    /// (without creating a `PathInfo` entry) when the target is a regular
+    /// file — the caller never gets back an `is_file` `PathInfo` and therefore
+    /// never has to release a fresh refs=1 entry via `_decrementPathRef`,
+    /// which would acquire `manager.mutex` then `Watcher.mutex` (via
+    /// `main_watcher.remove` on hash) and deadlock against the watcher
+    /// thread's `Watcher.mutex → manager.mutex` ordering in `onFileUpdate`.
+    ///
+    /// Used by `NewSubdirTask` because a merged inotify event may OR-in
+    /// `IN_ISDIR` from a sibling name in the same batch (e.g. `mkdir sub;
+    /// touch file.txt`), causing the `file.txt` name to be queued as a
+    /// "new subdirectory" candidate; this helper lets the task reject
+    /// non-directories cleanly without ever taking ownership of an fd.
+    fn _dirFdFromAbsolutePathZ(
+        this: *PathWatcherManager,
+        path: [:0]const u8,
+    ) bun.sys.Maybe(PathInfo) {
+        return this._fdFromAbsolutePathZImpl(path, .dir_only);
+    }
+
+    fn _fdFromAbsolutePathZImpl(
+        this: *PathWatcherManager,
+        path: [:0]const u8,
+        comptime mode: enum { allow_file, dir_only },
+    ) bun.sys.Maybe(PathInfo) {
         this.mutex.lock();
         defer this.mutex.unlock();
 
         if (this.file_paths.getEntry(path)) |entry| {
             var info = entry.value_ptr;
+            if (mode == .dir_only and info.is_file) {
+                return .{ .err = .{
+                    .errno = @truncate(@intFromEnum(bun.sys.E.NOTDIR)),
+                    .syscall = .open,
+                } };
+            }
             info.refs += 1;
             return .{ .result = info.* };
         }
@@ -73,7 +107,7 @@ pub const PathWatcherManager = struct {
             .windows => bun.sys.openDirAtWindowsA(bun.FD.cwd(), path, .{ .iterable = true, .read_only = true }),
         }) {
             .err => |e| {
-                if (e.errno == @intFromEnum(bun.sys.E.NOTDIR)) {
+                if (mode == .allow_file and e.errno == @intFromEnum(bun.sys.E.NOTDIR)) {
                     const file = switch (bun.sys.open(path, 0, 0)) {
                         .err => |file_err| return .{ .err = file_err.withPath(path) },
                         .result => |r| r,
@@ -320,14 +354,13 @@ pub const PathWatcherManager = struct {
                                 // A new subdirectory appeared under a recursive watcher's tree.
                                 // Queue a task that will open it and register a fresh inotify
                                 // watch — without this, events for files created inside the new
-                                // subdirectory would never fire (#29677).
+                                // subdirectory would never fire (#29677). Ownership of the
+                                // refPendingDirectory ref transfers into NewSubdirTask; `add` is
+                                // infallible (aborts on OOM) so there is no rollback path that
+                                // would re-enter `manager.mutex` via `unrefPendingDirectory →
+                                // PathWatcher.deinit → unregisterWatcher`.
                                 if (is_new_subdir and watcher.recursive and watcher.refPendingDirectory()) {
-                                    if (new_subdirs.add(watcher, path_slice)) {
-                                        // refPendingDirectory succeeded; ownership of the ref
-                                        // transfers to NewSubdirTask which will unref on completion.
-                                    } else {
-                                        watcher.unrefPendingDirectory();
-                                    }
+                                    new_subdirs.add(watcher, path_slice);
                                 }
 
                                 watcher.emit(event_type.toEvent(path), hash, timestamp, false);
@@ -597,7 +630,7 @@ pub const PathWatcherManager = struct {
         task: jsc.WorkPoolTask = .{ .callback = callback },
 
         /// Small inline list that holds a handful of (watcher, absolute path)
-        /// pairs. Onefileupdate can produce a burst of these when a directory
+        /// pairs. `onFileUpdate` can produce a burst of these when a directory
         /// tree is moved in, but typical batches have 0–1.
         pub const List = struct {
             /// Heap-allocated entries. Null when count == 0 to avoid
@@ -611,25 +644,28 @@ pub const PathWatcherManager = struct {
                 path: [:0]u8,
             };
 
-            /// Attempt to append. Returns true on success, false on OOM (in
-            /// which case the caller must undo any ref it took for the watcher).
-            pub fn add(this: *List, watcher: *PathWatcher, abs_path: []const u8) bool {
+            /// Append. Small allocations — follow the file's `bun.handleOom`
+            /// convention (see `_fdFromAbsolutePathZImpl`) and abort on OOM
+            /// rather than propagating a rollback path that would need to
+            /// `unrefPendingDirectory()` inside `manager.mutex`, re-entering
+            /// the mutex via `PathWatcher.deinit → unregisterWatcher` if the
+            /// watcher was closed in the race window.
+            pub fn add(this: *List, watcher: *PathWatcher, abs_path: []const u8) void {
                 if (this.count == this.capacity) {
                     const new_cap: u32 = if (this.capacity == 0) 4 else this.capacity * 2;
                     if (this.items) |p| {
                         const old_slice = p[0..this.capacity];
-                        const resized = bun.default_allocator.realloc(old_slice, new_cap) catch return false;
+                        const resized = bun.handleOom(bun.default_allocator.realloc(old_slice, new_cap));
                         this.items = resized.ptr;
                     } else {
-                        const fresh = bun.default_allocator.alloc(Entry, new_cap) catch return false;
+                        const fresh = bun.handleOom(bun.default_allocator.alloc(Entry, new_cap));
                         this.items = fresh.ptr;
                     }
                     this.capacity = new_cap;
                 }
-                const dup = bun.default_allocator.dupeZ(u8, abs_path) catch return false;
+                const dup = bun.handleOom(bun.default_allocator.dupeZ(u8, abs_path));
                 this.items.?[this.count] = .{ .watcher = watcher, .path = dup };
                 this.count += 1;
-                return true;
             }
 
             pub fn slice(this: *const List) []Entry {
@@ -680,42 +716,37 @@ pub const PathWatcherManager = struct {
                 // Watcher may have been closed between queueing and now.
                 if (entry.watcher.isClosed()) continue;
 
-                // Resolve the absolute path to a directory PathInfo. The
-                // lookup may fail if the new subdirectory was deleted or
-                // replaced by a non-directory before we got here — that's a
-                // benign race, just skip.
-                const path_info = switch (self.manager._fdFromAbsolutePathZ(entry.path)) {
+                // Resolve the absolute path to a directory PathInfo. Uses the
+                // directory-only helper so a sibling-triggered false positive
+                // (e.g. `mkdir sub; touch file.txt` merges into one event with
+                // `is_dir` OR'd over both names) fails with NOTDIR instead of
+                // opening the regular file and creating a refs=1 PathInfo
+                // that would need a lock-inverting cleanup — see
+                // `_dirFdFromAbsolutePathZ` for the full deadlock trace.
+                //
+                // Other benign cases that land here: the subdirectory was
+                // deleted, moved, or symlinked to a non-directory between
+                // IN_CREATE and the WorkPool pickup. All skip cleanly.
+                const path_info = switch (self.manager._dirFdFromAbsolutePathZ(entry.path)) {
                     .result => |p| p,
                     .err => |err| {
                         log("[watch] _registerNewSubdirectory({s}) lookup: {f}", .{ entry.path, err });
                         continue;
                     },
                 };
-                if (path_info.is_file) {
-                    // Race: the name referred to a directory when IN_CREATE
-                    // fired but is now a regular file. Drop the ref we just
-                    // took and move on.
-                    self.manager._decrementPathRef(path_info.path);
-                    continue;
-                }
 
                 // Track this subdirectory against the watcher so its path
                 // reference is released when the watcher is unregistered.
-                var append_failed = false;
+                // handleOom on append — the rollback path would need to
+                // clean up the refs=1 entry from `manager.file_paths` while
+                // skipping `main_watcher.remove` (Watcher.mutex would
+                // AB/BA-deadlock against the watcher thread's
+                // Watcher→manager ordering). Aborting on OOM matches the
+                // rest of the file's `bun.handleOom` convention.
                 {
                     entry.watcher.mutex.lock();
                     defer entry.watcher.mutex.unlock();
-                    entry.watcher.file_paths.append(bun.default_allocator, path_info.path) catch {
-                        append_failed = true;
-                    };
-                }
-                if (append_failed) {
-                    // Must release manager-side path ref AFTER dropping
-                    // watcher.mutex: _decrementPathRef takes manager.mutex,
-                    // and unregisterWatcher takes manager.mutex first then
-                    // watcher.mutex — inverting here would AB/BA deadlock.
-                    self.manager._decrementPathRef(path_info.path);
-                    continue;
+                    bun.handleOom(entry.watcher.file_paths.append(bun.default_allocator, path_info.path));
                 }
 
                 switch (self.manager._addDirectory(entry.watcher, path_info)) {

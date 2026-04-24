@@ -64,7 +64,11 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
 
     // Read /proc/stat to get number of CPUs and times
     {
-        const file = try std.fs.cwd().openFile("/proc/stat", .{});
+        const file = std.fs.cwd().openFile("/proc/stat", .{}) catch {
+            // hidepid mounts (common on Android) deny /proc/stat. Node returns []
+            // rather than throwing.
+            return try jsc.JSValue.createEmptyArray(globalThis, 0);
+        };
         defer file.close();
 
         const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, .probably_small).unwrap();
@@ -368,6 +372,11 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
         }
 
         if (result == null) {
+            // bionic has no passwd entries for app uids; with HOME also unset
+            // (zygote/run-as), return a usable default rather than throwing.
+            if (comptime Environment.isAndroid) {
+                return bun.String.static("/data/local/tmp");
+            }
             // in uv__getpwuid_r, null result throws UV_ENOENT.
             return global.throwValue(try bun.sys.Error.fromCode(
                 .NOENT,
@@ -463,10 +472,18 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
     var interface_start: ?*c.ifaddrs = null;
     const rc = c.getifaddrs(&interface_start);
     if (rc != 0) {
+        const errno = std.posix.errno(rc);
+        // Android API 30+: SELinux denies the netlink socket getifaddrs uses.
+        // Node returns {} rather than throwing.
+        if (comptime Environment.isAndroid) {
+            if (errno == .ACCES or errno == .PERM) {
+                return jsc.JSValue.createEmptyObject(globalThis, 0);
+            }
+        }
         const err = jsc.SystemError{
             .message = bun.String.static("A system error occurred: getifaddrs returned an error"),
             .code = bun.String.static("ERR_SYSTEM_ERROR"),
-            .errno = @intFromEnum(std.posix.errno(rc)),
+            .errno = @intFromEnum(errno),
             .syscall = bun.String.static("getifaddrs"),
         };
 

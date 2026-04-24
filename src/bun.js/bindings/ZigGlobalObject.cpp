@@ -30,11 +30,13 @@
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSGlobalProxyInlines.h"
-#include "JavaScriptCore/JSInternalPromise.h"
+#include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSLock.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMicrotask.h"
 #include "JavaScriptCore/JSModuleLoader.h"
+#include "JavaScriptCore/CyclicModuleRecord.h"
+#include "JavaScriptCore/ModuleRegistryEntry.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "JavaScriptCore/JSModuleNamespaceObjectInlines.h"
 #include "JavaScriptCore/JSModuleRecord.h"
@@ -297,7 +299,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // JSC::Options::useSigillCrashAnalyzer() = true;
             JSC::Options::useSourceProviderCache() = true;
             // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
-            JSC::Options::exposeInternalModuleLoader() = true;
+            // JSModuleLoader is now a JSCell (not a JSObject) so exposing it as
+            // the global `Loader` would let user code dereference a non-object
+            // and trip JSValue::synthesizePrototype's isSymbol() debug assert.
+            JSC::Options::exposeInternalModuleLoader() = false;
             JSC::Options::useSharedArrayBuffer() = true;
             JSC::Options::useJITCage() = false;
             JSC::Options::useShadowRealm() = true;
@@ -658,67 +663,169 @@ JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
     }
 
-    globalObject->moduleLoader()->provideFetch(globalObject, keyAny, jsCast<JSC::JSSourceCode*>(result)->sourceCode());
+    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, moduleKey), JSC::ScriptFetchParameters::Type::JavaScript, jsCast<JSC::JSSourceCode*>(result));
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
 }
 
-extern "C" void* Zig__GlobalObject__getModuleRegistryMap(JSC::JSGlobalObject* arg0)
+static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
 {
-    if (JSC::JSObject* loader = JSC::jsDynamicCast<JSC::JSObject*>(arg0->moduleLoader())) {
-        JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(
-            loader->getDirect(arg0->vm(), JSC::Identifier::fromString(arg0->vm(), "registry"_s)));
+    if (!record)
+        return false;
+    if (auto* cyclic = jsDynamicCast<JSC::CyclicModuleRecord*>(record))
+        return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated && !cyclic->evaluationError();
+    // SyntheticModuleRecord is "evaluated" once linked (it has an environment).
+    return record->moduleEnvironmentMayBeNull() != nullptr;
+}
 
-        JSC::JSMap* cloned = map->clone(arg0, arg0->vm(), arg0->mapStructure());
-        JSC::gcProtect(cloned);
+JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue keyValue = callFrame->argument(0);
+    if (!keyValue.isString())
+        return JSValue::encode(jsUndefined());
+    auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* entry = globalObject->moduleLoader()->registryEntry(key);
+    if (!entry || !isModuleEvaluated(entry->record()))
+        return JSValue::encode(jsUndefined());
+    auto* ns = entry->record()->getModuleNamespace(globalObject, false);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(ns);
+}
 
-        return cloned;
+JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue keyValue = callFrame->argument(0);
+    if (!keyValue.isString())
+        return JSValue::encode(jsBoolean(false));
+    auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(globalObject->moduleLoader()->removeEntry(key)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::MarkedArgumentBuffer keys;
+    for (auto& [key, entry] : globalObject->moduleLoader()->moduleMap()) {
+        if (!key.first || !entry || !isModuleEvaluated(entry->record()))
+            continue;
+        keys.append(jsString(vm, String { key.first }));
+    }
+    if (keys.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    auto* array = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), keys);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(array);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue keyValue = callFrame->argument(0);
+    auto keyString = keyValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto key = JSC::Identifier::fromString(vm, keyString);
+
+    auto* loader = globalObject->moduleLoader();
+    bool entryExistedBefore = false;
+    if (auto* entry = loader->registryEntry(key)) {
+        entryExistedBefore = true;
+        if (isModuleEvaluated(entry->record())) {
+            auto* ns = entry->record()->getModuleNamespace(globalObject, false);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSValue::encode(ns);
+        }
     }
 
+    JSPromise* promise = loader->loadModuleSync(globalObject, key, jsUndefined(), jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    switch (promise->status()) {
+    case JSPromise::Status::Fulfilled:
+        break;
+    case JSPromise::Status::Rejected: {
+        promise->markAsHandled();
+        JSValue error = promise->result();
+        scope.throwException(globalObject, error);
+        return {};
+    }
+    case JSPromise::Status::Pending: {
+        promise->markAsHandled();
+        // The load promise stays Pending when this module shares an SCC with an
+        // outer module that is still Evaluating (e.g. ESM entry → CJS shim →
+        // require(esm) → imports something the entry already loaded). For a
+        // non-TLA record whose status is exactly Evaluating, the body already
+        // ran synchronously; only the status flip waits on the SCC root. Treat
+        // that as success — the namespace is fully populated.
+        //
+        // Explicitly exclude EvaluatingAsync: a record reaches that state when
+        // it OR any dependency has top-level await, in which case bindings can
+        // still be in TDZ and we must throw the "async module" error instead
+        // of returning a half-initialized namespace.
+        if (auto* entry = loader->registryEntry(key)) {
+            if (auto* cyclic = jsDynamicCast<JSC::CyclicModuleRecord*>(entry->record())) {
+                auto status = cyclic->status();
+                if ((status == JSC::CyclicModuleRecord::Status::Evaluating || status == JSC::CyclicModuleRecord::Status::Evaluated) && !cyclic->hasTLA() && !cyclic->evaluationError())
+                    break;
+            }
+        }
+        // Only drop the entry we created. If the entry already existed (an
+        // outer import() is mid-load, or the module is EvaluatingAsync from a
+        // prior import), removing it would force a second evaluation and a
+        // second namespace object once that outer load completes.
+        if (!entryExistedBefore)
+            loader->removeEntry(key);
+        return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
+    }
+    }
+
+    auto* entry = loader->registryEntry(key);
+    if (!entry || !entry->record()) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, makeString("require() failed to evaluate module \""_s, keyString, "\". This is an internal consistentency error."_s));
+
+    // The loadModule promise resolved, so the entire graph linked + evaluated
+    // synchronously. We deliberately do NOT gate on CyclicModuleRecord::status()
+    // here: when require(esm) is called from inside an outer ESM graph that is
+    // itself mid-evaluation (a CJS shim imported by an ESM entry), the inner
+    // record's body has already run but its status only flips to Evaluated once
+    // the SCC root (the outer module we're currently inside) settles. Returning
+    // the namespace in that state matches the old loader's behaviour and Node's
+    // require(esm) cycle semantics. evaluationError() still surfaces a real
+    // throw from the module body.
+    auto* record = entry->record();
+    if (auto* cyclic = jsDynamicCast<JSC::CyclicModuleRecord*>(record)) {
+        if (JSValue err = cyclic->evaluationError()) {
+            scope.throwException(globalObject, err);
+            return {};
+        }
+    }
+
+    auto* ns = record->getModuleNamespace(globalObject, false);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(ns);
+}
+
+extern "C" void* Zig__GlobalObject__getModuleRegistryMap(JSC::JSGlobalObject*)
+{
+    // The JSC module loader registry is no longer a JS Map; snapshot/restore
+    // is no longer supported. The only Zig declaration of this symbol has no
+    // callers, so this is dead code kept for ABI compatibility.
     return nullptr;
 }
 
-extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC::JSGlobalObject* globalObject,
-    void* map_ptr)
+extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC::JSGlobalObject*, void*)
 {
-    if (map_ptr == nullptr)
-        return false;
-    JSC::JSMap* map = reinterpret_cast<JSC::JSMap*>(map_ptr);
-    auto& vm = JSC::getVM(globalObject);
-    if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(globalObject->moduleLoader())) {
-        auto identifier = JSC::Identifier::fromString(globalObject->vm(), "registry"_s);
-
-        if (JSC::JSMap* oldMap = JSC::jsDynamicCast<JSC::JSMap*>(
-                obj->getDirect(globalObject->vm(), identifier))) {
-
-            vm.finalizeSynchronousJSExecution();
-
-            obj->putDirect(globalObject->vm(), identifier,
-                map->clone(globalObject, globalObject->vm(), globalObject->mapStructure()));
-
-            // vm.deleteAllLinkedCode(JSC::DeleteAllCodeEffort::DeleteAllCodeIfNotCollecting);
-            // JSC::Heap::PreventCollectionScope(vm.heap);
-            oldMap->clear(globalObject);
-            JSC::gcUnprotect(oldMap);
-            // vm.heap.completeAllJITPlans();
-
-            // vm.forEachScriptExecutableSpace([&](auto &spaceAndSet) {
-            //   JSC::HeapIterationScope heapIterationScope(vm.heap);
-            //   auto &set = spaceAndSet.set;
-            //   set.forEachLiveCell([&](JSC::HeapCell *cell, JSC::HeapCell::Kind) {
-            //     if (JSC::ModuleProgramExecutable *executable =
-            //           JSC::jsDynamicCast<JSC::ModuleProgramExecutable *>(cell)) {
-            //       executable->clearCode(set);
-            //     }
-            //   });
-            // });
-
-            // globalObject->vm().heap.deleteAllUnlinkedCodeBlocks(
-            //   JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
-        }
-    }
-    // map
-    // }
-    return true;
+    // See Zig__GlobalObject__getModuleRegistryMap above.
+    return false;
 }
 
 #define WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ConstructorName)                                                                                                       \
@@ -904,12 +1011,6 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
     // Do this in C++ for now
     auto* globalObj = static_cast<GlobalObject*>(obj);
-
-    // JSInternalPromise should not be tracked through the normal promise rejection mechanism
-    // as they are internal to the engine and should not be exposed to user space.
-    // See: JSInternalPromise.h - "CAUTION: Must not leak the JSInternalPromise to the user space"
-    if (jsDynamicCast<JSC::JSInternalPromise*>(promise))
-        return;
 
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:
@@ -2224,39 +2325,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(map);
         });
 
-    m_esmRegistryMap.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {
-            auto* global = init.owner;
-            auto& vm = init.vm;
-            auto scope = DECLARE_THROW_SCOPE(vm);
-
-            // if we get the termination exception, we'd still like to set a non-null Map so that
-            // we don't segfault
-            auto setEmpty = [&]() {
-                ASSERT(scope.exception());
-                init.set(JSC::JSMap::create(init.vm, init.owner->mapStructure()));
-            };
-
-            JSMap* registry = nullptr;
-            auto loaderValue = global->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "Loader"_s));
-            scope.assertNoExceptionExceptTermination();
-            RETURN_IF_EXCEPTION(scope, setEmpty());
-            if (loaderValue) {
-                auto registryValue = loaderValue.getObject()->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "registry"_s));
-                scope.assertNoExceptionExceptTermination();
-                RETURN_IF_EXCEPTION(scope, setEmpty());
-                if (registryValue) {
-                    registry = jsCast<JSC::JSMap*>(registryValue);
-                }
-            }
-
-            if (!registry) {
-                registry = JSC::JSMap::create(init.vm, init.owner->mapStructure());
-            }
-
-            init.set(registry);
-        });
-
     m_requireFunctionUnbound.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             init.set(
@@ -2741,8 +2809,11 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(builtinNames.getInternalWritableStreamPrivateName(), JSFunction::create(vm, this, 1, String(), getInternalWritableStream, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.createWritableStreamFromInternalPrivateName(), JSFunction::create(vm, this, 1, String(), createWritableStreamFromInternal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.fulfillModuleSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionFulfillModuleSync, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.esmNamespaceForCjsPrivateName(), JSFunction::create(vm, this, 1, String(), functionEsmNamespaceForCjs, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.esmRegistryDeletePrivateName(), JSFunction::create(vm, this, 1, String(), functionEsmRegistryDelete, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.esmRegistryEvaluatedKeysPrivateName(), JSFunction::create(vm, this, 0, String(), functionEsmRegistryEvaluatedKeys, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.esmLoadSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionEsmLoadSync, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(vm.propertyNames->builtinNames().ArrayBufferPrivateName(), arrayBufferConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
-        GlobalPropertyInfo(builtinNames.LoaderPrivateName(), this->moduleLoader(), PropertyAttribute::DontDelete | 0),
         GlobalPropertyInfo(builtinNames.internalModuleRegistryPrivateName(), this->internalModuleRegistry(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.processBindingConstantsPrivateName(), this->processBindingConstants(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.requireMapPrivateName(), this->requireMap(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0),
@@ -3132,14 +3203,9 @@ template void GlobalObject::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 void GlobalObject::reload()
 {
-    JSModuleLoader* moduleLoader = this->moduleLoader();
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSMap* registry = jsCast<JSC::JSMap*>(moduleLoader->get(this, Identifier::fromString(vm, "registry"_s)));
-    RETURN_IF_EXCEPTION(scope, );
-
-    registry->clear(this);
-    RETURN_IF_EXCEPTION(scope, );
+    this->moduleLoader()->clearAll();
     this->requireMap()->clear(this);
     RETURN_IF_EXCEPTION(scope, );
 
@@ -3174,7 +3240,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
-    JSValue referrer, JSValue origin)
+    JSValue referrer, JSValue origin, bool)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
 
@@ -3208,6 +3274,32 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         ASSERT(!globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup);
     }
 
+    // The new C++ loader calls resolve() on keys that moduleLoaderImportModule
+    // already resolved through plugin onResolve. If the key already carries a
+    // plugin namespace that has an onLoad handler, it is a fully-resolved
+    // virtual key — return it unchanged so we don't fall through to the
+    // filesystem resolver and fail with "Cannot find module".
+    //
+    // FIXME(module-loader): this short-circuit ignores the plugin's filter
+    // and bypasses any onResolve handler for static imports written directly
+    // as "ns:..." in source. The proper fix is for moduleLoaderImportModule
+    // to mark keys it already resolved so we can skip only those.
+    if (!globalObject->onLoadPlugins.namespaces.isEmpty()) {
+        auto keyStr = keyZ.toWTFString();
+        if (auto colon = keyStr.find(':'); colon != WTF::notFound && !(colon == 1 && isASCIIAlpha(keyStr[0]))) {
+            // colon == 1 with a leading ASCII letter is a Windows drive
+            // ("C:\\..."), never a plugin namespace.
+            auto ns = keyStr.left(colon);
+            for (const auto& registered : globalObject->onLoadPlugins.namespaces) {
+                if (registered == ns) {
+                    keyZ.deref();
+                    referrerZ.deref();
+                    return Identifier::fromString(globalObject->vm(), keyStr);
+                }
+            }
+        }
+    }
+
     ZigString queryString = { 0, 0 };
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
     keyZ.deref();
@@ -3226,7 +3318,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
 }
 
-JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
+JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
     JSModuleLoader*,
     JSString* moduleNameValue,
     JSValue parameters,
@@ -3238,7 +3330,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     {
-        JSC::JSInternalPromise* result = NodeVM::importModule(globalObject, moduleNameValue, parameters, sourceOrigin);
+        JSC::JSPromise* result = NodeVM::importModule(globalObject, moduleNameValue, parameters, sourceOrigin);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (result) {
             return result;
@@ -3253,10 +3345,9 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
         if (auto resolution = globalObject->onLoadPlugins.resolveVirtualModule(moduleName, sourceOrigin.url().protocolIsFile() ? sourceOrigin.url().fileSystemPath() : String())) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolution.value());
 
-            auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::jsUndefined(), parameters, JSC::jsUndefined());
+            auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, JSC::jsUndefined());
             if (scope.exception()) [[unlikely]] {
-                auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
-                return promise->rejectWithCaughtException(globalObject, scope);
+                return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
             }
             return result;
         }
@@ -3306,11 +3397,10 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
 
         // And convert that pending exception into a rejected promise.
         if (scope.exception()) [[unlikely]] {
-            auto* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
             moduleNameZ.deref();
             sourceOriginZ.deref();
 
-            return promise->rejectWithCaughtException(globalObject, scope);
+            return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
         }
 
         if (queryString.len == 0) {
@@ -3337,7 +3427,15 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
                 if (type) {
                     if (type.isString()) {
                         const auto typeString = type.toWTFString(globalObject);
-                        parameters = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(typeString));
+                        // parseType returns HostDefined for any non-empty unknown
+                        // string under USE(BUN_JSC_ADDITIONS); the single-arg
+                        // create(Type) asserts on HostDefined, so route those
+                        // through the string overload which carries the type name.
+                        auto knownType = ScriptFetchParameters::parseType(typeString);
+                        if (knownType && *knownType != ScriptFetchParameters::Type::HostDefined)
+                            parameters = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(*knownType));
+                        else
+                            parameters = JSC::JSScriptFetchParameters::create(vm, ScriptFetchParameters::create(typeString));
                     }
                 }
             }
@@ -3345,24 +3443,32 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     }
 
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
-        JSC::jsUndefined(), parameters, jsUndefined());
+        JSC::Identifier(), parameters, jsUndefined());
     if (scope.exception()) [[unlikely]] {
-        return JSC::JSInternalPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+        return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }
 
     ASSERT(result);
     return result;
 }
 
-static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
-    JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
     promise->rejectAsHandled(vm, globalObject, value);
     return promise;
 }
 
-JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
+static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->fulfill(vm, globalObject, value);
+    return promise;
+}
+
+JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue parameters, JSValue script)
 {
@@ -3408,6 +3514,27 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
     // EncodedJSValues are empty, which our code should be handling
     memset(&res.result, 0, sizeof res.result);
 
+    // require(esm) needs the entire dependency graph to load without yielding
+    // to microtasks. The async fetch path goes through Zig's transpiler thread
+    // pool; route to the synchronous fetch instead so the returned promise is
+    // already fulfilled and the loader keeps draining its private queue (see
+    // JSModuleLoader::loadModuleSync / VM::m_synchronousModuleQueue).
+    if (vm.m_synchronousModuleQueue) {
+        JSValue result = Bun::fetchESMSourceCodeSync(
+            static_cast<Zig::GlobalObject*>(globalObject),
+            moduleKeyJS,
+            &res,
+            &moduleKeyBun,
+            &source,
+            typeAttributeString.isEmpty() ? nullptr : &typeAttribute);
+        RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
+        if (auto* promise = JSC::jsDynamicCast<JSC::JSPromise*>(result))
+            return promise;
+        if (result && result.inherits<JSC::JSSourceCode>())
+            return resolvedInternalPromise(globalObject, result);
+        return rejectedInternalPromise(globalObject, result ? result : JSC::jsUndefined());
+    }
+
     JSValue result = Bun::fetchESMSourceCodeAsync(
         static_cast<Zig::GlobalObject*>(globalObject),
         moduleKeyJS,
@@ -3418,13 +3545,10 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
     RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
     ASSERT(result);
-    if (auto* internalPromise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(result)) {
-        return internalPromise;
-    } else if (auto* promise = JSC::jsDynamicCast<JSC::JSPromise*>(result)) {
-        return jsCast<JSC::JSInternalPromise*>(promise);
-    } else {
-        return rejectedInternalPromise(globalObject, result);
+    if (auto* promise = JSC::jsDynamicCast<JSC::JSPromise*>(result)) {
+        return promise;
     }
+    return rejectedInternalPromise(globalObject, result);
 }
 
 JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject* globalObject,
@@ -3461,6 +3585,8 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     JSValue sentValue, JSValue resumeMode)
 {
     Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (scriptFetcher && scriptFetcher.isObject()) [[unlikely]] {
         if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
@@ -3471,6 +3597,11 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
 
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         scriptFetcher, sentValue, resumeMode);
+    // The new C++ loader propagates the module body's throw out of
+    // evaluateNonVirtual; the old JS-side ModuleLoader.js swallowed it before
+    // dispatching here. Don't call back into Zig (which opens an
+    // ExceptionValidationScope) with an exception still pending.
+    RETURN_IF_EXCEPTION(scope, result);
 
     if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
         Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(result));

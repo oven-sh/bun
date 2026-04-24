@@ -102,4 +102,26 @@ describe.concurrent("run-shell", () => {
     expect(stdout).toBe("hello world\n");
     expect(exitCode).toBe(0);
   });
+
+  // Bare CR (not followed by LF) preceded by a backslash inside double
+  // quotes. POSIX/bash treat `\<CR>` as literal `\` + CR because CR isn't
+  // in the small set of chars a backslash escapes inside double quotes.
+  // Making `\r` escapable (to reach the line-continuation handler) must
+  // not silently drop the backslash when the CR is standalone.
+  test("bare CR inside double quotes keeps literal backslash", async () => {
+    using dir = tempDir("bun-shell-bare-cr", {
+      "bare.sh": 'echo "a\\\rb"\n',
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "bare.sh")],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("a\\\rb\n");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -33,7 +33,7 @@ import {
 /**
  * @typedef {"linux" | "darwin" | "windows"} Os
  * @typedef {"aarch64" | "x64"} Arch
- * @typedef {"musl"} Abi
+ * @typedef {"musl" | "android"} Abi
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
  * @typedef {"latest" | "previous" | "oldest" | "eol"} Tier
  * @typedef {"release" | "assert" | "debug" | "asan"} Profile
@@ -129,6 +129,11 @@ const buildPlatforms = [
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23" },
+  // Android: cross-compiled from glibc amazonlinux via NDK sysroot. Host arch
+  // matches target arch so only --abi/--target/--sysroot are cross. Gated until
+  // bun-webkit-linux-{arm64,amd64}-android prebuilts are published.
+  // { os: "linux", arch: "aarch64", abi: "android", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  // { os: "linux", arch: "x64", abi: "android", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
   { os: "windows", arch: "aarch64", release: "11" },
@@ -207,7 +212,9 @@ function getImageKey(platform) {
     key += `-with-${features.join("-")}`;
   }
 
-  if (abi) {
+  // Android cross-compiles from the same glibc image as gnu (just needs NDK,
+  // which bootstrap.sh installs on all Linux build images) — no separate image.
+  if (abi && abi !== "android") {
     key += `-${abi}`;
   }
 
@@ -488,6 +495,10 @@ function getBuildArgs(target, options, mode) {
     if (os === "linux") args.push(`--abi=${abi ?? "gnu"}`);
   } else if (abi === "musl") {
     args.push("--abi=musl");
+  } else if (abi === "android") {
+    // Android cross-compiles C++ from a glibc host: arch/abi must be explicit
+    // (host detection would report the build box's gnu/x64, not the target).
+    args.push(`--os=${os}`, `--arch=${arch}`, "--abi=android");
   }
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
@@ -597,6 +608,9 @@ function getTargetTriplet(platform) {
   let triplet = `bun-${os}-${arch}`;
   if (abi === "musl") {
     triplet += "-musl";
+  }
+  if (abi === "android") {
+    triplet += "-android";
   }
   if (baseline) {
     triplet += "-baseline";

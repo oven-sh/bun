@@ -3,8 +3,9 @@
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isWindows, tempDirWithFiles } from "harness";
+import { isWindows, tempDirWithFiles, tmpdirSync } from "harness";
 import fs from "node:fs";
+import path from "node:path";
 
 let tmp: string;
 beforeAll(() => {
@@ -232,3 +233,54 @@ describe("fs.promises.glob", () => {
     expect(Array.fromAsync(fs.promises.glob(["a/bar.txt", "a/baz.js"], { cwd: tmp }))).resolves.toStrictEqual(expected);
   });
 }); // </fs.promises.glob>
+
+// https://github.com/oven-sh/bun/issues/29699
+describe.skipIf(isWindows)("does not descend into directory symlinks (matches Node)", () => {
+  let root: string;
+
+  beforeAll(() => {
+    // pnpm-style symlink cycle: a/node_modules/b -> b, b/node_modules/c -> c,
+    //                           c/node_modules/a -> a. If glob followed directory
+    // symlinks, a `**/*.test.ts` search rooted at `a/` would loop indefinitely.
+    root = tmpdirSync();
+    for (const p of ["a/src", "b/src", "a/node_modules", "b/node_modules", "c/node_modules"]) {
+      fs.mkdirSync(path.join(root, p), { recursive: true });
+    }
+    fs.writeFileSync(path.join(root, "a/src/foo.test.ts"), "export {}");
+    fs.writeFileSync(path.join(root, "b/src/bar.test.ts"), "export {}");
+    fs.symlinkSync("../../b", path.join(root, "a/node_modules/b"), "dir");
+    fs.symlinkSync("../../c", path.join(root, "b/node_modules/c"), "dir");
+    fs.symlinkSync("../../a", path.join(root, "c/node_modules/a"), "dir");
+
+    // Plus a flat symlink pointing at a sibling directory (exercises the
+    // non-cycle case where Node still does not descend).
+    fs.mkdirSync(path.join(root, "flat/dir"), { recursive: true });
+    fs.writeFileSync(path.join(root, "flat/dir/inside.txt"), "x");
+    fs.symlinkSync("dir", path.join(root, "flat/link"), "dir");
+
+    // A symlink pointing directly at a file (Node does match these).
+    fs.writeFileSync(path.join(root, "target.txt"), "t");
+    fs.symlinkSync("target.txt", path.join(root, "alias.txt"), "file");
+  });
+
+  afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("fs.promises.glob does not loop on a pnpm-style symlink cycle", async () => {
+    const matches: string[] = [];
+    for await (const file of fs.promises.glob("**/*.test.ts", { cwd: path.join(root, "a") })) {
+      matches.push(file);
+      if (matches.length > 2) break; // guard: the bug emitted infinite matches
+    }
+    expect(matches).toStrictEqual(["src/foo.test.ts"]);
+  });
+
+  it("fs.globSync does not descend into a directory symlink", () => {
+    expect(fs.globSync("*/*.txt", { cwd: path.join(root, "flat") }).sort()).toStrictEqual(["dir/inside.txt"]);
+  });
+
+  it("fs.globSync still matches symlinks that point at files", () => {
+    expect(fs.globSync("*.txt", { cwd: root }).sort()).toStrictEqual(["alias.txt", "target.txt"]);
+  });
+}); // </symlink behavior>

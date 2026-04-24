@@ -95,8 +95,12 @@ function mapOptions(options: GlobOptions): GlobScanOptions & { exclude: GlobOpti
     // `process.cwd()` may be overridden by JS code, but native code will used the
     // cached `getcwd` on BunProcess.
     cwd: options?.cwd ?? process.cwd(),
-    // https://github.com/nodejs/node/blob/a9546024975d0bfb0a8ae47da323b10fb5cbb88b/lib/internal/fs/glob.js#L655
-    followSymlinks: true,
+    // Node's `fs.glob` does not descend into directory symlinks by default —
+    // it only `lstat`s matched entries for the `withFileTypes` option. Following
+    // symlinks produces duplicate matches (e.g. `**/*.test.ts`) and loops on
+    // pnpm-style node_modules cycles until ENAMETOOLONG.
+    // https://github.com/oven-sh/bun/issues/29699
+    followSymlinks: false,
     // https://github.com/oven-sh/bun/issues/20507
     onlyFiles: false,
     exclude,

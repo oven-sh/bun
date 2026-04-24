@@ -115,13 +115,20 @@ function isMissingPath(err: unknown): boolean {
 }
 
 /**
- * Node's `fs.glob` follows directory symlinks only for **literal** path
- * segments (no wildcards). `Bun.Glob` has a single `followSymlinks` boolean,
- * which can't express that — so we do it here: peel off the contiguous literal
- * prefix into the cwd and pass only the wildcard portion to `Bun.Glob`, with
- * `followSymlinks: false`. The original prefix is prepended back to each yield
- * so the output paths match what the user wrote (absolute for absolute
- * patterns, relative for relative ones).
+ * Peel the leading literal segments of `pattern` onto `cwd`. Everything from
+ * the first wildcard segment onwards is returned as the remainder pattern.
+ *
+ * The per-segment "wildcards don't cross symlinks, literals do" rule is
+ * enforced inside the walker via `descendLiteralSymlinks` (see `mapOptions`),
+ * so this function exists for the remaining reasons:
+ *
+ *   - anchor absolute patterns at the filesystem root (or drive root on
+ *     Windows) without walking through cwd first;
+ *   - skip a needless readdir of the literal-prefix directory when the
+ *     pattern has one, e.g. `a/b/*.ts` opens `cwd/a/b` directly;
+ *   - preserve what the user wrote in output paths (absolute stays absolute,
+ *     relative keeps its literal prefix) by prepending `prefix` back on each
+ *     yield.
  *
  * The final path segment is never consumed — it always goes to `Bun.Glob` so
  * the native matcher drives the actual `readdir`/`match`. This keeps the

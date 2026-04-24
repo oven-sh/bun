@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { mkdirSync, realpathSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { join } from "path";
 import * as os from "node:os";
+import { join } from "path";
 
 it("arch", () => {
   expect(["x64", "x86", "arm64"].some(arch => os.arch() === arch)).toBe(true);
@@ -167,12 +167,7 @@ it.skipIf(!isLinux)("cpus() handles non-contiguous CPU IDs (#29689)", async () =
 
   const cpuinfoBody =
     cpuIds
-      .map(
-        id =>
-          `processor\t: ${id}\n` +
-          `model name\t: AMD EPYC 7713 64-Core Processor\n` +
-          `cpu MHz\t\t: 2000.000\n`,
-      )
+      .map(id => `processor\t: ${id}\n` + `model name\t: AMD EPYC 7713 64-Core Processor\n` + `cpu MHz\t\t: 2000.000\n`)
       .join("\n") + "\n";
 
   using dir = tempDir("cpus-noncontiguous", {
@@ -204,11 +199,7 @@ it.skipIf(!isLinux)("cpus() handles non-contiguous CPU IDs (#29689)", async () =
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Released bun (USE_SYSTEM_BUN=1) without the fix dies here with
   // `Failed to get CPU information` (ERR_SYSTEM_ERROR) on stderr and a

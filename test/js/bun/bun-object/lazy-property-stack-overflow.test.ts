@@ -25,3 +25,26 @@ test.concurrent.each(["sql", "SQL", "$", "Glob"])("accessing Bun.%s near stack o
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });
+
+// forEachPropertyImpl walks the prototype chain via getPrototype(), which may
+// throw via a Proxy getPrototypeOf trap. The returned empty JSValue must not
+// be passed to getObject().
+test.concurrent("Bun.inspect with throwing Proxy getPrototypeOf trap does not crash", async () => {
+  const src = `
+      const obj = { a: 1 };
+      Object.setPrototypeOf(obj, new Proxy({}, {
+        getPrototypeOf() { throw new Error("trap"); }
+      }));
+      Bun.inspect(obj);
+      process.exitCode = 0;
+    `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  const exitCode = await proc.exited;
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});

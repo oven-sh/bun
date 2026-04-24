@@ -28,6 +28,11 @@ import {
   writeFile,
 } from "./utils.mjs";
 
+// The macOS major version that constitutes the `release-tier=latest` pool for
+// darwin test agents. Anything older self-tags as `release-tier=previous`.
+// Bump when a new macOS ships and the first runner on it is online.
+const LATEST_DARWIN_RELEASE = 26;
+
 /**
  * @param {"install" | "start"} action
  * @param {{ queue?: string }} [cliOptions]
@@ -334,8 +339,17 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
       "abi-version": getAbiVersion(),
       "distro": getDistro(),
       "distro-version": distroVersion,
-      // ci.mjs targets macOS test jobs by `release=<major>` (e.g. 14, 15).
       "release": isMacOS ? distroVersion?.split(".")[0] : undefined,
+      // ci.mjs targets darwin test jobs by `release-tier` so each PR runs once
+      // on the current macOS (`latest`) and once on whatever older version the
+      // remaining fleet has (`previous`). Bump LATEST_DARWIN_RELEASE here when
+      // a new macOS ships and the first runner on it is online; existing boxes
+      // automatically fall into `previous` without reconfiguration.
+      "release-tier": isMacOS
+        ? parseInt(distroVersion?.split(".")[0] || "0") >= LATEST_DARWIN_RELEASE
+          ? "latest"
+          : "previous"
+        : undefined,
       "ephemeral": ephemeral || false,
       "cloud": cloud,
     };

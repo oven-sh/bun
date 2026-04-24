@@ -186,7 +186,7 @@ export const globalFlags: Flag[] = [
     desc: "Disable C++ exceptions",
   },
   {
-    flag: "/EHsc",
+    flag: "/EHs-c-",
     when: c => c.windows,
     desc: "Disable C++ exceptions (MSVC: s- disables C++, c- disables C)",
   },
@@ -954,6 +954,12 @@ export const fileOverrides: FileOverride[] = [
     when: c => c.linux && c.lto && c.abi !== "musl",
     desc: "Disable LTO: LLD 21 emits glibc versioned symbols (exp@GLIBC_2.17) into .lto_discard which fails to parse '@'",
   },
+  {
+    file: "src/bun.js/bindings/windows/rescle.cpp",
+    extraFlags: "/EHsc",
+    when: c => c.windows,
+    desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
+  },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1061,8 +1067,9 @@ export function computeCpuTargetFlags(cfg: Config): string[] {
  * specific source. Returns extra flags to append (may be empty).
  */
 export function extraFlagsFor(cfg: Config, srcRelPath: string): string[] {
+  const key = srcRelPath.replaceAll("\\", "/");
   for (const o of fileOverrides) {
-    if (o.file !== srcRelPath) continue;
+    if (o.file !== key) continue;
     if (o.when && !o.when(cfg)) continue;
     return resolveFlagValue(o.extraFlags, cfg);
   }

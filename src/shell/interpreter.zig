@@ -680,7 +680,7 @@ pub const Interpreter = struct {
                 const static_str = if (comptime bun.Environment.isWindows) EnvStr.initSlice("USERPROFILE") else EnvStr.initSlice("HOME");
                 break :brk self.shell_env.get(static_str) orelse self.export_env.get(static_str);
             };
-            return env_var orelse EnvStr.initSlice("");
+            return env_var orelse EnvStr.initSlice(if (comptime bun.Environment.isAndroid) "/data/local/tmp" else "");
         }
 
         pub fn writeFailingErrorFmt(

@@ -677,7 +677,12 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
     struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_internal_callback_t) + ext_size);
     memset(p, 0, sizeof(struct us_internal_callback_t) + ext_size);
 
-    us_poll_init(p, eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC), POLL_TYPE_CALLBACK);
+    int efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (efd == -1) {
+        us_poll_free(p, loop);
+        return NULL;
+    }
+    us_poll_init(p, efd, POLL_TYPE_CALLBACK);
 
     struct us_internal_callback_t *cb = (struct us_internal_callback_t *) p;
     cb->loop = loop;

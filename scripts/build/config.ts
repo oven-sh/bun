@@ -435,13 +435,10 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
   }
   const arch = triple.startsWith("x86_64") ? "x86_64" : "aarch64";
   const ndkRtLinux = join(ndkClangLib, ndkClangVer, "lib", "linux");
-  // NDK r27 keeps builtins/sanitizers in the old-style flat dir (arch in
-  // filename) but libunwind in the new-style per-arch subdir.
+  // NDK r27 keeps builtins in the old-style flat dir (arch in filename) but
+  // libunwind in the new-style per-arch subdir.
   const links = {
     "libclang_rt.builtins.a": join(ndkRtLinux, `libclang_rt.builtins-${arch}-android.a`),
-    "libclang_rt.ubsan_standalone.a": join(ndkRtLinux, `libclang_rt.ubsan_standalone-${arch}-android.a`),
-    "libclang_rt.ubsan_standalone.so": join(ndkRtLinux, `libclang_rt.ubsan_standalone-${arch}-android.so`),
-    "libclang_rt.ubsan_standalone_cxx.a": join(ndkRtLinux, `libclang_rt.ubsan_standalone_cxx-${arch}-android.a`),
     "libunwind.a": join(ndkRtLinux, arch, "libunwind.a"),
   };
   if (Object.keys(links).every(n => existsSync(join(targetDir, n)))) return;
@@ -511,7 +508,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   // ASAN: default on for debug builds on arm64 macOS or linux
   const asanDefault = debug && ((darwin && arm64) || linux);
-  const asan = partial.asan ?? asanDefault;
+  // Android: force off. NDK ASAN deployment needs wrap.sh + runtime .so
+  // shipping alongside the binary; UBSan likewise. Not worth the matrix.
+  const asan = abi === "android" ? false : (partial.asan ?? asanDefault);
 
   // Zig ASAN follows ASAN unless explicitly overridden
   const zigAsan = partial.zigAsan ?? asan;

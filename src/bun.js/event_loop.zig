@@ -280,9 +280,9 @@ fn updateCounts(this: *EventLoop) void {
     const loop = this.virtual_machine.event_loop_handle.?;
     if (comptime Environment.isWindows) {
         if (delta > 0) {
-            loop.active_handles += @intCast(delta);
+            loop.addActive(@intCast(delta));
         } else {
-            loop.active_handles -= @intCast(-delta);
+            loop.subActive(@intCast(-delta));
         }
     } else {
         if (delta > 0) {

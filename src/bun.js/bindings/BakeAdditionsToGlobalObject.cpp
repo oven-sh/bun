@@ -20,7 +20,7 @@ JSC::JSFunction* BakeAdditionsToGlobalObject::wrapComponent(JSGlobalObject* glob
 
 void createDevServerFrameworkRequestArgsStructure(JSC::LazyClassStructure::Initializer& init)
 {
-    auto structure = JSC::Structure::create(init.vm, init.global, init.global->objectPrototype(), JSC::TypeInfo(JSC::ObjectType, 0), JSFinalObject::info(), NonArray, 5);
+    auto structure = JSC::Structure::create(init.vm, init.global, init.global->objectPrototype(), JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 5);
 
     PropertyOffset offset = 0;
     structure = structure->addPropertyTransition(init.vm, structure, JSC::Identifier::fromString(init.vm, "routerTypeMain"_s), 0, offset);

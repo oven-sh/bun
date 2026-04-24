@@ -3,8 +3,8 @@
 // An agent that starts buildkite-agent and runs others services.
 
 import { copyFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
   getAbi,

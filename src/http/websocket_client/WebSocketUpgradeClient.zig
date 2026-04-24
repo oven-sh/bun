@@ -929,12 +929,15 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     },
                     "Sec-WebSocket-Extensions".len => {
                         if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Extensions", false)) {
-                            // If we didn't offer permessage-deflate, ignore any
-                            // extensions the server advertises. Accepting a
-                            // non-offered extension is a protocol violation per
-                            // RFC 6455 §9.1, but silently ignoring avoids
-                            // breaking callers for a misbehaving server.
-                            if (!this.offered_permessage_deflate) continue;
+                            // Per RFC 6455 §9.1, the server MUST NOT respond with an
+                            // extension the client did not offer. Match upstream `ws`
+                            // (lib/websocket.js: "Server sent a Sec-WebSocket-Extensions
+                            // header but no extension was requested") and fail the
+                            // handshake instead of silently accepting it.
+                            if (!this.offered_permessage_deflate) {
+                                this.terminate(ErrorCode.invalid_response);
+                                return;
+                            }
                             // This is a simplified parser. A full parser would handle multiple extensions and quoted values.
                             var it = std.mem.splitScalar(u8, header.value, ',');
                             while (it.next()) |ext_str| {

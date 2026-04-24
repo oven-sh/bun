@@ -917,8 +917,10 @@ describe("perMessageDeflate upgrade header", () => {
   // with the request line + headers.
   function captureUpgradeRequest(connectClient: (url: string) => void): Promise<string> {
     const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let accepted: import("net").Socket | undefined;
 
     const server = createNetServer(socket => {
+      accepted = socket;
       let buf = Buffer.alloc(0);
       socket.on("data", chunk => {
         buf = Buffer.concat([buf, chunk]);
@@ -955,7 +957,13 @@ describe("perMessageDeflate upgrade header", () => {
       connectClient(`ws://127.0.0.1:${port}/`);
     });
 
-    return promise.finally(() => server.close());
+    // `server.close()` only stops listening — the accepted connection keeps
+    // the event loop alive until the client's close timeout fires. Destroy it
+    // explicitly so the test doesn't leak a socket on slower runners.
+    return promise.finally(() => {
+      accepted?.destroy();
+      server.close();
+    });
   }
 
   it("omits Sec-WebSocket-Extensions when perMessageDeflate is false", async () => {
@@ -1008,5 +1016,59 @@ describe("perMessageDeflate upgrade header", () => {
       ws.on("error", () => {});
     });
     expect(request).toContain("Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits");
+  });
+
+  // Per RFC 6455 §9.1 (and npm ws), accepting a server-advertised extension we
+  // didn't offer is a protocol violation. Fail the handshake with an error
+  // event instead of completing the upgrade with compression silently enabled.
+  it("rejects a Sec-WebSocket-Extensions response when we did not offer it", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    let accepted: import("net").Socket | undefined;
+
+    const server = createNetServer(socket => {
+      accepted = socket;
+      let buf = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        const end = buf.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        const headerLines = buf.subarray(0, end).toString("utf8").split("\r\n");
+        const keyLine = headerLines.find(l => l.toLowerCase().startsWith("sec-websocket-key:"))!;
+        const key = keyLine.slice(keyLine.indexOf(":") + 1).trim();
+        const accept = crypto
+          .createHash("sha1")
+          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+
+        // Server erroneously returns permessage-deflate even though client
+        // opted out via `perMessageDeflate: false` → should fail handshake.
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${accept}\r\n` +
+            "Sec-WebSocket-Extensions: permessage-deflate\r\n\r\n",
+        );
+      });
+      socket.on("error", () => {});
+    });
+
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = (server.address() as AddressInfo);
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/`, { perMessageDeflate: false });
+      ws.on("open", () => reject(new Error("handshake should have failed")));
+      ws.on("error", () => resolve());
+      ws.on("close", () => {
+        // If close fires before error, resolve — the handshake was aborted.
+        resolve();
+      });
+    });
+
+    try {
+      await promise;
+    } finally {
+      accepted?.destroy();
+      server.close();
+    }
   });
 });

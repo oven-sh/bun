@@ -2866,6 +2866,27 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     }
                     continue;
                 }
+                // Escaped CR from `\<CR><LF>` line-continuation in a
+                // CRLF-encoded script: `read_char()` swallowed the backslash
+                // and returned the `\r` as escaped, leaving the `\n` for the
+                // next read. Consume that `\n` so the whole `\<CR><LF>` acts
+                // as a single line continuation (matches the escaped-`\n`
+                // case above). Escaped CR without a trailing `\n` falls
+                // through to preserve the literal byte.
+                else if (char == '\r') {
+                    if (comptime bun.Environment.allow_assert) {
+                        assert(input.escaped);
+                    }
+                    if (self.peek()) |next| {
+                        if (!next.escaped and next.char == '\n') {
+                            _ = self.eat();
+                            if (self.chars.state != .Double) {
+                                try self.break_word_impl(true, true, false);
+                            }
+                            continue;
+                        }
+                    }
+                }
 
                 try self.appendCharToStrPool(char);
             }

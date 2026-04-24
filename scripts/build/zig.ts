@@ -54,16 +54,19 @@ export const ZIG_COMMIT_FAST = "af6e006bec4494b5f716b1508e7113fc2210ed67";
  * (before the full Config exists, hence the narrow input shape).
  *
  * STABLE is used for:
- *   - Windows targets (local + CI): the FAST fork's Windows-side
- *     allocator/condvar fixes (oven-sh/zig#20) haven't landed yet.
+ *   - Windows HOSTS (local + CI): the FAST fork's Windows allocator/
+ *     condvar fixes (oven-sh/zig#20) haven't landed; psema is a host-side
+ *     concern (where the compiler runs), so the gate is host.os not the
+ *     target. In CI Windows targets build natively on Windows hosts
+ *     (getZigAgent), so host===target there anyway.
  *   - Main-branch CI (canary nightly + tagged production): anything that
  *     ships to users gets the proven compiler with full cross-language LTO.
  *
- * FAST for everything else: non-Windows local dev and non-Windows PR CI
+ * FAST for everything else: non-Windows-host local dev and PR CI
  * (`pr` set by ci.mjs when `!isMainBranch()`).
  */
-export function zigFastCompiler(opts: { windows: boolean; ci: boolean; pr: boolean }): boolean {
-  if (opts.windows) return false;
+export function zigFastCompiler(opts: { hostWindows: boolean; ci: boolean; pr: boolean }): boolean {
+  if (opts.hostWindows) return false;
   return !opts.ci || opts.pr;
 }
 
@@ -258,8 +261,8 @@ export function codegenEmbed(cfg: Config): boolean {
  * Where zig lives. Defaults to vendor/zig (FAST — the local-dev default,
  * also hardcoded in package.json/.vscode/.claude/docs so don't rename) or
  * vendor/zig-stable (STABLE). Per-variant so flipping between a
- * `zigFast=true` config and a `--canary=off` / `--zig-commit=$STABLE`
- * config doesn't wipe and re-download the other compiler (fetchZig nukes
+ * `zigFast=true` config and e.g. `--zig-commit=$STABLE` or a `ci-*`
+ * profile doesn't wipe and re-download the other compiler (fetchZig nukes
  * the dest on commit mismatch). Both dirs are gitignored.
  *
  * Override via $BUN_ZIG_PATH to point at an existing zig install (e.g.

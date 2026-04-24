@@ -50,7 +50,7 @@ export interface Host {
  * Overridable via PartialConfig for testing (e.g. trying a WebKit branch).
  *
  * Zig is NOT here: there are two pins (STABLE/FAST) and which one applies
- * depends on resolved build options (windows/ci/pr), so the default is
+ * depends on resolved build options (host.os/ci/pr), so the default is
  * computed inside resolveConfig via zigFastCompiler().
  */
 const versionDefaults = {
@@ -244,7 +244,7 @@ export interface Config {
   /**
    * Which zig compiler line this build uses — true = `upgrade-0.15.2-fast`
    * (parallel sema + sharded codegen), false = `upgrade-0.15.2` (stable).
-   * Derived from {windows, ci, pr} via zigFastCompiler(), or from an
+   * Derived from {host.os, ci, pr} via zigFastCompiler(), or from an
    * explicit `--zig-commit` matching a known pin. Gates ZIG_PARALLEL_SEMA
    * and codegenThreads() in zig.ts.
    */
@@ -757,13 +757,13 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
-  // Zig: FAST (parallel sema + sharded codegen) for non-Windows local dev
-  // and PR CI; STABLE for Windows (oven-sh/zig#20 not landed) and
-  // main-branch CI (canary + production). An explicit --zig-commit
+  // Zig: FAST (parallel sema + sharded codegen) for non-Windows-host local
+  // dev and PR CI; STABLE for Windows hosts (oven-sh/zig#20 not landed)
+  // and main-branch CI (canary + production). An explicit --zig-commit
   // matching a known pin overrides the default so e.g.
   // `--zig-commit=$STABLE` doesn't leave zigFast=true (which would make
   // ninja declare bun-zig.{0..N-1}.o that the stable compiler can't emit).
-  const zigFastDefault = zigFastCompiler({ windows, ci, pr });
+  const zigFastDefault = zigFastCompiler({ hostWindows: host.os === "windows", ci, pr });
   const zigCommit = partial.zigCommit ?? (zigFastDefault ? ZIG_COMMIT_FAST : ZIG_COMMIT_STABLE);
   const zigFast = zigCommit === ZIG_COMMIT_STABLE ? false : zigCommit === ZIG_COMMIT_FAST ? true : zigFastDefault;
 

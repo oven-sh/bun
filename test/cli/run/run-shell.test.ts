@@ -45,7 +45,7 @@ describe.concurrent("run-shell", () => {
     // Each line ends in CRLF. Before the fix, `export\r` wasn't a known
     // builtin so bun emitted "command not found: export", and `echo $X\r`
     // passed a trailing \r through to stdout.
-    const shellScript = "export VITE_PARAM=value\r\necho \"[$VITE_PARAM]\"\r\necho done\r\n";
+    const shellScript = 'export VITE_PARAM=value\r\necho "[$VITE_PARAM]"\r\necho done\r\n';
     await Bun.write(join(dir, "crlf.sh"), shellScript);
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(dir, "crlf.sh")],
@@ -54,11 +54,7 @@ describe.concurrent("run-shell", () => {
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("[value]\ndone\n");
     expect(exitCode).toBe(0);

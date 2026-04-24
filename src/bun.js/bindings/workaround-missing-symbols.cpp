@@ -49,9 +49,10 @@ extern "C" int kill(int pid, int sig)
 #endif
 #endif
 
-#if defined(__FreeBSD__)
+#if defined(__FreeBSD__) && !ASSERT_ENABLED
 // WTF references this counter from text/StringCommon.h under STRING_STATS;
-// when building without WebCore the definition lives here.
+// Debug WebKit defines it (StringView.cpp); Release doesn't, but Bun's
+// StringView.h usage still emits a reference.
 #include <atomic>
 namespace WTF::Detail {
 std::atomic<int> wtfStringCopyCount;

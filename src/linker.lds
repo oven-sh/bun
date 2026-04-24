@@ -3,6 +3,9 @@ BUN_1.2 {
 	napi*;
 	node_api_*;
 	node_module_register;
+	# FreeBSD: crt1.o defines these, libc.so.7 references them dynamically.
+	environ;
+	__progname;
 
 
   uv_accept;

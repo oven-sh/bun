@@ -37,6 +37,10 @@ source "azure-arm" "windows-x64" {
 
   // Output — Managed Image (x64 supports this)
 
+  // SIG replication to 27 regions takes longer than the 60m default; the
+  // CreateOrUpdate poll was hitting "context deadline exceeded" at exactly 1h.
+  shared_image_gallery_timeout = "3h"
+
   // Also publish to Compute Gallery
   shared_image_gallery_destination {
     subscription         = var.subscription_id
@@ -44,7 +48,10 @@ source "azure-arm" "windows-x64" {
     gallery_name         = var.gallery_name
     image_name           = var.image_name != "" ? var.image_name : "windows-x64-2019-build-${var.build_number}"
     image_version        = "1.0.0"
-    storage_account_type = "Standard_LRS"
+    // Premium_LRS: SSD-backed gallery storage — faster provisioning when
+    // robobun launches runners from this image, and faster cross-region
+    // replication during the publish step above.
+    storage_account_type = "Premium_LRS"
     target_region { name = var.location }
     target_region { name = "australiaeast" }
     target_region { name = "brazilsouth" }

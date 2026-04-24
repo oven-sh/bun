@@ -1719,14 +1719,17 @@ prefetch_build_deps() {
 
 	# Pre-pull test docker images (postgres, mysql, redis, minio, …) so tests
 	# don't fetch them at runtime. install_docker() only enables the daemon for
-	# next boot on most distros — start it now. Best-effort: a docker hiccup
-	# shouldn't fail the bake.
+	# next boot on most distros — start it now. Runs as root: install_docker()
+	# added $user to the docker group, but group membership doesn't apply to
+	# the current shell, so a non-root `docker compose` here would get
+	# permission-denied on the socket. Best-effort: a docker hiccup shouldn't
+	# fail the bake.
 	if [ -f "$clone_dir/bun/test/docker/prepare-ci.ts" ] && command -v docker >/dev/null; then
 		systemctl_path="$(which systemctl)"
-		if [ -n "$systemctl_path" ] && ! docker info >/dev/null 2>&1; then
+		if [ -n "$systemctl_path" ]; then
 			execute_sudo "$systemctl_path" start docker || true
 		fi
-		( cd "$clone_dir/bun" && "$bun_path" test/docker/prepare-ci.ts ) || \
+		( cd "$clone_dir/bun" && execute_sudo "$bun_path" test/docker/prepare-ci.ts ) || \
 			print "warning: prepare-ci.ts failed; test docker images not pre-pulled"
 	fi
 

@@ -406,6 +406,19 @@ async function runTests() {
   const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
 
+  // Kick off only the docker services this shard's tests need (mysql/postgres/
+  // redis/minio/…) so they've initialized by the time any test's ensure() runs.
+  // warmup-ci.ts maps test paths → services and does one `compose up -d` (no
+  // --wait); ensure()'s own `up --wait` is the synchronization point and
+  // returns fast when the container is already healthy. Linux-only — macOS /
+  // Windows CI don't run docker tests. Runs in the background while
+  // getVendorTests below installs vendor deps.
+  if (isCI && isLinux && spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0) {
+    spawn(execPath, [join(cwd, "test", "docker", "warmup-ci.ts"), ...tests], {
+      stdio: ["ignore", "inherit", "inherit"],
+    }).on("error", err => console.warn("docker warmup spawn failed:", err.message));
+  }
+
   /** @type {VendorTest[] | undefined} */
   let vendorTests;
   let vendorTotal = 0;
@@ -2668,24 +2681,6 @@ export async function main() {
   if (isCI) {
     if (allFiles.every(filename => filename.startsWith("docs/"))) {
       doRunTests = false;
-    }
-  }
-
-  // Kick off the test docker services early so mysql/postgres have already
-  // initialized by the time any test's ensure() runs. No --wait — just start
-  // them in the background; ensure()'s own `up --wait` is the synchronization
-  // point and returns fast when the container is already healthy. Linux-only
-  // (Windows/macOS CI don't run docker tests); arm64 currently still skips in
-  // harness.isDockerEnabled() but warming there is harmless and removes a
-  // coupling if that gate is lifted.
-  if (doRunTests && isCI && isLinux) {
-    const probe = spawnSync("docker", ["compose", "version"], { stdio: "ignore" });
-    if (probe.status === 0) {
-      console.log("Warming docker test services in background...");
-      const composeFile = join(cwd, "test", "docker", "docker-compose.yml");
-      spawn("docker", ["compose", "-p", "bun-test-services", "-f", composeFile, "up", "-d", "--build"], {
-        stdio: "inherit",
-      }).on("error", err => console.warn("docker warmup spawn failed:", err.message));
     }
   }
 

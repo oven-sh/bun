@@ -743,16 +743,28 @@ us_internal_create_child_ssl_socket_context(
 }
 
 /* Common function for creating a context from options.
- * We must NOT free a SSL_CTX with only SSL_CTX_free! Also free any password */
+ * We must NOT free a SSL_CTX with only SSL_CTX_free! Also free any password.
+ *
+ * With the SSL_CTX cache added for bun#12117 a single SSL_CTX may now be
+ * referenced by multiple wrapped contexts (each with is_parent=1), so
+ * free_ssl_context can be invoked more than once per SSL_CTX as those
+ * wrappers tear down. The password userdata is a single pointer stored on the
+ * SSL_CTX itself, so we null it out after the first free to make subsequent
+ * calls safe. The SSL_CTX_free ref-count machinery then still tears down the
+ * SSL_CTX exactly once, when the last ref is dropped. */
 void free_ssl_context(SSL_CTX *ssl_context) {
   if (!ssl_context) {
     return;
   }
 
-  /* If we have set a password string, free it here */
+  /* If we have set a password string, free it here. OpenSSL/BoringSSL returns
+   * NULL if we have no set password (or if a previous free_ssl_context call
+   * already freed+cleared it via the setter below). */
   void *password = SSL_CTX_get_default_passwd_cb_userdata(ssl_context);
-  /* OpenSSL returns NULL if we have no set password */
-  us_free(password);
+  if (password) {
+    us_free(password);
+    SSL_CTX_set_default_passwd_cb_userdata(ssl_context, NULL);
+  }
 
   SSL_CTX_free(ssl_context);
 }
@@ -2095,11 +2107,23 @@ static struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls_imp
     /* Reuse the caller-provided SSL_CTX. Allocates only the us_socket_context_t
      * wrapper; the expensive SSL_CTX_new + cert/cipher parsing is skipped. */
     us_internal_init_loop_ssl_data(old_context->loop);
-    SSL_CTX_up_ref(shared_ssl_ctx);
     struct us_internal_ssl_socket_context_t *ssl_ctx_holder =
         (struct us_internal_ssl_socket_context_t *)us_create_bun_nossl_socket_context(
             old_context->loop,
             sizeof(struct us_internal_ssl_socket_context_t) + sizeof(struct us_wrapped_socket_context_t));
+    if (UNLIKELY(!ssl_ctx_holder)) {
+      us_socket_context_unref(0, old_context);
+      return NULL;
+    }
+    /* Take the SSL_CTX ref only after the wrapper allocation succeeded, so a
+     * failure path here cannot leak a dangling up_ref. BoringSSL's
+     * SSL_CTX_up_ref returns 0 on failure (effectively never in practice, but
+     * be defensive). */
+    if (UNLIKELY(SSL_CTX_up_ref(shared_ssl_ctx) != 1)) {
+      us_socket_context_free(0, (struct us_socket_context_t *)ssl_ctx_holder);
+      us_socket_context_unref(0, old_context);
+      return NULL;
+    }
     ssl_ctx_holder->on_server_name = NULL;
     ssl_ctx_holder->ssl_context = shared_ssl_ctx;
     ssl_ctx_holder->is_parent = 1;  /* ensures SSL_CTX_free (= decrement refcount) on free */

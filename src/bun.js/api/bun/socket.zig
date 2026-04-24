@@ -24,6 +24,12 @@ fn lookupCachedSSLCtx(hash: u64) ?*anyopaque {
 fn storeCachedSSLCtx(hash: u64, ssl_ctx: *anyopaque) void {
     ssl_ctx_cache_lock.lock();
     defer ssl_ctx_cache_lock.unlock();
+    // Re-check under the lock so two concurrent misses cannot both insert
+    // (the loser would be overwritten and leaked). If another caller won the
+    // race, we drop this SSL_CTX on the floor (the wrapped SocketContext the
+    // caller also holds still retains its own ref; SSL_CTX_free there will
+    // decrement the refcount cleanly).
+    if (ssl_ctx_cache.contains(hash)) return;
     // Bump the BoringSSL refcount so the cache entry keeps the SSL_CTX alive
     // independently of any one wrapped SocketContext's lifetime.
     _ = bun.BoringSSL.c.SSL_CTX_up_ref(@ptrCast(@alignCast(ssl_ctx)));

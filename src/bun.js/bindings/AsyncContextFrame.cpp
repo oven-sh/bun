@@ -96,22 +96,22 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }
 
-#define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                     \
-    if (!functionObject.isCell())                                            \
-        return jsUndefined();                                                \
-    auto& vm = global->vm();                                                 \
-    JSValue restoreAsyncContext;                                             \
-    InternalFieldTuple* asyncContextData = nullptr;                          \
-    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(functionObject)) { \
-        functionObject = uncheckedDowncast<JSC::JSObject>(wrapper->callback.get());    \
-        asyncContextData = global->m_asyncContextData.get();                 \
-        restoreAsyncContext = asyncContextData->getInternalField(0);         \
-        asyncContextData->putInternalField(vm, 0, wrapper->context.get());   \
-    }                                                                        \
-    auto result = JSC::profiledCall(__VA_ARGS__);                            \
-    if (asyncContextData) {                                                  \
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);      \
-    }                                                                        \
+#define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                            \
+    if (!functionObject.isCell())                                                   \
+        return jsUndefined();                                                       \
+    auto& vm = global->vm();                                                        \
+    JSValue restoreAsyncContext;                                                    \
+    InternalFieldTuple* asyncContextData = nullptr;                                 \
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(functionObject)) {       \
+        functionObject = uncheckedDowncast<JSC::JSObject>(wrapper->callback.get()); \
+        asyncContextData = global->m_asyncContextData.get();                        \
+        restoreAsyncContext = asyncContextData->getInternalField(0);                \
+        asyncContextData->putInternalField(vm, 0, wrapper->context.get());          \
+    }                                                                               \
+    auto result = JSC::profiledCall(__VA_ARGS__);                                   \
+    if (asyncContextData) {                                                         \
+        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);             \
+    }                                                                               \
     return result;
 
 // JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, const ArgList& args, ASCIILiteral errorMessage)

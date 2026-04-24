@@ -685,7 +685,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_loading, (JSGlobalObject*, EncodedJSVal
 #define WEBVIEW_CALLBACK_ACCESSOR(Name, field)                                                                  \
     JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_##Name, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName)) \
     {                                                                                                           \
-        auto* thisObject = dynamicDowncast<JSWebView>(JSValue::decode(thisValue));                               \
+        auto* thisObject = dynamicDowncast<JSWebView>(JSValue::decode(thisValue));                              \
         if (!thisObject) return JSValue::encode(jsUndefined());                                                 \
         JSObject* cb = thisObject->field.get();                                                                 \
         return JSValue::encode(cb ? JSValue(cb) : jsNull());                                                    \
@@ -693,7 +693,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWebViewGetter_loading, (JSGlobalObject*, EncodedJSVal
     JSC_DEFINE_CUSTOM_SETTER(jsWebViewSetter_##Name,                                                            \
         (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))   \
     {                                                                                                           \
-        auto* thisObject = dynamicDowncast<JSWebView>(JSValue::decode(thisValue));                               \
+        auto* thisObject = dynamicDowncast<JSWebView>(JSValue::decode(thisValue));                              \
         if (!thisObject) return false;                                                                          \
         JSValue value = JSValue::decode(encodedValue);                                                          \
         if (value.isUndefinedOrNull()) {                                                                        \

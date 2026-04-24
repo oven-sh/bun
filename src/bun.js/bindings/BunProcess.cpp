@@ -182,6 +182,8 @@ static JSValue constructPlatform(VM& vm, JSObject* processObject)
 {
 #if defined(__APPLE__)
     return JSC::jsString(vm, makeAtomString("darwin"_s));
+#elif defined(__ANDROID__)
+    return JSC::jsString(vm, makeAtomString("android"_s));
 #elif defined(__linux__)
     return JSC::jsString(vm, makeAtomString("linux"_s));
 #elif OS(WINDOWS)

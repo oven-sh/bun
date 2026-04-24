@@ -321,9 +321,7 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
       a: { node_modules: {} },
     });
     fs.symlinkSync("../..", path.join(String(dir), "a/node_modules/a"), "dir");
-    expect(fs.globSync("**/node_modules/a/*.txt", { cwd: String(dir) })).toStrictEqual([
-      "a/node_modules/a/x.txt",
-    ]);
+    expect(fs.globSync("**/node_modules/a/*.txt", { cwd: String(dir) })).toStrictEqual(["a/node_modules/a/x.txt"]);
   });
 
   it("trailing slashes match the named directory", () => {

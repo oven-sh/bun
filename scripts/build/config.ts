@@ -242,6 +242,14 @@ export interface Config {
    * codegenThreads() in zig.ts.
    */
   zigFast: boolean;
+  /**
+   * Whether the zig step emits LTO bitcode (`-Dlto=true`) instead of machine
+   * code. Distinct from `lto` (the C++/link side): on FAST builds zig emits
+   * sharded machine code so codegenThreads()>1 can fire, while C++ still
+   * compiles with -flto and lld LTOs the C++ bitcode (mixed-input link).
+   * Only STABLE (production) gets full cross-language LTO including zig.
+   */
+  zigLto: boolean;
   /** WebKit commit. Default in versions.ts; override to test a WebKit branch. */
   webkitVersion: string;
 }
@@ -757,6 +765,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const zigFastDefault = zigFastCompiler({ ci, canary });
   const zigCommit = partial.zigCommit ?? (zigFastDefault ? ZIG_COMMIT_FAST : ZIG_COMMIT_STABLE);
   const zigFast = zigCommit === ZIG_COMMIT_STABLE ? false : zigCommit === ZIG_COMMIT_FAST ? true : zigFastDefault;
+  // FAST builds (PR/canary CI, local) skip LTO on the zig side so
+  // codegenThreads()>1 can shard the LLVM emit; the C++/link side keeps
+  // `lto` and lld handles the mixed bitcode + machine-code link. STABLE
+  // (production) keeps full cross-language LTO.
+  const zigLto = lto && !zigFast;
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
@@ -852,6 +865,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     canaryRevision,
     zigCommit,
     zigFast,
+    zigLto,
     webkitVersion,
   };
 }

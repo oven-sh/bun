@@ -38,6 +38,9 @@ pub const FetchTasklet = struct {
 
     signal: ?*jsc.WebCore.AbortSignal = null,
     signals: http.Signals = .{},
+
+    otel_span: ?*bun.otel.NativeSpan = null,
+
     signal_store: http.Signals.Store = .{},
     has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
@@ -58,6 +61,43 @@ pub const FetchTasklet = struct {
     tracker: jsc.Debugger.AsyncTaskTracker,
 
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+
+    /// Build the client-span attr set on the stack from stash + end-time scalars.
+    fn endOtelClientSpan(span: *bun.otel.NativeSpan, status_code: u32, fail: ?[]const u8) void {
+        var buf: [6]bun.otel.instrument.Attribute = undefined;
+        var a: []bun.otel.instrument.Attribute = &buf;
+        a[0] = .semconv(.@"http.request.method", .string(span.name));
+        a = a[1..];
+        if (span.stash_) |st| {
+            if (st.s[0].len > 0) {
+                a[0] = .semconv(.@"url.full", .string(st.s[0]));
+                a = a[1..];
+            }
+            if (st.s[1].len > 0) {
+                a[0] = .semconv(.@"server.address", .string(st.s[1]));
+                a = a[1..];
+            }
+            if (st.i != 0) {
+                a[0] = .semconv(.@"server.port", .int(st.i));
+                a = a[1..];
+            }
+        }
+        var ebuf: [4]u8 = undefined;
+        if (fail) |e| {
+            span.setStatus(.err, e);
+            a[0] = .semconv(.@"error.type", .string(e));
+            a = a[1..];
+        } else if (status_code != 0) {
+            a[0] = .semconv(.@"http.response.status_code", .int(@intCast(status_code)));
+            a = a[1..];
+            if (status_code >= 500) {
+                span.setStatus(.err, "");
+                a[0] = .semconv(.@"error.type", .string(std.fmt.bufPrint(&ebuf, "{d}", .{status_code}) catch "5xx"));
+                a = a[1..];
+            }
+        }
+        span.end(buf[0 .. buf.len - a.len]);
+    }
 
     pub fn ref(this: *FetchTasklet) void {
         const count = this.ref_count.fetchAdd(1, .monotonic);
@@ -198,6 +238,11 @@ pub const FetchTasklet = struct {
 
     fn clearData(this: *FetchTasklet) void {
         log("clearData ", .{});
+        if (this.otel_span) |span| {
+            this.otel_span = null;
+            const fail: ?[]const u8 = if (this.result.fail) |e| @errorName(e) else null;
+            endOtelClientSpan(span, 0, fail);
+        }
         const allocator = bun.default_allocator;
         if (this.url_proxy_buffer.len > 0) {
             allocator.free(this.url_proxy_buffer);
@@ -967,6 +1012,12 @@ pub const FetchTasklet = struct {
         const metadata = this.metadata.?;
         const http_response = metadata.response;
         this.is_waiting_body = this.result.has_more;
+        if (this.otel_span) |span| {
+            this.otel_span = null;
+            // TODO(otel): network.protocol.version — http.HTTPClientResult does
+            // not currently surface negotiated HTTP version.
+            endOtelClientSpan(span, http_response.status_code, null);
+        }
         return Response.init(
             .{
                 .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
@@ -1134,13 +1185,30 @@ pub const FetchTasklet = struct {
             fetch_tasklet.signals.cert_errors = null;
         }
 
+        if (bun.otel.TracerProvider.getIfEnabled(jsc_vm, .fetch) != null) {
+            const parent = bun.otel.instrument.getActiveSpanContext(globalThis);
+            if (bun.otel.NativeSpan.start(jsc_vm, .fetch, .fetch, .client, @tagName(fetch_options.method), parent)) |span| {
+                // Stash slots: s[0]=url.full, s[1]=server.address, i=server.port. Method is span.name (static).
+                const st = span.stash();
+                st.s[0] = st.push(url.href);
+                st.s[1] = st.push(url.hostname);
+                st.i = @intCast(url.getPortAuto());
+                fetch_tasklet.otel_span = span;
+                if (fetch_tasklet.request_headers.get("traceparent") == null) {
+                    var tp_buf: [bun.otel.propagation.traceparent_len]u8 = undefined;
+                    bun.otel.propagation.formatTraceparent(span.ctx, &tp_buf);
+                    fetch_tasklet.request_headers.append("traceparent", &tp_buf) catch {};
+                }
+            }
+        }
+
         // This task gets queued on the HTTP thread.
         fetch_tasklet.http.?.* = http.AsyncHTTP.init(
             bun.default_allocator,
             fetch_options.method,
             url,
-            fetch_options.headers.entries,
-            fetch_options.headers.buf.items,
+            fetch_tasklet.request_headers.entries,
+            fetch_tasklet.request_headers.buf.items,
             &fetch_tasklet.response_buffer,
             fetch_tasklet.request_body.slice(),
             http.HTTPClientResult.Callback.New(

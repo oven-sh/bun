@@ -266,6 +266,7 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   emitRuntimeJs(ctx);
   emitNodeFallbacks(ctx);
   emitErrorCode(ctx);
+  emitOtlpProto(ctx);
   emitGeneratedClasses(ctx);
   emitCppBind(ctx);
   emitCiInfo(ctx);
@@ -537,6 +538,34 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
   o.all.push(...outputs);
   o.zigInputs.push(...outputs);
   o.cppHeaders.push(outputs[0]!, outputs[1]!);
+}
+
+function emitOtlpProto({ n, cfg, o, dirStamp }: Ctx): void {
+  const script = resolve(cfg.cwd, "src", "codegen", "generate-otlp-proto.ts");
+  const protoDir = resolve(cfg.cwd, "src", "otel", "proto");
+  const inputs = [
+    script,
+    resolve(protoDir, "common.proto"),
+    resolve(protoDir, "resource.proto"),
+    resolve(protoDir, "trace.proto"),
+    resolve(protoDir, "trace_service.proto"),
+  ];
+  const outputs = [resolve(cfg.codegenDir, "OtlpProtoTags.zig")];
+
+  n.build({
+    outputs,
+    rule: "codegen",
+    inputs,
+    orderOnlyInputs: [dirStamp],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "OtlpProtoTags.zig",
+      args: shJoin(cfg, ["run", script, cfg.codegenDir]),
+    },
+  });
+
+  o.all.push(...outputs);
+  o.zigInputs.push(...outputs);
 }
 
 function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {

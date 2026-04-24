@@ -38,8 +38,11 @@ JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject
 {
     JSValue context = globalObject->m_asyncContextData.get()->getInternalField(0);
 
-    // If there is no async context, do not snapshot the callback.
-    if (context.isUndefined()) {
+    // If there is no async context, do not snapshot the callback. `null` is the
+    // sentinel OTEL uses to mean "no active span" — unlike `undefined` it
+    // survives microtask save/restore (JSMicrotask.cpp), but it should still be
+    // treated as "no context" here so callbacks aren't needlessly wrapped.
+    if (context.isUndefinedOrNull()) {
         return callback;
     }
 
@@ -94,6 +97,22 @@ void auditEverything(JSGlobalObject* globalObject, JSValue value, JSValue thisVa
 extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlobalObject* globalObject, JSC::EncodedJSValue callback)
 {
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
+}
+
+extern "C" JSC::EncodedJSValue Bun__getAsyncContextSlot(JSGlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->m_asyncContextData.get()->getInternalField(0));
+}
+
+extern "C" void Bun__setAsyncContextSlot(JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    globalObject->m_asyncContextData.get()->putInternalField(vm, 0, JSValue::decode(value));
+}
+
+extern "C" void Bun__enableAsyncContextTracking(JSGlobalObject* globalObject)
+{
+    globalObject->setAsyncContextTrackingEnabled(true);
 }
 
 #define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                     \

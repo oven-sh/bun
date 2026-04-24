@@ -29,27 +29,40 @@ pub const CppWebSocket = opaque {
     extern fn WebSocket__didReceiveBytes(websocket_context: *CppWebSocket, bytes: [*]const u8, byte_len: usize, opcode: u8) void;
     extern fn WebSocket__rejectUnauthorized(websocket_context: *CppWebSocket) bool;
     pub fn didAbruptClose(this: *CppWebSocket, reason: ErrorCode) void {
-        const loop = jsc.VirtualMachine.get().eventLoop();
+        const vm = jsc.VirtualMachine.get();
+        const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
+        var otel = bun.otel.instrument.WSGuard.begin(vm, vm.global, .websocket_client, "ws close", null);
+        otel.setError(@tagName(reason));
+        defer otel.end();
         WebSocket__didAbruptClose(this, reason);
     }
     pub fn didClose(this: *CppWebSocket, code: u16, reason: *bun.String) void {
-        const loop = jsc.VirtualMachine.get().eventLoop();
+        const vm = jsc.VirtualMachine.get();
+        const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
+        var otel = bun.otel.instrument.WSGuard.begin(vm, vm.global, .websocket_client, "ws close", null);
+        defer otel.end();
         WebSocket__didClose(this, code, reason);
     }
     pub fn didReceiveText(this: *CppWebSocket, clone: bool, text: *const jsc.ZigString) void {
-        const loop = jsc.VirtualMachine.get().eventLoop();
+        const vm = jsc.VirtualMachine.get();
+        const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
+        var otel = bun.otel.instrument.WSGuard.begin(vm, vm.global, .websocket_client, "ws message", text.len);
+        defer otel.end();
         WebSocket__didReceiveText(this, clone, text);
     }
     pub fn didReceiveBytes(this: *CppWebSocket, bytes: [*]const u8, byte_len: usize, opcode: u8) void {
-        const loop = jsc.VirtualMachine.get().eventLoop();
+        const vm = jsc.VirtualMachine.get();
+        const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
+        var otel = bun.otel.instrument.WSGuard.begin(vm, vm.global, .websocket_client, "ws message", byte_len);
+        defer otel.end();
         WebSocket__didReceiveBytes(this, bytes, byte_len, opcode);
     }
     pub fn rejectUnauthorized(this: *CppWebSocket) bool {
@@ -59,15 +72,21 @@ pub const CppWebSocket = opaque {
         return WebSocket__rejectUnauthorized(this);
     }
     pub fn didConnect(this: *CppWebSocket, socket: *uws.Socket, buffered_data: ?[*]u8, buffered_len: usize, deflate_params: ?*const WebSocketDeflate.Params, custom_ssl_ctx: ?*uws.SocketContext) void {
-        const loop = jsc.VirtualMachine.get().eventLoop();
+        const vm = jsc.VirtualMachine.get();
+        const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
+        var otel = bun.otel.instrument.WSGuard.begin(vm, vm.global, .websocket_client, "ws open", null);
+        defer otel.end();
         WebSocket__didConnect(this, socket, buffered_data, buffered_len, deflate_params, custom_ssl_ctx);
     }
     pub fn didConnectWithTunnel(this: *CppWebSocket, tunnel: *anyopaque, buffered_data: ?[*]u8, buffered_len: usize, deflate_params: ?*const WebSocketDeflate.Params) void {
-        const loop = jsc.VirtualMachine.get().eventLoop();
+        const vm = jsc.VirtualMachine.get();
+        const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
+        var otel = bun.otel.instrument.WSGuard.begin(vm, vm.global, .websocket_client, "ws open", null);
+        defer otel.end();
         WebSocket__didConnectWithTunnel(this, tunnel, buffered_data, buffered_len, deflate_params);
     }
     extern fn WebSocket__incrementPendingActivity(websocket_context: *CppWebSocket) void;

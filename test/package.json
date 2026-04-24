@@ -1,12 +1,13 @@
 {
   "name": "test",
   "devDependencies": {
+    "@opentelemetry/otlp-transformer": "^0.214.0",
+    "@types/puppeteer": "7.0.4",
     "@types/react": "18.0.28",
     "@types/react-dom": "18.0.11",
     "@types/supertest": "2.0.12",
     "@types/utf-8-validate": "5.0.0",
-    "@types/ws": "8.5.10",
-    "@types/puppeteer": "7.0.4"
+    "@types/ws": "8.5.10"
   },
   "dependencies": {
     "@astrojs/node": "9.1.3",

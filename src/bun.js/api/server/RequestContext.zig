@@ -78,6 +78,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         additional_on_abort: ?AdditionalOnAbortCallback = null,
 
+        otel_span: ?*bun.otel.NativeSpan = null,
+
         // TODO: support builtin compression
 
         pub fn setSignalAborted(this: *RequestContext, reason: bun.jsc.CommonAbortReason) void {
@@ -688,6 +690,12 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (comptime Environment.isDebug) {
                 ctxLog("finalizeWithoutDeinit: has_finalized {}", .{this.flags.has_finalized});
                 this.flags.has_finalized = true;
+            }
+
+            if (this.otel_span) |span| {
+                this.otel_span = null;
+                const status: u16 = if (this.response_ptr) |r| r.statusCode() else 0;
+                bun.otel.instrument.endHttpServerSpan(span, if (ssl_enabled) "https" else "http", status, this.flags.aborted);
             }
 
             if (this.response_jsvalue != .zero) {

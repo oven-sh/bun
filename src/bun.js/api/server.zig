@@ -1900,6 +1900,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
             }
 
+            const otel_guard = this.beginOtelNodeHTTPSpan(req, resp);
             const result: JSValue = bun.jsc.fromJSHostCall(globalThis, @src(), onNodeHTTPRequestFn, .{
                 @intFromPtr(AnyServer.from(this).ptr.ptr()),
                 globalThis,
@@ -1914,6 +1915,16 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 upgrade_ctx,
                 &node_http_response,
             }) catch globalThis.takeException(error.JSError);
+            if (otel_guard) |*g| {
+                g.guard.restore();
+                if (g.span) |s| {
+                    if (node_http_response) |r| {
+                        if (r.flags.is_request_pending) {
+                            r.otel_span = s;
+                        } else r.endOtelSpan(s);
+                    } else bun.otel.instrument.endHttpServerSpan(s, if (ssl_enabled) "https" else "http", 0, false);
+                }
+            }
 
             const HTTPResult = union(enum) {
                 rejection: jsc.JSValue,
@@ -2022,6 +2033,37 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             onNodeHTTPRequestWithUpgradeCtx(this, req, resp, null);
         }
 
+        const OtelNodeHTTPGuard = struct {
+            guard: bun.otel.instrument.SlotGuard,
+            span: ?*bun.otel.NativeSpan,
+        };
+
+        /// Mirrors `beginOtelServerSpan` for the node:http compatibility path.
+        /// The span is parked on `NodeHTTPResponse` after the handler is invoked
+        /// and ended in `NodeHTTPResponse.markRequestAsDone` (or here if no
+        /// response object was created).
+        fn beginOtelNodeHTTPSpan(this: *ThisServer, req: *uws.Request, resp: *App.Response) ?OtelNodeHTTPGuard {
+            if (bun.otel.TracerProvider.getIfEnabled(this.vm, .node_http) == null) return null;
+            const parent = if (req.header("traceparent")) |h| bun.otel.propagation.parseTraceparent(h) else null;
+            // uWS returns lowercase; semconv `http.request.method` is the canonical
+            // token (uppercase) or "_OTHER" so the slice stays static.
+            const method_name: []const u8 = if (bun.http.Method.find(req.method())) |m| @tagName(m) else "_OTHER";
+            const span = bun.otel.NativeSpan.start(this.vm, .node_http, .node_http, .server, method_name, parent) orelse {
+                if (parent) |p| {
+                    const cell = bun.otel.OtelSpanContext.create(this.globalThis, p, true);
+                    return .{ .guard = bun.otel.instrument.SlotGuard.enter(this.globalThis, cell), .span = null };
+                }
+                return null;
+            };
+            const st = span.stash();
+            this.stashOtelServerStart(st, req, resp);
+            st.s[bun.otel.instrument.ServerSlot.method] = method_name;
+            return .{
+                .guard = bun.otel.instrument.SlotGuard.enter(this.globalThis, span.createContextCell(this.globalThis)),
+                .span = span,
+            };
+        }
+
         const onNodeHTTPRequestFn = if (ssl_enabled)
             NodeHTTPServer__onRequest_https
         else
@@ -2052,6 +2094,56 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return false;
         }
 
+        /// One-branch fast path when OTEL is off. Otherwise: parse incoming
+        /// `traceparent`, start a server span on the RequestContext, install
+        /// its SpanContext as the active async-context slot, and return the
+        /// guard so the caller can restore immediately after the JS handler
+        /// returns. The span is ended in `RequestContext.finalizeWithoutDeinit`.
+        fn beginOtelServerSpan(this: *ThisServer, ctx: *RequestContext, req: *uws.Request) ?bun.otel.instrument.SlotGuard {
+            if (bun.otel.TracerProvider.getIfEnabled(this.vm, .serve) == null) return null;
+            const parent = if (req.header("traceparent")) |h| bun.otel.propagation.parseTraceparent(h) else null;
+            const span = bun.otel.NativeSpan.start(this.vm, .serve, .server, .server, @tagName(ctx.method), parent) orelse {
+                // Unsampled: still propagate the incoming context so downstream
+                // fetch carries the same trace.
+                if (parent) |p| {
+                    const cell = bun.otel.OtelSpanContext.create(this.globalThis, p, true);
+                    return bun.otel.instrument.SlotGuard.enter(this.globalThis, cell);
+                }
+                return null;
+            };
+            const st = span.stash();
+            this.stashOtelServerStart(st, req, ctx.resp);
+            st.s[bun.otel.instrument.ServerSlot.method] = @tagName(ctx.method);
+            ctx.otel_span = span;
+            return bun.otel.instrument.SlotGuard.enter(this.globalThis, span.createContextCell(this.globalThis));
+        }
+
+        /// Capture start-time strings into the span's pooled stash; attrs are
+        /// built on the stack at end (`instrument.endHttpServerSpan`). Only
+        /// called when a span exists, so the header reads / remote-addr lookup
+        /// are not on the OTEL-off path.
+        fn stashOtelServerStart(this: *ThisServer, st: *bun.otel.instrument.StrStash, req: *uws.Request, resp: anytype) void {
+            const Slot = bun.otel.instrument.ServerSlot;
+            st.s[Slot.url] = st.push(req.url());
+            if (req.header("user-agent")) |ua| st.s[Slot.ua] = st.push(ua);
+            switch (this.config.address) {
+                .tcp => |tcp| {
+                    st.i = if (this.listener) |l| @intCast(l.getLocalPort()) else @intCast(tcp.port);
+                    if (tcp.hostname) |h| st.s[Slot.server_addr] = st.push(bun.sliceTo(h, 0));
+                },
+                .unix => {},
+            }
+            // TODO(otel): network.protocol.version — uWS does not currently
+            // expose HTTP/1.1 vs HTTP/2 on the request/response in our bindings.
+            if (@typeInfo(@TypeOf(resp)) == .optional) {
+                if (resp) |r| {
+                    if (r.getRemoteSocketInfo()) |info| st.s[Slot.client_addr] = st.push(info.ip);
+                }
+            } else {
+                if (resp.getRemoteSocketInfo()) |info| st.s[Slot.client_addr] = st.push(info.ip);
+            }
+        }
+
         pub fn onUserRouteRequest(user_route: *UserRoute, req: *uws.Request, resp: *App.Response) void {
             const server = user_route.server;
             const index = user_route.id;
@@ -2062,8 +2154,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .specific => |m| m,
             }) orelse return;
 
+            const otel_guard = server.beginOtelServerSpan(prepared.ctx, req);
+            if (prepared.ctx.otel_span) |s| {
+                const st = s.stash();
+                st.s[bun.otel.instrument.ServerSlot.route] = st.push(user_route.route.path);
+            }
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
+            if (otel_guard) |*g| g.restore();
 
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
@@ -2103,6 +2201,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             bun.assert(this.config.onRequest != .zero);
 
+            const otel_guard = this.beginOtelServerSpan(prepared.ctx, req);
             const js_value = this.jsValueAssertAlive();
             const response_value = this.config.onRequest.call(
                 this.globalThis,
@@ -2110,6 +2209,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 &.{ prepared.js_request, js_value },
             ) catch |err|
                 this.globalThis.takeException(err);
+            if (otel_guard) |*g| g.restore();
 
             this.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
@@ -2330,8 +2430,14 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             var should_deinit_context = false;
             var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, .no, method) orelse return;
             prepared.ctx.upgrade_context = upgrade_ctx; // set the upgrade context
+            const otel_guard = server.beginOtelServerSpan(prepared.ctx, req);
+            if (prepared.ctx.otel_span) |s| {
+                const st = s.stash();
+                st.s[bun.otel.instrument.ServerSlot.route] = st.push(this.route.path);
+            }
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
+            if (otel_guard) |*g| g.restore();
 
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }

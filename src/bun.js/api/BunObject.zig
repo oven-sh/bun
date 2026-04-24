@@ -2082,6 +2082,7 @@ pub const JSZstd = struct {
 comptime {
     _ = Crypto.JSPasswordObject.JSPasswordObject__create;
     _ = @import("../../btjs.zig").dumpBtjsTrace;
+    _ = bun.otel;
     BunObject.exportAll();
 }
 

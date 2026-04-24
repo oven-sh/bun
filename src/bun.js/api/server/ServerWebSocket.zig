@@ -96,7 +96,9 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
         .globalObject = globalObject,
         .callback = onOpenHandler,
     };
+    var otel = OtelWSGuard.begin(vm, globalObject, "ws open", null);
     ws.cork(&corker, Corker.run);
+    otel.end(corker.result);
     const result = corker.result;
     this.#flags.opened = true;
     if (result.toError()) |err_value| {
@@ -156,7 +158,9 @@ pub fn onMessage(
         .callback = onMessageHandler,
     };
 
+    var otel = OtelWSGuard.begin(vm, globalObject, "ws message", message.len);
     ws.cork(&corker, Corker.run);
+    otel.end(corker.result);
     const result = corker.result;
 
     if (result.isEmptyOrUndefinedOrNull()) return;
@@ -332,12 +336,14 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
             return;
         };
 
-        _ = handler.onClose.call(globalObject, .js_undefined, &[_]jsc.JSValue{ this.#this_value.tryGet() orelse .js_undefined, JSValue.jsNumber(code), message_js }) catch |e| {
+        var otel = OtelWSGuard.begin(vm, globalObject, "ws close", null);
+        const close_result = handler.onClose.call(globalObject, .js_undefined, &[_]jsc.JSValue{ this.#this_value.tryGet() orelse .js_undefined, JSValue.jsNumber(code), message_js }) catch |e| brk: {
             const err = globalObject.takeException(e);
             log("onClose error {}", .{this.#this_value.isNotEmpty()});
             handler.runErrorCallback(vm, globalObject, err);
-            return;
+            break :brk .js_undefined;
         };
+        otel.end(close_result);
     } else if (signal) |sig| {
         const loop = vm.eventLoop();
 
@@ -349,6 +355,20 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
         }
     }
 }
+
+/// Thin alias so existing call sites stay `OtelWSGuard.begin(...)`; the
+/// implementation is shared with the client in `bun.otel.instrument.WSGuard`.
+const OtelWSGuard = struct {
+    inner: bun.otel.instrument.WSGuard,
+
+    pub fn begin(vm: *jsc.VirtualMachine, global: *jsc.JSGlobalObject, name: []const u8, body_size: ?usize) OtelWSGuard {
+        return .{ .inner = bun.otel.instrument.WSGuard.begin(vm, global, .websocket, name, body_size) };
+    }
+
+    pub fn end(self: *OtelWSGuard, result: jsc.JSValue) void {
+        self.inner.endWithResult(result);
+    }
+};
 
 pub fn behavior(comptime ServerType: type, comptime ssl: bool, opts: uws.WebSocketBehavior) uws.WebSocketBehavior {
     return uws.WebSocketBehavior.Wrap(ServerType, @This(), ssl).apply(opts);

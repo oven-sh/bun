@@ -132,6 +132,20 @@ describe("perMessageDeflate upgrade header", () => {
     expect(request).toContain("Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits");
   });
 
+  // Object spread copies own *enumerable* properties only, so a non-enumerable
+  // `perMessageDeflate: false` defined with `Object.defineProperty` must not
+  // disable the offer either.
+  it("ignores non-enumerable perMessageDeflate properties", async () => {
+    const request = await captureUpgradeRequest(url => {
+      const options: { [k: string]: unknown } = {};
+      Object.defineProperty(options, "perMessageDeflate", { value: false, enumerable: false });
+      const ws = new WebSocket(url, options as any);
+      ws.on("open", () => ws.close());
+      ws.on("error", () => {});
+    });
+    expect(request).toContain("Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits");
+  });
+
   // Per RFC 6455 §9.1 (and npm ws), accepting a server-advertised extension we
   // didn't offer is a protocol violation. Fail the handshake with an error
   // event instead of completing the upgrade with compression silently enabled.

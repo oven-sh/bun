@@ -316,6 +316,24 @@ it("jsx with fragment", () => {
   expect(input).toBe(output);
 });
 
+it("jsx with circular reference does not crash", () => {
+  const a = { $$typeof: Symbol.for("react.element"), type: "div" };
+  a.key = a;
+  expect(Bun.inspect(a)).toBe("<div key=[Circular] />");
+
+  const b = { $$typeof: Symbol.for("react.element"), type: "span", props: {} };
+  b.props.children = b;
+  expect(Bun.inspect(b)).toBe("<span>\n  [Circular]\n</span>");
+
+  const c = { $$typeof: Symbol.for("react.element"), type: "p", props: {} };
+  c.props.self = c;
+  expect(Bun.inspect(c)).toBe("<p self=[Circular] />");
+
+  const d = { $$typeof: Symbol.for("react.element"), type: "ul", props: {} };
+  d.props.children = [d];
+  expect(Bun.inspect(d)).toBe("<ul>\n  [Circular]\n</ul>");
+});
+
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
   expect(Bun.inspect("hi")).toBe('"hi"');

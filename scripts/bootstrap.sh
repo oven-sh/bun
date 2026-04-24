@@ -1283,6 +1283,10 @@ install_android_ndk() {
 	unzip="$(require unzip)"
 	execute_sudo "$unzip" -q "$ndk_zip" -d /opt
 	execute_sudo mv "/opt/android-ndk-${ndk_version}" "$ndk_home"
+	# Trim ~1.1GB unused (NDK clang/lld, lldb, non-android runtimes).
+	ndk_prebuilt="$ndk_home/toolchains/llvm/prebuilt/linux-x86_64"
+	execute_sudo rm -rf "$ndk_prebuilt/bin" "$ndk_prebuilt/python3" "$ndk_prebuilt/lib/liblldb.so" \
+		"$ndk_home/simpleperf" "$ndk_home/shader-tools" "$ndk_home/sources"
 	append_to_profile "export ANDROID_NDK_ROOT=$ndk_home"
 
 	# Symlink NDK compiler-rt builtins + libunwind into host clang's resource

@@ -532,8 +532,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // LTO: default on only for CI release linux non-asan non-assertions
   const ltoDefault = release && linux && ci && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
-  // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit)
-  if (asan && lto) {
+  // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
+  // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
+  if ((asan && lto) || abi === "android") {
     lto = false;
   }
 

@@ -130,10 +130,9 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23" },
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.23" },
   // Android: cross-compiled from glibc amazonlinux via NDK sysroot. Host arch
-  // matches target arch so only --abi/--target/--sysroot are cross. Gated until
-  // bun-webkit-linux-{arm64,amd64}-android prebuilts are published.
-  // { os: "linux", arch: "aarch64", abi: "android", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  // { os: "linux", arch: "x64", abi: "android", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  // matches target arch so only --abi/--target/--sysroot are cross.
+  { os: "linux", arch: "aarch64", abi: "android", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "linux", arch: "x64", abi: "android", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
   { os: "windows", arch: "aarch64", release: "11" },

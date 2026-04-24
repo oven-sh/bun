@@ -19,7 +19,7 @@
  * re-extraction after a failed patch doesn't re-download.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ar, cc, cxx, nasm } from "./compile.ts";
 import type { BuildType, Config } from "./config.ts";
@@ -1372,11 +1372,9 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
     env[envKey] = cfg.cc;
     const linkArgs = [`-Clink-arg=--target=${cfg.crossTarget}`];
     if (cfg.sysroot !== undefined) linkArgs.push(`-Clink-arg=--sysroot=${cfg.sysroot}`);
-    if (cfg.abi === "android" && cfg.androidNdk !== undefined) {
+    if (cfg.androidNdkRuntimeDir !== undefined) {
       const llvmArch = cfg.arm64 ? "aarch64" : "x86_64";
-      const clangLib = join(dirname(cfg.sysroot!), "lib", "clang");
-      const ver = readdirSync(clangLib)[0];
-      if (ver !== undefined) linkArgs.push(`-Clink-arg=-L${join(clangLib, ver, "lib", "linux", llvmArch)}`);
+      linkArgs.push(`-Clink-arg=-L${join(cfg.androidNdkRuntimeDir, llvmArch)}`);
     }
     env.CARGO_ENCODED_RUSTFLAGS = [...(spec.rustflags ?? []), ...linkArgs].join("\x1f");
   }

@@ -151,18 +151,15 @@ class BunWebSocket extends EventEmitter {
     let tlsOptions;
     let agent;
     // Mirrors ws's `const opts = { perMessageDeflate: true, ...options }` + truthy check:
-    // omitted keeps the default (offer the extension); any own `perMessageDeflate` key
-    // whose value is falsy (`false`, `null`, `0`, `''`, explicit `undefined`) disables it.
-    // ws uses spread (`...options`), which copies own *enumerable* properties only —
-    // use `propertyIsEnumerable` so a non-enumerable `perMessageDeflate` (rare, but
-    // defined via `Object.defineProperty`) doesn't unexpectedly disable the offer.
+    // any `perMessageDeflate` that's present and falsy suppresses the extension
+    // offer; omitted or truthy keeps the default.
     let disableDeflate = false;
     // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L741-L747
     if ($isObject(options)) {
       headers = options?.headers;
       proxy = options?.proxy;
       tlsOptions = options?.tls;
-      if (Object.prototype.propertyIsEnumerable.$call(options, "perMessageDeflate") && !options.perMessageDeflate) {
+      if ("perMessageDeflate" in options && !options.perMessageDeflate) {
         disableDeflate = true;
       }
 

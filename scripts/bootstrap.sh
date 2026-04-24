@@ -1253,7 +1253,10 @@ install_rust() {
 
 	case "$os" in
 	linux)
-		rustup="$(require rustup)"
+		rustup="$rust_home/bin/rustup"
+		if ! [ -x "$rustup" ]; then
+			error "rustup not found at $rustup after install"
+		fi
 		execute_as_user "$rustup" target add aarch64-linux-android
 		execute_as_user "$rustup" target add x86_64-linux-android
 		;;

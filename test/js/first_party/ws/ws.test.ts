@@ -5,7 +5,7 @@ import crypto from "crypto";
 import { once } from "events";
 import { bunEnv, bunExe } from "harness";
 import { createServer } from "http";
-import { AddressInfo, connect } from "net";
+import { AddressInfo, connect, createServer as createNetServer } from "net";
 import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
 
@@ -915,12 +915,10 @@ describe("perMessageDeflate upgrade header", () => {
   // Listen on a raw TCP socket, capture the WebSocket upgrade request bytes,
   // complete a minimal RFC 6455 handshake so the client opens, and resolve
   // with the request line + headers.
-  function captureUpgradeRequest(connect: (url: string) => void): Promise<string> {
-    const { createServer } = require("node:net") as typeof import("node:net");
-    const nodeCrypto = require("node:crypto") as typeof import("node:crypto");
+  function captureUpgradeRequest(connectClient: (url: string) => void): Promise<string> {
     const { promise, resolve, reject } = Promise.withResolvers<string>();
 
-    const server = createServer(socket => {
+    const server = createNetServer(socket => {
       let buf = Buffer.alloc(0);
       socket.on("data", chunk => {
         buf = Buffer.concat([buf, chunk]);
@@ -936,7 +934,7 @@ describe("perMessageDeflate upgrade header", () => {
           return;
         }
         const key = keyLine.slice(keyLine.indexOf(":") + 1).trim();
-        const accept = nodeCrypto
+        const accept = crypto
           .createHash("sha1")
           .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
           .digest("base64");
@@ -954,7 +952,7 @@ describe("perMessageDeflate upgrade header", () => {
 
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.address() as AddressInfo;
-      connect(`ws://127.0.0.1:${port}/`);
+      connectClient(`ws://127.0.0.1:${port}/`);
     });
 
     return promise.finally(() => server.close());
@@ -988,5 +986,27 @@ describe("perMessageDeflate upgrade header", () => {
       ws.addEventListener("error", () => {});
     });
     expect(request.toLowerCase()).not.toContain("sec-websocket-extensions");
+  });
+
+  // npm ws uses a truthy check after merging defaults (`const opts = { perMessageDeflate: true, ...options }`),
+  // so any own-key falsy value — not just literal `false` — suppresses the extension offer.
+  for (const falsy of [null, 0, "", undefined] as const) {
+    it(`omits Sec-WebSocket-Extensions for perMessageDeflate: ${JSON.stringify(falsy)}`, async () => {
+      const request = await captureUpgradeRequest(url => {
+        const ws = new WebSocket(url, { perMessageDeflate: falsy as unknown as boolean });
+        ws.on("open", () => ws.close());
+        ws.on("error", () => {});
+      });
+      expect(request.toLowerCase()).not.toContain("sec-websocket-extensions");
+    });
+  }
+
+  it("keeps the offer when perMessageDeflate is truthy (e.g. empty object)", async () => {
+    const request = await captureUpgradeRequest(url => {
+      const ws = new WebSocket(url, { perMessageDeflate: {} });
+      ws.on("open", () => ws.close());
+      ws.on("error", () => {});
+    });
+    expect(request).toContain("Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits");
   });
 });

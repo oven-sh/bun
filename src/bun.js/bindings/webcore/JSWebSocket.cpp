@@ -270,13 +270,24 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
-        // Parse perMessageDeflate option (ws-compatible). `false` disables the
-        // `Sec-WebSocket-Extensions: permessage-deflate` offer on the upgrade
-        // request. Anything else (true / object / omitted) keeps the default.
-        auto perMessageDeflateValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "perMessageDeflate"_s)));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        if (perMessageDeflateValue && perMessageDeflateValue.isBoolean() && !perMessageDeflateValue.asBoolean()) {
-            offerPerMessageDeflate = false;
+        // Parse perMessageDeflate option (ws-compatible). Mirrors npm ws's
+        // `const opts = { perMessageDeflate: true, ...options }; if (opts.perMessageDeflate)`:
+        // any own-key falsy value (`false`, `null`, `0`, `''`, explicit `undefined`)
+        // suppresses the extension offer; omitted or truthy keeps the default.
+        // Use a PropertySlot directly so we can distinguish "absent" from
+        // "present with value undefined" — `getOwnPropertyIfExists` collapses them.
+        {
+            PropertyName perMessageDeflateName(Identifier::fromString(vm, "perMessageDeflate"_s));
+            PropertySlot perMessageDeflateSlot(options, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+            bool hasOwn = options->methodTable()->getOwnPropertySlot(options, globalObject, perMessageDeflateName, perMessageDeflateSlot);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (hasOwn) {
+                JSValue perMessageDeflateValue = perMessageDeflateSlot.getValue(globalObject, perMessageDeflateName);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                if (!perMessageDeflateValue.toBoolean(lexicalGlobalObject)) {
+                    offerPerMessageDeflate = false;
+                }
+            }
         }
 
         // Parse proxy option - can be string or { url, headers }

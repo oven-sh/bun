@@ -3,6 +3,18 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness"
 import { readFileSync } from "node:fs";
 import path from "path";
 
+// Debug/ASAN builds print "WARNING: ASAN interferes with JSC signal handlers; …"
+// to stderr on every JS-executing process launch — emitted via std::call_once
+// in Options.cpp, so at most once per subprocess. It leaks into snapshot tests
+// that capture stderr. Strip it before snapshotting so debug-ASAN CI lanes
+// match the release snapshot.
+function stripAsanWarning(s: string): string {
+  return s
+    .split("\n")
+    .filter(line => !line.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+}
+
 test("coverage crash", () => {
   const dir = tempDirWithFiles("cov", {
     "demo.test.ts": `class Y {
@@ -158,7 +170,7 @@ test("should call both functions", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 
@@ -223,7 +235,7 @@ test("should call only some functions", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 
@@ -288,7 +300,7 @@ test("should call all functions", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 
@@ -355,7 +367,7 @@ test("should call all functions", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 
@@ -473,7 +485,7 @@ test("should pass", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize error output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 
@@ -512,7 +524,7 @@ test("should pass", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize error output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 
@@ -557,7 +569,7 @@ test("should call function", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 
@@ -610,7 +622,7 @@ test("should call function", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 

@@ -183,7 +183,7 @@ Structure* ServerRouteList::structureForParamsObject(JSC::VM& vm, JSC::JSGlobalO
         auto* zigGlobalObject = defaultGlobalObject(globalObject);
         auto* prototype = zigGlobalObject->m_JSBunRequestParamsPrototype.get(zigGlobalObject);
         unsigned inlineCapacity = std::min(identifiers.size(), static_cast<size_t>(JSC::JSFinalObject::maxInlineCapacity));
-        auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), JSFinalObject::info(), NonArray, inlineCapacity);
+        auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(FinalObjectType, StructureFlags), JSFinalObject::info(), NonArray, inlineCapacity);
 
         if (identifiers.size() < JSC::JSFinalObject::maxInlineCapacity) {
             PropertyOffset offset;
@@ -290,7 +290,7 @@ JSObject* createJSBunRequestParamsPrototype(JSC::VM& vm, Zig::GlobalObject* glob
 {
     auto* prototype = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     prototype->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("RequestParams"_s)), JSC::PropertyAttribute::DontEnum | 0);
-    auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, JSC::JSFinalObject::StructureFlags), JSFinalObject::info(), NonArray);
+    auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(FinalObjectType, JSC::JSFinalObject::StructureFlags), JSFinalObject::info(), NonArray);
     structure->setMayBePrototype(true);
     return JSC::constructEmptyObject(vm, structure);
 }

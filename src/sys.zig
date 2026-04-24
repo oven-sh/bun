@@ -3939,7 +3939,7 @@ pub fn readNonblocking(fd: bun.FD, buf: []u8) Maybe(usize) {
 
             if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
                 switch (err.getErrno()) {
-                    .OPNOTSUPP, .NOSYS => {
+                    .OPNOTSUPP, .NOSYS, .PERM, .ACCES => {
                         bun.linux.RWFFlagSupport.disable();
                         switch (bun.isReadable(fd)) {
                             .hup, .ready => return read(fd, buf),
@@ -3992,7 +3992,7 @@ pub fn writeNonblocking(fd: bun.FD, buf: []const u8) Maybe(usize) {
 
             if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                 switch (err.getErrno()) {
-                    .OPNOTSUPP, .NOSYS => {
+                    .OPNOTSUPP, .NOSYS, .PERM, .ACCES => {
                         bun.linux.RWFFlagSupport.disable();
                         switch (bun.isWritable(fd)) {
                             .hup, .ready => return write(fd, buf),

@@ -1,2 +1,5 @@
 [toolchain]
 channel = "nightly-2025-12-10"
+# rust-src is needed for -Zbuild-std (Tier 3 targets like
+# aarch64-unknown-freebsd have no prebuilt std).
+components = ["rust-src"]

@@ -413,6 +413,12 @@ function getTestAgent(platform, options) {
     });
   }
 
+  // musl: same vCPU as glibc but 2× RAM (m-family). The alpine images now bake
+  // ~14 GB of build prefetch + ~6 GB of pre-pulled docker test images, and
+  // the docker test containers (mysql/postgres on tmpfs) run alongside the
+  // tests — c-family's 8 GB was the wrong side of tight.
+  const musl = platform.abi === "musl";
+
   if (arch === "aarch64") {
     if (profile === "asan") {
       return getEc2Agent(platform, options, {
@@ -422,7 +428,7 @@ function getTestAgent(platform, options) {
       });
     }
     return getEc2Agent(platform, options, {
-      instanceType: "c8g.xlarge",
+      instanceType: musl ? "m8g.xlarge" : "c8g.xlarge",
       cpuCount: 2,
       threadsPerCore: 1,
     });
@@ -436,7 +442,7 @@ function getTestAgent(platform, options) {
     });
   }
   return getEc2Agent(platform, options, {
-    instanceType: "c7i.xlarge",
+    instanceType: musl ? "m7i.xlarge" : "c7i.xlarge",
     cpuCount: 2,
     threadsPerCore: 1,
   });
@@ -770,6 +776,11 @@ function getBuildImageStep(platform, options) {
     },
     env: {
       DEBUG: "1",
+      // Packer needs several minutes to delete its temp Azure resources after a cancel;
+      // the agent's default 10s grace SIGKILLs it mid-cleanup and leaks a full
+      // VM/NIC/IP stack per retry. The agent reads this from job env — there's no
+      // step-level property for it.
+      BUILDKITE_SIGNAL_GRACE_PERIOD_SECONDS: `${10 * 60}`,
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),

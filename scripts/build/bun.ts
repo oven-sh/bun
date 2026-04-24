@@ -400,10 +400,41 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     n.blank();
     const archiveName = `${cfg.libPrefix}${exeName}${cfg.libSuffix}`;
     const archive = ar(n, cfg, archiveName, allObjects);
+
+    // Upload dep libs as soon as they're built — they're ready ~minutes
+    // before the archive (WebKit copies from prefetch in seconds; lolhtml
+    // builds in ~30s), so the upload overlaps the cxx compile instead of
+    // waiting for it. Own pool so it doesn't take a compile slot. ci.ts's
+    // uploadArtifacts() then only handles the archive.
+    let depUploadStamp: string | undefined;
+    if (cfg.buildkite && depLibs.length > 0) {
+      n.pool("bk_upload", 1);
+      n.rule("bk_upload", {
+        // Paths relative to buildDir (ninja's cwd) so artifact names match
+        // what link-only's downloadArtifacts() expects. ; is the agent's
+        // default delimiter — quoted so the host shell doesn't split it.
+        // Stamp written only after the agent exits 0 so a failed upload
+        // re-runs on the next ninja invocation.
+        command:
+          cfg.host.os === "windows"
+            ? `cmd /c buildkite-agent artifact upload "$paths" && type nul > $out`
+            : `buildkite-agent artifact upload '$paths' && touch $out`,
+        description: "buildkite upload dep libs",
+        pool: "bk_upload",
+      });
+      depUploadStamp = resolve(cfg.buildDir, ".dep-libs-uploaded");
+      n.build({
+        outputs: [depUploadStamp],
+        rule: "bk_upload",
+        inputs: depLibs,
+        vars: { paths: depLibs.map(p => relative(cfg.buildDir, p)).join(";") },
+      });
+    }
+
     // depLibs explicit in the phony: deps with no provided includes (tinycc,
     // lolhtml) aren't in depHeaderSignal, so the archive doesn't pull them
     // transitively — but link-only still needs them uploaded.
-    n.phony("bun", [archive, ...depLibs]);
+    n.phony("bun", [archive, ...depLibs, ...(depUploadStamp ? [depUploadStamp] : [])]);
     n.default(["bun"]);
     return { archive, deps, codegen, zigObjects, objects: allObjects };
   }

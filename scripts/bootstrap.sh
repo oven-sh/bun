@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 29
+# Version: 30
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -953,7 +953,7 @@ setup_node_gyp_cache() {
 }
 
 bun_version_exact() {
-	print "1.3.1"
+	print "1.3.13"
 }
 
 install_bun() {
@@ -1671,6 +1671,80 @@ ensure_no_tmpfs() {
 	execute_sudo systemctl mask tmp.mount
 }
 
+prefetch_build_deps() {
+	# CI-only: bake a read-only download cache for scripts/build/download.ts
+	# (BUN_BUILD_PREFETCH_DIR). Everything is content-addressed by URL/identity,
+	# so a dep version bump in scripts/build/deps/ just misses the cache for that
+	# one dep — no image rebuild needed.
+	if ! [ "$ci" = "1" ]; then
+		return
+	fi
+
+	prefetch_dir="/opt/bun-prefetch"
+	bun_path="$(require bun)"
+	git_path="$(require git)"
+
+	# Only bootstrap.sh is uploaded to the bake VM, so the repo (and the
+	# prefetch script + scripts/build/deps/*.ts version pins) has to be cloned.
+	# BUN_BOOTSTRAP_REPO_REF lets the image-build orchestrator pin to the
+	# commit it was triggered from; default to main.
+	repo_ref="${BUN_BOOTSTRAP_REPO_REF:-main}"
+	clone_dir="$(create_tmp_directory)"
+	# Best-effort: a fork-PR branch that doesn't exist on the upstream remote,
+	# a deleted branch, or a transient network blip shouldn't abort the whole
+	# image bake — the build just falls through to the network with no warm
+	# cache. Same for a ref that predates the prefetch script.
+	if ! "$git_path" clone --depth=1 --branch "$repo_ref" \
+		https://github.com/oven-sh/bun.git "$clone_dir/bun"; then
+		print "warning: clone of $repo_ref failed; skipping warm cache"
+		execute_sudo rm -rf "$clone_dir"
+		return
+	fi
+	if ! [ -f "$clone_dir/bun/scripts/prefetch-deps.ts" ]; then
+		print "prefetch-deps.ts not present at $repo_ref; skipping warm cache"
+		execute_sudo rm -rf "$clone_dir"
+		return
+	fi
+
+	create_directory "$prefetch_dir"
+	# resolveConfig() walks up from cwd to find package.json — run from inside
+	# the clone. Direct invocation (not `execute`) so a non-zero is observable
+	# here rather than swallowed by the subshell — the parent shell has no
+	# `set -e`, and `error()` inside a subshell can't kill the parent.
+	if ! ( cd "$clone_dir/bun" && "$bun_path" scripts/prefetch-deps.ts "$prefetch_dir" ); then
+		print "warning: prefetch-deps.ts failed; baking without warm cache"
+		execute_sudo rm -rf "$clone_dir" "$prefetch_dir"
+		return
+	fi
+
+	# Pre-pull test docker images (postgres, mysql, redis, minio, …) so tests
+	# don't fetch them at runtime. install_docker() only enables the daemon for
+	# next boot on most distros — start it now. Runs as root: install_docker()
+	# added $user to the docker group, but group membership doesn't apply to
+	# the current shell, so a non-root `docker compose` here would get
+	# permission-denied on the socket. Best-effort: a docker hiccup shouldn't
+	# fail the bake.
+	if [ -f "$clone_dir/bun/test/docker/prepare-ci.ts" ] && command -v docker >/dev/null; then
+		systemctl_path="$(which systemctl)"
+		if [ -n "$systemctl_path" ]; then
+			execute_sudo "$systemctl_path" start docker || true
+		fi
+		( cd "$clone_dir/bun" && execute_sudo "$bun_path" test/docker/prepare-ci.ts ) || \
+			print "warning: prepare-ci.ts failed; test docker images not pre-pulled"
+	fi
+
+	execute_sudo rm -rf "$clone_dir"
+
+	# Read-only: download.ts only ever copies FROM here, and a writable baked
+	# input is something a misbehaving job could corrupt for later jobs on the
+	# same runner. download.ts also falls back to this path when the env var
+	# isn't set, so the exports below are belt-and-braces for interactive
+	# debugging rather than the load-bearing mechanism.
+	execute_sudo chmod -R a-w "$prefetch_dir"
+	append_file /etc/environment "BUN_BUILD_PREFETCH_DIR=$prefetch_dir"
+	append_to_profile "export BUN_BUILD_PREFETCH_DIR=\"$prefetch_dir\""
+}
+
 main() {
 	check_features "$@"
 	check_operating_system
@@ -1684,6 +1758,7 @@ main() {
 	install_chromium
 	install_fuse_python
 	install_age
+	prefetch_build_deps
 	if [ "${BUN_NO_CORE_DUMP:-0}" != "1" ]; then
 		configure_core_dumps
 	fi

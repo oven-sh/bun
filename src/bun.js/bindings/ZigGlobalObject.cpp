@@ -828,15 +828,15 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC::JSGlobalObject*, 
     return false;
 }
 
-#define WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ConstructorName)                                                                                                       \
-    JSValue ConstructorName##ConstructorCallback(VM& vm, JSObject* lexicalGlobalObject)                                                                             \
-    {                                                                                                                                                               \
+#define WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ConstructorName)                                                                                                            \
+    JSValue ConstructorName##ConstructorCallback(VM& vm, JSObject* lexicalGlobalObject)                                                                                  \
+    {                                                                                                                                                                    \
         return WebCore::JS##ConstructorName::getConstructor(vm, uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject));                                              \
-    }                                                                                                                                                               \
-    JSC_DEFINE_CUSTOM_GETTER(ConstructorName##_getter,                                                                                                              \
-        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,                                                                                  \
-            JSC::PropertyName))                                                                                                                                     \
-    {                                                                                                                                                               \
+    }                                                                                                                                                                    \
+    JSC_DEFINE_CUSTOM_GETTER(ConstructorName##_getter,                                                                                                                   \
+        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,                                                                                       \
+            JSC::PropertyName))                                                                                                                                          \
+    {                                                                                                                                                                    \
         return JSC::JSValue::encode(WebCore::JS##ConstructorName::getConstructor(lexicalGlobalObject->vm(), uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject))); \
     }
 

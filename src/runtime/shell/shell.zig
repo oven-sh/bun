@@ -2871,8 +2871,12 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 // and returned the `\r` as escaped, leaving the `\n` for the
                 // next read. Consume that `\n` so the whole `\<CR><LF>` acts
                 // as a single line continuation (matches the escaped-`\n`
-                // case above). Escaped CR without a trailing `\n` falls
-                // through to preserve the literal byte.
+                // case above). Escaped CR *not* followed by `\n` preserves
+                // both bytes verbatim: in Normal state the swallowed
+                // backslash was already the escape prefix (so only `\r`
+                // remains), but in Double state bash/POSIX treats `\<CR>`
+                // as literal `\` + CR, so re-emit the backslash that
+                // read_char() consumed.
                 else if (char == '\r') {
                     if (comptime bun.Environment.allow_assert) {
                         assert(input.escaped);
@@ -2885,6 +2889,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             }
                             continue;
                         }
+                    }
+                    if (self.chars.state == .Double) {
+                        try self.appendCharToStrPool('\\');
                     }
                 }
 

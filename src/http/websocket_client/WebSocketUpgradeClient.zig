@@ -58,6 +58,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         // This is base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")).
         expected_accept: [28]u8 = .{0} ** 28,
 
+        // Whether the upgrade request offered `permessage-deflate`. When this is
+        // false (opt-out via `perMessageDeflate: false`), any `permessage-deflate`
+        // the server returns anyway is ignored.
+        offered_permessage_deflate: bool = true,
+
         const State = enum {
             initializing,
             reading,
@@ -122,6 +127,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             target_authorization: ?*const bun.String,
             // Unix domain socket path for ws+unix:// / wss+unix:// (null for TCP)
             unix_socket_path: ?*const bun.String,
+            // Whether to advertise `permessage-deflate` in the upgrade request
+            // (ws.WebSocket's `perMessageDeflate` option; true by default).
+            offer_permessage_deflate: bool,
         ) callconv(.c) ?*HTTPClient {
             const vm = global.bunVM();
 
@@ -179,6 +187,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 client_protocol_slice.slice(),
                 extra_headers,
                 if (target_authorization_slice) |s| s.slice() else null,
+                offer_permessage_deflate,
             ) catch return null;
             const body = request_result.body;
 
@@ -241,6 +250,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 .state = .initializing,
                 .proxy = proxy_state,
                 .expected_accept = request_result.expected_accept,
+                .offered_permessage_deflate = offer_permessage_deflate,
                 .subprotocols = brk: {
                     var subprotocols = bun.StringSet.init(bun.default_allocator);
                     var it = bun.http.HeaderValueIterator.init(protocol_for_subprotocols);
@@ -919,6 +929,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     },
                     "Sec-WebSocket-Extensions".len => {
                         if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Extensions", false)) {
+                            // If we didn't offer permessage-deflate, ignore any
+                            // extensions the server advertises. Accepting a
+                            // non-offered extension is a protocol violation per
+                            // RFC 6455 §9.1, but silently ignoring avoids
+                            // breaking callers for a misbehaving server.
+                            if (!this.offered_permessage_deflate) continue;
                             // This is a simplified parser. A full parser would handle multiple extensions and quoted values.
                             var it = std.mem.splitScalar(u8, header.value, ',');
                             while (it.next()) |ext_str| {
@@ -1333,6 +1349,10 @@ fn buildRequestBody(
     client_protocol: []const u8,
     extra_headers: Headers8Bit,
     target_authorization: ?[]const u8,
+    /// When false, don't advertise `permessage-deflate` (matches `ws` with
+    /// `perMessageDeflate: false`). When true, send the default extension
+    /// offer `permessage-deflate; client_max_window_bits`.
+    offer_permessage_deflate: bool,
 ) std.mem.Allocator.Error!BuildRequestResult {
     const allocator = bun.default_allocator;
 
@@ -1425,6 +1445,11 @@ fn buildRequestBody(
         try writer.print("{s}: {s}\r\n", .{ name_slice, value });
     }
 
+    const extensions_line: []const u8 = if (offer_permessage_deflate)
+        "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n"
+    else
+        "";
+
     // Build request with user overrides
     if (user_host) |h| {
         return .{
@@ -1435,11 +1460,11 @@ fn buildRequestBody(
                     "Connection: Upgrade\r\n" ++
                     "Upgrade: websocket\r\n" ++
                     "Sec-WebSocket-Version: 13\r\n" ++
-                    "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" ++
+                    "{s}" ++
                     "{f}" ++
                     "{s}" ++
                     "\r\n",
-                .{ pathname, h, pico_headers, extra_headers_buf.items },
+                .{ pathname, h, extensions_line, pico_headers, extra_headers_buf.items },
             ),
             .expected_accept = expected_accept,
         };
@@ -1453,11 +1478,11 @@ fn buildRequestBody(
                 "Connection: Upgrade\r\n" ++
                 "Upgrade: websocket\r\n" ++
                 "Sec-WebSocket-Version: 13\r\n" ++
-                "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" ++
+                "{s}" ++
                 "{f}" ++
                 "{s}" ++
                 "\r\n",
-            .{ pathname, host_fmt, pico_headers, extra_headers_buf.items },
+            .{ pathname, host_fmt, extensions_line, pico_headers, extra_headers_buf.items },
         ),
         .expected_accept = expected_accept,
     };

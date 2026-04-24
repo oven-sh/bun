@@ -215,6 +215,9 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     int rejectUnauthorized = -1;
     void* sslConfig = nullptr; // SSLConfig pointer from Zig
     auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
+    // Default true — matches Bun's existing behavior of always offering permessage-deflate.
+    // ws.WebSocket passes `perMessageDeflate: false` to opt out.
+    bool offerPerMessageDeflate = true;
 
     // Proxy options
     String proxyUrl;
@@ -267,6 +270,15 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
+        // Parse perMessageDeflate option (ws-compatible). `false` disables the
+        // `Sec-WebSocket-Extensions: permessage-deflate` offer on the upgrade
+        // request. Anything else (true / object / omitted) keeps the default.
+        auto perMessageDeflateValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "perMessageDeflate"_s)));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (perMessageDeflateValue && perMessageDeflateValue.isBoolean() && !perMessageDeflateValue.asBoolean()) {
+            offerPerMessageDeflate = false;
+        }
+
         // Parse proxy option - can be string or { url, headers }
         auto proxyValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "proxy"_s)));
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -312,8 +324,8 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     }
 
     auto object = (rejectUnauthorized == -1)
-        ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), sslConfig)
-        : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false, WTF::move(proxyUrl), WTF::move(proxyHeadersInit), sslConfig);
+        ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), sslConfig, offerPerMessageDeflate)
+        : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false, WTF::move(proxyUrl), WTF::move(proxyHeadersInit), sslConfig, offerPerMessageDeflate);
 
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});

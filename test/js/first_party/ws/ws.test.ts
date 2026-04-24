@@ -906,3 +906,87 @@ describe("ping/pong no-arg payload", () => {
     await promise;
   });
 });
+
+// https://github.com/oven-sh/bun/issues/29684
+// ws default is to send `Sec-WebSocket-Extensions: permessage-deflate;
+// client_max_window_bits`. With `perMessageDeflate: false`, the extension
+// offer must be suppressed on the upgrade request — matching Node + `ws`.
+describe("perMessageDeflate upgrade header", () => {
+  // Listen on a raw TCP socket, capture the WebSocket upgrade request bytes,
+  // complete a minimal RFC 6455 handshake so the client opens, and resolve
+  // with the request line + headers.
+  function captureUpgradeRequest(connect: (url: string) => void): Promise<string> {
+    const { createServer } = require("node:net") as typeof import("node:net");
+    const nodeCrypto = require("node:crypto") as typeof import("node:crypto");
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+
+    const server = createServer(socket => {
+      let buf = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        const end = buf.indexOf("\r\n\r\n");
+        if (end === -1) return;
+
+        const request = buf.subarray(0, end).toString("utf8");
+        const headerLines = request.split("\r\n");
+        const keyLine = headerLines.find(l => l.toLowerCase().startsWith("sec-websocket-key:"));
+        if (!keyLine) {
+          socket.destroy();
+          reject(new Error("client did not send Sec-WebSocket-Key"));
+          return;
+        }
+        const key = keyLine.slice(keyLine.indexOf(":") + 1).trim();
+        const accept = nodeCrypto
+          .createHash("sha1")
+          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+        );
+        resolve(request);
+      });
+      socket.on("error", reject);
+    });
+
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      connect(`ws://127.0.0.1:${port}/`);
+    });
+
+    return promise.finally(() => server.close());
+  }
+
+  it("omits Sec-WebSocket-Extensions when perMessageDeflate is false", async () => {
+    const request = await captureUpgradeRequest(url => {
+      const ws = new WebSocket(url, { perMessageDeflate: false });
+      ws.on("open", () => ws.close());
+      ws.on("error", () => {});
+    });
+    expect(request.toLowerCase()).not.toContain("sec-websocket-extensions");
+  });
+
+  it("still sends Sec-WebSocket-Extensions when perMessageDeflate is unset", async () => {
+    const request = await captureUpgradeRequest(url => {
+      const ws = new WebSocket(url);
+      ws.on("open", () => ws.close());
+      ws.on("error", () => {});
+    });
+    expect(request).toContain("Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits");
+  });
+
+  it("omits Sec-WebSocket-Extensions for native WebSocket with perMessageDeflate: false", async () => {
+    const request = await captureUpgradeRequest(url => {
+      // globalThis.WebSocket is Bun's native client, separate from the `ws`
+      // package's BunWebSocket wrapper — verify the option is threaded all
+      // the way through to the native upgrade builder.
+      const ws = new (globalThis as any).WebSocket(url, { perMessageDeflate: false });
+      ws.addEventListener("open", () => ws.close());
+      ws.addEventListener("error", () => {});
+    });
+    expect(request.toLowerCase()).not.toContain("sec-websocket-extensions");
+  });
+});

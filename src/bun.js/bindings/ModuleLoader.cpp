@@ -8,7 +8,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
-#include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSInternalFieldObjectImpl.h>
 
 #include "ZigSourceProvider.h"
@@ -28,6 +28,7 @@
 #include "JSEventEmitter.h"
 
 #include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSMap.h>
@@ -67,19 +68,19 @@ public:
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
 
-static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
-    JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
     auto scope = DECLARE_THROW_SCOPE(vm);
     scope.throwException(globalObject, value);
     return promise->rejectWithCaughtException(globalObject, scope);
 }
 
-static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
-    JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
     promise->fulfill(vm, globalObject, value);
     return promise;
 }
@@ -156,9 +157,9 @@ static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JS
     return result;
 }
 
-JSC::JSInternalPromise* PendingVirtualModuleResult::internalPromise()
+JSC::JSPromise* PendingVirtualModuleResult::internalPromise()
 {
-    return jsCast<JSC::JSInternalPromise*>(internalField(2).get());
+    return jsCast<JSC::JSPromise*>(internalField(2).get());
 }
 
 const ClassInfo PendingVirtualModuleResult::s_info = { "PendingVirtualModule"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PendingVirtualModuleResult) };
@@ -183,7 +184,7 @@ void PendingVirtualModuleResult::finishCreation(VM& vm, const WTF::String& speci
     Base::finishCreation(vm);
     Base::internalField(0).set(vm, this, JSC::jsString(vm, specifier));
     Base::internalField(1).set(vm, this, JSC::jsString(vm, referrer));
-    Base::internalField(2).set(vm, this, JSC::JSInternalPromise::create(vm, globalObject()->internalPromiseStructure()));
+    Base::internalField(2).set(vm, this, JSC::JSPromise::create(vm, globalObject()->promiseStructure()));
 }
 
 template<typename Visitor>
@@ -438,7 +439,7 @@ static JSValue handleVirtualModuleResult(
         auto specifierString = specifier->toWTFString(BunString::ZeroCopy);
         auto referrerString = referrer->toWTFString(BunString::ZeroCopy);
         PendingVirtualModuleResult* pendingModule = PendingVirtualModuleResult::create(globalObject, specifierString, referrerString, wasModuleMock);
-        JSC::JSInternalPromise* internalPromise = pendingModule->internalPromise();
+        JSC::JSPromise* internalPromise = pendingModule->internalPromise();
         MarkedArgumentBuffer arguments;
         arguments.append(promise);
         arguments.append(globalObject->thenable(jsFunctionOnLoadObjectResultResolve));
@@ -466,7 +467,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     ResolvedSourceCodeHolder sourceCodeHolder(res);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSInternalPromise* promise = jsCast<JSC::JSInternalPromise*>(JSC::JSValue::decode(encodedPromiseValue));
+    JSC::JSPromise* promise = jsCast<JSC::JSPromise*>(JSC::JSValue::decode(encodedPromiseValue));
 
     if (!res->success) {
         RELEASE_AND_RETURN(scope, promise->reject(vm, globalObject, JSValue::decode(res->result.err.value)));
@@ -475,52 +476,43 @@ extern "C" void Bun__onFulfillAsyncModule(
     auto* specifierValue = Bun::toJS(globalObject, *specifier);
     RETURN_IF_EXCEPTION(scope, );
 
-    auto* map = globalObject->esmRegistryMap();
-    RETURN_IF_EXCEPTION(scope, );
-    auto entry = map->get(globalObject, specifierValue);
-    RETURN_IF_EXCEPTION(scope, );
-    if (entry) {
-        if (entry.isObject()) {
+    // The new C++ module loader does not create a registry entry until *after*
+    // this fetch promise resolves (provideFetch runs inside the
+    // ModuleLoadTopSettled microtask). Two concurrent dynamic imports of the
+    // same key therefore each get their own embedder fetch promise, and the
+    // loser of that race must still resolve so its loadModule chain can reach
+    // the (idempotent) provideFetch and reuse the already-loaded record.
+    // The old #6946/#12910 short-circuit was for the JS loader's *shared*
+    // entry.fetch promise; under the new loader returning here would strand
+    // the loser's promise pending forever.
+    //
+    // FIXME(module-loader): the loser still re-transpiled the file. The right
+    // fix is for JSModuleLoader::loadModule to ensureRegistered() *before*
+    // calling fetch so concurrent importers share the entry's fetchPromise
+    // instead of each round-tripping through the embedder.
 
-            auto* object = entry.getObject();
-            auto state = object->getIfPropertyExists(globalObject, Bun::builtinNames(vm).statePublicName());
-            RETURN_IF_EXCEPTION(scope, );
-            if (state && state.isInt32()) {
-                if (state.asInt32() > JSC::JSModuleLoader::Status::Fetch) {
-                    // it's a race! we lost.
-                    // https://github.com/oven-sh/bun/issues/6946
-                    // https://github.com/oven-sh/bun/issues/12910
-                    return;
-                }
-            }
-        }
-
-        if (res->result.value.isCommonJSModule) {
-            auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), specifierValue, res->result.value);
-            EXCEPTION_ASSERT(created.has_value() == !scope.exception());
-            if (created.has_value()) {
-                JSSourceCode* code = JSSourceCode::create(vm, WTF::move(created.value()));
-                promise->resolve(globalObject, vm, code);
-                scope.assertNoExceptionExceptTermination();
-            } else {
-                auto* exception = scope.exception();
-                if (!vm.isTerminationException(exception)) {
-                    (void)scope.tryClearException();
-                    promise->reject(vm, globalObject, exception);
-                    scope.assertNoExceptionExceptTermination();
-                }
-            }
-        } else {
-            auto provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
-            if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
-                Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
-            }
-            promise->resolve(globalObject, vm, JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider))));
+    if (res->result.value.isCommonJSModule) {
+        auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), specifierValue, res->result.value);
+        EXCEPTION_ASSERT(created.has_value() == !scope.exception());
+        if (created.has_value()) {
+            JSSourceCode* code = JSSourceCode::create(vm, WTF::move(created.value()));
+            promise->resolve(globalObject, vm, code);
             scope.assertNoExceptionExceptTermination();
+        } else {
+            auto* exception = scope.exception();
+            if (!vm.isTerminationException(exception)) {
+                (void)scope.tryClearException();
+                promise->reject(vm, globalObject, exception);
+                scope.assertNoExceptionExceptTermination();
+            }
         }
     } else {
-        // the module has since been deleted from the registry.
-        // let's not keep it forever for no reason.
+        auto provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
+        if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
+            Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
+        }
+        promise->resolve(globalObject, vm, JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider))));
+        scope.assertNoExceptionExceptTermination();
     }
 }
 
@@ -699,7 +691,12 @@ JSValue fetchCommonJSModule(
                 }
                 if (!wasModuleMock) {
                     auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result());
-                    globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, jsSourceCode->sourceCode());
+                    JSC::VM::SynchronousModuleQueue queue;
+                    queue.prev = vm.m_synchronousModuleQueue;
+                    vm.m_synchronousModuleQueue = &queue;
+                    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+                    if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+                    vm.m_synchronousModuleQueue = queue.prev;
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 RELEASE_AND_RETURN(scope, jsNumber(-1));
@@ -749,7 +746,12 @@ JSValue fetchCommonJSModule(
                 }
                 if (!wasModuleMock) {
                     auto* jsSourceCode = jsCast<JSSourceCode*>(promise->result());
-                    globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, jsSourceCode->sourceCode());
+                    JSC::VM::SynchronousModuleQueue queue;
+                    queue.prev = vm.m_synchronousModuleQueue;
+                    vm.m_synchronousModuleQueue = &queue;
+                    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+                    if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+                    vm.m_synchronousModuleQueue = queue.prev;
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 RELEASE_AND_RETURN(scope, jsNumber(-1));
@@ -758,23 +760,10 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    JSMap* registry = globalObject->esmRegistryMap();
-    RETURN_IF_EXCEPTION(scope, {});
-
     bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
-        JSValue entry = registry->get(globalObject, specifierValue);
-
-        if (!entry || !entry.isObject()) {
-            return false;
-        }
-        // return value doesn't matter since we check for exceptions after calling this lambda and
-        // before checking the returned bool
-        RETURN_IF_EXCEPTION(scope, false);
-
-        int status = entry.getObject()->getDirect(vm, WebCore::clientData(vm)->builtinNames().statePublicName()).asInt32();
-        return status > JSModuleLoader::Status::Fetch;
+        auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, specifierWtfString));
+        return entry && entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
     }();
-    RETURN_IF_EXCEPTION(scope, {});
 
     if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice) {
         RELEASE_AND_RETURN(scope, jsNumber(-1));
@@ -791,7 +780,12 @@ JSValue fetchCommonJSModule(
                     RELEASE_AND_RETURN(scope, target);
                 }
             } else {
-                globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(Ref(*cached)));
+                JSC::VM::SynchronousModuleQueue queue;
+                queue.prev = vm.m_synchronousModuleQueue;
+                vm.m_synchronousModuleQueue = &queue;
+                globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(Ref(*cached)));
+                if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+                vm.m_synchronousModuleQueue = queue.prev;
                 RETURN_IF_EXCEPTION(scope, {});
                 RELEASE_AND_RETURN(scope, jsNumber(-1));
             }
@@ -878,7 +872,19 @@ JSValue fetchCommonJSModuleNonBuiltin(
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
     if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute))
         Bun::IsolatedModuleCache::insert(vm, specifierWtfString, provider.get());
-    globalObject->moduleLoader()->provideFetch(globalObject, specifierValue, JSC::SourceCode(provider));
+    // provideFetch() now drives the C++ loader pipeline (parse -> module record)
+    // via internal microtasks. We're about to hand this entry to require(esm)'s
+    // synchronous load path, so run those reactions through the loader's
+    // private queue instead of leaving them on the user microtask queue we're
+    // currently inside of.
+    {
+        JSC::VM::SynchronousModuleQueue queue;
+        queue.prev = vm.m_synchronousModuleQueue;
+        vm.m_synchronousModuleQueue = &queue;
+        globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(provider));
+        if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+        vm.m_synchronousModuleQueue = queue.prev;
+    }
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, jsNumber(-1));
 }
@@ -1228,7 +1234,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
     JSC::JSValue referrerString = pendingModule->internalField(1).get();
     pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
-    JSC::JSInternalPromise* promise = pendingModule->internalPromise();
+    JSC::JSPromise* promise = pendingModule->internalPromise();
 
     BunString specifier = Bun::toString(globalObject, specifierString);
     BunString referrer = Bun::toString(globalObject, referrerString);
@@ -1258,7 +1264,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObjec
     PendingVirtualModuleResult* pendingModule = JSC::jsCast<PendingVirtualModuleResult*>(callFrame->argument(1));
     pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
-    JSC::JSInternalPromise* promise = pendingModule->internalPromise();
+    JSC::JSPromise* promise = pendingModule->internalPromise();
 
     pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
     promise->reject(vm, globalObject, reason);

@@ -5,7 +5,6 @@
 #include "InternalModuleRegistry.h"
 #include "ModuleLoader.h"
 #include "ZigGlobalObject.h"
-#include <JavaScriptCore/JSInternalPromise.h>
 #include <JavaScriptCore/JSPromise.h>
 namespace Bun {
 using namespace JSC;

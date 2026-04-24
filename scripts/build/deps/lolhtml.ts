@@ -45,6 +45,12 @@ export const lolhtml: Dependency = {
       spec.rustTarget = "aarch64-pc-windows-msvc";
     }
 
+    // Android: always a cross-compile. Static lib only, so cargo needs ar
+    // (any llvm-ar works) but no linker.
+    if (cfg.abi === "android") {
+      spec.rustTarget = cfg.arm64 ? "aarch64-linux-android" : "x86_64-linux-android";
+    }
+
     return spec;
   },
 

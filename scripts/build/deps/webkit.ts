@@ -57,6 +57,7 @@ import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSo
 function prebuiltSuffix(cfg: Config): string {
   let s = "";
   if (cfg.linux && cfg.abi === "musl") s += "-musl";
+  if (cfg.linux && cfg.abi === "android") s += "-android";
   // Baseline WebKit artifacts (-march=nehalem, /arch:SSE2 ICU) exist for
   // Linux amd64 (glibc + musl) and Windows amd64. No baseline variant for
   // arm64 or macOS. Suffix order matches the release asset names:
@@ -231,10 +232,30 @@ export const webkit: Dependency = {
         "-Wno-backend-plugin",
       );
     }
+    // Android local mode: WebKit overrides CMAKE_{C,CXX}_FLAGS (dropping the
+    // global --target/--sysroot we'd normally inject), so we hand CMake the
+    // NDK directly instead. CMAKE_SYSTEM_NAME=Android puts CMake into
+    // cross-compile mode (CMAKE_CROSSCOMPILING=ON, no try_run) and lets it
+    // derive sysroot/libc++ from CMAKE_ANDROID_NDK. We still set
+    // CMAKE_{C,CXX}_COMPILER (in source.ts) so the host clang is used
+    // rather than the NDK's bundled one.
+    if (cfg.abi === "android") {
+      optFlags.push(`--target=${cfg.crossTarget!}`, `--sysroot=${cfg.sysroot!}`);
+    }
     const optFlagStr = optFlags.join(" ");
     const args: Record<string, string> = {
       CMAKE_C_FLAGS: optFlagStr,
       CMAKE_CXX_FLAGS: optFlagStr,
+      ...(cfg.abi === "android"
+        ? {
+            CMAKE_SYSTEM_NAME: "Android",
+            CMAKE_SYSTEM_VERSION: String(cfg.androidApiLevel!),
+            CMAKE_ANDROID_NDK: cfg.androidNdk!,
+            CMAKE_ANDROID_ARCH_ABI: cfg.arm64 ? "arm64-v8a" : "x86_64",
+            CMAKE_ANDROID_STL_TYPE: "c++_static",
+            ENABLE_API_TESTS: "OFF",
+          }
+        : {}),
       PORT: "JSCOnly",
       ENABLE_STATIC_JSC: "ON",
       USE_THIN_ARCHIVES: "OFF",

@@ -19,7 +19,7 @@ import { ZIG_COMMIT } from "./zig.ts";
 
 export type OS = "linux" | "darwin" | "windows";
 export type Arch = "x64" | "aarch64";
-export type Abi = "gnu" | "musl";
+export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
 export type BuildMode = "full" | "cpp-only" | "zig-only" | "link-only";
 export type WebKitMode = "prebuilt" | "local";
@@ -34,7 +34,8 @@ export type WebKitMode = "prebuilt" | "local";
  * vs sh), quoting, and tool executable suffixes.
  *
  * For all other modes (full, cpp-only, link-only), host == target
- * since we don't cross-compile C++.
+ * unless cfg.crossTarget is set (currently: Android), in which case
+ * the C++ side is cross-compiled via clang's --target/--sysroot.
  */
 export interface Host {
   os: OS;
@@ -200,6 +201,18 @@ export interface Config {
   /** SDK path from `xcrun --show-sdk-path`. Passed to deps as -DCMAKE_OSX_SYSROOT. */
   osxSysroot: string | undefined;
 
+  // ─── Cross-compilation (set when host != target for C++) ───
+  // Generic so future targets (e.g. cross-compiling to macOS from Linux)
+  // go through the same plumbing. Currently populated only for Android.
+  /** clang `--target=` triple, e.g. "aarch64-unknown-linux-android28". undefined = native. */
+  crossTarget: string | undefined;
+  /** clang `--sysroot=` path. For Android: `<ndk>/toolchains/llvm/prebuilt/<host>/sysroot`. */
+  sysroot: string | undefined;
+  /** Android NDK root. undefined when abi != "android". */
+  androidNdk: string | undefined;
+  /** Android API level (the N in `__ANDROID_API__=N`). undefined when abi != "android". */
+  androidApiLevel: number | undefined;
+
   // ─── Versioning ───
   /** Bun's own version (from package.json). */
   version: string;
@@ -247,6 +260,10 @@ export interface PartialConfig {
   webkit?: WebKitMode;
   buildDir?: string;
   cacheDir?: string;
+  /** Override NDK location (default: $ANDROID_NDK_ROOT etc). Only used when abi=android. */
+  androidNdk?: string;
+  /** Override Android API level (default: ANDROID_API_LEVEL_DEFAULT). Only used when abi=android. */
+  androidApiLevel?: number;
   // Version pins (defaults in versions.ts).
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
@@ -344,9 +361,52 @@ export function detectHost(): Host {
 
 /**
  * Detect linux ABI (gnu vs musl) by checking for /etc/alpine-release.
+ * Android is never auto-detected — it's always a cross-compile target,
+ * so it must be requested explicitly via --abi=android.
  */
 export function detectLinuxAbi(): Abi {
   return existsSync("/etc/alpine-release") ? "musl" : "gnu";
+}
+
+/**
+ * Minimum Android API level we target. 28 = Android 9 (2018), the oldest
+ * release with the bionic syscall wrappers we rely on without raw-syscall
+ * fallbacks. Covers ~96% of active devices as of 2026.
+ */
+export const ANDROID_API_LEVEL_DEFAULT = 28;
+
+/**
+ * Locate the Android NDK. Checks the conventional env vars in priority
+ * order, then a couple of well-known install paths. Returns undefined if
+ * none found — caller decides whether to error.
+ */
+export function detectAndroidNdk(): string | undefined {
+  for (const v of ["ANDROID_NDK_ROOT", "ANDROID_NDK_HOME", "ANDROID_NDK"]) {
+    const p = process.env[v];
+    if (p && existsSync(join(p, "toolchains"))) return p;
+  }
+  for (const p of ["/opt/android-ndk", "/usr/local/android-ndk"]) {
+    if (existsSync(join(p, "toolchains"))) return p;
+  }
+  // Android Studio's sdkmanager puts NDKs under $ANDROID_HOME/ndk/<version>.
+  // We don't pick one automatically — too easy to get a stale version.
+  return undefined;
+}
+
+/**
+ * NDK toolchain prebuilt directory for the current build host. The NDK
+ * ships one prebuilt per host OS (always x86_64; arm64 macOS runs it
+ * under Rosetta).
+ */
+function ndkHostTag(host: Host): string {
+  switch (host.os) {
+    case "linux":
+      return "linux-x86_64";
+    case "darwin":
+      return "darwin-x86_64";
+    case "windows":
+      return "windows-x86_64";
+  }
 }
 
 /**
@@ -443,8 +503,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // failure is loud ("cannot find -l:libatomic.a") and the fix is obvious.
   const staticLibatomic = partial.staticLibatomic ?? true;
 
-  // TinyCC: off on Windows ARM64 (not supported), on elsewhere
-  const tinycc = partial.tinycc ?? !(windows && arm64);
+  // TinyCC: off on Windows ARM64 (not supported) and Android (no upstream
+  // bionic support; FFI cc() falls back to dlopen-only), on elsewhere.
+  const tinycc = partial.tinycc ?? !((windows && arm64) || abi === "android");
 
   const valgrind = partial.valgrind ?? false;
   const fuzzilli = partial.fuzzilli ?? false;
@@ -479,7 +540,33 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
-  assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu or musl)");
+  assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu, musl, or android)");
+
+  // ─── Cross-compilation (Android) ───
+  // We keep using the host's clang (same version everywhere) and pass
+  // --target/--sysroot. The NDK is needed only for its bionic sysroot,
+  // libc++, and compiler-rt — not for its bundled clang.
+  let crossTarget: string | undefined;
+  let sysroot: string | undefined;
+  let androidNdk: string | undefined;
+  let androidApiLevel: number | undefined;
+  if (abi === "android") {
+    androidNdk = partial.androidNdk ?? detectAndroidNdk();
+    if (androidNdk === undefined) {
+      throw new BuildError("--abi=android requires the Android NDK", {
+        hint: "Set ANDROID_NDK_ROOT or pass --android-ndk=<path>. Download: https://developer.android.com/ndk/downloads",
+      });
+    }
+    androidApiLevel = partial.androidApiLevel ?? ANDROID_API_LEVEL_DEFAULT;
+    sysroot = join(androidNdk, "toolchains", "llvm", "prebuilt", ndkHostTag(host), "sysroot");
+    if (!existsSync(sysroot)) {
+      throw new BuildError(`Android NDK sysroot not found at ${sysroot}`, {
+        hint: `Is ANDROID_NDK_ROOT (${androidNdk}) a valid NDK? Expected r26 or newer.`,
+      });
+    }
+    const llvmArch = arch === "x64" ? "x86_64" : "aarch64";
+    crossTarget = `${llvmArch}-unknown-linux-android${androidApiLevel}`;
+  }
 
   // ─── Versioning ───
   const pkgJsonPath = resolve(cwd, "package.json");
@@ -573,6 +660,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     nasm: toolchain.nasm,
     osxDeploymentTarget,
     osxSysroot,
+    crossTarget,
+    sysroot,
+    androidNdk,
+    androidApiLevel,
     version,
     revision,
     nodejsVersion,

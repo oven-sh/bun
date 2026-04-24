@@ -19,8 +19,8 @@
  * re-extraction after a failed patch doesn't re-download.
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ar, cc, cxx, nasm } from "./compile.ts";
 import type { BuildType, Config } from "./config.ts";
 import { assert } from "./error.ts";
@@ -1346,6 +1346,25 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
     const triple = spec.rustTarget ?? (cfg.arm64 ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc");
     const envKey = `CARGO_TARGET_${triple.toUpperCase().replace(/-/g, "_")}_LINKER`;
     env[envKey] = cfg.msvcLinker;
+  }
+
+  // Cross-compile (Android): cargo's default `cc` linker can't handle the
+  // foreign ELF objects. Use our clang as the linker driver and pass
+  // --target/--sysroot through, same as the C/C++ deps do via globalFlags.
+  // The cdylib output also wants -lunwind, which lives in the NDK's
+  // bundled clang resource dir (not the sysroot), so we add that -L too.
+  if (cfg.crossTarget !== undefined && spec.rustTarget !== undefined) {
+    const envKey = `CARGO_TARGET_${spec.rustTarget.toUpperCase().replace(/-/g, "_")}_LINKER`;
+    env[envKey] = cfg.cc;
+    const linkArgs = [`-Clink-arg=--target=${cfg.crossTarget}`];
+    if (cfg.sysroot !== undefined) linkArgs.push(`-Clink-arg=--sysroot=${cfg.sysroot}`);
+    if (cfg.abi === "android" && cfg.androidNdk !== undefined) {
+      const llvmArch = cfg.arm64 ? "aarch64" : "x86_64";
+      const clangLib = join(dirname(cfg.sysroot!), "lib", "clang");
+      const ver = readdirSync(clangLib)[0];
+      if (ver !== undefined) linkArgs.push(`-Clink-arg=-L${join(clangLib, ver, "lib", "linux", llvmArch)}`);
+    }
+    env.CARGO_ENCODED_RUSTFLAGS = [...(spec.rustflags ?? []), ...linkArgs].join("\x1f");
   }
 
   // ─── Emit build node ───

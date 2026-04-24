@@ -1796,8 +1796,12 @@ pub const Error = enum(i32) {
         }
 
         if (comptime bun.Environment.isLinux) {
+            if (eai == .SOCKTYPE) return Error.ECONNREFUSED;
+        }
+        if (comptime bun.Environment.isGlibc) {
+            // glibc-only async getaddrinfo_a / IDN extensions; absent on
+            // musl and bionic.
             switch (eai) {
-                .SOCKTYPE => return Error.ECONNREFUSED,
                 .IDN_ENCODE => return Error.EBADSTR,
                 .ALLDONE => return Error.ENOTFOUND,
                 .INPROGRESS => return Error.ETIMEOUT,

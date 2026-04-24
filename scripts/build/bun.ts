@@ -57,18 +57,25 @@ function systemLibs(cfg: Config): string[] {
 
   if (cfg.linux) {
     libs.push("-lc", "-lpthread", "-ldl");
-    // libatomic: static by default (CI distros ship it), dynamic on Arch-like.
-    // The static path needs to be the actual file path for lld to find it;
-    // dynamic uses -l syntax. We emit what CMake does: bare libatomic.a gets
-    // found in lib search paths, -latomic.so doesn't exist so we use -latomic.
-    if (cfg.staticLibatomic) {
-      libs.push("-l:libatomic.a");
+    if (cfg.abi === "android") {
+      // bionic: atomics are in compiler-rt builtins, no separate libatomic.
+      // -llog for __android_log_* (used by some deps' assert paths).
+      libs.push("-lm", "-llog");
     } else {
-      libs.push("-latomic");
+      // libatomic: static by default (CI distros ship it), dynamic on Arch-like.
+      // The static path needs to be the actual file path for lld to find it;
+      // dynamic uses -l syntax. We emit what CMake does: bare libatomic.a gets
+      // found in lib search paths, -latomic.so doesn't exist so we use -latomic.
+      if (cfg.staticLibatomic) {
+        libs.push("-l:libatomic.a");
+      } else {
+        libs.push("-latomic");
+      }
     }
     // Linux local WebKit: link system ICU (prebuilt bundles its own).
     // Assumes system ICU is in default lib paths — true on most distros.
-    if (cfg.webkit === "local") {
+    // Android: no system ICU; the local WebKit build must bundle it.
+    if (cfg.webkit === "local" && cfg.abi !== "android") {
       libs.push("-licudata", "-licui18n", "-licuuc");
     }
   }
@@ -623,6 +630,12 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
  * mismatch, etc.).
  */
 function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): void {
+  // Cross-compiled binaries can't run on the build host. Skip the smoke
+  // test entirely — `ninja check` becomes a no-op alias for the exe.
+  if (cfg.crossTarget !== undefined) {
+    n.phony("check", [exe]);
+    return;
+  }
   const stamp = resolve(cfg.buildDir, `${exeName}.smoke-test-passed`);
 
   // Linux+ASAN: wrap in `setarch <arch> -R` to disable ASLR. Fall back

@@ -2611,7 +2611,13 @@ pub mod internal {
         pub addr: SockaddrStorage,
     }
 
-    // re-order result to interleave ipv4 and ipv6 (also pack into a single allocation)
+    // Pack the linked list returned by getaddrinfo() into a single allocation.
+    // The order the OS gave us is preserved — the system's RFC 6724 destination
+    // selection / `gai.conf` / `AI_ADDRCONFIG` filter already decided which
+    // family should be preferred, and Node.js likewise reports `verbatim` order
+    // by default. See https://github.com/oven-sh/bun/issues/29695 — reordering
+    // to always put IPv6 first here breaks fetch/Bun.serve outbound on hosts
+    // where IPv6 is configured but unreachable.
     fn process_results(info: *mut AddrInfo) -> Box<[ResultEntry]> {
         let mut count: usize = 0;
         let mut info_: *mut AddrInfo = info;
@@ -2654,27 +2660,8 @@ pub mod internal {
         // SAFETY: every slot 0..count was written above
         let mut results: Box<[ResultEntry]> = unsafe { results.assume_init() };
 
-        // sort (interleave ipv4 and ipv6)
-        let mut want = netc::AF_INET6 as usize;
-        'outer: for idx in 0..count {
-            if results[idx].info.ai_family as usize == want {
-                continue;
-            }
-            for j in (idx + 1)..count {
-                if results[j].info.ai_family as usize == want {
-                    results.swap(idx, j);
-                    want = if want == netc::AF_INET6 as usize {
-                        netc::AF_INET as usize
-                    } else {
-                        netc::AF_INET6 as usize
-                    };
-                }
-            }
-            // the rest of the list is all one address family
-            break 'outer;
-        }
-
-        // set up pointers
+        // re-link the copied entries and re-home the `addr` pointer at the
+        // packed storage so the list outlives the original freeaddrinfo
         for idx in 0..count {
             let (left, right) = results.split_at_mut(idx + 1);
             let entry = &mut left[idx];

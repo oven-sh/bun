@@ -2574,6 +2574,20 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             try self.tokens.append(.Newline);
                             continue;
                         },
+                        // Handle CRLF line endings from Windows-edited scripts.
+                        // A `\r` immediately before `\n` in Normal state is
+                        // discarded so the `\n` fires its usual word-break +
+                        // Newline token. Inside quotes, `\r` stays literal
+                        // (matches bash/dash).
+                        '\r' => {
+                            comptime assertSpecialChar('\r');
+
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            if (self.peek()) |next| {
+                                if (!next.escaped and next.char == '\n') continue;
+                            }
+                            break :escaped;
+                        },
 
                         // glob asterisks
                         '*' => {
@@ -4162,7 +4176,7 @@ pub const ShellSrcBuilder = struct {
 };
 
 /// Characters that need to escaped
-const SPECIAL_CHARS = [_]u8{ '~', '[', ']', '#', ';', '\n', '*', '{', ',', '}', '`', '$', '=', '(', ')', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '|', '>', '<', '&', '\'', '"', ' ', '\\', SPECIAL_JS_CHAR };
+const SPECIAL_CHARS = [_]u8{ '~', '[', ']', '#', ';', '\n', '\r', '*', '{', ',', '}', '`', '$', '=', '(', ')', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '|', '>', '<', '&', '\'', '"', ' ', '\\', SPECIAL_JS_CHAR };
 const SPECIAL_CHARS_TABLE: bun.bit_set.IntegerBitSet(256) = brk: {
     var table = bun.bit_set.IntegerBitSet(256).initEmpty();
     for (SPECIAL_CHARS) |c| {

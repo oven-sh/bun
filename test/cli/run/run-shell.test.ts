@@ -37,4 +37,30 @@ describe.concurrent("run-shell", () => {
     const stderr = await proc.stderr.text();
     expect(stderr).toBe("error: Failed to run script.sh due to error Unexpected ')'\n");
   });
+
+  // https://github.com/oven-sh/bun/issues/29669
+  test("CRLF line endings are normalized (no command-not-found, no \\r in args)", async () => {
+    const dir = tmpdirSync("bun-shell-crlf");
+    mkdirSync(dir, { recursive: true });
+    // Each line ends in CRLF. Before the fix, `export\r` wasn't a known
+    // builtin so bun emitted "command not found: export", and `echo $X\r`
+    // passed a trailing \r through to stdout.
+    const shellScript = "export VITE_PARAM=value\r\necho \"[$VITE_PARAM]\"\r\necho done\r\n";
+    await Bun.write(join(dir, "crlf.sh"), shellScript);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "crlf.sh")],
+      cwd: dir,
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("[value]\ndone\n");
+    expect(exitCode).toBe(0);
+  });
 });

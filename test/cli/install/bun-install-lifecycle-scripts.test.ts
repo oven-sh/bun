@@ -3022,7 +3022,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(await proc.exited).toBe(0);
         assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
-        expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
+        // Mirror the Windows-slack multiplier used by the sibling 'bun pm trust'
+        // assertion below (line 3071). Windows CI runners routinely overshoot
+        // 750ms of CPU during `bun install` of a 1s-sleep preinstall script
+        // (observed 781ms–937ms on buildkite Windows 2019 runners).
+        expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000 * (isWindows ? 5 : 1));
       });
 
       // https://github.com/oven-sh/bun/issues/11252

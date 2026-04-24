@@ -3156,7 +3156,7 @@ pub fn memfd_create(name: [:0]const u8, flags_: MemfdFlags) Maybe(bun.FD) {
                         continue;
                     }
                 },
-                .NOSYS => memfd_enosys.store(true, .monotonic),
+                .NOSYS, .PERM, .ACCES => memfd_enosys.store(true, .monotonic),
                 else => {},
             }
 

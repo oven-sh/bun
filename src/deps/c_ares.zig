@@ -580,9 +580,6 @@ pub const Channel = opaque {
 
         libraryInit();
 
-        if (Error.get(ares_init(&channel))) |err| {
-            return err;
-        }
         const SockStateWrap = struct {
             pub fn onSockState(ctx: ?*anyopaque, socket: ares_socket_t, readable: c_int, writable: c_int) callconv(.c) void {
                 const container = bun.cast(*Container, ctx.?);
@@ -592,7 +589,12 @@ pub const Channel = opaque {
 
         var opts = bun.zero(Options);
 
-        opts.flags = ARES_FLAG_NOCHECKRESP;
+        opts.flags = ARES_FLAG_NOCHECKRESP |
+            // Android: c-ares can't auto-discover servers (no /etc/resolv.conf,
+            // no JNI). Without this flag it silently uses 127.0.0.1 and every
+            // query times out ~20s; with it, init returns ENOSERVERS so the
+            // caller can seed via setServers() or fall back to .system.
+            (if (bun.Environment.isAndroid) ARES_FLAG_NO_DFLT_SVR else 0);
         opts.sock_state_cb = &SockStateWrap.onSockState;
         opts.sock_state_cb_data = @as(*anyopaque, @ptrCast(this));
         opts.timeout = options.timeout orelse -1;
@@ -1905,6 +1907,7 @@ pub const ARES_FLAG_STAYOPEN = @as(c_int, 1) << @as(c_int, 4);
 pub const ARES_FLAG_NOSEARCH = @as(c_int, 1) << @as(c_int, 5);
 pub const ARES_FLAG_NOALIASES = @as(c_int, 1) << @as(c_int, 6);
 pub const ARES_FLAG_NOCHECKRESP = @as(c_int, 1) << @as(c_int, 7);
+pub const ARES_FLAG_NO_DFLT_SVR = @as(c_int, 1) << @as(c_int, 9);
 pub const ARES_FLAG_EDNS = @as(c_int, 1) << @as(c_int, 8);
 pub const ARES_OPT_FLAGS = @as(c_int, 1) << @as(c_int, 0);
 pub const ARES_OPT_TIMEOUT = @as(c_int, 1) << @as(c_int, 1);

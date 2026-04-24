@@ -89,17 +89,6 @@ export const globalFlags: Flag[] = [
     desc: "Cross-compile sysroot (target libc headers + libs)",
   },
   {
-    // On hosts with a GCC install (amazonlinux), clang's driver auto-detects
-    // it and prepends /usr/include/c++/N to the search list — even when
-    // --sysroot points elsewhere. That breaks #include_next in the sysroot's
-    // libc++ headers (they find the host's libstdc++ stdlib.h instead of the
-    // sysroot's C stdlib.h). Pointing --gcc-toolchain at the sysroot disables
-    // host-GCC detection without affecting anything else.
-    flag: c => [`--gcc-toolchain=${c.sysroot!}`, "-Wno-unused-command-line-argument"],
-    when: c => c.freebsd && c.sysroot !== undefined,
-    desc: "FreeBSD: disable host GCC include-path detection (warning suppressed: flag is a no-op on hosts without GCC)",
-  },
-  {
     // The NDK's libc++ headers live outside the sysroot's default search.
     // The NDK clang wrappers add this; with our own clang we must too.
     flag: c => ["-isystem", join(c.sysroot!, "usr", "include", "c++", "v1")],
@@ -113,15 +102,22 @@ export const globalFlags: Flag[] = [
     desc: "Android: platform define + 64-bit off_t (bionic defaults to 32-bit on LP32)",
   },
   {
-    // FreeBSD ships libc++ in base under usr/include/c++/v1. On hosts where
-    // clang detects a GCC install (amazonlinux), the driver leaks the host's
-    // /usr/include/c++/N into the search list even with --sysroot. -nostdinc++
-    // drops ALL default C++ paths (host GCC + host libc++); -isystem then adds
-    // only the sysroot's. -stdlib=libc++ stays at link only (linkFlags below).
-    flag: c => ["-nostdinc++", "-isystem", join(c.sysroot!, "usr", "include", "c++", "v1")],
+    // On hosts with a GCC install (amazonlinux), clang's driver auto-detects
+    // it and injects /usr/include/c++/N into the search list — even with
+    // --sysroot, --gcc-toolchain, and -nostdinc++. That breaks #include_next
+    // in the sysroot's libc++ headers. -nostdlibinc drops ALL standard system
+    // include paths (host AND sysroot defaults) while keeping clang's own
+    // resource dir (stddef.h etc.); we then add back only the two sysroot
+    // dirs in the correct order so #include_next from c++/v1 finds usr/include.
+    flag: c => [
+      "-nostdlibinc",
+      "-isystem",
+      join(c.sysroot!, "usr", "include", "c++", "v1"),
+      "-isystem",
+      join(c.sysroot!, "usr", "include"),
+    ],
     when: c => c.freebsd && c.sysroot !== undefined,
-    lang: "cxx",
-    desc: "FreeBSD: sysroot libc++ headers only (suppress host GCC/libc++ paths)",
+    desc: "FreeBSD: explicit sysroot include paths only (suppress host GCC detection)",
   },
 
   // ─── CPU target ───

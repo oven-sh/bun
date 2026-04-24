@@ -127,7 +127,6 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && rustup default nightly \
     && rustup target add aarch64-linux-android x86_64-linux-android \
     && rustup target add x86_64-unknown-freebsd \
-    && (rustup target add aarch64-unknown-freebsd || true) \
     && rustup component add rust-src
 
 # Android NDK — sysroot/libc++/compiler-rt for --abi=android cross-compile.
@@ -214,7 +213,6 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && rustup default nightly \
     && rustup target add aarch64-linux-android x86_64-linux-android \
     && rustup target add x86_64-unknown-freebsd \
-    && (rustup target add aarch64-unknown-freebsd || true) \
     && rustup component add rust-src
 
 ENV PATH=/root/.cargo/bin:$PATH

@@ -1264,9 +1264,8 @@ install_rust() {
 		# (no prebuilt) — lolhtml.ts uses -Zbuild-std for that, so the
 		# rustup target add is best-effort.
 		execute_as_user "$rustup" target add x86_64-unknown-freebsd
-		execute_as_user "$rustup" target add aarch64-unknown-freebsd || true
 		# rust-src for -Zbuild-std (Tier 3 targets without prebuilt std).
-		execute_as_user "$rustup" component add rust-src || true
+		execute_as_user "$rustup" component add rust-src
 		;;
 	esac
 }

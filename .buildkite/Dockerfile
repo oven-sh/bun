@@ -148,7 +148,11 @@ RUN curl -fsSL "https://dl.google.com/android/repository/android-ndk-${ANDROID_N
     # user can't write to /usr.
     && RES=$(clang -print-resource-dir) \
     && NDK_RT=/opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/$(ls /opt/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/)/lib/linux \
+    && mkdir -p $RES/lib/linux \
     && for A in aarch64 x86_64; do \
+         ln -sf $NDK_RT/libclang_rt.builtins-${A}-android.a $RES/lib/linux/; \
+         mkdir -p $RES/lib/linux/${A}; \
+         ln -sf $NDK_RT/${A}/libunwind.a $RES/lib/linux/${A}/; \
          DIR=$RES/lib/${A}-unknown-linux-android28; \
          mkdir -p $DIR; \
          ln -sf $NDK_RT/libclang_rt.builtins-${A}-android.a $DIR/libclang_rt.builtins.a; \

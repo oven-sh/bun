@@ -795,7 +795,13 @@ export const linkerFlags: Flag[] = [
     desc: "Dynamic C++ runtime on musl (static unavailable)",
   },
   {
-    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++", "-static-libstdc++"],
+    flag: c => [
+      `--target=${c.crossTarget!}`,
+      `--sysroot=${c.sysroot!}`,
+      "--rtlib=compiler-rt",
+      "-stdlib=libc++",
+      "-static-libstdc++",
+    ],
     when: c => c.linux && c.abi === "android",
     desc: "Android link: target/sysroot + static libc++ (NDK ships libc++, not libstdc++)",
   },

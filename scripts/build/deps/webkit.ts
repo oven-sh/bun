@@ -261,7 +261,7 @@ export const webkit: Dependency = {
             ANDROID: "ON",
             ENABLE_API_TESTS: "OFF",
             // No system ICU on Android. Point at a static cross-built ICU
-            // (see Dockerfile.android for the recipe). FindICU also probes
+            // (recipe in oven-sh/WebKit:Dockerfile.android). FindICU also probes
             // CMAKE_FIND_ROOT_PATH so we whitelist the prefix. ICU_INCLUDE_DIR
             // explicit: the NDK sysroot ships annotated headers that mark
             // most ICU functions __INTRODUCED_IN(31), so FindICU picking

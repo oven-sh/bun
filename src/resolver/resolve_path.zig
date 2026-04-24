@@ -2048,9 +2048,16 @@ export fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     const str = in.toUTF8WithoutRef(bun.default_allocator);
     defer str.deinit();
 
+    const cwd = globalObject.bunVM().transpiler.fs.top_level_dir;
+
+    var sfa = std.heap.stackFallback(4096, bun.default_allocator);
+    const alloc = sfa.get();
+    const buf = bun.handleOom(alloc.alloc(u8, cwd.len + str.slice().len + 8));
+    defer alloc.free(buf);
+
     const out_slice = joinAbsStringBuf(
-        globalObject.bunVM().transpiler.fs.top_level_dir,
-        &join_buf,
+        cwd,
+        buf,
         &.{str.slice()},
         .auto,
     );

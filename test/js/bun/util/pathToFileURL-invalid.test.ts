@@ -54,3 +54,18 @@ describe("Bun.pathToFileURL with inputs that fail URL construction", () => {
     }
   });
 });
+
+// Relative paths are resolved against cwd via a fixed 4096-byte threadlocal
+// buffer. Inputs longer than that must not panic with an out-of-bounds write.
+test("Bun.pathToFileURL with relative path longer than PATH_MAX does not crash", () => {
+  const seg = Buffer.alloc(5000, "a").toString();
+  const url = pathToFileURL(seg);
+  expect(url).toBeInstanceOf(URL);
+  expect(url.protocol).toBe("file:");
+  expect(url.pathname.endsWith("/" + seg)).toBe(true);
+
+  // `..` segments that collapse to a short path should also work even when
+  // the unnormalized input is long.
+  const collapsing = Buffer.alloc(6000, "../").toString() + "x";
+  expect(pathToFileURL(collapsing).href).toStartWith("file:///");
+});

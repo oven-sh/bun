@@ -24,11 +24,25 @@ static void load_certs_from_directory(const char* dir_path, STACK_OF(X509)* cert
       continue;
     }
     
-    // Check if file has .crt, .pem, or .cer extension
+    // Accept .crt/.pem/.cer, plus OpenSSL c_rehash-style names (^[0-9a-f]{8}\.[0-9]+$)
+    // — Android's /system/etc/security/cacerts/ and Debian's /etc/ssl/certs/
+    // both use the hashed format.
     const char* ext = strrchr(entry->d_name, '.');
-    if (!ext || (strcmp(ext, ".crt") != 0 && strcmp(ext, ".pem") != 0 && strcmp(ext, ".cer") != 0)) {
-      continue;
+    if (!ext) continue;
+    bool ok = strcmp(ext, ".crt") == 0 || strcmp(ext, ".pem") == 0 || strcmp(ext, ".cer") == 0;
+    if (!ok) {
+      size_t prefix = (size_t)(ext - entry->d_name);
+      if (prefix == 8) {
+        ok = true;
+        for (size_t i = 0; i < 8; i++) {
+          char c = entry->d_name[i];
+          if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) { ok = false; break; }
+        }
+        for (const char* p = ext + 1; ok && *p; p++) if (*p < '0' || *p > '9') ok = false;
+        if (ext[1] == '\0') ok = false;
+      }
     }
+    if (!ok) continue;
     
     // Build full path
     char filepath[PATH_MAX];
@@ -109,7 +123,16 @@ extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs)
 
   // Otherwise, load certificates from standard Linux/Unix paths
   // These are the common locations for system certificates
-  
+#ifdef __ANDROID__
+  // Android: no bundle files. System CAs are individual hashed PEM files.
+  static const char* bundle_paths[] = { NULL };
+  static const char* dir_paths[] = {
+    "/apex/com.android.conscrypt/cacerts",  // API 30+ (mainline updatable)
+    "/system/etc/security/cacerts",         // base system store
+    "/data/misc/user/0/cacerts-added",      // user-installed
+    NULL
+  };
+#else
   // Common certificate bundle locations (single file with multiple certs)
   // These paths are based on common Linux distributions and OpenSSL defaults
   static const char* bundle_paths[] = {
@@ -123,7 +146,7 @@ extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs)
     "/usr/local/share/ca-certificates/ca-certificates.crt", // Custom CA installs
     NULL
   };
-  
+
   // Common certificate directory locations (multiple files)
   // Note: OpenSSL expects hashed symlinks in directories (c_rehash format)
   static const char* dir_paths[] = {
@@ -131,12 +154,13 @@ extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs)
     "/etc/pki/tls/certs",       // RHEL/Fedora
     "/usr/share/ca-certificates", // Debian/Ubuntu (original certs, not hashed)
     "/usr/local/share/certs",   // FreeBSD
-    "/etc/openssl/certs",       // NetBSD  
+    "/etc/openssl/certs",       // NetBSD
     "/var/ssl/certs",           // AIX
     "/usr/local/etc/openssl/certs", // Homebrew OpenSSL on macOS
     "/System/Library/OpenSSL/certs", // macOS system OpenSSL (older versions)
     NULL
   };
+#endif
   
   // Try loading from bundle files first
   for (const char** path = bundle_paths; *path != NULL; path++) {

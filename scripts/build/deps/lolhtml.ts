@@ -51,6 +51,11 @@ export const lolhtml: Dependency = {
       spec.rustTarget = cfg.arm64 ? "aarch64-linux-android" : "x86_64-linux-android";
     }
 
+    // FreeBSD: cross-compile when crossTarget is set (host != freebsd).
+    if (cfg.freebsd && cfg.crossTarget !== undefined) {
+      spec.rustTarget = cfg.arm64 ? "aarch64-unknown-freebsd" : "x86_64-unknown-freebsd";
+    }
+
     return spec;
   },
 

@@ -269,13 +269,15 @@ pub const GenerateHeader = struct {
             fn run() void {
                 if (comptime Environment.isMac) {
                     platform_ = forMac();
-                } else if (comptime Environment.isPosix) {
+                } else if (comptime Environment.isLinux) {
                     platform_ = forLinux();
 
                     const release = bun.sliceTo(&linux_os_name.release, 0);
                     const sliced_string = Semver.SlicedString.init(release, release);
                     const result = Semver.Version.parse(sliced_string);
                     linux_kernel_version = result.version.min();
+                } else if (comptime Environment.isFreeBSD) {
+                    platform_ = forFreeBSD();
                 } else if (Environment.isWindows) {
                     platform_ = Platform{
                         .os = analytics.OperatingSystem.windows,
@@ -354,6 +356,17 @@ pub const GenerateHeader = struct {
             }
 
             return analytics.Platform{ .os = analytics.OperatingSystem.linux, .version = release, .arch = platform_arch };
+        }
+
+        var freebsd_os_name: std.c.utsname = undefined;
+        fn forFreeBSD() analytics.Platform {
+            freebsd_os_name = std.mem.zeroes(@TypeOf(freebsd_os_name));
+            _ = std.c.uname(&freebsd_os_name);
+            return analytics.Platform{
+                .os = analytics.OperatingSystem.freebsd,
+                .version = bun.sliceTo(&freebsd_os_name.release, 0),
+                .arch = platform_arch,
+            };
         }
     };
 };

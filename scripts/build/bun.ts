@@ -86,6 +86,13 @@ function systemLibs(cfg: Config): string[] {
     libs.push("-licucore", "-lresolv");
   }
 
+  if (cfg.freebsd) {
+    // pthread/m: explicit on FreeBSD (not folded into libc).
+    // execinfo: backtrace() — separate library on FreeBSD.
+    // kvm/procstat/elf/util: process introspection for node:os and crash handler.
+    libs.push("-lc", "-lpthread", "-lm", "-lexecinfo", "-lkvm", "-lprocstat", "-lelf", "-lutil");
+  }
+
   if (cfg.windows) {
     // Explicit .lib: these go after /link so no auto-suffixing by the
     // clang-cl driver. lld-link auto-appends .lib but link.exe doesn't;

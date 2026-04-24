@@ -1332,7 +1332,10 @@ pub fn spawnProcessPosix(
     }
 
     if (options.detached) {
-        flags |= bun.c.POSIX_SPAWN_SETSID;
+        if (comptime @hasDecl(bun.c, "POSIX_SPAWN_SETSID")) {
+            flags |= bun.c.POSIX_SPAWN_SETSID;
+        }
+        attr.detached = true;
     }
 
     // Pass PTY slave fd to attr for controlling terminal setup

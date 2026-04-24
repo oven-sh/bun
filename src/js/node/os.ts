@@ -123,7 +123,9 @@ function bound(binding) {
           ? "Darwin"
           : process.platform === "linux" || process.platform === "android"
             ? "Linux"
-            : $bundleError("TODO: type");
+            : process.platform === "freebsd"
+              ? "FreeBSD"
+              : $bundleError("TODO: type");
     },
     uptime: binding.uptime,
     userInfo: binding.userInfo,
@@ -132,11 +134,13 @@ function bound(binding) {
       // TODO: linux arm64 should also return "aarch64" (Node/uname compat) —
       // separate PR to avoid behavior change in the Android port.
       return process.arch === "arm64"
-        ? process.platform === "android"
+        ? process.platform === "android" || process.platform === "freebsd"
           ? "aarch64"
           : "arm64"
         : process.arch === "x64"
-          ? "x86_64"
+          ? process.platform === "freebsd"
+            ? "amd64"
+            : "x86_64"
           : $bundleError("TODO: machine");
     },
     devNull: process.platform === "win32" ? "\\\\.\\nul" : "/dev/null",

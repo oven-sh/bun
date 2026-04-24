@@ -31,7 +31,7 @@ import {
 } from "../scripts/utils.mjs";
 
 /**
- * @typedef {"linux" | "darwin" | "windows"} Os
+ * @typedef {"linux" | "darwin" | "windows" | "freebsd"} Os
  * @typedef {"aarch64" | "x64"} Arch
  * @typedef {"musl" | "android"} Abi
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
@@ -133,6 +133,10 @@ const buildPlatforms = [
   // matches target arch so only --abi/--target/--sysroot are cross.
   { os: "linux", arch: "aarch64", abi: "android", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", abi: "android", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  // FreeBSD: cross-compiled from glibc amazonlinux via base.txz sysroot,
+  // same model as Android. Target os/arch are explicit.
+  { os: "freebsd", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "freebsd", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
   { os: "windows", arch: "aarch64", release: "11" },
@@ -197,8 +201,12 @@ function getPlatformLabel(platform) {
  */
 function getImageKey(platform) {
   const { os, arch, distro, release, features, abi } = platform;
+  // Cross-compiled targets (Android, FreeBSD) build from a Linux host image
+  // — bootstrap.sh installs the NDK / base.txz sysroot on it. No separate
+  // image is baked.
+  const hostOs = os === "freebsd" ? "linux" : os;
   const version = release.replace(/\./g, "");
-  let key = `${os}-${arch}-${version}`;
+  let key = `${hostOs}-${arch}-${version}`;
   if (distro) {
     key += `-${distro}`;
   }
@@ -206,8 +214,6 @@ function getImageKey(platform) {
     key += `-with-${features.join("-")}`;
   }
 
-  // Android cross-compiles from the same glibc image as gnu (just needs NDK,
-  // which bootstrap.sh installs on all Linux build images) — no separate image.
   if (abi && abi !== "android") {
     key += `-${abi}`;
   }
@@ -293,8 +299,11 @@ function getPriority() {
 function getEc2Agent(platform, options, ec2Options) {
   const { os, arch, abi, distro, release } = platform;
   const { instanceType, cpuCount, threadsPerCore } = ec2Options;
+  // Cross-compiled targets run on a Linux EC2 box; the agent tag must match
+  // the host (`linux`), not the target.
+  const hostOs = os === "freebsd" ? "linux" : os;
   return {
-    os,
+    os: hostOs,
     arch,
     abi,
     distro,
@@ -487,6 +496,9 @@ function getBuildArgs(target, options, mode) {
     // Android cross-compiles C++ from a glibc host: arch/abi must be explicit
     // (host detection would report the build box's gnu/x64, not the target).
     args.push(`--os=${os}`, `--arch=${arch}`, "--abi=android");
+  } else if (os === "freebsd") {
+    // FreeBSD cross-compiles C++ from a Linux host: os/arch must be explicit.
+    args.push(`--os=${os}`, `--arch=${arch}`);
   }
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");

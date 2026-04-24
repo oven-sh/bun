@@ -142,7 +142,7 @@ pub const max_eviction_count = 8096;
 // ideally, the constants above can be inlined
 const Platform = switch (Environment.os) {
     .linux => @import("./watcher/INotifyWatcher.zig"),
-    .mac => @import("./watcher/KEventWatcher.zig"),
+    .mac, .freebsd => @import("./watcher/KEventWatcher.zig"),
     .windows => WindowsWatcher,
     .wasm => @compileError("Unsupported platform"),
 };

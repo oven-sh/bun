@@ -1032,7 +1032,7 @@ pub const FFI = struct {
                 filepath_buf,
                 name_slice.slice(),
                 switch (Environment.os) {
-                    .linux => "so",
+                    .linux, .freebsd => "so",
                     .mac => "dylib",
                     .windows => "dll",
                     .wasm => @compileError("TODO"),

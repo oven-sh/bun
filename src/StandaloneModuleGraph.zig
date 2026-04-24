@@ -901,7 +901,7 @@ pub const StandaloneModuleGraph = struct {
                 }
                 return cloned_executable_fd;
             },
-            .linux => {
+            .linux, .freebsd => {
                 // ELF section approach: find .bun section and expand it
                 const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
                 if (input_result.err) |err| {

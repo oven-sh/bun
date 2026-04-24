@@ -67,6 +67,31 @@ export const profiles = {
     webkit: "prebuilt",
   },
 
+  /**
+   * FreeBSD x64 cross-compile. Requires FREEBSD_SYSROOT (extracted base.txz).
+   * Sanitizers are forced off in resolveConfig() regardless of profile.
+   */
+  freebsd: {
+    buildType: "Debug",
+    os: "freebsd",
+    arch: "x64",
+    webkit: "prebuilt",
+  },
+
+  "freebsd-arm64": {
+    buildType: "Debug",
+    os: "freebsd",
+    arch: "aarch64",
+    webkit: "prebuilt",
+  },
+
+  "freebsd-release": {
+    buildType: "Release",
+    os: "freebsd",
+    arch: "x64",
+    webkit: "prebuilt",
+  },
+
   /** Release build for local testing. No LTO (that's CI-only). */
   release: {
     buildType: "Release",

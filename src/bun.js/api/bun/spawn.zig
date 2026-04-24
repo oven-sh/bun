@@ -110,7 +110,13 @@ pub const BunSpawn = struct {
 
         pub fn set(self: *Attr, flags: u16) !void {
             self.flags = flags;
-            self.detached = (flags & bun.c.POSIX_SPAWN_SETSID) != 0;
+            // FreeBSD's <spawn.h> has no POSIX_SPAWN_SETSID; bun-spawn.cpp
+            // calls setsid() in the child unconditionally for `detached` so
+            // the flag plumbing is a no-op there.
+            self.detached = if (comptime @hasDecl(bun.c, "POSIX_SPAWN_SETSID"))
+                (flags & bun.c.POSIX_SPAWN_SETSID) != 0
+            else
+                false;
         }
 
         pub fn resetSignals(self: *Attr) !void {
@@ -335,7 +341,7 @@ pub const PosixSpawn = struct {
         //   setsid() + ioctl(TIOCSCTTY) before exec, which system posix_spawn can't do.
         //   For non-PTY spawns on macOS, we use system posix_spawn which is safer
         //   (Apple's posix_spawn uses a kernel fast-path that avoids fork() entirely).
-        const use_bun_spawn = Environment.isLinux or (Environment.isMac and pty_slave_fd >= 0);
+        const use_bun_spawn = Environment.isLinux or Environment.isFreeBSD or (Environment.isMac and pty_slave_fd >= 0);
 
         if (use_bun_spawn) {
             return BunSpawnRequest.spawn(

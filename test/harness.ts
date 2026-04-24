@@ -19,7 +19,8 @@ export const BREAKING_CHANGES_BUN_1_2 = false;
 
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
-export const isPosix = isMacOS || isLinux;
+export const isFreeBSD = process.platform === "freebsd";
+export const isPosix = isMacOS || isLinux || isFreeBSD;
 export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isArm64 = process.arch === "arm64";

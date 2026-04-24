@@ -72,6 +72,8 @@ pub fn setThreadName(name: [:0]const u8) void {
         _ = std.posix.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch 0;
     } else if (Environment.isMac) {
         _ = std.c.pthread_setname_np(name);
+    } else if (Environment.isFreeBSD) {
+        std.c.pthread_set_name_np(std.c.pthread_self(), name);
     } else if (Environment.isWindows) {
         // TODO: use SetThreadDescription or NtSetInformationThread with 0x26 (ThreadNameInformation)
         // without causing exit code 0xC0000409 (stack buffer overrun) in child process

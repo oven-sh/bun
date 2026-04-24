@@ -49,6 +49,15 @@ extern "C" int kill(int pid, int sig)
 #endif
 #endif
 
+#if defined(__FreeBSD__)
+// WTF references this counter from text/StringCommon.h under STRING_STATS;
+// when building without WebCore the definition lives here.
+#include <atomic>
+namespace WTF::Detail {
+std::atomic<int> wtfStringCopyCount;
+}
+#endif
+
 // if linux
 #if defined(__linux__)
 #include <features.h>

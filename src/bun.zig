@@ -1574,7 +1574,7 @@ pub fn reloadProcess(
             },
         }
     } else if (comptime Environment.isPosix) {
-        on_before_reload_process_linux();
+        if (comptime Environment.isLinux) on_before_reload_process_linux();
         const err = std.posix.execveZ(
             exec_path,
             newargv,
@@ -1911,9 +1911,9 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.posix.Stat;
 pub const StatFS = switch (Environment.os) {
-    .mac => bun.c.struct_statfs,
-    .linux => bun.c.struct_statfs,
-    else => windows.libuv.uv_statfs_t,
+    .mac, .linux, .freebsd => bun.c.struct_statfs,
+    .windows => windows.libuv.uv_statfs_t,
+    .wasm => unreachable,
 };
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
@@ -3188,6 +3188,14 @@ pub fn getRoughTickCount(comptime mock_mode: timespec.MockMode) timespec {
             .sec = @intCast(ms / 1000),
             .nsec = @intCast((ms % 1000) * 1_000_000),
         };
+    }
+
+    if (comptime Environment.isFreeBSD) {
+        var spec = timespec{ .nsec = 0, .sec = 0 };
+        // CLOCK_MONOTONIC_FAST trades a small amount of precision for not
+        // crossing the syscall boundary; same idea as Linux MONOTONIC_COARSE.
+        _ = std.c.clock_gettime(.MONOTONIC_FAST, @ptrCast(&spec));
+        return spec;
     }
 
     return 0;

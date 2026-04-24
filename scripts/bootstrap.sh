@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 31
+# Version: 32
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1092,6 +1092,7 @@ install_build_essentials() {
 	install_gcc
 	install_rust
 	install_android_ndk
+	install_freebsd_sysroot
 	install_ccache
 	install_docker
 }
@@ -1259,6 +1260,8 @@ install_rust() {
 		fi
 		execute_as_user "$rustup" target add aarch64-linux-android
 		execute_as_user "$rustup" target add x86_64-linux-android
+		execute_as_user "$rustup" target add x86_64-unknown-freebsd
+		execute_as_user "$rustup" target add aarch64-unknown-freebsd
 		;;
 	esac
 }
@@ -1284,6 +1287,32 @@ install_android_ndk() {
 	execute_sudo "$unzip" -q "$ndk_zip" -d /opt
 	execute_sudo mv "/opt/android-ndk-${ndk_version}" "$ndk_home"
 	append_to_profile "export ANDROID_NDK_ROOT=$ndk_home"
+}
+
+freebsd_version() {
+	print "14.3"
+}
+
+install_freebsd_sysroot() {
+	case "$os" in
+	linux) ;;
+	*) return ;;
+	esac
+
+	freebsd_ver="$(freebsd_version)"
+	for fbsd_arch in amd64 arm64; do
+		case "$fbsd_arch" in
+		amd64) sysroot="/opt/freebsd-sysroot" ;;
+		arm64) sysroot="/opt/freebsd-sysroot-arm64" ;;
+		esac
+		if [ -d "$sysroot/usr/include" ]; then
+			continue
+		fi
+		execute_sudo mkdir -p "$sysroot"
+		base_txz=$(download_file "https://download.freebsd.org/releases/${fbsd_arch}/${freebsd_ver}-RELEASE/base.txz")
+		execute_sudo tar -C "$sysroot" -xJf "$base_txz" ./usr/include ./usr/lib ./lib
+	done
+	append_to_profile "export FREEBSD_SYSROOT=/opt/freebsd-sysroot"
 }
 
 install_docker() {

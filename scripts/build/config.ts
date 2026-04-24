@@ -17,7 +17,7 @@ import { clangTargetArch } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
 import { ZIG_COMMIT } from "./zig.ts";
 
-export type OS = "linux" | "darwin" | "windows";
+export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
@@ -72,8 +72,11 @@ export interface Config {
   linux: boolean;
   darwin: boolean;
   windows: boolean;
-  /** linux || darwin */
+  freebsd: boolean;
+  /** linux || darwin || freebsd */
   unix: boolean;
+  /** darwin || freebsd — kqueue-based event loop */
+  kqueue: boolean;
   x64: boolean;
   arm64: boolean;
 
@@ -203,7 +206,7 @@ export interface Config {
 
   // ─── Cross-compilation (set when host != target for C++) ───
   // Generic so future targets (e.g. cross-compiling to macOS from Linux)
-  // go through the same plumbing. Currently populated only for Android.
+  // go through the same plumbing. Populated for Android and FreeBSD.
   /** clang `--target=` triple, e.g. "aarch64-unknown-linux-android28". undefined = native. */
   crossTarget: string | undefined;
   /** clang `--sysroot=` path. For Android: `<ndk>/toolchains/llvm/prebuilt/<host>/sysroot`. */
@@ -212,6 +215,8 @@ export interface Config {
   androidNdk: string | undefined;
   /** Android API level (the N in `__ANDROID_API__=N`). undefined when abi != "android". */
   androidApiLevel: number | undefined;
+  /** FreeBSD release version targeted (e.g. "14.3"). undefined when os != "freebsd". */
+  freebsdVersion: string | undefined;
 
   // ─── Versioning ───
   /** Bun's own version (from package.json). */
@@ -264,6 +269,10 @@ export interface PartialConfig {
   androidNdk?: string;
   /** Override Android API level (default: ANDROID_API_LEVEL_DEFAULT). Only used when abi=android. */
   androidApiLevel?: number;
+  /** FreeBSD sysroot (extracted base.txz). Only used when os=freebsd. */
+  freebsdSysroot?: string;
+  /** FreeBSD release version (default: FREEBSD_VERSION_DEFAULT). Only used when os=freebsd. */
+  freebsdVersion?: string;
   // Version pins (defaults in versions.ts).
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
@@ -340,11 +349,13 @@ export function detectHost(): Host {
         ? "darwin"
         : plat === "win32"
           ? "windows"
-          : (() => {
-              throw new BuildError(`Unsupported host platform: ${plat}`, {
-                hint: "Bun builds on linux, darwin, or windows",
-              });
-            })();
+          : plat === "freebsd"
+            ? "freebsd"
+            : (() => {
+                throw new BuildError(`Unsupported host platform: ${plat}`, {
+                  hint: "Bun builds on linux, darwin, windows, or freebsd",
+                });
+              })();
 
   const a = hostArch();
   const arch: Arch =
@@ -374,6 +385,33 @@ export function detectLinuxAbi(): Abi {
  * fallbacks. Covers ~96% of active devices as of 2026.
  */
 export const ANDROID_API_LEVEL_DEFAULT = 28;
+
+/**
+ * FreeBSD release we target. 14.x is the current production series; 14.3
+ * is the oldest 14.x still on download.freebsd.org. Building against 14.3
+ * produces binaries that run on 14.3+ (FreeBSD guarantees forward ABI
+ * compat within a major).
+ */
+export const FREEBSD_VERSION_DEFAULT = "14.3";
+
+/**
+ * Locate a FreeBSD sysroot (extracted base.txz). Checks env var then
+ * well-known install paths. The sysroot is arch-specific (different
+ * crt/libc for amd64 vs arm64), so when cross-compiling for arm64 we
+ * look for the `-arm64` variant first. Returns undefined if none found.
+ */
+export function detectFreebsdSysroot(arch: Arch): string | undefined {
+  const env = process.env.FREEBSD_SYSROOT;
+  if (env && existsSync(join(env, "usr", "include", "sys", "param.h"))) return env;
+  const candidates =
+    arch === "aarch64"
+      ? ["/opt/freebsd-sysroot-arm64", "/opt/freebsd-sysroot"]
+      : ["/opt/freebsd-sysroot", "/opt/freebsd-sysroot-amd64"];
+  for (const p of candidates) {
+    if (existsSync(join(p, "usr", "include", "sys", "param.h"))) return p;
+  }
+  return undefined;
+}
 
 /**
  * Locate the Android NDK. Checks the conventional env vars in priority
@@ -406,6 +444,10 @@ function ndkHostTag(host: Host): string {
       return "darwin-x86_64";
     case "windows":
       return "windows-x86_64";
+    case "freebsd":
+      throw new BuildError("Android NDK does not ship FreeBSD prebuilts", {
+        hint: "Cross-compile to Android from a Linux host",
+      });
   }
 }
 
@@ -478,7 +520,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const linux = os === "linux";
   const darwin = os === "darwin";
   const windows = os === "windows";
-  const unix = linux || darwin;
+  const freebsd = os === "freebsd";
+  const unix = linux || darwin || freebsd;
+  const kqueue = darwin || freebsd;
   const x64 = arch === "x64";
   const arm64 = arch === "aarch64";
 
@@ -510,7 +554,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const asanDefault = debug && ((darwin && arm64) || linux);
   // Android: force off. NDK ASAN deployment needs wrap.sh + runtime .so
   // shipping alongside the binary; UBSan likewise. Not worth the matrix.
-  const asan = abi === "android" ? false : (partial.asan ?? asanDefault);
+  // FreeBSD: force off. Cross-compiled — we'd need to ship FreeBSD's
+  // libclang_rt.asan, and there's no -asan WebKit prebuilt for it.
+  const asan = abi === "android" || freebsd ? false : (partial.asan ?? asanDefault);
 
   // Zig ASAN follows ASAN unless explicitly overridden
   const zigAsan = partial.zigAsan ?? asan;
@@ -552,9 +598,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // failure is loud ("cannot find -l:libatomic.a") and the fix is obvious.
   const staticLibatomic = partial.staticLibatomic ?? true;
 
-  // TinyCC: off on Windows ARM64 (not supported) and Android (no upstream
-  // bionic support; FFI cc() falls back to dlopen-only), on elsewhere.
-  const tinycc = partial.tinycc ?? !((windows && arm64) || abi === "android");
+  // TinyCC: off on Windows ARM64 (not supported), Android (no upstream
+  // bionic support; FFI cc() falls back to dlopen-only), and FreeBSD
+  // (oven-sh/tinycc has no FreeBSD target).
+  const tinycc = partial.tinycc ?? !((windows && arm64) || abi === "android" || freebsd);
 
   const valgrind = partial.valgrind ?? false;
   const fuzzilli = partial.fuzzilli ?? false;
@@ -618,6 +665,31 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     linkNdkRuntimesIntoClang(toolchain.cc, androidNdk, host, crossTarget);
   }
 
+  // ─── Cross-compilation (FreeBSD) ───
+  // Same pattern as Android: host clang + --target/--sysroot. The sysroot
+  // is an extracted base.txz (libc, libc++, headers, crt files). When
+  // building ON FreeBSD, no cross flags are needed.
+  let freebsdVersion: string | undefined;
+  if (freebsd) {
+    freebsdVersion = partial.freebsdVersion ?? FREEBSD_VERSION_DEFAULT;
+    if (host.os !== "freebsd") {
+      sysroot = partial.freebsdSysroot ?? detectFreebsdSysroot(arch);
+      if (sysroot === undefined) {
+        throw new BuildError("--os=freebsd requires a FreeBSD sysroot when cross-compiling", {
+          hint:
+            "Set FREEBSD_SYSROOT or pass --freebsd-sysroot=<path>. Create one with: mkdir -p /opt/freebsd-sysroot && curl -L https://download.freebsd.org/releases/amd64/" +
+            freebsdVersion +
+            "-RELEASE/base.txz | tar -C /opt/freebsd-sysroot -xJf - ./usr/include ./usr/lib ./lib",
+        });
+      }
+      const llvmArch = arch === "x64" ? "x86_64" : "aarch64";
+      crossTarget = `${llvmArch}-unknown-freebsd${freebsdVersion}`;
+      // No compiler-rt symlinking needed (unlike Android): FreeBSD's base
+      // ships libgcc.a (which IS compiler-rt builtins, renamed for compat)
+      // in /usr/lib, and clang's freebsd driver finds it via --sysroot.
+    }
+  }
+
   // ─── Versioning ───
   const pkgJsonPath = resolve(cwd, "package.json");
   const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string };
@@ -649,7 +721,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     linux,
     darwin,
     windows,
+    freebsd,
     unix,
+    kqueue,
     x64,
     arm64,
     host,
@@ -714,6 +788,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     sysroot,
     androidNdk,
     androidApiLevel,
+    freebsdVersion,
     version,
     revision,
     nodejsVersion,

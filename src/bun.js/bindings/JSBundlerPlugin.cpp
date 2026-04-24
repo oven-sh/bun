@@ -35,6 +35,8 @@
 
 #if OS(WINDOWS)
 #include <windows.h>
+#else
+#include <dlfcn.h>
 #endif
 
 namespace Bun {

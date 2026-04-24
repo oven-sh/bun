@@ -43,8 +43,8 @@ export const cpuTargetFlags: Flag[] = [
   },
   {
     flag: ["-march=armv8-a+crc", "-mtune=ampere1"],
-    when: c => c.linux && c.arm64 && c.abi !== "android",
-    desc: "ARM64 Linux: ARMv8-A base + CRC, tuned for Ampere (Graviton-like)",
+    when: c => (c.linux || c.freebsd) && c.arm64 && c.abi !== "android",
+    desc: "ARM64 Linux/FreeBSD: ARMv8-A base + CRC, tuned for Ampere (Graviton-like)",
   },
   {
     flag: ["-march=armv8-a+crc", "-mtune=cortex-a78"],
@@ -100,6 +100,15 @@ export const globalFlags: Flag[] = [
     flag: ["-DANDROID", "-D_FILE_OFFSET_BITS=64"],
     when: c => c.abi === "android",
     desc: "Android: platform define + 64-bit off_t (bionic defaults to 32-bit on LP32)",
+  },
+  {
+    // FreeBSD ships libc++ in base under usr/include/c++/v1. With --sysroot
+    // clang finds it automatically, but explicit -isystem keeps the search
+    // order deterministic when host clang's own libc++ headers are newer.
+    flag: c => ["-isystem", join(c.sysroot!, "usr", "include", "c++", "v1")],
+    when: c => c.freebsd && c.sysroot !== undefined,
+    lang: "cxx",
+    desc: "FreeBSD: sysroot libc++ headers (cross-compile)",
   },
 
   // ─── CPU target ───
@@ -424,9 +433,9 @@ export const bunOnlyFlags: Flag[] = [
   // Not in globalFlags because deps set their own standard.
   {
     flag: "-std=gnu++23",
-    when: c => c.linux,
+    when: c => c.linux || c.freebsd,
     lang: "cxx",
-    desc: "C++23 with GNU extensions (required to match WebKit's ABI on Linux)",
+    desc: "C++23 with GNU extensions (required to match WebKit's ABI on Linux/FreeBSD)",
   },
   {
     flag: "-std=c++23",
@@ -492,8 +501,13 @@ export const bunOnlyFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-fno-pie"],
-    when: c => c.unix && c.abi !== "android",
+    when: c => c.unix && c.abi !== "android" && !c.freebsd,
     desc: "No position-independent code (we're a final executable)",
+  },
+  {
+    flag: "-fPIC",
+    when: c => c.freebsd,
+    desc: "FreeBSD: lld defaults to PIE; non-PIC objects fail R_X86_64_32 relocation",
   },
   {
     flag: "-fPIC",
@@ -868,6 +882,53 @@ export const linkerFlags: Flag[] = [
     when: c => c.linux,
     desc: "Dynamic symbol list + version script",
   },
+
+  // ─── FreeBSD ───
+  {
+    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
+    when: c => c.freebsd && c.crossTarget !== undefined,
+    desc: "FreeBSD cross-link: target/sysroot + libc++ (FreeBSD base ships libc++)",
+  },
+  {
+    flag: c => `--ld-path=${c.ld}`,
+    when: c => c.freebsd,
+    desc: "Use lld instead of system ld",
+  },
+  {
+    flag: ["-fPIC", "-pie"],
+    when: c => c.freebsd,
+    desc: "FreeBSD: PIE (default since FreeBSD 13)",
+  },
+  {
+    flag: [
+      "-Wl,--as-needed",
+      "-Wl,-z,stack-size=12800000",
+      "-Wl,--compress-debug-sections=zlib",
+      "-Wl,-z,lazy",
+      "-Wl,-z,norelro",
+      "-Wl,--gdb-index",
+      "-Wl,-z,combreloc",
+      "-Wl,--hash-style=both",
+      "-Wl,--build-id=sha1",
+    ],
+    when: c => c.freebsd,
+    desc: "FreeBSD linker tuning (same as Linux ELF)",
+  },
+  {
+    flag: "-Wl,--gc-sections",
+    when: c => c.freebsd && c.release,
+    desc: "Garbage-collect unused sections",
+  },
+  {
+    flag: c => [
+      "-Wl,-Bsymbolic-functions",
+      "-rdynamic",
+      `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
+      `-Wl,--version-script=${c.cwd}/src/linker.lds`,
+    ],
+    when: c => c.freebsd,
+    desc: "Dynamic symbol list + version script",
+  },
 ];
 
 /**
@@ -878,6 +939,7 @@ export const linkerFlags: Flag[] = [
 export function linkDepends(cfg: Config): string[] {
   if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
   if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
+  // linux + freebsd: ELF dynamic-list + version script
   return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
 }
 

@@ -101,6 +101,18 @@ export const platforms: Platform[] = [
     exe: "bin/bun",
   },
   {
+    os: "freebsd",
+    arch: "arm64",
+    bin: "bun-freebsd-aarch64",
+    exe: "bin/bun",
+  },
+  {
+    os: "freebsd",
+    arch: "x64",
+    bin: "bun-freebsd-x64",
+    exe: "bin/bun",
+  },
+  {
     os: "win32",
     arch: "x64",
     avx2: true,

@@ -70,7 +70,7 @@ function prebuiltSuffix(cfg: Config): string {
 }
 
 function prebuiltUrl(cfg: Config): string {
-  const os = cfg.windows ? "windows" : cfg.darwin ? "macos" : "linux";
+  const os = cfg.windows ? "windows" : cfg.darwin ? "macos" : cfg.freebsd ? "freebsd" : "linux";
   const arch = cfg.arm64 ? "arm64" : "amd64";
   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;
   const version = cfg.webkitVersion;
@@ -117,7 +117,7 @@ function prebuiltIcuLibs(cfg: Config): string[] {
     const d = cfg.debug ? "d" : "";
     return [`lib/sicudt${d}.lib`, `lib/sicuin${d}.lib`, `lib/sicuuc${d}.lib`];
   }
-  if (cfg.linux) {
+  if (cfg.linux || cfg.freebsd) {
     return ["lib/libicudata.a", "lib/libicui18n.a", "lib/libicuuc.a"];
   }
   return []; // darwin: system ICU
@@ -243,9 +243,12 @@ export const webkit: Dependency = {
       const icuRoot = process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android";
       optFlags.push(`--target=${cfg.crossTarget!}`, `--sysroot=${cfg.sysroot!}`, `-isystem`, join(icuRoot, "include"));
     }
+    if (cfg.freebsd && cfg.crossTarget !== undefined) {
+      optFlags.push(`--target=${cfg.crossTarget}`, `--sysroot=${cfg.sysroot!}`);
+    }
     const optFlagStr = optFlags.join(" ");
     const cxxOptFlagStr =
-      cfg.abi === "android"
+      cfg.abi === "android" || (cfg.freebsd && cfg.sysroot !== undefined)
         ? `${optFlagStr} -isystem ${join(cfg.sysroot!, "usr", "include", "c++", "v1")}`
         : optFlagStr;
     const args: Record<string, string> = {
@@ -266,6 +269,16 @@ export const webkit: Dependency = {
             // those up makes everything unavailable at API 28.
             ICU_ROOT: process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android",
             ICU_INCLUDE_DIR: join(process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android", "include"),
+            CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_LIBRARY: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
+          }
+        : {}),
+      ...(cfg.freebsd && cfg.crossTarget !== undefined
+        ? {
+            CMAKE_SYSTEM_NAME: "FreeBSD",
+            CMAKE_SYSTEM_PROCESSOR: cfg.arm64 ? "aarch64" : "x86_64",
+            CMAKE_SYSROOT: cfg.sysroot!,
             CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: "BOTH",
             CMAKE_FIND_ROOT_PATH_MODE_LIBRARY: "BOTH",
             CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",

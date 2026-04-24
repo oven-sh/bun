@@ -33,7 +33,47 @@
 #define LIBUS_SOCKET_READABLE 1
 #define LIBUS_SOCKET_WRITABLE 2
 
+#if defined(__APPLE__)
 #include <mach/mach.h>
+#elif defined(__FreeBSD__)
+/* FreeBSD has plain kevent(2) only — no kevent64. Shim the Darwin names so
+ * the kqueue path in epoll_kqueue.c stays a single body. udata is void* on
+ * FreeBSD (vs uint64_t on Darwin), and ext[2] doesn't exist (the trailing
+ * macro args are dropped). */
+#include <stdint.h>
+#define kevent64_s kevent
+#define EV_SET64(kevp, a, b, c, d, e, f, g, h) \
+    EV_SET((kevp), (a), (b), (c), (d), (e), ((void *)(uintptr_t)(f)))
+/* Darwin-only kevent64 flags. Kept as bits so callers OR them as before;
+ * the inline shim below translates each. */
+#ifndef KEVENT_FLAG_ERROR_EVENTS
+#define KEVENT_FLAG_ERROR_EVENTS 0x1u
+#endif
+#ifndef KEVENT_FLAG_IMMEDIATE
+#define KEVENT_FLAG_IMMEDIATE 0x2u
+#endif
+static inline int kevent64(int kq, const struct kevent64_s *changelist, int nchanges,
+                           struct kevent64_s *eventlist, int nevents, unsigned int flags,
+                           const struct timespec *timeout) {
+    /* KEVENT_FLAG_ERROR_EVENTS: Darwin restricts the eventlist to per-change
+     * errors. FreeBSD's kevent has no equivalent and would otherwise pop and
+     * lose unrelated ready events here. Registration paths only need syscall
+     * success, so suppress eventlist harvesting entirely. */
+    if (flags & KEVENT_FLAG_ERROR_EVENTS) {
+        eventlist = NULL;
+        nevents = 0;
+    }
+    /* KEVENT_FLAG_IMMEDIATE: Darwin's non-blocking poll. On FreeBSD that's
+     * a zero timespec. Some callers pass the flag with timeout=NULL (which
+     * would block forever here). */
+    static const struct timespec zero_ts = {0, 0};
+    if ((flags & KEVENT_FLAG_IMMEDIATE) && timeout == NULL) {
+        timeout = &zero_ts;
+    }
+    return kevent(kq, (const struct kevent *)changelist, nchanges,
+                  (struct kevent *)eventlist, nevents, timeout);
+}
+#endif
 #endif
 
 struct us_loop_t {

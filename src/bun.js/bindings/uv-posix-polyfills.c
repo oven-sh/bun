@@ -1,6 +1,6 @@
 #include "uv-posix-polyfills.h"
 
-#if OS(LINUX) || OS(DARWIN)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 
 #include <pthread.h>
 #include <unistd.h>
@@ -35,8 +35,8 @@ uint64_t uv__hrtime(uv_clocktype_t type);
 // #include "uv/sunos.h"
 #elif defined(__APPLE__)
 #include "uv-posix-polyfills-darwin.c"
-// #elif defined(__DragonFly__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
-// #include "uv/bsd.h"
+#elif defined(__FreeBSD__)
+#include "uv-posix-polyfills-posix.c"
 #elif defined(__CYGWIN__) || defined(__MSYS__) || defined(__HAIKU__) || defined(__QNX__) || defined(__GNU__)
 #include "uv-posix-polyfills-posix.c"
 #endif

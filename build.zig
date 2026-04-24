@@ -54,6 +54,7 @@ const BunBuildOptions = struct {
     lto: bool,
     override_no_export_cpp_apis: bool,
     android_ndk_sysroot: ?[]const u8 = null,
+    freebsd_sysroot: ?[]const u8 = null,
 
     cached_options_module: ?*Module = null,
     windows_shim: ?WindowsShim = null,
@@ -112,6 +113,12 @@ pub fn getOSVersionMin(os: OperatingSystem) ?Target.Query.OsVersion {
             .semver = .{ .major = 13, .minor = 0, .patch = 0 },
         },
 
+        // FreeBSD 14.0 is the oldest supported major. 14.x guarantees forward
+        // ABI compat, and 13.x is EOL by the time this lands.
+        .freebsd => .{
+            .semver = .{ .major = 14, .minor = 0, .patch = 0 },
+        },
+
         // Windows 10 1809 is the minimum supported version
         // One case where this is specifically required is in `deleteOpenedFile`
         .windows => .{
@@ -166,6 +173,7 @@ pub fn build(b: *Build) !void {
         else switch (temp_resolved.result.os.tag) {
             .macos => .mac,
             .linux => .linux,
+            .freebsd => .freebsd,
             .windows => .windows,
             else => |t| std.debug.panic("Unsupported OS tag {}", .{t}),
         };
@@ -212,6 +220,13 @@ pub fn build(b: *Build) !void {
     const android_ndk_sysroot = b.option([]const u8, "android_ndk_sysroot", "Android NDK sysroot for translate-c headers");
     if (abi.isAndroid() and android_ndk_sysroot == null) {
         std.debug.panic("-Dandroid_ndk_sysroot is required when targeting Android (zig does not bundle bionic headers)", .{});
+    }
+    // Same story for FreeBSD: zig bundles only Linux/macOS/Windows libc
+    // headers, so translate-c needs the FreeBSD sysroot. The obj's
+    // linkLibC() gets FreeBSD libc via `zig build --libc <file>`.
+    const freebsd_sysroot = b.option([]const u8, "freebsd_sysroot", "FreeBSD sysroot (extracted base.txz) for translate-c headers");
+    if (os == .freebsd and freebsd_sysroot == null) {
+        std.debug.panic("-Dfreebsd_sysroot is required when targeting FreeBSD (zig does not bundle FreeBSD libc headers)", .{});
     }
 
     var build_options = BunBuildOptions{
@@ -277,6 +292,7 @@ pub fn build(b: *Build) !void {
         .use_mimalloc = b.option(bool, "use_mimalloc", "Use mimalloc as default allocator") orelse false,
         .llvm_codegen_threads = b.option(u32, "llvm_codegen_threads", "Number of threads to use for LLVM codegen") orelse 1,
         .android_ndk_sysroot = android_ndk_sysroot,
+        .freebsd_sysroot = freebsd_sysroot,
     };
 
     // zig build obj
@@ -437,6 +453,20 @@ pub fn build(b: *Build) !void {
             .{ .os = .linux, .arch = .aarch64 },
         }, &.{.Debug});
     }
+    {
+        const step = b.step("check-freebsd", "Check for semantic analysis errors on FreeBSD");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .freebsd, .arch = .x86_64 },
+            .{ .os = .freebsd, .arch = .aarch64 },
+        }, &.{ .Debug, .ReleaseFast });
+    }
+    {
+        const step = b.step("check-freebsd-debug", "Check for semantic analysis errors on FreeBSD");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .freebsd, .arch = .x86_64 },
+            .{ .os = .freebsd, .arch = .aarch64 },
+        }, &.{.Debug});
+    }
 
     // zig build translate-c-headers
     {
@@ -453,7 +483,7 @@ pub fn build(b: *Build) !void {
         }) |t| {
             const resolved = t.resolveTarget(b);
             step.dependOn(
-                &b.addInstallFile(getTranslateC(b, resolved, .Debug, null), b.fmt("translated-c-headers/{s}.zig", .{
+                &b.addInstallFile(getTranslateC(b, resolved, .Debug, null, null), b.fmt("translated-c-headers/{s}.zig", .{
                     resolved.result.zigTriple(b.allocator) catch @panic("OOM"),
                 })).step,
             );
@@ -662,6 +692,8 @@ fn addMultiCheck(
                 .enable_fuzzilli = root_build_options.enable_fuzzilli,
                 .use_mimalloc = root_build_options.use_mimalloc,
                 .override_no_export_cpp_apis = root_build_options.override_no_export_cpp_apis,
+                .android_ndk_sysroot = root_build_options.android_ndk_sysroot,
+                .freebsd_sysroot = root_build_options.freebsd_sysroot,
             };
 
             var obj = addBunObject(b, &options);
@@ -671,7 +703,7 @@ fn addMultiCheck(
     }
 }
 
-fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, android_ndk_sysroot: ?[]const u8) LazyPath {
+fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, android_ndk_sysroot: ?[]const u8, freebsd_sysroot: ?[]const u8) LazyPath {
     const target = b.resolveTargetQuery(q: {
         var query = initial_target.query;
         if (query.os_tag == .windows)
@@ -689,6 +721,7 @@ fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: 
         .{ "POSIX", translate_c.target.result.os.tag != .windows },
         .{ "LINUX", translate_c.target.result.os.tag == .linux },
         .{ "DARWIN", translate_c.target.result.os.tag.isDarwin() },
+        .{ "FREEBSD", translate_c.target.result.os.tag == .freebsd },
     }) |entry| {
         const str, const value = entry;
         translate_c.defineCMacroRaw(b.fmt("{s}={d}", .{ str, @intFromBool(value) }));
@@ -706,6 +739,12 @@ fn getTranslateC(b: *Build, initial_target: std.Build.ResolvedTarget, optimize: 
         };
         translate_c.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sysroot}) });
         translate_c.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include/{s}", .{ sysroot, arch_triple }) });
+    }
+
+    if (target.result.os.tag == .freebsd) {
+        const sysroot = freebsd_sysroot orelse
+            std.debug.panic("translate-c for FreeBSD requires -Dfreebsd_sysroot", .{});
+        translate_c.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sysroot}) });
     }
 
     if (target.result.os.tag == .windows) {
@@ -912,7 +951,7 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
 
     mod.addImport("build_options", opts.buildOptionsModule(b));
 
-    const translate_c = getTranslateC(b, opts.target, opts.optimize, opts.android_ndk_sysroot);
+    const translate_c = getTranslateC(b, opts.target, opts.optimize, opts.android_ndk_sysroot, opts.freebsd_sysroot);
     mod.addImport("translated-c-headers", b.createModule(.{ .root_source_file = translate_c }));
 
     const zlib_internal_path = switch (os) {

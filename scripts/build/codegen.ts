@@ -104,7 +104,15 @@ function readPackageDeps(pkgDir: string): string[] {
  */
 function codegenTarget(cfg: Config): { platform: string; arch: string } {
   const platform =
-    cfg.abi === "android" ? "android" : cfg.os === "darwin" ? "darwin" : cfg.os === "windows" ? "win32" : "linux";
+    cfg.abi === "android"
+      ? "android"
+      : cfg.os === "darwin"
+        ? "darwin"
+        : cfg.os === "windows"
+          ? "win32"
+          : cfg.os === "freebsd"
+            ? "freebsd"
+            : "linux";
   const arch = cfg.x64 ? "x64" : "arm64";
   return { platform, arch };
 }

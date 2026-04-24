@@ -40,6 +40,7 @@ pub fn cpus(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     const cpusImpl = switch (Environment.os) {
         .linux => cpusImplLinux,
         .mac => cpusImplDarwin,
+        .freebsd => cpusImplFreeBSD,
         .windows => cpusImplWindows,
         .wasm => @compileError("Unsupported OS"),
     };
@@ -176,6 +177,52 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
         }
     }
 
+    return values;
+}
+
+fn cpusImplFreeBSD(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
+    var ncpu: c_uint = 0;
+    var ncpu_len: usize = @sizeOf(c_uint);
+    try std.posix.sysctlbynameZ("hw.ncpu", &ncpu, &ncpu_len, null, 0);
+    if (ncpu == 0) return error.no_processor_info;
+
+    var model_buf: [512]u8 = undefined;
+    var model_len: usize = model_buf.len;
+    const model = if (std.posix.sysctlbynameZ("hw.model", &model_buf, &model_len, null, 0)) |_|
+        jsc.ZigString.init(std.mem.sliceTo(&model_buf, 0)).withEncoding().toJS(globalThis)
+    else |_|
+        jsc.ZigString.static("unknown").withEncoding().toJS(globalThis);
+
+    var speed_mhz: c_uint = 0;
+    var speed_len: usize = @sizeOf(c_uint);
+    _ = std.posix.sysctlbynameZ("hw.clockrate", &speed_mhz, &speed_len, null, 0) catch {};
+
+    const cpu_states = 5; // user, nice, sys, intr, idle
+    const times_buf = try bun.default_allocator.alloc(c_long, @as(usize, ncpu) * cpu_states);
+    defer bun.default_allocator.free(times_buf);
+    var times_len: usize = times_buf.len * @sizeOf(c_long);
+    try std.posix.sysctlbynameZ("kern.cp_times", times_buf.ptr, &times_len, null, 0);
+
+    const ticks: i64 = bun_sysconf__SC_CLK_TCK();
+    const mult: u64 = if (ticks > 0) 1000 / @as(u64, @intCast(ticks)) else 1;
+
+    const values = try jsc.JSValue.createEmptyArray(globalThis, @intCast(ncpu));
+    var i: u32 = 0;
+    while (i < ncpu) : (i += 1) {
+        const off = @as(usize, i) * cpu_states;
+        const times = CPUTimes{
+            .user = @as(u64, @intCast(@max(times_buf[off + 0], 0))) * mult,
+            .nice = @as(u64, @intCast(@max(times_buf[off + 1], 0))) * mult,
+            .sys = @as(u64, @intCast(@max(times_buf[off + 2], 0))) * mult,
+            .irq = @as(u64, @intCast(@max(times_buf[off + 3], 0))) * mult,
+            .idle = @as(u64, @intCast(@max(times_buf[off + 4], 0))) * mult,
+        };
+        const cpu = jsc.JSValue.createEmptyObject(globalThis, 3);
+        cpu.put(globalThis, jsc.ZigString.static("model"), model);
+        cpu.put(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(speed_mhz));
+        cpu.put(globalThis, jsc.ZigString.static("times"), times.toValue(globalThis));
+        try values.putIndex(globalThis, i, cpu);
+    }
     return values;
 }
 
@@ -450,6 +497,11 @@ pub fn loadavg(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             }
             break :loadavg [3]f64{ 0, 0, 0 };
         },
+        .freebsd => loadavg: {
+            var avg: [3]f64 = .{ 0, 0, 0 };
+            if (c.getloadavg(&avg, 3) != 3) break :loadavg [3]f64{ 0, 0, 0 };
+            break :loadavg avg;
+        },
         .windows => .{ 0, 0, 0 },
         .wasm => @compileError("TODO"),
     };
@@ -462,7 +514,7 @@ pub fn loadavg(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
 }
 
 pub const networkInterfaces = switch (Environment.os) {
-    .linux, .mac => networkInterfacesPosix,
+    .linux, .mac, .freebsd => networkInterfacesPosix,
     .windows => networkInterfacesWindows,
     .wasm => @compileError("Unsupported OS"),
 };
@@ -508,7 +560,7 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
             if (iface.ifa_addr == null) return false;
             return if (comptime Environment.isLinux)
                 return iface.ifa_addr.*.sa_family == std.posix.AF.PACKET
-            else if (comptime Environment.isMac)
+            else if (comptime Environment.isMac or Environment.isFreeBSD)
                 return iface.ifa_addr.?.*.sa_family == std.posix.AF.LINK
             else
                 @compileError("unreachable");
@@ -604,7 +656,7 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
                 //  cast to a link-layer socket address
                 if (comptime Environment.isLinux) {
                     break @as(?*std.posix.sockaddr.ll, @ptrCast(@alignCast(ll_iface.ifa_addr)));
-                } else if (comptime Environment.isMac) {
+                } else if (comptime Environment.isMac or Environment.isFreeBSD) {
                     break @as(?*c.sockaddr_dl, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                 } else {
                     @compileError("unreachable");
@@ -615,7 +667,7 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
                 // Encode its link-layer address.  We need 2*6 bytes for the
                 //  hex characters and 5 for the colon separators
                 var mac_buf: [17]u8 = undefined;
-                const addr_data = if (comptime Environment.isLinux) ll_addr.addr else if (comptime Environment.isMac) ll_addr.sdl_data[ll_addr.sdl_nlen..] else @compileError("unreachable");
+                const addr_data = if (comptime Environment.isLinux) ll_addr.addr else if (comptime Environment.isMac or Environment.isFreeBSD) ll_addr.sdl_data[ll_addr.sdl_nlen..] else @compileError("unreachable");
                 if (addr_data.len < 6) {
                     const mac = "00:00:00:00:00:00";
                     interface.put(globalThis, jsc.ZigString.static("mac"), jsc.ZigString.init(mac).withEncoding().toJS(globalThis));
@@ -782,7 +834,7 @@ pub fn release() bun.String {
 
             break :slice name_buffer[0..result.len];
         },
-        .mac => slice: {
+        .mac, .freebsd => slice: {
             @memset(&name_buffer, 0);
 
             var size: usize = name_buffer.len;
@@ -898,6 +950,12 @@ pub fn totalmem() u64 {
             if (c.sysinfo(&info) == @as(c_int, 0)) return @as(u64, @bitCast(info.totalram)) *% @as(c_ulong, @bitCast(@as(c_ulong, info.mem_unit)));
             return 0;
         },
+        .freebsd => {
+            var physmem: u64 = 0;
+            var size: usize = @sizeOf(u64);
+            std.posix.sysctlbynameZ("hw.physmem", &physmem, &size, null, 0) catch return 0;
+            return physmem;
+        },
         .windows => {
             return libuv.uv_get_total_memory();
         },
@@ -921,7 +979,7 @@ pub fn uptime(global: *jsc.JSGlobalObject) bun.JSError!f64 {
             }
             return uptime_value;
         },
-        .mac => {
+        .mac, .freebsd => {
             var boot_time: std.posix.timeval = undefined;
             var size: usize = @sizeOf(@TypeOf(boot_time));
 
@@ -978,7 +1036,7 @@ pub fn version() bun.JSError!bun.String {
     var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
 
     const slice: []const u8 = switch (Environment.os) {
-        .mac => slice: {
+        .mac, .freebsd => slice: {
             @memset(&name_buffer, 0);
 
             var size: usize = name_buffer.len;

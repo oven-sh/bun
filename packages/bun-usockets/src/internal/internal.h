@@ -31,7 +31,7 @@ typedef SSIZE_T ssize_t;
 #include <stdalign.h>
 #endif
 
-#if defined(LIBUS_USE_KQUEUE)
+#if defined(LIBUS_USE_KQUEUE) && defined(__APPLE__)
 #include <mach/mach.h>
 #endif
 
@@ -242,7 +242,7 @@ struct us_udp_socket_t {
     struct us_udp_socket_t *next;
 };
 
-#if defined(LIBUS_USE_KQUEUE)
+#if defined(LIBUS_USE_KQUEUE) && defined(__APPLE__)
 /* Internal callback types are polls just like sockets */
 struct us_internal_callback_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;

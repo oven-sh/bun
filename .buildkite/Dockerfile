@@ -125,7 +125,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && export PATH=$HOME/.cargo/bin:$PATH \
     && rustup install nightly \
     && rustup default nightly \
-    && rustup target add aarch64-linux-android x86_64-linux-android
+    && rustup target add aarch64-linux-android x86_64-linux-android \
+    && rustup target add x86_64-unknown-freebsd aarch64-unknown-freebsd
 
 # Android NDK — sysroot/libc++/compiler-rt for --abi=android cross-compile.
 ARG ANDROID_NDK_VERSION="r27c"
@@ -134,6 +135,16 @@ RUN curl -fsSL "https://dl.google.com/android/repository/android-ndk-${ANDROID_N
     && mv /opt/android-ndk-${ANDROID_NDK_VERSION} /opt/android-ndk \
     && rm /tmp/ndk.zip
 ENV ANDROID_NDK_ROOT=/opt/android-ndk
+
+# FreeBSD sysroot — extracted base.txz for --os=freebsd cross-compile.
+# Only the matching arch is fetched (x64 image gets amd64 sysroot, etc.).
+ARG FREEBSD_VERSION="14.3"
+RUN FBSD_ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64"; fi) \
+    && mkdir -p /opt/freebsd-sysroot \
+    && curl -fsSL "https://download.freebsd.org/releases/${FBSD_ARCH}/${FREEBSD_VERSION}-RELEASE/base.txz" -o /tmp/base.txz \
+    && tar -C /opt/freebsd-sysroot -xJf /tmp/base.txz ./usr/include ./usr/lib ./lib \
+    && rm /tmp/base.txz
+ENV FREEBSD_SYSROOT=/opt/freebsd-sysroot
 
 RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     echo "Downloading buildkite" && \
@@ -199,7 +210,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && export PATH=$HOME/.cargo/bin:$PATH \
     && rustup install nightly \
     && rustup default nightly \
-    && rustup target add aarch64-linux-android x86_64-linux-android
+    && rustup target add aarch64-linux-android x86_64-linux-android \
+    && rustup target add x86_64-unknown-freebsd aarch64-unknown-freebsd
 
 ENV PATH=/root/.cargo/bin:$PATH
 

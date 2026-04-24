@@ -114,11 +114,19 @@ pub const windows = struct {
     };
 };
 
+pub const freebsd = struct {
+    pub const memmem = bun.c.memmem;
+    pub const lstat = std.c.lstat;
+    pub const fstat = std.c.fstat;
+    pub const stat = std.c.stat;
+};
+
 pub const current = switch (bun.Environment.os) {
     .linux => linux,
     .windows => windows,
     .mac => darwin,
-    else => struct {},
+    .freebsd => freebsd,
+    .wasm => struct {},
 };
 
 const bun = @import("bun");

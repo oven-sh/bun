@@ -338,6 +338,9 @@ pub const analytics = struct {
         /// android
         android,
 
+        /// freebsd
+        freebsd,
+
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {

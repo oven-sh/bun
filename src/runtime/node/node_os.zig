@@ -57,15 +57,34 @@ pub fn cpus(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
 fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     // Create the return array
     const values = try jsc.JSValue.createEmptyArray(globalThis, 0);
+
+    // The JS array is a packed `[0, num_cpus)` but the kernel's CPU IDs can be
+    // sparse — on multi-socket systems (e.g. dual-socket EPYC) `/proc/stat`
+    // and `/proc/cpuinfo` expose IDs like `0..63, 128..191`. Parse the real
+    // ID from each `cpuN` line and keep `cpu_id -> array_index` in a map so
+    // passes 2 and 3 can translate IDs back to slots. See #29689.
+    var cpu_id_to_index = std.AutoHashMap(u32, u32).init(bun.default_allocator);
+    defer cpu_id_to_index.deinit();
     var num_cpus: u32 = 0;
 
     var stack_fallback = std.heap.stackFallback(1024 * 8, bun.default_allocator);
     var file_buf = std.array_list.Managed(u8).init(stack_fallback.get());
     defer file_buf.deinit();
 
+    // Optional test-only override: when set, procfs/sysfs paths are read from
+    // `<root>/proc/...` and `<root>/sys/...` instead of the real kernel
+    // pseudo-filesystem, so regression tests can cover non-contiguous CPU
+    // numbering without needing such hardware.
+    const procfs_root: []const u8 = bun.env_var.BUN_DEBUG_CPUS_PROCFS_ROOT.get() orelse "";
+    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
     // Read /proc/stat to get number of CPUs and times
     {
-        const file = std.fs.cwd().openFile("/proc/stat", .{}) catch {
+        const stat_path = if (procfs_root.len == 0)
+            "/proc/stat"
+        else
+            try std.fmt.bufPrint(&path_buf, "{s}/proc/stat", .{procfs_root});
+        const file = std.fs.cwd().openFile(stat_path, .{}) catch {
             // hidepid mounts (common on Android) deny /proc/stat. lazyCpus in os.ts
             // pre-creates hostCpuCount lazy proxies, so return that many stub
             // entries (zeroed times / unknown model / speed 0) — matches Node.
@@ -96,10 +115,16 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
         while (line_iter.next()) |line| {
             // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
             var toks = std.mem.tokenizeAny(u8, line, " \t");
-            const cpu_name = toks.next();
-            if (cpu_name == null or !std.mem.startsWith(u8, cpu_name.?, "cpu")) break; // done with CPUs
+            const cpu_name = toks.next() orelse break;
+            if (!std.mem.startsWith(u8, cpu_name, "cpu")) break; // done with CPUs
 
-            //NOTE: libuv assumes this is fixed on Linux, not sure that's actually the case
+            // Parse the real CPU ID from the `cpuN` prefix, not the array slot.
+            // On non-contiguous systems these are sparse (`cpu0..cpu63, cpu128..`).
+            // The aggregate `cpu` line was skipped above; parseInt on an empty
+            // slice fails with `InvalidCharacter`, so we'd stop there too if
+            // the kernel ever emitted two aggregate lines.
+            const cpu_id = std.fmt.parseInt(u32, cpu_name[3..], 10) catch break;
+
             const scale = 10;
 
             var times = CPUTimes{};
@@ -110,17 +135,26 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             _ = try (toks.next() orelse error.eol); // skip iowait
             times.irq = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
 
-            // Actually create the JS object representing the CPU
-            const cpu = jsc.JSValue.createEmptyObject(globalThis, 1);
+            // Actually create the JS object representing the CPU.
+            // `model` is seeded to "unknown" so CPUs whose IDs don't appear in
+            // /proc/cpuinfo — or where /proc/cpuinfo is unreadable — still end
+            // up with a valid string, and the cpuinfo pass can overwrite it.
+            const cpu = jsc.JSValue.createEmptyObject(globalThis, 2);
             cpu.put(globalThis, jsc.ZigString.static("times"), times.toValue(globalThis));
+            cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
             try values.putIndex(globalThis, num_cpus, cpu);
 
+            try cpu_id_to_index.put(cpu_id, num_cpus);
             num_cpus += 1;
         }
     }
 
     // Read /proc/cpuinfo to get model information (optional)
-    if (std.fs.cwd().openFile("/proc/cpuinfo", .{})) |file| {
+    const cpuinfo_path = if (procfs_root.len == 0)
+        "/proc/cpuinfo"
+    else
+        try std.fmt.bufPrint(&path_buf, "{s}/proc/cpuinfo", .{procfs_root});
+    if (std.fs.cwd().openFile(cpuinfo_path, .{})) |file| {
         defer file.close();
 
         const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, .probably_small).unwrap();
@@ -132,45 +166,40 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
         const key_processor = "processor\t: ";
         const key_model_name = "model name\t: ";
 
-        var cpu_index: u32 = 0;
-        var has_model_name = true;
+        // `array_index` is the slot in `values` that the current `processor:`
+        // block refers to, translated through `cpu_id_to_index`. `null` means
+        // we saw a `processor:` line whose ID wasn't in `/proc/stat` — skip
+        // any model-name line for it rather than writing to the wrong slot.
+        var array_index: ?u32 = null;
         while (line_iter.next()) |line| {
             if (strings.hasPrefixComptime(line, key_processor)) {
-                if (!has_model_name) {
-                    const cpu = try values.getIndex(globalThis, cpu_index);
-                    cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
-                }
-                // If this line starts a new processor, parse the index from the line
                 const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
-                cpu_index = try std.fmt.parseInt(u32, digits, 10);
-                if (cpu_index >= num_cpus) return error.too_may_cpus;
-                has_model_name = false;
+                const cpu_id = try std.fmt.parseInt(u32, digits, 10);
+                array_index = cpu_id_to_index.get(cpu_id);
             } else if (strings.hasPrefixComptime(line, key_model_name)) {
-                // If this is the model name, extract it and store on the current cpu
+                // If this is the model name, extract it and store on the current cpu.
                 const model_name = line[key_model_name.len..];
-                const cpu = try values.getIndex(globalThis, cpu_index);
-                cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.init(model_name).withEncoding().toJS(globalThis));
-                has_model_name = true;
+                if (array_index) |idx| {
+                    const cpu = try values.getIndex(globalThis, idx);
+                    cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.init(model_name).withEncoding().toJS(globalThis));
+                }
             }
         }
-        if (!has_model_name) {
-            const cpu = try values.getIndex(globalThis, cpu_index);
-            cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
-        }
-    } else |_| {
-        // Initialize model name to "unknown"
-        var it = try values.arrayIterator(globalThis);
-        while (try it.next()) |cpu| {
-            cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
-        }
-    }
+    } else |_| {}
 
-    // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
-    for (0..num_cpus) |cpu_index| {
-        const cpu = try values.getIndex(globalThis, @truncate(cpu_index));
+    // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq for each
+    // real CPU ID (not for each sequential index — the sysfs paths use the
+    // kernel's sparse numbering on non-contiguous systems).
+    var it = cpu_id_to_index.iterator();
+    while (it.next()) |entry| {
+        const cpu_id = entry.key_ptr.*;
+        const array_index = entry.value_ptr.*;
+        const cpu = try values.getIndex(globalThis, array_index);
 
-        var path_buf: [128]u8 = undefined;
-        const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});
+        const path = if (procfs_root.len == 0)
+            try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_id})
+        else
+            try std.fmt.bufPrint(&path_buf, "{s}/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{ procfs_root, cpu_id });
         if (std.fs.cwd().openFile(path, .{})) |file| {
             defer file.close();
 

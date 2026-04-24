@@ -264,14 +264,15 @@ describe("fs.watch", () => {
     const dotdir = path.join(root, ".next");
     fs.mkdirSync(dotdir);
 
-    // Give the watcher time to register an inotify watch on the new .next/
-    // directory. No user-visible "rename: .next" event will ever fire
-    // (existing dotfile suppression), so we just wait for registration by
-    // timeout rather than waiting on an event.
-    await Bun.sleep(200);
-
+    // Unlike the sibling non-dotfile test above, no user-visible
+    // "rename: .next" event will ever fire (pre-existing dotfile
+    // suppression), so we can't poll on an intermediate event for the
+    // inotify-watch-registration step. Drive the write-poll loop long
+    // enough (~1s total) that the registration two WorkPool hops later
+    // lands before the last write; each post-registration write produces
+    // an event via the newly-registered watch and breaks the loop.
     const nested = path.join(dotdir, "build.js");
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 50; i++) {
       fs.writeFileSync(nested, `v${i}\n`);
       if (filenames.some(n => n.endsWith("build.js"))) break;
       await Bun.sleep(20);

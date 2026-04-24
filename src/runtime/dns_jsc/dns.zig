@@ -1485,7 +1485,13 @@ pub const internal = struct {
         addr: std.c.sockaddr.storage,
     };
 
-    // re-order result to interleave ipv4 and ipv6 (also pack into a single allocation)
+    // Pack the linked list returned by getaddrinfo() into a single allocation.
+    // The order the OS gave us is preserved — the system's RFC 6724 destination
+    // selection / `gai.conf` / `AI_ADDRCONFIG` filter already decided which
+    // family should be preferred, and Node.js likewise reports `verbatim` order
+    // by default. See https://github.com/oven-sh/bun/issues/29695 — reordering
+    // to always put IPv6 first here breaks fetch/Bun.serve outbound on hosts
+    // where IPv6 is configured but unreachable.
     fn processResults(info: *std.c.addrinfo) []ResultEntry {
         var count: usize = 0;
         var info_: ?*std.c.addrinfo = info;
@@ -1496,7 +1502,7 @@ pub const internal = struct {
 
         var results = bun.handleOom(bun.default_allocator.alloc(ResultEntry, count));
 
-        // copy results
+        // copy results, preserving the OS-returned order
         var i: usize = 0;
         info_ = info;
         while (info_) |ai| {
@@ -1516,22 +1522,8 @@ pub const internal = struct {
             info_ = ai.next;
         }
 
-        // sort (interleave ipv4 and ipv6)
-        var want: usize = std.c.AF.INET6;
-        for (0..count) |idx| {
-            if (results[idx].info.family == want) continue;
-            for (idx + 1..count) |j| {
-                if (results[j].info.family == want) {
-                    std.mem.swap(ResultEntry, &results[idx], &results[j]);
-                    want = if (want == std.c.AF.INET6) std.c.AF.INET else std.c.AF.INET6;
-                }
-            } else {
-                // the rest of the list is all one address family
-                break;
-            }
-        }
-
-        // set up pointers
+        // re-link the copied entries and re-home the `addr` pointer at the
+        // packed storage so the list outlives the original std.c.freeaddrinfo
         for (results, 0..) |*entry, idx| {
             entry.info.canonname = null;
             if (idx + 1 < count) {

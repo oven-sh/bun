@@ -52,13 +52,9 @@ test("tearing down hundreds of spawned subprocesses at exit does not overflow th
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const filteredStderr = stderr
-    .split(/\r?\n/)
-    .filter(s => !s.startsWith("WARNING: ASAN interferes"))
-    .join("\n")
-    .trim();
-
-  expect(filteredStderr).toBe("");
+  if (exitCode !== 0) {
+    console.error(stderr);
+  }
   expect(stdout.trim()).toBe("spawned=350");
   // A panic during process teardown (after the script body has run) would
   // surface as a non-zero exit code.

@@ -655,7 +655,14 @@
     "packageManager": {
       "description": "Defines which package manager is expected to be used when working on the current project. This field is currently experimental and needs to be opted-in; see https://nodejs.org/api/corepack.html",
       "type": "string",
-      "pattern": "^((npm|pnpm|yarn|bun)@\\d+\\.\\d+\\.\\d+(-.+)?|bun)$"
+      "oneOf": [
+        {
+          "pattern": "(npm|pnpm|yarn|bun)@\\d+\\.\\d+\\.\\d+(-.+)?"
+        },
+        {
+          "const": "bun"
+        }
+      ]
     },
     "engines": {
       "type": "object",

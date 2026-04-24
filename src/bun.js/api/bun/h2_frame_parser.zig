@@ -2549,6 +2549,20 @@ pub const H2FrameParser = struct {
             if (this.remoteSettings) |s| s.initialWindowSize else DEFAULT_WINDOW_SIZE,
             this.paddingStrategy,
         );
+
+        // RFC 9113 §5.1.2: reject new server streams when session memory budget is exceeded
+        if (this.isServer and this.getSessionMemoryUsage() > this.getSessionMaxMemoryBytes()) {
+            this.rejectedStreams += 1;
+            if (this.maxRejectedStreams <= this.rejectedStreams) {
+                this.sendGoAway(streamIdentifier, ErrorCode.ENHANCE_YOUR_CALM, "ENHANCE_YOUR_CALM", this.lastStreamID, true);
+            } else {
+                this.endStream(entry.value_ptr, ErrorCode.ENHANCE_YOUR_CALM);
+            }
+            // endStream/sendGoAway dispatch into JS which may re-enter and rehash the
+            // streams map, invalidating entry.value_ptr — re-fetch before returning.
+            return if (this.streams.getEntry(streamIdentifier)) |e| e.value_ptr else null;
+        }
+
         const this_value = this.strong_this.tryGet() orelse return entry.value_ptr;
         const ctx_value = js.gc.context.get(this_value) orelse return entry.value_ptr;
         const callback = js.gc.onStreamStart.get(this_value) orelse return entry.value_ptr;
@@ -3341,9 +3355,15 @@ pub const H2FrameParser = struct {
         }
     };
 
-    // get memory usage in MB
-    fn getSessionMemoryUsage(this: *H2FrameParser) usize {
-        return (this.writeBuffer.len + this.queuedDataSize) / 1024 / 1024;
+    // get memory usage in bytes
+    fn getSessionMemoryUsage(this: *H2FrameParser) u64 {
+        // writeBufferOffset advances on partial flushes without shrinking writeBuffer.len,
+        // so subtract it to count only the bytes still pending on the socket.
+        return (@as(u64, this.writeBuffer.len) -| @as(u64, this.writeBufferOffset)) + this.queuedDataSize;
+    }
+
+    fn getSessionMaxMemoryBytes(this: *H2FrameParser) u64 {
+        return @as(u64, this.maxSessionMemory) * 1024 * 1024;
     }
 
     // get memory in bytes
@@ -4323,7 +4343,7 @@ pub const H2FrameParser = struct {
         }
 
         // too much memory being use
-        if (this.getSessionMemoryUsage() > this.maxSessionMemory) {
+        if (this.getSessionMemoryUsage() > this.getSessionMaxMemoryBytes()) {
             stream.state = .CLOSED;
             stream.rstCode = @intFromEnum(ErrorCode.ENHANCE_YOUR_CALM);
             this.rejectedStreams += 1;

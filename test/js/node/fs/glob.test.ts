@@ -311,6 +311,21 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     expect(fs.globSync("**/link/*.txt", { cwd: root })).toStrictEqual([]);
   });
 
+  it("**/literal through a self-referential symlink does not loop", () => {
+    // `**/node_modules/a/*.txt` against `a/node_modules/a -> ../..`: when the
+    // literal 'a' crosses the symlink the globstar must *not* re-activate on
+    // the far side — otherwise the walk revisits `a/node_modules/a/...`
+    // forever until ENAMETOOLONG. Node returns exactly one match.
+    using dir = tempDir("glob-cycle-literal", {
+      "x.txt": "root-x",
+      a: { node_modules: {} },
+    });
+    fs.symlinkSync("../..", path.join(String(dir), "a/node_modules/a"), "dir");
+    expect(fs.globSync("**/node_modules/a/*.txt", { cwd: String(dir) })).toStrictEqual([
+      "a/node_modules/a/x.txt",
+    ]);
+  });
+
   it("trailing slashes match the named directory", () => {
     // `a/` is Node-idiomatic for "match directory `a`"; split-on-sep yields
     // an empty trailing segment that mustn't be fed to the matcher as an

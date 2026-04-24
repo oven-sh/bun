@@ -912,16 +912,27 @@ pub fn GlobWalker_(
                                     continue;
                                 },
                                 .sym_link => {
-                                    // Descend through a symlink when either `follow_symlinks`
-                                    // is set (legacy callers) or the pattern segment pointing at
-                                    // the symlink is a literal AND `descend_literal_symlinks`
-                                    // is set (Node `fs.glob`: wildcards don't cross symlinks,
-                                    // literals do).
-                                    if (this.walker.follow_symlinks or
-                                        (this.walker.descend_literal_symlinks and this.walker.hasLiteralMatch(active, entry_name)))
-                                    {
-                                        if (!this.walker.evalImpl(active, entry_name)) continue;
+                                    // Pick the active set that should be live *on the far side*
+                                    // of the symlink, or `null` to mean "don't descend". Node's
+                                    // `fs.glob` rule: wildcards don't cross symlinks, literals do.
+                                    // When descent is triggered by a literal match, narrow the set
+                                    // to just the literal indices so `**` doesn't re-expand after
+                                    // the boundary — that's what prevents self-referential cycles
+                                    // like `a/node_modules/a -> ../..` under `**/node_modules/a/*`
+                                    // from looping until ENAMETOOLONG.
+                                    const far_side: ?ComponentSet = blk: {
+                                        if (this.walker.follow_symlinks) {
+                                            if (!this.walker.evalImpl(active, entry_name)) break :blk null;
+                                            break :blk active;
+                                        }
+                                        if (this.walker.descend_literal_symlinks) {
+                                            const lit = this.walker.literalMatchSet(active, entry_name);
+                                            if (lit.count() != 0) break :blk lit;
+                                        }
+                                        break :blk null;
+                                    };
 
+                                    if (far_side) |lit_active| {
                                         const subdir_parts: []const []const u8 = &[_][]const u8{
                                             dir.dir_path[0..dir.dir_path.len],
                                             entry_name,
@@ -931,7 +942,7 @@ pub fn GlobWalker_(
 
                                         try this.walker.workbuf.append(
                                             this.walker.arena.allocator(),
-                                            WorkItem.newSymlink(subdir_entry_name, active, entry_start),
+                                            WorkItem.newSymlink(subdir_entry_name, lit_active, entry_start),
                                         );
                                         continue;
                                     }
@@ -983,9 +994,19 @@ pub fn GlobWalker_(
                                             }
                                         },
                                         .sym_link => {
-                                            if (this.walker.follow_symlinks or
-                                                (this.walker.descend_literal_symlinks and this.walker.hasLiteralMatch(active, entry_name)))
-                                            {
+                                            // Same descent policy as the direct `.sym_link` path
+                                            // above — see the comment there for why the literal
+                                            // case narrows the far-side active set.
+                                            const far_side: ?ComponentSet = blk: {
+                                                if (this.walker.follow_symlinks) break :blk active;
+                                                if (this.walker.descend_literal_symlinks) {
+                                                    const lit = this.walker.literalMatchSet(active, entry_name);
+                                                    if (lit.count() != 0) break :blk lit;
+                                                }
+                                                break :blk null;
+                                            };
+
+                                            if (far_side) |lit_active| {
                                                 const subdir_parts: []const []const u8 = &[_][]const u8{
                                                     dir.dir_path[0..dir.dir_path.len],
                                                     entry_name,
@@ -994,7 +1015,7 @@ pub fn GlobWalker_(
                                                 const subdir_entry_name = try this.walker.join(subdir_parts);
                                                 try this.walker.workbuf.append(
                                                     this.walker.arena.allocator(),
-                                                    WorkItem.newSymlink(subdir_entry_name, active, entry_start),
+                                                    WorkItem.newSymlink(subdir_entry_name, lit_active, entry_start),
                                                 );
                                             } else if (!this.walker.only_files) {
                                                 if (this.walker.evalFile(active, entry_name)) {
@@ -1485,12 +1506,23 @@ pub fn GlobWalker_(
             return false;
         }
 
-        /// Returns true if any active component matches `entry_name` via a
-        /// **literal** (non-wildcard) comparison. Node's `fs.glob` (and typical
-        /// shell globs) descend into a directory symlink only when the pattern
+        /// Returns the subset of `active` whose components match `entry_name`
+        /// as a **literal** (non-wildcard). Node's `fs.glob` (and typical shell
+        /// globs) descend into a directory symlink only when the pattern
         /// segment naming it is a literal; wildcard components (`*`, `**`, or
         /// anything with glob syntax) stop at the symlink boundary.
-        fn hasLiteralMatch(this: *GlobWalker, active: ComponentSet, entry_name: []const u8) bool {
+        ///
+        /// The returned set is what should be active *on the far side* of the
+        /// symlink — crucially this drops any `.Double` (`**`) index that was
+        /// active alongside the literal, so `**` does not re-expand after
+        /// crossing a symlink. That matches Node's behavior and prevents
+        /// self-referential symlink cycles (e.g. `a/node_modules/a -> ../..`
+        /// under pattern `**/node_modules/a/*.txt`) from looping.
+        ///
+        /// Caller should check `result.count() != 0` to decide whether to
+        /// descend.
+        fn literalMatchSet(this: *GlobWalker, active: ComponentSet, entry_name: []const u8) ComponentSet {
+            var out = this.makeSet();
             const comps = this.patternComponents.items;
             var it = active.iterator(.{});
             while (it.next()) |i| {
@@ -1499,10 +1531,10 @@ pub fn GlobWalker_(
                 if (comp.syntax_hint == .Literal and
                     bun.strings.eql(comp.patternSlice(this.pattern), entry_name))
                 {
-                    return true;
+                    out.set(idx);
                 }
             }
-            return false;
+            return out;
         }
 
         inline fn normalizeIdx(this: *const GlobWalker, idx: u32) u32 {

@@ -530,6 +530,20 @@ struct us_socket_t *us_socket_wrap_with_tls(int ssl, struct us_socket_t *s, stru
     return(struct us_socket_t *) us_internal_ssl_socket_wrap_with_tls(s, options, events, old_socket_ext_size, socket_ext_size);
 }
 
+/* See libusockets.h. Shares one SSL_CTX across many upgradeTLS calls (bun#12117). */
+struct us_socket_t *us_socket_wrap_with_tls_using_ssl_ctx(int ssl, struct us_socket_t *s, void *shared_ssl_ctx, struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size) {
+    if (ssl) {
+        return NULL;
+    }
+    return(struct us_socket_t *) us_internal_ssl_socket_wrap_with_tls_using_ssl_ctx(s, shared_ssl_ctx, events, old_socket_ext_size, socket_ext_size);
+}
+
+void *us_socket_context_get_ssl_ctx(struct us_socket_context_t *context) {
+    /* context here is an SSL context cast to the public type */
+    struct us_internal_ssl_socket_context_t *ssl_ctx = (struct us_internal_ssl_socket_context_t *)context;
+    return us_internal_ssl_socket_context_get_native_handle(ssl_ctx);
+}
+
 // if a TLS socket calls this, it will start SSL call open event and TLS handshake if required
 // will have no effect if the socket is closed or is not TLS
 struct us_socket_t* us_socket_open(int ssl, struct us_socket_t * s, int is_client, char* ip, int ip_length) {

@@ -2074,8 +2074,13 @@ struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r 
   return (struct us_socket_t *)socket;
 }
 
-struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
+/* Shared implementation for both wrap_with_tls variants. If shared_ssl_ctx is
+ * non-NULL, skip SSL_CTX_new and up_ref the caller-provided SSL_CTX; the resulting
+ * wrapped context still owns exactly one SSL_CTX ref, freed via SSL_CTX_free (which
+ * decrements the BoringSSL refcount) when the wrapped context is torn down. */
+static struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls_impl(
     struct us_socket_t *s, struct us_bun_socket_context_options_t options,
+    SSL_CTX *shared_ssl_ctx,
     struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size) {
   /* Cannot wrap a closed socket */
   if (us_socket_is_closed(0, s)) {
@@ -2085,14 +2090,37 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   struct us_socket_context_t *old_context = us_socket_context(0, s);
   us_socket_context_ref(0,old_context);
 
-  enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
-  struct us_socket_context_t *context = us_create_bun_ssl_socket_context(
-      old_context->loop, sizeof(struct us_wrapped_socket_context_t),
-      options, &err);
+  struct us_socket_context_t *context;
+  if (shared_ssl_ctx) {
+    /* Reuse the caller-provided SSL_CTX. Allocates only the us_socket_context_t
+     * wrapper; the expensive SSL_CTX_new + cert/cipher parsing is skipped. */
+    us_internal_init_loop_ssl_data(old_context->loop);
+    SSL_CTX_up_ref(shared_ssl_ctx);
+    struct us_internal_ssl_socket_context_t *ssl_ctx_holder =
+        (struct us_internal_ssl_socket_context_t *)us_create_bun_nossl_socket_context(
+            old_context->loop,
+            sizeof(struct us_internal_ssl_socket_context_t) + sizeof(struct us_wrapped_socket_context_t));
+    ssl_ctx_holder->on_server_name = NULL;
+    ssl_ctx_holder->ssl_context = shared_ssl_ctx;
+    ssl_ctx_holder->is_parent = 1;  /* ensures SSL_CTX_free (= decrement refcount) on free */
+    ssl_ctx_holder->on_handshake = NULL;
+    ssl_ctx_holder->handshake_data = NULL;
+    ssl_ctx_holder->sc.is_low_prio = (int (*)(struct us_socket_t *))ssl_is_low_prio;
+    /* Skip SNI callback setup: it sets a SSL_CTX-wide arg, which would clobber
+     * other contexts sharing the SSL_CTX. Client-side TLS doesn't use it anyway. */
+    ssl_ctx_holder->sni = sni_new();
+    context = (struct us_socket_context_t *)ssl_ctx_holder;
+  } else {
+    enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
+    context = us_create_bun_ssl_socket_context(
+        old_context->loop, sizeof(struct us_wrapped_socket_context_t),
+        options, &err);
 
-  // Handle SSL context creation failure
-  if (UNLIKELY(!context)) {
-    return NULL;
+    // Handle SSL context creation failure
+    if (UNLIKELY(!context)) {
+      us_socket_context_unref(0, old_context);
+      return NULL;
+    }
   }
 
   struct us_internal_ssl_socket_context_t *tls_context =
@@ -2192,6 +2220,20 @@ us_socket_context_on_socket_connect_error(
   // always resume the socket
   us_socket_resume(1, &socket->s);
   return socket;
+}
+
+/* Public entry points that wrap the shared impl. */
+struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
+    struct us_socket_t *s, struct us_bun_socket_context_options_t options,
+    struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size) {
+  return us_internal_ssl_socket_wrap_with_tls_impl(s, options, NULL, events, old_socket_ext_size, socket_ext_size);
+}
+
+struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls_using_ssl_ctx(
+    struct us_socket_t *s, void *shared_ssl_ctx,
+    struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size) {
+  struct us_bun_socket_context_options_t unused_options = {0};
+  return us_internal_ssl_socket_wrap_with_tls_impl(s, unused_options, (SSL_CTX *)shared_ssl_ctx, events, old_socket_ext_size, socket_ext_size);
 }
 
 #endif

@@ -492,6 +492,15 @@ void us_socket_local_address(int ssl, us_socket_r s, char *nonnull_arg buf, int 
 struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR* fds);
 struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc);
 struct us_socket_t *us_socket_wrap_with_tls(int ssl, us_socket_r s, struct us_bun_socket_context_options_t options, struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size);
+/* Like us_socket_wrap_with_tls, but reuses a caller-provided SSL_CTX instead of
+ * creating a new one. The caller retains responsibility for the refcount on the
+ * passed SSL_CTX: this function calls SSL_CTX_up_ref once, so the wrapped context
+ * owns its own reference. For bun#12117: lets upgradeTLS share one SSL_CTX across
+ * many connections instead of allocating and tearing one down per cycle. */
+struct us_socket_t *us_socket_wrap_with_tls_using_ssl_ctx(int ssl, us_socket_r s, void *shared_ssl_ctx, struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size);
+/* Returns the SSL_CTX* associated with a TLS socket context. Caller must not free it
+ * directly — use SSL_CTX_free or SSL_CTX_up_ref. */
+void *us_socket_context_get_ssl_ctx(struct us_socket_context_t *context);
 int us_socket_raw_write(int ssl, us_socket_r s, const char *data, int length);
 struct us_socket_t* us_socket_open(int ssl, struct us_socket_t * s, int is_client, char* ip, int ip_length);
 int us_raw_root_certs(struct us_cert_string_t**out);

@@ -212,6 +212,13 @@ pub const SocketContext = opaque {
         c.us_socket_context_free(@intFromBool(ssl), this);
     }
 
+    /// Returns the underlying BoringSSL `SSL_CTX*` for a TLS-wrapped context.
+    /// Caller must not free the returned pointer directly; use SSL_CTX_up_ref/
+    /// SSL_CTX_free semantics. Used by the upgradeTLS SSL_CTX cache (bun#12117).
+    pub fn getSSLCtx(this: *SocketContext) ?*anyopaque {
+        return c.us_socket_context_get_ssl_ctx(this);
+    }
+
     pub fn listen(this: *SocketContext, ssl: bool, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32, err: *c_int) ?*ListenSocket {
         return c.us_socket_context_listen(@intFromBool(ssl), this, host, port, options, socket_ext_size, err);
     }
@@ -263,6 +270,7 @@ pub const c = struct {
     pub extern fn us_socket_context_ext(ssl: i32, context: *SocketContext) ?*anyopaque;
     pub extern fn us_socket_context_free(ssl: i32, context: *SocketContext) void;
     pub extern fn us_socket_context_get_native_handle(ssl: i32, context: *SocketContext) ?*anyopaque;
+    pub extern fn us_socket_context_get_ssl_ctx(context: *SocketContext) ?*anyopaque;
     pub extern fn us_socket_context_listen(ssl: i32, context: *SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32, err: *c_int) ?*ListenSocket;
     pub extern fn us_socket_context_listen_unix(ssl: i32, context: *SocketContext, path: [*:0]const u8, pathlen: usize, options: i32, socket_ext_size: i32, err: *c_int) ?*ListenSocket;
     pub extern fn us_socket_context_loop(ssl: i32, context: *SocketContext) ?*Loop;

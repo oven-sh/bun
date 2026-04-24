@@ -459,6 +459,9 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
     us_socket_r s, struct us_bun_socket_context_options_t options,
     struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size);
+struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls_using_ssl_ctx(
+    us_socket_r s, void *shared_ssl_ctx,
+    struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size);
 struct us_internal_ssl_socket_context_t *
 us_internal_create_child_ssl_socket_context(
     us_internal_ssl_socket_context_r context, int context_ext_size);

@@ -131,6 +131,35 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime ContextType: type,
             comptime Fields: anytype,
         ) ?NewSocketHandler(true) {
+            return wrapTLSInner(this, options, null, old_socket_ext_size, socket_ext_size, deref, ContextType, Fields);
+        }
+
+        /// Like wrapTLS, but reuses a caller-provided BoringSSL SSL_CTX instead of
+        /// creating a new one via SSL_CTX_new. Used by the upgradeTLS cache (bun#12117)
+        /// to amortize SSL_CTX allocation across many connections that share TLS config.
+        pub fn wrapTLSUsingSSLCtx(
+            this: ThisSocket,
+            shared_ssl_ctx: *anyopaque,
+            old_socket_ext_size: i32,
+            socket_ext_size: i32,
+            comptime deref: bool,
+            comptime ContextType: type,
+            comptime Fields: anytype,
+        ) ?NewSocketHandler(true) {
+            const unused: SocketContext.BunSocketContextOptions = .{};
+            return wrapTLSInner(this, unused, shared_ssl_ctx, old_socket_ext_size, socket_ext_size, deref, ContextType, Fields);
+        }
+
+        fn wrapTLSInner(
+            this: ThisSocket,
+            options: SocketContext.BunSocketContextOptions,
+            shared_ssl_ctx: ?*anyopaque,
+            old_socket_ext_size: i32,
+            socket_ext_size: i32,
+            comptime deref: bool,
+            comptime ContextType: type,
+            comptime Fields: anytype,
+        ) ?NewSocketHandler(true) {
             const TLSSocket = NewSocketHandler(true);
             const SocketHandler = struct {
                 const alignment = if (ContextType == anyopaque)
@@ -261,8 +290,12 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
             const this_socket = this.socket.get() orelse return null;
 
-            const socket = c.us_socket_wrap_with_tls(ssl_int, this_socket, options, events, old_socket_ext_size, socket_ext_size) orelse return null;
-            return NewSocketHandler(true).from(socket);
+            const socket = if (shared_ssl_ctx) |ctx|
+                c.us_socket_wrap_with_tls_using_ssl_ctx(ssl_int, this_socket, ctx, events, old_socket_ext_size, socket_ext_size)
+            else
+                c.us_socket_wrap_with_tls(ssl_int, this_socket, options, events, old_socket_ext_size, socket_ext_size);
+            const s = socket orelse return null;
+            return NewSocketHandler(true).from(s);
         }
 
         pub fn getNativeHandle(this: ThisSocket) ?*NativeSocketHandleType(is_ssl) {
@@ -1269,6 +1302,7 @@ const c = struct {
         on_handshake: ?*const fn (*us_socket_t, i32, uws.us_bun_verify_error_t, ?*anyopaque) callconv(.c) void = null,
     };
     pub extern fn us_socket_wrap_with_tls(ssl: i32, s: *uws.us_socket_t, options: uws.SocketContext.BunSocketContextOptions, events: c.us_socket_events_t, old_socket_ext_size: i32, socket_ext_size: i32) ?*uws.us_socket_t;
+    pub extern fn us_socket_wrap_with_tls_using_ssl_ctx(ssl: i32, s: *uws.us_socket_t, shared_ssl_ctx: *anyopaque, events: c.us_socket_events_t, old_socket_ext_size: i32, socket_ext_size: i32) ?*uws.us_socket_t;
 };
 
 const debug = bun.Output.scoped(.uws, .visible);

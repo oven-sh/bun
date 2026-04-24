@@ -1,5 +1,35 @@
 pub const SocketAddress = @import("./socket/SocketAddress.zig");
 
+// SSL_CTX cache for `tls.connect({ socket })` upgrades. Before this cache,
+// every call to `socket.upgradeTLS()` allocated a fresh BoringSSL SSL_CTX
+// via `SSL_CTX_new` + cert/cipher parsing. MongoDB's SDAM driver cycles
+// through this path on every heartbeat, so on Linux (where ptmalloc retains
+// per-thread arenas) RSS grew without bound. See bun#12117.
+//
+// The cache is keyed on `SSLConfig.contentHash()`, so two upgrades with
+// matching TLS options share a single `SSL_CTX` across the process lifetime.
+// Per-connection state lives in the per-`us_socket_t` SSL object, never the
+// shared `SSL_CTX`. This matches the pattern Node.js uses via its reusable
+// `SecureContext`.
+const SSLCtxCache = std.AutoHashMapUnmanaged(u64, *anyopaque);
+var ssl_ctx_cache: SSLCtxCache = .{};
+var ssl_ctx_cache_lock: bun.Mutex = .{};
+
+fn lookupCachedSSLCtx(hash: u64) ?*anyopaque {
+    ssl_ctx_cache_lock.lock();
+    defer ssl_ctx_cache_lock.unlock();
+    return ssl_ctx_cache.get(hash);
+}
+
+fn storeCachedSSLCtx(hash: u64, ssl_ctx: *anyopaque) void {
+    ssl_ctx_cache_lock.lock();
+    defer ssl_ctx_cache_lock.unlock();
+    // Bump the BoringSSL refcount so the cache entry keeps the SSL_CTX alive
+    // independently of any one wrapped SocketContext's lifetime.
+    _ = bun.BoringSSL.c.SSL_CTX_up_ref(@ptrCast(@alignCast(ssl_ctx)));
+    bun.handleOom(ssl_ctx_cache.put(bun.default_allocator, hash, ssl_ctx));
+}
+
 const WrappedType = enum {
     none,
     tls,
@@ -1496,7 +1526,22 @@ pub fn NewSocket(comptime ssl: bool) type {
             // reconfigure context to use the new wrapper handlers
             Socket.unsafeConfigure(this.socket.context().?, true, true, WrappedSocket, TCPHandler);
             const TLSHandler = NewWrappedHandler(true);
-            const new_socket = this.socket.wrapTLS(options, @sizeOf(*anyopaque), @sizeOf(WrappedSocket), true, WrappedSocket, TLSHandler) orelse {
+
+            // SSL_CTX cache: reuse a cached BoringSSL SSL_CTX when the same
+            // SSLConfig is seen again. See bun#12117.
+            //
+            // Safety: `upgradeTLS` early-returns on server-side callers
+            // (see the `isServer()` check at the top of this function), so
+            // the SNI callback set on the SSL_CTX by the cache-miss path is
+            // never invoked against a cached context. Sharing an SSL_CTX
+            // across client connections is the documented supported pattern
+            // (matches Node.js's `SecureContext`, BoringSSL's API conventions).
+            const config_hash = @constCast(socket_config).contentHash();
+            const cached_ssl_ctx = lookupCachedSSLCtx(config_hash);
+            const new_socket = (if (cached_ssl_ctx) |ssl_ctx|
+                this.socket.wrapTLSUsingSSLCtx(ssl_ctx, @sizeOf(*anyopaque), @sizeOf(WrappedSocket), true, WrappedSocket, TLSHandler)
+            else
+                this.socket.wrapTLS(options, @sizeOf(*anyopaque), @sizeOf(WrappedSocket), true, WrappedSocket, TLSHandler)) orelse {
                 const err = BoringSSL.ERR_get_error();
                 defer if (err != 0) BoringSSL.ERR_clear_error();
                 tls.wrapped = .none;
@@ -1545,6 +1590,13 @@ pub fn NewSocket(comptime ssl: bool) type {
             const new_context = new_socket.context().?;
             tls.socket_context = new_context; // owns the new tls context that have a ref from the old one
             tls.ref();
+
+            // On a cache miss we just minted a fresh SSL_CTX; stash it for reuse.
+            if (cached_ssl_ctx == null) {
+                if (new_context.getSSLCtx()) |ssl_ctx| {
+                    storeCachedSSLCtx(config_hash, ssl_ctx);
+                }
+            }
 
             const this_handlers = this.getHandlers();
             const raw_handlers_ptr = bun.handleOom(this_handlers.vm.allocator.create(Handlers));

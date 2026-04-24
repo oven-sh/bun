@@ -3218,13 +3218,16 @@ class ServerHttp2Session extends Http2Session {
   }
 
   unref() {
-    return this[bunHTTP2Socket]?.unref();
+    const socket = this[bunHTTP2Socket];
+    if (socket && typeof socket.unref === "function") return socket.unref();
   }
   ref() {
-    return this[bunHTTP2Socket]?.ref();
+    const socket = this[bunHTTP2Socket];
+    if (socket && typeof socket.ref === "function") return socket.ref();
   }
   setTimeout(msecs, callback) {
-    return this[bunHTTP2Socket]?.setTimeout(msecs, callback);
+    const socket = this[bunHTTP2Socket];
+    if (socket && typeof socket.setTimeout === "function") return socket.setTimeout(msecs, callback);
   }
 
   ping(payload, callback) {
@@ -3665,10 +3668,12 @@ class ClientHttp2Session extends Http2Session {
     return 1;
   }
   unref() {
-    return this[bunHTTP2Socket]?.unref();
+    const socket = this[bunHTTP2Socket];
+    if (socket && typeof socket.unref === "function") return socket.unref();
   }
   ref() {
-    return this[bunHTTP2Socket]?.ref();
+    const socket = this[bunHTTP2Socket];
+    if (socket && typeof socket.ref === "function") return socket.ref();
   }
   setNextStreamID(id) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
@@ -3678,7 +3683,8 @@ class ClientHttp2Session extends Http2Session {
     this.#parser?.setNextStreamID(id);
   }
   setTimeout(msecs, callback) {
-    return this[bunHTTP2Socket]?.setTimeout(msecs, callback);
+    const socket = this[bunHTTP2Socket];
+    if (socket && typeof socket.setTimeout === "function") return socket.setTimeout(msecs, callback);
   }
   ping(payload, callback) {
     if (typeof payload === "function") {

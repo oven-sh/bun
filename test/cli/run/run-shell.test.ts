@@ -3,6 +3,17 @@ import { mkdirSync } from "fs";
 import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
+// Debug/ASAN builds print "WARNING: ASAN interferes with JSC signal handlers..."
+// to stderr when JSC initializes, which is unrelated to the .sh dispatch path
+// under test here but still shows up occasionally across platforms. Strip it
+// before asserting stderr is clean.
+function stripAsanWarning(stderr: string): string {
+  return stderr
+    .split("\n")
+    .filter(l => !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+}
+
 describe.concurrent("run-shell", () => {
   test("running a shell script works", async () => {
     const dir = tmpdirSync();
@@ -54,7 +65,7 @@ describe.concurrent("run-shell", () => {
       stdout: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    expect(stripAsanWarning(stderr)).toBe("");
     expect(stdout).toBe("[value]\ndone\n");
     expect(exitCode).toBe(0);
   });
@@ -76,7 +87,7 @@ describe.concurrent("run-shell", () => {
       stdout: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    expect(stripAsanWarning(stderr)).toBe("");
     expect(stdout).toBe("first second third\n");
     expect(exitCode).toBe(0);
   });
@@ -98,7 +109,7 @@ describe.concurrent("run-shell", () => {
       stdout: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    expect(stripAsanWarning(stderr)).toBe("");
     expect(stdout).toBe("hello world\n");
     expect(exitCode).toBe(0);
   });
@@ -120,7 +131,7 @@ describe.concurrent("run-shell", () => {
       stdout: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    expect(stripAsanWarning(stderr)).toBe("");
     expect(stdout).toBe("a\\\rb\n");
     expect(exitCode).toBe(0);
   });

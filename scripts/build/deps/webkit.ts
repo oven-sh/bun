@@ -244,10 +244,12 @@ export const webkit: Dependency = {
       optFlags.push(`--target=${cfg.crossTarget!}`, `--sysroot=${cfg.sysroot!}`, `-isystem`, join(icuRoot, "include"));
     }
     const optFlagStr = optFlags.join(" ");
-    const cxxOptFlagStr =
-      cfg.abi === "android"
-        ? `${optFlagStr} -isystem ${join(cfg.sysroot!, "usr", "include", "c++", "v1")}`
-        : optFlagStr;
+    let cxxOptFlagStr = optFlagStr;
+    if (cfg.abi === "android") {
+      const inc = join(cfg.sysroot!, "usr", "include");
+      const triple = `${cfg.x64 ? "x86_64" : "aarch64"}-linux-android`;
+      cxxOptFlagStr += ` -nostdlibinc -isystem ${join(inc, "c++", "v1")} -isystem ${join(inc, triple)} -isystem ${inc}`;
+    }
     const args: Record<string, string> = {
       CMAKE_C_FLAGS: optFlagStr,
       CMAKE_CXX_FLAGS: cxxOptFlagStr,

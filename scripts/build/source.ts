@@ -581,6 +581,20 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
       restat: true,
       pool: "dep",
     });
+    // Cross-compile variant: ensure the rust std for the target triple is
+    // installed before building. CI images install rustup as a different
+    // user/HOME than the build runs under, so the target may be missing
+    // even though `rustup target add` ran at image-build time. Idempotent;
+    // chained at the ninja-shell level (no nested quoting).
+    const rustup = q(join(dirname(cfg.cargo), `rustup${cfg.host.exeSuffix}`));
+    n.rule("dep_cargo_cross", {
+      command:
+        `${stream} $env ${rustup} target add $rust_target && ` +
+        `${stream} --cwd=$manifestdir $env ${q(cfg.cargo)} build $args`,
+      description: "cargo $name ($rust_target)",
+      restat: true,
+      pool: "dep",
+    });
   }
 
   // preBuild: runs an arbitrary command before cmake configure. Used for
@@ -1368,9 +1382,10 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   }
 
   // ─── Emit build node ───
+  const cross = cfg.crossTarget !== undefined && spec.rustTarget !== undefined;
   n.build({
     outputs: [lib],
-    rule: "dep_cargo",
+    rule: cross ? "dep_cargo_cross" : "dep_cargo",
     inputs: [],
     // Rebuild if source changed or cargo binary changed. Cargo's own
     // dependency tracking handles file-level granularity below manifestDir.
@@ -1379,6 +1394,7 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
       name,
       manifestdir: manifestDir,
       args: quoteArgs(args, hostWin),
+      ...(cross ? { rust_target: spec.rustTarget! } : {}),
       // stream.ts's --env=K=V format. Values platform-quoted since ninja
       // passes the command line through the host's argv parser; stream.ts
       // receives them as proper argv entries.

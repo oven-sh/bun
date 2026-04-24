@@ -131,21 +131,24 @@ function crossLibcArgs(cfg: Config): string[] {
     );
     return ["--libc", libcFile, `-Dandroid_ndk_sysroot=${cfg.sysroot}`];
   }
-  if (cfg.freebsd && cfg.sysroot !== undefined) {
+  if (cfg.freebsd) {
+    // Native FreeBSD host: sysroot is "/". Cross-compile: extracted base.txz.
+    // build.zig requires -Dfreebsd_sysroot for translate-c either way.
+    const root = cfg.sysroot ?? "";
     const libcFile = resolve(cfg.buildDir, "freebsd-libc.txt");
     writeIfChanged(
       libcFile,
       [
-        `include_dir=${cfg.sysroot}/usr/include`,
-        `sys_include_dir=${cfg.sysroot}/usr/include`,
-        `crt_dir=${cfg.sysroot}/usr/lib`,
+        `include_dir=${root}/usr/include`,
+        `sys_include_dir=${root}/usr/include`,
+        `crt_dir=${root}/usr/lib`,
         `msvc_lib_dir=`,
         `kernel32_lib_dir=`,
         `gcc_dir=`,
         ``,
       ].join("\n"),
     );
-    return ["--libc", libcFile, `-Dfreebsd_sysroot=${cfg.sysroot}`];
+    return ["--libc", libcFile, `-Dfreebsd_sysroot=${root || "/"}`];
   }
   return [];
 }

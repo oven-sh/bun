@@ -1316,7 +1316,8 @@ install_freebsd_sysroot() {
 		base_txz=$(download_file "https://download.freebsd.org/releases/${fbsd_arch}/${freebsd_ver}-RELEASE/base.txz")
 		execute_sudo tar -C "$sysroot" -xJf "$base_txz" ./usr/include ./usr/lib ./lib
 	done
-	append_to_profile "export FREEBSD_SYSROOT=/opt/freebsd-sysroot"
+	# No FREEBSD_SYSROOT export — detectFreebsdSysroot() picks the
+	# arch-appropriate /opt/freebsd-sysroot{,-arm64} by well-known path.
 }
 
 install_docker() {

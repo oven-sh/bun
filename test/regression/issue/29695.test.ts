@@ -19,7 +19,7 @@
 // ::1 for the dual-stack listener to actually bind.
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { bunEnv, bunExe, isGlibc, isLinux, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isGlibc, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 import { which } from "bun";
 
@@ -120,10 +120,10 @@ test.skipIf(!canRun)(
   async () => {
     // Compile the shim into the test's tempDir so the .so is torn down with
     // the directory and never pollutes a shared location.
-    const dir = tempDirWithFiles("issue-29695", { "shim.c": SHIM_C });
-    const shimSo = join(dir, "shim.so");
+    using dir = tempDir("issue-29695", { "shim.c": SHIM_C });
+    const shimSo = join(String(dir), "shim.so");
     await using cc = Bun.spawn({
-      cmd: [CC!, "-shared", "-fPIC", "-ldl", "-o", shimSo, join(dir, "shim.c")],
+      cmd: [CC!, "-shared", "-fPIC", "-ldl", "-o", shimSo, join(String(dir), "shim.c")],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

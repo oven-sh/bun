@@ -7,7 +7,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { NODEJS_ABI_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
@@ -410,6 +410,56 @@ function ndkHostTag(host: Host): string {
 }
 
 /**
+ * Make the host clang able to link Android binaries by symlinking the
+ * NDK's compiler-rt builtins + libunwind into clang's resource dir.
+ *
+ * clang's driver emits a FULL PATH to `<resource-dir>/lib/<triple>/
+ * libclang_rt.builtins.a` — there's no `-L`-style search, so the file
+ * must exist at exactly that path. Our host clang has no Android-target
+ * compiler-rt; the NDK does. This is the standard "bring your own clang"
+ * setup for NDK cross-builds (Chromium does the same).
+ *
+ * Idempotent. Throws with a sudo hint if the resource dir isn't writable.
+ */
+function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: string): void {
+  const resourceDir = execSync(`"${cc}" -print-resource-dir`, { encoding: "utf8" }).trim();
+  const targetDir = join(resourceDir, "lib", triple);
+  // NDK r23+ layout: <prebuilt>/lib/clang/<ver>/lib/linux/<arch>/ for
+  // libunwind.a + new-style libclang_rt.builtins.a
+  const ndkPrebuilt = join(ndk, "toolchains", "llvm", "prebuilt", ndkHostTag(host));
+  const ndkClangLib = join(ndkPrebuilt, "lib", "clang");
+  // NDK ships exactly one clang version per release.
+  const ndkClangVer = readdirSync(ndkClangLib)[0];
+  if (ndkClangVer === undefined) {
+    throw new BuildError(`NDK clang resource dir not found under ${ndkClangLib}`);
+  }
+  const arch = triple.startsWith("x86_64") ? "x86_64" : "aarch64";
+  const ndkRtLinux = join(ndkClangLib, ndkClangVer, "lib", "linux");
+  // NDK r27 keeps builtins/sanitizers in the old-style flat dir (arch in
+  // filename) but libunwind in the new-style per-arch subdir.
+  const links = {
+    "libclang_rt.builtins.a": join(ndkRtLinux, `libclang_rt.builtins-${arch}-android.a`),
+    "libclang_rt.ubsan_standalone.a": join(ndkRtLinux, `libclang_rt.ubsan_standalone-${arch}-android.a`),
+    "libclang_rt.ubsan_standalone.so": join(ndkRtLinux, `libclang_rt.ubsan_standalone-${arch}-android.so`),
+    "libclang_rt.ubsan_standalone_cxx.a": join(ndkRtLinux, `libclang_rt.ubsan_standalone_cxx-${arch}-android.a`),
+    "libunwind.a": join(ndkRtLinux, arch, "libunwind.a"),
+  };
+  if (Object.keys(links).every(n => existsSync(join(targetDir, n)))) return;
+  try {
+    mkdirSync(targetDir, { recursive: true });
+    for (const [name, src] of Object.entries(links)) {
+      const dst = join(targetDir, name);
+      if (!existsSync(dst)) symlinkSync(src, dst);
+    }
+  } catch (cause) {
+    throw new BuildError(`Could not link NDK compiler-rt into ${targetDir}`, {
+      hint: `Run once with write access: sudo mkdir -p "${targetDir}" && sudo ln -s "${links["libclang_rt.builtins.a"]}" "${links["libunwind.a"]}" "${targetDir}/"`,
+      cause,
+    });
+  }
+}
+
+/**
  * Resolve a PartialConfig into a full Config.
  *
  * This is where all the "X defaults to Y unless Z" chains get resolved into
@@ -566,6 +616,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     }
     const llvmArch = arch === "x64" ? "x86_64" : "aarch64";
     crossTarget = `${llvmArch}-unknown-linux-android${androidApiLevel}`;
+    linkNdkRuntimesIntoClang(toolchain.cc, androidNdk, host, crossTarget);
   }
 
   // ─── Versioning ───

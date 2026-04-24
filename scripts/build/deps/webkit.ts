@@ -232,28 +232,43 @@ export const webkit: Dependency = {
         "-Wno-backend-plugin",
       );
     }
-    // Android local mode: WebKit overrides CMAKE_{C,CXX}_FLAGS (dropping the
-    // global --target/--sysroot we'd normally inject), so we hand CMake the
-    // NDK directly instead. CMAKE_SYSTEM_NAME=Android puts CMake into
-    // cross-compile mode (CMAKE_CROSSCOMPILING=ON, no try_run) and lets it
-    // derive sysroot/libc++ from CMAKE_ANDROID_NDK. We still set
-    // CMAKE_{C,CXX}_COMPILER (in source.ts) so the host clang is used
-    // rather than the NDK's bundled one.
+    // Android local mode: NOT using CMAKE_SYSTEM_NAME=Android because that
+    // module force-selects the NDK's bundled clang, overriding our
+    // CMAKE_{C,CXX}_COMPILER. Instead, treat it as a generic Linux
+    // cross-compile (CMAKE_SYSTEM_NAME=Linux + CMAKE_CROSSCOMPILING) and
+    // pass --target/--sysroot in CFLAGS. WebKit's source detects Android
+    // via __ANDROID__ (set by clang --target=*-android*); we set the cmake
+    // ANDROID variable manually so `if (ANDROID)` blocks trigger too.
     if (cfg.abi === "android") {
-      optFlags.push(`--target=${cfg.crossTarget!}`, `--sysroot=${cfg.sysroot!}`);
+      const icuRoot = process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android";
+      optFlags.push(`--target=${cfg.crossTarget!}`, `--sysroot=${cfg.sysroot!}`, `-isystem`, join(icuRoot, "include"));
     }
     const optFlagStr = optFlags.join(" ");
+    const cxxOptFlagStr =
+      cfg.abi === "android"
+        ? `${optFlagStr} -isystem ${join(cfg.sysroot!, "usr", "include", "c++", "v1")}`
+        : optFlagStr;
     const args: Record<string, string> = {
       CMAKE_C_FLAGS: optFlagStr,
-      CMAKE_CXX_FLAGS: optFlagStr,
+      CMAKE_CXX_FLAGS: cxxOptFlagStr,
       ...(cfg.abi === "android"
         ? {
-            CMAKE_SYSTEM_NAME: "Android",
-            CMAKE_SYSTEM_VERSION: String(cfg.androidApiLevel!),
-            CMAKE_ANDROID_NDK: cfg.androidNdk!,
-            CMAKE_ANDROID_ARCH_ABI: cfg.arm64 ? "arm64-v8a" : "x86_64",
-            CMAKE_ANDROID_STL_TYPE: "c++_static",
+            CMAKE_SYSTEM_NAME: "Linux",
+            CMAKE_SYSTEM_PROCESSOR: cfg.arm64 ? "aarch64" : "x86_64",
+            CMAKE_SYSROOT: cfg.sysroot!,
+            ANDROID: "ON",
             ENABLE_API_TESTS: "OFF",
+            // No system ICU on Android. Point at a static cross-built ICU
+            // (see Dockerfile.android for the recipe). FindICU also probes
+            // CMAKE_FIND_ROOT_PATH so we whitelist the prefix. ICU_INCLUDE_DIR
+            // explicit: the NDK sysroot ships annotated headers that mark
+            // most ICU functions __INTRODUCED_IN(31), so FindICU picking
+            // those up makes everything unavailable at API 28.
+            ICU_ROOT: process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android",
+            ICU_INCLUDE_DIR: join(process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android", "include"),
+            CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_LIBRARY: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
           }
         : {}),
       PORT: "JSCOnly",
@@ -350,8 +365,17 @@ export const webkit: Dependency = {
     // Windows ICU libs are NOT listed here — they're preBuild.outputs,
     // which source.ts appends to the resolved libs automatically. Listing
     // them here would make dep_build also claim to produce them (dup error).
-    // Posix uses system ICU (linked via -licu* in bun.ts).
+    // Posix uses system ICU (linked via -licu* in bun.ts). Android has no
+    // system ICU — link the static cross-built libs from BUN_ANDROID_ICU_ROOT.
     const libs = [...coreLibs(cfg), bmallocLib(cfg)];
+    if (cfg.abi === "android") {
+      const icuRoot = process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android";
+      libs.push(
+        resolve(icuRoot, "lib", "libicui18n.a"),
+        resolve(icuRoot, "lib", "libicuuc.a"),
+        resolve(icuRoot, "lib", "libicudata.a"),
+      );
+    }
 
     const includes = [
       // ABSOLUTE — resolved here because they're in the build dir, not src.
@@ -365,6 +389,11 @@ export const webkit: Dependency = {
     ];
     // Windows: ICU headers from preBuild output.
     if (cfg.windows) includes.push(resolve(icuDir(cfg), "include"));
+    // Android: ICU headers from BUN_ANDROID_ICU_ROOT (the NDK sysroot's
+    // unicode/ headers are __INTRODUCED_IN(31)-gated and unusable at API 28).
+    if (cfg.abi === "android") {
+      includes.push(resolve(process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android", "include"));
+    }
 
     return { libs, includes };
   },

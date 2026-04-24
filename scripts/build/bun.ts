@@ -56,12 +56,12 @@ function systemLibs(cfg: Config): string[] {
   const libs: string[] = [];
 
   if (cfg.linux) {
-    libs.push("-lc", "-lpthread", "-ldl");
     if (cfg.abi === "android") {
-      // bionic: atomics are in compiler-rt builtins, no separate libatomic.
-      // -llog for __android_log_* (used by some deps' assert paths).
-      libs.push("-lm", "-llog");
+      // bionic: pthread/dl/rt are folded into libc; no separate libatomic
+      // (compiler-rt builtins). -llog for __android_log_*.
+      libs.push("-lc", "-lm", "-llog");
     } else {
+      libs.push("-lc", "-lpthread", "-ldl");
       // libatomic: static by default (CI distros ship it), dynamic on Arch-like.
       // The static path needs to be the actual file path for lld to find it;
       // dynamic uses -l syntax. We emit what CMake does: bare libatomic.a gets

@@ -350,6 +350,10 @@ pub fn GlobWalker_(
 
         cwd: []const u8 = "",
         follow_symlinks: bool = false,
+        /// Node `fs.glob` semantics: when `follow_symlinks` is false, still
+        /// descend into a directory symlink if the pattern segment naming it
+        /// is a literal (no wildcards). Leaves pure-wildcard descent blocked.
+        descend_literal_symlinks: bool = false,
         error_on_broken_symlinks: bool = false,
         only_files: bool = true,
 
@@ -910,9 +914,12 @@ pub fn GlobWalker_(
                                 .sym_link => {
                                     // Descend through a symlink when either `follow_symlinks`
                                     // is set (legacy callers) or the pattern segment pointing at
-                                    // the symlink is a literal (Node's rule: wildcards don't
-                                    // cross symlinks, literals do).
-                                    if (this.walker.follow_symlinks or this.walker.hasLiteralMatch(active, entry_name)) {
+                                    // the symlink is a literal AND `descend_literal_symlinks`
+                                    // is set (Node `fs.glob`: wildcards don't cross symlinks,
+                                    // literals do).
+                                    if (this.walker.follow_symlinks or
+                                        (this.walker.descend_literal_symlinks and this.walker.hasLiteralMatch(active, entry_name)))
+                                    {
                                         if (!this.walker.evalImpl(active, entry_name)) continue;
 
                                         const subdir_parts: []const []const u8 = &[_][]const u8{
@@ -976,7 +983,9 @@ pub fn GlobWalker_(
                                             }
                                         },
                                         .sym_link => {
-                                            if (this.walker.follow_symlinks or this.walker.hasLiteralMatch(active, entry_name)) {
+                                            if (this.walker.follow_symlinks or
+                                                (this.walker.descend_literal_symlinks and this.walker.hasLiteralMatch(active, entry_name)))
+                                            {
                                                 const subdir_parts: []const []const u8 = &[_][]const u8{
                                                     dir.dir_path[0..dir.dir_path.len],
                                                     entry_name,

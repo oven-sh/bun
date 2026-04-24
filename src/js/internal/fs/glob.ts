@@ -132,15 +132,20 @@ function splitLiteralPrefix(pattern: string, cwd: string): { pattern: string; cw
   // Absolute patterns: anchor scanning at the filesystem root and consume the
   // full leading literal run. `validatePattern` has already swapped `/` for
   // `sep` on Windows, so we test against the platform separator (and the
-  // Windows drive-letter / UNC shapes `C:...` and `\\host\share\...`).
+  // Windows drive-letter `C:\...` and UNC `\\host\share\...` shapes). A bare
+  // `C:foo` (no separator after the colon) is drive-*relative*, not absolute.
   const isAbsolute =
-    pattern.startsWith(separator) || (isWindows && (/^[a-zA-Z]:/.test(pattern) || pattern.startsWith("\\\\")));
+    pattern.startsWith(separator) ||
+    (isWindows &&
+      (pattern.startsWith("\\\\") || (pattern.length >= 3 && /^[a-zA-Z]:[\\/]/.test(pattern))));
 
   // A trailing separator turns `split` into `[..., '']` — the empty tail would
   // become our "final segment" and leave `Bun.Glob` scanning an empty pattern,
-  // so drop any trailing separators before splitting. `a/` is a match on the
-  // directory `a`; Node and pre-PR Bun both treat it that way.
+  // so drop any trailing separators before splitting. `Bun.Glob` uses a
+  // trailing separator as a "directories only" filter (`a/*/`), so we keep
+  // track of whether one was present and re-append it to the remainder.
   const trimmed = stripTrailingSep(pattern, separator);
+  const hadTrailingSep = trimmed.length !== pattern.length;
   const parts = trimmed.split(separator);
   // Find the first segment that contains glob metacharacters. Everything
   // strictly before it is the literal prefix; the wildcard segment and
@@ -158,8 +163,16 @@ function splitLiteralPrefix(pattern: string, cwd: string): { pattern: string; cw
   }
 
   const literalSegs = parts.slice(0, stop);
-  const remainder = parts.slice(stop).join(separator);
-  const literalPath = literalSegs.join(separator) || (isAbsolute ? separator : ".");
+  let remainder = parts.slice(stop).join(separator);
+  if (hadTrailingSep) remainder += separator;
+  let literalPath = literalSegs.join(separator) || (isAbsolute ? separator : ".");
+  // On Windows, `C:` alone means "current dir on drive C"; to scan the drive
+  // root we need `C:\`. Append the separator whenever the literal prefix ends
+  // in a drive letter. `pathJoin` already handles this for relative cwds, but
+  // when the pattern itself is absolute we assign `literalPath` as-is.
+  if (isWindows && isAbsolute && /^[a-zA-Z]:$/.test(literalPath)) {
+    literalPath += separator;
+  }
   const newCwd = isAbsolute ? literalPath : pathJoin(cwd, literalPath);
   // Prefix preserves what the user wrote: absolute patterns emit absolute
   // paths, relative patterns keep their literal prefix visible (matching Node).
@@ -210,15 +223,17 @@ function mapOptions(options: GlobOptions): GlobScanOptions & { exclude: GlobOpti
     // cached `getcwd` on BunProcess.
     cwd: options?.cwd ?? process.cwd(),
     // Node's `fs.glob` does not descend into directory symlinks through
-    // wildcard segments; the literal prefix is pre-peeled into `cwd` by
-    // `splitLiteralPrefix`, and everything after the first wildcard is
-    // scanned without following symlinks.
+    // wildcard segments; the leading literal prefix is pre-peeled into `cwd`
+    // by `splitLiteralPrefix`, and `descendLiteralSymlinks` handles the
+    // mid-pattern case (a literal segment *after* a wildcard may still cross
+    // a symlink in GlobWalker).
     // https://github.com/oven-sh/bun/issues/29699
     followSymlinks: false,
+    descendLiteralSymlinks: true,
     // https://github.com/oven-sh/bun/issues/20507
     onlyFiles: false,
     exclude,
-  };
+  } as GlobScanOptions & { exclude: GlobOptions["exclude"] };
 }
 
 // `var` avoids TDZ checks.

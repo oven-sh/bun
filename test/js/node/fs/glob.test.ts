@@ -319,6 +319,25 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     expect(fs.globSync("a/src/", { cwd: root })).toStrictEqual(["a/src"]);
   });
 
+  it("trailing slash on a wildcard pattern filters to directories", () => {
+    // `a/*/` is "directories only"; the trailing separator we strip before
+    // splitting must be re-appended to the remainder so Bun.Glob's
+    // `trailing_sep` filter still fires.
+    using dir = tempDir("glob-trail", {
+      a: {
+        sub1: { ".keep": "" },
+        sub2: { ".keep": "" },
+        "file.txt": "f",
+      },
+    });
+    expect(fs.globSync("a/*/", { cwd: String(dir) }).sort()).toStrictEqual(["a/sub1", "a/sub2"]);
+    expect(fs.globSync("a/*", { cwd: String(dir) }).sort()).toStrictEqual([
+      "a/file.txt",
+      "a/sub1",
+      "a/sub2",
+    ]);
+  });
+
   it("literal prefix naming a regular file returns []", () => {
     // Opening `target.txt/` as a directory would throw ENOTDIR; Node returns
     // `[]` silently and so do we.

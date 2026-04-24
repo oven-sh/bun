@@ -344,6 +344,10 @@ pub const GenerateHeader = struct {
             // Confusingly, the "release" tends to contain the kernel version much more frequently than the "version" field.
             const release = bun.sliceTo(&linux_os_name.release, 0);
 
+            if (comptime Environment.isAndroid) {
+                return analytics.Platform{ .os = analytics.OperatingSystem.android, .version = release, .arch = platform_arch };
+            }
+
             // Linux DESKTOP-P4LCIEM 5.10.16.3-microsoft-standard-WSL2 #1 SMP Fri Apr 2 22:23:49 UTC 2021 x86_64 x86_64 x86_64 GNU/Linux
             if (std.mem.indexOf(u8, release, "microsoft") != null) {
                 return analytics.Platform{ .os = analytics.OperatingSystem.wsl, .version = release, .arch = platform_arch };

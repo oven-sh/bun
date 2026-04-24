@@ -1,4 +1,4 @@
-# Version: 17
+# Version: 18
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.

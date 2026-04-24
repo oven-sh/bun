@@ -4269,7 +4269,7 @@ declare module "bun" {
      * option.
      *
      * Defaults to `true` (the upgrade request advertises
-     * `permessage-deflate; client_max_window_bits`). Any own-key falsy value
+     * `permessage-deflate; client_max_window_bits`). Any falsy value
      * (`false`, `null`, `0`, `""`, explicit `undefined`) disables the offer.
      *
      * @default true

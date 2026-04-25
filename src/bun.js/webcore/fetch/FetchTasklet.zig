@@ -2,6 +2,18 @@ pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 
     const log = Output.scoped(.FetchTasklet, .visible);
+
+    /// Response-body backpressure thresholds. When the bytes buffered for JS
+    /// (scheduled_response_buffer on the HTTP-thread side, ByteStream.buffer
+    /// once the body is being streamed) exceed `body_high_water_mark`, the
+    /// HTTP thread pauses socket reads so TCP applies backpressure instead of
+    /// our heap growing without bound. Reads resume once a JS pull drains the
+    /// buffer below `body_low_water_mark`. The gap gives hysteresis so a
+    /// single 512 KB recv (LIBUS_RECV_BUFFER_LENGTH) doesn't oscillate
+    /// pause/resume on every chunk. See Signals.body_backpressure for the
+    /// HTTP-thread half.
+    pub const body_high_water_mark: usize = 1 * 1024 * 1024;
+    pub const body_low_water_mark: usize = 256 * 1024;
     sink: ?*ResumableSink = null,
     http: ?*http.AsyncHTTP = null,
     result: http.HTTPClientResult = .{},
@@ -40,6 +52,13 @@ pub const FetchTasklet = struct {
     signals: http.Signals = .{},
     signal_store: http.Signals.Store = .{},
     has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    /// Set while `onBodyReceived` is pushing a chunk into the ByteStream.
+    /// `pending.run()` inside `ByteStream.onData` drains microtasks, which can
+    /// re-enter `onPull` and fire `onStreamDrainedCallback` synchronously
+    /// before the chunk has finished propagating. The callback uses this flag
+    /// to defer the backpressure-release decision to `evaluateBodyBackpressure`
+    /// (which runs after `onData` returns and can see the settled state).
+    is_delivering_body_chunk: bool = false,
 
     // must be stored because AbortSignal stores reason weakly
     abort_reason: jsc.Strong.Optional = .empty,
@@ -361,12 +380,15 @@ pub const FetchTasklet = struct {
                 const chunk = scheduled_response_buffer.items;
 
                 if (this.result.has_more) {
+                    this.is_delivering_body_chunk = true;
+                    defer this.is_delivering_body_chunk = false;
                     try readable.ptr.Bytes.onData(
                         .{
                             .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,
                     );
+                    this.evaluateBodyBackpressure(&readable.ptr.Bytes.*);
                 } else {
                     this.clearStreamCancelHandler();
                     var prev = this.readable_stream_ref;
@@ -397,12 +419,15 @@ pub const FetchTasklet = struct {
                     const chunk = scheduled_response_buffer.items;
 
                     if (this.result.has_more) {
+                        this.is_delivering_body_chunk = true;
+                        defer this.is_delivering_body_chunk = false;
                         try readable.ptr.Bytes.onData(
                             .{
                                 .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                             },
                             bun.default_allocator,
                         );
+                        this.evaluateBodyBackpressure(&readable.ptr.Bytes.*);
                     } else {
                         readable.value.ensureStillAlive();
                         response.detachReadableStream(globalThis);
@@ -915,6 +940,8 @@ pub const FetchTasklet = struct {
                 const source = readable.ptr.Bytes.parent();
                 source.cancel_handler = null;
                 source.cancel_ctx = null;
+                source.drain_handler = null;
+                source.drain_ctx = null;
             }
         }
     }
@@ -923,6 +950,77 @@ pub const FetchTasklet = struct {
         const this = bun.cast(*FetchTasklet, ctx.?);
         if (this.ignore_data) return;
         this.ignoreRemainingResponseBody();
+    }
+
+    /// Runs on the JS thread when `ByteStream.onPull` finds the buffer empty
+    /// and parks waiting for data. If we previously asked the HTTP thread to
+    /// pause socket reads, this is the signal that the consumer is ready for
+    /// more — clear the flag and wake the HTTP thread so `drainResponseBody`
+    /// resumes the socket. Skipped while `onBodyReceived` is mid-delivery
+    /// (see `is_delivering_body_chunk`); in that window the auto-pull may
+    /// re-enter here before the chunk has settled, and `evaluateBodyBackpressure`
+    /// makes the decision once `onData` returns.
+    fn onStreamDrainedCallback(ctx: ?*anyopaque, buffered: usize) void {
+        const this = bun.cast(*FetchTasklet, ctx.?);
+        if (this.is_delivering_body_chunk) return;
+        this.maybeReleaseBodyBackpressure(buffered);
+    }
+
+    fn maybeReleaseBodyBackpressure(this: *FetchTasklet, buffered: usize) void {
+        if (buffered >= body_low_water_mark) return;
+        if (!this.signal_store.body_backpressure.load(.monotonic)) return;
+        this.signal_store.body_backpressure.store(false, .monotonic);
+        log("body backpressure released (buffered={d})", .{buffered});
+        if (this.http) |http_| {
+            // Reuse the response-body-drain queue: on the HTTP thread it both
+            // flushes any bytes that arrived between the pause decision and the
+            // actual `pauseStream()` call, and resumes reads now that the
+            // signal is clear.
+            bun.http.http_thread.scheduleResponseBodyDrain(http_.async_http_id);
+        }
+    }
+
+    /// Re-evaluate the backpressure signal after `onBodyReceived` has handed a
+    /// chunk to the ByteStream and the synchronous microtask cascade inside
+    /// `pending.run()` has settled.
+    ///
+    ///   • `buffer_action` set (`.text()`/`.arrayBuffer()` on an existing
+    ///     stream): the consumer asked for the whole body and there is no pull
+    ///     to ever resume from — never pause, and release if we already had.
+    ///   • `buffer` ≥ high-water mark: the controller's auto-pull stopped (its
+    ///     queue is full) and the surplus landed here. Request a pause.
+    ///   • `buffer` < low-water mark: release. Anything that left `buffer` is
+    ///     now in queues bounded by their own controller high-water marks
+    ///     (default queue, or tee branches after `response.clone()`), so a
+    ///     stalled reader cannot drive `buffer` below LWM and a draining one
+    ///     should resume the socket.
+    fn evaluateBodyBackpressure(this: *FetchTasklet, bytes: *const jsc.WebCore.ByteStream) void {
+        // `.text()`/`.arrayBuffer()`/etc. on a body whose ReadableStream already
+        // exists set `buffer_action` and intentionally accumulate the entire
+        // response in `buffer` until `has_received_last_chunk`. There is no
+        // pull in that mode, so a pause would never be released. Skip — the
+        // consumer has asked for the whole body.
+        if (bytes.buffer_action != null) {
+            this.maybeReleaseBodyBackpressure(0);
+            return;
+        }
+        const buffered = bytes.buffer.items.len -| bytes.offset;
+        if (buffered >= body_high_water_mark) {
+            if (this.signal_store.body_backpressure.load(.monotonic)) return;
+            log("body backpressure requested (ByteStream buffered={d})", .{buffered});
+            this.signal_store.body_backpressure.store(true, .monotonic);
+            return;
+        }
+        // Release when our buffer is below the low-water mark. We don't gate
+        // on `pending.state == .pending` here: when the body is teed
+        // (response.clone()) the cascade leaves bytes in the branch queues
+        // with `pending == .used`, and those queues are bounded by their own
+        // controller high-water marks. The `is_delivering_body_chunk` guard on
+        // `onStreamDrainedCallback` already prevents the unbounded ping-pong
+        // that motivated a stricter check — by the time we run, the synchronous
+        // microtask cascade has settled and any remaining bounce is at most one
+        // round-trip per HWM-sized batch.
+        this.maybeReleaseBodyBackpressure(buffered);
     }
 
     fn toBodyValue(this: *FetchTasklet) Body.Value {
@@ -938,6 +1036,7 @@ pub const FetchTasklet = struct {
                     .onStartStreaming = FetchTasklet.onStartStreamingHTTPResponseBodyCallback,
                     .onReadableStreamAvailable = FetchTasklet.onReadableStreamAvailable,
                     .onStreamCancelled = FetchTasklet.onStreamCancelledCallback,
+                    .onStreamDrained = FetchTasklet.onStreamDrainedCallback,
                 },
             };
             return response;
@@ -983,6 +1082,12 @@ pub const FetchTasklet = struct {
 
     fn ignoreRemainingResponseBody(this: *FetchTasklet) void {
         log("ignoreRemainingResponseBody", .{});
+        // If we paused socket reads for body backpressure, release now: the
+        // drain_handler we're about to clear is the only path that would
+        // otherwise resume, and the idle timeout was disarmed at pause time.
+        // Without this the connection sits paused forever after a
+        // reader.cancel() or Response GC mid-stream.
+        this.maybeReleaseBodyBackpressure(0);
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
         if (this.http) |http_| {

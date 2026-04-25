@@ -303,6 +303,16 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
             this.offset += to_write;
         }
 
+        // Report the new buffered size so the producer can release
+        // backpressure once we drop below its low-water mark, rather than
+        // waiting for the `.pending` branch below (which only fires at zero).
+        // FetchTasklet's `is_delivering_body_chunk` guard suppresses this
+        // when it's the controller's synchronous auto-pull running inside
+        // `pending.run()`; outside that window this is a real consumer read.
+        if (this.parent().drain_handler) |handler| {
+            handler(this.parent().drain_ctx, this.buffer.items.len - this.offset);
+        }
+
         if (this.has_received_last_chunk and remaining_in_buffer.len == 0) {
             this.buffer.clearAndFree();
             this.done = true;
@@ -331,6 +341,14 @@ pub fn onPull(this: *@This(), buffer: []u8, view: jsc.JSValue) streams.Result {
 
     this.pending_buffer = buffer;
     this.setValue(view);
+
+    // Buffer is empty and a read is now parked waiting — the consumer has
+    // caught up end-to-end. Same callback as the into_array branch above; this
+    // covers the case where the controller's queue was already empty so no
+    // intermediate drain was observed.
+    if (this.parent().drain_handler) |handler| {
+        handler(this.parent().drain_ctx, 0);
+    }
 
     return .{
         .pending = &this.pending,
@@ -440,6 +458,18 @@ pub fn toBufferedValue(this: *@This(), globalThis: *jsc.JSGlobalObject, action: 
         .json => .{ .json = .init(globalThis) },
         .text => .{ .text = .init(globalThis) },
     };
+
+    // Once buffer_action is set, onPull is never called again and onData
+    // accumulates straight into `buffer` until the last chunk — there is no
+    // pull-based resume path. If the producer paused for backpressure before
+    // we got here (e.g. `res.body` accessed, >HWM buffered, then `res.text()`),
+    // the only thing that would observe `buffer_action != null` and release is
+    // FetchTasklet.evaluateBodyBackpressure, and that runs only on new data
+    // which can't arrive while paused. Fire the drain hook now so the producer
+    // releases immediately.
+    if (this.parent().drain_handler) |handler| {
+        handler(this.parent().drain_ctx, 0);
+    }
 
     return this.buffer_action.?.value();
 }

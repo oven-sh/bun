@@ -421,6 +421,13 @@ pub fn NewSource(
         close_jsvalue: jsc.Strong.Optional = .empty,
         cancel_handler: ?*const fn (?*anyopaque) void = null,
         cancel_ctx: ?*anyopaque = null,
+        /// Invoked after the stream's internal buffer shrinks because JS pulled
+        /// bytes out. The argument is the number of bytes still buffered.
+        /// FetchTasklet uses this to release response-body backpressure once
+        /// the buffer drops below the low-water mark. Only ByteStream wires
+        /// this today; other Source contexts leave it null.
+        drain_handler: ?*const fn (?*anyopaque, buffered: usize) void = null,
+        drain_ctx: ?*anyopaque = null,
         globalThis: *JSGlobalObject = undefined,
         this_jsvalue: jsc.JSValue = .zero,
         is_closed: bool = false,

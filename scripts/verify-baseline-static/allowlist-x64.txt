@@ -12,7 +12,7 @@
 
 # ----------------------------------------------------------------------------
 # simdutf AVX2 (Haswell). Gate: set_best() dispatcher — CPUID at first call, cached in atomic ptr.
-# (91 symbols)
+# (93 symbols)
 # ----------------------------------------------------------------------------
 _ZN7simdutf7haswell12_GLOBAL__N_128convert_masked_utf8_to_utf16ILNS_10endiannessE0EEEmPKcmRPDs                                                                   [AVX, AVX2]
 _ZN7simdutf7haswell12_GLOBAL__N_128convert_masked_utf8_to_utf16ILNS_10endiannessE1EEEmPKcmRPDs                                                                   [AVX, AVX2]
@@ -111,7 +111,7 @@ _ZNK7simdutf7haswell14implementation4findEPKcS3_c                               
 
 # ----------------------------------------------------------------------------
 # simdutf AVX-512 (Icelake). Same dispatcher.
-# (91 symbols)
+# (95 symbols)
 # ----------------------------------------------------------------------------
 _ZN7simdutf7icelake12_GLOBAL__N_121utf16_to_utf8_avx512iILNS_10endiannessE0EEEmPKDsmPhPm                                                                  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
 _ZN7simdutf7icelake12_GLOBAL__N_121utf16_to_utf8_avx512iILNS_10endiannessE1EEEmPKDsmPhPm                                                                  [AVX, AVX512BW, AVX512F, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]

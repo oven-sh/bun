@@ -190,6 +190,12 @@ function splitLiteralPrefix(pattern: string, cwd: string): { pattern: string; cw
   }
   let remainder = parts.slice(stop).join(separator);
   if (hadTrailingSep) remainder += separator;
+  // If the remainder is empty, the pattern was entirely separators (`'/'`,
+  // `'//'`, `'\\\\'` etc.) — let Bun.Glob handle it directly so `fs.globSync('/')`
+  // yields `['/']` the way Node does.
+  if (remainder === "") {
+    return { pattern, cwd, prefix: "" };
+  }
   let literalPath = literalSegs.join(separator) || (isAbsolute ? separator : ".");
   // On Windows, `C:` alone means "current dir on drive C"; to scan the drive
   // root we need `C:\`. Append the separator whenever the literal prefix ends

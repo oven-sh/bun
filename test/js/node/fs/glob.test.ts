@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
-import path from "node:path";
+import path, { sep } from "node:path";
 
 let tmp: string;
 beforeAll(() => {
@@ -332,40 +332,10 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     expect(fs.globSync("a/src/", { cwd: root })).toStrictEqual(["a/src"]);
   });
 
-  it("trailing slash on a wildcard pattern filters to directories", () => {
-    // `a/*/` is "directories only"; the trailing separator we strip before
-    // splitting must be re-appended to the remainder so Bun.Glob's
-    // `trailing_sep` filter still fires.
-    using dir = tempDir("glob-trail", {
-      a: {
-        sub1: { ".keep": "" },
-        sub2: { ".keep": "" },
-        "file.txt": "f",
-      },
-    });
-    expect(fs.globSync("a/*/", { cwd: String(dir) }).sort()).toStrictEqual(["a/sub1", "a/sub2"]);
-    expect(fs.globSync("a/*", { cwd: String(dir) }).sort()).toStrictEqual(["a/file.txt", "a/sub1", "a/sub2"]);
-  });
-
   it("literal prefix naming a regular file returns []", () => {
     // Opening `target.txt/` as a directory would throw ENOTDIR; Node returns
     // `[]` silently and so do we.
     expect(fs.globSync("target.txt/*.js", { cwd: root })).toStrictEqual([]);
-  });
-
-  it("exclude callback errors propagate (are not swallowed by our ENOENT/ENOTDIR handling)", async () => {
-    // The wrapper catches ENOENT/ENOTDIR from the *scanner* (missing literal
-    // prefix) and returns `[]` to match Node. A user-supplied `exclude`
-    // callback that throws — even if the thrown value has `.code === 'ENOENT'`
-    // (e.g. a stat on a vanished entry) — must propagate to the caller.
-    const boom = Object.assign(new Error("exclude blew up"), { code: "ENOENT" });
-    const exclude = () => {
-      throw boom;
-    };
-    expect(() => fs.globSync("*.txt", { cwd: root, exclude })).toThrow(boom);
-    expect(async () => {
-      for await (const _ of fs.promises.glob("*.txt", { cwd: root, exclude })) break;
-    }).toThrow(boom);
   });
 
   it("self-referential symlink in the literal prefix returns [] (not ELOOP)", () => {
@@ -377,14 +347,74 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     expect(fs.globSync("loop/inside.txt", { cwd: String(dir) })).toStrictEqual([]);
   });
 
+  it("brace alternative that names a symlink still descends", () => {
+    // `{link,dir}/*.txt` should yield matches for both branches; `link` is a
+    // symlink. Brace alternatives are bounded, so the walker's symlink-descent
+    // gate accepts them the same way as a plain `.Literal`.
+    const cwd = path.join(root, "flat");
+    expect(fs.globSync("{link,dir}/*.txt", { cwd }).sort()).toStrictEqual(["dir/inside.txt", "link/inside.txt"]);
+  });
+}); // </symlink behavior>
+
+// Cross-platform `splitLiteralPrefix` tests — no symlink fixtures, so these
+// run on every OS to exercise the JS-side path-manipulation branches
+// (trailing slashes, consecutive separators, ENOTDIR fallthrough, and
+// user-exclude error propagation).
+describe("fs.glob path-manipulation edge cases", () => {
+  function seg(...parts: string[]) {
+    return parts.join(sep);
+  }
+  const nativeSep = sep;
+  // Patterns go in as forward-slash; `validatePattern` normalizes to `sep`
+  // before reaching `splitLiteralPrefix`. Outputs come back with `sep`.
+
+  it("trailing slash on a wildcard pattern filters to directories", () => {
+    using dir = tempDir("glob-trail", {
+      a: {
+        sub1: { ".keep": "" },
+        sub2: { ".keep": "" },
+        "file.txt": "f",
+      },
+    });
+    expect(fs.globSync("a/*/", { cwd: String(dir) }).sort()).toStrictEqual([seg("a", "sub1"), seg("a", "sub2")]);
+    expect(fs.globSync("a/*", { cwd: String(dir) }).sort()).toStrictEqual([
+      seg("a", "file.txt"),
+      seg("a", "sub1"),
+      seg("a", "sub2"),
+    ]);
+  });
+
   it("collapses consecutive separators in the literal prefix", () => {
     // `a//b/*.txt` should normalize to `a/b/*.txt` in output (matches Node);
-    // leaving `a//b/x.txt` would break `Bun.Glob('a/b/x.txt').match(...)`
+    // leaving `a//b/x.txt` would break `new Bun.Glob('a/b/x.txt').match(...)`
     // comparisons in user code.
     using dir = tempDir("glob-dbl", {
       a: { b: { "x.txt": "x" } },
     });
-    expect(fs.globSync("a//b/*.txt", { cwd: String(dir) })).toStrictEqual(["a/b/x.txt"]);
-    expect(fs.globSync("a///b/*.txt", { cwd: String(dir) })).toStrictEqual(["a/b/x.txt"]);
+    expect(fs.globSync("a//b/*.txt", { cwd: String(dir) })).toStrictEqual([seg("a", "b", "x.txt")]);
+    expect(fs.globSync("a///b/*.txt", { cwd: String(dir) })).toStrictEqual([seg("a", "b", "x.txt")]);
   });
-}); // </symlink behavior>
+
+  it("exclude callback errors propagate (not swallowed by ENOENT/ENOTDIR handling)", async () => {
+    using dir = tempDir("glob-exclude", { "a.txt": "a", "b.txt": "b" });
+    const boom = Object.assign(new Error("exclude blew up"), { code: "ENOENT" });
+    const exclude = () => {
+      throw boom;
+    };
+    expect(() => fs.globSync("*.txt", { cwd: String(dir), exclude })).toThrow(boom);
+    expect(async () => {
+      for await (const _ of fs.promises.glob("*.txt", { cwd: String(dir), exclude })) break;
+    }).toThrow(boom);
+  });
+
+  it("pattern that is entirely separators falls through to Bun.Glob", () => {
+    // `fs.globSync('/')` is a pre-existing limitation — Bun.Glob itself
+    // doesn't match root patterns. We don't fix that here, but we make sure
+    // the prefix-peeling doesn't make it worse by stripping the pattern to
+    // an empty string before Bun.Glob can see it.
+    const _ = fs.globSync(nativeSep);
+    // (no assertion on result — pre-PR Bun also returned `[]`; we just
+    // verify the call doesn't throw or hang.)
+    expect(Array.isArray(_)).toBe(true);
+  });
+});

@@ -1521,6 +1521,13 @@ pub fn GlobWalker_(
         ///
         /// Caller should check `result.count() != 0` to decide whether to
         /// descend.
+        ///
+        /// Components with `.Literal` syntax are the obvious case. Components
+        /// with special syntax (`.None`) that lack `*` or `?` are also safe:
+        /// brace alternatives (`{link,dir}`), character classes (`[lmn]ink`),
+        /// and escaped metachars (`\*foo`) all name a **finite** set of
+        /// strings, so they can't generate unbounded descent on their own.
+        /// `.Single`/`.Double`/`.WildcardFilepath` are rejected (unbounded).
         fn literalMatchSet(this: *GlobWalker, active: ComponentSet, entry_name: []const u8) ComponentSet {
             var out = this.makeSet();
             const comps = this.patternComponents.items;
@@ -1528,13 +1535,24 @@ pub fn GlobWalker_(
             while (it.next()) |i| {
                 const idx: u32 = @intCast(i);
                 const comp = &comps[idx];
-                if (comp.syntax_hint == .Literal and
-                    bun.strings.eql(comp.patternSlice(this.pattern), entry_name))
-                {
+                const slice = comp.patternSlice(this.pattern);
+                const is_bounded = switch (comp.syntax_hint) {
+                    .Literal => true,
+                    .None => !containsAnyOf(slice, "*?"),
+                    else => false,
+                };
+                if (is_bounded and this.matchPatternImpl(comp, entry_name)) {
                     out.set(idx);
                 }
             }
             return out;
+        }
+
+        inline fn containsAnyOf(haystack: []const u8, needles: []const u8) bool {
+            for (haystack) |c| {
+                for (needles) |n| if (c == n) return true;
+            }
+            return false;
         }
 
         inline fn normalizeIdx(this: *const GlobWalker, idx: u32) u32 {

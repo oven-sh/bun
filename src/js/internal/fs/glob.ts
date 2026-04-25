@@ -39,6 +39,11 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
   const excludeGlobs = Array.isArray(exclude)
     ? exclude.flatMap(pattern => [new Bun.Glob(pattern), new Bun.Glob(pattern.replace(/\/+$/, "") + "/**")])
     : null;
+  // Dedup across patterns — two expanded brace alternatives can match the
+  // same file (`{a,*}/*.txt` expands to `a/*.txt` + `*/*.txt`), and the
+  // public `pattern` API also accepts an array. Skip the Set allocation when
+  // there's only one pattern (the common case).
+  const seen: Set<string> | null = patterns.length > 1 ? new Set() : null;
 
   for (const pat of patterns) {
     const { pattern: scanPattern, cwd: scanCwd, prefix } = splitLiteralPrefix(pat, globOptions.cwd as string);
@@ -68,6 +73,10 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
           continue;
         }
       }
+      if (seen !== null) {
+        if (seen.has(full)) continue;
+        seen.add(full);
+      }
 
       yield full;
     }
@@ -81,6 +90,7 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
   const excludeGlobs = Array.isArray(exclude)
     ? exclude.flatMap(pattern => [new Bun.Glob(pattern), new Bun.Glob(pattern.replace(/\/+$/, "") + "/**")])
     : null;
+  const seen: Set<string> | null = patterns.length > 1 ? new Set() : null;
 
   for (const pat of patterns) {
     const { pattern: scanPattern, cwd: scanCwd, prefix } = splitLiteralPrefix(pat, globOptions.cwd as string);
@@ -102,6 +112,10 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
         if (excludeGlobs.some(glob => glob.match(full))) {
           continue;
         }
+      }
+      if (seen !== null) {
+        if (seen.has(full)) continue;
+        seen.add(full);
       }
 
       yield full;
@@ -258,28 +272,42 @@ function expandBraces(pattern: string): string[] {
   const open = findTopLevelBrace(pattern);
   if (open === -1) return [pattern];
   const close = findMatchingBrace(pattern, open);
-  if (close === -1) return [pattern]; // unbalanced, treat as literal
-  const prefix = pattern.slice(0, open);
+  // Unbalanced `{…`: leave this brace alone but still walk the rest of the
+  // pattern for *other* top-level braces.
+  if (close === -1) return [pattern];
+  const head = pattern.slice(0, open);
+  const braceSrc = pattern.slice(open, close + 1);
   const suffix = pattern.slice(close + 1);
   const body = pattern.slice(open + 1, close);
   const alternatives = splitTopLevelCommas(body);
-  // Single-alternative braces (`{abc}`) aren't expansion, just literal braces.
-  if (alternatives.length <= 1) return [pattern];
+  // Single-alternative braces (`{abc}`) aren't expansion per Node/minimatch —
+  // keep them literal. But still recurse into the suffix so a later
+  // `{p,q}` brace group doesn't get stranded (`{abc}/{p,q}` must expand the
+  // second group).
+  if (alternatives.length <= 1) {
+    return expandBraces(suffix).map(tail => head + braceSrc + tail);
+  }
   const out: string[] = [];
   for (const alt of alternatives) {
     for (const sub of expandBraces(alt)) {
       for (const tail of expandBraces(suffix)) {
-        out.push(prefix + sub + tail);
+        out.push(head + sub + tail);
       }
     }
   }
   return out;
 }
 
+// On Windows backslash is the path separator, not a glob escape — treating
+// it as an escape here would skip the character after any `\`, so
+// `a\{link,d*}\*.txt` would hide its `{` from the scanner. POSIX uses `\` as
+// a glob escape, so keep the skip there.
+const BACKSLASH_ESCAPES = !isWindows;
+
 function findTopLevelBrace(s: string): number {
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
-    if (c === 92 /* \ */) {
+    if (BACKSLASH_ESCAPES && c === 92 /* \ */) {
       i++; // skip the escaped char
       continue;
     }
@@ -292,7 +320,7 @@ function findMatchingBrace(s: string, open: number): number {
   let depth = 1;
   for (let i = open + 1; i < s.length; i++) {
     const c = s.charCodeAt(i);
-    if (c === 92 /* \ */) {
+    if (BACKSLASH_ESCAPES && c === 92 /* \ */) {
       i++;
       continue;
     }
@@ -311,7 +339,7 @@ function splitTopLevelCommas(s: string): string[] {
   let depth = 0;
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
-    if (c === 92 /* \ */) {
+    if (BACKSLASH_ESCAPES && c === 92 /* \ */) {
       i++;
       continue;
     }

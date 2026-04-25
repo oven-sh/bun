@@ -447,4 +447,28 @@ describe("fs.glob path-manipulation edge cases", () => {
     // Duplicate alternatives dedupe (single yield per path).
     expect(fs.globSync("{a,a}/*.txt", { cwd: String(dir) })).toStrictEqual([seg("a", "x.txt")]);
   });
+
+  it("dedupes paths matched by multiple expanded alternatives", () => {
+    // `{a,*}` expands to `a/*.txt` and `*/*.txt` — both match `a/file.txt`,
+    // but fs.glob should yield it once (matching Node). Also covers the
+    // pre-existing gap for array-patterns (`['a/*.txt', 'a/*.txt']`).
+    using dir = tempDir("glob-dedup", { a: { "file.txt": "x" } });
+    expect(fs.globSync("{a,*}/*.txt", { cwd: String(dir) })).toStrictEqual([seg("a", "file.txt")]);
+    expect(fs.globSync(["a/*.txt", "a/*.txt"], { cwd: String(dir) })).toStrictEqual([seg("a", "file.txt")]);
+  });
+
+  it("expands later brace groups past a single-alternative earlier group", () => {
+    // `{abc}/{p,q}/*.txt`: the first group has no alternatives to expand but
+    // the suffix still needs walking so `{p,q}` gets split.
+    using dir = tempDir("glob-suffix", {
+      abc: {
+        p: { "p.txt": "p" },
+        q: { "q.txt": "q" },
+      },
+    });
+    expect(fs.globSync("{abc}/{p,q}/*.txt", { cwd: String(dir) }).sort()).toStrictEqual([
+      seg("abc", "p", "p.txt"),
+      seg("abc", "q", "q.txt"),
+    ]);
+  });
 });

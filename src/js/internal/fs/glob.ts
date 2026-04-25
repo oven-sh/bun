@@ -66,16 +66,19 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
       }
       if (step.done) break;
       const full = prefix ? prefix + step.value : step.value;
+      // Dedup before `exclude` so user callbacks fire once per unique path
+      // (pre-PR behavior for single-string brace patterns — a single Bun.Glob
+      // walk deduped internally before `exclude` ever saw the entry).
+      if (seen !== null) {
+        if (seen.has(full)) continue;
+        seen.add(full);
+      }
       if (typeof exclude === "function") {
         if (exclude(full)) continue;
       } else if (excludeGlobs) {
         if (excludeGlobs.some(glob => glob.match(full))) {
           continue;
         }
-      }
-      if (seen !== null) {
-        if (seen.has(full)) continue;
-        seen.add(full);
       }
 
       yield full;
@@ -106,16 +109,16 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
     }
     for (const ent of iter) {
       const full = prefix ? prefix + ent : ent;
+      if (seen !== null) {
+        if (seen.has(full)) continue;
+        seen.add(full);
+      }
       if (typeof exclude === "function") {
         if (exclude(full)) continue;
       } else if (excludeGlobs) {
         if (excludeGlobs.some(glob => glob.match(full))) {
           continue;
         }
-      }
-      if (seen !== null) {
-        if (seen.has(full)) continue;
-        seen.add(full);
       }
 
       yield full;

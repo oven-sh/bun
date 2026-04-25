@@ -810,6 +810,12 @@ pub const Bin = extern struct {
         fn createSymlink(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
             defer {
                 if (this.err == null) {
+                    // Make sure `umask` is populated. The hoisted installer
+                    // and `bun link`/`bun unlink` prime it, but the isolated
+                    // installer goes straight to `Bin.Linker.link()` — without
+                    // this call `umask` would stay 0 and the chmod below
+                    // would unconditionally widen to 0o777.
+                    ensureUmask();
                     // Mark the bin executable. Honor the process umask the
                     // same way npm and pnpm do: final mode = 0o777 & ~umask.
                     _ = bun.sys.chmod(abs_target, 0o777 & ~umask);

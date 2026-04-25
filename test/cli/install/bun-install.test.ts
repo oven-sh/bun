@@ -8778,45 +8778,66 @@ describe.concurrent("bun-install", () => {
   //
   // POSIX-only. Windows has no umask, and directory creation goes through a
   // different code path there.
-  it.skipIf(isWindows)("respects process umask when creating install directories (#29723)", async () => {
-    const pkgDir = tempDirWithFiles("bun-install-umask-29723", {
-      "baz-0.0.3.tgz": await file(join(import.meta.dir, "baz-0.0.3.tgz")).arrayBuffer(),
-      "package.json": JSON.stringify({
-        name: "foo",
-        version: "0.0.1",
-        dependencies: {
-          baz: "file:baz-0.0.3.tgz",
-        },
-      }),
-      // Cache enabled so the cache directory gets created too — this is
-      // what BUN_INSTALL_CACHE_DIR points at in the bug report.
-      "bunfig.toml": `[install]\ncache = "./.umask-cache"\n`,
-    });
-    const cacheDir = join(pkgDir, ".umask-cache");
+  //
+  // Parametrized over the two linkers because they share almost no directory-
+  // creation code — isolated goes through `isolated_install.zig` /
+  // `isolated_install/Installer.zig`, hoisted through `hoisted_install.zig`
+  // and `PackageInstall.installWithHardlink`. Bin linking in particular
+  // relied on `Bin.Linker.ensureUmask()` being primed by the hoisted entry
+  // point; the isolated path never called it, so bin targets would chmod to
+  // 0o777 regardless of umask.
+  for (const linker of ["hoisted", "isolated"] as const) {
+    it.skipIf(isWindows)(
+      `${linker} install respects process umask for directories and bin targets (#29723)`,
+      async () => {
+        const pkgDir = tempDirWithFiles(`bun-install-umask-29723-${linker}`, {
+          // Local tarball that ships executable bins — exercises both the
+          // package-dir mkdir path and `Bin.Linker.createSymlink`'s chmod.
+          "multi-tool-pkg-1.0.0.tgz": await file(
+            join(import.meta.dir, "multi-tool-pkg-1.0.0.tgz"),
+          ).arrayBuffer(),
+          "package.json": JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: {
+              "multi-tool-pkg": "file:multi-tool-pkg-1.0.0.tgz",
+            },
+          }),
+          // Cache enabled so the cache directory gets created too — this is
+          // what BUN_INSTALL_CACHE_DIR points at in the bug report.
+          "bunfig.toml": `[install]\ncache = "./.umask-cache"\nlinker = "${linker}"\n`,
+        });
+        const cacheDir = join(pkgDir, ".umask-cache");
 
-    // Drive umask through a shell wrapper — calling process.umask() in the
-    // test runner would leak into unrelated concurrent tests.
-    await using proc = Bun.spawn({
-      cmd: ["sh", "-c", `umask 0002 && exec "$@"`, "sh", bunExe(), "install"],
-      cwd: pkgDir,
-      env,
-      stderr: "pipe",
-      stdout: "pipe",
-      stdin: "ignore",
-    });
-    const [errText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(errText).not.toContain("panic:");
-    expect(errText).not.toContain("error:");
-    expect(exitCode).toBe(0);
+        // Drive umask through a shell wrapper — calling process.umask() in
+        // the test runner would leak into unrelated concurrent tests.
+        await using proc = Bun.spawn({
+          cmd: ["sh", "-c", `umask 0002 && exec "$@"`, "sh", bunExe(), "install"],
+          cwd: pkgDir,
+          env,
+          stderr: "pipe",
+          stdout: "pipe",
+          stdin: "ignore",
+        });
+        const [errText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(errText).not.toContain("panic:");
+        expect(errText).not.toContain("error:");
+        expect(exitCode).toBe(0);
 
-    const statMode = (p: string) => stat(p).then(s => s.mode & 0o777);
+        const statMode = (p: string) => stat(p).then(s => s.mode & 0o777);
 
-    // Directories we create: final mode = 0o777 & ~0o002 = 0o775.
-    // These are the paths the reporter specifically called out.
-    expect(await statMode(join(pkgDir, "node_modules"))).toBe(0o775);
-    expect(await statMode(join(pkgDir, "node_modules", "baz"))).toBe(0o775);
-    expect(await statMode(cacheDir)).toBe(0o775);
-  });
+        // Directories we create: final mode = 0o777 & ~0o002 = 0o775.
+        expect(await statMode(join(pkgDir, "node_modules"))).toBe(0o775);
+        expect(await statMode(cacheDir)).toBe(0o775);
+
+        // Bin target — `stat` follows the symlink so this is the mode of
+        // the executable file that `Bin.Linker.createSymlink` chmod'd.
+        // Pre-fix isolated installs left this at 0o777.
+        const binLink = join(pkgDir, "node_modules", ".bin", "multi-tool");
+        expect((await stat(binLink)).mode & 0o777).toBe(0o775);
+      },
+    );
+  }
 
   it("should handle @scoped name that contains tilde, issue#7045", async () => {
     await withContext(defaultOpts, async ctx => {

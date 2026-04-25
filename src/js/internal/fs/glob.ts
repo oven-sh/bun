@@ -176,12 +176,17 @@ function splitLiteralPrefix(pattern: string, cwd: string): { pattern: string; cw
   // Empty segments come from consecutive separators in the pattern
   // (`a//b/*.txt`). Node collapses those in its output and in `Minimatch`
   // pattern matching, so we strip them here too before re-assembling the
-  // literal prefix — keeping only the leading empty for rooted POSIX paths
-  // (`/foo/*.txt` → `['', 'foo', '*.txt']` → `/foo`).
+  // literal prefix — keeping only the leading empties that carry path-root
+  // meaning:
+  //   POSIX  `/foo/*.txt`    → `['',   'foo',   '*.txt']` keep idx 0
+  //   Windows UNC `\\s\sh\…` → `['','','s','sh','*.txt']` keep idx 0 **and** 1
+  //   (UNC's double leading `\\` is how Windows distinguishes network paths
+  //    from a drive-rooted single-backslash path.)
+  const uncLeadingEmpties = isWindows && isAbsolute && pattern.startsWith("\\\\") ? 2 : isAbsolute ? 1 : 0;
   const rawLiteralSegs = parts.slice(0, stop);
   const literalSegs: string[] = [];
   for (let i = 0; i < rawLiteralSegs.length; i++) {
-    if (rawLiteralSegs[i] !== "" || (i === 0 && isAbsolute)) literalSegs.push(rawLiteralSegs[i]);
+    if (rawLiteralSegs[i] !== "" || i < uncLeadingEmpties) literalSegs.push(rawLiteralSegs[i]);
   }
   let remainder = parts.slice(stop).join(separator);
   if (hadTrailingSep) remainder += separator;

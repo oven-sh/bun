@@ -434,7 +434,10 @@ describe("fs.glob path-manipulation edge cases", () => {
       c: { "z.txt": "z" },
     });
     // Simple flat expansion.
-    expect(fs.globSync("{a,b}/*.txt", { cwd: String(dir) }).sort()).toStrictEqual([seg("a", "x.txt"), seg("b", "y.txt")]);
+    expect(fs.globSync("{a,b}/*.txt", { cwd: String(dir) }).sort()).toStrictEqual([
+      seg("a", "x.txt"),
+      seg("b", "y.txt"),
+    ]);
     // Nested braces.
     expect(fs.globSync("{a,{b,c}}/*.txt", { cwd: String(dir) }).sort()).toStrictEqual([
       seg("a", "x.txt"),

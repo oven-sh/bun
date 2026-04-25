@@ -2148,6 +2148,8 @@ pub const TestCommand = struct {
             // Determine if this file should run tests concurrently based on glob pattern
             const should_run_concurrent = reporter.jest.shouldFileRunConcurrently(file_id);
             bun_test_root.enterFile(file_id, reporter, should_run_concurrent, first_last);
+            vm.global.beginTestModuleMockingScope();
+            defer vm.global.endTestModuleMockingScope();
             defer bun_test_root.exitFile();
 
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index, reporter);

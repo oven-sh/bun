@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 // Regression test for the "ThreadLock is locked by thread X, not thread Y" panic
 // seen on process exit after a fetch() with a streaming request body (originally
@@ -62,11 +62,7 @@ test.skipIf(!isDebug && !isASAN)(
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Precondition: the sleep hook must be compiled in for this test to be
     // meaningful. Without it the race is effectively unreachable and this test

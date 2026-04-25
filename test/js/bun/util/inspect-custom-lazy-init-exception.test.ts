@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-test("Bun.inspect on object with custom inspect does not crash when node:util fails to load", async () => {
+test.concurrent("Bun.inspect on object with custom inspect does not crash when node:util fails to load", async () => {
   const src = `
     const { writeSync } = require("node:fs");
     const print = (s) => writeSync(1, s + "\\n");
@@ -42,7 +42,7 @@ test("Bun.inspect on object with custom inspect does not crash when node:util fa
   expect(exitCode).toBe(0);
 });
 
-test("Bun.inspect with colors does not crash when utilInspectFunction was previously nulled", async () => {
+test.concurrent("Bun.inspect with colors does not crash when utilInspectFunction was previously nulled", async () => {
   const src = `
     const { writeSync } = require("node:fs");
     const print = (s) => writeSync(1, s + "\\n");

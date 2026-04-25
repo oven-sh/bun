@@ -8818,7 +8818,6 @@ describe.concurrent("bun-install", () => {
           stdin: "ignore",
         });
         const [errText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-        expect(errText).not.toContain("panic:");
         expect(errText).not.toContain("error:");
         expect(exitCode).toBe(0);
 

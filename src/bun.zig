@@ -2376,6 +2376,11 @@ pub inline fn OSPathLiteral(comptime literal: anytype) *const [literal.len:0]OSP
 pub const MakePath = struct {
     const w = std.os.windows;
 
+    // Alias for the file-level `makePath`. The local `makePath` below
+    // shadows it, so `MakePath.makeOpenPath` needs this to reach the
+    // dangling-symlink-safe version.
+    const makePathSafe = @import("bun").makePath;
+
     // TODO(@paperclover): upstream making this public into zig std
     // there is zero reason this must be copied
     //
@@ -2490,12 +2495,15 @@ pub const MakePath = struct {
             );
         }
 
-        // POSIX: avoid std's makeOpenPath which hardcodes mode 0o755. Try to
-        // openDir, falling back to our makePath (which uses umask_mkdir_mode)
-        // and retrying.
+        // POSIX: avoid std's makeOpenPath which hardcodes mode 0o755. Try
+        // openDir first, then fall back to the file-level `bun.makePath`
+        // (umask-honoring mkdirat plus dangling-symlink handling) and retry.
+        // Using the local `MakePath.makePath` here would infinite-loop on a
+        // dangling intermediate symlink — the file-level one lstats and
+        // rm-rf's it.
         return self.openDir(sub_path, opts) catch |err| switch (err) {
             error.FileNotFound => {
-                try MakePath.makePath(std.meta.Elem(@TypeOf(sub_path)), self, sub_path);
+                try makePathSafe(self, sub_path);
                 return self.openDir(sub_path, opts);
             },
             else => |e| return e,

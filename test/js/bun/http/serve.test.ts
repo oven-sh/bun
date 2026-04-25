@@ -380,9 +380,7 @@ it("default fallback response has a single Content-Length header", async () => {
       // The raw wire bytes must contain exactly one Content-Length header
       // (case-insensitive) — RFC 7230 §3.3.2.
       const headerSection = wireBytes.split("\r\n\r\n", 1)[0];
-      const contentLengthCount = headerSection
-        .split("\r\n")
-        .filter(line => /^content-length\s*:/i.test(line)).length;
+      const contentLengthCount = headerSection.split("\r\n").filter(line => /^content-length\s*:/i.test(line)).length;
       expect(contentLengthCount).toBe(1);
     },
   );
@@ -399,9 +397,7 @@ it("default browser fallback response has a single Content-Length header", async
     async server => {
       const wireBytes = await new Promise<string>((resolve, reject) => {
         const sock = net.connect(Number(server.port), "127.0.0.1", () => {
-          sock.write(
-            "GET / HTTP/1.1\r\nHost: localhost\r\nSec-Fetch-Dest: document\r\nConnection: close\r\n\r\n",
-          );
+          sock.write("GET / HTTP/1.1\r\nHost: localhost\r\nSec-Fetch-Dest: document\r\nConnection: close\r\n\r\n");
         });
         let buf = "";
         sock.on("data", d => (buf += d.toString("latin1")));
@@ -410,9 +406,7 @@ it("default browser fallback response has a single Content-Length header", async
       });
 
       const headerSection = wireBytes.split("\r\n\r\n", 1)[0];
-      const contentLengthCount = headerSection
-        .split("\r\n")
-        .filter(line => /^content-length\s*:/i.test(line)).length;
+      const contentLengthCount = headerSection.split("\r\n").filter(line => /^content-length\s*:/i.test(line)).length;
       expect(contentLengthCount).toBe(1);
     },
   );

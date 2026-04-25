@@ -272,9 +272,11 @@ function expandBraces(pattern: string): string[] {
   const open = findTopLevelBrace(pattern);
   if (open === -1) return [pattern];
   const close = findMatchingBrace(pattern, open);
-  // Unbalanced `{…`: leave this brace alone but still walk the rest of the
-  // pattern for *other* top-level braces.
-  if (close === -1) return [pattern];
+  // Unbalanced `{…`: leave the `{` alone but keep walking past it so that a
+  // later balanced brace group (`a{b/{link,d*}/*.txt`) still expands.
+  if (close === -1) {
+    return expandBraces(pattern.slice(open + 1)).map(tail => pattern.slice(0, open + 1) + tail);
+  }
   const head = pattern.slice(0, open);
   const braceSrc = pattern.slice(open, close + 1);
   const suffix = pattern.slice(close + 1);

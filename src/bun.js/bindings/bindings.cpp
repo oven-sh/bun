@@ -561,6 +561,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         flags = flags & ~FLAG_NOT;
 
         bool passed = ExpectCustomAsymmetricMatcher__execute(customMatcher->wrapped(), JSValue::encode(matcherProp), globalObject, JSValue::encode(otherProp));
+        RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
         return passed ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
     }
 

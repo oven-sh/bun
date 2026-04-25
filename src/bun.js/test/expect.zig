@@ -1051,6 +1051,7 @@ pub const Expect = struct {
             promise.setHandled(vm);
 
             globalThis.bunVM().waitForPromise(promise);
+            if (globalThis.hasException()) return error.JSError;
 
             result = promise.result(vm);
             result.ensureStillAlive();
@@ -1732,6 +1733,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         const arguments = callframe.arguments_old(1).slice();
         const received_value = if (arguments.len < 1) .js_undefined else arguments[0];
         const matched = try executeImpl(this, callframe.this(), globalThis, received_value);
+        if (globalThis.hasException()) return error.JSError;
         return JSValue.jsBoolean(matched);
     }
 

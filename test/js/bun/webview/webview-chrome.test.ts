@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isMacOS } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
@@ -105,20 +105,12 @@ function findChrome(): string | undefined {
 
 const chromePath = findChrome();
 // TODO: macOS 13/14 aarch64 CI — findChrome() resolves the Playwright
-// chrome-headless-shell, but `new Bun.WebView({backend: chrome})` throws
-// ERR_DLOPEN_FAILED at spawn time. Recent Chromium builds link against
-// frameworks only present on newer macOS, so the binary exists but can't
-// load. Probe once on CI macOS (where the cached shell may be ahead of
-// the OS) instead of guessing a version cutoff.
-let chromeBroken = false;
-if (chromePath && isCI && isMacOS) {
-  try {
-    new Bun.WebView({ backend: { type: "chrome", url: false }, width: 8, height: 8 }).close();
-  } catch (e: any) {
-    if (e?.code === "ERR_DLOPEN_FAILED") chromeBroken = true;
-    else throw e;
-  }
-}
+// chrome-headless-shell, but it either throws ERR_DLOPEN_FAILED at spawn or
+// launches and immediately closes the pipe on first navigate. Recent Chromium
+// builds link against frameworks only present on macOS 15+, so the binary
+// exists but can't run. Gate on CI + macOS < 15 rather than probing — a real
+// probe needs an async navigate, which adds startup cost on every platform.
+const chromeBroken = isCI && isMacOS && !isMacOSVersionAtLeast(15);
 const it = chromePath && !chromeBroken ? test : test.todo;
 
 // url:false forces spawn-mode — skips DevToolsActivePort auto-detect

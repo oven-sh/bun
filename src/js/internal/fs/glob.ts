@@ -283,38 +283,36 @@ function validatePattern(pattern: string | string[]): string[] {
  * A brace that itself contains a `/` (`{a/b,c}`) also forces expansion.
  */
 function leafOnlyBraces(pattern: string): boolean {
+  // A separator is `/` everywhere, plus `\` on Windows. The raw pattern
+  // hasn't been normalized yet (that happens after `expandBraces` runs),
+  // so we have to accept both Windows shapes here — unlike the brace
+  // parsers which only see segments from `split(sep)`.
   let depth = 0;
-  let braceSawSlash = false;
-  let braceStart = -1;
-  let sawBraceBeforeLeaf = false;
-  let lastSlashOutsideBrace = -1;
+  let anyTopLevelBraceClosed = false;
   for (let i = 0; i < pattern.length; i++) {
     const c = pattern.charCodeAt(i);
     if (BACKSLASH_ESCAPES && c === 92 /* \ */) {
       i++;
       continue;
     }
-    if (c === 123 /* { */) {
-      if (depth === 0) {
-        braceStart = i;
-        braceSawSlash = false;
-        if (braceStart <= lastSlashOutsideBrace) sawBraceBeforeLeaf = true;
-      }
+    const isSep = c === 47 /* / */ || (!BACKSLASH_ESCAPES && c === 92 /* \ */);
+    if (isSep) {
+      // Separator inside a brace body → brace spans directory segments.
+      if (depth > 0) return false;
+      // Separator at depth 0 after a top-level brace closed → that brace
+      // was in a directory segment, so the pattern isn't leaf-only.
+      if (anyTopLevelBraceClosed) return false;
+    } else if (c === 123 /* { */) {
       depth++;
-    } else if (c === 125 /* } */) {
-      if (depth > 0) depth--;
-      if (depth === 0 && braceSawSlash) return false;
-    } else if (c === 47 /* / */) {
-      if (depth > 0) braceSawSlash = true;
-      else {
-        lastSlashOutsideBrace = i;
-        // A brace that closed before this `/` is now in a directory
-        // segment (everything up to here becomes "before the leaf").
-        if (braceStart !== -1 && braceStart < i) sawBraceBeforeLeaf = true;
-      }
+    } else if (c === 125 /* } */ && depth > 0) {
+      depth--;
+      if (depth === 0) anyTopLevelBraceClosed = true;
     }
   }
-  return !sawBraceBeforeLeaf;
+  // Unbalanced `{` (depth never returned to 0): be conservative and force
+  // expansion — `expandBraces` has a dedicated recursion for this shape.
+  if (depth !== 0) return false;
+  return true;
 }
 
 /**

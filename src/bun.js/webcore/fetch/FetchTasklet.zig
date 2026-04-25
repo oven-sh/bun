@@ -74,12 +74,33 @@ pub const FetchTasklet = struct {
     }
 
     pub fn derefFromThread(this: *FetchTasklet) void {
+        // Testing hook (ci_assert builds only): sleep before decrementing the ref count so
+        // the JS thread has time to process onProgressUpdate, drop its ref, drain the event
+        // loop, and set `is_shutting_down`. Without this the JS-deref-then-shutdown vs
+        // HTTP-deref race is too narrow to exercise deterministically. The stderr marker
+        // lets the test assert the hook is actually compiled in. Used by
+        // test/regression/issue/26225/shutdown-race.test.ts.
+        if (comptime bun.Environment.ci_assert) {
+            if (bun.getenvZ("BUN_DEBUG_FETCH_TASKLET_DEREF_SLEEP_MS")) |str| {
+                if (std.fmt.parseInt(u64, str, 10) catch null) |ms| {
+                    std.debug.print("[FetchTasklet.derefFromThread sleep {d}ms]\n", .{ms});
+                    std.Thread.sleep(ms * std.time.ns_per_ms);
+                }
+            }
+        }
+
         const count = this.ref_count.fetchSub(1, .monotonic);
         bun.debugAssert(count > 0);
 
         if (count == 1) {
             if (this.javascript_vm.isShuttingDown()) {
-                this.deinit() catch |err| switch (err) {};
+                // Process is exiting. `deinit()` (via `clearData()`) would touch
+                // JS-thread-only state from the HTTP thread: `ResumableSink`'s
+                // single-threaded `RefCount` (ThreadLock bound to the JS thread in
+                // `startRequestStream`), plus several `jsc.Strong`/`jsc.Weak` refs and
+                // `Response`. The JS event loop won't drain at this point either, so
+                // dispatching there is futile. Just leak — every resource here is
+                // in-process memory the OS is about to reclaim.
                 return;
             }
             // this is really unlikely to happen, but can happen

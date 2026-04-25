@@ -8793,9 +8793,7 @@ describe.concurrent("bun-install", () => {
         const pkgDir = tempDirWithFiles(`bun-install-umask-29723-${linker}`, {
           // Local tarball that ships executable bins — exercises both the
           // package-dir mkdir path and `Bin.Linker.createSymlink`'s chmod.
-          "multi-tool-pkg-1.0.0.tgz": await file(
-            join(import.meta.dir, "multi-tool-pkg-1.0.0.tgz"),
-          ).arrayBuffer(),
+          "multi-tool-pkg-1.0.0.tgz": await file(join(import.meta.dir, "multi-tool-pkg-1.0.0.tgz")).arrayBuffer(),
           "package.json": JSON.stringify({
             name: "foo",
             version: "0.0.1",

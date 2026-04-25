@@ -34,9 +34,9 @@ pub const HtmlRenderer = struct {
         var out: OutputBuffer = .{ .list = .{}, .allocator = allocator, .oom = false };
         // HTML output is typically ~1.2-1.8x the source markdown; reserving up
         // front avoids repeated reallocs of the output buffer in the hot path.
-        out.list.ensureTotalCapacityPrecise(allocator, src_text.len * 2 + 64) catch {
-            out.oom = true;
-        };
+        // Best-effort: if the speculative reservation fails we fall back to
+        // incremental growth instead of poisoning the buffer.
+        out.list.ensureTotalCapacityPrecise(allocator, src_text.len * 2 + 64) catch {};
         return .{
             .out = out,
             .allocator = allocator,

@@ -89,10 +89,11 @@ pub fn renderToHTML(
         return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
     }
 
-    const arena = scratchArena();
-    defer _ = arena.reset(.{ .retain_with_limit = 1 << 20 });
+    var scratch = ScratchArena.acquire();
+    defer scratch.release();
+    const arena = scratch.allocator();
 
-    const buffer = try jsc.Node.StringOrBuffer.fromJS(globalThis, arena.allocator(), input_value) orelse {
+    const buffer = try jsc.Node.StringOrBuffer.fromJS(globalThis, arena, input_value) orelse {
         return globalThis.throwInvalidArguments("Expected a string or buffer to render", .{});
     };
 
@@ -100,26 +101,50 @@ pub fn renderToHTML(
 
     const options = try parseOptions(globalThis, opts_value);
 
-    const result = md.renderToHtmlWithOptions(input, arena.allocator(), options) catch {
+    const result = md.renderToHtmlWithOptions(input, arena, options) catch {
         return globalThis.throwOutOfMemory();
     };
 
     return bun.String.createUTF8ForJS(globalThis, result);
 }
 
-threadlocal var scratch_arena: ?bun.ArenaAllocator = null;
-
 /// Per-thread scratch arena reused across markdown renders. The parser treats
 /// its allocator as a bump arena (no individual frees), so a `MimallocArena`
 /// here would force a `mi_heap_new`/`mi_heap_destroy` pair per call which
 /// dominates short inputs; resetting a retained `std.heap.ArenaAllocator` is
 /// effectively free by comparison.
-fn scratchArena() *bun.ArenaAllocator {
-    if (scratch_arena == null) {
-        scratch_arena = bun.ArenaAllocator.init(bun.default_allocator);
+///
+/// `parseOptions` and `StringOrBuffer.fromJS` can run arbitrary user JS
+/// (getters / Proxy traps / toString), which may re-enter `renderToHTML` on
+/// the same thread. The `busy` guard hands reentrant callers a private
+/// stack-local arena so the inner `release()` can't reset memory the outer
+/// call is still pointing into.
+const ScratchArena = struct {
+    owned: ?bun.ArenaAllocator,
+
+    threadlocal var shared: ?bun.ArenaAllocator = null;
+    threadlocal var busy: bool = false;
+
+    fn acquire() ScratchArena {
+        if (busy) return .{ .owned = bun.ArenaAllocator.init(bun.default_allocator) };
+        if (shared == null) shared = bun.ArenaAllocator.init(bun.default_allocator);
+        busy = true;
+        return .{ .owned = null };
     }
-    return &scratch_arena.?;
-}
+
+    fn allocator(self: *ScratchArena) std.mem.Allocator {
+        return if (self.owned) |*a| a.allocator() else shared.?.allocator();
+    }
+
+    fn release(self: *ScratchArena) void {
+        if (self.owned) |*a| {
+            a.deinit();
+        } else {
+            _ = shared.?.reset(.{ .retain_with_limit = 1 << 20 });
+            busy = false;
+        }
+    }
+};
 
 fn parseOptions(globalThis: *jsc.JSGlobalObject, opts_value: JSValue) bun.JSError!md.Options {
     var options: md.Options = .{};

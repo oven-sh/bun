@@ -558,4 +558,20 @@ code
       expect(Markdown.html(input, { tables: true })).toContain("<th>" + cell + "</th>");
     });
   });
+
+  test("reentrant html() from options getter does not corrupt the outer render", () => {
+    // Non-ASCII forces the input string to be allocated into the scratch arena.
+    const outerSrc = "# héllo\n\n" + Buffer.alloc(64, "a").toString();
+    const expected = Markdown.html(outerSrc);
+    let inner = "";
+    const opts = {
+      get tables() {
+        inner = Markdown.html("**inner**");
+        return true;
+      },
+    };
+    const outer = Markdown.html(outerSrc, opts);
+    expect(inner).toContain("<strong>inner</strong>");
+    expect(outer).toBe(expected);
+  });
 });

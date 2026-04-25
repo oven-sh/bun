@@ -60,8 +60,10 @@ pub fn installHoistedPackages(
 
         new_node_modules = true;
 
-        // Attempt to create a new node_modules folder
-        if (bun.sys.mkdir("node_modules", 0o755).asErr()) |err| {
+        // Attempt to create a new node_modules folder. Pass 0o777 so the
+        // kernel's umask application decides the final permission
+        // (matches Node/npm/pnpm).
+        if (bun.sys.mkdir("node_modules", bun.umask_mkdir_mode).asErr()) |err| {
             if (err.errno != @intFromEnum(bun.sys.E.EXIST)) {
                 Output.err(err, "could not create the <b>\"node_modules\"<r> directory", .{});
                 Global.crash();

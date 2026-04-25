@@ -396,7 +396,7 @@ pub const PackageInstall = struct {
                 while (try walker.next().unwrap()) |entry| {
                     switch (entry.kind) {
                         .directory => {
-                            _ = bun.sys.mkdirat(.fromStdDir(destination_dir_), entry.path, 0o755);
+                            _ = bun.sys.mkdirat(.fromStdDir(destination_dir_), entry.path, bun.umask_mkdir_mode);
                         },
                         .file => {
                             bun.copy(u8, &stackpath, entry.path);
@@ -432,7 +432,7 @@ pub const PackageInstall = struct {
             }
         };
 
-        var subdir = destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.fail(err, .opening_dest_dir, @errorReturnTrace());
+        var subdir = bun.MakePath.makeOpenPath(destination_dir, bun.span(this.destination_dir_subpath), .{}) catch |err| return Result.fail(err, .opening_dest_dir, @errorReturnTrace());
         defer subdir.close();
 
         this.file_count = FileCopier.copy(
@@ -451,7 +451,7 @@ pub const PackageInstall = struct {
             if (strings.indexOfCharZ(this.destination_dir_subpath, std.fs.path.sep)) |slash| {
                 this.destination_dir_subpath_buf[slash] = 0;
                 const subdir = this.destination_dir_subpath_buf[0..slash :0];
-                destination_dir.makeDirZ(subdir) catch {};
+                _ = bun.sys.mkdiratZ(.fromStdDir(destination_dir), subdir, bun.umask_mkdir_mode);
                 this.destination_dir_subpath_buf[slash] = std.fs.path.sep;
             }
         }
@@ -527,7 +527,7 @@ pub const PackageInstall = struct {
         state.walker.resolve_unknown_entry_types = true;
 
         if (!Environment.isWindows) {
-            state.subdir = destbase.makeOpenPath(bun.span(destpath), .{
+            state.subdir = bun.MakePath.makeOpenPath(destbase, bun.span(destpath), .{
                 .iterate = true,
                 .access_sub_paths = true,
             }) catch |err| {

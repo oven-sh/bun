@@ -2360,4 +2360,97 @@ describe("bun link integration", () => {
 
     expect([...installedFiles].sort()).toEqual([...publishedFiles].sort());
   });
+
+  // Regression: when a producer has `files: ["build/**/*"]` AND a directory
+  // sibling at root that shares its name with a directory nested under
+  // `build/`, the root-level whitelist must not strip the nested copy.
+  // Real-world repro: @amboss/design-system has both `<root>/assets/` (dev
+  // SVG sources, excluded from publish) and `<root>/build/esm/web-tokens/
+  // assets/` (built JSON shipped via files). A basename-only skip list
+  // drops both; npm publish (and we) must keep the nested one.
+  test("isolated: root-only `files` exclusion does not strip same-named nested dirs", async () => {
+    using home = tempDir("link-home-", {});
+    const env = hermeticEnv(String(home));
+
+    using producer = tempDir("linkpkg-nested-same-name-", {
+      "package.json": JSON.stringify({ name: "no-deps", version: "1.0.0", files: ["build/**/*"] }),
+      "README.md": "# nested\n",
+      // Root `assets/` — excluded by `files`.
+      "assets/icon.svg": "<svg/>",
+      // Nested `assets/` under whitelisted `build/` — must survive.
+      "build/esm/web-tokens/assets/icons.json": "{}",
+      "build/esm/web-tokens/assets/logo.json": "{}",
+      "build/esm/index.js": "module.exports = 'BUILT';",
+      // Other dev junk siblings to assets/ at root, also excluded.
+      "src/index.ts": "export {}",
+      "docs/guide.md": "# docs\n",
+    });
+
+    await using linkProc = spawn({
+      cmd: [bunExe(), "link"],
+      cwd: String(producer),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, linkStderr, linkExit] = await Promise.all([
+      linkProc.stdout.text(),
+      linkProc.stderr.text(),
+      linkProc.exited,
+    ]);
+    if (linkExit !== 0) throw new Error(`bun link failed: ${linkStderr}`);
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "isolated-link-nested-same-name",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    await using installProc = spawn({
+      cmd: [bunExe(), "install", "--backend=hardlink"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([
+      installProc.stdout.text(),
+      installProc.stderr.text(),
+      installProc.exited,
+    ]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bodyDir = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+
+    async function walk(dir: string, prefix = ""): Promise<string[]> {
+      const out: string[] = [];
+      for (const name of await readdir(dir)) {
+        const abs = join(dir, name);
+        const rel = prefix ? `${prefix}/${name}` : name;
+        const s = await stat(abs);
+        if (s.isDirectory()) {
+          out.push(...(await walk(abs, rel)));
+        } else {
+          out.push(rel);
+        }
+      }
+      return out;
+    }
+    const installedFiles = new Set(await walk(bodyDir));
+
+    // Nested assets/ under build/ must be present.
+    expect(installedFiles.has("build/esm/web-tokens/assets/icons.json")).toBe(true);
+    expect(installedFiles.has("build/esm/web-tokens/assets/logo.json")).toBe(true);
+    // Root assets/ must be excluded.
+    expect(installedFiles.has("assets/icon.svg")).toBe(false);
+    // Other excluded siblings stay out.
+    expect(installedFiles.has("src/index.ts")).toBe(false);
+    expect(installedFiles.has("docs/guide.md")).toBe(false);
+  });
 });

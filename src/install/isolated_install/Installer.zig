@@ -515,16 +515,60 @@ pub const Installer = struct {
                                     defer folder_dir.close();
 
                                     // Producer root is a working repo, not a published
-                                    // tarball. Mirror `bun pm pack`'s exact-name default
-                                    // ignores (see `default_ignore_patterns` /
-                                    // `root_default_ignore_patterns` in
-                                    // `src/cli/pack_command.zig`) so the installed
-                                    // `.bun/<hash>/<pkg>/` matches what a publish of the
-                                    // producer would contain. Glob patterns (`.*.swp`,
-                                    // `._*`, `.wafpickle-*`) are not handled by the
-                                    // Walker's exact-name hash filter; acceptable
-                                    // for this fix — if a consumer hits one, follow-up
-                                    // work can plumb pack_command's filter directly.
+                                    // tarball. The contract: what `bun pm pack` would
+                                    // ship from this repo === what we hardlink into
+                                    // `.bun/<hash>/<pkg>/`. We delegate the
+                                    // file-selection question to pack_command so that
+                                    // `package.json#files` (with globs and negation),
+                                    // `bin`, default excludes, and nested `.npmignore`
+                                    // / `.gitignore` files are interpreted exactly the
+                                    // way `bun pm pack` interprets them — no parallel
+                                    // implementation to drift.
+                                    //
+                                    // Windows: pack_command yields POSIX-separator
+                                    // subpaths and the path-iteration helpers below
+                                    // assume u8/Posix. Fall back to the previous
+                                    // basename-skip Walker on Windows until the path
+                                    // helpers learn WTF-16; producers typically
+                                    // `bun link` from POSIX hosts.
+                                    const publishable: ?bun.cli.PackCommand.PublishablePaths = if (comptime Environment.isWindows) null else publishable: {
+                                        var pkg_path_buf: bun.PathBuffer = undefined;
+                                        const pkg_path = bun.path.joinAbsStringBufZ(
+                                            producer_path,
+                                            &pkg_path_buf,
+                                            &.{"package.json"},
+                                            .auto,
+                                        );
+                                        // The cache returns a `*MapEntry` that another
+                                        // worker thread can invalidate by growing the
+                                        // hashmap. Hold the lock across the lookup
+                                        // and the copy-out of `e.root`; afterwards
+                                        // `root` is a stable Expr value pointing at
+                                        // default_allocator-owned tree nodes, safe to
+                                        // use without the lock.
+                                        const root = blk: {
+                                            const cache = &manager.workspace_package_json_cache;
+                                            cache.lock.lock();
+                                            defer cache.lock.unlock();
+                                            switch (cache.getWithPath(manager.allocator, manager.log, pkg_path, .{})) {
+                                                .entry => |e| break :blk e.root,
+                                                else => break :publishable null,
+                                            }
+                                        };
+                                        break :publishable bun.cli.PackCommand.collectPublishablePaths(
+                                            manager.allocator,
+                                            folder_dir.stdDir(),
+                                            root,
+                                        ) catch null;
+                                    };
+                                    var publishable_owned = publishable;
+                                    defer if (publishable_owned) |*p| p.deinit();
+
+                                    // Default-excludes used by the Windows /
+                                    // unparseable-AST fallback below. Mirrors
+                                    // `bun pm pack`'s `default_ignore_patterns` /
+                                    // `root_default_ignore_patterns` for everything
+                                    // expressible via the Walker's basename hash filter.
                                     const linked_skip_dirs: []const bun.OSPathSlice = &.{
                                         comptime bun.OSPathLiteral("node_modules"),
                                         comptime bun.OSPathLiteral(".git"),
@@ -546,145 +590,6 @@ pub const Installer = struct {
                                         comptime bun.OSPathLiteral("pnpm-lock.yaml"),
                                         comptime bun.OSPathLiteral("bun.lockb"),
                                         comptime bun.OSPathLiteral("bun.lock"),
-                                    };
-
-                                    // If the producer's package.json has a `files`
-                                    // array, `bun pm pack` treats it as a root-level
-                                    // whitelist: anything not named there (and not
-                                    // auto-included like package.json / README* /
-                                    // LICENSE* / CHANGELOG*) is stripped from the
-                                    // tarball. Mirror that here by pre-scanning the
-                                    // producer's root and appending non-whitelisted
-                                    // names to the Walker skip lists.
-                                    //
-                                    // Limitation: the Walker matches by basename at
-                                    // any depth, so a root-only exclusion also skips
-                                    // same-named entries nested under a whitelisted
-                                    // dir. Uncommon in practice (producers don't
-                                    // nest a second `src/` inside `dist/`); a
-                                    // follow-up can replace this with path-based
-                                    // filtering or reuse pack_command directly.
-                                    //
-                                    // Also unhandled here: `main`/`bin`/`module` is
-                                    // outside the `files` whitelist — npm would
-                                    // still publish the referenced file.
-                                    var extra_skip_arena = std.heap.ArenaAllocator.init(manager.allocator);
-                                    defer extra_skip_arena.deinit();
-                                    const extra_alloc = extra_skip_arena.allocator();
-                                    var extra_skip_dirs: std.ArrayListUnmanaged(bun.OSPathSlice) = .{};
-                                    var extra_skip_files: std.ArrayListUnmanaged(bun.OSPathSlice) = .{};
-                                    // Windows `DirIterator` yields WTF-16 basenames,
-                                    // which don't fit the ASCII-u8 comparators used
-                                    // below. Treat the `files` whitelist as a
-                                    // POSIX-only enhancement for now; Windows linked
-                                    // installs still apply the base default-excludes.
-                                    if (comptime !Environment.isWindows) {
-                                        var pkg_path_buf: bun.PathBuffer = undefined;
-                                        const pkg_path = bun.path.joinAbsStringBufZ(
-                                            producer_path,
-                                            &pkg_path_buf,
-                                            &.{"package.json"},
-                                            .auto,
-                                        );
-                                        // The cache is shared across install
-                                        // worker threads and returns a
-                                        // `*MapEntry` pointer that is
-                                        // invalidated if another thread grows
-                                        // the underlying hashmap. Hold the
-                                        // cache lock for the entry lookup and
-                                        // the whitelist build (both read the
-                                        // entry), then release before the
-                                        // scan-fd section, which only touches
-                                        // process-local data.
-                                        const cache = &manager.workspace_package_json_cache;
-                                        cache.lock.lock();
-                                        var whitelist: std.StringHashMapUnmanaged(void) = .{};
-                                        var have_whitelist = false;
-                                        switch (cache.getWithPath(manager.allocator, manager.log, pkg_path, .{})) {
-                                            .entry => |json_entry| {
-                                                if (json_entry.root.getArray("files")) |files_array_const| {
-                                                    var files_iter = files_array_const;
-                                                    while (files_iter.next()) |item| {
-                                                        const s = item.asString(manager.allocator) orelse continue;
-                                                        if (s.len == 0) continue;
-                                                        // npm `files` supports `!pattern`
-                                                        // negation to exclude from the
-                                                        // otherwise-included set. We only
-                                                        // implement positive top-segment
-                                                        // whitelisting; skip negated
-                                                        // entries so `!dist/internal`
-                                                        // doesn't get turned into a
-                                                        // whitelist key `!dist`.
-                                                        if (s[0] == '!') continue;
-                                                        // Collapse "dist/bundle.js" → "dist":
-                                                        // whitelist the top-level segment so
-                                                        // we keep enough of the tree for the
-                                                        // nested entry to land.
-                                                        const slash = std.mem.indexOfAny(u8, s, "/\\") orelse s.len;
-                                                        const top = s[0..slash];
-                                                        if (top.len == 0) continue;
-                                                        // `top` is a slice into the cached
-                                                        // parsed source, which outlives the
-                                                        // install. Safe to store as-is.
-                                                        whitelist.put(extra_alloc, top, {}) catch continue;
-                                                    }
-                                                    have_whitelist = true;
-                                                }
-                                            },
-                                            else => {},
-                                        }
-                                        cache.lock.unlock();
-
-                                        if (have_whitelist) blk: {
-                                            // Iterate on a *separate* fd so we don't
-                                            // consume `folder_dir`'s dir stream —
-                                            // Hardlinker's Walker will `getdents`
-                                            // that same fd and rely on it being at
-                                            // the start.
-                                            const scan_fd = switch (bun.openDirForIteration(FD.cwd(), producer_path)) {
-                                                .result => |fd| fd,
-                                                .err => break :blk,
-                                            };
-                                            defer scan_fd.close();
-
-                                            var root_iter = bun.DirIterator.iterate(scan_fd, if (Environment.isWindows) .u16 else .u8);
-                                            root_loop: while (root_iter.next().unwrap() catch null) |root_entry| {
-                                                const name_slice = root_entry.name.slice();
-                                                // Auto-included regardless of `files`:
-                                                if (bun.strings.eqlComptime(name_slice, "package.json")) continue;
-                                                inline for (.{ "README", "CHANGELOG", "LICENSE", "LICENCE" }) |prefix| {
-                                                    if (name_slice.len >= prefix.len and
-                                                        bun.strings.eqlCaseInsensitiveASCII(name_slice[0..prefix.len], prefix, true) and
-                                                        (name_slice.len == prefix.len or name_slice[prefix.len] == '.'))
-                                                    {
-                                                        continue :root_loop;
-                                                    }
-                                                }
-                                                if (whitelist.contains(name_slice)) continue;
-                                                const stored = extra_alloc.dupe(bun.OSPathChar, name_slice) catch continue;
-                                                const stored_slice: bun.OSPathSlice = stored;
-                                                switch (root_entry.kind) {
-                                                    .directory => extra_skip_dirs.append(extra_alloc, stored_slice) catch {},
-                                                    else => extra_skip_files.append(extra_alloc, stored_slice) catch {},
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // Concat base skip lists with per-producer extras.
-                                    const final_skip_dirs: []const bun.OSPathSlice = dirs: {
-                                        if (extra_skip_dirs.items.len == 0) break :dirs linked_skip_dirs;
-                                        const combined = extra_alloc.alloc(bun.OSPathSlice, linked_skip_dirs.len + extra_skip_dirs.items.len) catch break :dirs linked_skip_dirs;
-                                        @memcpy(combined[0..linked_skip_dirs.len], linked_skip_dirs);
-                                        @memcpy(combined[linked_skip_dirs.len..], extra_skip_dirs.items);
-                                        break :dirs combined;
-                                    };
-                                    const final_skip_files: []const bun.OSPathSlice = files: {
-                                        if (extra_skip_files.items.len == 0) break :files linked_skip_files;
-                                        const combined = extra_alloc.alloc(bun.OSPathSlice, linked_skip_files.len + extra_skip_files.items.len) catch break :files linked_skip_files;
-                                        @memcpy(combined[0..linked_skip_files.len], linked_skip_files);
-                                        @memcpy(combined[linked_skip_files.len..], extra_skip_files.items);
-                                        break :files combined;
                                     };
 
                                     const uses_global_store_link = installer.entryUsesGlobalStore(this.entry_id);
@@ -721,6 +626,32 @@ pub const Installer = struct {
                                         FD.cwd().deleteTree(final.slice()) catch {};
                                     }
 
+                                    if (publishable_owned) |publishable_paths| {
+                                        var dest: bun.Path(.{ .unit = .os, .sep = .auto }) = .init();
+                                        defer dest.deinit();
+                                        installer.appendRealStorePath(&dest, this.entry_id, .staging);
+
+                                        backend: switch (PackageInstall.Method.hardlink) {
+                                            .hardlink => switch (linkedHardlinkPaths(folder_dir, publishable_paths.paths, &dest)) {
+                                                .result => {},
+                                                .err => |err| {
+                                                    if (err.getErrno() == .XDEV) continue :backend .copyfile;
+                                                    return .failure(.{ .link_package = err });
+                                                },
+                                            },
+                                            .copyfile => switch (linkedCopyPaths(folder_dir, publishable_paths.paths, &dest)) {
+                                                .result => {},
+                                                .err => |err| return .failure(.{ .link_package = err }),
+                                            },
+                                            else => unreachable,
+                                        }
+
+                                        continue :next_step this.nextStep(current_step);
+                                    }
+
+                                    // Fallback (Windows or unparseable package.json):
+                                    // existing Hardlinker / FileCopier path with
+                                    // default exact-name excludes only.
                                     backend: switch (PackageInstall.Method.hardlink) {
                                         .hardlink => {
                                             var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDirLongPath();
@@ -735,8 +666,8 @@ pub const Installer = struct {
                                                 folder_dir,
                                                 src,
                                                 dest,
-                                                final_skip_files,
-                                                final_skip_dirs,
+                                                linked_skip_files,
+                                                linked_skip_dirs,
                                             );
                                             defer hardlinker.deinit();
 
@@ -784,8 +715,8 @@ pub const Installer = struct {
                                                 folder_dir,
                                                 src_path,
                                                 dest,
-                                                final_skip_files,
-                                                final_skip_dirs,
+                                                linked_skip_files,
+                                                linked_skip_dirs,
                                             );
                                             defer file_copier.deinit();
 
@@ -2212,6 +2143,102 @@ pub const Installer = struct {
 const string = []const u8;
 
 const debug = Output.scoped(.IsolatedInstaller, .hidden);
+
+/// Hardlink each `paths[i]` from `folder_dir` into `dest` (a path relative
+/// to cwd). `paths` contains POSIX-separator relative paths produced by
+/// `bun.cli.PackCommand.collectPublishablePaths`; missing source files are
+/// skipped (optional `bin` targets), and EEXIST is resolved by deleting
+/// the existing destination and retrying. EXDEV bubbles up so the caller
+/// can fall back to copyfile, mirroring the `Hardlinker` contract.
+fn linkedHardlinkPaths(
+    folder_dir: FD,
+    paths: []const [:0]const u8,
+    dest: *bun.Path(.{ .unit = .os, .sep = .auto }),
+) sys.Maybe(void) {
+    FD.cwd().makePath(u8, dest.sliceZ()) catch {};
+
+    for (paths) |rel| {
+        var save = dest.save();
+        defer save.restore();
+        dest.append(rel);
+
+        if (dest.dirname()) |parent| {
+            FD.cwd().makePath(u8, parent) catch {};
+        }
+
+        switch (sys.linkatZ(folder_dir, rel, FD.cwd(), dest.sliceZ())) {
+            .result => {},
+            .err => |err1| switch (err1.getErrno()) {
+                .EXIST => {
+                    FD.cwd().deleteTree(dest.slice()) catch {};
+                    switch (sys.linkatZ(folder_dir, rel, FD.cwd(), dest.sliceZ())) {
+                        .result => {},
+                        .err => |err2| return .initErr(err2),
+                    }
+                },
+                .NOENT => continue,
+                else => return .initErr(err1),
+            },
+        }
+    }
+
+    return .success;
+}
+
+/// Same path-list contract as `linkedHardlinkPaths`, but copies each file
+/// instead of hardlinking. Used as the EXDEV fallback when the producer's
+/// FS and the project's `node_modules` live on different devices (e.g.
+/// Docker bind-mounts).
+fn linkedCopyPaths(
+    folder_dir: FD,
+    paths: []const [:0]const u8,
+    dest: *bun.Path(.{ .unit = .os, .sep = .auto }),
+) sys.Maybe(void) {
+    FD.cwd().makePath(u8, dest.sliceZ()) catch {};
+    var copy_state: bun.CopyFileState = .{};
+
+    for (paths) |rel| {
+        var save = dest.save();
+        defer save.restore();
+        dest.append(rel);
+
+        if (dest.dirname()) |parent| {
+            FD.cwd().makePath(u8, parent) catch {};
+        }
+
+        const src = switch (folder_dir.openat(rel, bun.O.RDONLY, 0)) {
+            .result => |fd| fd,
+            .err => |err| {
+                if (err.getErrno() == .NOENT) continue;
+                return .initErr(err);
+            },
+        };
+        defer src.close();
+
+        const dest_fd = switch (sys.openat(FD.cwd(), dest.sliceZ(), bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644)) {
+            .result => |fd| fd,
+            .err => |err| return .initErr(err),
+        };
+        defer dest_fd.close();
+
+        if (comptime Environment.isPosix) {
+            // Best-effort: preserve file mode. Failure here is non-fatal.
+            switch (src.stat()) {
+                .result => |stat| {
+                    _ = bun.c.fchmod(dest_fd.cast(), @intCast(stat.mode));
+                },
+                .err => {},
+            }
+        }
+
+        switch (bun.copyFileWithState(src, dest_fd, &copy_state)) {
+            .result => {},
+            .err => |err| return .initErr(err),
+        }
+    }
+
+    return .success;
+}
 
 const FileCloner = @import("./FileCloner.zig");
 const Hardlinker = @import("./Hardlinker.zig");

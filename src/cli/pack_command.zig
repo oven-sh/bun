@@ -910,6 +910,105 @@ pub const PackCommand = struct {
         }
     }
 
+    pub const PublishablePaths = struct {
+        arena: std.heap.ArenaAllocator,
+        /// Relative POSIX subpaths (sentinel-terminated) of files that
+        /// `bun pm pack` would include in the published tarball. Includes
+        /// `bin` entries and entries reachable via `package.json#files`
+        /// (or the entire tree if `files` is absent), and the auto-included
+        /// `package.json`. Default ignores plus `.npmignore` / `.gitignore`
+        /// at every depth are honored.
+        paths: []const [:0]const u8,
+
+        pub fn deinit(this: *@This()) void {
+            this.arena.deinit();
+        }
+    };
+
+    /// Single source of truth for "what files would `bun pm pack` ship?".
+    /// Used by the isolated linker (when honoring an active `bun link`) so
+    /// the contents of `node_modules/.bun/<pkg>/` match what a publish of
+    /// the producer would contain — including the auto-included
+    /// `package.json`, `bin` entries outside the `files` whitelist, and
+    /// the recursive semantics of `files: ["dist/**/*.js"]`-style globs.
+    /// Without this, callers were forced to mirror the publish rules by
+    /// hand and inevitably drifted (cf. nested same-name directories).
+    pub fn collectPublishablePaths(
+        parent_allocator: std.mem.Allocator,
+        root_dir: std.fs.Dir,
+        json_root: Expr,
+    ) OOM!PublishablePaths {
+        var arena = std.heap.ArenaAllocator.init(parent_allocator);
+        errdefer arena.deinit();
+        const allocator = arena.allocator();
+
+        var pack_queue = PackQueue.init(allocator, {});
+
+        const bins = try getPackageBins(allocator, json_root);
+
+        for (bins) |bin| {
+            switch (bin.type) {
+                .file => try pack_queue.add(.{ .path = bin.path, .optional = true }),
+                .dir => {
+                    const bin_dir = root_dir.openDir(bin.path, .{ .iterate = true }) catch continue;
+                    try iterateProjectTree(allocator, &pack_queue, &.{}, .{ bin_dir, bin.path, 2 }, .silent);
+                },
+            }
+        }
+
+        if (json_root.get("files")) |files| {
+            if (files.asArray()) |_files_array| {
+                var includes: std.ArrayListUnmanaged(Pattern) = .{};
+                var excludes: std.ArrayListUnmanaged(Pattern) = .{};
+
+                var path_buf: PathBuffer = undefined;
+                var files_array = _files_array;
+                while (files_array.next()) |files_entry| {
+                    const file_entry_str = files_entry.asString(allocator) orelse continue;
+                    const normalized = bun.path.normalizeBuf(file_entry_str, &path_buf, .posix);
+                    const parsed = try Pattern.fromUTF8(allocator, normalized) orelse continue;
+                    if (parsed.flags.negated) {
+                        try excludes.append(allocator, parsed);
+                    } else {
+                        try includes.append(allocator, parsed);
+                    }
+                }
+
+                try iterateIncludedProjectTree(
+                    allocator,
+                    &pack_queue,
+                    bins,
+                    includes.items,
+                    excludes.items,
+                    root_dir,
+                    .silent,
+                );
+            }
+            // `files` not an array → fall back to the whole tree. `bun pm
+            // pack` crashes here; we can't, so we mirror the no-`files`
+            // path (publish-default tree).
+        } else {
+            try iterateProjectTree(allocator, &pack_queue, bins, .{ root_dir, "", 1 }, .silent);
+        }
+
+        // `package.json` is unconditionally included — both iterators skip
+        // it explicitly because the pack pipeline writes it from a
+        // normalized AST. We don't have that pipeline; just ship the file.
+        const pkg_path = try allocator.dupeZ(u8, "package.json");
+
+        var paths = try allocator.alloc([:0]const u8, pack_queue.count() + 1);
+        paths[0] = pkg_path;
+        var i: usize = 1;
+        while (pack_queue.removeOrNull()) |item| : (i += 1) {
+            paths[i] = item.path;
+        }
+
+        return .{
+            .arena = arena,
+            .paths = paths,
+        };
+    }
+
     fn getBundledDeps(
         allocator: std.mem.Allocator,
         json: Expr,

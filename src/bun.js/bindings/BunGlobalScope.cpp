@@ -5,6 +5,7 @@
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/JSCJSValueInlines.h"
 #include "JavaScriptCore/Symbol.h"
+#include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/VMTraps.h"
 #include "JavaScriptCore/VMTrapsInlines.h"
@@ -29,9 +30,12 @@ static WTF::SymbolImpl::StaticSymbolImpl metadataSymbolImpl { "Symbol.metadata" 
 
 static void installSymbolMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Matches addBuiltinGlobals: this runs during finishCreation and has no way
+    // to propagate an exception. Top exception scope swallows unexpected
+    // exceptions instead of tripping debug asserts downstream.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSObject* symbolConstructor = globalObject->get(globalObject, vm.propertyNames->Symbol).getObject();
-    RETURN_IF_EXCEPTION(scope, );
+    scope.assertNoExceptionExceptTermination();
     if (!symbolConstructor)
         return;
 
@@ -40,7 +44,7 @@ static void installSymbolMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalObject
         scope.assertNoExceptionExceptTermination();
         return;
     }
-    RETURN_IF_EXCEPTION(scope, );
+    scope.assertNoExceptionExceptTermination();
 
     // Symbol::create(vm, impl) is cached per-VM in vm.symbolImplToSymbolMap, so
     // every realm in this VM gets the same Symbol cell for this SymbolImpl —

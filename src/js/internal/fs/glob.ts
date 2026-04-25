@@ -295,7 +295,7 @@ function leafOnlyBraces(pattern: string): boolean {
       i++;
       continue;
     }
-    const isSep = c === 47 /* / */ || (!BACKSLASH_ESCAPES && c === 92 /* \ */);
+    const isSep = c === 47 /* / */ || (!BACKSLASH_ESCAPES && c === 92) /* \ */;
     if (isSep) {
       // Separator inside a brace body → brace spans directory segments.
       if (depth > 0) return false;

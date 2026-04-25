@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -771,4 +771,15 @@ it("CustomEvent", () => {
       BUBBLING_PHASE: 3,
     }"
   `);
+});
+
+it("Bun.inspect does not crash after deleting globalThis.Loader", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `delete globalThis.Loader; Bun.inspect(Bun.spawnSync(["echo"])); Bun.gc(true);`],
+    env: bunEnv,
+  });
+
+  const exitCode = await proc.exited;
+
+  expect(exitCode).toBe(0);
 });

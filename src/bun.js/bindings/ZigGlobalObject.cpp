@@ -1956,12 +1956,12 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_utilInspectFunction.initLater(
         [](const Initializer<JSFunction>& init) {
-            auto scope = DECLARE_THROW_SCOPE(init.vm);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
             JSValue nodeUtilValue = jsCast<Zig::GlobalObject*>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::NodeUtil);
-            RETURN_IF_EXCEPTION(scope, );
+            scope.assertNoExceptionExceptTermination();
             RELEASE_ASSERT(nodeUtilValue.isObject());
             auto prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
-            RETURN_IF_EXCEPTION(scope, );
+            scope.assertNoExceptionExceptTermination();
             ASSERT(prop);
             init.set(jsCast<JSFunction*>(prop));
         });
@@ -1982,23 +1982,23 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_utilInspectStylizeColorFunction.initLater(
         [](const Initializer<JSFunction>& init) {
-            auto scope = DECLARE_THROW_SCOPE(init.vm);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);
             JSC::MarkedArgumentBuffer args;
             args.append(jsCast<Zig::GlobalObject*>(init.owner)->utilInspectFunction());
-            RETURN_IF_EXCEPTION(scope, );
+            scope.assertNoExceptionExceptTermination();
 
             JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
-            RETURN_IF_EXCEPTION(scope, );
+            scope.assertNoExceptionExceptTermination();
 
             JSC::CallData callData = JSC::getCallData(getStylize);
             NakedPtr<JSC::Exception> returnedException = nullptr;
             auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
-            RETURN_IF_EXCEPTION(scope, );
+            scope.assertNoExceptionExceptTermination();
 
             if (returnedException) {
-                throwException(init.owner, scope, returnedException.get());
+                init.set(JSC::JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
+                return;
             }
-            RETURN_IF_EXCEPTION(scope, );
             init.set(jsCast<JSFunction*>(result));
         });
 

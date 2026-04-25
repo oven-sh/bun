@@ -554,12 +554,7 @@ describe("fs.glob path-manipulation edge cases", () => {
     };
     try {
       const got = fs.globSync("{pkg,app}/**/*.{js,ts}", { cwd: String(dir) }).sort();
-      expect(got).toStrictEqual([
-        seg("app", "d.ts"),
-        seg("app", "e.js"),
-        seg("pkg", "a.ts"),
-        seg("pkg", "b.js"),
-      ]);
+      expect(got).toStrictEqual([seg("app", "d.ts"), seg("app", "e.js"), seg("pkg", "a.ts"), seg("pkg", "b.js")]);
       expect(count).toBe(2); // two walks (pkg, app), not four.
     } finally {
       // @ts-expect-error — restore.

@@ -155,7 +155,7 @@ pub fn name(this: *const Error) []const u8 {
             // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
             @setRuntimeSafety(false);
             if (this.from_libuv) {
-                break :brk @as(SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(this.errno))));
+                break :brk @as(SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(-@as(c_int, this.errno)))));
             }
 
             break :brk @as(SystemErrno, @enumFromInt(this.errno));
@@ -333,6 +333,27 @@ pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
 pub fn toJSWithAsyncStack(this: Error, ptr: *jsc.JSGlobalObject, promise: *jsc.JSPromise) bun.JSError!jsc.JSValue {
     return this.toSystemError().toErrorInstanceWithAsyncStack(ptr, promise);
 }
+
+pub const TestingAPIs = struct {
+    /// Exercises Error.name() with from_libuv=true so tests can feed the
+    /// negated-UV-code errno values that node_fs.zig stores and verify the
+    /// integer overflow at translateUVErrorToE(-code) is fixed. Windows-only.
+    pub fn sysErrorNameFromLibuv(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        const arguments = callframe.arguments();
+        if (arguments.len < 1 or !arguments[0].isNumber()) {
+            return globalThis.throw("sysErrorNameFromLibuv: expected 1 number argument", .{});
+        }
+        if (comptime !Environment.isWindows) {
+            return .js_undefined;
+        }
+        const err: Error = .{
+            .errno = @intCast(arguments[0].toInt32()),
+            .syscall = .open,
+            .from_libuv = true,
+        };
+        return bun.String.createUTF8ForJS(globalThis, err.name());
+    }
+};
 
 const std = @import("std");
 

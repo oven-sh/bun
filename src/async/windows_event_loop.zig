@@ -246,14 +246,14 @@ pub const FilePoll = struct {
     /// Only intended to be used from EventLoop.Pollable
     pub fn deactivate(this: *FilePoll, loop: *Loop) void {
         bun.assert(this.flags.contains(.has_incremented_poll_count));
-        loop.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        loop.subActive(@as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count))));
         log("deactivate - {d}", .{loop.active_handles});
         this.flags.remove(.has_incremented_poll_count);
     }
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn activate(this: *FilePoll, loop: *Loop) void {
-        loop.active_handles += @as(u32, @intFromBool(!this.flags.contains(.closed) and !this.flags.contains(.has_incremented_poll_count)));
+        loop.addActive(@as(u32, @intFromBool(!this.flags.contains(.closed) and !this.flags.contains(.has_incremented_poll_count))));
         log("activate - {d}", .{loop.active_handles});
         this.flags.insert(.has_incremented_poll_count);
     }

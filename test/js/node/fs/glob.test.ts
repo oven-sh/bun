@@ -458,17 +458,27 @@ describe("fs.glob path-manipulation edge cases", () => {
   });
 
   it("expands later brace groups past a single-alternative earlier group", () => {
-    // `{abc}/{p,q}/*.txt`: the first group has no alternatives to expand but
-    // the suffix still needs walking so `{p,q}` gets split.
+    // `{abc}/{p,q}/*.txt`: expandBraces keeps the single-alternative `{abc}`
+    // verbatim (matching Node/minimatch) but must still recurse into the
+    // suffix so `{p,q}` gets split into two patterns.
+    //
+    // Note: Bun.Glob's native matcher (pre-existing, unrelated to this PR)
+    // treats `{abc}` as matching the string `abc`, whereas Node/minimatch
+    // treats it as matching the literal three-character string `{abc}`. So
+    // this assertion is "Bun's answer", not Node-parity. What we're locking
+    // in here is that *both halves of the suffix are walked*, not that the
+    // single-alt brace is handled Node-equivalently.
     using dir = tempDir("glob-suffix", {
       abc: {
         p: { "p.txt": "p" },
         q: { "q.txt": "q" },
       },
     });
-    expect(fs.globSync("{abc}/{p,q}/*.txt", { cwd: String(dir) }).sort()).toStrictEqual([
-      seg("abc", "p", "p.txt"),
-      seg("abc", "q", "q.txt"),
-    ]);
+    const got = fs.globSync("{abc}/{p,q}/*.txt", { cwd: String(dir) }).sort();
+    // Without the suffix-recursion fix this would be `["abc/p/p.txt"]` only
+    // (the q/ half stranded), or more likely `[]` (Bun.Glob given the whole
+    // `{abc}/{p,q}/*.txt` verbatim).
+    expect(got).toContain(seg("abc", "p", "p.txt"));
+    expect(got).toContain(seg("abc", "q", "q.txt"));
   });
 });

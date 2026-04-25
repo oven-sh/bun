@@ -741,7 +741,10 @@ function getTestBunStep(platform, options, testOptions = {}) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
-    timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
+    // The macOS-26 M2-mini runners complete all files in ~30 min — right at
+    // the old 30-min wall, so shards were getting killed after running every
+    // test. 40 gives them headroom; revisit once the 26 fleet is warmed up.
+    timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : os === "darwin" ? 40 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },

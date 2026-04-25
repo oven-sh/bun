@@ -960,7 +960,7 @@ const SQL: typeof Bun.SQL = function SQL(
     // Stubs for adapters without LISTEN/NOTIFY — keep the API shape uniform
     // and surface a clear error instead of "sql.listen is not a function".
     const unsupported = () =>
-      Promise.reject(new Error("LISTEN/NOTIFY is not supported by this adapter (PostgreSQL only)"));
+      Promise.$reject(new Error("LISTEN/NOTIFY is not supported by this adapter (PostgreSQL only)"));
     sql.listen = (channel, onnotify, onlisten?) => {
       validateChannel(channel);
       if (!$isCallable(onnotify)) throw $ERR_INVALID_ARG_TYPE("onnotify", "function", onnotify);

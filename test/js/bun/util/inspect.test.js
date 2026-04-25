@@ -343,6 +343,15 @@ it("jsx with non-object props", () => {
   expect(Bun.inspect(el)).toBe("<div />");
 });
 
+it("jsx with circular props in test diff formatter", () => {
+  const el = { $$typeof: Symbol.for("react.element"), type: "div", props: null, key: null };
+  el.props = el;
+  expect(() => expect(el).toEqual({})).toThrow(/\[Circular\]/);
+
+  const el2 = { $$typeof: Symbol.for("react.element"), type: "div", props: 42, key: null };
+  expect(() => expect(el2).toEqual({})).toThrow();
+});
+
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
   expect(Bun.inspect("hi")).toBe('"hi"');

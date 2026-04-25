@@ -1249,6 +1249,7 @@ pub fn spawnOpts(
             "--irreversible-delete",
             "--full-index",
             "--no-index",
+            "--no-ext-diff",
         };
         const argv_buf = bun.handleOom(bun.default_allocator.alloc([]const u8, ARGV.len + 2));
         argv_buf[0] = git;
@@ -1381,6 +1382,7 @@ pub fn gitDiffInternal(
             "--irreversible-delete",
             "--full-index",
             "--no-index",
+            "--no-ext-diff",
             old_folder,
             new_folder,
         },

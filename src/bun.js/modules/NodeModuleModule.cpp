@@ -23,6 +23,7 @@
 
 #include "GeneratedNodeModuleModule.h"
 #include "ZigGeneratedClasses.h"
+#include "DOMURL.h"
 
 namespace Bun {
 
@@ -33,6 +34,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__JSSourceMap__find);
 BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDebugNoop);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPath);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPackageJSON);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBuiltinModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor);
@@ -587,6 +589,44 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPath, (JSGlobalObject * globalObject, JSC
     return NodeModuleModule__findPath(globalObject, request_bun_str, paths);
 }
 
+// findPackageJSON - https://nodejs.org/api/module.html#module_module_findpackagejson_specifier_base
+// Find the closest package.json file starting from the specifier and walking up directories
+JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPackageJSON, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Get the 'specifier' argument (module specifier whose package.json should be located)
+    JSValue specifierValue = callFrame->argument(0);
+    // Get the 'base' argument (optional - absolute location of containing module)
+    JSValue baseValue = callFrame->argument(1);
+
+    // Validate specifier: must be string, URL, or undefined
+    // Check for valid URL object using jsDynamicCast
+    bool specifierIsURL = specifierValue.isObject() && 
+        jsDynamicCast<JSDOMURL*>(specifierValue);
+    if (specifierValue.isNumber() || specifierValue.isBoolean() || 
+        (specifierValue.isObject() && !specifierValue.isStringObject() && !specifierIsURL)) {
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "specifier must be a string or URL"_s));
+        return JSValue::encode(jsUndefined());
+    }
+
+    // Validate base: must be string, URL, or undefined
+    bool baseIsURL = baseValue.isObject() && 
+        jsDynamicCast<JSDOMURL*>(baseValue);
+    if (!baseValue.isString() && !baseValue.isUndefined() &&
+        (baseValue.isNumber() || baseValue.isBoolean() ||
+         (baseValue.isObject() && !baseValue.isStringObject() && !baseIsURL))) {
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "base must be a string, URL, or undefined"_s));
+        return JSValue::encode(jsUndefined());
+    }
+
+    // Throw error: findPackageJSON is not yet implemented
+    // Returning undefined would confuse callers (undistinguishable from "not found")
+    scope.throwException(globalObject, JSC::createError(globalObject, "findPackageJSON is not implemented yet"_s));
+    return JSValue::encode(jsUndefined());
+}
+
 // These two setters are only used if you directly hit
 // `Module.prototype.require` or `module.require`. When accessing the cjs
 // require argument, this is a bound version of `require`, which calls into the
@@ -911,6 +951,7 @@ builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 0
+findPackageJSON        jsFunctionFindPackageJSON        Function 2
 findSourceMap           Bun__JSSourceMap__find           Function 1
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback

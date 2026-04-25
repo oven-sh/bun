@@ -265,8 +265,10 @@ function validatePattern(pattern: string | string[]): string[] {
  * `['a', 'b', 'c']`; `\{a,b\}` → `['\\{a,b\\}']` (unchanged).
  *
  * This is a small subset of minimatch's expansion — we don't handle numeric
- * ranges (`{1..3}`). Those are rare in filesystem globs and both Bun.Glob and
- * Node's fs.glob already treat them as literal braces.
+ * or character sequence ranges (`{1..3}`, `{a..c}`). Node's `fs.glob`
+ * (via minimatch → `brace-expansion`) does expand those; leaving them
+ * unexpanded here is a known divergence from Node that matches Bun.Glob's
+ * native matcher, which also treats sequence ranges as literal braces.
  */
 function expandBraces(pattern: string): string[] {
   const open = findTopLevelBrace(pattern);

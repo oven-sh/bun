@@ -1524,10 +1524,16 @@ pub fn GlobWalker_(
         ///
         /// Components with `.Literal` syntax are the obvious case. Components
         /// with special syntax (`.None`) that lack `*` or `?` are also safe:
-        /// brace alternatives (`{link,dir}`), character classes (`[lmn]ink`),
-        /// and escaped metachars (`\*foo`) all name a **finite** set of
-        /// strings, so they can't generate unbounded descent on their own.
-        /// `.Single`/`.Double`/`.WildcardFilepath` are rejected (unbounded).
+        /// brace alternatives (`{link,dir}`) and character classes (`[lmn]ink`)
+        /// name a **finite** set of strings, so they can't generate unbounded
+        /// descent. `.Single`/`.Double`/`.WildcardFilepath` are rejected
+        /// (unbounded).
+        ///
+        /// The `*?` check looks at raw bytes, so a component like `\*foo`
+        /// (escaped glob star — a directory literally named `*foo`) is
+        /// *not* accepted here even though it names a single string; that
+        /// path would need an unescape pass. Escaped literals are rare and
+        /// not a regression vs. pre-PR Bun.
         fn literalMatchSet(this: *GlobWalker, active: ComponentSet, entry_name: []const u8) ComponentSet {
             var out = this.makeSet();
             const comps = this.patternComponents.items;

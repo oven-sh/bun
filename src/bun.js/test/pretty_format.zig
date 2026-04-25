@@ -326,7 +326,7 @@ pub const JestPrettyFormat = struct {
             }
 
             pub inline fn canHaveCircularReferences(tag: Tag) bool {
-                return tag == .Array or tag == .Object or tag == .Map or tag == .Set;
+                return tag == .Array or tag == .Object or tag == .Map or tag == .Set or tag == .JSX;
             }
 
             const Result = struct {

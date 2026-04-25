@@ -57,7 +57,6 @@
 #include "JavaScriptCore/SourceOrigin.h"
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
-#include "JavaScriptCore/Symbol.h"
 #include "JavaScriptCore/VM.h"
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
@@ -2913,23 +2912,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
-
-    // Expose Symbol.metadata (TC39 decorator metadata). If Bun's WebKit fork
-    // provides it as a native well-known symbol, this is a no-op; otherwise we
-    // install it here so `Symbol.metadata` matches the spec and the transpiler's
-    // `__knownSymbol("metadata")` helper picks it up consistently.
-    // https://github.com/oven-sh/bun/issues/29724
-    JSC::JSObject* symbolConstructor = this->get(this, vm.propertyNames->Symbol).getObject();
-    scope.assertNoExceptionExceptTermination();
-    RETURN_IF_EXCEPTION(scope, );
-    JSC::Identifier metadataIdentifier = JSC::Identifier::fromString(vm, "metadata"_s);
-    if (!symbolConstructor->hasOwnProperty(this, metadataIdentifier)) {
-        symbolConstructor->putDirectWithoutTransition(vm, metadataIdentifier,
-            JSC::Symbol::createWithDescription(vm, "Symbol.metadata"_s),
-            PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    }
-    scope.assertNoExceptionExceptTermination();
-    RETURN_IF_EXCEPTION(scope, );
 }
 
 // ===================== start conditional builtin globals =====================

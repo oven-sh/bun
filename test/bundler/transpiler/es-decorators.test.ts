@@ -370,6 +370,45 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("true\ntrue\ntrue\n");
       expect(exitCode).toBe(0);
     });
+
+    test("Symbol.metadata is shared across realms (ShadowRealm)", async () => {
+      // ECMA-262 §6.1.5.1 — well-known symbols are shared by all realms in the VM.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const r = new ShadowRealm();
+        const cross = r.evaluate("() => Symbol.metadata")();
+        console.log(cross === Symbol.metadata);
+        console.log(cross === Symbol.iterator);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\nfalse\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Symbol.metadata is exposed inside node:vm contexts", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const { runInNewContext } = require("node:vm");
+        console.log(runInNewContext("typeof Symbol.metadata"));
+        console.log(runInNewContext("Symbol.metadata.toString()"));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("symbol\nSymbol(Symbol.metadata)\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Function.prototype[Symbol.metadata] is null for undecorated classes", async () => {
+      // Per the Decorator Metadata proposal, undecorated classes resolve
+      // Foo[Symbol.metadata] to null via Function.prototype, not undefined.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Plain {}
+        console.log(Plain[Symbol.metadata]);
+        console.log(Function.prototype[Symbol.metadata]);
+        const d = Object.getOwnPropertyDescriptor(Function.prototype, Symbol.metadata);
+        console.log(d.value, d.writable, d.enumerable, d.configurable);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("null\nnull\nnull false false false\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("addInitializer", () => {

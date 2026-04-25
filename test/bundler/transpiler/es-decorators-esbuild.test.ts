@@ -10,7 +10,9 @@ import { join } from "path";
 // decorators are used.
 
 const testBoilerplate = `
-// Polyfill Symbol.metadata (not natively available in JSC)
+// Symbol.metadata and Function.prototype[Symbol.metadata] are exposed by Bun
+// (see https://github.com/oven-sh/bun/issues/29724). The block below keeps the
+// boilerplate self-contained against older bun binaries during bisects.
 const metaKey = Symbol.metadata || Symbol.for("Symbol.metadata");
 if (!(metaKey in Function.prototype)) {
   Object.defineProperty(Function.prototype, metaKey, { value: null });

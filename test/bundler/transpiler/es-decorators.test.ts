@@ -312,32 +312,59 @@ describe("ES Decorators", () => {
   });
 
   describe("metadata", () => {
+    test("Symbol.metadata is exposed as a well-known symbol", async () => {
+      // https://github.com/oven-sh/bun/issues/29724 — Symbol.metadata must be
+      // exposed globally so `class[Symbol.metadata]` works per TC39 spec.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        console.log(typeof Symbol.metadata);
+        console.log(Symbol.metadata.toString());
+        const d = Object.getOwnPropertyDescriptor(Symbol, "metadata");
+        console.log(d.writable, d.enumerable, d.configurable);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("symbol\nSymbol(Symbol.metadata)\nfalse false false\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("Symbol.metadata is set on decorated class", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
-        // Symbol.metadata may not exist natively, use the same fallback as the runtime
-        const metadataKey = Symbol.metadata || Symbol.for("Symbol.metadata");
         function dec(cls, ctx) { return cls; }
         @dec class Foo {}
-        console.log(typeof Foo[metadataKey]);
-        console.log(Foo[metadataKey] !== null);
+        console.log(typeof Foo[Symbol.metadata]);
+        console.log(Foo[Symbol.metadata] !== null);
       `);
       expect(stderr).toBe("");
       expect(stdout).toBe("object\ntrue\n");
       expect(exitCode).toBe(0);
     });
 
+    test("class field decorator writes and reads metadata via Symbol.metadata", async () => {
+      // https://github.com/oven-sh/bun/issues/29724
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, context) {
+          context.metadata["test"] = "works";
+        }
+        class Foo {
+          @dec name;
+        }
+        console.log(Foo[Symbol.metadata].test);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("works\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("metadata inherits from parent class", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
-        const metadataKey = Symbol.metadata || Symbol.for("Symbol.metadata");
         function dec(cls, ctx) {
           ctx.metadata.decorated = true;
           return cls;
         }
         @dec class Base {}
         @dec class Child extends Base {}
-        console.log(Base[metadataKey].decorated);
-        console.log(Child[metadataKey].decorated);
-        console.log(Object.getPrototypeOf(Child[metadataKey]) === Base[metadataKey]);
+        console.log(Base[Symbol.metadata].decorated);
+        console.log(Child[Symbol.metadata].decorated);
+        console.log(Object.getPrototypeOf(Child[Symbol.metadata]) === Base[Symbol.metadata]);
       `);
       expect(stderr).toBe("");
       expect(stdout).toBe("true\ntrue\ntrue\n");

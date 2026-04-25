@@ -1591,7 +1591,11 @@ JSC_DEFINE_HOST_FUNCTION(isAbortSignal, (JSGlobalObject*, CallFrame* callFrame))
 extern "C" JSC::EncodedJSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue Bun__Jest__testModuleObject(Zig::GlobalObject* globalObject)
 {
-    return JSValue::encode(globalObject->lazyTestModuleObject());
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* result = globalObject->lazyTestModuleObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(result);
 }
 
 extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* globalObject)
@@ -1821,12 +1825,23 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::JSGlobalObject* globalObject = init.owner;
 
             JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
+            if (result.isEmpty()) [[unlikely]] {
+                // Install a fallback to satisfy JSC's LazyProperty contract
+                // (init.set must be called), but leave the pending exception
+                // alone so the caller can propagate it.
+                init.set(JSC::constructEmptyObject(globalObject));
+                return;
+            }
             init.set(result.toObject(globalObject));
         });
 
     m_testMatcherUtilsObject.initLater(
         [](const Initializer<JSObject>& init) {
             JSValue result = JSValue::decode(ExpectMatcherUtils_createSigleton(init.owner));
+            if (result.isEmpty()) [[unlikely]] {
+                init.set(JSC::constructEmptyObject(init.owner));
+                return;
+            }
             init.set(result.toObject(init.owner));
         });
 

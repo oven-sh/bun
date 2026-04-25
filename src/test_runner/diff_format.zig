@@ -44,7 +44,7 @@ pub const DiffFormatter = struct {
                 &received_buf.writer,
                 fmt_options,
             ) catch {
-                this.globalThis.clearException();
+                _ = this.globalThis.clearExceptionExceptTermination();
             };
 
             JestPrettyFormat.format(
@@ -55,7 +55,7 @@ pub const DiffFormatter = struct {
                 &expected_buf.writer,
                 fmt_options,
             ) catch {
-                this.globalThis.clearException();
+                _ = this.globalThis.clearExceptionExceptTermination();
             };
         }
 

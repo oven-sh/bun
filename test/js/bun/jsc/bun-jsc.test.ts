@@ -24,7 +24,7 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
 
 describe("bun:jsc", () => {
   function count() {
@@ -101,19 +101,18 @@ describe("bun:jsc", () => {
   // own state (extra retained values, async hook state) cannot keep the
   // target alive incidentally.
   it("WeakRef target collects after `await Promise.resolve()` (per-microtask ClearKeptObjects)", async () => {
-    using dir = tempDir("weakref-await", {
-      "test.mjs":
-        `import { fullGC } from "bun:jsc";\n` +
-        `function makeRef() { return new WeakRef({ value: 1 }); }\n` +
-        `const ref = makeRef();\n` +
-        `await Promise.resolve();\n` +
-        `fullGC();\n` +
-        `console.log(ref.deref() === undefined ? "PASS" : "FAIL");\n`,
-    });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test.mjs"],
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { fullGC } from "bun:jsc";
+        function makeRef() { return new WeakRef({ value: 1 }); }
+        const ref = makeRef();
+        await Promise.resolve();
+        fullGC();
+        console.log(ref.deref() === undefined ? "PASS" : "FAIL");`,
+      ],
       env: bunEnv,
-      cwd: String(dir),
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout.trim()).toBe("PASS");

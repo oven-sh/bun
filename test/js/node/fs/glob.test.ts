@@ -381,6 +381,35 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     const cwd = path.join(root, "flat");
     expect(fs.globSync("{link,d*}/*.txt", { cwd }).sort()).toStrictEqual(["dir/inside.txt", "link/inside.txt"]);
   });
+
+  it("nested brace alternative containing a leaf-local brace still expands it for symlink descent", () => {
+    // `{{x,y}_{link,d*},other}/file.txt`: the outer alt `{x,y}_{link,d*}`
+    // is itself compound — the recursion into it has
+    // `suffix='_{link,d*}'`, which looks leaf-local (no separator follows
+    // inside the alt). A naive `leafOnlyBraces(suffix)` fast-path inside
+    // `expandBraces` would keep `{link,d*}` unexpanded — but the outer
+    // frame then appends `/file.txt`, so `{link,d*}` ends up in a
+    // directory segment of `x_{link,d*}/file.txt`. The walker sees it as
+    // a wildcard component with `syntax_hint=None` and refuses to cross
+    // the `x_link` symlink, silently dropping the match. `expandBraces`
+    // threads an `isTrueTail` flag specifically to block that
+    // short-circuit inside alternative recursions.
+    using inner = tempDir("fs-glob-nested-brace", {
+      x_dir: { "file.txt": "d" },
+      y_dir: { "file.txt": "y" },
+      other: { "file.txt": "o" },
+      // target for the `x_link` symlink below
+      target: { "file.txt": "l" },
+    });
+    const cwd = String(inner);
+    fs.symlinkSync("target", path.join(cwd, "x_link"), "dir");
+    expect(fs.globSync("{{x,y}_{link,d*},other}/file.txt", { cwd }).sort()).toStrictEqual([
+      "other/file.txt",
+      "x_dir/file.txt",
+      "x_link/file.txt",
+      "y_dir/file.txt",
+    ]);
+  });
 }); // </symlink behavior>
 
 // Cross-platform `splitLiteralPrefix` tests — no symlink fixtures, so these

@@ -323,48 +323,56 @@ function leafOnlyBraces(pattern: string): boolean {
  * braces (`\{`) and nested braces. `{a,b}/c` → `['a/c', 'b/c']`; `{a,{b,c}}` →
  * `['a', 'b', 'c']`; `\{a,b\}` → `['\\{a,b\\}']` (unchanged).
  *
+ * `isTrueTail` tracks whether `pattern` is a true tail of the final output
+ * pattern — i.e. nothing will be concatenated after it by an outer frame.
+ * That matters for the `leafOnlyBraces` fast-path: a brace is "leaf-only"
+ * relative to some string only if nothing follows that string, otherwise a
+ * brace that looks leaf-local can end up in a directory segment of the final
+ * pattern (see the `alt` recursion below for the trigger shape).
+ *
  * This is a small subset of minimatch's expansion — we don't handle numeric
  * or character sequence ranges (`{1..3}`, `{a..c}`). Node's `fs.glob`
  * (via minimatch → `brace-expansion`) does expand those; leaving them
  * unexpanded here is a known divergence from Node that matches Bun.Glob's
  * native matcher, which also treats sequence ranges as literal braces.
  */
-function expandBraces(pattern: string): string[] {
+function expandBraces(pattern: string, isTrueTail: boolean = true): string[] {
   const open = findTopLevelBrace(pattern);
   if (open === -1) return [pattern];
   const close = findMatchingBrace(pattern, open);
   // Unbalanced `{…`: leave the `{` alone but keep walking past it so that a
-  // later balanced brace group (`a{b/{link,d*}/*.txt`) still expands.
+  // later balanced brace group (`a{b/{link,d*}/*.txt`) still expands. The
+  // outer frame re-prepends `pattern.slice(0, open+1)`, so the recursion's
+  // result is still a true tail of the final pattern — forward the flag.
   if (close === -1) {
-    return expandBraces(pattern.slice(open + 1)).map(tail => pattern.slice(0, open + 1) + tail);
+    return expandBraces(pattern.slice(open + 1), isTrueTail).map(tail => pattern.slice(0, open + 1) + tail);
   }
   const head = pattern.slice(0, open);
   const braceSrc = pattern.slice(open, close + 1);
   const suffix = pattern.slice(close + 1);
   const body = pattern.slice(open + 1, close);
   const alternatives = splitTopLevelCommas(body);
-  // Re-apply the `leafOnlyBraces` fast-path to the suffix before recursing:
-  // a mixed pattern like `{pkg,app}/**/*.{js,ts}` must expand the directory
-  // brace, but the leaf brace `{js,ts}` in the suffix can stay intact for
-  // the native `matchBrace` to handle — no need to fan out 2×2 = 4 patterns
-  // when 2 will do. Without this check, `leafOnlyBraces`'s guard in
-  // `validatePattern` would be wasted the moment any directory-segment
-  // brace forces expansion.
-  const tailsExpanded = leafOnlyBraces(suffix) ? [suffix] : expandBraces(suffix);
+  // Re-apply the `leafOnlyBraces` fast-path to the suffix — but only when
+  // we're already inside a true-tail recursion. For a mixed top-level
+  // pattern like `{pkg,app}/**/*.{js,ts}` the directory brace must be
+  // expanded, but the leaf brace `{js,ts}` in the suffix can stay intact
+  // for the native `matchBrace` to handle. When we're recursing on an
+  // *alternative* (`isTrueTail=false`), the outer frame will concatenate
+  // `tails` after our result, so a brace we leave unexpanded here could
+  // end up in a directory segment of the final pattern.
+  const tails = isTrueTail && leafOnlyBraces(suffix) ? [suffix] : expandBraces(suffix, isTrueTail);
   // Single-alternative braces (`{abc}`) aren't expansion per Node/minimatch —
   // keep them literal. But still handle the suffix so a later `{p,q}` brace
   // group doesn't get stranded (`{abc}/{p,q}` must expand the second group
   // if it's in a directory segment).
   if (alternatives.length <= 1) {
-    return tailsExpanded.map(tail => head + braceSrc + tail);
+    return tails.map(tail => head + braceSrc + tail);
   }
-  // Hoist the tail expansion out of the inner loop — it's loop-invariant
-  // (`suffix` is fixed for this frame), so recomputing it for every
-  // `(alt × sub)` pair would be wasted work.
-  const tails = tailsExpanded;
   const out: string[] = [];
   for (const alt of alternatives) {
-    for (const sub of expandBraces(alt)) {
+    // `alt` is never a true tail — the outer frame appends `tails` (and
+    // possibly ancestor `tails` above that) after each expansion below.
+    for (const sub of expandBraces(alt, false)) {
       for (const tail of tails) {
         out.push(head + sub + tail);
       }

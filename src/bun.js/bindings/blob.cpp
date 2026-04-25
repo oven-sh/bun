@@ -20,7 +20,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlo
     BunString filename = Bun::toString(fileNameStr);
 
     JSC::EncodedJSValue encoded = Blob__create(lexicalGlobalObject, impl->impl());
-    JSBlob* blob = jsCast<JSBlob*>(JSC::JSValue::decode(encoded));
+    JSBlob* blob = uncheckedDowncast<JSBlob>(JSC::JSValue::decode(encoded));
     Blob__setAsFile(blob->wrapped(), &filename);
 
     return JSC::JSValue::decode(encoded);

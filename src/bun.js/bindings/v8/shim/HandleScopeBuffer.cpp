@@ -26,7 +26,7 @@ HandleScopeBuffer* HandleScopeBuffer::create(JSC::VM& vm, JSC::Structure* struct
 template<typename Visitor>
 void HandleScopeBuffer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    HandleScopeBuffer* thisObject = jsCast<HandleScopeBuffer*>(cell);
+    HandleScopeBuffer* thisObject = uncheckedDowncast<HandleScopeBuffer>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 

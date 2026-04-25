@@ -84,7 +84,7 @@ JSC_DEFINE_HOST_FUNCTION(jsKeyObjectConstructor_from, (JSGlobalObject * lexicalG
 
     // 1. Validate Input Argument
     JSValue keyValue = callFrame->argument(0);
-    JSCryptoKey* cryptoKey = jsDynamicCast<JSCryptoKey*>(keyValue);
+    JSCryptoKey* cryptoKey = dynamicDowncast<JSCryptoKey>(keyValue);
 
     if (!cryptoKey) {
         return ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, "key"_s, "CryptoKey"_s, keyValue);

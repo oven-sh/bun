@@ -488,7 +488,7 @@ extern "C" napi_status napi_get_date_value(napi_env env, napi_value value, doubl
 
     JSValue jsValue = toJS(value);
 
-    auto* date = jsDynamicCast<JSC::DateInstance*>(jsValue);
+    auto* date = dynamicDowncast<JSC::DateInstance>(jsValue);
     NAPI_RETURN_EARLY_IF_FALSE(env, date != nullptr, napi_date_expected);
 
     *result = date->internalNumber();
@@ -835,7 +835,7 @@ static void wrap_cleanup(napi_env env, void* data, void* hint)
 
 static inline NapiRef* getWrapContentsIfExists(VM& vm, JSGlobalObject* globalObject, JSObject* object)
 {
-    if (auto* napi_instance = jsDynamicCast<NapiPrototype*>(object)) {
+    if (auto* napi_instance = dynamicDowncast<NapiPrototype>(object)) {
         return napi_instance->napiRef;
     } else {
         JSValue contents = object->getDirect(vm, WebCore::builtinNames(vm).napiWrappedContentsPrivateName());
@@ -843,7 +843,7 @@ static inline NapiRef* getWrapContentsIfExists(VM& vm, JSGlobalObject* globalObj
             return nullptr;
         } else {
             // jsCast asserts: we should not have stored anything but a NapiExternal here
-            return static_cast<NapiRef*>(jsCast<Bun::NapiExternal*>(contents)->value());
+            return static_cast<NapiRef*>(uncheckedDowncast<Bun::NapiExternal>(contents)->value());
         }
     }
 }
@@ -870,7 +870,7 @@ extern "C" napi_status napi_wrap(napi_env env,
     NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object, napi_object_expected);
 
     // NapiPrototype has an inline field to store a napi_ref, so we use that if we can
-    auto* napi_instance = jsDynamicCast<NapiPrototype*>(jsc_object);
+    auto* napi_instance = dynamicDowncast<NapiPrototype>(jsc_object);
 
     const JSC::Identifier& propertyName = WebCore::builtinNames(vm).napiWrappedContentsPrivateName();
 
@@ -913,7 +913,7 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
     JSObject* jsc_object = jsc_value.getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, jsc_object, napi_object_expected);
     // may be null
-    auto* napi_instance = jsDynamicCast<NapiPrototype*>(jsc_object);
+    auto* napi_instance = dynamicDowncast<NapiPrototype>(jsc_object);
 
     Zig::GlobalObject* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
@@ -1252,7 +1252,7 @@ extern "C" napi_status napi_is_detached_arraybuffer(napi_env env,
     NAPI_CHECK_ARG(env, arraybuffer);
     NAPI_CHECK_ARG(env, result);
 
-    JSC::JSArrayBuffer* jsArrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(toJS(arraybuffer));
+    JSC::JSArrayBuffer* jsArrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(toJS(arraybuffer));
     NAPI_RETURN_EARLY_IF_FALSE(env, jsArrayBuffer, napi_arraybuffer_expected);
 
     auto* arrayBuffer = jsArrayBuffer->impl();
@@ -1268,7 +1268,7 @@ extern "C" napi_status napi_detach_arraybuffer(napi_env env,
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
 
-    JSC::JSArrayBuffer* jsArrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(toJS(arraybuffer));
+    JSC::JSArrayBuffer* jsArrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(toJS(arraybuffer));
     NAPI_RETURN_EARLY_IF_FALSE(env, jsArrayBuffer, napi_arraybuffer_expected);
 
     auto* arrayBuffer = jsArrayBuffer->impl();
@@ -1535,7 +1535,7 @@ extern "C" JS_EXPORT napi_status node_api_create_buffer_from_arraybuffer(napi_en
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ARG(env, result);
 
-    JSC::JSArrayBuffer* jsArrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(toJS(arraybuffer));
+    JSC::JSArrayBuffer* jsArrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(toJS(arraybuffer));
     NAPI_RETURN_EARLY_IF_FALSE(env, jsArrayBuffer, napi_arraybuffer_expected);
 
     auto* globalObject = toJS(env);
@@ -1592,7 +1592,7 @@ extern "C" napi_status napi_object_freeze(napi_env env, napi_value object_value)
 
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSC::JSObject* object = JSC::jsCast<JSC::JSObject*>(value);
+    JSC::JSObject* object = uncheckedDowncast<JSC::JSObject>(value);
     objectConstructorFreeze(globalObject, object);
     NAPI_RETURN_IF_EXCEPTION(env);
 
@@ -1607,7 +1607,7 @@ extern "C" napi_status napi_object_seal(napi_env env, napi_value object_value)
 
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSC::JSObject* object = JSC::jsCast<JSC::JSObject*>(value);
+    JSC::JSObject* object = uncheckedDowncast<JSC::JSObject>(value);
     objectConstructorSeal(globalObject, object);
     NAPI_RETURN_IF_EXCEPTION(env);
 
@@ -1664,7 +1664,7 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
     NAPI_CHECK_ARG(env, arraybuffer);
     NAPI_CHECK_ARG(env, result);
     JSValue arraybufferValue = toJS(arraybuffer);
-    auto arraybufferPtr = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(arraybufferValue);
+    auto arraybufferPtr = dynamicDowncast<JSC::JSArrayBuffer>(arraybufferValue);
     NAPI_RETURN_EARLY_IF_FALSE(env, arraybufferPtr, napi_arraybuffer_expected);
 
     if (byte_offset + length > arraybufferPtr->impl()->byteLength()) {
@@ -1757,7 +1757,7 @@ extern "C" napi_status napi_create_typedarray(
     NAPI_CHECK_ARG(env, arraybuffer);
     NAPI_CHECK_ARG(env, result);
     JSValue arraybufferValue = toJS(arraybuffer);
-    auto arraybufferPtr = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(arraybufferValue);
+    auto arraybufferPtr = dynamicDowncast<JSC::JSArrayBuffer>(arraybufferValue);
     NAPI_RETURN_EARLY_IF_FALSE(env, arraybufferPtr, napi_arraybuffer_expected);
     switch (type) {
     case napi_int8_array:
@@ -2422,12 +2422,12 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
             return napi_clear_last_error(env);
 
         case JSC::ObjectType:
-            if (JSC::jsDynamicCast<Bun::NapiExternal*>(value)) {
+            if (dynamicDowncast<Bun::NapiExternal>(value)) {
                 *result = napi_external;
                 return napi_clear_last_error(env);
             }
 
-            if (JSC::jsDynamicCast<AsyncContextFrame*>(value)) {
+            if (dynamicDowncast<AsyncContextFrame>(value)) {
                 *result = napi_function;
                 return napi_clear_last_error(env);
             }
@@ -2602,7 +2602,7 @@ extern "C" napi_status napi_get_value_external(napi_env env, napi_value value,
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, value);
-    auto* external = jsDynamicCast<Bun::NapiExternal*>(toJS(value));
+    auto* external = dynamicDowncast<Bun::NapiExternal>(toJS(value));
     NAPI_RETURN_EARLY_IF_FALSE(env, external, napi_invalid_arg);
 
     *result = external->value();
@@ -2837,7 +2837,7 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv,
     // global state is not trivial since there are no Zig bindings for that.
     // Most, if not all, threadsafe callbacks will not pass the callback to JS,
     // they will just call it with this function.
-    NAPI_RETURN_EARLY_IF_FALSE(env, funcValue.isCallable() || jsDynamicCast<AsyncContextFrame*>(funcValue), napi_invalid_arg);
+    NAPI_RETURN_EARLY_IF_FALSE(env, funcValue.isCallable() || dynamicDowncast<AsyncContextFrame>(funcValue), napi_invalid_arg);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -2874,7 +2874,7 @@ extern "C" napi_status napi_type_tag_object(napi_env env, napi_value value, cons
     NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
     JSValue napiTypeTagValue = globalObject->napiTypeTags()->get(js_object);
 
-    auto* existing_tag = jsDynamicCast<Bun::NapiTypeTag*>(napiTypeTagValue);
+    auto* existing_tag = dynamicDowncast<Bun::NapiTypeTag>(napiTypeTagValue);
     // cannot tag an object that is already tagged
     NAPI_RETURN_EARLY_IF_FALSE(env, existing_tag == nullptr, napi_invalid_arg);
 
@@ -2894,7 +2894,7 @@ extern "C" napi_status napi_check_object_type_tag(napi_env env, napi_value value
     NAPI_RETURN_EARLY_IF_FALSE(env, js_object, napi_object_expected);
 
     bool match = false;
-    auto* found_tag = jsDynamicCast<Bun::NapiTypeTag*>(globalObject->napiTypeTags()->get(js_object));
+    auto* found_tag = dynamicDowncast<Bun::NapiTypeTag>(globalObject->napiTypeTags()->get(js_object));
     if (found_tag && found_tag->matches(*type_tag)) {
         match = true;
     }

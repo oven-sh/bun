@@ -364,11 +364,10 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Env vars match cmake's (BuildBun.cmake ~1462).
   // No setarch wrapper — cmake doesn't use one for features.mjs either
   // (only for the --revision smoke test).
-  // Cross-compiled binaries (Android, FreeBSD) can't run on the build
-  // host — write an empty features.json instead so packaging proceeds.
+  // Cross-compiled binaries can't run on the build host — write a stub.
   if (cfg.crossTarget !== undefined) {
-    console.log("Skipping features.json (cross-compiled binary can't run on host)");
-    writeFileSync(resolve(buildDir, "features.json"), "{}\n");
+    console.log("Skipping features.json (cross-compiled binary cannot run on host)");
+    writeFileSync(resolve(buildDir, "features.json"), JSON.stringify({ crossTarget: cfg.crossTarget }));
   } else {
     console.log("Generating features.json...");
     run([exe, resolve(cfg.cwd, "scripts", "features.mjs")], buildDir, {

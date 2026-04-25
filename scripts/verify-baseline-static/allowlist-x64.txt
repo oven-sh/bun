@@ -414,6 +414,34 @@ ipint_simd_v128_xor                       [AVX]
 
 
 # ----------------------------------------------------------------------------
+# JSC IPInt relaxed Wasm SIMD. Upstream 85da494b1c29 implements the
+# relaxed-SIMD proposal in IPInt; gated behind Options::useWasmSIMD() &&
+# Options::useWasmRelaxedSIMD().
+# (20 symbols)
+# ----------------------------------------------------------------------------
+ipint_simd_f32x4_relaxed_madd                     [AVX]
+ipint_simd_f32x4_relaxed_max                      [AVX]
+ipint_simd_f32x4_relaxed_min                      [AVX]
+ipint_simd_f32x4_relaxed_nmadd                    [AVX]
+ipint_simd_f64x2_relaxed_madd                     [AVX]
+ipint_simd_f64x2_relaxed_max                      [AVX]
+ipint_simd_f64x2_relaxed_min                      [AVX]
+ipint_simd_f64x2_relaxed_nmadd                    [AVX]
+ipint_simd_i16x8_relaxed_dot_i8x16_i7x16_s        [AVX]
+ipint_simd_i16x8_relaxed_laneselect               [AVX]
+ipint_simd_i16x8_relaxed_q15mulr_s                [AVX]
+ipint_simd_i32x4_relaxed_dot_i8x16_i7x16_add_s    [AVX]
+ipint_simd_i32x4_relaxed_laneselect               [AVX]
+ipint_simd_i32x4_relaxed_trunc_f32x4_s            [AVX]
+ipint_simd_i32x4_relaxed_trunc_f32x4_u            [AVX]
+ipint_simd_i32x4_relaxed_trunc_f64x2_s_zero       [AVX]
+ipint_simd_i32x4_relaxed_trunc_f64x2_u_zero       [AVX]
+ipint_simd_i64x2_relaxed_laneselect               [AVX]
+ipint_simd_i8x16_relaxed_laneselect               [AVX]
+ipint_simd_i8x16_relaxed_swizzle                  [AVX]
+
+
+# ----------------------------------------------------------------------------
 # JSC IPInt atomics. cmpxchg loop reloads the SIMD accumulator with vmovdqu
 # after the IPInt metadata removal in upstream ef40cabc28d2; gated behind
 # Options::useWasmSIMD().

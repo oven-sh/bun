@@ -94,10 +94,6 @@ function readPackageDeps(pkgDir: string): string[] {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Register ninja rules shared by all codegen steps. Call once before
- * emitCodegen().
- */
-/**
  * Node-style platform/arch strings for the TARGET (not the host running
  * codegen). Passed as TARGET_PLATFORM/TARGET_ARCH so scripts that inline
  * `process.platform` into bundled JS use the target's value.

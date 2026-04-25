@@ -343,7 +343,7 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             RETURN_IF_EXCEPTION(scope, {});
             JSObject* moduleNative = moduleNativeValue.getObject();
             RETURN_IF_EXCEPTION(scope, {});
-            AbstractModuleRecord* resolvedRecord = jsCast<NodeVMModule*>(moduleNative)->moduleRecord(globalObject);
+            AbstractModuleRecord* resolvedRecord = uncheckedDowncast<NodeVMModule>(moduleNative)->moduleRecord(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
             // innerModuleLinking asserts every visited cyclic record is past
@@ -351,7 +351,7 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             // loader's continueModuleLoading (which is what flips New ->
             // Unlinked for the whole graph), so do it for each dependency as
             // we wire it in.
-            if (auto* cyclic = jsDynamicCast<JSC::CyclicModuleRecord*>(resolvedRecord); cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::New)
+            if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(resolvedRecord); cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::New)
                 cyclic->status(JSC::CyclicModuleRecord::Status::Unlinked);
 
             // specifiers/moduleNatives were built from requestedModules() in
@@ -399,7 +399,7 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
     if (nodeVmGlobalObject)
         globalObject = nodeVmGlobalObject;
 
-    record->link(globalObject, jsUndefined());
+    record->link(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
 
     return jsUndefined();
@@ -480,7 +480,7 @@ JSObject* NodeVMSourceTextModule::createPrototype(VM& vm, JSGlobalObject* global
 template<typename Visitor>
 void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* vmModule = jsCast<NodeVMSourceTextModule*>(cell);
+    auto* vmModule = uncheckedDowncast<NodeVMSourceTextModule>(cell);
     ASSERT_GC_OBJECT_INHERITS(vmModule, info());
     Base::visitChildren(vmModule, visitor);
 

@@ -122,7 +122,7 @@ extern "C" JSC::EncodedJSValue PathParsedObject__create(
     JSC::EncodedJSValue ext,
     JSC::EncodedJSValue name)
 {
-    auto* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     auto& vm = JSC::getVM(globalObject);
     JSC::JSObject* result = JSC::constructEmptyObject(vm, global->pathParsedObjectStructure());
     result->putDirectOffset(vm, 0, JSC::JSValue::decode(root));

@@ -66,9 +66,20 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     // Read /proc/stat to get number of CPUs and times
     {
         const file = std.fs.cwd().openFile("/proc/stat", .{}) catch {
-            // hidepid mounts (common on Android) deny /proc/stat. Node returns []
-            // rather than throwing.
-            return try jsc.JSValue.createEmptyArray(globalThis, 0);
+            // hidepid mounts (common on Android) deny /proc/stat. lazyCpus in os.ts
+            // pre-creates hostCpuCount lazy proxies, so return that many stub
+            // entries (zeroed times / unknown model / speed 0) — matches Node.
+            const count: u32 = @intCast(@max(1, bun_sysconf__SC_NPROCESSORS_ONLN()));
+            const stubs = try jsc.JSValue.createEmptyArray(globalThis, count);
+            var i: u32 = 0;
+            while (i < count) : (i += 1) {
+                const cpu = jsc.JSValue.createEmptyObject(globalThis, 3);
+                cpu.put(globalThis, jsc.ZigString.static("times"), (CPUTimes{}).toValue(globalThis));
+                cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
+                cpu.put(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(0));
+                try stubs.putIndex(globalThis, i, cpu);
+            }
+            return stubs;
         };
         defer file.close();
 

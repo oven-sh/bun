@@ -33,7 +33,7 @@ extern "C" JSPromise* Bun__loadHTMLEntryPoint(Zig::GlobalObject* globalObject)
         return JSPromise::resolvedPromise(globalObject, result);
     }
 
-    JSPromise* promise = jsDynamicCast<JSC::JSPromise*>(result);
+    JSPromise* promise = dynamicDowncast<JSC::JSPromise>(result);
     if (!promise) [[unlikely]] {
         BUN_PANIC("Failed to load HTML entry point");
     }

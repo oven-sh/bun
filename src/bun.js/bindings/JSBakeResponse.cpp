@@ -168,7 +168,7 @@ void JSBakeResponse::finishCreation(JSC::VM& vm)
 template<typename Visitor>
 void JSBakeResponse::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSBakeResponse* thisObject = jsCast<JSBakeResponse*>(cell);
+    JSBakeResponse* thisObject = uncheckedDowncast<JSBakeResponse>(cell);
     Base::visitChildren(thisObject, visitor);
 }
 

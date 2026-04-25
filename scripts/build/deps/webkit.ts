@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "522d56876c60c3fb5a55081e59270964c61d0d66";
+export const WEBKIT_VERSION = "autobuild-preview-pr-199-3be45332";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -250,10 +250,15 @@ export const webkit: Dependency = {
       optFlags.push(`--target=${cfg.crossTarget}`, `--sysroot=${cfg.sysroot!}`);
     }
     const optFlagStr = optFlags.join(" ");
-    const cxxOptFlagStr =
-      cfg.abi === "android" || (cfg.freebsd && cfg.sysroot !== undefined)
-        ? `${optFlagStr} -isystem ${join(cfg.sysroot!, "usr", "include", "c++", "v1")}`
-        : optFlagStr;
+    let cxxOptFlagStr = optFlagStr;
+    if (cfg.abi === "android") {
+      const inc = join(cfg.sysroot!, "usr", "include");
+      const triple = `${cfg.x64 ? "x86_64" : "aarch64"}-linux-android`;
+      cxxOptFlagStr += ` -nostdlibinc -isystem ${join(inc, "c++", "v1")} -isystem ${join(inc, triple)} -isystem ${inc}`;
+    } else if (cfg.freebsd && cfg.sysroot !== undefined) {
+      const inc = join(cfg.sysroot, "usr", "include");
+      cxxOptFlagStr += ` -nostdlibinc -isystem ${join(inc, "c++", "v1")} -isystem ${inc}`;
+    }
     const args: Record<string, string> = {
       CMAKE_C_FLAGS: optFlagStr,
       CMAKE_CXX_FLAGS: cxxOptFlagStr,

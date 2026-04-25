@@ -42,7 +42,7 @@ NodeVMSyntheticModule* NodeVMSyntheticModule::create(VM& vm, JSGlobalObject* glo
     }
 
     JSValue exportNamesValue = args.at(2);
-    auto* exportNamesArray = jsDynamicCast<JSArray*>(exportNamesValue);
+    auto* exportNamesArray = dynamicDowncast<JSArray>(exportNamesValue);
     if (!exportNamesArray) {
         throwArgumentTypeError(*globalObject, scope, 2, "exportNames"_s, "Module"_s, "Module"_s, "Array"_s);
         return nullptr;
@@ -143,7 +143,8 @@ JSValue NodeVMSyntheticModule::link(JSGlobalObject* globalObject, JSArray* speci
         globalObject = nodeVmGlobalObject;
     }
 
-    Synchronousness sync = record->link(globalObject, scriptFetcher);
+    (void)scriptFetcher;
+    Synchronousness sync = record->link(globalObject, nullptr);
 
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -224,7 +225,7 @@ JSObject* NodeVMSyntheticModule::createPrototype(VM& vm, JSGlobalObject* globalO
 template<typename Visitor>
 void NodeVMSyntheticModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* vmModule = jsCast<NodeVMSyntheticModule*>(cell);
+    auto* vmModule = uncheckedDowncast<NodeVMSyntheticModule>(cell);
     ASSERT_GC_OBJECT_INHERITS(vmModule, info());
     Base::visitChildren(vmModule, visitor);
 

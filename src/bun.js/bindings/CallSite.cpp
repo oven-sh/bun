@@ -84,7 +84,7 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
 template<typename Visitor>
 void CallSite::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    CallSite* thisCallSite = jsCast<CallSite*>(cell);
+    CallSite* thisCallSite = uncheckedDowncast<CallSite>(cell);
     Base::visitChildren(thisCallSite, visitor);
     visitor.append(thisCallSite->m_thisValue);
     visitor.append(thisCallSite->m_function);
@@ -93,7 +93,7 @@ void CallSite::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 JSC_DEFINE_HOST_FUNCTION(nativeFrameForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::JSFunction* function = jsCast<JSC::JSFunction*>(callFrame->argument(0));
+    JSC::JSFunction* function = uncheckedDowncast<JSC::JSFunction>(callFrame->argument(0));
     return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "nativeFrameForTesting"_s));
 }
 

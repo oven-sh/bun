@@ -206,7 +206,7 @@ export interface Config {
 
   // ─── Cross-compilation (set when host != target for C++) ───
   // Generic so future targets (e.g. cross-compiling to macOS from Linux)
-  // go through the same plumbing. Populated for Android and FreeBSD.
+  // go through the same plumbing. Currently populated only for Android.
   /** clang `--target=` triple, e.g. "aarch64-unknown-linux-android28". undefined = native. */
   crossTarget: string | undefined;
   /** clang `--sysroot=` path. For Android: `<ndk>/toolchains/llvm/prebuilt/<host>/sysroot`. */
@@ -215,6 +215,8 @@ export interface Config {
   androidNdk: string | undefined;
   /** Android API level (the N in `__ANDROID_API__=N`). undefined when abi != "android". */
   androidApiLevel: number | undefined;
+  /** NDK compiler-rt/libunwind dir: `<ndk>/toolchains/llvm/prebuilt/<host>/lib/clang/<ver>/lib/linux`. */
+  androidNdkRuntimeDir: string | undefined;
   /** FreeBSD release version targeted (e.g. "14.3"). undefined when os != "freebsd". */
   freebsdVersion: string | undefined;
 
@@ -461,7 +463,8 @@ function ndkHostTag(host: Host): string {
  * compiler-rt; the NDK does. This is the standard "bring your own clang"
  * setup for NDK cross-builds (Chromium does the same).
  *
- * Idempotent. Throws with a sudo hint if the resource dir isn't writable.
+ * Idempotent. Warns with a sudo hint if the resource dir isn't writable
+ * (CI build images create the symlinks as root in bootstrap.sh/Dockerfile).
  */
 function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: string): void {
   const resourceDir = execSync(`"${cc}" -print-resource-dir`, { encoding: "utf8" }).trim();
@@ -477,24 +480,38 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
   }
   const arch = triple.startsWith("x86_64") ? "x86_64" : "aarch64";
   const ndkRtLinux = join(ndkClangLib, ndkClangVer, "lib", "linux");
-  // NDK r27 keeps builtins in the old-style flat dir (arch in filename) but
-  // libunwind in the new-style per-arch subdir.
+  // Populate BOTH layouts: apt.llvm.org clang uses old-style flat
+  // (lib/linux/libclang_rt.builtins-<arch>-android.a) while tarball builds use
+  // per-triple (lib/<triple>/libclang_rt.builtins.a). NDK r27 keeps builtins in
+  // the flat dir but libunwind in the per-arch subdir.
+  const flatDir = join(resourceDir, "lib", "linux");
   const links = {
-    "libclang_rt.builtins.a": join(ndkRtLinux, `libclang_rt.builtins-${arch}-android.a`),
-    "libunwind.a": join(ndkRtLinux, arch, "libunwind.a"),
+    [join(targetDir, "libclang_rt.builtins.a")]: join(ndkRtLinux, `libclang_rt.builtins-${arch}-android.a`),
+    [join(targetDir, "libunwind.a")]: join(ndkRtLinux, arch, "libunwind.a"),
+    [join(flatDir, `libclang_rt.builtins-${arch}-android.a`)]: join(
+      ndkRtLinux,
+      `libclang_rt.builtins-${arch}-android.a`,
+    ),
+    [join(flatDir, arch, "libunwind.a")]: join(ndkRtLinux, arch, "libunwind.a"),
   };
-  if (Object.keys(links).every(n => existsSync(join(targetDir, n)))) return;
+  if (Object.keys(links).every(dst => existsSync(dst))) return;
   try {
     mkdirSync(targetDir, { recursive: true });
-    for (const [name, src] of Object.entries(links)) {
-      const dst = join(targetDir, name);
+    mkdirSync(join(flatDir, arch), { recursive: true });
+    for (const [dst, src] of Object.entries(links)) {
       if (!existsSync(dst)) symlinkSync(src, dst);
     }
   } catch (cause) {
-    throw new BuildError(`Could not link NDK compiler-rt into ${targetDir}`, {
-      hint: `Run once with write access: sudo mkdir -p "${targetDir}" && sudo ln -s "${links["libclang_rt.builtins.a"]}" "${links["libunwind.a"]}" "${targetDir}/"`,
-      cause,
-    });
+    // Don't throw — zig-only mode doesn't need these, and on CI bootstrap.sh
+    // creates them as root during image build. The actual link step will fail
+    // loudly later if they're genuinely missing where needed.
+    const lnCmds = Object.entries(links)
+      .map(([dst, src]) => `sudo ln -sf "${src}" "${dst}"`)
+      .join(" && ");
+    console.warn(
+      `warning: could not link NDK compiler-rt into ${resourceDir} (${(cause as NodeJS.ErrnoException).code}). ` +
+        `If the final link fails on libclang_rt.builtins.a, run: sudo mkdir -p "${targetDir}" "${join(flatDir, arch)}" && ${lnCmds}`,
+    );
   }
 }
 
@@ -568,12 +585,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // build:asan always set ENABLE_ASSERTIONS=ON for this reason.
   const assertions = partial.assertions ?? (debug || asan);
 
-  // LTO: default on only for CI release linux non-asan non-assertions.
-  // Android/FreeBSD: off — no -lto WebKit prebuilt is published for either.
-  const ltoDefault = release && linux && abi !== "android" && ci && !assertions && !asan;
+  // LTO: default on only for CI release linux non-asan non-assertions
+  const ltoDefault = release && linux && ci && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
-  // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit)
-  if (asan && lto) {
+  // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
+  // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
+  if ((asan && lto) || abi === "android") {
     lto = false;
   }
 
@@ -647,6 +664,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   let sysroot: string | undefined;
   let androidNdk: string | undefined;
   let androidApiLevel: number | undefined;
+  let androidNdkRuntimeDir: string | undefined;
   if (abi === "android") {
     androidNdk = partial.androidNdk ?? detectAndroidNdk();
     if (androidNdk === undefined) {
@@ -655,12 +673,20 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       });
     }
     androidApiLevel = partial.androidApiLevel ?? ANDROID_API_LEVEL_DEFAULT;
-    sysroot = join(androidNdk, "toolchains", "llvm", "prebuilt", ndkHostTag(host), "sysroot");
+    const ndkPrebuilt = join(androidNdk, "toolchains", "llvm", "prebuilt", ndkHostTag(host));
+    sysroot = join(ndkPrebuilt, "sysroot");
     if (!existsSync(sysroot)) {
       throw new BuildError(`Android NDK sysroot not found at ${sysroot}`, {
         hint: `Is ANDROID_NDK_ROOT (${androidNdk}) a valid NDK? Expected r26 or newer.`,
       });
     }
+    // NDK ships exactly one clang version per release.
+    const ndkClangLib = join(ndkPrebuilt, "lib", "clang");
+    const ndkClangVer = readdirSync(ndkClangLib)[0];
+    if (ndkClangVer === undefined) {
+      throw new BuildError(`NDK clang resource dir not found under ${ndkClangLib}`);
+    }
+    androidNdkRuntimeDir = join(ndkClangLib, ndkClangVer, "lib", "linux");
     const llvmArch = arch === "x64" ? "x86_64" : "aarch64";
     crossTarget = `${llvmArch}-unknown-linux-android${androidApiLevel}`;
     linkNdkRuntimesIntoClang(toolchain.cc, androidNdk, host, crossTarget);
@@ -789,6 +815,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     sysroot,
     androidNdk,
     androidApiLevel,
+    androidNdkRuntimeDir,
     freebsdVersion,
     version,
     revision,

@@ -308,7 +308,7 @@ void JSMIMEType::finishCreation(VM& vm, String type, String subtype, JSMIMEParam
 template<typename Visitor>
 void JSMIMEType::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSMIMEType* thisObject = jsCast<JSMIMEType*>(cell);
+    JSMIMEType* thisObject = uncheckedDowncast<JSMIMEType>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_parameters);
@@ -344,7 +344,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterType, (JSGlobalObject * globalObje
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSMIMEType*>(JSC::JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
         return {};
@@ -358,7 +358,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsMIMETypeProtoSetterType, (JSGlobalObject * globalObje
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSMIMEType*>(JSC::JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
         return {};
@@ -384,7 +384,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterSubtype, (JSGlobalObject * globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSMIMEType*>(JSC::JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
         return {};
@@ -398,7 +398,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsMIMETypeProtoSetterSubtype, (JSGlobalObject * globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSMIMEType*>(JSC::JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
         return {};
@@ -424,7 +424,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterEssence, (JSGlobalObject * globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSMIMEType*>(JSC::JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
         return {};
@@ -439,7 +439,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMIMETypeProtoGetterParams, (JSGlobalObject * globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSMIMEType*>(JSC::JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSMIMEType>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
         return {};
@@ -453,7 +453,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMETypeProtoFuncToString, (JSGlobalObject * globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsDynamicCast<JSMIMEType*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<JSMIMEType>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         scope.throwException(globalObject, Bun::createInvalidThisError(globalObject, thisObject, "MIMEType"));
         return {};

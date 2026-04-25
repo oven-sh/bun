@@ -63,8 +63,8 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         return m_evaluationResult.get();
     }
 
-    auto* sourceTextThis = jsDynamicCast<NodeVMSourceTextModule*>(this);
-    auto* syntheticThis = jsDynamicCast<NodeVMSyntheticModule*>(this);
+    auto* sourceTextThis = dynamicDowncast<NodeVMSourceTextModule>(this);
+    auto* syntheticThis = dynamicDowncast<NodeVMSyntheticModule>(this);
 
 #define VM_RETURN_IF_EXCEPTION(scope__, value__)                                                \
     do {                                                                                        \
@@ -165,11 +165,11 @@ void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractMo
 
     for (const auto& request : record->requestedModules()) {
         if (auto iter = m_resolveCache.find(request.m_specifier.string()); iter != m_resolveCache.end()) {
-            auto* dependency = jsCast<NodeVMModule*>(iter->value.get());
+            auto* dependency = uncheckedDowncast<NodeVMModule>(iter->value.get());
             RELEASE_ASSERT(dependency != nullptr);
 
             if (dependency->status() == Status::Unlinked) {
-                if (auto* syntheticDependency = jsDynamicCast<NodeVMSyntheticModule*>(dependency)) {
+                if (auto* syntheticDependency = dynamicDowncast<NodeVMSyntheticModule>(dependency)) {
                     syntheticDependency->link(globalObject, nullptr, nullptr, jsUndefined());
                     RETURN_IF_EXCEPTION(scope, );
                 }
@@ -178,7 +178,7 @@ void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractMo
             if (dependency->status() == Status::Linked) {
                 JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
                 RETURN_IF_EXCEPTION(scope, );
-                RELEASE_ASSERT_WITH_MESSAGE(jsDynamicCast<JSC::JSPromise*>(dependencyResult) == nullptr, "TODO(@heimskr): implement async support for node:vm module dependencies");
+                RELEASE_ASSERT_WITH_MESSAGE(dynamicDowncast<JSC::JSPromise>(dependencyResult) == nullptr, "TODO(@heimskr): implement async support for node:vm module dependencies");
             }
         }
     }
@@ -186,9 +186,9 @@ void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractMo
 
 JSValue NodeVMModule::createModuleRecord(JSC::JSGlobalObject* globalObject)
 {
-    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(this)) {
+    if (auto* thisObject = dynamicDowncast<NodeVMSourceTextModule>(this)) {
         return thisObject->createModuleRecord(globalObject);
-    } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(this)) {
+    } else if (auto* thisObject = dynamicDowncast<NodeVMSyntheticModule>(this)) {
         thisObject->createModuleRecord(globalObject);
         return jsUndefined();
     }
@@ -199,9 +199,9 @@ JSValue NodeVMModule::createModuleRecord(JSC::JSGlobalObject* globalObject)
 
 AbstractModuleRecord* NodeVMModule::moduleRecord(JSC::JSGlobalObject* globalObject)
 {
-    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(this)) {
+    if (auto* thisObject = dynamicDowncast<NodeVMSourceTextModule>(this)) {
         return thisObject->moduleRecord(globalObject);
-    } else if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(this)) {
+    } else if (auto* thisObject = dynamicDowncast<NodeVMSyntheticModule>(this)) {
         return thisObject->moduleRecord(globalObject);
     }
 
@@ -235,18 +235,14 @@ JSModuleNamespaceObject* NodeVMModule::namespaceObject(JSC::JSGlobalObject* glob
         return object;
     }
 
-    if (auto* thisObject = jsDynamicCast<NodeVMModule*>(this)) {
-        AbstractModuleRecord* amr = thisObject->moduleRecord(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        object = amr->getModuleNamespace(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (object) {
-            namespaceObject(vm, object);
-        }
-        RETURN_IF_EXCEPTION(scope, {});
-    } else {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("NodeVMModule::namespaceObject called on an unsupported module type (%s)", classInfo()->className.characters());
+    AbstractModuleRecord* amr = this->moduleRecord(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    object = amr->getModuleNamespace(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (object) {
+        namespaceObject(vm, object);
     }
+    RETURN_IF_EXCEPTION(scope, {});
 
     return object;
 }
@@ -306,19 +302,19 @@ void NodeVMModulePrototype::finishCreation(JSC::VM& vm)
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeVmModuleGetterIdentifier, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
-    auto* thisObject = jsCast<NodeVMModule*>(JSC::JSValue::decode(thisValue));
+    auto* thisObject = uncheckedDowncast<NodeVMModule>(JSC::JSValue::decode(thisValue));
     return JSValue::encode(JSC::jsString(globalObject->vm(), thisObject->identifier()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetStatusCode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* thisObject = jsCast<NodeVMModule*>(callFrame->thisValue());
+    auto* thisObject = uncheckedDowncast<NodeVMModule>(callFrame->thisValue());
     return JSValue::encode(JSC::jsNumber(static_cast<uint32_t>(thisObject->status())));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetStatus, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* thisObject = jsCast<NodeVMModule*>(callFrame->thisValue());
+    auto* thisObject = uncheckedDowncast<NodeVMModule>(callFrame->thisValue());
 
     using enum NodeVMModule::Status;
     switch (thisObject->status()) {
@@ -344,7 +340,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetNamespace, (JSC::JSGlobalObject * glob
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* thisObject = jsDynamicCast<NodeVMModule*>(callFrame->thisValue())) {
+    if (auto* thisObject = dynamicDowncast<NodeVMModule>(callFrame->thisValue())) {
         RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->namespaceObject(globalObject)));
     }
 
@@ -357,7 +353,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetError, (JSC::JSGlobalObject * globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* thisObject = jsCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
+    if (auto* thisObject = uncheckedDowncast<NodeVMSourceTextModule>(callFrame->thisValue())) {
         if (JSC::Exception* exception = thisObject->evaluationException()) {
             return JSValue::encode(exception->value());
         }
@@ -374,9 +370,9 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests, (JSC::JSGlobalObject *
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = jsCast<NodeVMModule*>(callFrame->thisValue());
+    auto* thisObject = uncheckedDowncast<NodeVMModule>(callFrame->thisValue());
 
-    if (auto* sourceTextModule = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
+    if (auto* sourceTextModule = dynamicDowncast<NodeVMSourceTextModule>(callFrame->thisValue())) {
         sourceTextModule->ensureModuleRecord(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -411,7 +407,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleEvaluate, (JSC::JSGlobalObject * globalOb
         breakOnSigint = breakOnSigintValue.asBoolean();
     }
 
-    if (auto* thisObject = jsDynamicCast<NodeVMModule*>(callFrame->thisValue())) {
+    if (auto* thisObject = dynamicDowncast<NodeVMModule>(callFrame->thisValue())) {
         RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->evaluate(globalObject, timeout, breakOnSigint)));
     }
 
@@ -424,8 +420,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSArray* specifiers = jsDynamicCast<JSArray*>(callFrame->argument(0));
-    JSArray* moduleNatives = jsDynamicCast<JSArray*>(callFrame->argument(1));
+    JSArray* specifiers = dynamicDowncast<JSArray>(callFrame->argument(0));
+    JSArray* moduleNatives = dynamicDowncast<JSArray>(callFrame->argument(1));
 
     if (!specifiers) {
         return throwArgumentTypeError(*globalObject, scope, 0, "specifiers"_s, "Module"_s, "Module"_s, "Array"_s);
@@ -435,7 +431,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleLink, (JSC::JSGlobalObject * globalObject
         return throwArgumentTypeError(*globalObject, scope, 1, "moduleNatives"_s, "Module"_s, "Module"_s, "Array"_s);
     }
 
-    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
+    if (auto* thisObject = dynamicDowncast<NodeVMSourceTextModule>(callFrame->thisValue())) {
         RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->link(globalObject, specifiers, moduleNatives, callFrame->argument(2))));
     }
 
@@ -448,11 +444,11 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleInstantiate, (JSC::JSGlobalObject * globa
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
+    if (auto* thisObject = dynamicDowncast<NodeVMSourceTextModule>(callFrame->thisValue())) {
         RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->instantiate(globalObject)));
     }
 
-    if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
+    if (auto* thisObject = dynamicDowncast<NodeVMSyntheticModule>(callFrame->thisValue())) {
         RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->instantiate(globalObject)));
     }
 
@@ -465,7 +461,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleSetExport, (JSC::JSGlobalObject * globalO
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* thisObject = jsDynamicCast<NodeVMSyntheticModule*>(callFrame->thisValue())) {
+    if (auto* thisObject = dynamicDowncast<NodeVMSyntheticModule>(callFrame->thisValue())) {
         JSValue nameValue = callFrame->argument(0);
         if (!nameValue.isString()) {
             Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "name"_str, "string"_s, nameValue);
@@ -487,7 +483,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData, (JSC::JSGlobalObject * 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* thisObject = jsDynamicCast<NodeVMSourceTextModule*>(callFrame->thisValue())) {
+    if (auto* thisObject = dynamicDowncast<NodeVMSourceTextModule>(callFrame->thisValue())) {
         RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->cachedData(globalObject)));
     }
 
@@ -497,14 +493,14 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateCachedData, (JSC::JSGlobalObject * 
 
 JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleCreateModuleRecord, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* thisObject = jsCast<NodeVMModule*>(callFrame->thisValue());
+    auto* thisObject = uncheckedDowncast<NodeVMModule>(callFrame->thisValue());
     return JSValue::encode(thisObject->createModuleRecord(globalObject));
 }
 
 template<typename Visitor>
 void NodeVMModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* vmModule = jsCast<NodeVMModule*>(cell);
+    auto* vmModule = uncheckedDowncast<NodeVMModule>(cell);
     ASSERT_GC_OBJECT_INHERITS(vmModule, info());
     Base::visitChildren(vmModule, visitor);
 

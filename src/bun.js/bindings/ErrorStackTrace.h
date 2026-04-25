@@ -124,7 +124,7 @@ public:
         }
 
         if (m_callee && m_callee->inherits<JSC::JSFunction>()) {
-            auto* function = jsCast<JSC::JSFunction*>(m_callee);
+            auto* function = uncheckedDowncast<JSC::JSFunction>(m_callee);
             if (function->isHostFunction()) {
                 return false;
             }

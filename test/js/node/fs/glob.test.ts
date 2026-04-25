@@ -435,13 +435,12 @@ describe("fs.glob path-manipulation edge cases", () => {
   });
 
   it("pattern that is entirely separators falls through to Bun.Glob", () => {
-    // `fs.globSync('/')` is a pre-existing limitation — Bun.Glob itself
-    // doesn't match root patterns. We don't fix that here, but we make sure
-    // the prefix-peeling doesn't make it worse by stripping the pattern to
-    // an empty string before Bun.Glob can see it.
+    // `fs.globSync('/')` — Bun.Glob itself doesn't match root patterns
+    // (a known limitation; Node returns `['/']` but Bun returns `[]`). We
+    // don't fix that here, but we make sure the prefix-peeling doesn't make
+    // it worse by stripping the pattern to an empty string before Bun.Glob
+    // can see it — the call should complete without throwing or hanging.
     const _ = fs.globSync(nativeSep);
-    // (no assertion on result — pre-PR Bun also returned `[]`; we just
-    // verify the call doesn't throw or hang.)
     expect(Array.isArray(_)).toBe(true);
   });
 
@@ -480,11 +479,11 @@ describe("fs.glob path-manipulation edge cases", () => {
     // verbatim (matching Node/minimatch) but must still recurse into the
     // suffix so `{p,q}` gets split into two patterns.
     //
-    // Note: Bun.Glob's native matcher (pre-existing, unrelated to this PR)
-    // treats `{abc}` as matching the string `abc`, whereas Node/minimatch
-    // treats it as matching the literal three-character string `{abc}`. So
-    // this assertion is "Bun's answer", not Node-parity. What we're locking
-    // in here is that *both halves of the suffix are walked*, not that the
+    // Note: Bun.Glob's native matcher treats `{abc}` as matching the
+    // string `abc`, whereas Node/minimatch treats it as matching the
+    // literal three-character string `{abc}`. So this assertion is
+    // "Bun's answer", not Node-parity. What we're locking in here is
+    // that *both halves of the suffix are walked*, not that the
     // single-alt brace is handled Node-equivalently.
     using dir = tempDir("glob-suffix", {
       abc: {

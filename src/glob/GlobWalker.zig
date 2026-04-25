@@ -1549,8 +1549,8 @@ pub fn GlobWalker_(
         /// The `*?` check looks at raw bytes, so a component like `\*foo`
         /// (escaped glob star — a directory literally named `*foo`) is
         /// *not* accepted here even though it names a single string; that
-        /// path would need an unescape pass. Escaped literals are rare and
-        /// not a regression vs. pre-PR Bun.
+        /// would need an unescape pass. Escaped literals are rare enough
+        /// that this conservative rejection is acceptable.
         fn literalMatchSet(this: *GlobWalker, active: ComponentSet, entry_name: []const u8) ComponentSet {
             var out = this.makeSet();
             const comps = this.patternComponents.items;

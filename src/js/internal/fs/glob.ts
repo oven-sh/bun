@@ -66,9 +66,10 @@ async function* glob(pattern: string | string[], options?: GlobOptions): AsyncGe
       }
       if (step.done) break;
       const full = prefix ? prefix + step.value : step.value;
-      // Dedup before `exclude` so user callbacks fire once per unique path
-      // (pre-PR behavior for single-string brace patterns — a single Bun.Glob
-      // walk deduped internally before `exclude` ever saw the entry).
+      // Dedup before `exclude` so user callbacks fire once per unique path.
+      // When brace pre-expansion yields overlapping alternatives
+      // (`{a,*}/*.txt` → `a/*.txt` + `*/*.txt`) both scans can emit the same
+      // path; we shouldn't invoke the user's `exclude` twice for it.
       if (seen !== null) {
         if (seen.has(full)) continue;
         seen.add(full);
@@ -160,12 +161,12 @@ function splitLiteralPrefix(pattern: string, cwd: string): { pattern: string; cw
   const separator = isWindows ? sep : "/";
   // Absolute patterns: anchor scanning at the filesystem root and consume the
   // full leading literal run. `validatePattern` has already swapped `/` for
-  // `sep` on Windows, so we test against the platform separator (and the
-  // Windows drive-letter `C:\...` and UNC `\\host\share\...` shapes). A bare
+  // `sep` on Windows, so `startsWith(separator)` catches POSIX-rooted,
+  // drive-rooted (`\\foo`), and UNC (`\\\\host\\share\\…`) shapes in one
+  // check. The drive-letter form (`C:\…`) needs its own check — a bare
   // `C:foo` (no separator after the colon) is drive-*relative*, not absolute.
   const isAbsolute =
-    pattern.startsWith(separator) ||
-    (isWindows && (pattern.startsWith("\\\\") || (pattern.length >= 3 && /^[a-zA-Z]:[\\/]/.test(pattern))));
+    pattern.startsWith(separator) || (isWindows && pattern.length >= 3 && /^[a-zA-Z]:[\\/]/.test(pattern));
 
   // A trailing separator turns `split` into `[..., '']` — the empty tail would
   // become our "final segment" and leave `Bun.Glob` scanning an empty pattern,

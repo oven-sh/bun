@@ -347,12 +347,7 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
     JSObject* thenResult = promise->then(globalObject, transformer, globalObject->promiseEmptyOnRejectedFunction());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    // JSPromise::then() may return a non-JSPromise when Promise[Symbol.species]
-    // is overridden in the vm context — don't uncheckedDowncast (release-mode
-    // static_cast) on a user-influenced shape.
-    if (auto* thenPromise = dynamicDowncast<JSPromise>(thenResult))
-        RELEASE_AND_RETURN(scope, thenPromise);
-    RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, thenResult));
+    RELEASE_AND_RETURN(scope, uncheckedDowncast<JSPromise>(thenResult));
 }
 
 // Helper function to create an anonymous function expression with parameters

@@ -287,10 +287,14 @@ function expandBraces(pattern: string): string[] {
   if (alternatives.length <= 1) {
     return expandBraces(suffix).map(tail => head + braceSrc + tail);
   }
+  // Hoist the tail expansion out of the inner loop — it's loop-invariant
+  // (`suffix` is fixed for this frame), so `expandBraces(suffix)` would
+  // otherwise be recomputed once per `(alt × sub)` pair.
+  const tails = expandBraces(suffix);
   const out: string[] = [];
   for (const alt of alternatives) {
     for (const sub of expandBraces(alt)) {
-      for (const tail of expandBraces(suffix)) {
+      for (const tail of tails) {
         out.push(head + sub + tail);
       }
     }

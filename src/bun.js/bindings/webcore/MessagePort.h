@@ -126,12 +126,6 @@ private:
     void contextDestroyed() final;
     // bool virtualHasPendingActivity() const final;
 
-    EventTargetData* eventTargetData() final { return &m_eventTargetData; }
-    EventTargetData* eventTargetDataConcurrently() final { return &m_eventTargetData; }
-    EventTargetData& ensureEventTargetData() final { return m_eventTargetData; }
-
-    EventTargetData m_eventTargetData;
-
     // A port starts out its life entangled, and remains entangled until it is detached or is cloned.
     bool isEntangled() const { return !m_isDetached && m_entangled; }
 

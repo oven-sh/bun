@@ -389,19 +389,19 @@ fn writeProxyRequest(
     request: picohttp.Request,
     client: *HTTPClient,
 ) !void {
-    var port: []const u8 = undefined;
-    if (client.url.getPort()) |_| {
-        port = client.url.port;
-    } else {
-        port = if (client.url.isHTTPS()) "443" else "80";
-    }
-
     _ = writer.write(request.method) catch 0;
     // will always be http:// here, https:// needs CONNECT tunnel
     _ = writer.write(" http://") catch 0;
     _ = writer.write(client.url.hostname) catch 0;
-    _ = writer.write(":") catch 0;
-    _ = writer.write(port) catch 0;
+    // Only include the port in the absolute-form request URI when the
+    // original URL had an explicit port. RFC 7230 §5.3.2 treats the default
+    // port as redundant, and writing `:80`/`:443` here breaks proxies that
+    // do strict Host/authority matching (e.g. Charles, mitmproxy). Matches
+    // curl and Node.js `http.request` behavior.
+    if (client.url.getPort()) |_| {
+        _ = writer.write(":") catch 0;
+        _ = writer.write(client.url.port) catch 0;
+    }
     _ = writer.write(request.path) catch 0;
     _ = writer.write(" HTTP/1.1\r\nProxy-Connection: Keep-Alive\r\n") catch 0;
 
@@ -547,6 +547,8 @@ pub fn deinit(this: *HTTPClient) void {
     // Release our strong ref on the interned SSLConfig
     if (this.tls_props) |*tls| tls.deinit();
     this.tls_props = null;
+    if (this.custom_ssl_ctx) |ctx| ctx.deref();
+    this.custom_ssl_ctx = null;
     this.unix_socket_path.deinit();
     this.unix_socket_path = jsc.ZigString.Slice.empty;
 }
@@ -653,6 +655,12 @@ pub fn getSslCtx(this: *HTTPClient, comptime is_ssl: bool) *NewHTTPContext(is_ss
     } else {
         return &http_thread.http_context;
     }
+}
+
+pub fn setCustomSslCtx(this: *HTTPClient, ctx: *NewHTTPContext(true)) void {
+    ctx.ref();
+    if (this.custom_ssl_ctx) |old| old.deref();
+    this.custom_ssl_ctx = ctx;
 }
 
 // lowercase hash header names so that we can be sure

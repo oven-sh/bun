@@ -15,7 +15,9 @@
 /// Version 16: Added typeof undefined minification optimization.
 /// Version 17: Removed transpiler import rewrite for bun:test. Not bumping it causes test/js/bun/http/req-url-leak.test.ts to fail with SyntaxError: Export named 'expect' not found in module 'bun:test'.
 /// Version 18: Include ESM record (module info) with an ES Module, see #15758
-const expected_version = 18;
+/// Version 19: Sourcemap blob is InternalSourceMap (varint stream + sync points), not VLQ.
+/// Version 20: InternalSourceMap stream is bit-packed windows.
+const expected_version = 20;
 
 const debug = Output.scoped(.cache, .visible);
 const MINIMUM_CACHE_SIZE = 50 * 1024;

@@ -2366,6 +2366,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             ctx.request_body = body;
             var signal = jsc.WebCore.AbortSignal.new(this.globalThis);
             ctx.signal = signal;
+            signal.pendingActivityRef();
 
             var request_object = Request.new(Request.init(
                 ctx.method,
@@ -2653,10 +2654,6 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // --- 7. Debug mode specific routes ---
             if (debug_mode) {
                 app.get("/bun:info", *ThisServer, this, onBunInfoRequest);
-                if (this.config.inspector) {
-                    jsc.markBinding(@src());
-                    Bun__addInspector(ssl_enabled, app, this.globalThis);
-                }
             }
 
             // --- 8. Handle DevServer routes & Track "/*" Coverage ---
@@ -3261,8 +3258,6 @@ pub const AnyServer = struct {
         };
     }
 };
-
-extern fn Bun__addInspector(bool, *anyopaque, *jsc.JSGlobalObject) void;
 
 pub export fn Server__setIdleTimeout(server: jsc.JSValue, seconds: jsc.JSValue, globalThis: *jsc.JSGlobalObject) void {
     Server__setIdleTimeout_(server, seconds, globalThis) catch |err| switch (err) {

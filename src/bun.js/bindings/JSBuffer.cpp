@@ -3,6 +3,7 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#include "WebCoreJSBuiltins.h"
 #include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/Error.h"

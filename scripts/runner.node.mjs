@@ -406,6 +406,19 @@ async function runTests() {
   const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
 
+  // Kick off only the docker services this shard's tests need (mysql/postgres/
+  // redis/minio/…) so they've initialized by the time any test's ensure() runs.
+  // warmup-ci.ts maps test paths → services and does one `compose up -d` (no
+  // --wait); ensure()'s own `up --wait` is the synchronization point and
+  // returns fast when the container is already healthy. Linux-only — macOS /
+  // Windows CI don't run docker tests. Runs in the background while
+  // getVendorTests below installs vendor deps.
+  if (isCI && isLinux && spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0) {
+    spawn(execPath, [join(cwd, "test", "docker", "warmup-ci.ts"), ...tests], {
+      stdio: ["ignore", "inherit", "inherit"],
+    }).on("error", err => console.warn("docker warmup spawn failed:", err.message));
+  }
+
   /** @type {VendorTest[] | undefined} */
   let vendorTests;
   let vendorTotal = 0;

@@ -47,6 +47,9 @@ public:
         SHA_256,
         SHA_384,
         SHA_512,
+        SHA3_256,
+        SHA3_384,
+        SHA3_512,
     };
     PAL_EXPORT static std::unique_ptr<CryptoDigest> create(Algorithm);
     PAL_EXPORT ~CryptoDigest();

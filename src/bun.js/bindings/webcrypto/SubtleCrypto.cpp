@@ -204,6 +204,9 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::SHA_256:
         case CryptoAlgorithmIdentifier::SHA_384:
         case CryptoAlgorithmIdentifier::SHA_512:
+        case CryptoAlgorithmIdentifier::SHA3_256:
+        case CryptoAlgorithmIdentifier::SHA3_384:
+        case CryptoAlgorithmIdentifier::SHA3_512:
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
@@ -381,6 +384,9 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::SHA_256:
         case CryptoAlgorithmIdentifier::SHA_384:
         case CryptoAlgorithmIdentifier::SHA_512:
+        case CryptoAlgorithmIdentifier::SHA3_256:
+        case CryptoAlgorithmIdentifier::SHA3_384:
+        case CryptoAlgorithmIdentifier::SHA3_512:
             return Exception { NotSupportedError };
         case CryptoAlgorithmIdentifier::None:
             return Exception { NotSupportedError };
@@ -778,6 +784,7 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::Digest);
+    RETURN_IF_EXCEPTION(scope, void());
     if (paramsOrException.hasException()) {
         promise->reject(paramsOrException.releaseException().code(), "Unrecognized algorithm name"_s);
         return;

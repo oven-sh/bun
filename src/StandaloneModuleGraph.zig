@@ -267,19 +267,19 @@ pub const StandaloneModuleGraph = struct {
                 .none => null,
                 .parsed => |map| map,
                 .serialized => |serialized| {
-                    var stored = switch (SourceMap.Mapping.parse(
-                        bun.default_allocator,
-                        serialized.mappingVLQ(),
-                        null,
-                        std.math.maxInt(i32),
-                        std.math.maxInt(i32),
-                        .{},
-                    )) {
-                        .success => |x| x,
-                        .fail => {
-                            this.* = .none;
-                            return null;
-                        },
+                    const blob = serialized.mappingBlob() orelse {
+                        this.* = .none;
+                        return null;
+                    };
+                    if (!SourceMap.InternalSourceMap.isValidBlob(blob)) {
+                        this.* = .none;
+                        return null;
+                    }
+                    const ism = SourceMap.InternalSourceMap{ .data = blob.ptr };
+                    var stored: SourceMap.ParsedSourceMap = .{
+                        .ref_count = .init(),
+                        .internal = ism,
+                        .input_line_count = ism.inputLineCount(),
                     };
 
                     const source_files = serialized.sourceFileNames();
@@ -1348,6 +1348,38 @@ pub const StandaloneModuleGraph = struct {
         comptime unreachable;
     }
 
+    /// Hint to the kernel that the embedded `__BUN`/`.bun` source pages are
+    /// unlikely to be accessed again after the entrypoint has been parsed.
+    /// The pages are clean file-backed COW, so any later read (lazy require,
+    /// stack-trace source lookup) faults back in transparently from the
+    /// executable on disk. Only applies when running as a compiled
+    /// standalone binary.
+    pub fn hintSourcePagesDontNeed() void {
+        if (comptime Environment.isWindows) return;
+
+        const bytes: []const u8 = if (comptime Environment.isMac)
+            Macho.getData() orelse return
+        else if (comptime Environment.isLinux)
+            ELF.getData() orelse return
+        else
+            return;
+
+        if (bytes.len == 0) return;
+
+        const page: usize = std.heap.pageSize();
+        const start = std.mem.alignBackward(usize, @intFromPtr(bytes.ptr), page);
+        const end = std.mem.alignForward(usize, @intFromPtr(bytes.ptr) + bytes.len, page);
+
+        // std.posix.madvise hits `unreachable` on unexpected errnos; this is a
+        // best-effort hint, so call libc directly and just log on failure.
+        const rc = std.c.madvise(@ptrFromInt(start), end - start, std.posix.MADV.DONTNEED);
+        if (rc != 0) {
+            Output.debugWarn("hintSourcePagesDontNeed: madvise failed errno={d}", .{std.c._errno().*});
+            return;
+        }
+        Output.debugWarn("hintSourcePagesDontNeed: MADV_DONTNEED {d} bytes", .{end - start});
+    }
+
     /// Allocates a StandaloneModuleGraph on the heap, populates it from bytes, sets it globally, and returns the pointer.
     fn fromBytesAlloc(allocator: std.mem.Allocator, raw_bytes: []u8, offsets: Offsets) !*StandaloneModuleGraph {
         const graph_ptr = try allocator.create(StandaloneModuleGraph);
@@ -1358,14 +1390,15 @@ pub const StandaloneModuleGraph = struct {
 
     /// Source map serialization in the bundler is specially designed to be
     /// loaded in memory as is. Source contents are compressed with ZSTD to
-    /// reduce the file size, and mappings are stored as uncompressed VLQ.
+    /// reduce the file size, and mappings are stored as an InternalSourceMap
+    /// blob (varint deltas + sync points) so lookups need no decode pass.
     pub const SerializedSourceMap = struct {
         bytes: []const u8,
 
         /// Following the header bytes:
         /// - source_files_count number of StringPointer, file names
         /// - source_files_count number of StringPointer, zstd compressed contents
-        /// - the mapping data, `map_vlq_length` bytes
+        /// - the InternalSourceMap blob, `map_bytes_length` bytes
         /// - all the StringPointer contents
         pub const Header = extern struct {
             source_files_count: u32,
@@ -1376,9 +1409,11 @@ pub const StandaloneModuleGraph = struct {
             return @ptrCast(map.bytes.ptr);
         }
 
-        pub fn mappingVLQ(map: SerializedSourceMap) []const u8 {
+        pub fn mappingBlob(map: SerializedSourceMap) ?[]const u8 {
+            if (map.bytes.len < @sizeOf(Header)) return null;
             const head = map.header();
             const start = @sizeOf(Header) + head.source_files_count * @sizeOf(StringPointer) * 2;
+            if (start > map.bytes.len or head.map_bytes_length > map.bytes.len - start) return null;
             return map.bytes[start..][0..head.map_bytes_length];
         }
 
@@ -1466,14 +1501,16 @@ pub const StandaloneModuleGraph = struct {
         }
 
         const map_vlq: []const u8 = mappings_str.data.e_string.slice(arena);
+        const map_blob = SourceMap.InternalSourceMap.fromVLQ(arena, map_vlq, 0) catch
+            return error.InvalidSourceMap;
 
         try out.writeInt(u32, sources_paths.items.len, .little);
-        try out.writeInt(u32, @intCast(map_vlq.len), .little);
+        try out.writeInt(u32, @intCast(map_blob.len), .little);
 
         const string_payload_start_location = @sizeOf(u32) +
             @sizeOf(u32) +
             @sizeOf(bun.StringPointer) * sources_content.items.len * 2 + // path + source
-            map_vlq.len;
+            map_blob.len;
 
         for (sources_paths.items.slice()) |item| {
             if (item.data != .e_string)
@@ -1519,7 +1556,7 @@ pub const StandaloneModuleGraph = struct {
             try out.writeInt(u32, slice.length, .little);
         }
 
-        try out.writeAll(map_vlq);
+        try out.writeAll(map_blob);
 
         bun.assert(header_list.items.len == string_payload_start_location);
     }

@@ -22,6 +22,22 @@ export const patchInternals = {
   makeDiff: $newZigFunction("patch.zig", "TestingAPIs.makeDiff", 2),
 };
 
+export const internalSourceMap = {
+  fromVLQ: $newZigFunction("sourcemap/InternalSourceMap.zig", "TestingAPIs.fromVLQ", 1) as (vlq: string) => Uint8Array,
+  toVLQ: $newZigFunction("sourcemap/InternalSourceMap.zig", "TestingAPIs.toVLQ", 1) as (blob: Uint8Array) => string,
+  find: $newZigFunction("sourcemap/InternalSourceMap.zig", "TestingAPIs.find", 3) as (
+    blob: Uint8Array,
+    line: number,
+    col: number,
+  ) => {
+    generatedLine: number;
+    generatedColumn: number;
+    originalLine: number;
+    originalColumn: number;
+    sourceIndex: number;
+  } | null,
+};
+
 const shellLex = $newZigFunction("shell.zig", "TestingAPIs.shellLex", 2);
 const shellParse = $newZigFunction("shell.zig", "TestingAPIs.shellParse", 2);
 
@@ -224,3 +240,15 @@ export const hostedGitInfo = {
   parseUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsParseUrl", 1),
   fromUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsFromUrl", 1),
 };
+
+export const translateUVErrorToE: (code: number) => string | undefined = $newZigFunction(
+  "sys.zig",
+  "TestingAPIs.translateUVErrorToE",
+  1,
+);
+
+export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $newZigFunction(
+  "sys/Error.zig",
+  "TestingAPIs.sysErrorNameFromLibuv",
+  1,
+);

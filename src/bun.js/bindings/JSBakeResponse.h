@@ -3,6 +3,7 @@
 #include "JSCookieMap.h"
 #include "root.h"
 #include "ZigGeneratedClasses.h"
+#include "WebCoreJSBuiltins.h"
 
 namespace Bun {
 using namespace JSC;

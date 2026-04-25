@@ -138,10 +138,15 @@ const buildPlatforms = [
  * @type {Platform[]}
  */
 const testPlatforms = [
-  { os: "darwin", arch: "aarch64", release: "14", tier: "latest" },
-  { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
+  // Darwin arm64 is targeted by `release-tier` (see getTestAgent): one job on
+  // `latest` (current macOS, 26 today) and one on `previous` (anything older
+  // — currently 13/14/15). x64 is NOT tier-targeted: a single entry runs on
+  // whichever Intel box is free. Intel Macs can't run latest macOS and the
+  // tier split bottlenecked the smaller pool, so x64 trades guaranteed
+  // version coverage for throughput. The `release` field only labels the step.
+  { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
+  { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
-  { os: "darwin", arch: "x64", release: "13", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "13", tier: "latest" },
@@ -347,7 +352,8 @@ function getLinkBunAgent(platform, options) {
   }
 
   return getEc2Agent(platform, options, {
-    instanceType: arch === "aarch64" ? "r8g.xlarge" : "r7i.xlarge",
+    // Full LTO with bun-zig.o as bitcode peaks >31 GiB on aarch64; xlarge OOMs.
+    instanceType: arch === "aarch64" ? "r8g.2xlarge" : "r7i.2xlarge",
   });
 }
 
@@ -379,9 +385,11 @@ function getZigAgent(platform, options) {
     });
   }
 
-  // Everything else cross-compiles from Linux aarch64
+  // Everything else cross-compiles from Linux aarch64. ASAN gets a wider
+  // box: it builds with cg=CI_ASAN_CODEGEN_THREADS (8) so it can use the
+  // parallel backend; release stays at cg=1 (full IPO) so 2 vCPU suffice.
   return getEc2Agent(getZigPlatform(), options, {
-    instanceType: "r8g.large",
+    instanceType: platform.profile === "asan" ? "r8g.2xlarge" : "r8g.large",
   });
 }
 
@@ -391,13 +399,19 @@ function getZigAgent(platform, options) {
  * @returns {Agent}
  */
 function getTestAgent(platform, options) {
-  const { os, arch, profile } = platform;
+  const { os, arch, profile, tier } = platform;
 
   if (os === "darwin") {
+    // `release-tier` is emitted by scripts/agent.mjs based on the box's macOS
+    // major version. arm64 splits into `latest` (current macOS) + `previous`
+    // (anything older). x64 is NOT tier-targeted — single entry, any Intel
+    // box — because the tier split bottlenecked the smaller pool and Intel
+    // can't run latest anyway.
     return {
       queue: `test-${os}`,
       os,
       arch,
+      ...(arch === "aarch64" ? { "release-tier": tier } : {}),
     };
   }
 
@@ -410,6 +424,12 @@ function getTestAgent(platform, options) {
     });
   }
 
+  // musl: same vCPU as glibc but 2× RAM (m-family). The alpine images now bake
+  // ~14 GB of build prefetch + ~6 GB of pre-pulled docker test images, and
+  // the docker test containers (mysql/postgres on tmpfs) run alongside the
+  // tests — c-family's 8 GB was the wrong side of tight.
+  const musl = platform.abi === "musl";
+
   if (arch === "aarch64") {
     if (profile === "asan") {
       return getEc2Agent(platform, options, {
@@ -419,7 +439,7 @@ function getTestAgent(platform, options) {
       });
     }
     return getEc2Agent(platform, options, {
-      instanceType: "c8g.xlarge",
+      instanceType: musl ? "m8g.xlarge" : "c8g.xlarge",
       cpuCount: 2,
       threadsPerCore: 1,
     });
@@ -433,7 +453,7 @@ function getTestAgent(platform, options) {
     });
   }
   return getEc2Agent(platform, options, {
-    instanceType: "c7i.xlarge",
+    instanceType: musl ? "m7i.xlarge" : "c7i.xlarge",
     cpuCount: 2,
     threadsPerCore: 1,
   });
@@ -701,8 +721,11 @@ function getTestBunStep(platform, options, testOptions = {}) {
     args.push(`--build-id=${buildId}`);
   }
 
-  if (testFiles) {
+  if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
+  } else {
+    // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead
+    args.push("--exclude=integration/bun-types");
   }
 
   const depends = [];
@@ -764,6 +787,11 @@ function getBuildImageStep(platform, options) {
     },
     env: {
       DEBUG: "1",
+      // Packer needs several minutes to delete its temp Azure resources after a cancel;
+      // the agent's default 10s grace SIGKILLs it mid-cleanup and leaks a full
+      // VM/NIC/IP stack per retry. The agent reads this from job env — there's no
+      // step-level property for it.
+      BUILDKITE_SIGNAL_GRACE_PERIOD_SECONDS: `${10 * 60}`,
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
@@ -827,6 +855,7 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
   const targets = releasePlatforms.map(p => ({ triplet: getTargetTriplet(p) }));
   const args = [`--targets '${JSON.stringify(targets)}'`, `--threshold-mb ${BINARY_SIZE_THRESHOLD_MB}`];
   if (recordOnly) args.push("--no-fail");
+  if (!options.canary) args.push("--release");
 
   return {
     key: "binary-size",

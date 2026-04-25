@@ -21,7 +21,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { ar, cc } from "./compile.ts";
+import { ar, cc, cxx, nasm } from "./compile.ts";
 import type { BuildType, Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { computeSourceIdentity, fetchCliPath } from "./fetch-cli.ts";
@@ -169,21 +169,53 @@ export type BuildSpec =
       kind: "none";
     };
 
+/** A source file with extra per-file flags (e.g. SIMD `-mavx2`). */
+export interface DirectSource {
+  path: string;
+  cflags: string[];
+}
+
+/** A header derived from a template in the source tree. */
+export interface HeaderSubst {
+  /** Template path relative to srcDir (e.g. "zlib.h.in"). */
+  from: string;
+  /**
+   * Literal replacements applied via `String.split(from).join(to)` — no
+   * regex. cmake's `configure_file(@ONLY)` is exactly this: each `@VAR@`
+   * token swaps for a fixed string. Order is as given.
+   */
+  replace?: Array<[from: string, to: string]>;
+}
+
 /**
  * Compile sources directly into our ninja graph — no cmake/cargo sub-process.
  *
- * Each source becomes a `cc` build edge; outputs are archived into
- * `buildDir/deps/<name>/lib<name>.a`. Flags are the same globals that
- * nested-cmake deps get (computeDepFlags) so ASAN/optimization/target
- * stay consistent.
- *
- * Use this for deps simple enough that an overlay CMakeLists.txt is more
- * work than listing the files — tinycc, picohttpparser, libdeflate.
+ * Each source becomes a `cc`/`cxx`/`nasm` build edge; outputs are archived
+ * into `buildDir/deps/<name>/lib<name>.a`. Flags are the same globals that
+ * nested-cmake deps get (computeDepFlags) so ASAN/optimization/target stay
+ * consistent.
  */
 export interface DirectBuild {
   kind: "direct";
-  /** C sources relative to srcDir. */
-  sources: string[];
+  /**
+   * C/.S sources relative to srcDir. A bare string compiles with the dep's
+   * shared flags; the object form appends per-file cflags (used for SIMD
+   * kernels that need `-m<isa>` while the rest of the dep does not).
+   */
+  sources: Array<string | DirectSource>;
+  /**
+   * Compile sources as C++ even when they're .c files. Uses cxxflags from
+   * computeDepFlags and prepends `-x c++`. Mimalloc needs this — its public
+   * headers are read by both C++ TUs and the allocator implementation, and
+   * C/C++ can disagree on struct layout for trailing flexible arrays.
+   */
+  lang?: "c" | "cxx";
+  /**
+   * Same semantics as NestedCmakeBuild.pic. true → -fPIC; false (default)
+   * → on darwin add -fno-pic -fno-pie to undo apple-clang's PIC default,
+   * elsewhere nothing. Windows is a no-op either way.
+   */
+  pic?: boolean;
   /**
    * Preprocessor defines. Value type controls the emitted form:
    *   true    → -DNAME
@@ -194,14 +226,24 @@ export interface DirectBuild {
   defines?: Record<string, string | number | true>;
   /** Extra C flags beyond computeDepFlags globals. */
   cflags?: string[];
+  /** Flags for `.asm` sources (nasm). Separate because nasm doesn't share clang's argv shape. */
+  nasmflags?: string[];
   /** Include dirs relative to srcDir (no -I prefix). "." for the root. */
   includes?: string[];
   /**
-   * Empty header files written to buildDir/deps/<name>/ at configure time.
-   * For deps that `#include "config.h"` where we have nothing to put in it.
-   * buildDir is added to -I so sources find them.
+   * Headers written to buildDir/deps/<name>/. Key is the output filename;
+   * buildDir is added to -I so sources find them. Two value forms:
+   *
+   *   string       Literal contents written at configure time. For
+   *                autotools-style `#include "config.h"` where we
+   *                hand-write the answers instead of probing.
+   *
+   *   HeaderSubst  Derived from a template in srcDir at build time
+   *                (ninja edge). For *.h.in files where the upstream
+   *                header is too large to inline but the substitution
+   *                is trivial.
    */
-  stubHeaders?: string[];
+  headers?: Record<string, string | HeaderSubst>;
   /**
    * Build-time host tool that generates headers the library sources
    * include. Compiled WITHOUT sanitizers — it runs once on the build
@@ -332,6 +374,9 @@ export interface Provides {
    * Library outputs to link. Paths relative to the dep's BUILD directory
    * (or its libSubdir if set). May be bare names ("mimalloc" → libmimalloc.a)
    * or exact paths ("CMakeFiles/mimalloc-obj.dir/src/static.c.o").
+   *
+   * Ignored for `direct` builds — emitDirect names the archive
+   * `lib<dep.name>` and returns that path itself.
    */
   libs: string[];
   /** Include directories. Paths relative to the dep's SOURCE directory. */
@@ -374,11 +419,15 @@ export interface Dependency {
   patches?: string[] | ((cfg: Config) => string[]);
 
   /**
-   * Other deps whose SOURCE must be ready before this dep's build runs.
+   * Other deps that must be BUILT before this dep's configure runs.
    * Used for header-level dependencies — e.g. libarchive needs zlib's
-   * headers at compile time (`-I${vendorDir}/zlib`), so zlib must be
-   * fetched first. This adds an order-only dep on the other dep's source
-   * stamp — it does NOT link the other dep's libs (that's `provides.libs`).
+   * headers at configure time (`check_include_file("zlib.h")`). zlib-ng
+   * generates `zlib.h` during its own cmake configure, so libarchive must
+   * wait for zlib's full build, not just its source fetch.
+   *
+   * Resolves to the named dep's build outputs (lib files for nested-cmake,
+   * source stamp for header-only). Order-only on configure, implicit on
+   * build. Does NOT link the other dep's libs (that's `provides.libs`).
    */
   fetchDeps?: string[];
 
@@ -412,8 +461,18 @@ export interface Dependency {
  */
 export interface ResolvedDep {
   name: string;
-  /** Absolute paths to .a/.lib/.o files for link(). */
+  /**
+   * Absolute paths to .a/.lib files for link(). Populated by nested-cmake/
+   * cargo/prebuilt deps, and by `direct` deps when `cfg.archiveDeps` is on.
+   */
   libs: string[];
+  /**
+   * Absolute paths to .o/.obj files for link(). Populated by `direct` deps
+   * when `cfg.archiveDeps` is off (the default) — the dep's sources are
+   * compiled in our graph and the resulting objects go straight into bun's
+   * link line / cpp-only archive instead of an intermediate `.a`.
+   */
+  objects: string[];
   /** Absolute include paths for -I flags. */
   includes: string[];
   defines: string[];
@@ -552,6 +611,17 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     restat: true,
   });
 
+  // DirectBuild header substitution: literal string replacement on a
+  // template file (cmake's configure_file(@ONLY) without the cmake).
+  // restat is what makes this cheap — if the output text is unchanged
+  // (unmodified template, same replacements), downstream .o files are
+  // pruned via their depfile entries.
+  n.rule("dep_subst", {
+    command: `${cfg.jsRuntime} ${fetchCli} subst $in $out $pairs`,
+    description: "subst $out",
+    restat: true,
+  });
+
   // The `dep` pool: depth-4 balances two concerns. Each nested cmake/cargo
   // build spawns its own -j parallelism; running all 15 at once would
   // oversubscribe cores badly (15 × nproc jobs). Four-at-a-time keeps CPU
@@ -575,8 +645,8 @@ export function depSourceDir(cfg: Config, name: string): string {
 }
 
 /**
- * Path to a dep's fetch stamp. Used by fetchDeps to add cross-dep
- * ordering (e.g. libarchive's build waits for zlib's .ref).
+ * Path to a dep's fetch stamp. Used by zig-only mode to depend on zstd's
+ * source being on disk without resolving the full dep graph.
  */
 export function depSourceStamp(cfg: Config, name: string): string {
   return resolve(depSourceDir(cfg, name), ".ref");
@@ -597,7 +667,12 @@ export function depBuildDir(cfg: Config, name: string): string {
  * If the dep is disabled (enabled() returns false), returns null. Caller
  * should skip.
  */
-export function resolveDep(n: Ninja, cfg: Config, dep: Dependency): ResolvedDep | null {
+export function resolveDep(
+  n: Ninja,
+  cfg: Config,
+  dep: Dependency,
+  resolved: ReadonlyMap<string, ResolvedDep>,
+): ResolvedDep | null {
   if (dep.enabled && !dep.enabled(cfg)) {
     return null;
   }
@@ -636,10 +711,16 @@ export function resolveDep(n: Ninja, cfg: Config, dep: Dependency): ResolvedDep 
 
   // DirectBuild sources are ALSO compiled in our ninja graph, so they need
   // the same implicit-output-of-fetch treatment. Include the codegen tool
-  // source and its input file too — the tool reads that file at build time.
+  // source, its input, and any HeaderSubst templates — all read at build
+  // time from the fetched tree.
   const directSources: string[] = [];
   if (buildSpec.kind === "direct") {
-    directSources.push(...buildSpec.sources.map(s => resolve(srcDir, s)));
+    for (const s of buildSpec.sources) {
+      directSources.push(resolve(srcDir, typeof s === "string" ? s : s.path));
+    }
+    for (const h of Object.values(buildSpec.headers ?? {})) {
+      if (typeof h !== "string") directSources.push(resolve(srcDir, h.from));
+    }
     if (buildSpec.codegen !== undefined) {
       directSources.push(resolve(srcDir, buildSpec.codegen.tool));
       for (const a of buildSpec.codegen.args) {
@@ -686,22 +767,27 @@ export function resolveDep(n: Ninja, cfg: Config, dep: Dependency): ResolvedDep 
   }
 
   // ─── Resolve fetchDeps → extra inputs on configure + build ───
-  // These are deps whose SOURCE must be ready before we build (not link).
-  // E.g. libarchive compiles with -I${vendorDir}/zlib so zlib must be fetched.
+  // These are deps that must be BUILT before we configure (not link).
+  // E.g. libarchive's configure runs check_include_file("zlib.h"), and
+  // zlib-ng generates zlib.h during its own cmake configure — so we depend
+  // on zlib's lib output (which implies its configure ran).
   //
-  // On CONFIGURE: order-only. Configure needs the headers to exist (for
-  //   check_include_file), but doesn't track their content — feature
-  //   detection results are cached in CMakeCache.txt regardless.
+  // On CONFIGURE: order-only. Configure needs the headers to exist, but
+  //   doesn't track their content — feature detection is cached in
+  //   CMakeCache.txt regardless.
   //
-  // On BUILD: implicit. If the cross-dep source is re-fetched (commit bump),
-  //   its headers may have changed; our .o files track them via the inner
-  //   ninja's .d files. We need to re-invoke `cmake --build` so the inner
-  //   ninja can detect staleness. Restat on the build rule ensures that if
-  //   the headers DIDN'T actually change, the inner no-op prunes downstream.
-  const fetchDepStamps = (dep.fetchDeps ?? []).map(d => depSourceStamp(cfg, d));
+  // On BUILD: implicit. If the cross-dep rebuilds (commit bump), its
+  //   headers may have changed; our .o files track them via the inner
+  //   ninja's .d files. Restat prunes downstream when nothing changed.
+  const fetchDepStamps = (dep.fetchDeps ?? []).flatMap(d => {
+    const r = resolved.get(d);
+    assert(r, `${dep.name}: fetchDeps references '${d}' but it wasn't resolved first — fix allDeps ordering`);
+    return r.outputs;
+  });
 
   // ─── Step 2+3: build ───
   let libs: string[];
+  let objects: string[] = [];
   let outputs: string[];
 
   if (buildSpec.kind === "nested-cmake") {
@@ -724,7 +810,11 @@ export function resolveDep(n: Ninja, cfg: Config, dep: Dependency): ResolvedDep 
   } else if (buildSpec.kind === "direct") {
     const result = emitDirect(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp, fetchDepStamps });
     libs = result.libs;
-    outputs = result.libs;
+    objects = result.objects;
+    // outputs is the "downstream needs me built" signal — for direct deps
+    // that's the generated headers + source stamp, NOT the .o files (those
+    // are link inputs, not include-order dependencies).
+    outputs = result.headerOutputs;
   } else {
     // No build step. Source stamp is the only output. For deps with
     // provides.sources (picohttpparser), emitBun adds a phony pointing at
@@ -749,6 +839,7 @@ export function resolveDep(n: Ninja, cfg: Config, dep: Dependency): ResolvedDep 
   return {
     name: dep.name,
     libs,
+    objects,
     includes,
     defines: provides.defines ?? [],
     sources: resolvedSources,
@@ -807,8 +898,11 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
     return [resolve(targetDir, outSubdir, `${cfg.libPrefix}${buildSpec.libName}${cfg.libSuffix}`)];
   }
 
-  // direct: single lib<name>.a in buildDir/deps/<name>/.
+  // direct: single lib<name>.a when archiveDeps; otherwise the dep's .o
+  // files are folded into libbun.a in cpp-only and there's no separate
+  // artifact for link-only to fetch.
   if (buildSpec.kind === "direct") {
+    if (!cfg.archiveDeps) return [];
     const buildDir = depBuildDir(cfg, dep.name);
     return [resolve(buildDir, `${cfg.libPrefix}${dep.name}${cfg.libSuffix}`)];
   }
@@ -939,6 +1033,7 @@ function emitPrebuilt(
   return {
     name,
     libs,
+    objects: [],
     includes,
     defines: provides.defines ?? [],
     sources: [],
@@ -1152,8 +1247,9 @@ function emitNestedCmake(
     return resolve(libDir, `${cfg.libPrefix}${lib}${cfg.libSuffix}`);
   });
 
-  // Targets default to lib names — most deps name their cmake target
-  // the same as the output library (boringssl's "crypto" → libcrypto.a).
+  // Targets default to lib names — for deps where the cmake target and
+  // the output library share a name. Any dep that diverges sets
+  // `targets` explicitly.
   const targets = spec.targets ?? provides.libs.filter(l => !l.includes("."));
 
   // ─── Emit build node ───
@@ -1306,7 +1402,7 @@ function emitDirect(
   name: string,
   spec: DirectBuild,
   input: EmitDirectInput,
-): { libs: string[] } {
+): { libs: string[]; objects: string[]; headerOutputs: string[] } {
   const { srcDir, sourceStamp, fetchDepStamps } = input;
   const buildDir = depBuildDir(cfg, name);
   const hostWin = cfg.host.os === "windows";
@@ -1316,25 +1412,57 @@ function emitDirect(
 
   // Library flags: globals (includes ASAN when cfg.asan) + dep's own includes
   // and defines. Same base as what gets forwarded to nested cmake via
-  // CMAKE_C_FLAGS.
+  // CMAKE_C_FLAGS / CMAKE_CXX_FLAGS. `lang` picks the flag set; the compile
+  // function is chosen per-file by extension below.
   const depFlags = computeDepFlags(cfg);
+  const isCxx = spec.lang === "cxx";
+  const baseFlags = isCxx ? depFlags.cxxflags : depFlags.cflags;
+
+  // PIC: mirror emitNestedCmake's handling so direct deps get the same
+  // codegen as cmake deps would. spec.pic → -fPIC; otherwise on darwin
+  // undo apple-clang's PIC default to match the non-PIE final binary.
+  const picFlags: string[] = [];
+  if (spec.pic) {
+    if (!cfg.windows) picFlags.push("-fPIC");
+  } else if (cfg.darwin) {
+    picFlags.push("-fno-pic", "-fno-pie");
+  }
+
   const incFlags = (spec.includes ?? []).map(i => `-I${q(resolve(srcDir, i))}`);
   const defFlags = Object.entries(spec.defines ?? {}).map(([k, v]) => defineFlag(k, v));
-  const libFlags = [...depFlags.cflags, ...incFlags, ...defFlags, ...(spec.cflags ?? [])];
+  const libFlags = [...baseFlags, ...picFlags, ...incFlags, ...defFlags, ...(spec.cflags ?? [])];
 
   // Sources must exist before compile attempts. sourceStamp (or the fetch
   // .ref) is order-only: we don't want every .o recompiling when the stamp
   // mtime bumps but the .c files are unchanged — the depfile knows better.
   const orderOnly = [sourceStamp, ...fetchDepStamps];
 
-  // ─── Stub headers (optional) ───
-  // Written at configure time (not ninja nodes — they're constant, no
-  // dependencies). buildDir added to -I below so sources find them.
-  const needsBuildDirInc = (spec.stubHeaders?.length ?? 0) > 0 || spec.codegen !== undefined;
-  if (spec.stubHeaders !== undefined && spec.stubHeaders.length > 0) {
+  // ─── Generated headers (optional) ───
+  // Literal-string headers are written at configure time via writeIfChanged
+  // (mtime only moves when contents change). HeaderSubst headers become
+  // ninja edges — their template lives in srcDir, which doesn't exist
+  // until fetch runs. Either way buildDir goes on -I and the outputs are
+  // implicit inputs to every cc edge.
+  const headers = Object.entries(spec.headers ?? {});
+  const needsBuildDirInc = headers.length > 0 || spec.codegen !== undefined;
+  const generated: string[] = [];
+  if (headers.length > 0) {
     mkdirSync(buildDir, { recursive: true });
-    for (const h of spec.stubHeaders) {
-      writeIfChanged(resolve(buildDir, h), "/* stub — generated at configure */\n");
+    for (const [h, body] of headers) {
+      const out = resolve(buildDir, h);
+      if (typeof body === "string") {
+        writeIfChanged(out, body === "" ? "/* stub — generated at configure */\n" : body);
+      } else {
+        n.build({
+          outputs: [out],
+          rule: "dep_subst",
+          inputs: [resolve(srcDir, body.from)],
+          implicitInputs: [fetchCliPath],
+          orderOnlyInputs: orderOnly,
+          vars: { pairs: quoteArgs((body.replace ?? []).flat(), hostWin) },
+        });
+        generated.push(out);
+      }
     }
   }
 
@@ -1384,24 +1512,53 @@ function emitDirect(
   }
 
   // ─── Compile + archive ───
-  // Generated header (if any) is an implicit input to every .o — library
-  // sources include it. buildDir goes on -I so #include "foo.h" finds
-  // both stub and generated headers.
-  const implicit = generatedHeader !== undefined ? [generatedHeader] : [];
+  // Generated headers (codegen + subst) are implicit inputs to every .o —
+  // library sources include them. buildDir goes on -I so #include "foo.h"
+  // finds literal, subst, and codegen headers alike.
+  if (generatedHeader !== undefined) generated.push(generatedHeader);
+  const implicit = generated;
   const genInc = needsBuildDirInc ? [`-I${q(buildDir)}`] : [];
 
-  const objects = spec.sources.map(s =>
-    cc(n, cfg, resolve(srcDir, s), {
-      flags: [...libFlags, ...genInc],
+  const objects = spec.sources.map(s => {
+    const path = typeof s === "string" ? s : s.path;
+    const extra = typeof s === "string" ? [] : s.cflags;
+    const abs = resolve(srcDir, path);
+    // .asm → nasm() (NASM syntax, Windows-x64). .c/.S → cc() (clang's
+    // integrated assembler handles .S), prepending `-x c++` when lang:"cxx"
+    // forces a C source through the C++ frontend (mimalloc). Everything
+    // else (.cc/.cpp/.cxx) → cxx().
+    if (path.endsWith(".asm")) {
+      return nasm(n, cfg, abs, { flags: [...(spec.nasmflags ?? []), ...extra], orderOnlyInputs: orderOnly });
+    }
+    const isC = path.endsWith(".c");
+    const isAsm = path.endsWith(".S");
+    const opts = {
+      flags: [...(isC && isCxx ? ["-x", "c++"] : []), ...libFlags, ...genInc, ...extra],
       orderOnlyInputs: orderOnly,
       implicitInputs: implicit,
-    }),
-  );
+    };
+    return isC || isAsm ? cc(n, cfg, abs, opts) : cxx(n, cfg, abs, opts);
+  });
 
-  const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects);
-  n.phony(name, [lib]);
-
-  return { libs: [lib] };
+  // Default: hand the objects straight to bun's link line — no intermediate
+  // archive. With cfg.archiveDeps the old per-dep .a is produced instead
+  // (useful for bisecting duplicate-symbol issues, since a .a only
+  // contributes members the linker actually pulls).
+  if (cfg.archiveDeps) {
+    // ar's output dir + the per-source obj dirs both need pre-creating —
+    // configure.ts:mkdirAll only sees `output.objects`, which is empty
+    // in this branch.
+    mkdirSync(buildDir, { recursive: true });
+    for (const o of objects) mkdirSync(resolve(o, ".."), { recursive: true });
+    const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects);
+    n.phony(name, [lib]);
+    return { libs: [lib], objects: [], headerOutputs: [lib] };
+  }
+  n.phony(name, objects);
+  // headerOutputs: what downstream needs to wait on for HEADERS to be
+  // ready. For no-archive direct deps that's the generated header set
+  // (subst/literal/codegen) plus the source stamp — not the .o files.
+  return { libs: [], objects, headerOutputs: [...generated, sourceStamp] };
 }
 
 /**

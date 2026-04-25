@@ -1,6 +1,6 @@
 import { $ as Shell, fileURLToPath } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { makeTree } from "harness";
+import { bunEnv, bunExe, makeTree } from "harness";
 import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -312,6 +312,36 @@ describe("@types/bun integration test", () => {
     typeTest("checks without lib.dom.d.ts", {
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
       diagnostics: [],
+    });
+  });
+
+  // TypeScript 7's native (Go-based) compiler does not expose a JS compiler API yet,
+  // so unlike the tests above we have to write a real tsconfig and spawn the CLI.
+  // https://devblogs.microsoft.com/typescript/announcing-typescript-7-0-beta/
+  describe("tsgo (TypeScript 7 native preview)", () => {
+    test("checks without lib.dom.d.ts", async () => {
+      const fixtureDir = await createIsolatedFixture(["@typescript/native-preview"]);
+
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.compilerOptions.skipLibCheck = false;
+      tsconfig.include = ["*.ts", "*.tsx"];
+      await Bun.write(join(fixtureDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
+
+      const tsgo = join(fixtureDir, "node_modules", "@typescript", "native-preview", "bin", "tsgo.js");
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), tsgo, "-p", "."],
+        env: bunEnv,
+        cwd: fixtureDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
     });
   });
 

@@ -9,7 +9,7 @@ import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
 import { ChildProcess, execSync, fork } from "child_process";
-import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
+import { readdir, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
@@ -762,7 +762,7 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
   };
 }
 
-export async function toHaveBins(actual: string[], expectedBins: string[]) {
+export function toHaveBins(actual: string[], expectedBins: string[]) {
   const message = () => `Expected ${actual} to be package bins ${expectedBins}`;
 
   if (isWindows) {
@@ -777,19 +777,19 @@ export async function toHaveBins(actual: string[], expectedBins: string[]) {
   return { pass: actual.every((bin, i) => bin === expectedBins[i]), message };
 }
 
-export async function toBeValidBin(actual: string, expectedLinkPath: string) {
+export function toBeValidBin(actual: string, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
-    const contents = await readFile(actual + ".bunx", "utf16le");
+    const contents = fs.readFileSync(actual + ".bunx", "utf16le");
     const expected = expectedLinkPath.slice(3);
     return { pass: contents.includes(expected), message };
   }
 
-  return { pass: (await readlink(actual)) === expectedLinkPath, message };
+  return { pass: fs.readlinkSync(actual) === expectedLinkPath, message };
 }
 
-export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
+export function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
@@ -1001,19 +1001,22 @@ export async function describeWithContainer(
         ready: readyPromise,
       };
 
-      // Start the service before any tests
+      // Kick off `ensure()` at describe-define time so a file with multiple
+      // describeWithContainer blocks starts all of its containers in parallel.
+      // up() de-duplicates in-flight calls per service, so two describes for
+      // the same service share one `compose up`. beforeAll just awaits the
+      // result so test failures still surface there.
+      const startPromise = import("./docker/index.ts").then(h => h.ensure(actualService as any));
+      // Surface any rejection through `ready`; without a handler the runner
+      // would see an unhandled rejection before beforeAll re-throws it.
+      startPromise.catch(readyRejecter!);
+
       beforeAll(async () => {
-        try {
-          const dockerHelper = await import("./docker/index.ts");
-          const info = await dockerHelper.ensure(actualService as any);
-          _host = info.host;
-          _port = info.ports[servicePort];
-          console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);
-          readyResolver!();
-        } catch (error) {
-          readyRejecter!(error);
-          throw error;
-        }
+        const info = await startPromise;
+        _host = info.host;
+        _port = info.ports[servicePort];
+        console.log(`Container ready via docker-compose: ${image} at ${_host}:${_port}`);
+        readyResolver!();
       });
 
       fn(containerDescriptor);
@@ -1771,6 +1774,9 @@ cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
     if (opts.linker) {
       bunfig += `linker = "${opts.linker}"\n`;
     }
+    if (opts.globalStore !== undefined) {
+      bunfig += `globalStore = ${opts.globalStore}\n`;
+    }
     if (opts.publicHoistPattern) {
       if (typeof opts.publicHoistPattern === "string") {
         bunfig += `publicHoistPattern = "${opts.publicHoistPattern}"`;
@@ -1786,6 +1792,7 @@ type BunfigOpts = {
   saveTextLockfile?: boolean;
   npm?: boolean;
   linker?: "isolated" | "hoisted";
+  globalStore?: boolean;
   publicHoistPattern?: string | string[];
 };
 

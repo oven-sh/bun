@@ -28,6 +28,7 @@
 
 #include "Exception.h"
 #include "WebCoreJSClientData.h"
+#include "WebCoreJSBuiltins.h"
 
 namespace WebCore {
 

@@ -6,7 +6,7 @@
 // https://github.com/oven-sh/bun/issues/24742
 
 import { expect, test } from "bun:test";
-import { chmodSync, cpSync, existsSync, readFileSync } from "fs";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 import { join } from "path";
 
@@ -41,7 +41,37 @@ function readInterp(buf: Buffer): string | null {
   return null;
 }
 
-test.skipIf(!isLinux || !patchelf || !existsSync(ldso))(
+// Read up to the first 4 KiB of a file (enough for PT_INTERP, which always
+// lives in the first ELF page). The bun binary is ~1.3 GB in debug builds,
+// so `readFileSync` on it would be wasteful; mirror what the Zig helper does.
+function readHead(path: string, bytes = 4096): Buffer {
+  const fd = openSync(path, "r");
+  try {
+    const buf = Buffer.alloc(bytes);
+    const n = readSync(fd, buf, 0, bytes, 0);
+    return buf.subarray(0, n);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Mirror of `hostUsesNixStoreInterpreter()` in src/elf.zig. After #29290 the
+// normalization is skipped on Nix/Guix hosts — this assertion only holds on
+// non-Nix hosts. (The #29290 test covers the NixOS-host branch.)
+function hostLooksNix(): boolean {
+  if (!isLinux) return false;
+  if (existsSync("/etc/NIXOS")) return true;
+  if (existsSync("/gnu/store")) return true;
+  try {
+    const selfInterp = readInterp(readHead(bunExe()));
+    if (selfInterp && (selfInterp.startsWith("/nix/store/") || selfInterp.startsWith("/gnu/store/"))) {
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+test.skipIf(!isLinux || !patchelf || !existsSync(ldso) || hostLooksNix())(
   "bun build --compile normalizes /nix/store interpreter (#24742)",
   async () => {
     using dir = tempDir("nix-interp", {
@@ -62,7 +92,7 @@ test.skipIf(!isLinux || !patchelf || !existsSync(ldso))(
       expect(r.stderr.toString()).toBe("");
       expect(r.exitCode).toBe(0);
     }
-    expect(readInterp(readFileSync(fakeNixBun))).toBe(fakeNixInterp);
+    expect(readInterp(readHead(fakeNixBun))).toBe(fakeNixInterp);
 
     // Build using the patched binary as the template via --compile-executable-path.
     // (We run the real bunExe(); only the *source* of the copy is the Nix-patched one.)
@@ -91,7 +121,7 @@ test.skipIf(!isLinux || !patchelf || !existsSync(ldso))(
 
     // The compiled output's interpreter must be the standard FHS path,
     // not the /nix/store path baked into fake-nix-bun.
-    const interp = readInterp(readFileSync(out));
+    const interp = readInterp(readHead(out));
     expect(interp).toBe(ldso);
 
     // And it must actually run on a stock system.
@@ -101,4 +131,5 @@ test.skipIf(!isLinux || !patchelf || !existsSync(ldso))(
       expect(r.exitCode).toBe(0);
     }
   },
+  180_000,
 );

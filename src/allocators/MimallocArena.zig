@@ -8,9 +8,8 @@ const Self = @This();
 ///
 /// This type is a `GenericAllocator`; see `src/allocators.zig`.
 pub const Default = struct {
-    pub fn allocator(self: Default) std.mem.Allocator {
-        _ = self;
-        return Borrowed.getDefault().allocator();
+    pub fn allocator(_: Default) std.mem.Allocator {
+        return .{ .ptr = undefined, .vtable = &global_mimalloc_vtable };
     }
 };
 
@@ -23,11 +22,20 @@ pub const Borrowed = struct {
     #heap: BorrowedHeap,
 
     pub fn allocator(self: Borrowed) std.mem.Allocator {
-        return .{ .ptr = self.#heap, .vtable = &c_allocator_vtable };
+        return .{ .ptr = self.#heap, .vtable = &heap_allocator_vtable };
     }
 
+    /// Prefer `Default.allocator()` / `getThreadLocalDefault()` for a thread-safe
+    /// global allocator. This returns the process-wide main heap so that
+    /// `gc()` / `ownsPtr()` on the result remain meaningful.
     pub fn getDefault() Borrowed {
-        return .{ .#heap = getThreadHeap() };
+        const heap = mimalloc.mi_heap_main();
+        if (comptime !safety_checks) return .{ .#heap = heap };
+        const S = struct {
+            threadlocal var dbg: ?DebugHeap = null;
+        };
+        if (S.dbg == null) S.dbg = .{ .inner = heap, .thread_lock = .initLocked() };
+        return .{ .#heap = &S.dbg.? };
     }
 
     pub fn gc(self: Borrowed) void {
@@ -42,7 +50,7 @@ pub const Borrowed = struct {
     }
 
     pub fn ownsPtr(self: Borrowed, ptr: *const anyopaque) bool {
-        return mimalloc.mi_heap_check_owned(self.getMimallocHeap(), ptr);
+        return mimalloc.mi_heap_contains(self.getMimallocHeap(), ptr);
     }
 
     fn fromOpaque(ptr: *anyopaque) Borrowed {
@@ -81,8 +89,8 @@ pub const Borrowed = struct {
 
     pub fn downcast(std_alloc: std.mem.Allocator) Borrowed {
         bun.assertf(
-            isInstance(std_alloc),
-            "not a MimallocArena (vtable is {*})",
+            std_alloc.vtable == &heap_allocator_vtable,
+            "not an owned MimallocArena heap (vtable is {*})",
             .{std_alloc.vtable},
         );
         return .fromOpaque(std_alloc.ptr);
@@ -98,19 +106,6 @@ const DebugHeap = struct {
     pub const deinit = void;
 };
 
-threadlocal var thread_heap: if (safety_checks) ?DebugHeap else void = if (safety_checks) null;
-
-fn getThreadHeap() BorrowedHeap {
-    if (comptime !safety_checks) return mimalloc.mi_heap_get_default();
-    if (thread_heap == null) {
-        thread_heap = .{
-            .inner = mimalloc.mi_heap_get_default(),
-            .thread_lock = .initLocked(),
-        };
-    }
-    return &thread_heap.?;
-}
-
 const log = bun.Output.scoped(.mimalloc, .hidden);
 
 pub fn allocator(self: Self) std.mem.Allocator {
@@ -121,13 +116,11 @@ pub fn borrow(self: Self) Borrowed {
     return .{ .#heap = if (comptime safety_checks) self.#heap.get() else self.#heap };
 }
 
-/// Internally, mimalloc calls mi_heap_get_default()
-/// to get the default heap.
-/// It uses pthread_getspecific to do that.
-/// We can save those extra calls if we just do it once in here
+/// In v3, `mi_malloc`/`mi_free` are already thread-local-fast — there is no
+/// per-thread default heap to cache. Route through the global vtable.
 pub fn getThreadLocalDefault() std.mem.Allocator {
     if (bun.Environment.enable_asan) return bun.default_allocator;
-    return Borrowed.getDefault().allocator();
+    return .{ .ptr = undefined, .vtable = &global_mimalloc_vtable };
 }
 
 pub fn backingAllocator(_: Self) std.mem.Allocator {
@@ -251,14 +244,40 @@ fn vtable_remap(ptr: *anyopaque, buf: []u8, alignment: Alignment, new_len: usize
     return @ptrCast(value);
 }
 
-pub fn isInstance(alloc: std.mem.Allocator) bool {
-    return alloc.vtable == &c_allocator_vtable;
+fn global_vtable_alloc(_: *anyopaque, len: usize, alignment: Alignment, _: usize) ?[*]u8 {
+    log("Malloc: {d}\n", .{len});
+    const ptr: ?*anyopaque = if (mimalloc.mustUseAlignedAlloc(alignment))
+        mimalloc.mi_malloc_aligned(len, alignment.toByteUnits())
+    else
+        mimalloc.mi_malloc(len);
+    return if (ptr) |p| @ptrCast(p) else null;
 }
 
-const c_allocator_vtable = std.mem.Allocator.VTable{
+fn global_vtable_resize(_: *anyopaque, buf: []u8, _: Alignment, new_len: usize, _: usize) bool {
+    return mimalloc.mi_expand(buf.ptr, new_len) != null;
+}
+
+fn global_vtable_remap(_: *anyopaque, buf: []u8, alignment: Alignment, new_len: usize, _: usize) ?[*]u8 {
+    return @ptrCast(mimalloc.mi_realloc_aligned(buf.ptr, new_len, alignment.toByteUnits()));
+}
+
+pub fn isInstance(alloc: std.mem.Allocator) bool {
+    return alloc.vtable == &heap_allocator_vtable or alloc.vtable == &global_mimalloc_vtable;
+}
+
+/// VTable for owned heaps created with `mi_heap_new`.
+const heap_allocator_vtable = std.mem.Allocator.VTable{
     .alloc = vtable_alloc,
     .resize = vtable_resize,
     .remap = vtable_remap,
+    .free = vtable_free,
+};
+
+/// VTable for the process-wide default allocator (`mi_malloc`/`mi_free`).
+const global_mimalloc_vtable = std.mem.Allocator.VTable{
+    .alloc = global_vtable_alloc,
+    .resize = global_vtable_resize,
+    .remap = global_vtable_remap,
     .free = vtable_free,
 };
 

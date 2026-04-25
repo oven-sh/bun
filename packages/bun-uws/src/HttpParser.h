@@ -910,8 +910,12 @@ namespace uWS
             // lets check if content len is valid before calling requestHandler
             if(contentLengthStringLen) {
                 remainingStreamingBytes = toUnsignedInteger(contentLengthString);
-                if (remainingStreamingBytes == UINT64_MAX) [[unlikely]] {
-                    /* Parser error */
+                /* remainingStreamingBytes is overloaded: for Content-Length it holds the raw byte
+                 * count, for Transfer-Encoding: chunked it holds the ChunkedEncoding state word.
+                 * isParsingChunkedEncoding() distinguishes the two by testing the flag bits, so a
+                 * Content-Length value must never reach a flag bit. UINT64_MAX (parse error) is
+                 * also caught by this since UINT64_MAX > STATE_SIZE_MASK. */
+                if (remainingStreamingBytes > STATE_SIZE_MASK) [[unlikely]] {
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH);
                 }
             }

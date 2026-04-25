@@ -3,6 +3,7 @@
 
 #include "BunProcess.h"
 #include "DLHandleMap.h"
+#include "WebCoreJSBuiltins.h"
 #include "v8/node.h"
 
 // Include the CMake-generated dependency versions header
@@ -2991,6 +2992,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
 
     auto* zigGlobal = defaultGlobalObject(globalObject);
     Bun__Process__exit(zigGlobal, exitCode);
+    // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
+    // Zig WebWorker.exit() it called requests JSC termination (guarded so it's a
+    // no-op when re-entered from a process.on('exit') handler).
+    throwScope.release();
     return JSC::JSValue::encode(jsUndefined());
 }
 

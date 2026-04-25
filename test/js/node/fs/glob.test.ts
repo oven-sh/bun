@@ -349,10 +349,19 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
 
   it("brace alternative that names a symlink still descends", () => {
     // `{link,dir}/*.txt` should yield matches for both branches; `link` is a
-    // symlink. Brace alternatives are bounded, so the walker's symlink-descent
-    // gate accepts them the same way as a plain `.Literal`.
+    // symlink. `validatePattern` pre-expands braces, so each alternative
+    // becomes its own scan and the literal `link` branch crosses the symlink.
     const cwd = path.join(root, "flat");
     expect(fs.globSync("{link,dir}/*.txt", { cwd }).sort()).toStrictEqual(["dir/inside.txt", "link/inside.txt"]);
+  });
+
+  it("mixed-wildcard brace alternative preserves the literal branch's symlink descent", () => {
+    // `{link,d*}/*.txt`: `link` is literal (descends through the symlink),
+    // `d*` is a wildcard (matches `dir` but doesn't re-cross a symlink if it
+    // hit one). Brace pre-expansion gives each alternative independent
+    // treatment — matching Node.
+    const cwd = path.join(root, "flat");
+    expect(fs.globSync("{link,d*}/*.txt", { cwd }).sort()).toStrictEqual(["dir/inside.txt", "link/inside.txt"]);
   });
 }); // </symlink behavior>
 
@@ -416,5 +425,23 @@ describe("fs.glob path-manipulation edge cases", () => {
     // (no assertion on result — pre-PR Bun also returned `[]`; we just
     // verify the call doesn't throw or hang.)
     expect(Array.isArray(_)).toBe(true);
+  });
+
+  it("expands brace alternatives in the pattern", () => {
+    using dir = tempDir("glob-braces", {
+      a: { "x.txt": "x" },
+      b: { "y.txt": "y" },
+      c: { "z.txt": "z" },
+    });
+    // Simple flat expansion.
+    expect(fs.globSync("{a,b}/*.txt", { cwd: String(dir) }).sort()).toStrictEqual([seg("a", "x.txt"), seg("b", "y.txt")]);
+    // Nested braces.
+    expect(fs.globSync("{a,{b,c}}/*.txt", { cwd: String(dir) }).sort()).toStrictEqual([
+      seg("a", "x.txt"),
+      seg("b", "y.txt"),
+      seg("c", "z.txt"),
+    ]);
+    // Duplicate alternatives dedupe (single yield per path).
+    expect(fs.globSync("{a,a}/*.txt", { cwd: String(dir) })).toStrictEqual([seg("a", "x.txt")]);
   });
 });

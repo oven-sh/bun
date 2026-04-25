@@ -219,16 +219,111 @@ function stripTrailingSep(s: string, sep: string): string {
 }
 
 function validatePattern(pattern: string | string[]): string[] {
-  if (Array.isArray(pattern)) {
-    validateArray(pattern, "pattern");
-    return pattern.map(p => {
-      validateString(p, "pattern");
-      return isWindows ? p.replaceAll("/", sep) : p;
-    });
-  }
+  const raw = Array.isArray(pattern)
+    ? (validateArray(pattern, "pattern"),
+      pattern.map(p => {
+        validateString(p, "pattern");
+        return p;
+      }))
+    : (validateString(pattern, "pattern"), [pattern]);
 
-  validateString(pattern, "pattern");
-  return [isWindows ? pattern.replaceAll("/", sep) : pattern];
+  // Expand brace alternatives up-front (`{a,b}/*` → `a/*`, `b/*`). This
+  // matches Node's minimatch-powered semantics, and it's also what makes the
+  // walker's "literals cross symlinks, wildcards don't" rule work correctly
+  // for mixed braces like `{link,d*}/*.txt` — each alternative becomes its
+  // own scan with its own literal-prefix classification.
+  const expanded: string[] = [];
+  const seen = new Set<string>();
+  for (const p of raw) {
+    for (const e of expandBraces(p)) {
+      if (!seen.has(e)) {
+        seen.add(e);
+        expanded.push(e);
+      }
+    }
+  }
+  return isWindows ? expanded.map(p => p.replaceAll("/", sep)) : expanded;
+}
+
+/**
+ * Expand top-level brace alternatives in a glob pattern, preserving escaped
+ * braces (`\{`) and nested braces. `{a,b}/c` → `['a/c', 'b/c']`; `{a,{b,c}}` →
+ * `['a', 'b', 'c']`; `\{a,b\}` → `['\\{a,b\\}']` (unchanged).
+ *
+ * This is a small subset of minimatch's expansion — we don't handle numeric
+ * ranges (`{1..3}`). Those are rare in filesystem globs and both Bun.Glob and
+ * Node's fs.glob already treat them as literal braces.
+ */
+function expandBraces(pattern: string): string[] {
+  const open = findTopLevelBrace(pattern);
+  if (open === -1) return [pattern];
+  const close = findMatchingBrace(pattern, open);
+  if (close === -1) return [pattern]; // unbalanced, treat as literal
+  const prefix = pattern.slice(0, open);
+  const suffix = pattern.slice(close + 1);
+  const body = pattern.slice(open + 1, close);
+  const alternatives = splitTopLevelCommas(body);
+  // Single-alternative braces (`{abc}`) aren't expansion, just literal braces.
+  if (alternatives.length <= 1) return [pattern];
+  const out: string[] = [];
+  for (const alt of alternatives) {
+    for (const sub of expandBraces(alt)) {
+      for (const tail of expandBraces(suffix)) {
+        out.push(prefix + sub + tail);
+      }
+    }
+  }
+  return out;
+}
+
+function findTopLevelBrace(s: string): number {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c === 92 /* \ */) {
+      i++; // skip the escaped char
+      continue;
+    }
+    if (c === 123 /* { */) return i;
+  }
+  return -1;
+}
+
+function findMatchingBrace(s: string, open: number): number {
+  let depth = 1;
+  for (let i = open + 1; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c === 92 /* \ */) {
+      i++;
+      continue;
+    }
+    if (c === 123 /* { */) depth++;
+    else if (c === 125 /* } */) {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function splitTopLevelCommas(s: string): string[] {
+  const out: string[] = [];
+  let start = 0;
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c === 92 /* \ */) {
+      i++;
+      continue;
+    }
+    if (c === 123 /* { */) depth++;
+    else if (c === 125 /* } */) depth--;
+    else if (c === 44 /* , */ && depth === 0) {
+      out.push(s.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(s.slice(start));
+  return out;
 }
 
 function mapOptions(options: GlobOptions): GlobScanOptions & { exclude: GlobOptions["exclude"] } {

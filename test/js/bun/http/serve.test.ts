@@ -358,6 +358,66 @@ it("should display a welcome message when the response value type is incorrect",
   );
 });
 
+// https://github.com/oven-sh/bun/issues/29714
+it("default fallback response has a single Content-Length header", async () => {
+  await runTest(
+    {
+      // @ts-ignore — intentionally return undefined to trigger the default
+      // "Welcome to Bun!" fallback response.
+      fetch() {},
+    },
+    async server => {
+      const wireBytes = await new Promise<string>((resolve, reject) => {
+        const sock = net.connect(Number(server.port), "127.0.0.1", () => {
+          sock.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        });
+        let buf = "";
+        sock.on("data", d => (buf += d.toString("latin1")));
+        sock.on("end", () => resolve(buf));
+        sock.on("error", reject);
+      });
+
+      // The raw wire bytes must contain exactly one Content-Length header
+      // (case-insensitive) — RFC 7230 §3.3.2.
+      const headerSection = wireBytes.split("\r\n\r\n", 1)[0];
+      const contentLengthCount = headerSection
+        .split("\r\n")
+        .filter(line => /^content-length\s*:/i.test(line)).length;
+      expect(contentLengthCount).toBe(1);
+    },
+  );
+});
+
+// https://github.com/oven-sh/bun/issues/29714
+it("default browser fallback response has a single Content-Length header", async () => {
+  await runTest(
+    {
+      // @ts-ignore — intentionally return undefined to trigger the default
+      // browser-navigation fallback (gzip HTML welcome page).
+      fetch() {},
+    },
+    async server => {
+      const wireBytes = await new Promise<string>((resolve, reject) => {
+        const sock = net.connect(Number(server.port), "127.0.0.1", () => {
+          sock.write(
+            "GET / HTTP/1.1\r\nHost: localhost\r\nSec-Fetch-Dest: document\r\nConnection: close\r\n\r\n",
+          );
+        });
+        let buf = "";
+        sock.on("data", d => (buf += d.toString("latin1")));
+        sock.on("end", () => resolve(buf));
+        sock.on("error", reject);
+      });
+
+      const headerSection = wireBytes.split("\r\n\r\n", 1)[0];
+      const contentLengthCount = headerSection
+        .split("\r\n")
+        .filter(line => /^content-length\s*:/i.test(line)).length;
+      expect(contentLengthCount).toBe(1);
+    },
+  );
+});
+
 it("request.signal works in trivial case", async () => {
   var aborty = new AbortController();
   var signaler = Promise.withResolvers();

@@ -163,6 +163,21 @@ pub const VM = opaque {
 
     extern fn JSC__VM__throwError(*VM, *JSGlobalObject, JSValue) void;
     pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) error{JSError} {
+        // If a termination exception is already pending (e.g. from the vm
+        // watchdog firing during error-object creation), skip throwing a new
+        // one – just propagate the existing exception.
+        if (global_object.hasException()) {
+            if (comptime bun.Environment.ci_assert) {
+                // In debug/ASAN builds, still assert that only termination
+                // exceptions reach here. A non-termination pending exception
+                // would indicate a programming error in the caller.
+                var scope: bun.jsc.ExceptionValidationScope = undefined;
+                scope.init(global_object, @src());
+                defer scope.deinit();
+                scope.assertNoExceptionExceptTermination() catch {};
+            }
+            return error.JSError;
+        }
         var scope: bun.jsc.ExceptionValidationScope = undefined;
         scope.init(global_object, @src());
         defer scope.deinit();

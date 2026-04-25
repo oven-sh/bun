@@ -24,7 +24,7 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
 
 describe("bun:jsc", () => {
   function count() {
@@ -94,6 +94,30 @@ describe("bun:jsc", () => {
   });
   it("releaseWeakRefs", () => {
     expect(releaseWeakRefs()).toBeUndefined();
+  });
+  // ECMA-262 sec-clear-kept-objects: [[KeptAlive]] is emptied at every
+  // microtask checkpoint, including async-function continuations on
+  // already-fulfilled promises. Run in a subprocess so the test runner's
+  // own state (extra retained values, async hook state) cannot keep the
+  // target alive incidentally.
+  it("WeakRef target collects after `await Promise.resolve()` (per-microtask ClearKeptObjects)", async () => {
+    using dir = tempDir("weakref-await", {
+      "test.mjs":
+        `import { fullGC } from "bun:jsc";\n` +
+        `function makeRef() { return new WeakRef({ value: 1 }); }\n` +
+        `const ref = makeRef();\n` +
+        `await Promise.resolve();\n` +
+        `fullGC();\n` +
+        `console.log(ref.deref() === undefined ? "PASS" : "FAIL");\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("PASS");
+    expect(exitCode).toBe(0);
   });
   it("totalCompileTime", () => {
     expect(totalCompileTime(count)).toBeGreaterThanOrEqual(0);

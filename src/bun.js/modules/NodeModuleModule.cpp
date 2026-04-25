@@ -785,11 +785,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
-{
-    return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {

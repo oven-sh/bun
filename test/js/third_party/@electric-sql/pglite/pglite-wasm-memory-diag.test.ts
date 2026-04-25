@@ -4,7 +4,7 @@ import { bunEnv, bunExe, isWindows } from "harness";
 // Diagnostic for the Windows-only IPInt OutOfBoundsMemoryAccess in pglite (oven-sh/bun#29393).
 // Captures JSC_logWasmMemory output so we can see what MemoryMode and mappedCapacity each
 // dylink-loaded instance sees. Remove once the root cause is found.
-test.runIf(isWindows)("pglite: log Wasm memory mode/capacity (diagnostic)", async () => {
+test.if(isWindows)("pglite: log Wasm memory mode/capacity (diagnostic)", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

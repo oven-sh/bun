@@ -2305,7 +2305,13 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
 
                 path_buf2[component.path.len] = 0;
                 const path_to_use = path_buf2[0..component.path.len :0];
-                const result = try sys.lstat(path_to_use).unwrap();
+                // The mkdirat above and the deleteTree below are both
+                // relative to `dir`. Stat the same dir-fd so the decision
+                // lines up — `sys.lstat` would resolve against cwd, which
+                // is wrong when `dir` isn't cwd (issue noticed on #29726
+                // after MakePath.makeOpenPath started routing non-cwd
+                // callers through here).
+                const result = try sys.lstatat(.fromStdDir(dir), path_to_use).unwrap();
                 const is_dir = S.ISDIR(@intCast(result.mode));
                 // dangling symlink
                 if (!is_dir) {

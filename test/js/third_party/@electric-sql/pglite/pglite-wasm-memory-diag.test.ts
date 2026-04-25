@@ -81,3 +81,38 @@ test.if(process.arch === "x64")("pglite: BoundsChecking+IPInt-only repro (diagno
   console.error(stdout);
   expect(stderr).toContain("[pglite-diag]");
 });
+
+// Second discriminator: all tiers active (IPInt+BBQ+OMG) with fast memory off.
+// Windows fails ONLY with all 3 tiers active. If Linux/macOS x64 also fails here,
+// the bug is the BoundsChecking + tier-up interaction (fixable from posix).
+test.if(process.arch === "x64")("pglite: BoundsChecking + all-3-tiers (diagnostic, any x64)", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { PGlite } = require("@electric-sql/pglite");
+        const db = new PGlite();
+        try {
+          await db.query("SELECT 1");
+          console.error("[pglite-diag] x64 BoundsChecking+all-tiers: OK");
+        } catch (e) {
+          console.error("[pglite-diag] x64 BoundsChecking+all-tiers: THREW:", e?.message ?? e);
+        }
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      BUN_JSC_useWasmFastMemory: "0",
+      JSC_useJIT: undefined,
+    },
+    cwd: import.meta.dir,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  console.error(stderr);
+  console.error(stdout);
+  expect(stderr).toContain("[pglite-diag]");
+});

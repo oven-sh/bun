@@ -589,12 +589,13 @@ pub const Channel = opaque {
 
         var opts = bun.zero(Options);
 
-        opts.flags = ARES_FLAG_NOCHECKRESP |
-            // Android: c-ares can't auto-discover servers (no /etc/resolv.conf,
-            // no JNI). Without this flag it silently uses 127.0.0.1 and every
-            // query times out ~20s; with it, init returns ENOSERVERS so the
-            // caller can seed via setServers() or fall back to .system.
-            (if (bun.Environment.isAndroid) ARES_FLAG_NO_DFLT_SVR else 0);
+        // Android note: c-ares can't auto-discover servers (no /etc/resolv.conf,
+        // no JNI), so it falls back to 127.0.0.1 and queries time out. We do
+        // NOT set ARES_FLAG_NO_DFLT_SVR here — that makes init fail with
+        // ENOSERVER, which breaks dns.setServers() (it needs an initialized
+        // channel to call ares_set_servers_ports). Letting the 127.0.0.1
+        // default stand means setServers() works as the documented workaround.
+        opts.flags = ARES_FLAG_NOCHECKRESP;
         opts.sock_state_cb = &SockStateWrap.onSockState;
         opts.sock_state_cb_data = @as(*anyopaque, @ptrCast(this));
         opts.timeout = options.timeout orelse -1;

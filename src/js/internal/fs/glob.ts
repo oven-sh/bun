@@ -343,17 +343,25 @@ function expandBraces(pattern: string): string[] {
   const suffix = pattern.slice(close + 1);
   const body = pattern.slice(open + 1, close);
   const alternatives = splitTopLevelCommas(body);
+  // Re-apply the `leafOnlyBraces` fast-path to the suffix before recursing:
+  // a mixed pattern like `{pkg,app}/**/*.{js,ts}` must expand the directory
+  // brace, but the leaf brace `{js,ts}` in the suffix can stay intact for
+  // the native `matchBrace` to handle — no need to fan out 2×2 = 4 patterns
+  // when 2 will do. Without this check, `leafOnlyBraces`'s guard in
+  // `validatePattern` would be wasted the moment any directory-segment
+  // brace forces expansion.
+  const tailsExpanded = leafOnlyBraces(suffix) ? [suffix] : expandBraces(suffix);
   // Single-alternative braces (`{abc}`) aren't expansion per Node/minimatch —
-  // keep them literal. But still recurse into the suffix so a later
-  // `{p,q}` brace group doesn't get stranded (`{abc}/{p,q}` must expand the
-  // second group).
+  // keep them literal. But still handle the suffix so a later `{p,q}` brace
+  // group doesn't get stranded (`{abc}/{p,q}` must expand the second group
+  // if it's in a directory segment).
   if (alternatives.length <= 1) {
-    return expandBraces(suffix).map(tail => head + braceSrc + tail);
+    return tailsExpanded.map(tail => head + braceSrc + tail);
   }
   // Hoist the tail expansion out of the inner loop — it's loop-invariant
-  // (`suffix` is fixed for this frame), so `expandBraces(suffix)` would
-  // otherwise be recomputed once per `(alt × sub)` pair.
-  const tails = expandBraces(suffix);
+  // (`suffix` is fixed for this frame), so recomputing it for every
+  // `(alt × sub)` pair would be wasted work.
+  const tails = tailsExpanded;
   const out: string[] = [];
   for (const alt of alternatives) {
     for (const sub of expandBraces(alt)) {

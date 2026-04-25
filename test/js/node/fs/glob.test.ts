@@ -528,4 +528,42 @@ describe("fs.glob path-manipulation edge cases", () => {
       Bun.Glob = OrigGlob;
     }
   });
+
+  it("mixed directory + leaf brace keeps the leaf brace unexpanded", () => {
+    // `{pkg,app}/**/*.{js,ts}` — common in monorepo lint configs. The
+    // directory brace `{pkg,app}` genuinely forces two separate walk roots
+    // (symlink-descent semantics depend on the literal prefix), but the
+    // leaf brace `{js,ts}` only drives per-entry name matching and can stay
+    // intact for the native `matchBrace`. Without the suffix fast-path in
+    // `expandBraces` this would fan out to 2×2 = 4 patterns → 4 walks;
+    // with it we see 2 walks, one rooted at `pkg/` and one at `app/`.
+    using dir = tempDir("glob-mixedbrace", {
+      pkg: { "a.ts": "x", "b.js": "y", "c.md": "z" },
+      app: { "d.ts": "x", "e.js": "y", "f.md": "z" },
+      other: { "g.ts": "skip" },
+    });
+
+    const OrigGlob = Bun.Glob;
+    let count = 0;
+    // @ts-expect-error — intentionally shim the constructor for the duration.
+    Bun.Glob = class extends OrigGlob {
+      constructor(...args: ConstructorParameters<typeof Bun.Glob>) {
+        count++;
+        super(...args);
+      }
+    };
+    try {
+      const got = fs.globSync("{pkg,app}/**/*.{js,ts}", { cwd: String(dir) }).sort();
+      expect(got).toStrictEqual([
+        seg("app", "d.ts"),
+        seg("app", "e.js"),
+        seg("pkg", "a.ts"),
+        seg("pkg", "b.js"),
+      ]);
+      expect(count).toBe(2); // two walks (pkg, app), not four.
+    } finally {
+      // @ts-expect-error — restore.
+      Bun.Glob = OrigGlob;
+    }
+  });
 });

@@ -1538,7 +1538,7 @@ pub fn GlobWalker_(
                 const slice = comp.patternSlice(this.pattern);
                 const is_bounded = switch (comp.syntax_hint) {
                     .Literal => true,
-                    .None => !containsAnyOf(slice, "*?"),
+                    .None => bun.strings.indexOfAny(slice, "*?") == null,
                     else => false,
                 };
                 if (is_bounded and this.matchPatternImpl(comp, entry_name)) {
@@ -1546,13 +1546,6 @@ pub fn GlobWalker_(
                 }
             }
             return out;
-        }
-
-        inline fn containsAnyOf(haystack: []const u8, needles: []const u8) bool {
-            for (haystack) |c| {
-                for (needles) |n| if (c == n) return true;
-            }
-            return false;
         }
 
         inline fn normalizeIdx(this: *const GlobWalker, idx: u32) u32 {

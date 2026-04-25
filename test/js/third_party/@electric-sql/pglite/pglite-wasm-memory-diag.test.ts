@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
 // Diagnostic for the Windows-only IPInt OutOfBoundsMemoryAccess in pglite (oven-sh/bun#29393).

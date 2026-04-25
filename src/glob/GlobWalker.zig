@@ -944,6 +944,17 @@ pub fn GlobWalker_(
                                             this.walker.arena.allocator(),
                                             WorkItem.newSymlink(subdir_entry_name, lit_active, entry_start),
                                         );
+
+                                        // The narrowed `lit_active` is what descends, but the
+                                        // **full** active set may also contain a terminal index
+                                        // that matches the symlink *as a leaf* (e.g. a terminal
+                                        // `*` against the symlink name). Check that here — the
+                                        // descent we just queued won't emit it because the
+                                        // work-item handler only sees `lit_active`.
+                                        if (!this.walker.follow_symlinks and !this.walker.only_files and this.walker.evalFile(active, entry_name)) {
+                                            const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
+                                            return .{ .result = prepared_path };
+                                        }
                                         continue;
                                     }
 
@@ -1017,6 +1028,12 @@ pub fn GlobWalker_(
                                                     this.walker.arena.allocator(),
                                                     WorkItem.newSymlink(subdir_entry_name, lit_active, entry_start),
                                                 );
+                                                // See the matching comment in the direct .sym_link branch: the
+                                                // narrowed descent doesn't cover terminal-index leaf matches.
+                                                if (!this.walker.follow_symlinks and !this.walker.only_files and this.walker.evalFile(active, entry_name)) {
+                                                    const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
+                                                    return .{ .result = prepared_path };
+                                                }
                                             } else if (!this.walker.only_files) {
                                                 if (this.walker.evalFile(active, entry_name)) {
                                                     const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;

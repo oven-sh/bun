@@ -249,10 +249,19 @@ function validatePattern(pattern: string | string[]): string[] {
   // walker's "literals cross symlinks, wildcards don't" rule work correctly
   // for mixed braces like `{link,d*}/*.txt` — each alternative becomes its
   // own scan with its own literal-prefix classification.
+  //
+  // Fast path: when all braces in the pattern sit entirely inside the final
+  // path segment (the common `**/*.{js,ts,jsx,tsx}` shape), we skip the
+  // expansion. Leaf-segment braces only affect per-entry *name* matching,
+  // not directory traversal, so `Bun.Glob`'s native `matchBrace` handles
+  // them in a single tree walk. Pre-expanding would turn that into one
+  // walk per alternative with no shared readdir cache — typically an N×
+  // I/O regression on a hot pattern shape.
   const expanded: string[] = [];
   const seen = new Set<string>();
   for (const p of raw) {
-    for (const e of expandBraces(p)) {
+    const patterns = leafOnlyBraces(p) ? [p] : expandBraces(p);
+    for (const e of patterns) {
       if (!seen.has(e)) {
         seen.add(e);
         expanded.push(e);
@@ -260,6 +269,52 @@ function validatePattern(pattern: string | string[]): string[] {
     }
   }
   return isWindows ? expanded.map(p => p.replaceAll("/", sep)) : expanded;
+}
+
+/**
+ * Returns true if every brace group in `pattern` lies entirely after the
+ * last path separator — i.e. no brace `{` appears before the last `/`, and
+ * no brace body contains a `/`. Such braces can only influence leaf-name
+ * matching, not directory traversal, so `Bun.Glob`'s native `matchBrace`
+ * handles them in a single walk and we can skip the pre-expansion.
+ *
+ * Single-pass scan: track the last `/` we've seen *outside* any brace; if
+ * a `{` appears at depth 0 before or at that position, we must expand.
+ * A brace that itself contains a `/` (`{a/b,c}`) also forces expansion.
+ */
+function leafOnlyBraces(pattern: string): boolean {
+  let depth = 0;
+  let braceSawSlash = false;
+  let braceStart = -1;
+  let sawBraceBeforeLeaf = false;
+  let lastSlashOutsideBrace = -1;
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern.charCodeAt(i);
+    if (BACKSLASH_ESCAPES && c === 92 /* \ */) {
+      i++;
+      continue;
+    }
+    if (c === 123 /* { */) {
+      if (depth === 0) {
+        braceStart = i;
+        braceSawSlash = false;
+        if (braceStart <= lastSlashOutsideBrace) sawBraceBeforeLeaf = true;
+      }
+      depth++;
+    } else if (c === 125 /* } */) {
+      if (depth > 0) depth--;
+      if (depth === 0 && braceSawSlash) return false;
+    } else if (c === 47 /* / */) {
+      if (depth > 0) braceSawSlash = true;
+      else {
+        lastSlashOutsideBrace = i;
+        // A brace that closed before this `/` is now in a directory
+        // segment (everything up to here becomes "before the leaf").
+        if (braceStart !== -1 && braceStart < i) sawBraceBeforeLeaf = true;
+      }
+    }
+  }
+  return !sawBraceBeforeLeaf;
 }
 
 /**

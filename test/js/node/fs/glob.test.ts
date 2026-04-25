@@ -324,6 +324,24 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
     expect(fs.globSync("**/node_modules/a/*.txt", { cwd: String(dir) })).toStrictEqual(["a/node_modules/a/x.txt"]);
   });
 
+  it("symlink is emitted as a leaf match alongside the descent it enables", () => {
+    // `**/a/a/*` against `a/a/a -> target`: the matching `a` literal in the
+    // active set narrows descent, but the terminal `*` in the full active
+    // set also matches the symlink name directly. Both `a/a/a` (the symlink
+    // itself) and `a/a/a/leaf.txt` (from the descent) should be returned —
+    // matching Node. Before this fix the walker narrowed descent but skipped
+    // the terminal-match check on the full set.
+    using dir = tempDir("glob-leaf-and-descent", {
+      a: { a: {} },
+      target: { "leaf.txt": "x" },
+    });
+    fs.symlinkSync("../../target", path.join(String(dir), "a/a/a"), "dir");
+    expect(fs.globSync("**/a/a/*", { cwd: String(dir) }).sort()).toStrictEqual([
+      path.join("a", "a", "a"),
+      path.join("a", "a", "a", "leaf.txt"),
+    ]);
+  });
+
   it("trailing slashes match the named directory", () => {
     // `a/` is Node-idiomatic for "match directory `a`"; split-on-sep yields
     // an empty trailing segment that mustn't be fed to the matcher as an
@@ -480,5 +498,35 @@ describe("fs.glob path-manipulation edge cases", () => {
     // `{abc}/{p,q}/*.txt` verbatim).
     expect(got).toContain(seg("abc", "p", "p.txt"));
     expect(got).toContain(seg("abc", "q", "q.txt"));
+  });
+
+  it("leaf-only brace patterns run as a single tree walk", () => {
+    // `**/*.{js,ts,jsx,tsx}` is the hot pattern in lint/build tooling: the
+    // brace only controls per-entry *name* matching, not directory
+    // traversal, so pre-expanding into four patterns would mean four
+    // independent tree walks with no shared readdir cache. `validatePattern`
+    // detects leaf-only braces and skips expansion — verified here by
+    // counting Bun.Glob instantiations.
+    using dir = tempDir("glob-leafbrace", {
+      src: { "a.ts": "x", "b.js": "y", "c.jsx": "z", "d.tsx": "w", "e.md": "m" },
+    });
+
+    const OrigGlob = Bun.Glob;
+    let count = 0;
+    // @ts-expect-error — intentionally shim the constructor for the duration.
+    Bun.Glob = class extends OrigGlob {
+      constructor(...args: ConstructorParameters<typeof Bun.Glob>) {
+        count++;
+        super(...args);
+      }
+    };
+    try {
+      const got = fs.globSync("**/*.{js,ts,jsx,tsx}", { cwd: String(dir) }).sort();
+      expect(got).toStrictEqual([seg("src", "a.ts"), seg("src", "b.js"), seg("src", "c.jsx"), seg("src", "d.tsx")]);
+      expect(count).toBe(1); // one walk, not four.
+    } finally {
+      // @ts-expect-error — restore.
+      Bun.Glob = OrigGlob;
+    }
   });
 });

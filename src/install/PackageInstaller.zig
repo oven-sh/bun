@@ -127,7 +127,7 @@ pub const PackageInstaller = struct {
         pub fn makeAndOpenDir(this: *NodeModulesFolder, root: std.fs.Dir) !std.fs.Dir {
             const out = brk: {
                 if (comptime Environment.isPosix) {
-                    break :brk try root.makeOpenPath(this.path.items, .{ .iterate = true, .access_sub_paths = true });
+                    break :brk try bun.MakePath.makeOpenPath(root, this.path.items, .{ .iterate = true, .access_sub_paths = true });
                 }
 
                 break :brk (try bun.sys.openDirAtWindowsA(.fromStdDir(root), this.path.items, .{

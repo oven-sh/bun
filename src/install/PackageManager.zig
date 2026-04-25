@@ -463,7 +463,7 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
         // used later for adding to path for scripts
         manager.node_gyp_tempdir_name = try manager.allocator.dupe(u8, node_gyp_tempdir_name);
 
-        var node_gyp_tempdir = tempdir.handle.makeOpenPath(manager.node_gyp_tempdir_name, .{}) catch |err| {
+        var node_gyp_tempdir = bun.MakePath.makeOpenPath(tempdir.handle, manager.node_gyp_tempdir_name, .{}) catch |err| {
             if (err == error.EEXIST) {
                 // it should not exist
                 Output.prettyErrorln("<r><red>error<r>: node-gyp tempdir already exists", .{});

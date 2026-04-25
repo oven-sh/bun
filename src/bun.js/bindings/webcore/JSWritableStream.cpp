@@ -99,7 +99,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWritableStreamDOMConst
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSWritableStreamDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSWritableStreamDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto underlyingSink = argument0.value().isUndefined() ? std::optional<Converter<IDLObject>::ReturnType>() : std::optional<Converter<IDLObject>::ReturnType>(convert<IDLObject>(*lexicalGlobalObject, argument0.value()));
@@ -185,7 +185,7 @@ JSObject* JSWritableStream::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSWritableStream::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSWritableStreamDOMConstructor, DOMConstructorID::WritableStream>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSWritableStreamDOMConstructor, DOMConstructorID::WritableStream>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSWritableStream::destroy(JSC::JSCell* cell)
@@ -198,7 +198,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamConstructor, (JSGlobalObject * lexicalG
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSWritableStreamPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSWritableStreamPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSWritableStream::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -271,7 +271,7 @@ JSC::GCClient::IsoSubspace* JSWritableStream::subspaceForImpl(JSC::VM& vm)
 
 void JSWritableStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSWritableStream*>(cell);
+    auto* thisObject = uncheckedDowncast<JSWritableStream>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -305,7 +305,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 WritableStream* JSWritableStream::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSWritableStream*>(value))
+    if (auto* wrapper = dynamicDowncast<JSWritableStream>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

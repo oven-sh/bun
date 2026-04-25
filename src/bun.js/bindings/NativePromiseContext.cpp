@@ -54,6 +54,6 @@ extern "C" JSC::EncodedJSValue Bun__NativePromiseContext__create(Zig::GlobalObje
 
 extern "C" void* Bun__NativePromiseContext__take(JSC::EncodedJSValue encodedValue)
 {
-    auto* cell = JSC::jsCast<Bun::NativePromiseContext*>(JSC::JSValue::decode(encodedValue));
+    auto* cell = uncheckedDowncast<Bun::NativePromiseContext>(JSC::JSValue::decode(encodedValue));
     return cell->take();
 }

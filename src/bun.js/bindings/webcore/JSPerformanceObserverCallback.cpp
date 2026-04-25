@@ -60,7 +60,7 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverC
 
     Ref<JSPerformanceObserverCallback> protectedThis(*this);
 
-    auto& globalObject = *jsCast<JSDOMGlobalObject*>(m_data->callback()->globalObject());
+    auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(m_data->callback()->globalObject());
     auto& vm = globalObject.vm();
 
     JSLockHolder lock(vm);

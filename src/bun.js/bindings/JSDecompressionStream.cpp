@@ -123,14 +123,14 @@ JSObject* JSDecompressionStream::prototype(VM& vm, JSDOMGlobalObject& globalObje
 
 JSValue JSDecompressionStream::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSDecompressionStreamDOMConstructor, DOMConstructorID::DecompressionStream>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSDecompressionStreamDOMConstructor, DOMConstructorID::DecompressionStream>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDecompressionStreamConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSDecompressionStreamPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSDecompressionStreamPrototype>(JSValue::decode(thisValue));
     if (!prototype)
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSDecompressionStream::getConstructor(vm, lexicalGlobalObject));

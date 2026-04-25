@@ -64,7 +64,7 @@ extern "C" FFICallbackFunctionWrapper* Bun__createFFICallbackFunction(
     auto* vm = &globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(*vm);
 
-    auto* callbackFunction = jsCast<JSC::JSFunction*>(JSC::JSValue::decode(callbackFn));
+    auto* callbackFunction = uncheckedDowncast<JSC::JSFunction>(JSC::JSValue::decode(callbackFn));
 
     auto* wrapper = new FFICallbackFunctionWrapper(callbackFunction, globalObject);
 
@@ -87,7 +87,7 @@ extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionWithDataValue(Zig::GlobalOb
 extern "C" void* Bun__FFIFunction_getDataPtr(JSC::EncodedJSValue jsValue)
 {
 
-    Zig::JSFFIFunction* function = jsDynamicCast<Zig::JSFFIFunction*>(JSC::JSValue::decode(jsValue));
+    Zig::JSFFIFunction* function = dynamicDowncast<Zig::JSFFIFunction>(JSC::JSValue::decode(jsValue));
     if (!function)
         return nullptr;
 
@@ -97,7 +97,7 @@ extern "C" void* Bun__FFIFunction_getDataPtr(JSC::EncodedJSValue jsValue)
 extern "C" void Bun__FFIFunction_setDataPtr(JSC::EncodedJSValue jsValue, void* ptr)
 {
 
-    Zig::JSFFIFunction* function = jsDynamicCast<Zig::JSFFIFunction*>(JSC::JSValue::decode(jsValue));
+    Zig::JSFFIFunction* function = dynamicDowncast<Zig::JSFFIFunction>(JSC::JSValue::decode(jsValue));
     if (!function)
         return;
 
@@ -136,7 +136,7 @@ JSFFIFunction::JSFFIFunction(VM& vm, NativeExecutable* executable, JSGlobalObjec
 template<typename Visitor>
 void JSFFIFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSFFIFunction* thisObject = jsCast<JSFFIFunction*>(cell);
+    JSFFIFunction* thisObject = uncheckedDowncast<JSFFIFunction>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }
@@ -162,7 +162,7 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, Zig::GlobalObject* globalObject, un
 
 JSC_DEFINE_HOST_FUNCTION(JSFFIFunction::trampoline, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    const auto* function = jsCast<JSFFIFunction*>(callFrame->jsCallee());
+    const auto* function = uncheckedDowncast<JSFFIFunction>(callFrame->jsCallee());
     return function->function()(globalObject, callFrame);
 }
 
@@ -213,7 +213,7 @@ FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCoun
         argsVec.append(args[i]);
 
     WebCore::ScriptExecutionContext::postTaskTo(globalObject->scriptExecutionContext()->identifier(), [argsVec = WTF::move(argsVec), wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
-        auto* globalObject = JSC::jsCast<Zig::GlobalObject*>(ctx.jsGlobalObject());
+        auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
         auto& vm = JSC::getVM(globalObject);
         JSC::MarkedArgumentBuffer arguments;
         auto* function = wrapper.m_function.get();

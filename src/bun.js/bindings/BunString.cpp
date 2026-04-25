@@ -568,7 +568,7 @@ extern "C" size_t URL__originLength(const char* latin1_slice, size_t len)
 
 extern "C" JSC::EncodedJSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexicalGlobalObject, BunString* bunString)
 {
-    auto& globalObject = *jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& globalObject = *uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = globalObject.vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -577,7 +577,7 @@ extern "C" JSC::EncodedJSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexica
     auto object = WebCore::DOMURL::create(str, String());
     auto jsValue = WebCore::toJSNewlyCreated<WebCore::IDLInterface<WebCore::DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTF::move(object));
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto* jsDOMURL = jsCast<WebCore::JSDOMURL*>(jsValue.asCell());
+    auto* jsDOMURL = uncheckedDowncast<WebCore::JSDOMURL>(jsValue.asCell());
     vm.heap.reportExtraMemoryAllocated(jsDOMURL, jsDOMURL->wrapped().memoryCostForGC());
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
 }
@@ -911,7 +911,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
     if (!existingValue.isEmpty()) {
         // If existing value is already an array, push to it
         if (existingValue.isObject() && existingValue.getObject()->inherits<JSC::JSArray>()) {
-            JSC::JSArray* array = jsCast<JSC::JSArray*>(existingValue.getObject());
+            JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(existingValue.getObject());
             array->push(global, newValue);
         } else {
             // Create new array with both values

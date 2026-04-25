@@ -118,7 +118,7 @@ using JSFetchHeadersDOMConstructor = JSDOMConstructor<JSFetchHeaders>;
 
 size_t JSFetchHeaders::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 {
-    auto* thisObject = jsCast<JSFetchHeaders*>(cell);
+    auto* thisObject = uncheckedDowncast<JSFetchHeaders>(cell);
     auto& wrapped = thisObject->wrapped();
     return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
 }
@@ -127,14 +127,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstru
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSFetchHeadersDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSFetchHeadersDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
 
     auto init = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>>::ReturnType>();
 
     if (argument0.value() && !argument0.value().isUndefined()) {
-        if (auto* existingJsFetchHeaders = jsDynamicCast<JSFetchHeaders*>(argument0.value())) {
+        if (auto* existingJsFetchHeaders = dynamicDowncast<JSFetchHeaders>(argument0.value())) {
             auto newHeaders = FetchHeaders::create(existingJsFetchHeaders->wrapped());
             auto jsValue = toJSNewlyCreated<IDLInterface<FetchHeaders>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(newHeaders));
             if constexpr (IsExceptionOr<decltype(jsValue)>)
@@ -158,7 +158,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstru
     RETURN_IF_EXCEPTION(throwScope, {});
 
     if (argument0.value())
-        jsCast<JSFetchHeaders*>(jsValue)->computeMemoryCost();
+        uncheckedDowncast<JSFetchHeaders>(jsValue)->computeMemoryCost();
 
     return JSValue::encode(jsValue);
 }
@@ -186,7 +186,7 @@ template<> void JSFetchHeadersDOMConstructor::initializeProperties(VM& vm, JSDOM
  **/
 JSC_DEFINE_CUSTOM_GETTER(jsFetchHeadersGetterCount, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    JSFetchHeaders* castedThis = jsDynamicCast<JSFetchHeaders*>(JSValue::decode(thisValue));
+    JSFetchHeaders* castedThis = dynamicDowncast<JSFetchHeaders>(JSValue::decode(thisValue));
     if (!castedThis) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -200,7 +200,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSFetchHeaders* castedThis = jsDynamicCast<JSFetchHeaders*>(callFrame->thisValue());
+    JSFetchHeaders* castedThis = dynamicDowncast<JSFetchHeaders>(callFrame->thisValue());
     if (!castedThis) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -291,7 +291,7 @@ JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalO
 JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getSetCookie, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    JSFetchHeaders* castedThis = jsDynamicCast<JSFetchHeaders*>(callFrame->thisValue());
+    JSFetchHeaders* castedThis = dynamicDowncast<JSFetchHeaders>(callFrame->thisValue());
     if (!castedThis) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }
@@ -367,7 +367,7 @@ JSObject* JSFetchHeaders::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSFetchHeaders::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSFetchHeadersDOMConstructor, DOMConstructorID::FetchHeaders>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSFetchHeadersDOMConstructor, DOMConstructorID::FetchHeaders>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSFetchHeaders::destroy(JSC::JSCell* cell)
@@ -380,7 +380,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsFetchHeadersConstructor, (JSGlobalObject * lexicalGlo
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSFetchHeadersPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSFetchHeadersPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSFetchHeaders::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -638,7 +638,7 @@ JSC::GCClient::IsoSubspace* JSFetchHeaders::subspaceForImpl(JSC::VM& vm)
 
 void JSFetchHeaders::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSFetchHeaders*>(cell);
+    auto* thisObject = uncheckedDowncast<JSFetchHeaders>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -714,7 +714,7 @@ bool JSFetchHeadersOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> h
 template<typename Visitor>
 void JSFetchHeaders::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSFetchHeaders*>(cell);
+    auto* thisObject = uncheckedDowncast<JSFetchHeaders>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.reportExtraMemoryVisited(thisObject->m_memoryCost);
@@ -770,7 +770,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 FetchHeaders* JSFetchHeaders::toWrapped(JSC::VM& vm, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSFetchHeaders*>(value))
+    if (auto* wrapper = dynamicDowncast<JSFetchHeaders>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

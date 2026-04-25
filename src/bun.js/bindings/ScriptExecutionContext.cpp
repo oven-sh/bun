@@ -363,7 +363,7 @@ ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
 {
     if (!globalObject || !globalObject->inherits<JSDOMGlobalObject>())
         return nullptr;
-    return JSC::jsCast<JSDOMGlobalObject*>(globalObject)->scriptExecutionContext();
+    return uncheckedDowncast<JSDOMGlobalObject>(globalObject)->scriptExecutionContext();
 }
 
 void ScriptExecutionContext::postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)

@@ -74,10 +74,15 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
 
 static JSValue scriptFetchParametersToImportAttributes(JSGlobalObject* globalObject, JSC::ScriptFetchParameters* params)
 {
-    if (!params || params->type() == JSC::ScriptFetchParameters::Type::None)
-        return jsUndefined();
     auto& vm = globalObject->vm();
     auto* obj = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    if (!params)
+        return obj;
+    if (!params->attributes().isEmpty()) {
+        for (auto& [key, value] : params->attributes())
+            obj->putDirect(vm, JSC::Identifier::fromUid(vm, key.get()), jsString(vm, value));
+        return obj;
+    }
     switch (params->type()) {
     case JSC::ScriptFetchParameters::Type::JSON:
         obj->putDirect(vm, vm.propertyNames->type, jsNontrivialString(vm, "json"_s));

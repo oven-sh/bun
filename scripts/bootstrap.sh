@@ -1261,8 +1261,7 @@ install_rust() {
 		execute_as_user "$rustup" target add aarch64-linux-android
 		execute_as_user "$rustup" target add x86_64-linux-android
 		# x86_64-unknown-freebsd is Tier 2 (prebuilt std). aarch64 is Tier 3
-		# (no prebuilt) — lolhtml.ts uses -Zbuild-std for that, so the
-		# rustup target add is best-effort.
+		# (no prebuilt) — lolhtml.ts uses -Zbuild-std for that.
 		execute_as_user "$rustup" target add x86_64-unknown-freebsd
 		# rust-src for -Zbuild-std (Tier 3 targets without prebuilt std).
 		execute_as_user "$rustup" component add rust-src
@@ -1290,7 +1289,33 @@ install_android_ndk() {
 	unzip="$(require unzip)"
 	execute_sudo "$unzip" -q "$ndk_zip" -d /opt
 	execute_sudo mv "/opt/android-ndk-${ndk_version}" "$ndk_home"
+	# Trim ~1.1GB unused (NDK clang/lld, lldb, non-android runtimes).
+	ndk_prebuilt="$ndk_home/toolchains/llvm/prebuilt/linux-x86_64"
+	execute_sudo rm -rf "$ndk_prebuilt/bin" "$ndk_prebuilt/python3" "$ndk_prebuilt/lib/liblldb.so" \
+		"$ndk_home/simpleperf" "$ndk_home/shader-tools" "$ndk_home/sources"
 	append_to_profile "export ANDROID_NDK_ROOT=$ndk_home"
+
+	# Symlink NDK compiler-rt builtins + libunwind into host clang's resource
+	# dir. clang's driver hardcodes <resource-dir>/lib/<triple>/libclang_rt.*
+	# with no -L fallback, so the file must exist there for any android link.
+	# Done here (as root) so the build user doesn't need write access to /usr.
+	clang="$(which clang-$(llvm_version) || which clang)"
+	if [ -x "$clang" ]; then
+		res_dir="$("$clang" -print-resource-dir)"
+		ndk_clang_ver="$(ls "$ndk_home/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/" | head -1)"
+		ndk_rt="$ndk_home/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/$ndk_clang_ver/lib/linux"
+		execute_sudo mkdir -p "$res_dir/lib/linux"
+		for ndk_arch in aarch64 x86_64; do
+			# Old-style flat layout (apt.llvm.org clang) AND new-style per-triple.
+			execute_sudo ln -sf "$ndk_rt/libclang_rt.builtins-${ndk_arch}-android.a" "$res_dir/lib/linux/"
+			execute_sudo mkdir -p "$res_dir/lib/linux/${ndk_arch}"
+			execute_sudo ln -sf "$ndk_rt/${ndk_arch}/libunwind.a" "$res_dir/lib/linux/${ndk_arch}/"
+			triple_dir="$res_dir/lib/${ndk_arch}-unknown-linux-android28"
+			execute_sudo mkdir -p "$triple_dir"
+			execute_sudo ln -sf "$ndk_rt/libclang_rt.builtins-${ndk_arch}-android.a" "$triple_dir/libclang_rt.builtins.a"
+			execute_sudo ln -sf "$ndk_rt/${ndk_arch}/libunwind.a" "$triple_dir/libunwind.a"
+		done
+	fi
 }
 
 freebsd_version() {

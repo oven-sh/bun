@@ -604,6 +604,11 @@ export const defines: Flag[] = [
     when: c => !c.staticSqlite,
     desc: "SQLite loaded at runtime",
   },
+  {
+    flag: "BUN_STATIC_BUILD=1",
+    when: c => c.linux && c.staticAll,
+    desc: "Disable glibc .symver directives in workaround-missing-symbols.cpp",
+  },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -735,7 +740,7 @@ export const linkerFlags: Flag[] = [
       "-Wl,--wrap=powf",
       "-Wl,--wrap=quick_exit",
     ],
-    when: c => c.linux && c.abi !== "musl",
+    when: c => c.linux && c.abi !== "musl" && !c.staticAll,
     desc: "Wrap glibc 2.18+ symbols (portable down to glibc 2.17)",
   },
   {
@@ -784,8 +789,34 @@ export const linkerFlags: Flag[] = [
       "-Wl,--hash-style=both",
       "-Wl,--build-id=sha1",
     ],
-    when: c => c.linux,
+    when: c => c.linux && !c.staticAll,
     desc: "Linux linker tuning: lazy binding, large stack, compressed debug, fast gdb loading",
+  },
+  {
+    // Static build: equivalent tuning without lazy/relro/dynamic-specific flags.
+    flag: [
+      "-Wl,-z,stack-size=12800000",
+      "-Wl,--compress-debug-sections=zlib",
+      "-Wl,-O2",
+      "-Wl,--gdb-index",
+      "-Wl,--sort-section=name",
+      "-Wl,--build-id=sha1",
+    ],
+    when: c => c.linux && c.staticAll,
+    desc: "Linux linker tuning for static builds (no lazy/relro)",
+  },
+  {
+    flag: "-static",
+    when: c => c.linux && c.staticAll,
+    desc: "Fully static binary — no dynamic linker dependency",
+  },
+  {
+    // mimalloc overrides malloc/free; libc.a also defines them. Tell lld to
+    // accept multiple definitions and keep the first (mimalloc wins because
+    // it appears before -lc in link order).
+    flag: "-Wl,--allow-multiple-definition",
+    when: c => c.linux && c.staticAll,
+    desc: "Allow mimalloc to override libc malloc in static builds",
   },
   {
     flag: "-Wl,--gc-sections",
@@ -818,7 +849,7 @@ export const linkerFlags: Flag[] = [
       `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
       `-Wl,--version-script=${c.cwd}/src/linker.lds`,
     ],
-    when: c => c.linux,
+    when: c => c.linux && !c.staticAll,
     desc: "Dynamic symbol list + version script",
   },
 ];

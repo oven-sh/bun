@@ -116,6 +116,8 @@ export interface Config {
   /** MinSizeRel → optimize for size. */
   smol: boolean;
   staticSqlite: boolean;
+  /** Fully static binary: pass -static to the linker. Works on glibc (Ubuntu/Debian) and musl. */
+  staticAll: boolean;
   staticLibatomic: boolean;
   tinycc: boolean;
   valgrind: boolean;
@@ -235,6 +237,7 @@ export interface PartialConfig {
   baseline?: boolean;
   canary?: boolean;
   staticSqlite?: boolean;
+  staticAll?: boolean;
   staticLibatomic?: boolean;
   tinycc?: boolean;
   valgrind?: boolean;
@@ -399,8 +402,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // ─── Features ───
   // Each is resolved exactly once here.
 
+  const staticAll = partial.staticAll ?? false;
+
   // ASAN: default on for debug builds on arm64 macOS or linux
-  const asanDefault = debug && ((darwin && arm64) || linux);
+  // Static builds are incompatible with ASAN (Clang ASAN does not support -static)
+  const asanDefault = !staticAll && debug && ((darwin && arm64) || linux);
   const asan = partial.asan ?? asanDefault;
 
   // Zig ASAN follows ASAN unless explicitly overridden
@@ -479,6 +485,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
+  assert(!staticAll || linux, "staticAll=true requires os=linux");
+  assert(!staticAll || !asan, "staticAll=true is incompatible with ASAN; pass --asan=off");
   assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu or musl)");
 
   // ─── Versioning ───
@@ -535,6 +543,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     canary,
     smol,
     staticSqlite,
+    staticAll,
     staticLibatomic,
     tinycc,
     valgrind,
@@ -813,6 +822,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.baseline) features.push("baseline");
   if (cfg.valgrind) features.push("valgrind");
   if (cfg.fuzzilli) features.push("fuzzilli");
+  if (cfg.staticAll) features.push("static-all");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);

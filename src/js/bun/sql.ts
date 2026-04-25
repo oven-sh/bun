@@ -937,21 +937,49 @@ const SQL: typeof Bun.SQL = function SQL(
   sql.distributed = sql.beginDistributed;
   sql.end = sql.close;
 
+  const validateChannel = (channel: string) => {
+    if (typeof channel !== "string" || !channel) {
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
+    }
+    if (channel.indexOf("\0") !== -1) {
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
+    }
+  };
   if (pool.listen) {
     sql.listen = (channel, onnotify, onlisten?) => pool.listen(channel, onnotify, onlisten);
     sql.unlisten = (channel, onnotify?) => pool.unlisten(channel, onnotify);
     // notify uses a regular pool connection via parameterized query — no dedicated listen connection
     sql.notify = (channel, payload) => {
-      if (typeof channel !== "string" || !channel) {
-        throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
-      }
-      if (channel.indexOf("\0") !== -1) {
-        throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
-      }
+      validateChannel(channel);
       if (typeof payload !== "string") {
         throw $ERR_INVALID_ARG_TYPE("payload", "string", payload);
       }
       return sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]);
+    };
+  } else {
+    // Stubs for adapters without LISTEN/NOTIFY — keep the API shape uniform
+    // and surface a clear error instead of "sql.listen is not a function".
+    const unsupported = () =>
+      Promise.reject(new Error("LISTEN/NOTIFY is not supported by this adapter (PostgreSQL only)"));
+    sql.listen = (channel, onnotify, onlisten?) => {
+      validateChannel(channel);
+      if (!$isCallable(onnotify)) throw $ERR_INVALID_ARG_TYPE("onnotify", "function", onnotify);
+      if (onlisten !== undefined && !$isCallable(onlisten)) {
+        throw $ERR_INVALID_ARG_TYPE("onlisten", "function", onlisten);
+      }
+      return unsupported();
+    };
+    sql.unlisten = (channel, onnotify?) => {
+      validateChannel(channel);
+      if (onnotify !== undefined && !$isCallable(onnotify)) {
+        throw $ERR_INVALID_ARG_TYPE("onnotify", "function", onnotify);
+      }
+      return unsupported();
+    };
+    sql.notify = (channel, payload) => {
+      validateChannel(channel);
+      if (typeof payload !== "string") throw $ERR_INVALID_ARG_TYPE("payload", "string", payload);
+      return unsupported();
     };
   }
 

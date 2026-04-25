@@ -470,6 +470,14 @@ function onQueryFinish(this: PooledPostgresConnection, onClose: (err: Error) => 
   this.adapter.release(this);
 }
 
+async function resolvePostgresPassword(
+  password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>),
+): Promise<string> {
+  if (typeof password === "function") password = password();
+  if (password && $isPromise(password)) password = await password;
+  return (password as string) || "";
+}
+
 class PooledPostgresConnection {
   private static async createConnection(
     options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
@@ -491,22 +499,14 @@ class PooledPostgresConnection {
       path,
     } = options;
 
-    let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
-
     try {
-      if (typeof password === "function") {
-        password = password();
-      }
-
-      if (password && $isPromise(password)) {
-        password = await password;
-      }
+      const password = await resolvePostgresPassword(options.password);
 
       return createPostgresConnection(
         hostname,
         Number(port),
         username || "",
-        password || "",
+        password,
         database || "",
         // > The default value for sslmode is prefer. As is shown in the table, this
         // makes no sense from a security point of view, and it only promises
@@ -1413,7 +1413,10 @@ class PostgresAdapter
   #listenChannels: Map<string, Set<(payload: string) => void>> = new Map();
   // Per-channel onlisten callbacks (fired on every successful LISTEN ack,
   // including reconnects).
-  #listenOnlistenCallbacks: Map<string, Set<() => void>> = new Map();
+  #listenOnlistenCallbacks: Map<string, Set<(state: { pid: number; secret: number }) => void>> = new Map();
+  // Shared by concurrent listen() calls on the same channel so they all await
+  // the same LISTEN ack instead of skipping it and resolving early.
+  #listenInFlight: Map<string, Promise<void>> = new Map();
   #listenReconnectDelay: number = 250;
   #listenReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   // Track consecutive per-channel LISTEN failures during reconnect. A channel
@@ -1440,6 +1443,8 @@ class PostgresAdapter
     this.#listenChannels.clear();
     this.#listenOnlistenCallbacks.clear();
     this.#listenChannelFailures.clear();
+    this.#listenInFlight.clear();
+    this.#listenReconnectDelay = 250;
     // Intentionally do NOT zero #listenState here — user code holding a `state`
     // reference from a previous listen() should be able to inspect the last-known
     // pid/secret after close (e.g. to log "shut down on backend N"). The next
@@ -1453,9 +1458,7 @@ class PostgresAdapter
 
   async #createListenConnection(): Promise<$ZigGeneratedClasses.PostgresSQLConnection> {
     const info = this.connectionInfo;
-    let password: any = info.password;
-    if (typeof password === "function") password = password();
-    if (password && $isPromise(password)) password = await password;
+    const password = await resolvePostgresPassword(info.password);
 
     // If close() ran while we were resolving the password, bail out.
     if (this.closed) throw this.connectionClosedError();
@@ -1465,7 +1468,7 @@ class PostgresAdapter
       info.hostname,
       Number(info.port),
       info.username || "",
-      password || "",
+      password,
       info.database || "",
       info.sslMode || SSLMode.disable,
       info.tls || null,
@@ -1562,14 +1565,14 @@ class PostgresAdapter
           // Channel may have been unlistened while we awaited the connection.
           if (!this.#listenChannels.has(channel)) continue;
           try {
-            await this.#runListenQuery(conn, `LISTEN "${channel.replaceAll('"', '""')}"`);
+            await this.#runListenQuery(conn, `LISTEN ${this.#quoteChannel(channel)}`);
             const failures = this.#listenChannelFailures.get(channel);
             if (failures !== undefined) this.#listenChannelFailures.delete(channel);
             const onlistens = this.#listenOnlistenCallbacks.get(channel);
             if (onlistens) {
               for (const fn of onlistens) {
                 try {
-                  fn.$call(undefined);
+                  fn.$call(undefined, this.#listenState);
                 } catch {}
               }
             }
@@ -1613,6 +1616,12 @@ class PostgresAdapter
     }, delayMs);
   }
 
+  // PG channel identifiers must be double-quoted to preserve case and allow
+  // characters outside the unquoted-identifier grammar; embedded `"` doubles up.
+  #quoteChannel(channel: string): string {
+    return `"${channel.replaceAll('"', '""')}"`;
+  }
+
   async #runListenQuery(conn: $ZigGeneratedClasses.PostgresSQLConnection, sql: string): Promise<void> {
     const pendingValue = new SQLResultArray();
     const handle = createPostgresQuery(sql, [], pendingValue, undefined, false, true);
@@ -1654,18 +1663,14 @@ class PostgresAdapter
   async listen(
     channel: string,
     onnotify: (payload: string) => void,
-    onlisten?: () => void,
-  ): Promise<{ state: object; unlisten: () => Promise<void> }> {
+    onlisten?: (state: { pid: number; secret: number }) => void,
+  ): Promise<{ state: { pid: number; secret: number }; unlisten: () => Promise<void> }> {
     if (typeof channel !== "string" || !channel)
       throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
     if (channel.indexOf("\0") !== -1) throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
     if (!$isCallable(onnotify)) throw $ERR_INVALID_ARG_TYPE("onnotify", "function", onnotify);
     if (onlisten !== undefined && !$isCallable(onlisten)) throw $ERR_INVALID_ARG_TYPE("onlisten", "function", onlisten);
 
-    // We register the listener early so reconnect logic can find it, but if
-    // the LISTEN query (or initial connection) fails we must roll back the
-    // registration so the channel state stays consistent for retries.
-    const isNewChannel = !this.#listenChannels.has(channel) || this.#listenChannels.get(channel)!.size === 0;
     if (!this.#listenChannels.has(channel)) this.#listenChannels.set(channel, new Set());
     this.#listenChannels.get(channel)!.add(onnotify);
 
@@ -1675,25 +1680,38 @@ class PostgresAdapter
     }
 
     try {
-      const conn = await this.#ensureListenConnection();
-      if (isNewChannel) {
-        await this.#runListenQuery(conn, `LISTEN "${channel.replaceAll('"', '""')}"`);
+      // Always issue LISTEN (idempotent server-side) and share the in-flight
+      // promise so concurrent callers can't resolve before the ack and can't
+      // miss the case where the connection dropped mid-handoff.
+      let inFlight = this.#listenInFlight.get(channel);
+      if (!inFlight) {
+        inFlight = (async () => {
+          const conn = await this.#ensureListenConnection();
+          await this.#runListenQuery(conn, `LISTEN ${this.#quoteChannel(channel)}`);
+        })().finally(() => {
+          if (this.#listenInFlight.get(channel) === inFlight) this.#listenInFlight.delete(channel);
+        });
+        this.#listenInFlight.set(channel, inFlight);
       }
+      await inFlight;
     } catch (err) {
-      // Roll back the registration we just made so a retry can issue LISTEN.
+      // Roll back only the registrations this call made — siblings keep theirs.
       const set = this.#listenChannels.get(channel);
       set?.delete(onnotify);
+      if (onlisten) {
+        const onlistens = this.#listenOnlistenCallbacks.get(channel);
+        onlistens?.delete(onlisten);
+        if (onlistens && onlistens.size === 0) this.#listenOnlistenCallbacks.delete(channel);
+      }
       if (set && set.size === 0) {
         this.#listenChannels.delete(channel);
         this.#listenOnlistenCallbacks.delete(channel);
-      } else if (onlisten) {
-        this.#listenOnlistenCallbacks.get(channel)?.delete(onlisten);
       }
       throw err;
     }
 
     try {
-      onlisten?.();
+      onlisten?.(this.#listenState);
     } catch {}
 
     // unlistened is checked then set synchronously inside the closure; no await
@@ -1706,6 +1724,13 @@ class PostgresAdapter
       unlisten: async () => {
         if (unlistened) return;
         unlistened = true;
+        // Drop this caller's onlisten — unlisten(channel, onnotify) only clears
+        // onlistenCallbacks on full teardown, so siblings would keep firing it.
+        if (onlisten) {
+          const onlistens = this.#listenOnlistenCallbacks.get(channel);
+          onlistens?.delete(onlisten);
+          if (onlistens && onlistens.size === 0) this.#listenOnlistenCallbacks.delete(channel);
+        }
         await this.unlisten(channel, onnotify);
       },
     };
@@ -1731,7 +1756,7 @@ class PostgresAdapter
     }
 
     if (this.#listenConnection && !this.#listenChannels.has(channel)) {
-      await this.#runListenQuery(this.#listenConnection, `UNLISTEN "${channel.replaceAll('"', '""')}"`);
+      await this.#runListenQuery(this.#listenConnection, `UNLISTEN ${this.#quoteChannel(channel)}`);
     }
   }
 }

@@ -885,7 +885,7 @@ declare module "bun" {
     listen(
       channel: string,
       onnotify: (payload: string) => void,
-      onlisten?: () => void,
+      onlisten?: (state: { pid: number; secret: number }) => void,
     ): Promise<{ state: { pid: number; secret: number }; unlisten: () => Promise<void> }>;
 
     /**

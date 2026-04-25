@@ -6,6 +6,18 @@ describe("pathToFileURL", () => {
   it("should convert a path to a file url", () => {
     expect(pathToFileURL("/path/to/file.js").href).toBe("file:///path/to/file.js");
   });
+
+  it("should handle relative paths longer than PATH_MAX", () => {
+    const long = Buffer.alloc(6000, "a").toString();
+    const url = pathToFileURL(long);
+    expect(url.href.endsWith("/" + long)).toBe(true);
+  });
+
+  it("should normalize long relative paths with .. segments", () => {
+    const input = Buffer.alloc(14000, "abcdef/").toString() + Buffer.alloc(6000, "../").toString() + "final";
+    const url = pathToFileURL(input);
+    expect(url.href).toBe(`${pathToFileURL(process.cwd())}/final`);
+  });
 });
 
 describe("fileURLToPath", () => {

@@ -653,30 +653,34 @@ pub const Loop = extern struct {
 
     pub fn subActive(this: *Loop, value: u32) void {
         log("subActive({d}) - {d}", .{ value, this.active_handles });
-        this.active_handles -= value;
+        // Match PosixLoop.subActive: saturate to avoid underflowing the
+        // unsigned counter during process teardown when Bun's virtual
+        // keep-alive refs and libuv's own handle accounting momentarily
+        // disagree (observed with many child processes exiting at once).
+        this.active_handles -|= value;
     }
 
     pub fn addActive(this: *Loop, value: u32) void {
         log("addActive({d})", .{value});
-        this.active_handles += value;
+        this.active_handles +|= value;
     }
 
     pub const ref = inc;
     pub const unref = dec;
 
     pub fn inc(this: *Loop) void {
-        log("inc - {d}", .{this.active_handles + 1});
+        log("inc - {d}", .{this.active_handles +| 1});
 
         // This log may be helpful if you are curious where KeepAlives are being created from
         // if (Env.isDebug) {
         //     std.debug.dumpCurrentStackTrace(@returnAddress(), .{});
         // }
-        this.active_handles += 1;
+        this.active_handles +|= 1;
     }
 
     pub fn dec(this: *Loop) void {
         log("dec", .{});
-        this.active_handles -= 1;
+        this.active_handles -|= 1;
     }
 
     pub fn stop(this: *Loop) void {
@@ -753,7 +757,7 @@ pub const Loop = extern struct {
 
     pub fn unrefCount(this: *Loop, count: i32) void {
         log("unrefCount({d})", .{count});
-        this.active_handles -= @intCast(count);
+        this.active_handles -|= @as(u32, @intCast(count));
     }
 
     pub fn dumpActiveHandles(this: *Loop, stream: ?*FILE) void {

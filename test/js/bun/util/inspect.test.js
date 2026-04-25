@@ -803,4 +803,36 @@ describe("WeakMap/WeakSet with user-assigned .size property", () => {
     wm.size = 1000;
     expect(() => expect(wm).toMatchObject([])).toThrow();
   });
+
+  it("expect().toMatchObject() diff formatting does not crash on WeakSet with .size", () => {
+    const ws = new WeakSet();
+    ws.size = 1000;
+    expect(() => expect(ws).toMatchObject([])).toThrow();
+  });
+
+  it("Bun.inspect does not invoke .size getter on WeakMap", () => {
+    const wm = new WeakMap();
+    let called = false;
+    Object.defineProperty(wm, "size", {
+      get() {
+        called = true;
+        throw new Error("should not be called");
+      },
+    });
+    expect(Bun.inspect(wm)).toBe("WeakMap {}");
+    expect(called).toBe(false);
+  });
+
+  it("Bun.inspect does not invoke .size getter on WeakSet", () => {
+    const ws = new WeakSet();
+    let called = false;
+    Object.defineProperty(ws, "size", {
+      get() {
+        called = true;
+        throw new Error("should not be called");
+      },
+    });
+    expect(Bun.inspect(ws)).toBe("WeakSet {}");
+    expect(called).toBe(false);
+  });
 });

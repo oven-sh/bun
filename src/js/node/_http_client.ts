@@ -410,28 +410,7 @@ function ClientRequest(input, options, cb) {
           }));
           setIsNextIncomingMessageHTTPS(prevIsHTTPS);
           res.req = this;
-          let timer;
-          res.setTimeout = (msecs, callback) => {
-            if (callback) {
-              res.on("timeout", callback);
-            }
-            if (timer) {
-              clearTimeout(timer);
-              timer = undefined;
-            }
-            if (msecs > 0) {
-              // Use an unref'd timer so an idle response timeout does not keep
-              // the event loop alive (matches Node's socket.setTimeout semantics).
-              timer = setTimeout(() => {
-                timer = undefined;
-                if (res.complete) {
-                  return;
-                }
-                res.emit("timeout");
-              }, msecs).unref();
-            }
-            return res;
-          };
+          res.setTimeout = clientResponseSetTimeout;
           process.nextTick(
             (self, res) => {
               // If the user did not listen for the 'response' event, then they
@@ -1056,6 +1035,36 @@ function emitContinueAndSocketNT(self) {
 
 function emitAbortNextTick(self) {
   self.emit("abort");
+}
+
+const kResTimeoutTimer = Symbol("kResTimeoutTimer");
+
+function onClientResponseTimeout(res) {
+  res[kResTimeoutTimer] = undefined;
+  if (res.complete) {
+    return;
+  }
+  res.emit("timeout");
+}
+
+// Assigned as res.setTimeout on client-side IncomingMessage instances. Kept at
+// module scope so it doesn't close over ClientRequest locals and keep them
+// alive for the lifetime of the response.
+function clientResponseSetTimeout(msecs, callback) {
+  if (callback) {
+    this.on("timeout", callback);
+  }
+  const existing = this[kResTimeoutTimer];
+  if (existing) {
+    clearTimeout(existing);
+    this[kResTimeoutTimer] = undefined;
+  }
+  if (msecs > 0) {
+    // Use an unref'd timer so an idle response timeout does not keep the
+    // event loop alive (matches Node's socket.setTimeout semantics).
+    this[kResTimeoutTimer] = setTimeout(onClientResponseTimeout, msecs, this).unref();
+  }
+  return this;
 }
 
 export default {

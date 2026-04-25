@@ -159,9 +159,7 @@ pub const JSRef = union(enum) {
                 strong.deinit();
                 this.* = .{ .weak = value };
             },
-            .finalized => {
-                bun.debugAssert(false);
-            },
+            .finalized => {},
         }
     }
 

@@ -35,6 +35,29 @@ const c = if (bun.Environment.enable_asan) struct {
 
 pub const enabled = bun.Environment.enable_asan;
 
+comptime {
+    if (enabled) {
+        // Defined here (in bun-zig.o, a direct link input) rather than in C: in CI's
+        // split build the C objects are archived into libbun.a, and clang places the
+        // ASAN runtime — which already weak-defines __asan_default_options — before
+        // user inputs, so an archive member that only provides this symbol is never
+        // extracted and the override silently doesn't apply.
+        @export(&__asan_default_options, .{ .name = "__asan_default_options" });
+    }
+}
+
+fn __asan_default_options() callconv(.c) [*:0]const u8 {
+    // detect_stack_use_after_return moves stack locals to a heap-backed fake stack
+    // that JSC's conservative GC does not scan, so JSValues that should be kept
+    // alive by being on the stack (e.g. MarkedArgumentBuffer's inline storage) get
+    // collected. Also surfaces as a Thread::currentSingleton().stack().contains(this)
+    // assertion in JSC::JSGlobalObject::GlobalPropertyInfo on debug builds.
+    //
+    // detect_leaks: off by default everywhere (it defaults on for Linux only); CI
+    // opts in via ASAN_OPTIONS with a suppressions file.
+    return "detect_stack_use_after_return=0:detect_leaks=0";
+}
+
 /// Update allocation stack trace for the given allocation to the current stack
 /// trace
 pub fn updateAllocationContext(ptr: *const anyopaque) bool {

@@ -1909,6 +1909,9 @@ describe("bun link integration", () => {
   // `index.js`. Producer adds `marker.js` — presence of that file in
   // `node_modules/.bun/no-deps@1.0.0/node_modules/no-deps/` is proof the
   // body was sourced from the producer dir, not the registry tarball cache.
+  // Returned to the caller, which wraps it with `using` for disposal.
+  // Don't `using` here — that would dispose on function return, before
+  // the test body can use the producer.
   async function setupLinkedNoDeps(env: NodeJS.ProcessEnv) {
     const producer = tempDir("linkpkg-producer-", {
       "package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
@@ -2150,7 +2153,7 @@ describe("bun link integration", () => {
 
     // Producer shaped like a real repo: publishable content at top level
     // plus a pile of things `bun publish` would strip.
-    const producer = tempDir("linkpkg-realrepo-", {
+    using producer = tempDir("linkpkg-realrepo-", {
       "package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
       "README.md": "# content\n",
       "index.js": "module.exports = 'FROM_PRODUCER';",
@@ -2264,7 +2267,7 @@ describe("bun link integration", () => {
     using home = tempDir("link-home-", {});
     const env = hermeticEnv(String(home));
 
-    const producer = tempDir("linkpkg-fileswl-", {
+    using producer = tempDir("linkpkg-fileswl-", {
       "package.json": JSON.stringify({ name: "no-deps", version: "1.0.0", files: ["dist"] }),
       "README.md": "# content\n",
       "dist/bundle.js": "module.exports = 'BUILT';",

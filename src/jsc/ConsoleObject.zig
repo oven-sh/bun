@@ -2764,9 +2764,10 @@ pub const Formatter = struct {
                 this.quote_strings = true;
                 defer this.quote_strings = prev_quote_strings;
 
-                const map_name = if (value.jsType() == .WeakMap) "WeakMap" else "Map";
+                const is_weak = value.jsType() == .WeakMap;
+                const map_name = if (is_weak) "WeakMap" else "Map";
 
-                if (length == 0) {
+                if (length == 0 or is_weak) {
                     return writer.print("{s} {{}}", .{map_name});
                 }
 
@@ -2871,9 +2872,10 @@ pub const Formatter = struct {
                 this.quote_strings = true;
                 defer this.quote_strings = prev_quote_strings;
 
-                const set_name = if (value.jsType() == .WeakSet) "WeakSet" else "Set";
+                const is_weak = value.jsType() == .WeakSet;
+                const set_name = if (is_weak) "WeakSet" else "Set";
 
-                if (length == 0) {
+                if (length == 0 or is_weak) {
                     return writer.print("{s} {{}}", .{set_name});
                 }
 

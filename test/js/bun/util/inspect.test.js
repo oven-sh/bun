@@ -772,3 +772,35 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+describe("WeakMap/WeakSet with user-assigned .size property", () => {
+  it("Bun.inspect does not attempt to iterate WeakMap", () => {
+    const wm = new WeakMap();
+    wm.size = 1000;
+    expect(Bun.inspect(wm)).toBe("WeakMap {}");
+  });
+
+  it("Bun.inspect does not attempt to iterate WeakSet", () => {
+    const ws = new WeakSet();
+    ws.size = 1000;
+    expect(Bun.inspect(ws)).toBe("WeakSet {}");
+  });
+
+  it("expect().toEqual() diff formatting does not crash on WeakMap with .size", () => {
+    const wm = new WeakMap();
+    wm.size = 1;
+    expect(() => expect(wm).toEqual(new Map())).toThrow();
+  });
+
+  it("expect().toEqual() diff formatting does not crash on WeakSet with .size", () => {
+    const ws = new WeakSet();
+    ws.size = 1;
+    expect(() => expect(ws).toEqual(new Set())).toThrow();
+  });
+
+  it("expect().toMatchObject() diff formatting does not crash on WeakMap with .size", () => {
+    const wm = new WeakMap();
+    wm.size = 1000;
+    expect(() => expect(wm).toMatchObject([])).toThrow();
+  });
+});

@@ -138,15 +138,15 @@ const buildPlatforms = [
  * @type {Platform[]}
  */
 const testPlatforms = [
-  // Darwin test agents are targeted by `release-tier` (see getTestAgent), not
-  // by exact `release`. arm64 runs on `latest` (current macOS, 26 today) and
-  // `previous` (14/15). x64 runs on `previous` (14/15) and `oldest` (13) —
-  // Intel can't run `latest`, and 13 is the min-supported floor. The `release`
-  // field below only labels the step; routing is by `tier`.
+  // Darwin arm64 is targeted by `release-tier` (see getTestAgent): one job on
+  // `latest` (current macOS, 26 today) and one on `previous` (anything older
+  // — currently 13/14/15). x64 is NOT tier-targeted: a single entry runs on
+  // whichever Intel box is free. Intel Macs can't run latest macOS and the
+  // tier split bottlenecked the smaller pool, so x64 trades guaranteed
+  // version coverage for throughput. The `release` field only labels the step.
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
-  { os: "darwin", arch: "x64", release: "14", tier: "previous" },
-  { os: "darwin", arch: "x64", release: "13", tier: "oldest" },
+  { os: "darwin", arch: "x64", release: "14", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "13", tier: "latest" },
@@ -403,14 +403,15 @@ function getTestAgent(platform, options) {
 
   if (os === "darwin") {
     // `release-tier` is emitted by scripts/agent.mjs based on the box's macOS
-    // major version (>= LATEST_DARWIN_RELEASE → "latest", else "previous").
-    // Targeting by tier instead of exact release lets the `previous` job land
-    // on whichever 13/14/15 box is free without per-box config.
+    // major version. arm64 splits into `latest` (current macOS) + `previous`
+    // (anything older). x64 is NOT tier-targeted — single entry, any Intel
+    // box — because the tier split bottlenecked the smaller pool and Intel
+    // can't run latest anyway.
     return {
       queue: `test-${os}`,
       os,
       arch,
-      "release-tier": tier,
+      ...(arch === "aarch64" ? { "release-tier": tier } : {}),
     };
   }
 

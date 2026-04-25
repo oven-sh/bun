@@ -1332,7 +1332,10 @@ async function getPipeline(options = {}) {
   const imagePlatforms = new Map(
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
-          .filter(({ os }) => os !== "darwin")
+          // darwin: no cloud images. freebsd: cross-compiles from a linux
+          // image (getImageKey maps it to the matching linux key), so no
+          // separate freebsd image is baked.
+          .filter(({ os }) => os !== "darwin" && os !== "freebsd")
           .filter(({ os, distro }) => !imageFilter || os === imageFilter || distro === imageFilter)
           .map(platform => [getImageKey(platform), platform])
       : [],

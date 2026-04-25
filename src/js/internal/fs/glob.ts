@@ -272,21 +272,23 @@ function validatePattern(pattern: string | string[]): string[] {
 }
 
 /**
- * Returns true if every brace group in `pattern` lies entirely after the
- * last path separator — i.e. no brace `{` appears before the last `/`, and
- * no brace body contains a `/`. Such braces can only influence leaf-name
- * matching, not directory traversal, so `Bun.Glob`'s native `matchBrace`
- * handles them in a single walk and we can skip the pre-expansion.
+ * Returns true if every brace group in `pattern` lies entirely in the leaf
+ * path segment — no brace opens in a directory segment, and no brace body
+ * contains a separator. Such braces can only influence leaf-name matching,
+ * not directory traversal, so `Bun.Glob`'s native `matchBrace` handles them
+ * in a single walk and we can skip the pre-expansion.
  *
- * Single-pass scan: track the last `/` we've seen *outside* any brace; if
- * a `{` appears at depth 0 before or at that position, we must expand.
- * A brace that itself contains a `/` (`{a/b,c}`) also forces expansion.
+ * Single-pass scan: walk the pattern tracking brace depth and whether any
+ * top-level brace has already closed. Bail to `false` when a separator
+ * appears inside a brace (`{a/b,c}` spans segments) or at depth 0 after a
+ * brace has closed (the closed brace was in a directory segment). An
+ * unbalanced `{` also bails — `expandBraces` has a dedicated recursion for
+ * that shape.
  */
 function leafOnlyBraces(pattern: string): boolean {
   // A separator is `/` everywhere, plus `\` on Windows. The raw pattern
-  // hasn't been normalized yet (that happens after `expandBraces` runs),
-  // so we have to accept both Windows shapes here — unlike the brace
-  // parsers which only see segments from `split(sep)`.
+  // hasn't been normalized yet (that happens after `expandBraces` runs, on
+  // the expanded outputs), so we have to accept both Windows shapes here.
   let depth = 0;
   let anyTopLevelBraceClosed = false;
   for (let i = 0; i < pattern.length; i++) {

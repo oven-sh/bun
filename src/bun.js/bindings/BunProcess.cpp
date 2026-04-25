@@ -1122,12 +1122,74 @@ bool isSignalName(WTF::String input)
     return signalNameToNumberMap->contains(input);
 }
 
+
+extern "C" void bun_restore_stdio();
+
 extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
 {
     Process* process = globalObject->processObject();
 
     String signalName = signalNumberToNameMap->get(signalNumber);
+
+    // If the signal number doesn't map to a known name, it cannot have JS
+    // listeners. Fall through to emitForBindings (which will be a no-op) to
+    // preserve the safe pre-existing behavior for unknown/unmapped signals.
+    if (signalName.isEmpty()) {
+        MarkedArgumentBuffer args;
+        args.append(jsUndefined());
+        args.append(jsNumber(signalNumber));
+        process->wrapped().emitForBindings(Identifier::fromString(JSC::getVM(globalObject), signalName), args);
+        return;
+    }
+
     Identifier signalNameIdentifier = Identifier::fromString(JSC::getVM(globalObject), signalName);
+
+    // Match Node.js behavior: if no JS listeners are registered for this signal,
+    // restore SIG_DFL and re-raise so the process terminates with the correct
+    // exit code (128 + signal number). Without this, signals like SIGHUP from
+    // terminal death are silently swallowed, causing orphaned processes.
+    if (process->wrapped().listenerCount(signalNameIdentifier) == 0) {
+#if !OS(WINDOWS)
+        // Node.js ignores SIGPIPE and SIGXFSZ by default (they should never
+        // terminate the process). Match that behavior here.
+        if (signalNumber == SIGPIPE
+#ifdef SIGXFSZ
+            || signalNumber == SIGXFSZ
+#endif
+        ) {
+            return;
+        }
+
+        // Restore terminal state before re-raising (matches onExitSignal behavior).
+        bun_restore_stdio();
+
+        // Reset Bun's crash handler signals (SIGSEGV, SIGBUS, SIGILL, SIGFPE) to
+        // SIG_DFL before re-raising. Without this, Worker threads that encounter a
+        // fault during process teardown would trigger the crash handler's backtrace()
+        // call, which is not async-signal-safe and can segfault in _Unwind_Find_FDE().
+        {
+            struct sigaction reset;
+            memset(&reset, 0, sizeof(reset));
+            reset.sa_handler = SIG_DFL;
+            sigemptyset(&reset.sa_mask);
+            sigaction(SIGSEGV, &reset, nullptr);
+            sigaction(SIGBUS, &reset, nullptr);
+            sigaction(SIGILL, &reset, nullptr);
+            sigaction(SIGFPE, &reset, nullptr);
+        }
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = SIG_DFL;
+        sigemptyset(&sa.sa_mask);
+        sigaction(signalNumber, &sa, nullptr);
+        raise(signalNumber);
+#endif
+        // On Windows, signals with no listeners are a no-op (same as before).
+        // Windows signal handling uses uv_signal_t which doesn't have the
+        // orphaned-process problem that POSIX signals cause.
+        return;
+    }
+
     MarkedArgumentBuffer args;
     args.append(jsString(JSC::getVM(globalObject), signalNameIdentifier.string()));
     args.append(jsNumber(signalNumber));

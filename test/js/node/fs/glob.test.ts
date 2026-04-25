@@ -367,4 +367,24 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
       for await (const _ of fs.promises.glob("*.txt", { cwd: root, exclude })) break;
     }).toThrow(boom);
   });
+
+  it("self-referential symlink in the literal prefix returns [] (not ELOOP)", () => {
+    // Opening `loop/` as a directory throws ELOOP for a self-referential
+    // symlink `loop -> loop`. Node swallows this and returns `[]`; so do we.
+    using dir = tempDir("glob-loop", {});
+    fs.symlinkSync("loop", path.join(String(dir), "loop"), "dir");
+    expect(fs.globSync("loop/*.txt", { cwd: String(dir) })).toStrictEqual([]);
+    expect(fs.globSync("loop/inside.txt", { cwd: String(dir) })).toStrictEqual([]);
+  });
+
+  it("collapses consecutive separators in the literal prefix", () => {
+    // `a//b/*.txt` should normalize to `a/b/*.txt` in output (matches Node);
+    // leaving `a//b/x.txt` would break `Bun.Glob('a/b/x.txt').match(...)`
+    // comparisons in user code.
+    using dir = tempDir("glob-dbl", {
+      a: { b: { "x.txt": "x" } },
+    });
+    expect(fs.globSync("a//b/*.txt", { cwd: String(dir) })).toStrictEqual(["a/b/x.txt"]);
+    expect(fs.globSync("a///b/*.txt", { cwd: String(dir) })).toStrictEqual(["a/b/x.txt"]);
+  });
 }); // </symlink behavior>

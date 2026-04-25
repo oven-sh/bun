@@ -110,11 +110,13 @@ function* globSync(pattern: string | string[], options?: GlobOptions): Generator
 }
 
 // When a literal prefix gets folded into `cwd`, opening that cwd can fail if
-// the path is missing (ENOENT) or names a regular file rather than a directory
-// (ENOTDIR). Node and pre-PR Bun both return `[]` in these cases.
+// the path is missing (ENOENT), names a regular file rather than a directory
+// (ENOTDIR), or traverses a symlink cycle (ELOOP — a self-referential symlink
+// like `loop -> loop` in the literal prefix). All three produce empty results
+// in Node; we match that by treating them as "no match".
 function isMissingPath(err: unknown): boolean {
   const code = (err as any)?.code;
-  return code === "ENOENT" || code === "ENOTDIR";
+  return code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP";
 }
 
 /**
@@ -171,7 +173,16 @@ function splitLiteralPrefix(pattern: string, cwd: string): { pattern: string; cw
     return { pattern, cwd, prefix: "" };
   }
 
-  const literalSegs = parts.slice(0, stop);
+  // Empty segments come from consecutive separators in the pattern
+  // (`a//b/*.txt`). Node collapses those in its output and in `Minimatch`
+  // pattern matching, so we strip them here too before re-assembling the
+  // literal prefix — keeping only the leading empty for rooted POSIX paths
+  // (`/foo/*.txt` → `['', 'foo', '*.txt']` → `/foo`).
+  const rawLiteralSegs = parts.slice(0, stop);
+  const literalSegs: string[] = [];
+  for (let i = 0; i < rawLiteralSegs.length; i++) {
+    if (rawLiteralSegs[i] !== "" || (i === 0 && isAbsolute)) literalSegs.push(rawLiteralSegs[i]);
+  }
   let remainder = parts.slice(stop).join(separator);
   if (hadTrailingSep) remainder += separator;
   let literalPath = literalSegs.join(separator) || (isAbsolute ? separator : ".");

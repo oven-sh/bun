@@ -537,10 +537,23 @@ pub const Bin = extern struct {
 
         var has_set_umask = false;
 
+        /// Capture the process umask once so it can be consulted later,
+        /// but do NOT zero it out. Historically we called `umask(0)` here
+        /// to avoid losing tarball-stored bits (the executable bit on
+        /// `node_modules/.bin` entries etc.). In practice the code that
+        /// needed exact modes already calls `fchmod` after the fact, and
+        /// zeroing umask prevented users' `umask 0o002` from producing
+        /// group-writable install trees — which is what this function was
+        /// blocking in issue #29723. Leaving umask alone lets the kernel
+        /// apply it to directory/file creation like Node, npm, and pnpm.
         pub fn ensureUmask() void {
             if (!has_set_umask) {
                 has_set_umask = true;
-                umask = bun.sys.umask(0);
+                // `umask(mask)` returns the previous mask. Read-and-restore
+                // so we capture the caller's umask without changing it.
+                const previous = bun.sys.umask(0);
+                _ = bun.sys.umask(previous);
+                umask = previous;
             }
         }
 
@@ -797,7 +810,9 @@ pub const Bin = extern struct {
         fn createSymlink(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
             defer {
                 if (this.err == null) {
-                    _ = bun.sys.chmod(abs_target, umask | 0o777);
+                    // Mark the bin executable. Honor the process umask the
+                    // same way npm and pnpm do: final mode = 0o777 & ~umask.
+                    _ = bun.sys.chmod(abs_target, 0o777 & ~umask);
                 }
             }
 

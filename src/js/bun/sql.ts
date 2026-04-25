@@ -1059,9 +1059,13 @@ const SQL: typeof Bun.SQL = function SQL(
     // This ensures we don't have dangling callbacks if LISTEN fails
     if (isNewChannel) {
       await conn.unsafe(`LISTEN ${pool.escapeIdentifier(channel)}`);
-      // LISTEN succeeded, now create the callback set
-      callbacks = new Set();
-      listeners.set(channel, callbacks);
+      // LISTEN succeeded – re-read in case a concurrent listen() already
+      // created the Set for this channel while we were awaiting.
+      callbacks = listeners.get(channel);
+      if (!callbacks) {
+        callbacks = new Set();
+        listeners.set(channel, callbacks);
+      }
     }
 
     // Add callback to listeners (LISTEN already succeeded for new channels)

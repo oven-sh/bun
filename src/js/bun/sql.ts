@@ -936,6 +936,25 @@ const SQL: typeof Bun.SQL = function SQL(
   sql.transaction = sql.begin;
   sql.distributed = sql.beginDistributed;
   sql.end = sql.close;
+
+  if (pool.listen) {
+    sql.listen = (channel, onnotify, onlisten?) => pool.listen(channel, onnotify, onlisten);
+    sql.unlisten = (channel, onnotify?) => pool.unlisten(channel, onnotify);
+    // notify uses a regular pool connection via parameterized query — no dedicated listen connection
+    sql.notify = (channel, payload) => {
+      if (typeof channel !== "string" || !channel) {
+        throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
+      }
+      if (channel.indexOf("\0") !== -1) {
+        throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
+      }
+      if (typeof payload !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("payload", "string", payload);
+      }
+      return sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]);
+    };
+  }
+
   return sql;
 };
 
@@ -1014,6 +1033,18 @@ defaultSQLObject.end = defaultSQLObject.close = (...args: Parameters<typeof lazy
 defaultSQLObject.flush = (...args: Parameters<typeof lazyDefaultSQL.flush>) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.flush(...args);
+};
+defaultSQLObject.listen = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.listen(...args);
+};
+defaultSQLObject.unlisten = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.unlisten(...args);
+};
+defaultSQLObject.notify = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.notify(...args);
 };
 //define lazy properties
 defineProperties(defaultSQLObject, {

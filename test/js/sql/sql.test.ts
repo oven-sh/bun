@@ -12384,5 +12384,334 @@ CREATE TABLE ${table_name} (
         expect(e.message).toContain("65535");
       }
     });
+    describe("LISTEN/NOTIFY", () => {
+      test("sql.listen and sql.notify round-trip a payload", async () => {
+        await using db = postgres(options);
+        const { promise, resolve } = Promise.withResolvers<string>();
+
+        await db.listen("test_listen_basic", payload => resolve(payload));
+        await db.notify("test_listen_basic", "hello-bun");
+
+        const received = await promise;
+        expect(received).toBe("hello-bun");
+        await db.unlisten("test_listen_basic");
+      });
+
+      test("sql.listen receives multiple notifications in order", async () => {
+        await using db = postgres(options);
+        const received: string[] = [];
+        let resolver: (() => void) | null = null;
+
+        await db.listen("test_listen_multi", payload => {
+          received.push(payload);
+          if (received.length >= 3) resolver?.();
+        });
+
+        const { promise, resolve } = Promise.withResolvers<void>();
+        resolver = resolve;
+
+        await db.notify("test_listen_multi", "one");
+        await db.notify("test_listen_multi", "two");
+        await db.notify("test_listen_multi", "three");
+
+        await promise;
+        expect(received).toEqual(["one", "two", "three"]);
+        await db.unlisten("test_listen_multi");
+      });
+
+      test("sql.listen invokes onlisten callback on registration", async () => {
+        await using db = postgres(options);
+        const { promise, resolve } = Promise.withResolvers<void>();
+
+        await db.listen("test_listen_onlisten", () => {}, resolve);
+        await promise;
+        await db.unlisten("test_listen_onlisten");
+      });
+
+      test("sql.listen returns state with pid/secret and unlisten", async () => {
+        await using db = postgres(options);
+        const result = await db.listen("test_listen_state", () => {});
+        expect(result).toBeObject();
+        expect(result.state).toBeDefined();
+        // state.pid should be a positive integer (PG backend PID, populated from BackendKeyData)
+        expect(typeof result.state.pid).toBe("number");
+        expect(result.state.pid).toBeGreaterThan(0);
+        // state.secret is the cancellation secret key
+        expect(typeof result.state.secret).toBe("number");
+        expect(typeof result.unlisten).toBe("function");
+        await result.unlisten();
+      });
+
+      test("sql.listen state is shared across listeners and updates on reconnect", async () => {
+        await using db = postgres(options);
+
+        // First subscription on the listen connection
+        const r1 = await db.listen("test_listen_state_shared", () => {});
+        const initialPid = r1.state.pid;
+        expect(initialPid).toBeGreaterThan(0);
+
+        // Second subscription should hand back the SAME state object reference,
+        // so users holding either reference always see the live backend pid/secret.
+        const r2 = await db.listen("test_listen_state_shared_2", () => {});
+        expect(r2.state).toBe(r1.state);
+        expect(r2.state.pid).toBe(initialPid);
+
+        // Drive a reconnect by terminating the listen backend from a pool query.
+        // onlisten fires once on registration AND again on reconnect — count fires
+        // and resolve only on the second (post-reconnect) firing.
+        const { promise: reconnected, resolve: resolveReconnect } = Promise.withResolvers<void>();
+        let onlistenFires = 0;
+        await db.listen(
+          "test_listen_state_shared_observer",
+          () => {},
+          () => {
+            if (++onlistenFires === 2) resolveReconnect();
+          },
+        );
+
+        // pg_terminate_backend may itself report an error on the kicking
+        // connection — narrow the catch to that one query so unrelated bugs
+        // (e.g. db being undefined) still surface as a real test failure.
+        await db.unsafe("SELECT pg_terminate_backend($1)", [initialPid]).catch(() => {});
+
+        await reconnected;
+
+        // Same object reference, but pid is now the *new* backend's PID.
+        expect(r1.state).toBe(r2.state);
+        expect(r1.state.pid).toBeGreaterThan(0);
+        expect(r1.state.pid).not.toBe(initialPid);
+
+        await db.unlisten("test_listen_state_shared");
+        await db.unlisten("test_listen_state_shared_2");
+        await db.unlisten("test_listen_state_shared_observer");
+      });
+
+      test("sql.listen reconnects and resumes notification delivery", async () => {
+        await using db = postgres(options);
+        const received: string[] = [];
+        const { promise: gotBefore, resolve: resolveBefore } = Promise.withResolvers<void>();
+        const { promise: gotAfter, resolve: resolveAfter } = Promise.withResolvers<void>();
+        const { promise: secondListen, resolve: resolveSecondListen } = Promise.withResolvers<void>();
+
+        let onlistenCount = 0;
+        const sub = await db.listen(
+          "test_listen_reconnect",
+          payload => {
+            received.push(payload);
+            if (payload === "before") resolveBefore();
+            if (payload === "after") resolveAfter();
+          },
+          () => {
+            onlistenCount++;
+            if (onlistenCount === 2) resolveSecondListen();
+          },
+        );
+        expect(onlistenCount).toBe(1);
+        const initialPid = sub.state.pid;
+
+        await db.notify("test_listen_reconnect", "before");
+        await gotBefore;
+
+        // Force the listen connection to drop server-side
+        await db.unsafe("SELECT pg_terminate_backend($1)", [initialPid]).catch(() => {});
+
+        // Wait for reconnect to issue LISTEN again (onlisten fires twice: original + reconnect)
+        await secondListen;
+        expect(sub.state.pid).not.toBe(initialPid);
+
+        // Notifications on the same channel should now be delivered via the new backend
+        await db.notify("test_listen_reconnect", "after");
+        await gotAfter;
+
+        expect(received).toEqual(["before", "after"]);
+        await sub.unlisten();
+      });
+
+      test("sql.listen reconnect re-fires onlisten for every channel", async () => {
+        await using db = postgres(options);
+        const fires: string[] = [];
+        const { promise: allReconnected, resolve } = Promise.withResolvers<void>();
+
+        let total = 0;
+        const onlisten = (channel: string) => () => {
+          fires.push(channel);
+          // 2 channels × 2 fires each (initial + after reconnect) = 4
+          if (++total === 4) resolve();
+        };
+
+        const r1 = await db.listen("test_reconnect_a", () => {}, onlisten("a"));
+        await db.listen("test_reconnect_b", () => {}, onlisten("b"));
+        const initialPid = r1.state.pid;
+
+        await db.unsafe("SELECT pg_terminate_backend($1)", [initialPid]).catch(() => {});
+
+        await allReconnected;
+
+        // Each channel's onlisten fired exactly twice (initial + post-reconnect)
+        expect(fires.filter(c => c === "a").length).toBe(2);
+        expect(fires.filter(c => c === "b").length).toBe(2);
+
+        await db.unlisten("test_reconnect_a");
+        await db.unlisten("test_reconnect_b");
+      });
+
+      test("sql.unlisten stops receiving notifications", async () => {
+        await using db = postgres(options);
+        const received: string[] = [];
+        const { promise: gotBefore, resolve: resolveBefore } = Promise.withResolvers<void>();
+        const { promise: gotBarrier, resolve: resolveBarrier } = Promise.withResolvers<void>();
+
+        await db.listen("test_listen_unlisten", payload => {
+          received.push(payload);
+          if (payload === "before") resolveBefore();
+        });
+        // Barrier channel shares the same listen connection; messages on a single
+        // connection are delivered in order, so when the barrier arrives we know
+        // any pending "after" message would already have been delivered.
+        await db.listen("test_listen_unlisten_barrier", () => resolveBarrier());
+
+        await db.notify("test_listen_unlisten", "before");
+        await gotBefore;
+
+        await db.unlisten("test_listen_unlisten");
+
+        await db.notify("test_listen_unlisten", "after");
+        await db.notify("test_listen_unlisten_barrier", "go");
+        await gotBarrier;
+
+        expect(received).toEqual(["before"]);
+
+        await db.unlisten("test_listen_unlisten_barrier");
+      });
+
+      test("multiple listeners on the same channel all receive notifications", async () => {
+        await using db = postgres(options);
+        const { promise: p1, resolve: r1 } = Promise.withResolvers<string>();
+        const { promise: p2, resolve: r2 } = Promise.withResolvers<string>();
+
+        const fn1 = (payload: string) => r1(payload);
+        const fn2 = (payload: string) => r2(payload);
+
+        await db.listen("test_listen_multi_listeners", fn1);
+        await db.listen("test_listen_multi_listeners", fn2);
+        await db.notify("test_listen_multi_listeners", "broadcast");
+
+        const [got1, got2] = await Promise.all([p1, p2]);
+        expect(got1).toBe("broadcast");
+        expect(got2).toBe("broadcast");
+
+        await db.unlisten("test_listen_multi_listeners");
+      });
+
+      test("sql.notify with pg_notify empty payload works", async () => {
+        await using db = postgres(options);
+        const { promise, resolve } = Promise.withResolvers<string>();
+
+        await db.listen("test_listen_empty", payload => resolve(payload));
+        await db.notify("test_listen_empty", "");
+
+        const received = await promise;
+        expect(received).toBe("");
+        await db.unlisten("test_listen_empty");
+      });
+
+      test("sql.listen rejects invalid channel names", async () => {
+        await using db = postgres(options);
+        // empty string
+        expect(db.listen("", () => {})).rejects.toThrow();
+        // null bytes are forbidden by PostgreSQL identifiers
+        expect(db.listen("with\0null", () => {})).rejects.toThrow();
+        // non-callable onnotify
+        expect(db.listen("ch", 42 as any)).rejects.toThrow();
+        // non-callable onlisten
+        expect(db.listen("ch", () => {}, 42 as any)).rejects.toThrow();
+      });
+
+      test("sql.notify validates arguments", async () => {
+        await using db = postgres(options);
+        expect(() => db.notify("", "payload")).toThrow();
+        expect(() => db.notify("with\0null", "payload")).toThrow();
+        expect(() => db.notify("ch", null as any)).toThrow();
+        expect(() => db.notify("ch", 42 as any)).toThrow();
+      });
+
+      test("sql.unlisten validates arguments", async () => {
+        await using db = postgres(options);
+        expect(db.unlisten("")).rejects.toThrow();
+        expect(db.unlisten("with\0null")).rejects.toThrow();
+        expect(db.unlisten("ch", 42 as any)).rejects.toThrow();
+      });
+
+      test("unlisten() returned from listen() is idempotent", async () => {
+        await using db = postgres(options);
+        const { unlisten } = await db.listen("test_double_unlisten", () => {});
+        await unlisten();
+        // Calling again must not throw and must not send a second UNLISTEN.
+        await unlisten();
+        await unlisten();
+      });
+
+      test("unlisten() returned from listen() removes only that listener", async () => {
+        await using db = postgres(options);
+        const { promise: gotBoth, resolve: resolveBoth } = Promise.withResolvers<void>();
+        let count = 0;
+        const received: string[] = [];
+
+        const fn1 = (payload: string) => {
+          received.push(`fn1:${payload}`);
+          if (++count === 2) resolveBoth();
+        };
+        const fn2 = (payload: string) => {
+          received.push(`fn2:${payload}`);
+          if (++count === 2) resolveBoth();
+        };
+
+        const sub1 = await db.listen("test_partial_unlisten", fn1);
+        await db.listen("test_partial_unlisten", fn2);
+
+        // Remove only fn1
+        await sub1.unlisten();
+
+        // Use a barrier channel for synchronization
+        const { promise: gotBarrier, resolve: resolveBarrier } = Promise.withResolvers<void>();
+        await db.listen("test_partial_unlisten_barrier", () => resolveBarrier());
+
+        await db.notify("test_partial_unlisten", "after_unlisten");
+        await db.notify("test_partial_unlisten_barrier", "go");
+        await gotBarrier;
+
+        // fn2 should still receive, fn1 should not
+        expect(received).toEqual(["fn2:after_unlisten"]);
+
+        await db.unlisten("test_partial_unlisten");
+        await db.unlisten("test_partial_unlisten_barrier");
+      });
+
+      test("close during in-flight listen does not leak the connection", async () => {
+        // Force a fresh adapter (no shared pool) and start listen + close in the same tick.
+        const db = postgres(options);
+        const listenPromise = db.listen("test_close_during_listen", () => {}).catch(() => {});
+        await db.close({ timeout: 0 });
+        await listenPromise; // should resolve/reject cleanly without leaking
+      });
+
+      test("sql.listen onlisten fires after server-side LISTEN is registered", async () => {
+        await using db = postgres(options);
+        const { promise: onlistenFired, resolve } = Promise.withResolvers<void>();
+        await db.listen("test_onlisten_timing", () => {}, resolve);
+        await onlistenFired;
+
+        // At this point, pg_listening_channels() on the listen connection
+        // must include our channel. Since we can't query the dedicated
+        // listen connection directly, the next-best assertion is that an
+        // immediate notify is received.
+        const { promise: gotPayload, resolve: resolvePayload } = Promise.withResolvers<string>();
+        await db.listen("test_onlisten_timing", p => resolvePayload(p));
+        await db.notify("test_onlisten_timing", "after_onlisten");
+        expect(await gotPayload).toBe("after_onlisten");
+
+        await db.unlisten("test_onlisten_timing");
+      });
+    });
   }); // Close "PostgreSQL tests" describe
 } // Close if (isDockerEnabled())

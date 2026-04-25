@@ -860,6 +860,57 @@ declare module "bun" {
     unsafe<T = any>(string: string, values?: any[]): SQL.Query<T>;
 
     /**
+     * Subscribe to a PostgreSQL LISTEN channel. A dedicated connection is
+     * created and reused for all listeners; it reconnects automatically with
+     * exponential backoff on disconnect.
+     *
+     * @param channel - The channel name to listen on
+     * @param onnotify - Called with the payload string each time a notification arrives
+     * @param onlisten - Called each time the LISTEN command completes (initial connect and reconnects)
+     * The returned `state` object is shared across all listen() calls on this SQL
+     * instance and is mutated in place when the underlying listen connection is
+     * (re)established — a stale reference always reflects the current backend.
+     *
+     * @returns Promise resolving to `{ state, unlisten }`. `state.pid` is the
+     * PostgreSQL backend process ID (useful with `pg_terminate_backend`),
+     * `state.secret` is the cancellation secret. Call `unlisten()` to remove this
+     * specific listener (idempotent).
+     *
+     * @example
+     * const { state, unlisten } = await sql.listen('news', payload => console.log(payload));
+     * console.log('listening on backend pid', state.pid);
+     * // later:
+     * await unlisten();
+     */
+    listen(
+      channel: string,
+      onnotify: (payload: string) => void,
+      onlisten?: () => void,
+    ): Promise<{ state: { pid: number; secret: number }; unlisten: () => Promise<void> }>;
+
+    /**
+     * Unsubscribe from a PostgreSQL LISTEN channel.
+     * If `onnotify` is provided, only that specific listener is removed.
+     * If omitted, all listeners on the channel are removed and UNLISTEN is sent.
+     *
+     * @param channel - The channel name to unlisten from
+     * @param onnotify - The specific listener to remove (optional)
+     */
+    unlisten(channel: string, onnotify?: (payload: string) => void): Promise<void>;
+
+    /**
+     * Send a PostgreSQL NOTIFY to a channel using `pg_notify`.
+     * Uses a regular pool connection — does not require an active listener.
+     *
+     * @param channel - The channel name to notify
+     * @param payload - The payload string to send
+     *
+     * @example
+     * await sql.notify('news', JSON.stringify({ headline: 'hello' }));
+     */
+    notify(channel: string, payload: string): Promise<void>;
+
+    /**
      * Reads a file and uses the contents as a query.
      * Optional parameters can be used if the file includes $1, $2, etc
      * @example

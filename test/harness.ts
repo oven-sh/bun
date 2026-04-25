@@ -48,6 +48,9 @@ export const isASAN = basename(process.execPath).includes("bun-asan");
 
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,
+  // Strip ad-hoc JSC debug options that may be set on CI agents — they leak
+  // a "WARNING: failed to parse" line to stderr that breaks snapshot tests.
+  JSC_useJIT: undefined,
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",

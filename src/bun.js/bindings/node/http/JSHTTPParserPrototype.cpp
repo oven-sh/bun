@@ -3,6 +3,7 @@
 #include "JSConnectionsList.h"
 #include "ZigGlobalObject.h"
 #include "JSDOMExceptionHandling.h"
+#include <wtf/MathExtras.h>
 
 namespace Bun {
 
@@ -183,7 +184,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject
 
     if (callFrame->argumentCount() > 2) {
         if (maxHttpHeaderSizeValue.isNumber()) {
-            maxHttpHeaderSize = static_cast<uint64_t>(maxHttpHeaderSizeValue.asNumber());
+            maxHttpHeaderSize = truncateDoubleToUint64(maxHttpHeaderSizeValue.asNumber());
         }
     }
 
@@ -206,7 +207,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject
         }
     }
 
-    llhttp_type_t type = static_cast<llhttp_type_t>(typeValue.toNumber(globalObject));
+    llhttp_type_t type = static_cast<llhttp_type_t>(typeValue.toInt32(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(thisValue);

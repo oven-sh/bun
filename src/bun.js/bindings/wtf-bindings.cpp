@@ -15,6 +15,7 @@
 #if !OS(WINDOWS)
 #include <stdatomic.h>
 
+#include <signal.h>
 #include <termios.h>
 static int orig_termios_fd = -1;
 static struct termios orig_termios;
@@ -99,6 +100,10 @@ static void uv__tty_make_raw(struct termios* tio)
 
 extern "C" void Bun__atexit(void (*func)(void));
 
+#if !OS(WINDOWS)
+extern "C" volatile sig_atomic_t bun_stdio_modified[3];
+#endif
+
 extern "C" int Bun__ttySetMode(int fd, int mode)
 {
 #if !OS(WINDOWS)
@@ -159,10 +164,27 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
         break;
     }
 
+    // Mark the fd as modified *before* applying the change. If a
+    // SIGINT/SIGTERM lands between the device going raw and our bookkeeping
+    // catching up, bun_restore_stdio would otherwise read 0 and skip the
+    // restore — leaving the terminal in raw mode after exit. A spurious set
+    // when uv__tcsetattr fails is harmless: bun_restore_stdio then writes
+    // the cooked startup snapshot back to a still-cooked device (no-op,
+    // pre-PR behavior). Bounds-checked because the PTY master fd from
+    // Bun.Terminal calls through here too. See #29592.
+    //
+    // Marked on every transition, including setRawMode(true)→(false), so
+    // the signal-exit path (which runs only bun_restore_stdio, not the
+    // atexit uv_tty_reset_mode hook) still restores cooked mode on Ctrl-C.
+    if (fd >= 0 && fd < 3) {
+        bun_stdio_modified[fd] = 1;
+    }
+
     /* Apply changes after draining */
     rc = uv__tcsetattr(fd, TCSADRAIN, &tmp);
-    if (rc == 0)
+    if (rc == 0) {
         current_tty_mode = mode;
+    }
 
     return rc;
 #else

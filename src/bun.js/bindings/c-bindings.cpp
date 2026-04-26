@@ -400,6 +400,18 @@ extern "C" void Bun__onExit();
 extern "C" int32_t bun_stdio_tty[3];
 #if !OS(WINDOWS)
 static termios termios_to_restore_later[3];
+// Whether Bun itself has modified the termios of each stdio fd during this
+// process's lifetime (e.g. via process.stdin.setRawMode). Used to decide
+// whether the exit-time termios restore should fire when Bun is acting as a
+// pipeline producer (stdout is a pipe). See #29592 — writing our startup
+// snapshot back to a shared /dev/pts device clobbers raw mode set on the
+// same device by a downstream consumer (less, fzf, fx, ...).
+//
+// `volatile sig_atomic_t` because bun_restore_stdio() reads this from signal
+// context (onExitSignal, SIGINT/SIGTERM) while Bun__ttySetMode() writes it
+// from normal execution; sig_atomic_t is the only integral type POSIX
+// guarantees can be accessed atomically across that boundary.
+extern "C" volatile sig_atomic_t bun_stdio_modified[3] = { 0, 0, 0 };
 #endif
 
 extern "C" void bun_restore_stdio()
@@ -407,9 +419,25 @@ extern "C" void bun_restore_stdio()
 
 #if !OS(WINDOWS)
 
+    // Only suppress the restore when Bun is a pipeline producer (stdout is a
+    // pipe, not a TTY) and it didn't touch termios itself. That's the #29592
+    // case — a downstream consumer on the same /dev/pts/* device has already
+    // taken over termios and writing our startup snapshot back clobbers it.
+    //
+    // For the interactive-wrapper case (stdout IS a TTY, e.g. `bun run vim`
+    // where the child put the terminal into raw mode and then crashed), we
+    // keep the unconditional restore so the shell prompt comes back cooked.
+    // Same for the crash-handler, --watch reload, and signal-death paths in
+    // run_command / bunx / lifecycle_script_runner — those are all cases
+    // where Bun is the foreground session owner and the startup snapshot is
+    // the state the user expects back.
+    const bool pipeline_producer = bun_stdio_tty[1] == 0;
+
     // restore stdio
     for (int32_t fd = 0; fd < 3; fd++) {
         if (!bun_stdio_tty[fd])
+            continue;
+        if (pipeline_producer && !bun_stdio_modified[fd])
             continue;
 
         sigset_t sa;

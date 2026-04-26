@@ -633,8 +633,10 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         }
 
         pub fn put(self: *Self, result: *Result, value: ValueType) !*ValueType {
-            const ptr = try self.reserve(result, value);
-            self.publish(result.*);
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            const ptr = try self.reserveLocked(result, value);
+            self.index.put(self.allocator, result.hash, result.index) catch unreachable;
             return ptr;
         }
 
@@ -644,7 +646,10 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         pub fn reserve(self: *Self, result: *Result, value: ValueType) !*ValueType {
             self.mutex.lock();
             defer self.mutex.unlock();
+            return self.reserveLocked(result, value);
+        }
 
+        fn reserveLocked(self: *Self, result: *Result, value: ValueType) !*ValueType {
             if (result.index.index == NotFound.index or result.index.index == Unassigned.index) {
                 result.index.is_overflow = instance.backing_buf_used > max_index;
                 if (result.index.is_overflow) {

@@ -2319,6 +2319,7 @@ pub const Resolver = struct {
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
         const dir_info_ptr = r.dir_cache.reserve(&dir_cache_info_result, .{}) catch unreachable;
+        errdefer r.dir_cache.publish(dir_cache_info_result);
 
         // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
         // which gets overwritten on the next auto-install resolution. `dirInfoUncached` stores
@@ -3037,6 +3038,7 @@ pub const Resolver = struct {
             // from `peek()` until we `publish` after population, so the
             // dirInfoCached fast path never observes a half-initialized entry.
             const dir_info_ptr = try r.dir_cache.reserve(&queue_top.result, DirInfo{});
+            errdefer r.dir_cache.publish(queue_top.result);
 
             try r.dirInfoUncached(
                 dir_info_ptr,

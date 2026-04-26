@@ -22,7 +22,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGenerateKeysTemplate(JSC::JSGlobalOb
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<DiffieHellmanType>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "generateKeys"_s);
         return {};
@@ -47,7 +47,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncComputeSecretTemplate(JSC::JSGlobalO
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<DiffieHellmanType>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "computeSecret"_s);
         return {};
@@ -125,7 +125,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPrimeTemplate(JSC::JSGlobalObject
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<DiffieHellmanType>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "getPrime"_s);
         return {};
@@ -151,7 +151,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetGeneratorTemplate(JSC::JSGlobalOb
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<DiffieHellmanType>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "getGenerator"_s);
         return {};
@@ -177,7 +177,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPublicKeyTemplate(JSC::JSGlobalOb
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<DiffieHellmanType>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "getPublicKey"_s);
         return {};
@@ -203,7 +203,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPrivateKeyTemplate(JSC::JSGlobalO
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<DiffieHellmanType>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "getPrivateKey"_s);
         return {};
@@ -228,7 +228,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncSetPublicKeyTemplate(JSC::JSGlobalOb
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<DiffieHellmanType>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "setPublicKey"_s);
         return {};
@@ -265,7 +265,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncSetPrivateKeyTemplate(JSC::JSGlobalO
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<DiffieHellmanType>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "setPrivateKey"_s);
         return {};

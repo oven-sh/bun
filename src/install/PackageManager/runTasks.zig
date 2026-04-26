@@ -329,6 +329,13 @@ pub fn runTasks(
                 manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueParseNPMPackage(task.task_id, name, task)));
             },
             .extract => |*extract| {
+                // Streaming extraction never pushes its NetworkTask to
+                // `async_network_task_queue` once committed — the
+                // extract Task published by `TarballStream.finish()`
+                // owns its lifetime — so every `.extract` task that
+                // arrives here is taking the buffered path.
+                bun.debugAssert(!task.streaming_committed);
+
                 if (!has_network_error and task.response.metadata == null) {
                     has_network_error = true;
                     const min = manager.options.min_simultaneous_requests;
@@ -343,6 +350,10 @@ pub fn runTasks(
 
                     if (task.retried < manager.options.max_retry_count) {
                         task.retried += 1;
+                        // Streaming never committed (asserted above), so
+                        // the pre-allocated stream is safe to reuse for
+                        // the retry attempt.
+                        task.resetStreamingForRetry();
                         manager.enqueueNetworkTask(task);
 
                         if (manager.options.log_level.isVerbose()) {
@@ -365,24 +376,57 @@ pub fn runTasks(
                     }
                 }
 
+                // Past this point we will not retry. If streaming state was
+                // allocated but never scheduled, release it now so the
+                // pre-created Task goes back to the pool and the stream
+                // buffers are freed. The buffered `enqueueExtractNPMPackage`
+                // path below allocates its own Task.
+                task.discardUnusedStreamingState(manager);
+
                 const metadata = task.response.metadata orelse {
                     const err = task.response.fail orelse error.TarballFailedToDownload;
 
+                    // The download will not be retried for this task_id, so
+                    // drop the dedupe state before dispatching the error.
+                    // Otherwise a later `enqueuePackageForDownload` for the
+                    // same package sees `found_existing`, never schedules a
+                    // network task, and waits forever for a callback that
+                    // will not arrive. `Store.Installer.onPackageDownloadError`
+                    // drains `task_queue` itself but does not touch
+                    // `network_dedupe_map`, so this must run on the callback
+                    // path too. Capture `is_required` first —
+                    // `isNetworkTaskRequired` reads the map and returns `true`
+                    // when the entry is gone, which would upgrade optional-dep
+                    // warnings to errors on the void-callback fallback below.
+                    const is_required = manager.isNetworkTaskRequired(task.task_id);
+                    _ = manager.network_dedupe_map.remove(task.task_id);
+
                     if (@TypeOf(callbacks.onPackageDownloadError) != void) {
-                        const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
-                        callbacks.onPackageDownloadError(
-                            extract_ctx,
-                            package_id,
-                            extract.name.slice(),
-                            &extract.resolution,
-                            err,
-                            task.url_buf,
-                        );
+                        if (Ctx == *Store.Installer) {
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                task.task_id,
+                                extract.name.slice(),
+                                &extract.resolution,
+                                err,
+                                task.url_buf,
+                            );
+                        } else {
+                            const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                package_id,
+                                extract.name.slice(),
+                                &extract.resolution,
+                                err,
+                                task.url_buf,
+                            );
+                        }
                         continue;
                     }
 
                     const fmt = "{s} downloading tarball <b>{s}@{f}<r>";
-                    if (manager.isNetworkTaskRequired(task.task_id)) {
+                    if (is_required) {
                         manager.log.addErrorFmt(
                             null,
                             logger.Loc.Empty,
@@ -418,12 +462,27 @@ pub fn runTasks(
                         }
                     }
 
+                    if (manager.task_queue.fetchRemove(task.task_id)) |removed| {
+                        var list = removed.value;
+                        list.deinit(manager.allocator);
+                    }
+
                     continue;
                 };
 
                 const response = metadata.response;
 
                 if (response.status_code > 399) {
+                    // Non-retryable HTTP error: drop dedupe state so a later
+                    // enqueue for this task_id schedules a fresh network task
+                    // instead of waiting on this failed one. Runs before the
+                    // callback branch so `Store.Installer` (which `continue`s
+                    // from the callback) is covered too. Capture
+                    // `is_required` first — `isNetworkTaskRequired` reads the
+                    // map and returns `true` when the entry is gone.
+                    const is_required = manager.isNetworkTaskRequired(task.task_id);
+                    _ = manager.network_dedupe_map.remove(task.task_id);
+
                     if (@TypeOf(callbacks.onPackageDownloadError) != void) {
                         const err = switch (response.status_code) {
                             400 => error.TarballHTTP400,
@@ -434,20 +493,31 @@ pub fn runTasks(
                             405...499 => error.TarballHTTP4xx,
                             else => error.TarballHTTP5xx,
                         };
-                        const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
 
-                        callbacks.onPackageDownloadError(
-                            extract_ctx,
-                            package_id,
-                            extract.name.slice(),
-                            &extract.resolution,
-                            err,
-                            task.url_buf,
-                        );
+                        if (Ctx == *Store.Installer) {
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                task.task_id,
+                                extract.name.slice(),
+                                &extract.resolution,
+                                err,
+                                task.url_buf,
+                            );
+                        } else {
+                            const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                package_id,
+                                extract.name.slice(),
+                                &extract.resolution,
+                                err,
+                                task.url_buf,
+                            );
+                        }
                         continue;
                     }
 
-                    if (manager.isNetworkTaskRequired(task.task_id)) {
+                    if (is_required) {
                         manager.log.addErrorFmt(
                             null,
                             logger.Loc.Empty,
@@ -479,6 +549,11 @@ pub fn runTasks(
                                 manager.options.do.install_packages = false;
                             }
                         }
+                    }
+
+                    if (manager.task_queue.fetchRemove(task.task_id)) |removed| {
+                        var list = removed.value;
+                        list.deinit(manager.allocator);
                     }
 
                     continue;
@@ -590,31 +665,63 @@ pub fn runTasks(
                 if (task.status == .fail) {
                     const err = task.err orelse error.TarballFailedToExtract;
 
+                    // Extract-task failure (integrity check, libarchive error, etc.)
+                    // is symmetric with the HTTP 4xx/5xx branch above: drop the
+                    // dedupe state so a later `enqueuePackageForDownload` for this
+                    // `task_id` schedules a fresh network task instead of waiting
+                    // on this failed one forever. Runs before the callback branch
+                    // so `Store.Installer` (which `continue`s from the callback)
+                    // is covered too. `network_dedupe_map.remove` is a no-op for
+                    // `local_tarball` tasks (they never populate the map).
+                    _ = manager.network_dedupe_map.remove(task.id);
+
                     if (@TypeOf(callbacks.onPackageDownloadError) != void) {
-                        callbacks.onPackageDownloadError(
-                            extract_ctx,
-                            package_id,
-                            alias,
-                            resolution,
-                            err,
-                            switch (task.tag) {
-                                .extract => task.request.extract.network.url_buf,
-                                .local_tarball => task.request.local_tarball.tarball.url.slice(),
-                                else => unreachable,
-                            },
-                        );
-                    } else {
-                        manager.log.addErrorFmt(
-                            null,
-                            logger.Loc.Empty,
-                            manager.allocator,
-                            "{s} extracting tarball from <b>{s}<r>",
-                            .{
-                                @errorName(err),
+                        const fail_url = switch (task.tag) {
+                            .extract => task.request.extract.network.url_buf,
+                            .local_tarball => task.request.local_tarball.tarball.url.slice(),
+                            else => unreachable,
+                        };
+                        if (Ctx == *Store.Installer) {
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                task.id,
                                 alias,
-                            },
-                        ) catch |e| bun.handleOom(e);
+                                resolution,
+                                err,
+                                fail_url,
+                            );
+                        } else {
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                package_id,
+                                alias,
+                                resolution,
+                                err,
+                                fail_url,
+                            );
+                        }
+                        continue;
                     }
+
+                    manager.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        manager.allocator,
+                        "{s} extracting tarball from <b>{s}<r>",
+                        .{
+                            @errorName(err),
+                            alias,
+                        },
+                    ) catch |e| bun.handleOom(e);
+
+                    // Void-callback fallback (resolve phase): drain the
+                    // `task_queue` entry too so a later install-phase
+                    // `enqueuePackageForDownload` doesn't wedge on `found_existing`.
+                    if (manager.task_queue.fetchRemove(task.id)) |removed| {
+                        var list = removed.value;
+                        list.deinit(manager.allocator);
+                    }
+
                     continue;
                 }
 
@@ -723,6 +830,59 @@ pub fn runTasks(
                             err,
                             url,
                         );
+                    } else if (@TypeOf(callbacks.onPackageDownloadError) != void and Ctx == *Store.Installer) {
+                        // The isolated installer queued its entry contexts
+                        // under `checkout_id`, not `clone_id`. A failed clone
+                        // never reaches checkout, so drain every waiting
+                        // checkout for this repo or the install loop blocks
+                        // forever on the entry's pending-task slot.
+                        var drained_any = false;
+                        if (manager.task_queue.fetchRemove(task.id)) |removed| {
+                            var waiters = removed.value;
+                            defer waiters.deinit(manager.allocator);
+                            const pkg_resolutions = manager.lockfile.packages.items(.resolution);
+                            for (waiters.items) |waiter| {
+                                const dep_id = switch (waiter) {
+                                    .dependency => |id| id,
+                                    else => continue,
+                                };
+                                const pkg_id = manager.lockfile.buffers.resolutions.items[dep_id];
+                                if (pkg_id == invalid_package_id) continue;
+                                const res = &pkg_resolutions[pkg_id];
+                                if (res.tag != .git) continue;
+                                const checkout_id = Task.Id.forGitCheckout(
+                                    manager.lockfile.str(&res.value.git.repo),
+                                    manager.lockfile.str(&res.value.git.resolved),
+                                );
+                                drained_any = true;
+                                callbacks.onPackageDownloadError(
+                                    extract_ctx,
+                                    checkout_id,
+                                    name,
+                                    res,
+                                    err,
+                                    url,
+                                );
+                            }
+                        }
+                        if (!drained_any) {
+                            // No clone waiters recorded (or all were skipped
+                            // above) — fall back to the clone task's own
+                            // resolution so the originating entry is still
+                            // released.
+                            const checkout_id = Task.Id.forGitCheckout(
+                                url,
+                                manager.lockfile.str(&clone.res.value.git.resolved),
+                            );
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                checkout_id,
+                                name,
+                                &clone.res,
+                                err,
+                                url,
+                            );
+                        }
                     } else if (log_level != .silent) {
                         manager.log.addErrorFmt(
                             null,
@@ -798,16 +958,27 @@ pub fn runTasks(
                 if (task.status == .fail) {
                     const err = task.err orelse error.Failed;
 
-                    manager.log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        manager.allocator,
-                        "{s} checking out repository for <b>{s}<r>",
-                        .{
-                            @errorName(err),
+                    if (@TypeOf(callbacks.onPackageDownloadError) != void and Ctx == *Store.Installer) {
+                        callbacks.onPackageDownloadError(
+                            extract_ctx,
+                            task.id,
                             alias.slice(),
-                        },
-                    ) catch |e| bun.handleOom(e);
+                            resolution,
+                            err,
+                            manager.lockfile.str(&resolution.value.git.repo),
+                        );
+                    } else {
+                        manager.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            manager.allocator,
+                            "{s} checking out repository for <b>{s}<r>",
+                            .{
+                                @errorName(err),
+                                alias.slice(),
+                            },
+                        ) catch |e| bun.handleOom(e);
+                    }
 
                     continue;
                 }
@@ -1082,6 +1253,16 @@ pub fn generateNetworkTaskForTarball(
         authorization,
     );
 
+    if (ExtractTarball.usesStreamingExtraction()) {
+        // Pre-create the extract Task and streaming state here on the
+        // main thread: `preallocated_resolve_tasks` is not thread-safe,
+        // and the streaming extractor needs a stable `Task` pointer so
+        // it can push the result onto `resolve_tasks` when it finishes.
+        const extract_task = this.createExtractTaskForStreaming(&network_task.callback.extract, network_task);
+        network_task.streaming_extract_task = extract_task;
+        network_task.tarball_stream = TarballStream.init(this.allocator, extract_task, network_task, this);
+    }
+
     return network_task;
 }
 
@@ -1104,6 +1285,7 @@ const HTTP = bun.http;
 const AsyncHTTP = HTTP.AsyncHTTP;
 
 const DependencyID = bun.install.DependencyID;
+const ExtractTarball = bun.install.ExtractTarball;
 const Features = bun.install.Features;
 const NetworkTask = bun.install.NetworkTask;
 const Npm = bun.install.Npm;
@@ -1112,6 +1294,7 @@ const PackageManifestError = bun.install.PackageManifestError;
 const PatchTask = bun.install.PatchTask;
 const Repository = bun.install.Repository;
 const Store = bun.install.Store;
+const TarballStream = bun.install.TarballStream;
 const Task = bun.install.Task;
 const invalid_package_id = bun.install.invalid_package_id;
 

@@ -22,7 +22,7 @@ void JSSecretKeyObject::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalO
 template<typename Visitor>
 void JSSecretKeyObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSSecretKeyObject* thisObject = jsCast<JSSecretKeyObject*>(cell);
+    JSSecretKeyObject* thisObject = uncheckedDowncast<JSSecretKeyObject>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }

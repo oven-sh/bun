@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "BunClientData.h"
+#include "WebCoreJSBuiltins.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -46,11 +47,13 @@ JSHeapData::JSHeapData(Heap& heap)
 {
 }
 
+JSHeapData::~JSHeapData() = default;
+
 #define CLIENT_ISO_SUBSPACE_INIT(subspace) subspace(m_heapData->subspace)
 
-JSVMClientData::JSVMClientData(VM& vm, RefPtr<SourceProvider> sourceProvider)
+JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvider)
     : m_builtinNames(vm)
-    , m_builtinFunctions(vm, sourceProvider, m_builtinNames)
+    , m_builtinFunctions(makeUnique<JSBuiltinFunctions>(vm, sourceProvider, m_builtinNames))
     , m_heapData(JSHeapData::ensureHeapData(vm.heap))
     , CLIENT_ISO_SUBSPACE_INIT(m_domBuiltinConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)

@@ -20,7 +20,7 @@ function createBunServer(fetch: Parameters<typeof Bun.serve>[0]["fetch"]) {
   return server;
 }
 
-describe("S3 - List Objects", () => {
+describe.concurrent("S3 - List Objects", () => {
   it("Should set encoded continuation-token in the request url before list-type", async () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
@@ -1085,15 +1085,17 @@ const optionsFromEnv: S3Options = {
 describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
   const bucket = new S3Client(optionsFromEnv);
 
+  // Separate prefixes so the two tests below are fully isolated and can run concurrently.
   const keyPrefix = `${randomUUIDv7()}/`;
+  const keyPrefix2 = `${randomUUIDv7()}/`;
 
   const file_1 = `${keyPrefix}file_1.txt`;
   const file_2 = `${keyPrefix}file_2.txt`;
   const file_3 = `${keyPrefix}file_3.txt`;
 
-  const file_4 = `${keyPrefix}file_a>b.txt`;
-  const file_5 = `${keyPrefix}file_a>c.txt`;
-  const file_6 = `${keyPrefix}file_a>d.txt`;
+  const file_4 = `${keyPrefix2}file_a>b.txt`;
+  const file_5 = `${keyPrefix2}file_a>c.txt`;
+  const file_6 = `${keyPrefix2}file_a>d.txt`;
 
   afterAll(async () => {
     try {
@@ -1104,10 +1106,12 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
     }
   });
 
-  it("should list objects with prefix, maxKeys and nextContinuationToken", async () => {
-    await bucket.write(file_1, "content 1");
-    await bucket.write(file_2, "content 2");
-    await bucket.write(file_3, "content 3");
+  it.concurrent("should list objects with prefix, maxKeys and nextContinuationToken", async () => {
+    await Promise.all([
+      bucket.write(file_1, "content 1"),
+      bucket.write(file_2, "content 2"),
+      bucket.write(file_3, "content 3"),
+    ]);
 
     const first_response = await bucket.list({ prefix: keyPrefix, maxKeys: 1 });
 
@@ -1142,13 +1146,15 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
     expect(storedFile.size).toBe(9);
   });
 
-  it("should list objects with startAfter, encodingType and fetchOwner", async () => {
-    await bucket.write(file_4, "content 4");
-    await bucket.write(file_5, "content 5");
-    await bucket.write(file_6, "content 6");
+  it.concurrent("should list objects with startAfter, encodingType and fetchOwner", async () => {
+    await Promise.all([
+      bucket.write(file_4, "content 4"),
+      bucket.write(file_5, "content 5"),
+      bucket.write(file_6, "content 6"),
+    ]);
 
     const res = await bucket.list({
-      prefix: keyPrefix, // isolates the test when Bucket is not empty
+      prefix: keyPrefix2, // isolates the test when Bucket is not empty
       startAfter: file_4,
       fetchOwner: true,
       encodingType: "url",

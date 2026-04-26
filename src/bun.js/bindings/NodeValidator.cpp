@@ -560,9 +560,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
         size_t length = 0;
         if (data.isString()) {
             length = data.toString(globalObject)->length();
-        } else if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(data)) {
+        } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data)) {
             length = view->length();
-        } else if (auto* buffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(data)) {
+        } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(data)) {
             if (auto* impl = buffer->impl()) {
                 length = impl->byteLength();
             }
@@ -636,7 +636,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateOneOf, (JSC::JSGlobalObject * global
 
     JSValue arrayValue = callFrame->argument(2);
 
-    if (JSArray* array = jsDynamicCast<JSArray*>(arrayValue)) {
+    if (JSArray* array = dynamicDowncast<JSArray>(arrayValue)) {
         unsigned length = array->length();
         for (size_t i = 0; i < length; i++) {
             JSValue element = array->getIndex(globalObject, i);

@@ -1,4 +1,4 @@
-#pragma std::once_flag
+#pragma once
 
 #include "root.h"
 #include <JavaScriptCore/InternalFunction.h>

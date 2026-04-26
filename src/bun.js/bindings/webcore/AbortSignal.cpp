@@ -46,7 +46,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(AbortSignal);
 
 extern "C" AbortSignalTimeout AbortSignal__Timeout__create(void* vm, AbortSignal* signal, uint64_t milliseconds);
 extern "C" void AbortSignal__Timeout__run(AbortSignalTimeout timeout, void* vm);
-extern "C" void AbortSignal__Timeout__deinit(AbortSignalTimeout timeout, void*);
+extern "C" void AbortSignal__Timeout__deinit(AbortSignalTimeout timeout);
 
 Ref<AbortSignal> AbortSignal::create(ScriptExecutionContext* context)
 {
@@ -137,7 +137,7 @@ void AbortSignal::addDependentSignal(AbortSignal& signal)
 void AbortSignal::cancelTimer()
 {
     if (auto timeout = std::exchange(m_timeout, nullptr)) {
-        AbortSignal__Timeout__deinit(timeout, bunVM(scriptExecutionContext()->vm()));
+        AbortSignal__Timeout__deinit(timeout);
     }
 }
 

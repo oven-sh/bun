@@ -17,7 +17,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNoop, (JSC::JSGlobalObject*, JSC::CallFrame*))
 
 JSC_DEFINE_HOST_FUNCTION(functionCallback, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSObject* callback = jsCast<JSObject*>(callFrame->uncheckedArgument(0));
+    JSObject* callback = uncheckedDowncast<JSObject>(callFrame->uncheckedArgument(0));
     JSC::CallData callData = JSC::getCallData(callback);
     return JSC::JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, callback, callData, JSC::jsUndefined(), JSC::MarkedArgumentBuffer()));
 }

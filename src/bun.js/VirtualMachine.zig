@@ -144,6 +144,22 @@ rare_data: ?*jsc.RareData = null,
 proxy_env_storage: jsc.RareData.ProxyEnvStorage = .{},
 is_us_loop_entered: bool = false,
 pending_internal_promise: ?*JSInternalPromise = null,
+pending_internal_promise_is_protected: bool = false,
+/// hot_reload_counter value at which we last surfaced a rejected
+/// pending_internal_promise. We can't use JSPromise.isHandled() as the
+/// "already reported" sentinel any more: the C++ module loader marks every
+/// pipeline promise handled before it ever reaches us. Using a generation
+/// counter (rather than the promise pointer) avoids false negatives when
+/// GC reuses the previous promise's allocation for the next reload's.
+pending_internal_promise_reported_at: u32 = std.math.maxInt(u32),
+/// A watcher event arrived while pending_internal_promise was still pending
+/// — i.e. while a previous hot-reload's loadAndEvaluateModule chain was
+/// still in flight on the microtask queue. Starting a second clearAll +
+/// load now would let the two chains interleave through one registry and
+/// produce duplicate or partial-graph evaluations, so defer the new reload
+/// until the in-flight promise settles. The main loop's per-tick
+/// reportExceptionInHotReloadedModuleIfNeeded picks this up.
+hot_reload_deferred: bool = false,
 entry_point_result: struct {
     value: jsc.Strong.Optional = .empty,
     cjs_set_value: bool = false,
@@ -204,6 +220,14 @@ commonjs_custom_extensions: bun.StringArrayHashMapUnmanaged(node_module_module.C
 has_mutated_built_in_extensions: u32 = 0,
 
 initial_script_execution_context_identifier: i32,
+
+/// `bun test --isolate`: bumped each time a fresh global is swapped in.
+/// Native callbacks compare against this and self-cancel on mismatch so
+/// stale handles from a prior test file never call into the new global.
+test_isolation_generation: u32 = 0,
+/// When true, listening sockets and subprocesses are tracked so they can
+/// be force-closed between test files. Set by `bun test --isolate`.
+test_isolation_enabled: bool = false,
 
 extern "C" fn Bake__getAsyncLocalStorage(globalObject: *JSGlobalObject) callconv(jsc.conv) jsc.JSValue;
 
@@ -695,9 +719,18 @@ pub fn reportExceptionInHotReloadedModuleIfNeeded(this: *jsc.VirtualMachine) voi
     defer this.addMainToWatcherIfNeeded();
     var promise = this.pending_internal_promise orelse return;
 
-    if (promise.status() == .rejected and !promise.isHandled()) {
-        this.unhandledRejection(this.global, promise.result(), promise.asValue());
-        promise.setHandled(this.global.vm());
+    switch (promise.status()) {
+        .pending => return,
+        .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {
+            this.pending_internal_promise_reported_at = this.hot_reload_counter;
+            this.unhandledRejection(this.global, promise.result(this.global.vm()), promise.toJS());
+            promise.setHandled();
+        },
+        .fulfilled => {},
+    }
+
+    if (this.hot_reload_deferred) {
+        this.reload(null);
     }
 }
 
@@ -733,7 +766,34 @@ pub inline fn autoGarbageCollect(this: *const VirtualMachine) void {
     }
 }
 
-pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
+pub fn reload(this: *VirtualMachine, _: ?*HotReloader.Task) void {
+    // The C++ module loader is async: reloadEntryPoint() returns while the
+    // fetch/link/evaluate chain is still draining via microtasks. Kicking
+    // off another clearAll() before that chain settles lets the two loads
+    // race through one registry. Defer instead; the main loop reschedules
+    // via reportExceptionInHotReloadedModuleIfNeeded once the in-flight
+    // promise resolves or rejects.
+    //
+    // Also defer when the previous promise has rejected but its error
+    // hasn't been printed yet: reloadEntryPoint() re-transpiles and
+    // overwrites source_mappings[path] in place, so a watcher event that
+    // slips in between the rejection microtask and the report would remap
+    // that error against the wrong sourcemap.
+    if (this.pending_internal_promise) |p| {
+        switch (p.status()) {
+            .pending => {
+                this.hot_reload_deferred = true;
+                return;
+            },
+            .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {
+                this.hot_reload_deferred = true;
+                return;
+            },
+            .fulfilled => {},
+        }
+    }
+    this.hot_reload_deferred = false;
+
     Output.debug("Reloading...", .{});
     const should_clear_terminal = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors_stdout);
     if (this.hot_reload == .watch) {
@@ -755,7 +815,12 @@ pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
     jsc.API.cron.CronJob.clearAllForVM(this, .reload);
     this.global.reload() catch @panic("Failed to reload");
     this.hot_reload_counter += 1;
-    this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
+    if (this.pending_internal_promise_is_protected) {
+        if (this.pending_internal_promise) |p| JSValue.fromCell(p).unprotect();
+        this.pending_internal_promise_is_protected = false;
+    }
+    // reloadEntryPoint() stores into pending_internal_promise on every return path.
+    _ = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
 }
 
 pub inline fn nodeFS(this: *VirtualMachine) *Node.fs.NodeFS {
@@ -1636,7 +1701,7 @@ fn _resolve(
         return;
     } else if (strings.eqlComptime(specifier, main_file_name) and jsc_vm.entry_point.generated) {
         ret.result = null;
-        ret.path = jsc_vm.entry_point.source.path.text;
+        ret.path = main_file_name;
         return;
     } else if (strings.hasPrefixComptime(specifier, js_ast.Macro.namespaceWithColon)) {
         ret.result = null;
@@ -1947,13 +2012,15 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
 
         1 => {
             const msg = log.msgs.items[0];
+            const referrer_utf8 = referrer.toUTF8(bun.default_allocator);
+            defer referrer_utf8.deinit();
             ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
                 .build => (bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e)),
                 .resolve => (bun.api.ResolveMessage.create(
                     globalThis,
                     globalThis.allocator(),
                     msg,
-                    referrer.toUTF8(bun.default_allocator).slice(),
+                    referrer_utf8.slice(),
                 ) catch |e| globalThis.takeException(e)),
             });
             return;
@@ -1965,6 +2032,9 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
             const errors = errors_stack[0..len];
             const logs = log.msgs.items[0..len];
 
+            const referrer_utf8 = referrer.toUTF8(bun.default_allocator);
+            defer referrer_utf8.deinit();
+
             for (logs, errors) |msg, *current| {
                 current.* = switch (msg.metadata) {
                     .build => bun.api.BuildMessage.create(globalThis, globalThis.allocator(), msg) catch |e| globalThis.takeException(e),
@@ -1972,7 +2042,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                         globalThis,
                         globalThis.allocator(),
                         msg,
-                        referrer.toUTF8(bun.default_allocator).slice(),
+                        referrer_utf8.slice(),
                     ) catch |e| globalThis.takeException(e),
                 };
             }
@@ -2007,6 +2077,7 @@ pub fn deinit(this: *VirtualMachine) void {
     }
     this.proxy_env_storage.deinit();
     this.overridden_main.deinit();
+    this.entry_point.deinit();
     this.has_terminated = true;
 }
 
@@ -2152,8 +2223,11 @@ fn loadPreloads(this: *VirtualMachine) !?*JSInternalPromise {
             return promise;
     }
 
-    // only load preloads once
-    this.preload.len = 0;
+    // Under --isolate each test file gets a fresh global, so preloads must
+    // re-execute for every file. Otherwise, only load preloads once.
+    if (!this.test_isolation_enabled) {
+        this.preload.len = 0;
+    }
 
     return null;
 }
@@ -2182,10 +2256,8 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
 
     if (!this.main_is_html_entrypoint) {
         try this.entry_point.generate(
-            this.allocator,
             this.bun_watcher != .none,
             entry_path,
-            main_file_name,
         );
     }
 
@@ -2195,20 +2267,23 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
                 JSValue.fromCell(promise).ensureStillAlive();
                 JSValue.fromCell(promise).protect();
                 this.pending_internal_promise = promise;
+                this.pending_internal_promise_is_protected = true;
                 return promise;
             }
 
             // Check if Module.runMain was patched
-            const prev = this.pending_internal_promise;
             if (this.has_patched_run_main) {
                 @branchHint(.cold);
                 this.pending_internal_promise = null;
+                this.pending_internal_promise_is_protected = false;
                 const ret = try jsc.fromJSHostCall(this.global, @src(), NodeModuleModule__callOverriddenRunMain, .{ this.global, try bun.String.createUTF8ForJS(this.global, main_file_name) });
-                if (this.pending_internal_promise == prev or this.pending_internal_promise == null) {
-                    this.pending_internal_promise = JSInternalPromise.resolvedPromise(this.global, ret);
-                    return this.pending_internal_promise.?;
-                }
-                return (this.pending_internal_promise orelse prev).?;
+                // If the override stored a promise itself, use that; otherwise
+                // wrap its return value.
+                if (this.pending_internal_promise) |stored| return stored;
+                const resolved = JSInternalPromise.resolvedPromise(this.global, ret);
+                this.pending_internal_promise = resolved;
+                this.pending_internal_promise_is_protected = false;
+                return resolved;
             }
         }
 
@@ -2218,11 +2293,13 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
             try jsc.fromJSHostCallGeneric(this.global, @src(), Bun__loadHTMLEntryPoint, .{this.global});
 
         this.pending_internal_promise = promise;
+        this.pending_internal_promise_is_protected = false;
         JSValue.fromCell(promise).ensureStillAlive();
         return promise;
     } else {
         const promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(this.main)) orelse return error.JSError;
         this.pending_internal_promise = promise;
+        this.pending_internal_promise_is_protected = false;
         JSValue.fromCell(promise).ensureStillAlive();
 
         return promise;
@@ -2230,6 +2307,14 @@ pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInter
 }
 
 extern "C" fn NodeModuleModule__callOverriddenRunMain(global: *JSGlobalObject, argv1: JSValue) JSValue;
+
+export fn Bun__VM__useIsolationSourceProviderCache(vm: *VirtualMachine) bool {
+    return vm.useIsolationSourceProviderCache();
+}
+
+pub inline fn useIsolationSourceProviderCache(this: *const VirtualMachine) bool {
+    return this.test_isolation_enabled and !bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE.get();
+}
 export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm: *VirtualMachine, is_patched: bool) void {
     if (vm.is_in_preload) {
         vm.has_patched_run_main = is_patched;
@@ -2238,6 +2323,7 @@ export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm: *VirtualMachine, is_
 export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm: *VirtualMachine, promise: *JSInternalPromise) void {
     if (vm.pending_internal_promise == null) {
         vm.pending_internal_promise = promise;
+        vm.pending_internal_promise_is_protected = false;
     }
 }
 
@@ -2258,6 +2344,7 @@ pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const 
             JSValue.fromCell(promise).ensureStillAlive();
             this.pending_internal_promise = promise;
             JSValue.fromCell(promise).protect();
+            this.pending_internal_promise_is_protected = true;
 
             return promise;
         }
@@ -2265,6 +2352,7 @@ pub fn reloadEntryPointForTestRunner(this: *VirtualMachine, entry_path: []const 
 
     const promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.fromBytes(this.main)) orelse return error.JSError;
     this.pending_internal_promise = promise;
+    this.pending_internal_promise_is_protected = false;
     JSValue.fromCell(promise).ensureStillAlive();
 
     return promise;
@@ -2348,18 +2436,105 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
 }
 
 pub fn addListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FD) void {
-    if (this.hot_reload != .watch) {
+    if (this.hot_reload != .watch and !this.test_isolation_enabled) {
         return;
     }
 
     this.rareData().addListeningSocketForWatchMode(socket);
 }
 pub fn removeListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FD) void {
-    if (this.hot_reload != .watch) {
+    if (this.hot_reload != .watch and !this.test_isolation_enabled) {
         return;
     }
 
     this.rareData().removeListeningSocketForWatchMode(socket);
+}
+
+/// `bun test --isolate`: tear down per-file OS resources, bump the generation
+/// so stale callbacks self-cancel, then create a fresh `ZigGlobalObject` on
+/// the same `JSC::VM` and point `this.global` at it. The old global is
+/// gcUnprotect'd; its module graph becomes collectable on the next GC.
+pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {
+    bun.debugAssert(this.test_isolation_enabled);
+
+    this.eventLoop().drainMicrotasks() catch {};
+
+    if (this.rare_data) |rare| {
+        rare.closeAllWatchersForIsolation();
+    }
+
+    {
+        const skip_spawn_ipc = if (this.rare_data) |rare| rare.spawn_ipc_usockets_context else null;
+        const skip_test_parallel_ipc = if (this.rare_data) |rare| rare.test_parallel_ipc_context else null;
+        // When this process is itself a forked child (NODE_CHANNEL_FD set),
+        // its inbound process.send/on('message') channel lives on a separate
+        // uws context that must survive the swap.
+        const skip_process_ipc: ?*uws.SocketContext = if (Environment.isPosix)
+            if (this.ipc) |ipc| switch (ipc) {
+                .initialized => |inst| inst.context,
+                .waiting => null,
+            } else null
+        else
+            null;
+        var maybe_ctx = bun.uws.Loop.get().internal_loop_data.head;
+        while (maybe_ctx) |ctx| {
+            const next_ctx = ctx.next();
+            if (ctx != skip_spawn_ipc and ctx != skip_process_ipc and ctx != skip_test_parallel_ipc) {
+                // ssl=false routes through the base on_close which, for SSL
+                // contexts, is ssl_on_close (SSL_free + user callback). Letting
+                // the real callbacks run lets wrappers drop Strong<> refs so
+                // the old global can be collected.
+                ctx.close(false);
+            }
+            maybe_ctx = next_ctx;
+        }
+    }
+    if (this.rare_data) |rare| {
+        // The context walk already closed all listening sockets properly
+        // (poll stop + fd close); just discard the now-stale fd list so it
+        // doesn't grow across files.
+        rare.listening_sockets_for_watch_mode_lock.lock();
+        rare.listening_sockets_for_watch_mode.clearRetainingCapacity();
+        rare.listening_sockets_for_watch_mode_lock.unlock();
+    }
+    this.eventLoop().drainMicrotasks() catch {};
+
+    _ = this.auto_killer.kill();
+    this.auto_killer.clear();
+
+    this.test_isolation_generation +%= 1;
+
+    this.overridden_main.deinit();
+    this.entry_point_result.value.deinit();
+    this.entry_point_result.cjs_set_value = false;
+    if (this.pending_internal_promise) |promise| {
+        if (this.pending_internal_promise_is_protected) {
+            JSValue.fromCell(promise).unprotect();
+            this.pending_internal_promise_is_protected = false;
+        }
+        this.pending_internal_promise = null;
+    }
+    this.has_patched_run_main = false;
+    this.main = "";
+    this.main_hash = 0;
+    this.main_resolved_path.deref();
+    this.main_resolved_path = bun.String.empty;
+    this.unhandled_error_counter = 0;
+
+    const new_global = JSGlobalObject.createForTestIsolation(this.global, this.console);
+    this.global = new_global;
+    VMHolder.cached_global_object = new_global;
+    this.regular_event_loop.global = new_global;
+    this.has_loaded_constructors = true;
+    if (this.ipc) |ipc| if (ipc == .initialized) {
+        ipc.initialized.globalThis = new_global;
+    };
+
+    // TODO(isolate): drain HTTPThread's keepalive pool. It lives on a separate
+    // thread with its own uws loop; pooled sockets are JS-invisible and bounded
+    // at HTTPContext.pool_size (64) per scheme, so serial --isolate leaks at
+    // most ~128 fds regardless of file count. --parallel covers this via
+    // worker recycling.
 }
 
 pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_name: string, specifier: string, hash: i32) !*JSInternalPromise {

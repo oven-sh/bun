@@ -180,7 +180,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
 {
     GET_FIRST_VALUE
 
-    auto* function = jsDynamicCast<JSFunction*>(value);
+    auto* function = dynamicDowncast<JSFunction>(value);
     if (!function || function->isHostFunction())
         return JSValue::encode(jsBoolean(false));
 
@@ -206,7 +206,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsGeneratorFunction,
         JSC::CallFrame* callframe))
 {
     GET_FIRST_VALUE
-    auto* function = jsDynamicCast<JSFunction*>(value);
+    auto* function = dynamicDowncast<JSFunction>(value);
     if (!function || function->isHostFunction())
         return JSValue::encode(jsBoolean(false));
 
@@ -275,7 +275,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsArrayBuffer,
         JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
-    auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(cell);
+    auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(cell);
     if (!arrayBuffer)
         return JSValue::encode(jsBoolean(false));
     return JSValue::encode(jsBoolean(!arrayBuffer->isShared()));
@@ -292,7 +292,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsSharedArrayBuffer,
         JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
-    auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(cell);
+    auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(cell);
     if (!arrayBuffer)
         return JSValue::encode(jsBoolean(false));
     return JSValue::encode(jsBoolean(arrayBuffer->isShared()));
@@ -314,7 +314,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAnyArrayBuffer,
         JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
-    auto* arrayBuffer = jsDynamicCast<JSArrayBuffer*>(cell);
+    auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(cell);
     return JSValue::encode(jsBoolean(arrayBuffer != nullptr));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBoxedPrimitive,

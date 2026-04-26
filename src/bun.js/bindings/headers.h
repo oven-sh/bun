@@ -26,7 +26,6 @@ namespace JSC {
 class JSGlobalObject;
 class Exception;
 class JSObject;
-class JSInternalPromise;
 class JSString;
 class JSCell;
 class JSMap;
@@ -118,7 +117,7 @@ CPP_DECL void JSC__JSString__toZigString(JSC::JSString* arg0, JSC::JSGlobalObjec
 #pragma mark - JSC::JSModuleLoader
 
 CPP_DECL JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* arg0, const unsigned char* arg1, size_t arg2, const unsigned char* arg3, size_t arg4, const unsigned char* arg5, size_t arg6, JSC::EncodedJSValue JSValue7, JSC::EncodedJSValue* arg8);
-CPP_DECL JSC::JSInternalPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* arg0, const BunString* arg1);
+CPP_DECL JSC::JSPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* arg0, const BunString* arg1);
 
 #pragma mark - WebCore::AbortSignal
 
@@ -150,19 +149,19 @@ CPP_DECL JSC::EncodedJSValue JSC__JSPromise__result(JSC::JSPromise* arg0, JSC::V
 CPP_DECL void JSC__JSPromise__setHandled(JSC::JSPromise* arg0);
 CPP_DECL uint32_t JSC__JSPromise__status(const JSC::JSPromise* arg0);
 
-#pragma mark - JSC::JSInternalPromise
+#pragma mark - JSC::JSInternalPromise (now aliased to JSPromise)
 
-CPP_DECL JSC::JSInternalPromise* JSC__JSInternalPromise__create(JSC::JSGlobalObject* arg0);
-CPP_DECL bool JSC__JSInternalPromise__isHandled(const JSC::JSInternalPromise* arg0);
-CPP_DECL void JSC__JSInternalPromise__reject(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
-CPP_DECL void JSC__JSInternalPromise__rejectAsHandled(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
-CPP_DECL void JSC__JSInternalPromise__rejectAsHandledException(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* arg1, JSC::Exception* arg2);
-CPP_DECL JSC::JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
-CPP_DECL void JSC__JSInternalPromise__resolve(JSC::JSInternalPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
-CPP_DECL JSC::JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
-CPP_DECL JSC::EncodedJSValue JSC__JSInternalPromise__result(const JSC::JSInternalPromise* arg0);
-CPP_DECL void JSC__JSInternalPromise__setHandled(JSC::JSInternalPromise* arg0, JSC::VM* arg1);
-CPP_DECL uint32_t JSC__JSInternalPromise__status(const JSC::JSInternalPromise* arg0);
+CPP_DECL JSC::JSPromise* JSC__JSInternalPromise__create(JSC::JSGlobalObject* arg0);
+CPP_DECL bool JSC__JSInternalPromise__isHandled(const JSC::JSPromise* arg0);
+CPP_DECL void JSC__JSInternalPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
+CPP_DECL void JSC__JSInternalPromise__rejectAsHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
+CPP_DECL void JSC__JSInternalPromise__rejectAsHandledException(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::Exception* arg2);
+CPP_DECL JSC::JSPromise* JSC__JSInternalPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
+CPP_DECL void JSC__JSInternalPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
+CPP_DECL JSC::JSPromise* JSC__JSInternalPromise__resolvedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
+CPP_DECL JSC::EncodedJSValue JSC__JSInternalPromise__result(const JSC::JSPromise* arg0);
+CPP_DECL void JSC__JSInternalPromise__setHandled(JSC::JSPromise* arg0, JSC::VM* arg1);
+CPP_DECL uint32_t JSC__JSInternalPromise__status(const JSC::JSPromise* arg0);
 
 #pragma mark - JSC::JSFunction
 
@@ -203,7 +202,7 @@ CPP_DECL uint32_t JSC__JSMap__size(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL void JSC__JSValue__then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, SYSV_ABI JSC::EncodedJSValue(* ArgFn3)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1), SYSV_ABI JSC::EncodedJSValue(* ArgFn4)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 CPP_DECL bool JSC__JSValue__asArrayBuffer(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, Bun__ArrayBuffer* arg2);
 CPP_DECL unsigned char JSC__JSValue__asBigIntCompare(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
-CPP_DECL JSC::JSInternalPromise* JSC__JSValue__asInternalPromise(JSC::EncodedJSValue JSValue0);
+CPP_DECL JSC::JSPromise* JSC__JSValue__asInternalPromise(JSC::EncodedJSValue JSValue0);
 CPP_DECL JSC::JSPromise* JSC__JSValue__asPromise(JSC::EncodedJSValue JSValue0);
 CPP_DECL JSC::JSString* JSC__JSValue__asString(JSC::EncodedJSValue JSValue0);
 CPP_DECL int32_t JSC__JSValue__coerceToInt32(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
@@ -590,7 +589,8 @@ ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(
     BunString* proxyHeaderNames, BunString* proxyHeaderValues, size_t proxyHeaderCount,
     void* sslConfig, bool targetIsSecure,
     const BunString* targetAuthorization,
-    const BunString* unixSocketPath);
+    const BunString* unixSocketPath,
+    bool offerPerMessageDeflate);
 ZIG_DECL void Bun__WebSocketHTTPClient__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL size_t Bun__WebSocketHTTPClient__memoryCost(WebSocketHTTPClient* arg0);
 #endif
@@ -607,7 +607,8 @@ ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(
     BunString* proxyHeaderNames, BunString* proxyHeaderValues, size_t proxyHeaderCount,
     void* sslConfig, bool targetIsSecure,
     const BunString* targetAuthorization,
-    const BunString* unixSocketPath);
+    const BunString* unixSocketPath,
+    bool offerPerMessageDeflate);
 ZIG_DECL void Bun__WebSocketHTTPSClient__register(JSC::JSGlobalObject* arg0, void* arg1, void* arg2);
 ZIG_DECL size_t Bun__WebSocketHTTPSClient__memoryCost(WebSocketHTTPSClient* arg0);
 

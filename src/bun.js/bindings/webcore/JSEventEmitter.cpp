@@ -101,7 +101,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstru
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSEventEmitterDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSEventEmitterDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
     if (!context) [[unlikely]]
@@ -129,7 +129,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstru
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSEventEmitterDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSEventEmitterDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
     if (!context) [[unlikely]] {
@@ -236,7 +236,7 @@ JSObject* JSEventEmitter::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSEventEmitter::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSEventEmitterDOMConstructor, DOMConstructorID::EventEmitter>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSEventEmitterDOMConstructor, DOMConstructorID::EventEmitter>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSEventEmitter::destroy(JSC::JSCell* cell)
@@ -249,7 +249,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsEventEmitterConstructor, (JSGlobalObject * lexicalGlo
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSEventEmitterPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSEventEmitterPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSEventEmitter::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -519,7 +519,7 @@ JSC::GCClient::IsoSubspace* JSEventEmitter::subspaceForImpl(JSC::VM& vm)
 template<typename Visitor>
 void JSEventEmitter::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSEventEmitter*>(cell);
+    auto* thisObject = uncheckedDowncast<JSEventEmitter>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread(visitor);
@@ -530,7 +530,7 @@ DEFINE_VISIT_CHILDREN(JSEventEmitter);
 template<typename Visitor>
 void JSEventEmitter::visitOutputConstraints(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSEventEmitter*>(cell);
+    auto* thisObject = uncheckedDowncast<JSEventEmitter>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread(visitor);
@@ -540,7 +540,7 @@ template void JSEventEmitter::visitOutputConstraints(JSCell*, AbstractSlotVisito
 template void JSEventEmitter::visitOutputConstraints(JSCell*, SlotVisitor&);
 void JSEventEmitter::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSEventEmitter*>(cell);
+    auto* thisObject = uncheckedDowncast<JSEventEmitter>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -549,7 +549,7 @@ void JSEventEmitter::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 
 bool JSEventEmitterOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    auto* jsEventEmitter = jsCast<JSEventEmitter*>(handle.slot()->asCell());
+    auto* jsEventEmitter = uncheckedDowncast<JSEventEmitter>(handle.slot()->asCell());
     if (jsEventEmitter->wrapped().isFiringEventListeners()) {
         if (reason) [[unlikely]]
             *reason = "EventEmitter firing event listeners"_s;

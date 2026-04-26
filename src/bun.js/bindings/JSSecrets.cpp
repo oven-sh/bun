@@ -267,7 +267,7 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
     auto& vm = global->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSPromise* promise = jsCast<JSPromise*>(JSValue::decode(promiseValue));
+    JSPromise* promise = uncheckedDowncast<JSPromise>(JSValue::decode(promiseValue));
 
     if (opts->error.isError()) {
         if (opts->error.type == Secrets::ErrorType::NotFound) {

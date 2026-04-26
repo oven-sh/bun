@@ -38,6 +38,7 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
+#include "WebCoreJSBuiltins.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -148,7 +149,7 @@ JSObject* JSByteLengthQueuingStrategy::prototype(VM& vm, JSDOMGlobalObject& glob
 
 JSValue JSByteLengthQueuingStrategy::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSByteLengthQueuingStrategyDOMConstructor, DOMConstructorID::ByteLengthQueuingStrategy>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSByteLengthQueuingStrategyDOMConstructor, DOMConstructorID::ByteLengthQueuingStrategy>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSByteLengthQueuingStrategy::destroy(JSC::JSCell* cell)
@@ -161,7 +162,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsByteLengthQueuingStrategyConstructor, (JSGlobalObject
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSByteLengthQueuingStrategyPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSByteLengthQueuingStrategyPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSByteLengthQueuingStrategy::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));

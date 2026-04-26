@@ -26,7 +26,7 @@ void JSCipher::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 template<typename Visitor>
 void JSCipher::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSCipher* thisObject = jsCast<JSCipher*>(cell);
+    JSCipher* thisObject = uncheckedDowncast<JSCipher>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }

@@ -91,7 +91,7 @@ pub const PackageInstall = struct {
 
         pub inline fn isSupported(this: Method) bool {
             if (comptime Environment.isMac) return macOS.get(this);
-            if (comptime Environment.isLinux) return linux.get(this);
+            if (comptime Environment.isLinux or Environment.isFreeBSD) return linux.get(this);
             if (comptime Environment.isWindows) return windows.get(this);
 
             return false;

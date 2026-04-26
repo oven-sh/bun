@@ -46,7 +46,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGenerateKeys, (JSC::JSGlobalObject * glo
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* ecdh = jsDynamicCast<JSECDH*>(callFrame->thisValue());
+    auto* ecdh = dynamicDowncast<JSECDH>(callFrame->thisValue());
     if (!ecdh) {
         throwThisTypeError(*globalObject, scope, "ECDH"_s, "generateKeys"_s);
         return {};
@@ -69,7 +69,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* ecdh = jsDynamicCast<JSECDH*>(callFrame->thisValue());
+    auto* ecdh = dynamicDowncast<JSECDH>(callFrame->thisValue());
     if (!ecdh) {
         throwThisTypeError(*globalObject, scope, "ECDH"_s, "computeSecret"_s);
         return {};
@@ -144,7 +144,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGetPublicKey, (JSC::JSGlobalObject * glo
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* ecdh = jsDynamicCast<JSECDH*>(callFrame->thisValue());
+    auto* ecdh = dynamicDowncast<JSECDH>(callFrame->thisValue());
     if (!ecdh) {
         throwThisTypeError(*globalObject, scope, "ECDH"_s, "getPublicKey"_s);
         return {};
@@ -163,7 +163,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGetPrivateKey, (JSC::JSGlobalObject * gl
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* ecdh = jsDynamicCast<JSECDH*>(callFrame->thisValue());
+    auto* ecdh = dynamicDowncast<JSECDH>(callFrame->thisValue());
     if (!ecdh) {
         throwThisTypeError(*globalObject, scope, "ECDH"_s, "getPrivateKey"_s);
         return {};
@@ -211,7 +211,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPublicKey, (JSC::JSGlobalObject * glo
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* ecdh = jsDynamicCast<JSECDH*>(callFrame->thisValue());
+    auto* ecdh = dynamicDowncast<JSECDH>(callFrame->thisValue());
     if (!ecdh) {
         throwThisTypeError(*globalObject, scope, "ECDH"_s, "setPublicKey"_s);
         return {};
@@ -270,7 +270,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPrivateKey, (JSC::JSGlobalObject * gl
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* ecdh = jsDynamicCast<JSECDH*>(callFrame->thisValue());
+    auto* ecdh = dynamicDowncast<JSECDH>(callFrame->thisValue());
     if (!ecdh) {
         throwThisTypeError(*globalObject, scope, "ECDH"_s, "setPrivateKey"_s);
         return {};

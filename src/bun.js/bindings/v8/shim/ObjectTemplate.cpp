@@ -45,7 +45,7 @@ void ObjectTemplate::finishCreation(JSC::VM& vm)
 template<typename Visitor>
 void ObjectTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    ObjectTemplate* tmp = jsCast<ObjectTemplate*>(cell);
+    ObjectTemplate* tmp = uncheckedDowncast<ObjectTemplate>(cell);
     ASSERT_GC_OBJECT_INHERITS(tmp, info());
     Base::visitChildren(tmp, visitor);
 

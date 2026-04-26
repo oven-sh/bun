@@ -52,9 +52,7 @@ This is an explicit exception to the "never use `bun test` directly" rule. There
 
 ### Test Organization
 
-If a test is for a specific numbered GitHub Issue, it should be placed in `test/regression/issue/${issueNumber}.test.ts`. Ensure the issue number is **REAL** and not a placeholder!
-
-If no valid issue number is provided, find the best existing file to modify instead, such as;
+**Default: add your test to the existing test file for the code you're changing.** Do not create a new file. A fetch bug goes in `test/js/web/fetch/fetch.test.ts`, a `Bun.serve` bug goes in `test/js/bun/http/serve.test.ts`, and so on. Keeping tests next to related coverage is what makes them discoverable and prevents duplicated setup.
 
 - `test/js/bun/` - Bun-specific API tests (http, crypto, ffi, shell, etc.)
 - `test/js/node/` - Node.js compatibility tests
@@ -64,6 +62,8 @@ If no valid issue number is provided, find the best existing file to modify inst
 - `test/integration/` - End-to-end integration tests
 - `test/napi/` - N-API compatibility tests
 - `test/v8/` - V8 C++ API compatibility tests
+
+**Exception:** `test/regression/issue/${issueNumber}.test.ts` is reserved for bugs that have a GitHub issue number **and** are true regressions (worked in a previous release, then broke). An issue number alone is not enough — if the behavior was never correct, it's not a regression and the test belongs in the existing file for that module. The issue number must be **REAL**, not a placeholder.
 
 ### Writing Tests
 
@@ -208,7 +208,7 @@ Third-party C/C++ libraries are vendored locally and can be read from disk (thes
 - `vendor/tinycc/` - TinyCC (FFI JIT compiler, fork: oven-sh/tinycc)
 - `vendor/WebKit/` - WebKit/JavaScriptCore (JS engine)
 - `vendor/zig/` - Zig compiler/stdlib
-- `vendor/zlib/` - zlib (compression, cloudflare fork)
+- `vendor/zlib/` - zlib-ng (compression, zlib-compat mode)
 - `vendor/zstd/` - Zstandard (compression)
 
 Build configuration for these is in `scripts/build/deps/*.ts`.

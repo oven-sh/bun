@@ -12,6 +12,7 @@
 // - WINDOWS
 // - DARWIN
 // - LINUX
+// - FREEBSD
 // - POSIX
 
 // For `POSIX_SPAWN_SETSID` and some other non-POSIX extensions in glibc
@@ -23,11 +24,16 @@
 #include "../packages/bun-native-bundler-plugin-api/bundler_plugin.h"
 
 #if POSIX
+#include <fcntl.h>
 #include <ifaddrs.h>
+#include <net/if.h>
 #include <netdb.h>
 #include <pwd.h>
+#include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -35,25 +41,27 @@
 #include <copyfile.h>
 #include <mach/mach_host.h>
 #include <mach/processor_info.h>
-#include <net/if.h>
 #include <net/if_dl.h>
 #include <sys/clonefile.h>
-#include <sys/fcntl.h>
 #include <sys/mount.h>
-#include <sys/socket.h>
-#include <sys/spawn.h>
-#include <sys/stat.h>
 #include <sys/stdio.h>
 #include <sys/sysctl.h>
 #elif LINUX
-#include <fcntl.h>
 #include <linux/fs.h>
-#include <net/if.h>
-#include <spawn.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
 #include <sys/statfs.h>
 #include <sys/sysinfo.h>
+#elif FREEBSD
+#include <arpa/inet.h>
+#include <dirent.h>
+#include <net/if_dl.h>
+#include <sys/event.h>
+#include <sys/mount.h>
+#include <sys/resource.h>
+#include <sys/sysctl.h>
+#include <sys/time.h>
+#include <sys/umtx.h>
+#include <sys/user.h>
+#include <sys/utsname.h>
 #endif
 
 #if WINDOWS

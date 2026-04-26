@@ -366,7 +366,7 @@ extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier);
 
-extern "C" JSC::JSInternalPromise* Bun__transpileFile(
+extern "C" JSC::JSPromise* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
     BunString* specifier,
@@ -387,6 +387,7 @@ extern "C" bool Bun__resolveAndFetchBuiltinModule(
     void* bunVM,
     const BunString* specifier,
     ErrorableResolvedSource* result);
+extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
 
 // Used in process.version
 extern "C" const char* Bun__version;

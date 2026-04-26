@@ -1725,42 +1725,49 @@ pub const JSBundler = struct {
             switch (which.to(i32)) {
                 0 => {
                     const resolve: *JSBundler.Resolve = bun.cast(*Resolve, ctx);
-                    resolve.value = .{
-                        .err = logger.Msg.fromJS(
-                            bun.default_allocator,
-                            plugin.globalObject(),
-                            resolve.import_record.source_file,
-                            exception,
-                        ) catch |err| switch (err) {
-                            error.OutOfMemory => bun.outOfMemory(),
-                            error.JSError, error.JSTerminated => {
-                                plugin.globalObject().reportActiveExceptionAsUnhandled(err);
-                                return;
-                            },
-                        },
-                    };
+                    const msg = msgFromJS(plugin, resolve.import_record.source_file, exception);
+                    resolve.value = .{ .err = msg };
                     resolve.bv2.onResolveAsync(resolve);
                 },
                 1 => {
                     const load: *Load = bun.cast(*Load, ctx);
-                    load.value = .{
-                        .err = logger.Msg.fromJS(
-                            bun.default_allocator,
-                            plugin.globalObject(),
-                            load.path,
-                            exception,
-                        ) catch |err| switch (err) {
-                            error.OutOfMemory => bun.outOfMemory(),
-                            error.JSError, error.JSTerminated => {
-                                plugin.globalObject().reportActiveExceptionAsUnhandled(err);
-                                return;
-                            },
-                        },
-                    };
+                    const msg = msgFromJS(plugin, load.path, exception);
+                    load.value = .{ .err = msg };
                     load.bv2.onLoadAsync(load);
                 },
                 else => @panic("invalid error type"),
             }
+        }
+
+        /// Convert a JS exception value into a `logger.Msg`. If the conversion itself throws
+        /// (e.g. `Symbol.toPrimitive` on the thrown object throws), clear that secondary
+        /// exception and return a generic fallback message so `onResolveAsync`/`onLoadAsync`
+        /// is still called and the bundler's pending-item counter is decremented. Returning
+        /// early here would cause `Bun.build` to hang forever waiting on the counter.
+        fn msgFromJS(plugin: *Plugin, file: []const u8, exception: JSValue) logger.Msg {
+            return logger.Msg.fromJS(
+                bun.default_allocator,
+                plugin.globalObject(),
+                file,
+                exception,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => bun.outOfMemory(),
+                error.JSError, error.JSTerminated => {
+                    // We are already producing a build error for the original plugin
+                    // exception; the secondary exception from string conversion is not
+                    // useful to the user and should not be treated as unhandled.
+                    _ = plugin.globalObject().clearExceptionExceptTermination();
+                    return .{
+                        .data = .{
+                            .text = bun.handleOom(bun.default_allocator.dupe(
+                                u8,
+                                "A bundler plugin threw a value that could not be converted to a string",
+                            )),
+                            .location = .{ .file = file, .line = -1, .column = -1 },
+                        },
+                    };
+                },
+            };
         }
     };
 };

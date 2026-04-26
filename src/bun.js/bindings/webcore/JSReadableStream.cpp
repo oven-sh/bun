@@ -41,6 +41,7 @@
 #include "ZigGeneratedClasses.h"
 #include "JavaScriptCore/BuiltinNames.h"
 #include "ZigGlobalObject.h"
+#include "WebCoreJSBuiltins.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -87,7 +88,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStreamPrototype, JSReadableStreamP
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncText, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
+    JSReadableStream* thisObject = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -100,7 +101,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncText, (JSGlobalObject * global
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncBytes, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
+    JSReadableStream* thisObject = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -113,7 +114,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncBytes, (JSGlobalObject * globa
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncJSON, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
+    JSReadableStream* thisObject = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -126,7 +127,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncJSON, (JSGlobalObject * global
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamProtoFuncBlob, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
+    JSReadableStream* thisObject = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -180,14 +181,14 @@ const ClassInfo JSReadableStreamPrototype::s_info = { "ReadableStream"_s, &Base:
 
 static JSC_DEFINE_CUSTOM_SETTER(JSReadableStreamPrototype__nativePtrSetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::EncodedJSValue encodedJSValue, JSC::PropertyName))
 {
-    JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
+    JSReadableStream* thisObject = uncheckedDowncast<JSReadableStream>(JSValue::decode(encodedThisValue));
     thisObject->setNativePtr(lexicalGlobalObject->vm(), JSValue::decode(encodedJSValue));
     return true;
 }
 
 static JSC_DEFINE_CUSTOM_GETTER(JSReadableStreamPrototype__nativePtrGetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::PropertyName))
 {
-    JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
+    JSReadableStream* thisObject = uncheckedDowncast<JSReadableStream>(JSValue::decode(encodedThisValue));
 
     // Force it to be locked, even though the value is still really there.
     if (thisObject->isNativeTypeTransferred()) {
@@ -199,27 +200,27 @@ static JSC_DEFINE_CUSTOM_GETTER(JSReadableStreamPrototype__nativePtrGetterWrap, 
 
 static JSC_DEFINE_CUSTOM_SETTER(JSReadableStreamPrototype__nativeTypeSetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::EncodedJSValue encodedJSValue, JSC::PropertyName))
 {
-    JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
+    JSReadableStream* thisObject = uncheckedDowncast<JSReadableStream>(JSValue::decode(encodedThisValue));
     thisObject->setNativeType(JSValue::decode(encodedJSValue).toInt32(lexicalGlobalObject));
     return true;
 }
 
 static JSC_DEFINE_CUSTOM_GETTER(JSReadableStreamPrototype__nativeTypeGetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::PropertyName))
 {
-    JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
+    JSReadableStream* thisObject = uncheckedDowncast<JSReadableStream>(JSValue::decode(encodedThisValue));
     return JSValue::encode(jsNumber(thisObject->nativeType()));
 }
 
 static JSC_DEFINE_CUSTOM_SETTER(JSReadableStreamPrototype__disturbedSetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::EncodedJSValue encodedJSValue, JSC::PropertyName))
 {
-    JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
+    JSReadableStream* thisObject = uncheckedDowncast<JSReadableStream>(JSValue::decode(encodedThisValue));
     thisObject->setDisturbed(JSValue::decode(encodedJSValue).toBoolean(lexicalGlobalObject));
     return true;
 }
 
 static JSC_DEFINE_CUSTOM_GETTER(JSReadableStreamPrototype__disturbedGetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::PropertyName))
 {
-    JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
+    JSReadableStream* thisObject = uncheckedDowncast<JSReadableStream>(JSValue::decode(encodedThisValue));
     return JSValue::encode(jsBoolean(thisObject->disturbed()));
 }
 
@@ -270,7 +271,7 @@ JSObject* JSReadableStream::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSReadableStream::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSReadableStreamDOMConstructor, DOMConstructorID::ReadableStream>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSReadableStreamDOMConstructor, DOMConstructorID::ReadableStream>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSReadableStream::destroy(JSC::JSCell* cell)
@@ -283,7 +284,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamConstructor, (JSGlobalObject * lexicalG
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSReadableStreamPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSReadableStreamPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSReadableStream::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -302,7 +303,7 @@ JSC::GCClient::IsoSubspace* JSReadableStream::subspaceForImpl(JSC::VM& vm)
 template<typename Visitor>
 void JSReadableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSReadableStream* stream = jsCast<JSReadableStream*>(cell);
+    JSReadableStream* stream = uncheckedDowncast<JSReadableStream>(cell);
     ASSERT_GC_OBJECT_INHERITS(stream, info());
     Base::visitChildren(stream, visitor);
 

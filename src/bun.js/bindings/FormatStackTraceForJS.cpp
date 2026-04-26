@@ -61,7 +61,7 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         JSC::JSValue callSiteValue = callSites->getIndex(lexicalGlobalObject, i);
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (CallSite* callSite = JSC::jsDynamicCast<CallSite*>(callSiteValue)) {
+        if (CallSite* callSite = dynamicDowncast<CallSite>(callSiteValue)) {
             callSite->formatAsString(vm, lexicalGlobalObject, sb);
             RETURN_IF_EXCEPTION(scope, {});
         } else {
@@ -173,7 +173,7 @@ WTF::String formatStackTrace(
     };
 
     if (errorInstance) {
-        if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
+        if (JSC::ErrorInstance* err = dynamicDowncast<JSC::ErrorInstance>(errorInstance)) {
             if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
                 // There appears to be an off-by-one error.
                 // The following reproduces the issue:
@@ -407,7 +407,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(
 
     if (errorInstance) {
         // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
-        if (auto* instance = jsDynamicCast<ErrorInstance*>(errorInstance)) {
+        if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
             if (!lexicalGlobalObject) {
                 lexicalGlobalObject = errorInstance->globalObject();
             }
@@ -496,7 +496,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
         ZigStackFrame& frame = remappedFrames[i];
         WTF::String sourceURLForFrame = didRemap[i] ? frame.source_url.toWTFString() : sourceURLs[i];
 
-        auto* callsite = jsCast<CallSite*>(callSites.at(i));
+        auto* callsite = uncheckedDowncast<CallSite>(callSites.at(i));
 
         if (!sourceURLForFrame.isEmpty())
             callsite->setSourceURL(vm, jsString(vm, sourceURLForFrame));
@@ -529,7 +529,7 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
     Zig::GlobalObject* globalObject = nullptr;
     JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
     lexicalGlobalObject = errorInstance->globalObject();
-    globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
@@ -637,8 +637,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::ErrorInstance* source = jsDynamicCast<JSC::ErrorInstance*>(callFrame->argument(0));
-    JSC::ErrorInstance* destination = jsDynamicCast<JSC::ErrorInstance*>(callFrame->argument(1));
+    JSC::ErrorInstance* source = dynamicDowncast<JSC::ErrorInstance>(callFrame->argument(0));
+    JSC::ErrorInstance* destination = dynamicDowncast<JSC::ErrorInstance>(callFrame->argument(1));
 
     if (!source || !destination) {
         throwTypeError(lexicalGlobalObject, scope, "First & second argument must be an Error object"_s);
@@ -663,8 +663,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    auto errorObject = jsDynamicCast<JSC::ErrorInstance*>(callFrame->argument(0));
-    auto callSites = jsDynamicCast<JSC::JSArray*>(callFrame->argument(1));
+    auto errorObject = dynamicDowncast<JSC::ErrorInstance>(callFrame->argument(0));
+    auto callSites = dynamicDowncast<JSC::JSArray>(callFrame->argument(1));
     if (!errorObject) {
         throwTypeError(lexicalGlobalObject, scope, "First argument must be an Error object"_s);
         return {};
@@ -684,7 +684,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* errorObject = jsDynamicCast<ErrorInstance*>(JSValue::decode(thisValue));
+    auto* errorObject = dynamicDowncast<ErrorInstance>(JSValue::decode(thisValue));
 
     // This shouldn't be possible.
     if (!errorObject) {
@@ -735,7 +735,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSC::JSObject* errorObject = objectArg.asCell()->getObject();
     JSC::JSValue caller = callFrame->argument(1);
 
-    size_t stackTraceLimit = globalObject->stackTraceLimit().value();
+    size_t stackTraceLimit = globalObject->stackTraceLimit().value_or(DEFAULT_ERROR_STACK_TRACE_LIMIT);
     if (stackTraceLimit == 0) {
         stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
     }
@@ -743,7 +743,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     WTF::Vector<JSC::StackFrame> stackTrace;
     JSCStackTrace::getFramesForCaller(vm, callFrame, errorObject, caller, stackTrace, stackTraceLimit);
 
-    if (auto* instance = jsDynamicCast<JSC::ErrorInstance*>(errorObject)) {
+    if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(errorObject)) {
         if (instance->hasMaterializedErrorInfo()) {
             // Error info was already materialized (e.g. .stack was previously accessed).
             // Don't call setStackFrames — it would leave m_errorInfoMaterialized=true with
@@ -768,11 +768,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             }
             RETURN_IF_EXCEPTION(scope, {});
 
-            if (auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject)) {
-                instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, zigGlobalObject->m_lazyStackCustomGetterSetter.get(zigGlobalObject), JSC::PropertyAttribute::CustomAccessor | 0);
-            } else {
-                instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, CustomGetterSetter::create(vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter), JSC::PropertyAttribute::CustomAccessor | 0);
-            }
+            instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::CustomAccessor | 0);
         }
     } else {
         OrdinalNumber line;

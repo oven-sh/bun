@@ -40,7 +40,7 @@ NapiHandleScopeImpl* NapiHandleScopeImpl::create(JSC::VM& vm,
 template<typename Visitor>
 void NapiHandleScopeImpl::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    NapiHandleScopeImpl* thisObject = jsCast<NapiHandleScopeImpl*>(cell);
+    NapiHandleScopeImpl* thisObject = uncheckedDowncast<NapiHandleScopeImpl>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 

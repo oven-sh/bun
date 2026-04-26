@@ -8,6 +8,7 @@
 #include "BunString.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/Vector.h"
+#include <wtf/MathExtras.h>
 
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -41,27 +42,27 @@ static JSNodePerformanceHooksHistogram* createHistogramInternal(JSGlobalObject* 
     if (lowestVal.isNumber()) {
         double dbl = lowestVal.asNumber();
         if (!std::isnan(dbl)) {
-            lowest = static_cast<int64_t>(dbl);
+            lowest = truncateDoubleToInt64(dbl);
         }
     } else if (lowestVal.isBigInt()) {
-        auto* bigInt = jsCast<JSBigInt*>(lowestVal);
+        auto* bigInt = uncheckedDowncast<JSBigInt>(lowestVal);
         lowest = JSBigInt::toBigInt64(bigInt);
     }
 
     if (highestVal.isNumber()) {
         double dbl = highestVal.asNumber();
         if (!std::isnan(dbl)) {
-            highest = static_cast<int64_t>(dbl);
+            highest = truncateDoubleToInt64(dbl);
         }
     } else if (highestVal.isBigInt()) {
-        auto* bigInt = jsCast<JSBigInt*>(highestVal);
+        auto* bigInt = uncheckedDowncast<JSBigInt>(highestVal);
         highest = JSBigInt::toBigInt64(bigInt);
     }
 
     if (figuresVal.isNumber()) {
         double dbl = figuresVal.asNumber();
         if (!std::isnan(dbl)) {
-            figures = static_cast<int>(dbl);
+            figures = truncateDoubleToInt32(dbl);
         }
     }
 

@@ -83,7 +83,7 @@ extern "C" JSC::EncodedJSValue JSReactElement__create(
     EncodedJSValue type,
     EncodedJSValue props)
 {
-    auto* global = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     VM& vm = global->vm();
 
     JSObject* element = constructEmptyObject(vm, global->JSReactElementStructure());
@@ -101,7 +101,7 @@ extern "C" JSC::EncodedJSValue JSReactElement__createFragment(
     uint8_t reactVersion,
     EncodedJSValue children)
 {
-    auto* global = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     VM& vm = global->vm();
 
     JSC::Symbol* fragmentSymbol = JSC::Symbol::create(vm,

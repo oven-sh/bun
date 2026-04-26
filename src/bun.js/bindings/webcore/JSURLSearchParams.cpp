@@ -120,7 +120,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSURLSearchParamsDOMCons
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSURLSearchParamsDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSURLSearchParamsDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto init = argument0.value().isUndefined() ? emptyString() : convert<IDLUnion<IDLSequence<IDLSequence<IDLUSVString>>, IDLRecord<IDLUSVString, IDLUSVString>, IDLUSVString>>(*lexicalGlobalObject, argument0.value());
@@ -159,7 +159,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsURLSearchParamsPrototype_getLength, (JSGlobalObject *
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = jsDynamicCast<JSURLSearchParams*>(JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSURLSearchParams>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(jsNumber(thisObject->wrapped().size()));
@@ -225,7 +225,7 @@ JSObject* JSURLSearchParams::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSURLSearchParams::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSURLSearchParamsDOMConstructor, DOMConstructorID::URLSearchParams>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSURLSearchParamsDOMConstructor, DOMConstructorID::URLSearchParams>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSURLSearchParams::destroy(JSC::JSCell* cell)
@@ -238,7 +238,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsURLSearchParamsConstructor, (JSGlobalObject * lexical
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSURLSearchParamsPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSURLSearchParamsPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSURLSearchParams::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -460,7 +460,7 @@ static void putIntoObject(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject,
                 obj->putDirect(vm, ident, array);
             }
         } else if (jsValue.isCell() && jsValue.asCell()->type() == ArrayType) {
-            JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
+            JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(jsValue.getObject());
             array->push(lexicalGlobalObject, stringValue);
             RETURN_IF_EXCEPTION(throwScope, );
         } else {
@@ -633,7 +633,7 @@ JSC::GCClient::IsoSubspace* JSURLSearchParams::subspaceForImpl(JSC::VM& vm)
 
 void JSURLSearchParams::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSURLSearchParams*>(cell);
+    auto* thisObject = uncheckedDowncast<JSURLSearchParams>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     // if (thisObject->scriptExecutionContext())
     //     analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -697,14 +697,14 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 URLSearchParams* JSURLSearchParams::toWrapped(JSC::VM& vm, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSURLSearchParams*>(value))
+    if (auto* wrapper = dynamicDowncast<JSURLSearchParams>(value))
         return &wrapper->wrapped();
     return nullptr;
 }
 
 size_t JSURLSearchParams::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 {
-    auto* thisObject = jsCast<JSURLSearchParams*>(cell);
+    auto* thisObject = uncheckedDowncast<JSURLSearchParams>(cell);
     auto& wrapped = thisObject->wrapped();
     return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
 }

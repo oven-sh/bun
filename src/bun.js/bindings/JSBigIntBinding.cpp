@@ -10,7 +10,7 @@ extern "C" JSBigInt* JSC__JSBigInt__fromJS(EncodedJSValue encodedValue)
 {
     JSValue value = JSValue::decode(encodedValue);
     ASSERT(!value.isEmpty());
-    if (auto* bigInt = jsDynamicCast<JSBigInt*>(value)) {
+    if (auto* bigInt = dynamicDowncast<JSBigInt>(value)) {
         return bigInt;
     }
     return nullptr;

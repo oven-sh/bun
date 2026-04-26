@@ -39,9 +39,7 @@ server.listen(0, "127.0.0.1", () => {
     req.on("error", () => {});
     req.on("response", () => {});
     req.on("data", () => {});
-    req.on("close", () => {
-      finish();
-    });
+    req.on("close", () => finish());
 
     // Write a payload larger than the default initial window size (65535)
     // so the tail of it is queued by the native frame parser and later
@@ -66,6 +64,11 @@ server.listen(0, "127.0.0.1", () => {
           extras.push(r);
         } catch {}
       }
+      // The UAF (if present) fires in native code immediately after this
+      // callback returns — flushQueue's defer resumes and touches the stale
+      // *Stream. We don't need to wait for the request to complete; finish
+      // on the next turn so the defer has run.
+      setImmediate(finish);
     });
     req.end();
   });
@@ -78,20 +81,16 @@ server.listen(0, "127.0.0.1", () => {
       console.error("write callback never fired");
       process.exit(1);
     }
-    try {
-      client.close();
-    } catch {}
+    // The UAF (if present) would have already tripped ASAN inside the write
+    // callback's caller by now; no need to wait for the extra streams or a
+    // graceful shutdown.
     try {
       client.destroy();
     } catch {}
-    server.close(() => {
-      console.log("ok");
-      process.exit(0);
-    });
-    // Force exit in case close() hangs waiting on the extra streams.
-    setTimeout(() => {
-      console.log("ok");
-      process.exit(0);
-    }, 500).unref();
+    try {
+      server.close();
+    } catch {}
+    console.log("ok");
+    process.exit(0);
   }
 });

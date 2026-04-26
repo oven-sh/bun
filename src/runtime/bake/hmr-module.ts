@@ -883,6 +883,13 @@ function patchImporters(mod: HMRModule) {
     // forwarders that close over it. Required for circular dependencies,
     // where the source's `exports` was `null` at the first attempt, and
     // safe in the steady state (idempotent via hasOwnProperty guard).
+    //
+    // This propagates only one hop. In a 3+ module circular `export *`
+    // chain (a→b→c→a), or on an HMR update that adds a key at a leaf
+    // through intermediate barrels, a second-level barrel could still
+    // be missing the new forwarders. That's a smaller-but-same-kind
+    // gap that the pre-PR `{ ...ns }` spread had strictly worse
+    // (every level empty); acceptable as a known limitation.
     importer.refreshStars();
   }
 }

@@ -692,31 +692,19 @@ pub fn spawnMaybeSync(
         .globalThis = globalThis,
         .process = process,
         .pid_rusage = null,
-        // Assigned immediately after this literal. `Writable.init()` writes
-        // to `subprocess.weak_file_sink_stdin_ptr`, `subprocess.flags`, and
-        // calls `subprocess.ref()` for `.pipe`/`.readable_stream` stdin; if
-        // called from inside this aggregate initializer those writes are
-        // clobbered by `.ref_count = .initExactRefs(2)`, `.flags = .{...}`,
-        // and the default `weak_file_sink_stdin_ptr = null` below.
+        // stdin/stdout/stderr are assigned immediately after this literal.
+        // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
+        // `subprocess.flags`, and calls `subprocess.ref()` for `.pipe` /
+        // `.readable_stream` stdin; if called from inside this aggregate
+        // initializer those writes are clobbered by `.ref_count =
+        // .initExactRefs(2)`, `.flags = .{...}`, and the default
+        // `weak_file_sink_stdin_ptr = null` below. stdout/stderr are deferred
+        // so that if `Writable.init()` fails the catch block doesn't have to
+        // tear down unstarted `PipeReader`s (whose `deinit()` asserts
+        // `isDone()`).
         .stdin = .{ .ignore = {} },
-        .stdout = Readable.init(
-            stdio[1],
-            event_loop,
-            subprocess,
-            spawned.stdout,
-            jsc_vm.allocator,
-            subprocess.stdout_maxbuf,
-            is_sync,
-        ),
-        .stderr = Readable.init(
-            stdio[2],
-            event_loop,
-            subprocess,
-            spawned.stderr,
-            jsc_vm.allocator,
-            subprocess.stderr_maxbuf,
-            is_sync,
-        ),
+        .stdout = .{ .ignore = {} },
+        .stderr = .{ .ignore = {} },
         // 1. JavaScript.
         // 2. Process.
         .ref_count = .initExactRefs(2),
@@ -743,12 +731,17 @@ pub fn spawnMaybeSync(
         subprocess,
         spawned.stdin,
         &promise_for_stream,
-    ) catch {
-        // The aggregate above already ran: ref_count = 2 and stdout/stderr/
-        // stdio_pipes are live, but neither the JS wrapper nor the process
-        // exit handler have been wired up to own those refs yet. Tear down
-        // what `finalize()` would have and release both refs.
-        _ = subprocess.tryKill(subprocess.killSignal);
+    ) catch |err| {
+        // ref_count = 2 from the aggregate above, but neither the JS
+        // wrapper nor the process exit handler are wired up yet, so
+        // release both. stdout/stderr are still `.ignore` — close the raw
+        // spawned pipe fds directly since `Readable.init()` will not run.
+        // `finalizeStreams()` here only closes `stdio_pipes` and the pidfd;
+        // stdin/stdout/stderr are `.ignore` so their `closeIO` is a no-op.
+        if (Environment.isPosix) {
+            if (spawned.stdout) |fd| fd.close();
+            if (spawned.stderr) |fd| fd.close();
+        }
         subprocess.finalizeStreams();
         subprocess.process.detach();
         subprocess.process.deref();
@@ -756,9 +749,28 @@ pub fn spawnMaybeSync(
         MaxBuf.removeFromSubprocess(&subprocess.stderr_maxbuf);
         subprocess.deref();
         subprocess.deref();
-        if (globalThis.hasException()) return error.JSError;
+        if (err == error.JSError) return error.JSError;
         return globalThis.throwOutOfMemory();
     };
+
+    subprocess.stdout = Readable.init(
+        stdio[1],
+        event_loop,
+        subprocess,
+        spawned.stdout,
+        jsc_vm.allocator,
+        subprocess.stdout_maxbuf,
+        is_sync,
+    );
+    subprocess.stderr = Readable.init(
+        stdio[2],
+        event_loop,
+        subprocess,
+        spawned.stderr,
+        jsc_vm.allocator,
+        subprocess.stderr_maxbuf,
+        is_sync,
+    );
 
     // For inline terminal options: close parent's slave_fd so EOF is received when child exits
     // For existing terminal: keep slave_fd open so terminal can be reused for more spawns

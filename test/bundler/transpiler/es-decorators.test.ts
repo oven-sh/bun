@@ -398,6 +398,9 @@ describe("ES Decorators", () => {
     test("Function.prototype[Symbol.metadata] is null for undecorated classes", async () => {
       // Per the Decorator Metadata proposal, undecorated classes resolve
       // Foo[Symbol.metadata] to null via Function.prototype, not undefined.
+      // The proposal specifies `{ writable: false, enumerable: false,
+      // configurable: true }` — configurable is deliberately true so
+      // polyfills can redefine it.
       const { stdout, stderr, exitCode } = await runDecorator(`
         class Plain {}
         console.log(Plain[Symbol.metadata]);
@@ -406,7 +409,7 @@ describe("ES Decorators", () => {
         console.log(d.value, d.writable, d.enumerable, d.configurable);
       `);
       expect(stderr).toBe("");
-      expect(stdout).toBe("null\nnull\nnull false false false\n");
+      expect(stdout).toBe("null\nnull\nnull false false true\n");
       expect(exitCode).toBe(0);
     });
   });

@@ -51,15 +51,21 @@ static void installSymbolMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalObject
     // the spec requires well-known symbols to be shared across realms
     // (ECMA-262 §6.1.5.1).
     JSC::Symbol* metadataSymbol = JSC::Symbol::create(vm, static_cast<SymbolImpl&>(metadataSymbolImpl));
-    unsigned attributes = PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly;
-    symbolConstructor->putDirectWithoutTransition(vm, metadataIdentifier, metadataSymbol, attributes);
+    // Symbol.metadata on the Symbol constructor is non-configurable, matching
+    // every other well-known symbol (ECMA-262 §20.4.2).
+    symbolConstructor->putDirectWithoutTransition(vm, metadataIdentifier, metadataSymbol,
+        PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     // Per the Decorator Metadata proposal, Function.prototype[@@metadata] is
     // null so undecorated classes resolve `Foo[Symbol.metadata]` to null
-    // (rather than undefined) via the prototype chain.
+    // (rather than undefined) via the prototype chain. The proposal and
+    // test262 specify `{ writable: false, enumerable: false, configurable:
+    // true }` — deliberately looser than well-known-symbol attributes so
+    // userland polyfills can redefine the property.
     JSC::JSObject* functionPrototype = globalObject->functionPrototype();
     JSC::Identifier metadataSymbolIdentifier = JSC::Identifier::fromUid(vm, &static_cast<SymbolImpl&>(metadataSymbolImpl));
-    functionPrototype->putDirectWithoutTransition(vm, metadataSymbolIdentifier, JSC::jsNull(), attributes);
+    functionPrototype->putDirectWithoutTransition(vm, metadataSymbolIdentifier, JSC::jsNull(),
+        PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
 }
 
 void GlobalScope::finishCreation(JSC::VM& vm)

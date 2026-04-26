@@ -810,9 +810,6 @@ pub const Bin = extern struct {
         fn createSymlink(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
             defer {
                 if (this.err == null) {
-                    // Mark the bin executable. Honor the process umask the
-                    // same way npm and pnpm do: final mode = 0o777 & ~umask.
-                    //
                     // `umask` is populated by `ensureUmask()`, which the
                     // hoisted installer, isolated installer, and
                     // `bun link`/`bun unlink` all call on the main thread
@@ -820,6 +817,13 @@ pub const Bin = extern struct {
                     // would race — `Bin.Linker.link()` runs on thread-pool
                     // workers in isolated mode and `ensureUmask()`'s
                     // read-and-restore of the process umask is not atomic.
+                    //
+                    // Assert the invariant so a future caller that forgets
+                    // to prime umask fails loudly in debug builds instead
+                    // of silently widening bin perms to 0o777.
+                    bun.assertWithLocation(has_set_umask, @src());
+                    // Mark the bin executable. Honor the process umask the
+                    // same way npm and pnpm do: final mode = 0o777 & ~umask.
                     _ = bun.sys.chmod(abs_target, 0o777 & ~umask);
                 }
             }

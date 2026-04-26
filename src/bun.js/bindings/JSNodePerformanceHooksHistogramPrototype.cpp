@@ -6,6 +6,7 @@
 #include "JSNodePerformanceHooksHistogramPrototype.h"
 #include "JSNodePerformanceHooksHistogram.h"
 #include "wtf/text/ASCIILiteral.h"
+#include <wtf/MathExtras.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -66,7 +67,7 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncRecord, (JSGlob
     JSValue arg = callFrame->uncheckedArgument(0);
     int64_t value;
     if (arg.isNumber()) {
-        value = static_cast<int64_t>(arg.asNumber());
+        value = truncateDoubleToInt64(arg.asNumber());
     } else if (arg.isBigInt()) {
         auto* bigInt = jsCast<JSBigInt*>(arg);
         value = JSBigInt::toBigInt64(bigInt);
@@ -388,7 +389,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
     if (callFrame->argumentCount() >= 1) {
         JSValue lowestArg = callFrame->uncheckedArgument(0);
         if (lowestArg.isNumber()) {
-            lowest = static_cast<int64_t>(lowestArg.asNumber());
+            lowest = truncateDoubleToInt64(lowestArg.asNumber());
         } else if (lowestArg.isBigInt()) {
             auto* bigInt = jsCast<JSBigInt*>(lowestArg);
             lowest = JSBigInt::toBigInt64(bigInt);
@@ -398,7 +399,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
     if (callFrame->argumentCount() >= 2) {
         JSValue highestArg = callFrame->uncheckedArgument(1);
         if (highestArg.isNumber()) {
-            highest = static_cast<int64_t>(highestArg.asNumber());
+            highest = truncateDoubleToInt64(highestArg.asNumber());
         } else if (highestArg.isBigInt()) {
             auto* bigInt = jsCast<JSBigInt*>(highestArg);
             highest = JSBigInt::toBigInt64(bigInt);
@@ -408,7 +409,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
     if (callFrame->argumentCount() >= 3) {
         JSValue figuresArg = callFrame->uncheckedArgument(2);
         if (figuresArg.isNumber()) {
-            figures = static_cast<int>(figuresArg.asNumber());
+            figures = truncateDoubleToInt32(figuresArg.asNumber());
         }
     }
 

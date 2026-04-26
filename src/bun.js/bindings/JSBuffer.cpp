@@ -48,6 +48,7 @@
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
+#include <wtf/MathExtras.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
@@ -1923,7 +1924,7 @@ bool inline parseArrayIndex(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalO
         return true;
     }
 
-    int64_t index = static_cast<int64_t>(value.toIntegerWithTruncation(globalObject));
+    int64_t index = truncateDoubleToInt64(value.toNumber(globalObject));
     RETURN_IF_EXCEPTION(scope, false);
 
     if (index < 0) {
@@ -2070,7 +2071,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalO
     if (fstart > byteLength) {
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
     }
-    start = static_cast<uint32_t>(fstart);
+    start = truncateDoubleToUint32(fstart);
 lstart:
 
     if (!arg3.isUndefined()) {
@@ -2215,7 +2216,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
             return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "length");
         }
         // Convert NaN length to 0, negative to 0 (for NaN offset case)
-        int64_t intLength = (std::isnan(length) || length < 0) ? 0 : static_cast<int64_t>(length);
+        int64_t intLength = (std::isnan(length) || length < 0) ? 0 : truncateDoubleToInt64(length);
         // Clamp to available buffer space
         maxLength = std::min(byteLength - safeOffset, static_cast<size_t>(intLength));
     }
@@ -2471,7 +2472,7 @@ static size_t validateOffsetBigInt64(JSC::JSGlobalObject* lexicalGlobalObject, J
         return 0;
     }
 
-    offset = static_cast<size_t>(offsetD);
+    offset = truncateDoubleToUint64(offsetD);
 
     if (offset > maxOffset) [[unlikely]] {
         Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, maxOffset, offsetVal);
@@ -3068,7 +3069,7 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
         double offsetD = offsetValue.toNumber(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (std::isnan(offsetD)) offsetD = 0;
-        offset = offsetD;
+        offset = truncateDoubleToUint64(offsetD);
         if (offset > byteLength) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "offset"_s);
         length -= offset;
     }
@@ -3077,7 +3078,7 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
         double lengthD = lengthValue.toNumber(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (std::isnan(lengthD)) lengthD = 0;
-        length = lengthD;
+        length = truncateDoubleToUint64(lengthD);
         if (length > byteLength - offset) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "length"_s);
     }
 

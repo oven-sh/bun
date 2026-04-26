@@ -1972,7 +1972,7 @@ fn packageShipsTypeDeclarations(
     pkg_id: PackageID,
     cache: *std.AutoHashMapUnmanaged(PackageID, bool),
 ) bool {
-    const gop = cache.getOrPut(manager.allocator, pkg_id) catch bun.outOfMemory();
+    const gop = bun.handleOom(cache.getOrPut(manager.allocator, pkg_id));
     if (gop.found_existing) return gop.value_ptr.*;
     gop.value_ptr.* = false;
 
@@ -2064,27 +2064,39 @@ fn scanForTypeDeclarationSignals(source_bytes: []const u8) bool {
 ///
 ///   "exports": { ".": { "types": { "import": "./a.d.mts", "require": "./a.d.cts" } } }
 ///
+/// Conditions can also be arrays of fallback targets:
+///
+///   "exports": { ".": [ { "types": "./a.d.ts", "default": "./a.js" }, "./b.js" ] }
+///
 /// Either shape means the package ships declarations, so any `"types"` key
 /// anywhere in the tree is a hit regardless of whether its value is a
-/// string or a nested conditional object. Recursion depth is bounded by
-/// how deeply a `package.json` nests conditions (1-3 in practice); the
-/// cap is just a defensive ceiling for malformed input.
+/// string, a nested conditional object, or sits inside an array-of-
+/// fallbacks. Recursion depth is bounded by how deeply a `package.json`
+/// nests conditions (1-3 in practice); the cap is just a defensive
+/// ceiling for malformed input.
 fn exportsHasTypesCondition(expr: bun.js_parser.Expr) bool {
     return exportsHasTypesConditionInner(expr, 0);
 }
 
 fn exportsHasTypesConditionInner(expr: bun.js_parser.Expr, depth: u8) bool {
     if (depth > 8) return false;
-    if (expr.data != .e_object) return false;
-    for (expr.data.e_object.properties.slice()) |prop| {
-        const key = prop.key orelse continue;
-        const value = prop.value orelse continue;
-        if (key.data == .e_string and key.data.e_string.eqlComptime("types")) {
-            return true;
-        }
-        if (value.data == .e_object) {
-            if (exportsHasTypesConditionInner(value, depth + 1)) return true;
-        }
+    switch (expr.data) {
+        .e_object => |obj| {
+            for (obj.properties.slice()) |prop| {
+                const key = prop.key orelse continue;
+                const value = prop.value orelse continue;
+                if (key.data == .e_string and key.data.e_string.eqlComptime("types")) {
+                    return true;
+                }
+                if (exportsHasTypesConditionInner(value, depth + 1)) return true;
+            }
+        },
+        .e_array => |array| {
+            for (array.items.slice()) |item| {
+                if (exportsHasTypesConditionInner(item, depth + 1)) return true;
+            }
+        },
+        else => {},
     }
     return false;
 }

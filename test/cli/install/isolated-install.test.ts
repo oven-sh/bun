@@ -2020,6 +2020,20 @@ describe("global virtual store", () => {
       "exports-types-dual/index.d.mts": "export {};\n",
       "exports-types-dual/index.d.cts": "export {};\n",
 
+      // Array-of-fallbacks: the Node resolution spec lets any target be a
+      // list of alternatives tried in order. A `"types"` key buried inside
+      // such an array still means the package ships types.
+      "exports-types-array/package.json": JSON.stringify({
+        name: "exports-types-array",
+        version: "1.0.0",
+        exports: {
+          ".": [{ types: "./index.d.ts", default: "./index.js" }, "./fallback.js"],
+        },
+      }),
+      "exports-types-array/index.js": "module.exports = {};\n",
+      "exports-types-array/index.d.ts": "export {};\n",
+      "exports-types-array/fallback.js": "module.exports = {};\n",
+
       "pure-js/package.json": JSON.stringify({
         name: "pure-js",
         version: "1.0.0",
@@ -2045,6 +2059,7 @@ describe("global virtual store", () => {
       "top-typings": await pack("top-typings"),
       "exports-types": await pack("exports-types"),
       "exports-types-dual": await pack("exports-types-dual"),
+      "exports-types-array": await pack("exports-types-array"),
       "pure-js": await pack("pure-js"),
     };
 
@@ -2095,6 +2110,7 @@ describe("global virtual store", () => {
           "top-typings": "1.0.0",
           "exports-types": "1.0.0",
           "exports-types-dual": "1.0.0",
+          "exports-types-array": "1.0.0",
           "pure-js": "1.0.0",
         },
       }),
@@ -2111,10 +2127,17 @@ describe("global virtual store", () => {
     expect(readlinkSync(pureEntry)).toMatch(/links[/\\]pure-js@1\.0\.0-[0-9a-f]{16}$/);
 
     // Each type-shipping signal — top-level `types`, top-level `typings`,
-    // a `"types"` condition with a string target under `exports`, or a
+    // a `"types"` condition with a string target under `exports`, a
     // `"types"` condition with a nested-object target (the dual ESM/CJS
-    // shape) — keeps the package project-local as a real directory.
-    for (const name of ["top-types", "top-typings", "exports-types", "exports-types-dual"] as const) {
+    // shape), or a `"types"` key nested inside an array-of-fallbacks —
+    // keeps the package project-local as a real directory.
+    for (const name of [
+      "top-types",
+      "top-typings",
+      "exports-types",
+      "exports-types-dual",
+      "exports-types-array",
+    ] as const) {
       const entry = join(bunDir, `${name}@1.0.0`);
       expect(lstatSync(entry).isSymbolicLink()).toBe(false);
       expect(lstatSync(entry).isDirectory()).toBe(true);

@@ -4,8 +4,7 @@ name: FreeBSD smoke test
 # actually starts and executes JavaScript. The build itself happens on
 # BuildKite (cross-compiled from Linux); this just validates the result.
 #
-# Triggered manually with a BuildKite artifact URL, or automatically on
-# pushes to branches that touch FreeBSD-related paths.
+# Triggered manually with a BuildKite artifact URL.
 
 on:
   workflow_dispatch:

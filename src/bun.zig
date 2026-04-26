@@ -1574,7 +1574,7 @@ pub fn reloadProcess(
             },
         }
     } else if (comptime Environment.isPosix) {
-        if (comptime Environment.isLinux) on_before_reload_process_linux();
+        if (comptime Environment.isLinux or Environment.isFreeBSD) on_before_reload_process_linux();
         const err = std.posix.execveZ(
             exec_path,
             newargv,

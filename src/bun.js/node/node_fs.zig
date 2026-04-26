@@ -3619,7 +3619,7 @@ pub const NodeFS = struct {
                 return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EOPNOTSUPP), .syscall = .copyfile } };
             }
 
-            var flags: i32 = bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC;
+            var flags: i32 = bun.O.CREAT | bun.O.WRONLY;
             if (args.mode.shouldntOverwrite()) {
                 flags |= bun.O.EXCL;
             }
@@ -3628,6 +3628,16 @@ pub const NodeFS = struct {
                 .err => |err| return Maybe(Return.CopyFile){ .err = err },
             };
             defer dest_fd.close();
+
+            // Don't O_TRUNC at open: if src and dest resolve to the same
+            // inode, that would zero the file before the first read. Match
+            // Node by checking inodes after both are open and refusing.
+            if (Syscall.fstat(dest_fd).asValue()) |dst_stat| {
+                if (stat_.ino == dst_stat.ino and stat_.dev == dst_stat.dev) {
+                    return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EINVAL), .syscall = .copyfile, .path = args.src.slice() } };
+                }
+            }
+            _ = Syscall.ftruncate(dest_fd, 0);
 
             // FreeBSD 13+ has copy_file_range(2). Try the kernel-side copy
             // first; fall back to read/write on cross-device or unsupported

@@ -223,10 +223,12 @@ pub fn build(b: *Build) !void {
     }
     // Same story for FreeBSD: zig bundles only Linux/macOS/Windows libc
     // headers, so translate-c needs the FreeBSD sysroot. The obj's
-    // linkLibC() gets FreeBSD libc via `zig build --libc <file>`.
-    const freebsd_sysroot = b.option([]const u8, "freebsd_sysroot", "FreeBSD sysroot (extracted base.txz) for translate-c headers");
+    // linkLibC() gets FreeBSD libc via `zig build --libc <file>`. On a
+    // native FreeBSD host the system root is the sysroot.
+    const freebsd_sysroot = b.option([]const u8, "freebsd_sysroot", "FreeBSD sysroot (extracted base.txz) for translate-c headers") orelse
+        if (os == .freebsd and builtin.os.tag == .freebsd) "/" else null;
     if (os == .freebsd and freebsd_sysroot == null) {
-        std.debug.panic("-Dfreebsd_sysroot is required when targeting FreeBSD (zig does not bundle FreeBSD libc headers)", .{});
+        std.debug.panic("-Dfreebsd_sysroot is required when cross-compiling to FreeBSD (zig does not bundle FreeBSD libc headers)", .{});
     }
 
     var build_options = BunBuildOptions{

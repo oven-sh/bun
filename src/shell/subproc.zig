@@ -698,8 +698,12 @@ pub const ShellSubprocess = struct {
                     .inherit,
                 },
                 .lazy = false,
+                // PATH unset → fall back to _PATH_DEFPATH on POSIX (Android often
+                // has no PATH). PATH="" (explicit empty) is preserved — that's a
+                // deliberate "search nothing" and substituting a default would
+                // change argv[0] resolution on existing platforms.
                 .PATH = if (event_loop.env().get("PATH")) |p|
-                    if (p.len > 0 or !bun.Environment.isPosix) p else bun.sliceTo(BUN_DEFAULT_PATH_FOR_SPAWN, 0)
+                    p
                 else if (bun.Environment.isPosix)
                     bun.sliceTo(BUN_DEFAULT_PATH_FOR_SPAWN, 0)
                 else

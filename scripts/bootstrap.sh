@@ -1281,19 +1281,17 @@ install_android_ndk() {
 
 	ndk_version="$(android_ndk_version)"
 	ndk_home="/opt/android-ndk"
-	if [ -d "$ndk_home" ]; then
-		return
+	if ! [ -d "$ndk_home" ]; then
+		ndk_zip=$(download_file "https://dl.google.com/android/repository/android-ndk-${ndk_version}-linux.zip")
+		unzip="$(require unzip)"
+		execute_sudo "$unzip" -q "$ndk_zip" -d /opt
+		execute_sudo mv "/opt/android-ndk-${ndk_version}" "$ndk_home"
+		# Trim ~1.1GB unused (NDK clang/lld, lldb, non-android runtimes).
+		ndk_prebuilt="$ndk_home/toolchains/llvm/prebuilt/linux-x86_64"
+		execute_sudo rm -rf "$ndk_prebuilt/bin" "$ndk_prebuilt/python3" "$ndk_prebuilt/lib/liblldb.so" \
+			"$ndk_home/simpleperf" "$ndk_home/shader-tools" "$ndk_home/sources"
+		append_to_profile "export ANDROID_NDK_ROOT=$ndk_home"
 	fi
-
-	ndk_zip=$(download_file "https://dl.google.com/android/repository/android-ndk-${ndk_version}-linux.zip")
-	unzip="$(require unzip)"
-	execute_sudo "$unzip" -q "$ndk_zip" -d /opt
-	execute_sudo mv "/opt/android-ndk-${ndk_version}" "$ndk_home"
-	# Trim ~1.1GB unused (NDK clang/lld, lldb, non-android runtimes).
-	ndk_prebuilt="$ndk_home/toolchains/llvm/prebuilt/linux-x86_64"
-	execute_sudo rm -rf "$ndk_prebuilt/bin" "$ndk_prebuilt/python3" "$ndk_prebuilt/lib/liblldb.so" \
-		"$ndk_home/simpleperf" "$ndk_home/shader-tools" "$ndk_home/sources"
-	append_to_profile "export ANDROID_NDK_ROOT=$ndk_home"
 
 	# Symlink NDK compiler-rt builtins + libunwind into host clang's resource
 	# dir. clang's driver hardcodes <resource-dir>/lib/<triple>/libclang_rt.*
@@ -1334,9 +1332,12 @@ install_freebsd_sysroot() {
 		amd64) sysroot="/opt/freebsd-sysroot" ;;
 		arm64) sysroot="/opt/freebsd-sysroot-arm64" ;;
 		esac
-		if [ -d "$sysroot/usr/include" ]; then
+		# Same sentinel detectFreebsdSysroot() uses, plus a /lib file so a
+		# half-extracted (interrupted) sysroot isn't treated as complete.
+		if [ -f "$sysroot/usr/include/sys/param.h" ] && [ -f "$sysroot/lib/libc.so.7" ]; then
 			continue
 		fi
+		execute_sudo rm -rf "$sysroot"
 		execute_sudo mkdir -p "$sysroot"
 		base_txz=$(download_file "https://download.freebsd.org/releases/${fbsd_arch}/${freebsd_ver}-RELEASE/base.txz")
 		execute_sudo tar -C "$sysroot" -xJf "$base_txz" ./usr/include ./usr/lib ./lib

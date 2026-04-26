@@ -607,9 +607,11 @@ pub const CopyFile = struct {
                 },
                 .result => {},
             }
-            this.read_len = @truncate(total_written);
             if (stat.size != 0 and @as(SizeType, @intCast(stat.size)) > this.max_length) {
                 _ = bun.sys.ftruncate(this.destination_fd, @intCast(this.max_length));
+                this.read_len = @truncate(@min(total_written, @as(u64, this.max_length)));
+            } else {
+                this.read_len = @truncate(total_written);
             }
             this.doClose();
         } else {

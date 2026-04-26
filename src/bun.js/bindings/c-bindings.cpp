@@ -205,7 +205,7 @@ extern "C" void windows_enable_stdio_inheritance()
 
 #endif
 
-#if OS(LINUX)
+#if OS(LINUX) || OS(FREEBSD)
 
 #include <sys/syscall.h>
 
@@ -213,6 +213,7 @@ extern "C" void windows_enable_stdio_inheritance()
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
 #endif
 
+#if OS(LINUX)
 #ifndef __NR_close_range
 // True for architectures we support:
 // - arch/arm64/include/asm/unistd32.h
@@ -227,6 +228,15 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 {
     return syscall(__NR_close_range, start, end, flags);
 }
+#else // OS(FREEBSD)
+// FreeBSD 12.2+ libc has close_range; no CLOSE_RANGE_CLOEXEC, so close
+// outright (best-effort fd cleanup before execve, same intent).
+extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
+{
+    (void)flags;
+    return close_range(start, end, 0);
+}
+#endif
 
 static void unset_cloexec(int fd)
 {

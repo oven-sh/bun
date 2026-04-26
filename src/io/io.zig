@@ -616,12 +616,13 @@ pub const Poll = struct {
 
         const pollable = Pollable.from(event.udata);
         const tag = pollable.tag();
-        const poll = pollable.poll();
         switch (tag) {
-            // ignore empty tags. This case should be unreachable in practice
+            // The waker is registered with udata=0 → tag=.empty. The wakeup
+            // exists only to unblock kevent() so the pending queue drains.
             .empty => {},
 
             inline else => |t| {
+                const poll = pollable.poll();
                 var this: *Pollable.Tag.Type(t) = @alignCast(@fieldParentPtr("io_poll", poll));
                 if (event.flags == std.c.EV.ERROR) {
                     log("error({d}) = {d}", .{ event.ident, event.data });

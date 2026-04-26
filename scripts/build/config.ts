@@ -666,7 +666,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   let androidApiLevel: number | undefined;
   let androidNdkRuntimeDir: string | undefined;
   if (abi === "android") {
-    androidNdk = partial.androidNdk ?? detectAndroidNdk();
+    androidNdk =
+      partial.androidNdk !== undefined
+        ? isAbsolute(partial.androidNdk)
+          ? partial.androidNdk
+          : resolve(cwd, partial.androidNdk)
+        : detectAndroidNdk();
     if (androidNdk === undefined) {
       throw new BuildError("--abi=android requires the Android NDK", {
         hint: "Set ANDROID_NDK_ROOT or pass --android-ndk=<path>. Download: https://developer.android.com/ndk/downloads",
@@ -700,13 +705,17 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   if (freebsd) {
     freebsdVersion = partial.freebsdVersion ?? FREEBSD_VERSION_DEFAULT;
     if (host.os !== "freebsd") {
-      sysroot = partial.freebsdSysroot ?? detectFreebsdSysroot(arch);
+      sysroot =
+        partial.freebsdSysroot !== undefined
+          ? isAbsolute(partial.freebsdSysroot)
+            ? partial.freebsdSysroot
+            : resolve(cwd, partial.freebsdSysroot)
+          : detectFreebsdSysroot(arch);
       if (sysroot === undefined) {
+        const dlArch = arch === "x64" ? "amd64" : "arm64";
+        const sysrootPath = arch === "x64" ? "/opt/freebsd-sysroot" : "/opt/freebsd-sysroot-arm64";
         throw new BuildError("--os=freebsd requires a FreeBSD sysroot when cross-compiling", {
-          hint:
-            "Set FREEBSD_SYSROOT or pass --freebsd-sysroot=<path>. Create one with: mkdir -p /opt/freebsd-sysroot && curl -L https://download.freebsd.org/releases/amd64/" +
-            freebsdVersion +
-            "-RELEASE/base.txz | tar -C /opt/freebsd-sysroot -xJf - ./usr/include ./usr/lib ./lib",
+          hint: `Set FREEBSD_SYSROOT or pass --freebsd-sysroot=<path>. Create one with: mkdir -p ${sysrootPath} && curl -L https://download.freebsd.org/releases/${dlArch}/${freebsdVersion}-RELEASE/base.txz | tar -C ${sysrootPath} -xJf - ./usr/include ./usr/lib ./lib`,
         });
       }
       const llvmArch = arch === "x64" ? "x86_64" : "aarch64";

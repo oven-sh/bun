@@ -51,11 +51,14 @@ export const lolhtml: Dependency = {
       spec.rustTarget = cfg.arm64 ? "aarch64-linux-android" : "x86_64-linux-android";
     }
 
-    // FreeBSD: cross-compile when crossTarget is set (host != freebsd).
-    // x86_64 is Tier 2 (prebuilt std). aarch64 is Tier 3 — no prebuilt, so
-    // build std from source via -Zbuild-std (requires nightly + rust-src).
-    if (cfg.freebsd && cfg.crossTarget !== undefined) {
-      spec.rustTarget = cfg.arm64 ? "aarch64-unknown-freebsd" : "x86_64-unknown-freebsd";
+    // FreeBSD: x86_64 is Tier 2 (prebuilt std). aarch64 is Tier 3 — no
+    // prebuilt, so build std from source via -Zbuild-std (requires nightly
+    // + rust-src) whether cross-compiling or native. rustTarget is only
+    // set when crossTarget is set (native uses cargo's host triple).
+    if (cfg.freebsd) {
+      if (cfg.crossTarget !== undefined) {
+        spec.rustTarget = cfg.arm64 ? "aarch64-unknown-freebsd" : "x86_64-unknown-freebsd";
+      }
       spec.buildStd = cfg.arm64;
     }
 

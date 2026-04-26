@@ -84,10 +84,12 @@ function prebuiltUrl(cfg: Config): string {
  */
 function prebuiltDestDir(cfg: Config): string {
   const version16 = cfg.webkitVersion.slice(0, 16);
-  // Cross-compiled targets share a host with native builds, so include os
-  // in the cache key to avoid Linux ↔ FreeBSD collisions on the same box.
-  const osKey = cfg.freebsd ? "-freebsd" : "";
-  return resolve(cfg.cacheDir, `webkit-${version16}${osKey}${prebuiltSuffix(cfg)}`);
+  // Cross-compiled targets share a host (and cache dir) with native builds,
+  // so include os+arch in the key — otherwise a FreeBSD/arm64 extraction
+  // collides with a Linux/x64 one at the same WebKit version.
+  const osKey = cfg.freebsd ? "-freebsd" : cfg.abi === "android" ? "-android" : "";
+  const archKey = cfg.arm64 ? "-arm64" : "";
+  return resolve(cfg.cacheDir, `webkit-${version16}${osKey}${archKey}${prebuiltSuffix(cfg)}`);
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -936,6 +936,7 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: [
+      "-Wl,-O2",
       "-Wl,--as-needed",
       "-Wl,-z,stack-size=12800000",
       "-Wl,--compress-debug-sections=zlib",
@@ -975,7 +976,7 @@ export function linkDepends(cfg: Config): string[] {
   if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
   if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
   if (cfg.darwin) return [join(cfg.cwd, "src/symbols.txt")];
-  // linux + freebsd: ELF dynamic-list + version script
+  // linux: ELF dynamic-list + version script
   return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
 }
 

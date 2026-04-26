@@ -561,6 +561,25 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                             bun.fmt.nullableFallback(limit, "<unknown>"),
                         },
                     );
+                } else if (comptime bun.Environment.isFreeBSD) {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {f}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>sudo sysctl kern.maxfiles=2147483646 kern.maxfilesperproc=2147483646<r>
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\
+                        \\To persist across reboots, add to /etc/sysctl.conf and edit /etc/login.conf.
+                        \\
+                    ,
+                        .{
+                            bun.fmt.nullableFallback(limit, "<unknown>"),
+                        },
+                    );
                 } else {
                     Output.prettyError(
                         \\
@@ -621,6 +640,23 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                         \\You may also need to run:
                         \\
                         \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
+                        \\
+                    ,
+                        .{
+                            bun.fmt.nullableFallback(limit, "<unknown>"),
+                        },
+                    );
+                } else if (comptime bun.Environment.isFreeBSD) {
+                    Output.prettyError(
+                        \\
+                        \\<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>
+                        \\
+                        \\<d>Current limit: {f}<r>
+                        \\
+                        \\To fix this, try running:
+                        \\
+                        \\  <cyan>ulimit -n 2147483646<r>
+                        \\  <cyan>sudo sysctl kern.maxfilesperproc=2147483646<r>
                         \\
                     ,
                         .{

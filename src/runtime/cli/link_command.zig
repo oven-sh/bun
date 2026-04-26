@@ -78,14 +78,14 @@ fn link(ctx: Command.Context) !void {
             // delete it if it exists
             node_modules.deleteTree(name) catch {};
 
-            // create scope if specified
+            // create scope if specified. Use bun.makePath so the mkdir
+            // honors the process umask the same way the surrounding dirs
+            // this PR fixed do (0o777 & ~umask vs std's hardcoded 0o755).
+            // bun.makePath handles PathAlreadyExists internally, so no
+            // special case is needed here.
             if (name[0] == '@') {
                 if (strings.indexOfChar(name, '/')) |i| {
-                    // Use bun.makePath so the mkdir honors the process umask
-                    // the same way the surrounding dirs this PR fixed do
-                    // (0o777 & ~umask instead of std's hardcoded 0o755).
-                    bun.makePath(node_modules, name[0..i]) catch |err| brk: {
-                        if (err == error.PathAlreadyExists) break :brk;
+                    bun.makePath(node_modules, name[0..i]) catch |err| {
                         if (manager.options.log_level != .silent)
                             Output.prettyErrorln("<r><red>error:<r> failed to create scope in global dir due to error {s}", .{@errorName(err)});
                         Global.crash();

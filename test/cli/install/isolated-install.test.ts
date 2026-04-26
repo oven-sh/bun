@@ -2131,7 +2131,13 @@ describe("global virtual store", () => {
     // `"types"` condition with a nested-object target (the dual ESM/CJS
     // shape), or a `"types"` key nested inside an array-of-fallbacks —
     // keeps the package project-local as a real directory.
-    const typeShippingNames = ["top-types", "top-typings", "exports-types", "exports-types-dual", "exports-types-array"] as const;
+    const typeShippingNames = [
+      "top-types",
+      "top-typings",
+      "exports-types",
+      "exports-types-dual",
+      "exports-types-array",
+    ] as const;
     for (const name of typeShippingNames) {
       const entry = join(bunDir, `${name}@1.0.0`);
       expect(lstatSync(entry).isSymbolicLink()).toBe(false);

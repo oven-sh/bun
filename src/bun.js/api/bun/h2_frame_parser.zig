@@ -4193,12 +4193,11 @@ pub const H2FrameParser = struct {
         const encoded_data = encoded_headers.items;
         const encoded_size = encoded_data.len;
 
-        const stream = this.handleReceivedStreamID(stream_id) orelse {
-            return jsc.JSValue.jsNumber(-1);
-        };
-        if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
-            stream.setContext(stream_ctx_arg, globalObject);
-        }
+        // Read all user-supplied option properties into locals BEFORE acquiring a
+        // *Stream pointer into this.streams. options.get() performs a full JS
+        // [[Get]] and may invoke accessor getters / Proxy traps that call back into
+        // request()/getNextStream(), which can insert into this.streams and trigger
+        // a rehash, invalidating any previously held *Stream (entry.value_ptr).
         var flags: u8 = @intFromEnum(HeadersFrameFlags.END_HEADERS);
         var exclusive: bool = false;
         var has_priority: bool = false;
@@ -4207,18 +4206,23 @@ pub const H2FrameParser = struct {
         var silent: bool = false;
         var waitForTrailers: bool = false;
         var end_stream: bool = false;
-        if (args_list.len > 4 and !args_list.ptr[4].isEmptyOrUndefinedOrNull()) {
+        var padding_strategy_opt: ?PaddingStrategy = null;
+        var wait_for_trailers_opt: ?bool = null;
+        var stream_dependency_opt: ?u32 = null;
+        var weight_opt: ?u16 = null;
+        var signal_opt: ?*jsc.WebCore.AbortSignal = null;
+        var options_error: enum { none, not_object, parent_range, weight_range } = .none;
+
+        if (args_list.len > 4 and !args_list.ptr[4].isEmptyOrUndefinedOrNull()) read_options: {
             const options = args_list.ptr[4];
             if (!options.isObject()) {
-                stream.state = .CLOSED;
-                stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
-                this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
-                return jsc.JSValue.jsNumber(stream_id);
+                options_error = .not_object;
+                break :read_options;
             }
 
             if (try options.get(globalObject, "paddingStrategy")) |padding_js| {
                 if (padding_js.isNumber()) {
-                    stream.paddingStrategy = switch (padding_js.to(u32)) {
+                    padding_strategy_opt = switch (padding_js.to(u32)) {
                         1 => .aligned,
                         2 => .max,
                         else => .none,
@@ -4229,7 +4233,7 @@ pub const H2FrameParser = struct {
             if (try options.get(globalObject, "waitForTrailers")) |trailes_js| {
                 if (trailes_js.isBoolean()) {
                     waitForTrailers = trailes_js.asBoolean();
-                    stream.waitForTrailers = waitForTrailers;
+                    wait_for_trailers_opt = waitForTrailers;
                 }
             }
 
@@ -4259,7 +4263,6 @@ pub const H2FrameParser = struct {
                 if (exclusive_js.isBoolean()) {
                     if (exclusive_js.asBoolean()) {
                         exclusive = true;
-                        stream.exclusive = true;
                         has_priority = true;
                     }
                 } else {
@@ -4272,12 +4275,10 @@ pub const H2FrameParser = struct {
                     has_priority = true;
                     parent = parent_js.toInt32();
                     if (parent <= 0 or parent > MAX_STREAM_ID) {
-                        stream.state = .CLOSED;
-                        stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
-                        this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
-                        return jsc.JSValue.jsNumber(stream.id);
+                        options_error = .parent_range;
+                        break :read_options;
                     }
-                    stream.streamDependency = @intCast(parent);
+                    stream_dependency_opt = @intCast(parent);
                 } else {
                     return globalObject.throwInvalidArgumentTypeValue("options.parent", "number", parent_js);
                 }
@@ -4288,38 +4289,65 @@ pub const H2FrameParser = struct {
                     has_priority = true;
                     weight = weight_js.toInt32();
                     if (weight < 1 or weight > std.math.maxInt(u8)) {
-                        stream.state = .CLOSED;
-                        stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
-                        this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
-                        return jsc.JSValue.jsNumber(stream_id);
+                        options_error = .weight_range;
+                        break :read_options;
                     }
-                    stream.weight = @intCast(weight);
+                    weight_opt = @intCast(weight);
                 } else {
                     return globalObject.throwInvalidArgumentTypeValue("options.weight", "number", weight_js);
                 }
-
-                if (weight < 1 or weight > std.math.maxInt(u8)) {
-                    stream.state = .CLOSED;
-                    stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
-                    this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
-                    return jsc.JSValue.jsNumber(stream_id);
-                }
-
-                stream.weight = @intCast(weight);
             }
 
             if (try options.get(globalObject, "signal")) |signal_arg| {
                 if (signal_arg.as(jsc.WebCore.AbortSignal)) |signal_| {
-                    if (signal_.aborted()) {
-                        stream.state = .IDLE;
-                        this.abortStream(stream, Bun__wrapAbortError(globalObject, signal_.abortReason()));
-                        return jsc.JSValue.jsNumber(stream_id);
-                    }
-                    stream.attachSignal(this, signal_);
+                    signal_opt = signal_;
                 } else {
                     return globalObject.throwInvalidArgumentTypeValue("options.signal", "AbortSignal", signal_arg);
                 }
             }
+        }
+
+        // All user-controlled getters have run. It is now safe to obtain a pointer
+        // into this.streams and write through it without risk of rehash from user JS.
+        const stream = this.handleReceivedStreamID(stream_id) orelse {
+            return jsc.JSValue.jsNumber(-1);
+        };
+        if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
+            stream.setContext(stream_ctx_arg, globalObject);
+        }
+
+        switch (options_error) {
+            .none => {},
+            .not_object, .parent_range, .weight_range => {
+                stream.state = .CLOSED;
+                stream.rstCode = @intFromEnum(ErrorCode.INTERNAL_ERROR);
+                this.dispatchWithExtra(.onStreamError, stream.getIdentifier(), jsc.JSValue.jsNumber(stream.rstCode));
+                return jsc.JSValue.jsNumber(stream_id);
+            },
+        }
+
+        if (padding_strategy_opt) |ps| {
+            stream.paddingStrategy = ps;
+        }
+        if (wait_for_trailers_opt) |v| {
+            stream.waitForTrailers = v;
+        }
+        if (exclusive) {
+            stream.exclusive = true;
+        }
+        if (stream_dependency_opt) |dep| {
+            stream.streamDependency = dep;
+        }
+        if (weight_opt) |w| {
+            stream.weight = w;
+        }
+        if (signal_opt) |signal_| {
+            if (signal_.aborted()) {
+                stream.state = .IDLE;
+                this.abortStream(stream, Bun__wrapAbortError(globalObject, signal_.abortReason()));
+                return jsc.JSValue.jsNumber(stream_id);
+            }
+            stream.attachSignal(this, signal_);
         }
 
         // too much memory being use

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 // H2FrameParser.request() previously obtained a *Stream pointer into the

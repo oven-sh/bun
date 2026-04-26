@@ -1,5 +1,5 @@
 import { pathToFileURL } from "bun";
-import { bunEnv, bunExe, bunRun, bunRunAsScript, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, bunRunAsScript, isFreeBSD, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 
@@ -177,7 +177,12 @@ describe("fs.watch", () => {
   // not the bare basename. Before the fix, Linux never registered an inotify
   // watch on the new subdirectory, so events either dropped entirely or
   // arrived with inconsistent filenames depending on kernel/fs behavior.
-  test.skipIf(isWindows)("recursive watch reports new subdirectory contents with full relative path", async () => {
+  // Skip on FreeBSD: kqueue NOTE_WRITE on a directory carries no filenames
+  // (see the FreeBSD-specific block in path_watcher.zig's `.directory` branch),
+  // so `is_new_subdir` never fires and `NewSubdirTask` never runs. The
+  // runtime-registered-subdir behavior is Linux-only at the moment (macOS
+  // bypasses this path via FSEvents, Windows via its own watcher).
+  test.skipIf(isWindows || isFreeBSD)("recursive watch reports new subdirectory contents with full relative path", async () => {
     const root = path.join(testDir, "new-subdir-relpath");
     try {
       fs.rmSync(root, { recursive: true, force: true });
@@ -237,7 +242,9 @@ describe("fs.watch", () => {
   // a blind spot. The user-visible "create" event for the dotfile parent is
   // still suppressed (consistent with pre-existing behavior), but the write
   // inside it MUST fire.
-  test.skipIf(isWindows)("recursive watch registers dot-prefixed subdirectories created at runtime", async () => {
+  // See note above: Linux-only feature, FreeBSD kqueue has no directory
+  // filenames and no FSEvents bypass.
+  test.skipIf(isWindows || isFreeBSD)("recursive watch registers dot-prefixed subdirectories created at runtime", async () => {
     const root = path.join(testDir, "new-dotsubdir");
     try {
       fs.rmSync(root, { recursive: true, force: true });

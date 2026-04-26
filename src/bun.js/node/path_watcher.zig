@@ -776,6 +776,17 @@ pub const PathWatcherManager = struct {
                 switch (self.manager._addDirectory(entry.watcher, path_info)) {
                     .err => |err| {
                         log("[watch] _registerNewSubdirectory({s}) addDirectory: {f}", .{ entry.path, err });
+                        // Surface the failure to JS via 'error' — matches
+                        // `DirectoryRegisterTask.run`'s initial-scan behavior.
+                        // By this point `O_DIRECTORY` already succeeded in
+                        // `_dirFdFromAbsolutePathZ`, so a failure here is a
+                        // real watch-registration problem — canonically
+                        // `inotify_add_watch` hitting `fs.inotify.max_user_watches`
+                        // (ENOSPC) — not a benign race, and the user should
+                        // see it on their 'error' listener. Staying silent
+                        // is the "why isn't my watcher working" gotcha.
+                        entry.watcher.emit(.{ .@"error" = err }, 0, std.time.milliTimestamp(), false);
+                        entry.watcher.flush();
                         // Leave the ref + file_paths entry in place; the watcher's
                         // deinit path walks file_paths and decrements refs correctly.
                     },

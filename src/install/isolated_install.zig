@@ -1955,11 +1955,11 @@ pub fn installIsolatedPackages(
 ///
 /// Returns true if its extracted `package.json` at
 /// `<cache>/<folder>/package.json` contains a top-level `"types"` or
-/// `"typings"` string field, or a `"types"` key inside a conditional
-/// `"exports"` entry. Either signal means the package intentionally ships
-/// `.d.ts` files that TypeScript will walk ancestor directories from —
-/// see the eligibility-DFS comment for why that rules the package out of
-/// the global virtual store.
+/// `"typings"` string field, a non-empty `"typesVersions"` map, or a
+/// `"types"` key anywhere inside `"exports"`. Any of these signals means
+/// the package intentionally ships `.d.ts` files that TypeScript will
+/// walk ancestor directories from — see the eligibility-DFS comment for
+/// why that rules the package out of the global virtual store.
 ///
 /// Results are memoized in `cache` so each distinct package is scanned at
 /// most once per install.
@@ -2034,9 +2034,10 @@ fn packageShipsTypeDeclarations(
     return gop.value_ptr.*;
 }
 
-/// Scans `package.json` bytes for a top-level `"types"` / `"typings"`
-/// string field, or a nested `"types"` key inside a conditional `"exports"`
-/// entry. Uses the shared JSON parser (cheaper to maintain than a
+/// Scans `package.json` bytes for any signal that the package ships
+/// TypeScript declarations: a top-level `"types"` / `"typings"` string,
+/// a non-empty `"typesVersions"` map, or a `"types"` key anywhere inside
+/// `"exports"`. Uses the shared JSON parser (cheaper to maintain than a
 /// hand-rolled scanner; a typical `package.json` is a few KB, well inside
 /// what the registry manifest cache already parses routinely during
 /// install).
@@ -2055,7 +2056,14 @@ fn scanForTypeDeclarationSignals(source_bytes: []const u8) bool {
     // that uses `JSON.parsePackageJSONUTF8` is expected to call it; we
     // mirror that here.
     install.initializeStore();
-    const json = JSON.parsePackageJSONUTF8(&source, &log_sink, arena_allocator) catch return false;
+    const json = JSON.parsePackageJSONUTF8(&source, &log_sink, arena_allocator) catch |err| switch (err) {
+        // Route OOM through the crash handler rather than silently
+        // misclassifying a type-shipping package as eligible for the
+        // global store. Any other parse error (malformed / corrupt
+        // package.json) gets the conservative `false` fallback.
+        error.OutOfMemory => bun.outOfMemory(),
+        else => return false,
+    };
 
     if (json.asProperty("types")) |prop| {
         if (prop.expr.asString(arena_allocator)) |s| {
@@ -2066,6 +2074,13 @@ fn scanForTypeDeclarationSignals(source_bytes: []const u8) bool {
         if (prop.expr.asString(arena_allocator)) |s| {
             if (s.len > 0) return true;
         }
+    }
+    // `typesVersions` is a map keyed by TypeScript version ranges; its
+    // mere presence means the package ships version-gated declarations
+    // (TypeScript's own module resolution honors it). Any non-empty
+    // object value is a positive signal.
+    if (json.asProperty("typesVersions")) |prop| {
+        if (prop.expr.data == .e_object and prop.expr.data.e_object.properties.len > 0) return true;
     }
     if (json.asProperty("exports")) |prop| {
         if (exportsHasTypesCondition(prop.expr)) return true;

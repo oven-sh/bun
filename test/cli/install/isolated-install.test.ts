@@ -2034,6 +2034,19 @@ describe("global virtual store", () => {
       "exports-types-array/index.d.ts": "export {};\n",
       "exports-types-array/fallback.js": "module.exports = {};\n",
 
+      // `typesVersions` ships version-gated declarations; some packages
+      // use it as their sole subpath-mapping mechanism and omit the
+      // top-level `"types"` field entirely.
+      "types-versions/package.json": JSON.stringify({
+        name: "types-versions",
+        version: "1.0.0",
+        typesVersions: {
+          ">=4.0": { "*": ["ts4/*"] },
+        },
+      }),
+      "types-versions/index.js": "module.exports = {};\n",
+      "types-versions/ts4/index.d.ts": "export {};\n",
+
       "pure-js/package.json": JSON.stringify({
         name: "pure-js",
         version: "1.0.0",
@@ -2060,6 +2073,7 @@ describe("global virtual store", () => {
       "exports-types": await pack("exports-types"),
       "exports-types-dual": await pack("exports-types-dual"),
       "exports-types-array": await pack("exports-types-array"),
+      "types-versions": await pack("types-versions"),
       "pure-js": await pack("pure-js"),
     };
 
@@ -2111,6 +2125,7 @@ describe("global virtual store", () => {
           "exports-types": "1.0.0",
           "exports-types-dual": "1.0.0",
           "exports-types-array": "1.0.0",
+          "types-versions": "1.0.0",
           "pure-js": "1.0.0",
         },
       }),
@@ -2129,14 +2144,16 @@ describe("global virtual store", () => {
     // Each type-shipping signal — top-level `types`, top-level `typings`,
     // a `"types"` condition with a string target under `exports`, a
     // `"types"` condition with a nested-object target (the dual ESM/CJS
-    // shape), or a `"types"` key nested inside an array-of-fallbacks —
-    // keeps the package project-local as a real directory.
+    // shape), a `"types"` key nested inside an array-of-fallbacks, or a
+    // non-empty `"typesVersions"` map — keeps the package project-local
+    // as a real directory.
     const typeShippingNames = [
       "top-types",
       "top-typings",
       "exports-types",
       "exports-types-dual",
       "exports-types-array",
+      "types-versions",
     ] as const;
     for (const name of typeShippingNames) {
       const entry = join(bunDir, `${name}@1.0.0`);

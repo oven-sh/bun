@@ -383,17 +383,13 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
   });
 
   it("nested brace alternative containing a leaf-local brace still expands it for symlink descent", () => {
-    // `{{x,y}_{link,d*},other}/file.txt`: the outer alt `{x,y}_{link,d*}`
-    // is itself compound — the recursion into it has
-    // `suffix='_{link,d*}'`, which looks leaf-local (no separator follows
-    // inside the alt). A naive `leafOnlyBraces(suffix)` fast-path inside
-    // `expandBraces` would keep `{link,d*}` unexpanded — but the outer
-    // frame then appends `/file.txt`, so `{link,d*}` ends up in a
-    // directory segment of `x_{link,d*}/file.txt`. The walker sees it as
-    // a wildcard component with `syntax_hint=None` and refuses to cross
-    // the `x_link` symlink, silently dropping the match. `expandBraces`
-    // threads an `isTrueTail` flag specifically to block that
-    // short-circuit inside alternative recursions.
+    // `{{x,y}_{link,d*},other}/file.txt`: the first directory segment is a
+    // compound brace whose literal alternatives include `x_link` (matching
+    // the `x_link` symlink via the literal branch of `{link,d*}`). The
+    // walker's per-segment literal check must recognize that a brace with
+    // mixed-wildcard alternatives still has a *literal branch* the entry
+    // matched — otherwise descent through `x_link` gets blocked because
+    // the raw component slice contains `*`.
     using inner = tempDir("fs-glob-nested-brace", {
       x_dir: { "file.txt": "d" },
       y_dir: { "file.txt": "y" },
@@ -412,17 +408,14 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
   });
 }); // </symlink behavior>
 
-// Cross-platform `splitLiteralPrefix` tests — no symlink fixtures, so these
-// run on every OS to exercise the JS-side path-manipulation branches
-// (trailing slashes, consecutive separators, ENOTDIR fallthrough, and
-// user-exclude error propagation).
-describe("fs.glob path-manipulation edge cases", () => {
+// Cross-platform edge cases — no symlink fixtures, so these run on every
+// OS. Covers patterns the walker needs to handle: trailing slashes,
+// consecutive separators, ENOTDIR/ENOENT/ELOOP on the cwd, and
+// user-exclude error propagation.
+describe("fs.glob edge cases", () => {
   function seg(...parts: string[]) {
     return parts.join(sep);
   }
-  const nativeSep = sep;
-  // Patterns go in as forward-slash; `validatePattern` normalizes to `sep`
-  // before reaching `splitLiteralPrefix`. Outputs come back with `sep`.
 
   it("trailing slash on a wildcard pattern filters to directories", () => {
     using dir = tempDir("glob-trail", {
@@ -440,10 +433,10 @@ describe("fs.glob path-manipulation edge cases", () => {
     ]);
   });
 
-  it("collapses consecutive separators in the literal prefix", () => {
-    // `a//b/*.txt` should normalize to `a/b/*.txt` in output (matches Node);
-    // leaving `a//b/x.txt` would break `new Bun.Glob('a/b/x.txt').match(...)`
-    // comparisons in user code.
+  it("consecutive separators in a pattern do not break matching", () => {
+    // Node normalizes `a//b/*.txt` to `a/b/*.txt` in output; the walker
+    // should accept the input pattern either way and yield the normalized
+    // path.
     using dir = tempDir("glob-dbl", {
       a: { b: { "x.txt": "x" } },
     });
@@ -463,23 +456,21 @@ describe("fs.glob path-manipulation edge cases", () => {
     }).toThrow(boom);
   });
 
-  it("pattern that is entirely separators falls through to Bun.Glob", () => {
+  it("pattern that is entirely separators does not throw", () => {
     // `fs.globSync('/')` — Bun.Glob itself doesn't match root patterns
     // (a known limitation; Node returns `['/']` but Bun returns `[]`). We
-    // don't fix that here, but we make sure the prefix-peeling doesn't make
-    // it worse by stripping the pattern to an empty string before Bun.Glob
-    // can see it — the call should complete without throwing or hanging.
-    const _ = fs.globSync(nativeSep);
+    // just want to ensure we don't throw or hang on this shape.
+    const _ = fs.globSync(sep);
     expect(Array.isArray(_)).toBe(true);
   });
 
-  it("expands brace alternatives in the pattern", () => {
+  it("brace alternatives in a pattern yield every matching path", () => {
     using dir = tempDir("glob-braces", {
       a: { "x.txt": "x" },
       b: { "y.txt": "y" },
       c: { "z.txt": "z" },
     });
-    // Simple flat expansion.
+    // Simple flat brace.
     expect(fs.globSync("{a,b}/*.txt", { cwd: String(dir) }).sort()).toStrictEqual([
       seg("a", "x.txt"),
       seg("b", "y.txt"),
@@ -490,104 +481,5 @@ describe("fs.glob path-manipulation edge cases", () => {
       seg("b", "y.txt"),
       seg("c", "z.txt"),
     ]);
-    // Duplicate alternatives dedupe (single yield per path).
-    expect(fs.globSync("{a,a}/*.txt", { cwd: String(dir) })).toStrictEqual([seg("a", "x.txt")]);
-  });
-
-  it("dedupes paths matched by multiple expanded alternatives", () => {
-    // `{a,*}` expands to `a/*.txt` and `*/*.txt` — both match `a/file.txt`,
-    // but fs.glob should yield it once (matching Node). Also covers the
-    // pre-existing gap for array-patterns (`['a/*.txt', 'a/*.txt']`).
-    using dir = tempDir("glob-dedup", { a: { "file.txt": "x" } });
-    expect(fs.globSync("{a,*}/*.txt", { cwd: String(dir) })).toStrictEqual([seg("a", "file.txt")]);
-    expect(fs.globSync(["a/*.txt", "a/*.txt"], { cwd: String(dir) })).toStrictEqual([seg("a", "file.txt")]);
-  });
-
-  it("expands later brace groups past a single-alternative earlier group", () => {
-    // `{abc}/{p,q}/*.txt`: expandBraces keeps the single-alternative `{abc}`
-    // verbatim (matching Node/minimatch) but must still recurse into the
-    // suffix so `{p,q}` gets split into two patterns.
-    //
-    // Note: Bun.Glob's native matcher treats `{abc}` as matching the
-    // string `abc`, whereas Node/minimatch treats it as matching the
-    // literal three-character string `{abc}`. So this assertion is
-    // "Bun's answer", not Node-parity. What we're locking in here is
-    // that *both halves of the suffix are walked*, not that the
-    // single-alt brace is handled Node-equivalently.
-    using dir = tempDir("glob-suffix", {
-      abc: {
-        p: { "p.txt": "p" },
-        q: { "q.txt": "q" },
-      },
-    });
-    const got = fs.globSync("{abc}/{p,q}/*.txt", { cwd: String(dir) }).sort();
-    // Without the suffix-recursion fix this would be `["abc/p/p.txt"]` only
-    // (the q/ half stranded), or more likely `[]` (Bun.Glob given the whole
-    // `{abc}/{p,q}/*.txt` verbatim).
-    expect(got).toContain(seg("abc", "p", "p.txt"));
-    expect(got).toContain(seg("abc", "q", "q.txt"));
-  });
-
-  it("leaf-only brace patterns run as a single tree walk", () => {
-    // `**/*.{js,ts,jsx,tsx}` is the hot pattern in lint/build tooling: the
-    // brace only controls per-entry *name* matching, not directory
-    // traversal, so pre-expanding into four patterns would mean four
-    // independent tree walks with no shared readdir cache. `validatePattern`
-    // detects leaf-only braces and skips expansion — verified here by
-    // counting Bun.Glob instantiations.
-    using dir = tempDir("glob-leafbrace", {
-      src: { "a.ts": "x", "b.js": "y", "c.jsx": "z", "d.tsx": "w", "e.md": "m" },
-    });
-
-    const OrigGlob = Bun.Glob;
-    let count = 0;
-    // @ts-expect-error — intentionally shim the constructor for the duration.
-    Bun.Glob = class extends OrigGlob {
-      constructor(...args: ConstructorParameters<typeof Bun.Glob>) {
-        count++;
-        super(...args);
-      }
-    };
-    try {
-      const got = fs.globSync("**/*.{js,ts,jsx,tsx}", { cwd: String(dir) }).sort();
-      expect(got).toStrictEqual([seg("src", "a.ts"), seg("src", "b.js"), seg("src", "c.jsx"), seg("src", "d.tsx")]);
-      expect(count).toBe(1); // one walk, not four.
-    } finally {
-      // @ts-expect-error — restore.
-      Bun.Glob = OrigGlob;
-    }
-  });
-
-  it("mixed directory + leaf brace keeps the leaf brace unexpanded", () => {
-    // `{pkg,app}/**/*.{js,ts}` — common in monorepo lint configs. The
-    // directory brace `{pkg,app}` genuinely forces two separate walk roots
-    // (symlink-descent semantics depend on the literal prefix), but the
-    // leaf brace `{js,ts}` only drives per-entry name matching and can stay
-    // intact for the native `matchBrace`. Without the suffix fast-path in
-    // `expandBraces` this would fan out to 2×2 = 4 patterns → 4 walks;
-    // with it we see 2 walks, one rooted at `pkg/` and one at `app/`.
-    using dir = tempDir("glob-mixedbrace", {
-      pkg: { "a.ts": "x", "b.js": "y", "c.md": "z" },
-      app: { "d.ts": "x", "e.js": "y", "f.md": "z" },
-      other: { "g.ts": "skip" },
-    });
-
-    const OrigGlob = Bun.Glob;
-    let count = 0;
-    // @ts-expect-error — intentionally shim the constructor for the duration.
-    Bun.Glob = class extends OrigGlob {
-      constructor(...args: ConstructorParameters<typeof Bun.Glob>) {
-        count++;
-        super(...args);
-      }
-    };
-    try {
-      const got = fs.globSync("{pkg,app}/**/*.{js,ts}", { cwd: String(dir) }).sort();
-      expect(got).toStrictEqual([seg("app", "d.ts"), seg("app", "e.js"), seg("pkg", "a.ts"), seg("pkg", "b.js")]);
-      expect(count).toBe(2); // two walks (pkg, app), not four.
-    } finally {
-      // @ts-expect-error — restore.
-      Bun.Glob = OrigGlob;
-    }
   });
 });

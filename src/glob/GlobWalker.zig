@@ -1524,33 +1524,21 @@ pub fn GlobWalker_(
         }
 
         /// Returns the subset of `active` whose components match `entry_name`
-        /// as a **literal** (non-wildcard). Node's `fs.glob` (and typical shell
-        /// globs) descend into a directory symlink only when the pattern
-        /// segment naming it is a literal; wildcard components (`*`, `**`, or
-        /// anything with glob syntax) stop at the symlink boundary.
+        /// *via a literal branch*. Node's `fs.glob` descends into a directory
+        /// symlink only when the pattern segment naming it is literal;
+        /// wildcard components stop at the symlink.
         ///
-        /// The returned set is what should be active *on the far side* of the
-        /// symlink — crucially this drops any `.Double` (`**`) index that was
-        /// active alongside the literal, so `**` does not re-expand after
-        /// crossing a symlink. That matches Node's behavior and prevents
-        /// self-referential symlink cycles (e.g. `a/node_modules/a -> ../..`
-        /// under pattern `**/node_modules/a/*.txt`) from looping.
+        /// The returned set is what should be active on the *far side* of
+        /// the symlink — and crucially it drops any `.Double` (`**`) index
+        /// that was active alongside the literal, so `**` cannot re-expand
+        /// after crossing a symlink. That matches Node's behavior and
+        /// prevents self-referential symlink cycles like
+        /// `a/node_modules/a -> ../..` under `**/node_modules/a/*.txt`.
         ///
-        /// Caller should check `result.count() != 0` to decide whether to
-        /// descend.
-        ///
-        /// Components with `.Literal` syntax are the obvious case. Components
-        /// with special syntax (`.None`) that lack `*` or `?` are also safe:
-        /// brace alternatives (`{link,dir}`) and character classes (`[lmn]ink`)
-        /// name a **finite** set of strings, so they can't generate unbounded
-        /// descent. `.Single`/`.Double`/`.WildcardFilepath` are rejected
-        /// (unbounded).
-        ///
-        /// The `*?` check looks at raw bytes, so a component like `\*foo`
-        /// (escaped glob star — a directory literally named `*foo`) is
-        /// *not* accepted here even though it names a single string; that
-        /// would need an unescape pass. Escaped literals are rare enough
-        /// that this conservative rejection is acceptable.
+        /// Mixed-brace components are handled branch-by-branch — for
+        /// `{link,d*}`, matching `link` via the literal alt `"link"` counts
+        /// as a literal match; matching `dir` via the wildcard alt `"d*"`
+        /// does NOT. See `hasLiteralMatch` for the per-branch logic.
         fn literalMatchSet(this: *GlobWalker, active: ComponentSet, entry_name: []const u8) ComponentSet {
             var out = this.makeSet();
             const comps = this.patternComponents.items;
@@ -1559,16 +1547,133 @@ pub fn GlobWalker_(
                 const idx: u32 = @intCast(i);
                 const comp = &comps[idx];
                 const slice = comp.patternSlice(this.pattern);
-                const is_bounded = switch (comp.syntax_hint) {
-                    .Literal => true,
-                    .None => bun.strings.indexOfAny(slice, "*?") == null,
+                const is_literal_match = switch (comp.syntax_hint) {
+                    .Literal => matchWildcardLiteral(slice, entry_name),
+                    .None => hasLiteralMatch(slice, entry_name),
+                    // `Single`/`Double`/`WildcardFilepath` are by
+                    // construction unbounded — never literal.
                     else => false,
                 };
-                if (is_bounded and this.matchPatternImpl(comp, entry_name)) {
-                    out.set(idx);
-                }
+                if (is_literal_match) out.set(idx);
             }
             return out;
+        }
+
+        /// Does `pattern` match `entry_name` via a **literal branch** — i.e.
+        /// a concatenation of brace alternatives containing no `*`, `?`, or
+        /// `[...]` character class? For `{link,d*}` the only literal branch
+        /// is `link`. For `{a,b}/{x,y}` there are four (`a/x`, `a/y`, `b/x`,
+        /// `b/y`) — but this helper is only ever called on a single path
+        /// segment, so top-level separators are unreachable.
+        ///
+        /// Escaped metacharacters (`\*foo`) count as literal.
+        fn hasLiteralMatch(pattern: []const u8, entry_name: []const u8) bool {
+            return matchLiteral(pattern, 0, @intCast(pattern.len), entry_name, 0, @intCast(entry_name.len));
+        }
+
+        /// Match `pattern[pi..phi]` against `entry[ei..ehi]` as a literal
+        /// branch. `*`, `?`, `[` inside the current branch are fatal
+        /// (wildcard makes the branch non-literal). Both ranges must be
+        /// consumed exactly; at `{` recurse into each top-level alternative
+        /// followed by the post-brace tail.
+        fn matchLiteral(
+            pattern: []const u8,
+            pi_in: u32,
+            phi: u32,
+            entry: []const u8,
+            ei_in: u32,
+            ehi: u32,
+        ) bool {
+            var pi = pi_in;
+            var ei = ei_in;
+            while (pi < phi) {
+                const c = pattern[pi];
+                switch (c) {
+                    '*', '?', '[' => return false,
+                    '\\' => {
+                        if (pi + 1 >= phi) return false;
+                        if (ei >= ehi or entry[ei] != pattern[pi + 1]) return false;
+                        pi += 2;
+                        ei += 1;
+                    },
+                    '{' => {
+                        const close = findMatchingBraceEnd(pattern, pi, phi) orelse return false;
+                        var alt_lo: u32 = pi + 1;
+                        var depth: u32 = 1;
+                        var scan: u32 = pi + 1;
+                        while (scan < close) : (scan += 1) {
+                            const sc = pattern[scan];
+                            if (sc == '\\') {
+                                scan += 1;
+                                continue;
+                            }
+                            if (sc == '{') {
+                                depth += 1;
+                            } else if (sc == '}') {
+                                depth -= 1;
+                            } else if (sc == ',' and depth == 1) {
+                                if (tryBranch(pattern, alt_lo, scan, close + 1, phi, entry, ei, ehi)) return true;
+                                alt_lo = scan + 1;
+                            }
+                        }
+                        return tryBranch(pattern, alt_lo, close, close + 1, phi, entry, ei, ehi);
+                    },
+                    else => {
+                        if (ei >= ehi or entry[ei] != c) return false;
+                        pi += 1;
+                        ei += 1;
+                    },
+                }
+            }
+            return ei == ehi;
+        }
+
+        /// For alternative `pattern[alt_lo..alt_hi]` followed by tail
+        /// `pattern[tail_lo..tail_hi]`, try every split point of
+        /// `entry[ei..ehi]` — if the alt matches the prefix literally AND
+        /// the tail matches the suffix literally, this branch works.
+        /// A single path segment is short (typically < 255 bytes), so the
+        /// O(n²) split iteration is cheap in practice.
+        fn tryBranch(
+            pattern: []const u8,
+            alt_lo: u32,
+            alt_hi: u32,
+            tail_lo: u32,
+            tail_hi: u32,
+            entry: []const u8,
+            ei: u32,
+            ehi: u32,
+        ) bool {
+            var k: u32 = ei;
+            while (k <= ehi) : (k += 1) {
+                if (matchLiteral(pattern, alt_lo, alt_hi, entry, ei, k) and
+                    matchLiteral(pattern, tail_lo, tail_hi, entry, k, ehi))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// Given `pattern[open] == '{'`, find the matching `}` within
+        /// `[open+1, hi)`. Returns null if unbalanced.
+        fn findMatchingBraceEnd(pattern: []const u8, open: u32, hi: u32) ?u32 {
+            var depth: u32 = 1;
+            var i: u32 = open + 1;
+            while (i < hi) : (i += 1) {
+                const c = pattern[i];
+                if (c == '\\') {
+                    i += 1;
+                    continue;
+                }
+                if (c == '{') {
+                    depth += 1;
+                } else if (c == '}') {
+                    depth -= 1;
+                    if (depth == 0) return i;
+                }
+            }
+            return null;
         }
 
         inline fn normalizeIdx(this: *const GlobWalker, idx: u32) u32 {

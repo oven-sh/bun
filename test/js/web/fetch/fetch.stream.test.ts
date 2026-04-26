@@ -1482,8 +1482,16 @@ it("stored body-stream error survives GC after Response is collected", async () 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  // ASAN debug builds unconditionally print a signal-handler warning to
+  // stderr at startup; ignore that line. On regression the JSC assertion
+  // lands on stderr, so surface it in the failure output.
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrLines).toBe("");
   expect(stdout.trim()).toStartWith("PASS");
   expect(exitCode).toBe(0);
 });

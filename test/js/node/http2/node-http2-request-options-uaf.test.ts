@@ -97,5 +97,4 @@ test.skipIf(!isDebug && !isASAN)(
     if (exitCode !== 0) console.error(stderr);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "done", exitCode: 0 });
   },
-  30_000,
 );

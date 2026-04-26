@@ -933,21 +933,30 @@ pub const H2FrameParser = struct {
                                 var _frame = this.dataFrameQueue.dequeue().?;
                                 client.outboundQueueSize -= 1;
 
+                                // The JS callbacks below (dispatchWriteCallback / dispatch /
+                                // dispatchWithExtra) can synchronously call request() or
+                                // getNextStream(), which may grow the streams HashMap and
+                                // invalidate `this` (a pointer into the map's backing storage).
+                                // Capture everything we need from `this` and apply state
+                                // mutations now, while the pointer is still valid, then never
+                                // dereference `this` again in this block.
+                                const signal_end = _frame.end_stream and this.dataFrameQueue.isEmpty();
+                                const wait_for_trailers = this.waitForTrailers;
+                                const identifier = this.getIdentifier();
+                                identifier.ensureStillAlive();
+                                var end_state = this.state;
+                                if (signal_end and !wait_for_trailers) {
+                                    end_state = if (this.state == .HALF_CLOSED_REMOTE) .CLOSED else .HALF_CLOSED_LOCAL;
+                                    this.state = end_state;
+                                }
+
+                                // `this` must not be dereferenced past this point.
                                 if (_frame.callback.get()) |callback_value| client.dispatchWriteCallback(callback_value);
-                                if (this.dataFrameQueue.isEmpty()) {
-                                    if (_frame.end_stream) {
-                                        if (this.waitForTrailers) {
-                                            client.dispatch(.onWantTrailers, this.getIdentifier());
-                                        } else {
-                                            const identifier = this.getIdentifier();
-                                            identifier.ensureStillAlive();
-                                            if (this.state == .HALF_CLOSED_REMOTE) {
-                                                this.state = .CLOSED;
-                                            } else {
-                                                this.state = .HALF_CLOSED_LOCAL;
-                                            }
-                                            client.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(this.state)));
-                                        }
+                                if (signal_end) {
+                                    if (wait_for_trailers) {
+                                        client.dispatch(.onWantTrailers, identifier);
+                                    } else {
+                                        client.dispatchWithExtra(.onStreamEnd, identifier, jsc.JSValue.jsNumber(@intFromEnum(end_state)));
                                     }
                                 }
                                 _frame.deinit(client.allocator);

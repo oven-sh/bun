@@ -21,14 +21,25 @@ test.concurrent("dynamic import('bun:main') returns the wrapper module", async (
     // package.json disables auto-install so a regression in the bun:main alias
     // cannot silently fall through to fetching the npm `main` package.
     "package.json": "{}",
+    // bun:main statically imports entry.mjs, so awaiting import("bun:main")
+    // at the top level of entry.mjs is a TLA self-cycle that never resolves.
+    // Defer the import to a .then() so entry.mjs (and therefore bun:main)
+    // can finish evaluating first.
     "entry.mjs": `
-      const m = await import("bun:main");
-      if (m[Symbol.toStringTag] !== "Module") throw new Error("expected module namespace, got " + Object.prototype.toString.call(m));
-      // The wrapper has no named exports. The npm \`main\` package (what this
-      // resolved to before the alias fix) exports {default,length,name,prototype}.
-      const keys = Object.keys(m);
-      if (keys.length !== 0) throw new Error("expected empty wrapper namespace, got keys: " + keys.join(","));
-      console.log("OK");
+      import("bun:main").then(
+        m => {
+          if (m[Symbol.toStringTag] !== "Module") throw new Error("expected module namespace, got " + Object.prototype.toString.call(m));
+          // The wrapper has no named exports. The npm \`main\` package (what this
+          // resolved to before the alias fix) exports {default,length,name,prototype}.
+          const keys = Object.keys(m);
+          if (keys.length !== 0) throw new Error("expected empty wrapper namespace, got keys: " + keys.join(","));
+          console.log("OK");
+        },
+        e => {
+          console.error(String(e));
+          process.exit(1);
+        },
+      );
     `,
   });
   await using proc = Bun.spawn({

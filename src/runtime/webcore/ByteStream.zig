@@ -445,6 +445,7 @@ pub fn toBufferedValue(this: *@This(), globalThis: *jsc.JSGlobalObject, action: 
     if (this.pending.result == .err) {
         const err, _ = this.pending.result.err.toJSWeak(globalThis);
         this.pending.result.deinit();
+        this.pending.result = .{ .done = {} };
         this.done = true;
         this.buffer.clearAndFree();
         return jsc.JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 test("server.fetch should reject invalid argument types without crashing", async () => {
   using server = Bun.serve({

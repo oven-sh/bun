@@ -12,6 +12,7 @@ pub const fetch_type_error_names: JSTypeErrorEnum = brk: {
     errors.set(JSType.kJSTypeString, "String");
     errors.set(JSType.kJSTypeObject, "Object");
     errors.set(JSType.kJSTypeSymbol, "Symbol");
+    errors.set(JSType.kJSTypeBigInt, "BigInt");
     break :brk errors;
 };
 
@@ -23,6 +24,7 @@ pub const fetch_type_error_string_values = .{
     std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeString)}),
     std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeObject)}),
     std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeSymbol)}),
+    std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeBigInt)}),
 };
 
 pub const fetch_type_error_strings: JSTypeErrorEnum = brk: {
@@ -54,6 +56,10 @@ pub const fetch_type_error_strings: JSTypeErrorEnum = brk: {
     errors.set(
         JSType.kJSTypeSymbol,
         bun.asByteSlice(fetch_type_error_string_values[6]),
+    );
+    errors.set(
+        JSType.kJSTypeBigInt,
+        bun.asByteSlice(fetch_type_error_string_values[7]),
     );
     break :brk errors;
 };

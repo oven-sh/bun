@@ -1353,6 +1353,14 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   };
   if (cfg.cargoHome !== undefined) env.CARGO_HOME = cfg.cargoHome;
   if (cfg.rustupHome !== undefined) env.RUSTUP_HOME = cfg.rustupHome;
+  // RUSTUP_TOOLCHAIN: bypasses rustup's rust-toolchain.toml auto-sync. When
+  // unset, rustup sees `channel = "nightly-…"` in the repo's toml and tries
+  // to verify/fetch that channel from static.rust-lang.org on every cargo
+  // invocation — which fails in network-restricted sandboxes even though the
+  // toolchain is already installed. Setting this pins the toolchain directly
+  // from the repo config (read once at configure time), so rustup uses the
+  // local install without hitting the network.
+  if (cfg.rustToolchain !== undefined) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
 
   if (spec.rustflags && spec.rustflags.length > 0) {
     // The \x1f encoding is deliberate — see cargo's docs on CARGO_ENCODED_RUSTFLAGS.

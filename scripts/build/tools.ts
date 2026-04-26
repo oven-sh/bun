@@ -7,7 +7,7 @@
  */
 
 import { execSync, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readdirSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import type { Arch, OS, Toolchain } from "./config.ts";
@@ -518,6 +518,12 @@ export interface CargoToolchain {
   cargo: string;
   cargoHome: string;
   rustupHome: string;
+  /**
+   * Channel from `rust-toolchain.toml` (e.g. `nightly-2025-12-10`), parsed
+   * once so we can forward it via RUSTUP_TOOLCHAIN. Undefined if the file is
+   * missing or unparseable — rustup then falls back to its own toml parsing.
+   */
+  rustToolchain: string | undefined;
 }
 
 /**
@@ -525,7 +531,7 @@ export interface CargoToolchain {
  * installed — caller decides whether to error (only needed when building
  * rust deps from source).
  */
-export function findCargo(hostOs: OS): CargoToolchain | undefined {
+export function findCargo(hostOs: OS, repoRoot: string): CargoToolchain | undefined {
   // Resolve CARGO_HOME and RUSTUP_HOME the same way rustup does:
   // explicit env var → platform default. We don't probe %PROGRAMFILES%
   // for MSI installs — rustup is overwhelmingly the common case.
@@ -546,7 +552,19 @@ export function findCargo(hostOs: OS): CargoToolchain | undefined {
   // host-specific path resolution (e.g. %PROGRAMFILES% probing on win32).
   void hostOs;
 
-  return { cargo, cargoHome, rustupHome };
+  // Parse the channel from rust-toolchain.toml. Minimal parser — we only
+  // care about the top-level `channel = "…"` line. If parsing fails, leave
+  // rustToolchain undefined and rustup picks up the file itself.
+  let rustToolchain: string | undefined;
+  try {
+    const toml = readFileSync(join(repoRoot, "rust-toolchain.toml"), "utf8");
+    const match = toml.match(/^\s*channel\s*=\s*"([^"]+)"/m);
+    if (match) rustToolchain = match[1];
+  } catch {
+    // rust-toolchain.toml missing — fine, rustup will use its defaults.
+  }
+
+  return { cargo, cargoHome, rustupHome, rustToolchain };
 }
 
 /**

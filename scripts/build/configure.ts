@@ -115,7 +115,17 @@ function configureInputs(cwd: string): string[] {
     .map(f => resolve(buildDir, f));
   const deps = globSync("deps/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
 
-  return [...scripts, ...deps, resolve(cwd, "scripts", "glob-sources.ts"), resolve(cwd, "package.json")].sort();
+  // rust-toolchain.toml: findCargo() parses the `channel` field at configure
+  // time and bakes it into the `dep_cargo` env (RUSTUP_TOOLCHAIN). Without
+  // tracking this file, a channel bump wouldn't trigger reconfigure and
+  // cargo would silently use the stale toolchain.
+  return [
+    ...scripts,
+    ...deps,
+    resolve(cwd, "scripts", "glob-sources.ts"),
+    resolve(cwd, "package.json"),
+    resolve(cwd, "rust-toolchain.toml"),
+  ].sort();
 }
 
 /**

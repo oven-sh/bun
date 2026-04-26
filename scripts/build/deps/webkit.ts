@@ -1,9 +1,11 @@
 /**
- * WebKit commit — determines prebuilt download URL + what to checkout
- * for local mode. Override via `--webkit-version=<hash>` to test a branch.
+ * WebKit commit — re-exported from webkit-version.ts so the pin can be
+ * imported from modules that would otherwise cause a circular import
+ * through flags.ts → config.ts → webkit.ts. Override via
+ * `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "bdf6aab38a9c6f99df3fd1486406ab6b74180fbb";
+export { WEBKIT_VERSION } from "./webkit-version.ts";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

@@ -3941,7 +3941,11 @@ pub const H2FrameParser = struct {
         const callback = args[0];
         const thisValue: JSValue = if (args.len > 1) args[1] else .js_undefined;
         var count: u32 = 0;
-        var it = this.streams.valueIterator();
+        // The callback runs arbitrary JS and may call request()/getNextStream(),
+        // which reaches handleReceivedStreamID() -> streams.getOrPut() and can
+        // rehash the hashmap, invalidating a raw valueIterator(). Use the
+        // resumable iterator like emitAbortToAllStreams/emitErrorToAllStreams do.
+        var it = StreamResumableIterator.init(this);
         while (it.next()) |stream| {
             const value = stream.jsContext.get() orelse continue;
             this.handlers.vm.eventLoop().runCallback(callback, globalObject, thisValue, &[_]jsc.JSValue{value});

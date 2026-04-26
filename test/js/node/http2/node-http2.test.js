@@ -1979,3 +1979,23 @@ it("http2 request.destroy() with error", async () => {
     });
   });
 });
+
+it("session.request() from a stream 'timeout' listener during forEachStream does not UAF on hashmap rehash", async () => {
+  // H2FrameParser.forEachStream() held a raw HashMap valueIterator() across a JS
+  // callback. Calling session.request() from that callback can rehash the streams
+  // hashmap and free the iterator's backing storage (heap-use-after-free under ASAN).
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", path.join(import.meta.dir, "node-http2-foreach-rehash-fixture.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(filteredStderr).toBe("");
+  expect(stdout).toBe("OK\n");
+  expect(exitCode).toBe(0);
+}, 30_000);

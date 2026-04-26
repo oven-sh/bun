@@ -58,6 +58,27 @@ const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 const { Duplex } = require("node:stream");
 
+// Local hook set by `ClientRequest` on itself when it owns an upgrade-aware
+// body generator. `createUpgradeSocket._final()`/`_destroy()` call this to
+// terminate the upload half of a hijacked connection without tripping the
+// normal `req.end()` path (which for the WebSocket/CDP pattern already ran
+// synchronously before the 101 response arrived).
+const kEndUpgradeBody = Symbol("kEndUpgradeBody");
+
+// Matches a `Connection: Upgrade` + `Upgrade: <proto>` pair that turns the
+// request into an HTTP/1.1 upgrade handshake. `h2`/`h2c` are excluded to
+// match `Bun__fetch_` in fetch.zig, which also ignores h2/h2c upgrades.
+function hasUpgradeHeaders(req): boolean {
+  const upgrade = req.getHeader("upgrade");
+  if (!upgrade) return false;
+  const upgradeStr = String(upgrade).toLowerCase();
+  if (upgradeStr === "h2" || upgradeStr === "h2c") return false;
+  const connection = req.getHeader("connection");
+  if (!connection) return false;
+  const cs = Array.isArray(connection) ? connection.join(",") : String(connection);
+  return /(?:^|[\s,])upgrade(?:[\s,]|$)/i.test(cs);
+}
+
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
@@ -137,7 +158,12 @@ function createUpgradeSocket(req, res) {
       res.resume();
     },
     write(chunk, encoding, callback) {
-      if (req.destroyed || req.finished) {
+      // Only gate on `req.destroyed`, NOT `req.finished` — for the
+      // WebSocket/CDP pattern the caller has already called `req.end()`
+      // before the 101, which sets `req.finished = true` synchronously.
+      // The upgrade-aware body generator stays alive past that point and
+      // still accepts writes until the hijacked socket tears down.
+      if (req.destroyed) {
         callback($ERR_STREAM_WRITE_AFTER_END());
         return;
       }
@@ -179,15 +205,28 @@ function createUpgradeSocket(req, res) {
       req.once("close", onClose);
     },
     final(callback) {
-      if (req.destroyed || req.finished) {
+      if (req.destroyed) {
         callback();
         return;
       }
-      // Wait until the underlying request body has actually finished before
-      // acknowledging `_final`. `'finish'` fires after `send()` has completed;
-      // `'error'`/`'close'` surface abnormal termination. Post-upgrade,
-      // FetchTasklet skips the chunked terminator so `req.end()` just closes
-      // the upload half without injecting framing bytes.
+      // If ClientRequest installed the upgrade-aware body terminator,
+      // close the upload half through it — this is the WebSocket/CDP
+      // (req.end() before 101) and dockerode (req.write() only) pattern.
+      // Otherwise, wait for the request to finish normally.
+      if (typeof req[kEndUpgradeBody] === "function") {
+        req[kEndUpgradeBody]();
+        callback();
+        return;
+      }
+      if (req.finished) {
+        callback();
+        return;
+      }
+      // Non-upgrade fallback (should not normally be reached on the
+      // hijacked-socket path). Wait until the underlying request body has
+      // actually finished before acknowledging `_final`. `'finish'` fires
+      // after `send()` has completed; `'error'`/`'close'` surface abnormal
+      // termination.
       let done = false;
       const finish = (err?: Error) => {
         if (done) return;
@@ -217,6 +256,15 @@ function createUpgradeSocket(req, res) {
       }
       try {
         res.destroy?.(err || undefined);
+      } catch (_err) {
+        void _err;
+      }
+      // Release the upgrade-aware body generator so `fetch` can finalize
+      // the request; otherwise the generator would hang forever waiting
+      // for more chunks (or the `finished` signal that never comes for
+      // the WebSocket pattern).
+      try {
+        req[kEndUpgradeBody]?.();
       } catch (_err) {
         void _err;
       }
@@ -297,6 +345,19 @@ function ClientRequest(input, options, cb) {
 
   let writeCount = 0;
   let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
+  // Upgrade-aware body generator's exit flag. For upgrade requests the
+  // generator ignores `self.finished` (which gets set synchronously by
+  // `req.end()` in the WebSocket pattern) and instead waits until the
+  // hijacked duplex socket explicitly closes the upload half via
+  // `this[kEndUpgradeBody]`.
+  let upgradeBodyEnded = false;
+
+  // Exposed on `this` so `createUpgradeSocket`'s `_final`/`_destroy` can
+  // release the upload half. Safe to call multiple times.
+  this[kEndUpgradeBody] = () => {
+    upgradeBodyEnded = true;
+    resolveNextChunk?.(true);
+  };
 
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
@@ -383,7 +444,13 @@ function ClientRequest(input, options, cb) {
 
     if (!this.finished) {
       send();
-      resolveNextChunk?.(true);
+      // For upgrade requests the upload half must stay open for post-101
+      // writes (WebSocket/CDP/dockerode all call `req.end()` before the
+      // 101 arrives). The generator keeps running until the hijacked
+      // socket's `_final`/`_destroy` signals via `kEndUpgradeBody`.
+      if (!hasUpgradeHeaders(this)) {
+        resolveNextChunk?.(true);
+      }
     }
 
     return this;
@@ -521,12 +588,23 @@ function ClientRequest(input, options, cb) {
         keepalive,
       };
       let keepOpen = false;
-      // no body and not finished
-      const isDuplex = customBody === undefined && !this.finished;
+      // Upgrade requests need a long-lived streaming body so the upload
+      // half of the hijacked connection stays open for post-101 writes.
+      // This covers the dockerode pattern (POST + req.write()) and the
+      // WebSocket/CDP pattern (GET + req.end() before the 101).
+      const isUpgrade = hasUpgradeHeaders(this);
+      const isDuplex = customBody === undefined && (!this.finished || isUpgrade);
 
       if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
+      }
+
+      // For upgrade requests always funnel the body through the generator
+      // so the write side stays live; any pre-assembled body is already in
+      // kBodyChunks (send() reads from there without clearing it).
+      if (isUpgrade && customBody !== undefined) {
+        customBody = undefined;
       }
 
       // Allow body for all methods when explicitly provided via req.write()/req.end()
@@ -534,9 +612,12 @@ function ClientRequest(input, options, cb) {
       if (customBody !== undefined) {
         fetchOptions.body = customBody;
       } else if (
-        isDuplex &&
-        // Normal case: non-GET/HEAD/OPTIONS can use streaming
-        ((method !== "GET" && method !== "HEAD" && method !== "OPTIONS") ||
+        (isDuplex || isUpgrade) &&
+        // Upgrade: always stream — even GET/HEAD/OPTIONS with no pre-body
+        // need a live body channel for post-upgrade socket.write().
+        (isUpgrade ||
+          // Normal case: non-GET/HEAD/OPTIONS can use streaming
+          (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") ||
           // Special case: GET/HEAD/OPTIONS with already-queued chunks should also stream
           this[kBodyChunks]?.length > 0)
       ) {
@@ -550,7 +631,10 @@ function ClientRequest(input, options, cb) {
             self.emit("drain");
           }
 
-          while (!self.finished) {
+          // Exit condition diverges: upgrade requests stay alive until the
+          // hijacked socket calls `req[kEndUpgradeBody]()`; non-upgrade
+          // requests end at `req.end()` as before.
+          while (isUpgrade ? !upgradeBodyEnded : !self.finished) {
             yield await new Promise(resolve => {
               resolveNextChunk = end => {
                 resolveNextChunk = undefined;

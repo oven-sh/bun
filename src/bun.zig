@@ -3002,19 +3002,14 @@ noinline fn assertionFailureWithMsg(comptime msg: []const u8, args: anytype) nor
 
 /// Like `assert`, but checks only run in debug builds.
 ///
-/// Please wrap expensive checks in an `if` statement.
-/// ```zig
-/// if (comptime bun.Environment.isDebug) {
-///   const expensive = doExpensiveCheck();
-///   bun.debugAssert(expensive);
-/// }
-/// ```
-pub fn debugAssert(zig_lazy cheap_value_only_plz: bool) callconv(callconv_inline) void {
+/// `ok` is `zig_lazy`: outside debug builds the argument expression is never
+/// analyzed, so expensive checks are guaranteed to generate no code.
+pub fn debugAssert(zig_lazy ok: bool) callconv(callconv_inline) void {
     if (comptime !Environment.isDebug) {
         return;
     }
 
-    if (!cheap_value_only_plz) {
+    if (!ok) {
         unreachable; // ASSERTION FAILURE
     }
 }

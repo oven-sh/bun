@@ -720,7 +720,8 @@ pub const Loop = extern struct {
             if (err == .BUSY) {
                 uv_walk(loop, &closeWalkCb, null);
                 _ = uv_run(loop, .default);
-                bun.debugAssert(uv_loop_close(loop) == .zero);
+                const rc = uv_loop_close(loop);
+                bun.debugAssert(rc == .zero);
             }
         }
 

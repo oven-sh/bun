@@ -26,20 +26,17 @@ test.concurrent("dynamic import('bun:main') returns the wrapper module", async (
     // Defer the import to a .then() so entry.mjs (and therefore bun:main)
     // can finish evaluating first.
     "entry.mjs": `
-      import("bun:main").then(
-        m => {
-          if (m[Symbol.toStringTag] !== "Module") throw new Error("expected module namespace, got " + Object.prototype.toString.call(m));
-          // The wrapper has no named exports. The npm \`main\` package (what this
-          // resolved to before the alias fix) exports {default,length,name,prototype}.
-          const keys = Object.keys(m);
-          if (keys.length !== 0) throw new Error("expected empty wrapper namespace, got keys: " + keys.join(","));
-          console.log("OK");
-        },
-        e => {
-          console.error(String(e));
-          process.exit(1);
-        },
-      );
+      import("bun:main").then(m => {
+        if (m[Symbol.toStringTag] !== "Module") throw new Error("expected module namespace, got " + Object.prototype.toString.call(m));
+        // The wrapper has no named exports. The npm \`main\` package (what this
+        // resolved to before the alias fix) exports {default,length,name,prototype}.
+        const keys = Object.keys(m);
+        if (keys.length !== 0) throw new Error("expected empty wrapper namespace, got keys: " + keys.join(","));
+        console.log("OK");
+      }).catch(e => {
+        console.error(String(e));
+        process.exit(1);
+      });
     `,
   });
   await using proc = Bun.spawn({

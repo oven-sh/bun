@@ -651,7 +651,22 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
         this.weak_file_sink_stdin_ptr = null;
         this.flags.has_stdin_destructor_called = true;
 
-        // It is okay if it does call deref() here, as in that case it was truly ref'd.
+        // `onAttachedProcessExit()` → `writer.close()` → `FileSink.onClose`
+        // fires `pipe.signal` synchronously on POSIX. When the signal still
+        // targets `&this.stdin` (the user never read `.stdin`, or did and
+        // `Writable.toJS` left it wired), that would re-enter
+        // `Writable.onClose` → `pipe.deref()` while `onAttachedProcessExit`
+        // is still running on `pipe`. Detach the signal first and drive the
+        // `onStdinDestroyed()` deref ourselves instead; this also leaves
+        // `this.stdin` as `.pipe` so reading `.stdin` after exit still
+        // returns the sink.
+        if (@intFromPtr(pipe.signal.ptr) == @intFromPtr(&this.stdin)) {
+            pipe.signal.clear();
+        }
+        const must_deref = this.flags.deref_on_stdin_destroyed;
+        this.flags.deref_on_stdin_destroyed = false;
+        defer if (must_deref) this.deref();
+
         pipe.onAttachedProcessExit(&status);
     }
 
@@ -736,7 +751,7 @@ fn closeIO(this: *Subprocess, comptime io: @Type(.enum_literal)) void {
     }
 }
 
-fn onPipeClose(this: *uv.Pipe) callconv(.c) void {
+pub fn onPipeClose(this: *uv.Pipe) callconv(.c) void {
     // safely free the pipes
     bun.default_allocator.destroy(this);
 }

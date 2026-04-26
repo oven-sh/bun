@@ -226,10 +226,10 @@ export interface Config {
   /** Git commit of the bun checkout — feeds into zig's -Dsha. */
   revision: string;
   canaryRevision: string;
-  /** Node.js compat version. Default in versions.ts; override to test a bump. */
+  /** Node.js compat version. Default in deps/nodejs-headers.ts; override to test a bump. */
   nodejsVersion: string;
   nodejsAbiVersion: string;
-  /** Zig compiler commit. Default in versions.ts; override to test a new compiler. */
+  /** Zig compiler commit. Default in zig.ts; override to test a new compiler. */
   zigCommit: string;
   /** WebKit commit. Default in versions.ts; override to test a WebKit branch. */
   webkitVersion: string;
@@ -275,7 +275,7 @@ export interface PartialConfig {
   freebsdSysroot?: string;
   /** FreeBSD release version (default: FREEBSD_VERSION_DEFAULT). Only used when os=freebsd. */
   freebsdVersion?: string;
-  // Version pins (defaults in versions.ts).
+  // Version pins (defaults in versions.ts / zig.ts / deps/nodejs-headers.ts).
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
   zigCommit?: string;
@@ -732,8 +732,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const version = pkgJson.version;
   const revision = getGitRevision(cwd);
 
-  // Defaults from versions.ts. Override via --webkit-version=<hash> etc.
-  // to test a branch before bumping the pinned default.
+  // Defaults from versions.ts (WebKit), zig.ts, deps/nodejs-headers.ts.
+  // Override via --webkit-version=<hash> etc. to test a branch before
+  // bumping the pinned default.
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const zigCommit = partial.zigCommit ?? versionDefaults.zigCommit;

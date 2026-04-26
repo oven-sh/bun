@@ -6623,6 +6623,107 @@ pub const NodeFS = struct {
             return ret.success;
         }
 
+        if (Environment.isFreeBSD) {
+            if (mode.isForceClone()) {
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EOPNOTSUPP), .syscall = .copyfile } };
+            }
+
+            const src_fd = switch (Syscall.open(src, bun.O.RDONLY | bun.O.NOFOLLOW, 0o644)) {
+                .result => |result| result,
+                .err => |err| {
+                    // ELOOP from O_NOFOLLOW on a symlink → recreate the link.
+                    if (err.getErrno() == .LOOP) {
+                        return Syscall.symlink(src, dest);
+                    }
+                    return .{ .err = err };
+                },
+            };
+            defer src_fd.close();
+
+            const stat_: bun.Stat = switch (Syscall.fstat(src_fd)) {
+                .result => |result| result,
+                .err => |err| return Maybe(Return.CopyFile){ .err = err.withFd(src_fd) },
+            };
+            if (!posix.S.ISREG(stat_.mode)) {
+                return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EOPNOTSUPP), .syscall = .copyfile } };
+            }
+
+            var flags: i32 = bun.O.CREAT | bun.O.WRONLY;
+            var wrote: u64 = 0;
+            if (mode.shouldntOverwrite()) {
+                flags |= bun.O.EXCL;
+            }
+
+            const dest_fd = dest_fd: {
+                switch (Syscall.open(dest, flags, jsc.Node.fs.default_permission)) {
+                    .result => |result| break :dest_fd result,
+                    .err => |err| {
+                        if (err.getErrno() == .NOENT) {
+                            var len = dest.len;
+                            while (len > 0 and dest[len - 1] != std.fs.path.sep) {
+                                len -= 1;
+                            }
+                            const mkdirResult = this.mkdirRecursive(.{
+                                .path = PathLike{ .string = PathString.init(dest[0..len]) },
+                                .recursive = true,
+                            });
+                            if (mkdirResult == .err) {
+                                return Maybe(Return.CopyFile){ .err = mkdirResult.err };
+                            }
+                            switch (Syscall.open(dest, flags, jsc.Node.fs.default_permission)) {
+                                .result => |result| break :dest_fd result,
+                                .err => {},
+                            }
+                        }
+                        @memcpy(this.sync_error_buf[0..dest.len], dest);
+                        return Maybe(Return.CopyFile){ .err = err.withPath(this.sync_error_buf[0..dest.len]) };
+                    },
+                }
+            };
+
+            // No O_TRUNC at open: if src and dest resolve to the same inode,
+            // that would zero the file before the first read.
+            if (Syscall.fstat(dest_fd).asValue()) |dst_stat| {
+                if (stat_.ino == dst_stat.ino and stat_.dev == dst_stat.dev) {
+                    dest_fd.close();
+                    @memcpy(this.sync_error_buf[0..src.len], src);
+                    return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(SystemErrno.EINVAL), .syscall = .copyfile, .path = this.sync_error_buf[0..src.len] } };
+                }
+            }
+
+            defer {
+                _ = Syscall.ftruncate(dest_fd, @as(i64, @intCast(@as(u63, @truncate(wrote)))));
+                _ = Syscall.fchmod(dest_fd, stat_.mode);
+                dest_fd.close();
+            }
+
+            const size: usize = @intCast(@max(stat_.size, 0));
+
+            // FreeBSD 13+ has copy_file_range(2). std.c declares it returning
+            // usize on FreeBSD, so bitcast to isize before getErrno (see
+            // freebsd_errno.getErrno).
+            var off_in: i64 = 0;
+            var off_out: i64 = 0;
+            cfr: while (true) {
+                const rc: isize = @bitCast(std.c.copy_file_range(src_fd.native(), &off_in, dest_fd.native(), &off_out, if (size == 0) std.math.maxInt(i32) - 1 else size -| wrote, 0));
+                switch (bun.sys.getErrno(rc)) {
+                    .SUCCESS => {
+                        if (rc == 0) return ret.success;
+                        wrote +|= @intCast(rc);
+                        if (size != 0 and wrote >= size) return ret.success;
+                    },
+                    .INTR => continue,
+                    .XDEV, .INVAL, .OPNOTSUPP, .NOSYS, .BADF => break :cfr,
+                    else => |e| {
+                        @memcpy(this.sync_error_buf[0..dest.len], dest);
+                        return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(e), .syscall = .copyfile, .path = this.sync_error_buf[0..dest.len] } };
+                    },
+                }
+            }
+
+            return copyFileUsingReadWriteLoop(src, dest, src_fd, dest_fd, size, &wrote);
+        }
+
         if (Environment.isWindows) {
             const src_enoent_maybe = ret.initErrWithP(.ENOENT, .copyfile, this.osPathIntoSyncErrorBuf(src));
             const dst_enoent_maybe = ret.initErrWithP(.ENOENT, .copyfile, this.osPathIntoSyncErrorBuf(dest));

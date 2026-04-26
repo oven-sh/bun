@@ -229,12 +229,12 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
     return syscall(__NR_close_range, start, end, flags);
 }
 #else // OS(FREEBSD)
-// FreeBSD 12.2+ libc has close_range; no CLOSE_RANGE_CLOEXEC, so close
-// outright (best-effort fd cleanup before execve, same intent).
+// FreeBSD 12.2+ libc has close_range; 14.0+ supports CLOSE_RANGE_CLOEXEC
+// (same value 1<<2 as Linux). Passing flags through means execveZ-failure
+// recovery keeps fds open (CLOEXEC) instead of closing them outright.
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
-    (void)flags;
-    return close_range(start, end, 0);
+    return close_range(start, end, flags);
 }
 #endif
 

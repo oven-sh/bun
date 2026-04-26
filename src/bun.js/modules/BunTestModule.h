@@ -7,7 +7,7 @@ void generateNativeModule_BunTest(
     JSC::MarkedArgumentBuffer& exportValues)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSObject* object = globalObject->lazyTestModuleObject();

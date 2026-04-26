@@ -188,7 +188,7 @@ JSObject* JSPerformanceTiming::prototype(VM& vm, JSDOMGlobalObject& globalObject
 
 JSValue JSPerformanceTiming::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSPerformanceTimingDOMConstructor, DOMConstructorID::PerformanceTiming>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSPerformanceTimingDOMConstructor, DOMConstructorID::PerformanceTiming>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSPerformanceTiming::destroy(JSC::JSCell* cell)
@@ -201,7 +201,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTimingConstructor, (JSGlobalObject * lexic
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSPerformanceTimingPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSPerformanceTimingPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSPerformanceTiming::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -570,7 +570,7 @@ JSC::GCClient::IsoSubspace* JSPerformanceTiming::subspaceForImpl(JSC::VM& vm)
 
 void JSPerformanceTiming::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSPerformanceTiming*>(cell);
+    auto* thisObject = uncheckedDowncast<JSPerformanceTiming>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -634,7 +634,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 PerformanceTiming* JSPerformanceTiming::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSPerformanceTiming*>(value))
+    if (auto* wrapper = dynamicDowncast<JSPerformanceTiming>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

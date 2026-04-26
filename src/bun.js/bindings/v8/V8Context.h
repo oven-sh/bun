@@ -20,12 +20,12 @@ public:
 
     const Zig::GlobalObject* globalObject() const
     {
-        return JSC::jsDynamicCast<const Zig::GlobalObject*>(localToCell());
+        return dynamicDowncast<const Zig::GlobalObject>(localToCell());
     }
 
     Zig::GlobalObject* globalObject()
     {
-        return JSC::jsDynamicCast<Zig::GlobalObject*>(localToCell());
+        return dynamicDowncast<Zig::GlobalObject>(localToCell());
     }
 
     HandleScope* currentHandleScope() const

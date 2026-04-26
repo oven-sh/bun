@@ -109,10 +109,15 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // suppress JSC warnings, which makes everything it transitively includes
   // "system" for -MMD purposes. -MMD would give a near-empty depfile; -MD
   // tracks all headers so PCH invalidates when WebKit headers change.
+  // -fno-pch-timestamp: don't embed input mtimes in the PCH. ccache returns
+  // cached PCH outputs by content hash, so the embedded mtime can be stale
+  // (e.g. after deleting pch/ and reconfiguring) → every consumer fails with
+  // "mtime changed". ninja's depfile already tracks invalidation; clang's
+  // redundant mtime check just fights ccache.
   n.rule("pch", {
     command: cfg.windows
-      ? `${ccacheLauncher}${cxx} /nologo /showIncludes $cxxflags /clang:-fpch-instantiate-templates /Yc$pch_header /FI$pch_header /Fp$out /c $in /Fo$pch_stub_obj`
-      : `${ccacheLauncher}${cxx} $cxxflags -Winvalid-pch -fpch-instantiate-templates -Xclang -emit-pch -Xclang -include -Xclang $pch_header -x c++-header -MD -MT $out -MF $out.d -c $in -o $out`,
+      ? `${ccacheLauncher}${cxx} /nologo /showIncludes $cxxflags /clang:-fpch-instantiate-templates -Xclang -fno-pch-timestamp /Yc$pch_header /FI$pch_header /Fp$out /c $in /Fo$pch_stub_obj`
+      : `${ccacheLauncher}${cxx} $cxxflags -Winvalid-pch -fpch-instantiate-templates -Xclang -fno-pch-timestamp -Xclang -emit-pch -Xclang -include -Xclang $pch_header -x c++-header -MD -MT $out -MF $out.d -c $in -o $out`,
     description: "pch $out",
     ...depfileOpts,
   });

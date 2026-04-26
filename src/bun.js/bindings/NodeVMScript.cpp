@@ -236,7 +236,7 @@ DEFINE_VISIT_CHILDREN(NodeVMScript);
 template<typename Visitor>
 void NodeVMScript::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    NodeVMScript* thisObject = jsCast<NodeVMScript*>(cell);
+    NodeVMScript* thisObject = uncheckedDowncast<NodeVMScript>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_cachedExecutable);
@@ -393,7 +393,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
+    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
@@ -455,7 +455,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
-    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
+    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
@@ -474,7 +474,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedData, (JSGlobalObject * globalObject, JS
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
-    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
+    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
@@ -491,7 +491,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataProduced, (JSGlobalObject * globalOb
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
-    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
+    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
@@ -505,7 +505,7 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalOb
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
-    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
+    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
@@ -526,7 +526,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
+    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
@@ -541,7 +541,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
+    auto* script = dynamicDowncast<NodeVMScript>(thisValue);
     if (!script) [[unlikely]] {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
@@ -559,7 +559,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
 JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = JSC::getVM(globalObject);
-    NodeVMScript* script = jsDynamicCast<NodeVMScript*>(callFrame->thisValue());
+    NodeVMScript* script = dynamicDowncast<NodeVMScript>(callFrame->thisValue());
     JSValue contextObjectValue = callFrame->argument(0);
     auto scope = DECLARE_THROW_SCOPE(vm);
 

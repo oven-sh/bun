@@ -26,7 +26,7 @@ public:
         JSC::SourceProviderSourceType sourceType)
     {
         auto provider = adoptRef(*new DevServerSourceProvider(source, sourceMapJSONPtr, sourceMapJSONLength, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
-        auto* zigGlobalObject = jsCast<::Zig::GlobalObject*>(globalObject);
+        auto* zigGlobalObject = uncheckedDowncast<::Zig::GlobalObject>(globalObject);
         auto specifier = Bun::toString(provider->sourceURL());
         provider->m_globalObject = zigGlobalObject;
         provider->m_specifier = specifier;

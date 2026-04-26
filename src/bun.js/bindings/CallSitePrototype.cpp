@@ -44,7 +44,7 @@ ALWAYS_INLINE static CallSite* getCallSite(JSGlobalObject* globalObject, JSC::JS
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (auto* callSite = JSC::jsDynamicCast<CallSite*>(thisValue)) {
+    if (auto* callSite = dynamicDowncast<CallSite>(thisValue)) {
         return callSite;
     }
 
@@ -163,7 +163,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
 
     if (JSValue functionValue = callSite->function()) {
         if (JSObject* fn = functionValue.getObject()) {
-            if (JSFunction* function = jsDynamicCast<JSFunction*>(fn)) {
+            if (JSFunction* function = dynamicDowncast<JSFunction>(fn)) {
                 if (function->inherits<JSC::JSBoundFunction>()) {
                     return JSC::JSValue::encode(JSC::jsBoolean(false));
                 }
@@ -175,7 +175,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsToplevel, (JSGlobalObject * globalOb
                 if (auto* executable = function->jsExecutable()) {
                     return JSValue::encode(jsBoolean(executable->isProgramExecutable() || executable->isModuleProgramExecutable()));
                 }
-            } else if (jsDynamicCast<InternalFunction*>(functionValue)) {
+            } else if (dynamicDowncast<InternalFunction>(functionValue)) {
                 return JSC::JSValue::encode(JSC::jsBoolean(true));
             }
         }

@@ -52,7 +52,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_close, (JSGlobalObject * globalObject, Cal
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(callFrame->thisValue());
     if (!parser) {
         throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "close"_s);
         return {};
@@ -68,7 +68,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_free, (JSGlobalObject * globalObject, Call
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(callFrame->thisValue());
     if (!parser) {
         throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "free"_s);
         return {};
@@ -92,7 +92,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_remove, (JSGlobalObject * globalObject, Ca
 
     JSValue thisValue = callFrame->thisValue();
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(thisValue);
+    JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(thisValue);
     if (!parser) {
         throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "remove"_s);
         return {};
@@ -110,7 +110,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(callFrame->thisValue());
     if (!parser) {
         throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "execute"_s);
         return {};
@@ -122,7 +122,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_execute, (JSGlobalObject * globalObject, C
 
     JSValue bufferValue = callFrame->argument(0);
 
-    if (auto* buffer = jsDynamicCast<JSArrayBufferView*>(bufferValue)) {
+    if (auto* buffer = dynamicDowncast<JSArrayBufferView>(bufferValue)) {
         if (buffer->isDetached()) {
             throwTypeError(globalObject, scope, "Buffer is detached"_s);
             return {};
@@ -144,7 +144,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_finish, (JSGlobalObject * globalObject, Ca
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(callFrame->thisValue());
     if (!parser) {
         throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "finish"_s);
         return {};
@@ -199,7 +199,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject
 
     if (callFrame->argumentCount() > 4) {
         if (!connectionsListValue.isUndefinedOrNull()) {
-            connections = jsDynamicCast<JSConnectionsList*>(connectionsListValue);
+            connections = dynamicDowncast<JSConnectionsList>(connectionsListValue);
             if (!connections) {
                 return JSValue::encode(jsUndefined());
             }
@@ -209,7 +209,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_initialize, (JSGlobalObject * globalObject
     llhttp_type_t type = static_cast<llhttp_type_t>(typeValue.toNumber(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(thisValue);
+    JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(thisValue);
     if (!parser) {
         throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "initialize"_s);
         return {};
@@ -226,7 +226,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_pause, (JSGlobalObject * globalObject, Cal
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(callFrame->thisValue());
     if (!parser) {
         throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "pause"_s);
         return {};
@@ -244,7 +244,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_resume, (JSGlobalObject * globalObject, Ca
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(callFrame->thisValue());
     if (!parser) {
         throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "resume"_s);
         return {};
@@ -262,7 +262,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_consume, (JSGlobalObject * globalObject, C
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(callFrame->thisValue());
     if (!parser) {
         throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "consume"_s);
         return {};
@@ -282,7 +282,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_unconsume, (JSGlobalObject * globalObject,
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(callFrame->thisValue());
     if (!parser) {
         throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "unconsume"_s);
         return {};
@@ -302,7 +302,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_getCurrentBuffer, (JSGlobalObject * lexica
     VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(callFrame->thisValue());
     if (!parser) {
         throwThisTypeError(*lexicalGlobalObject, scope, "HTTPParser"_s, "getCurrentBuffer"_s);
         return {};
@@ -320,7 +320,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_duration, (JSGlobalObject * globalObject, 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(callFrame->thisValue());
     if (!parser) {
         throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "duration"_s);
         return {};
@@ -338,7 +338,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_headersCompleted, (JSGlobalObject * global
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(callFrame->thisValue());
+    JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(callFrame->thisValue());
     if (!parser) {
         throwThisTypeError(*globalObject, scope, "HTTPParser"_s, "headersCompleted"_s);
         return {};

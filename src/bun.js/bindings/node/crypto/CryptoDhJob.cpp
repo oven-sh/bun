@@ -90,13 +90,13 @@ std::optional<DhJobCtx> DhJobCtx::fromJS(JSGlobalObject* globalObject, ThrowScop
     JSValue publicKeyValue = options->get(globalObject, Identifier::fromString(vm, "publicKey"_s));
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-    JSKeyObject* privateKeyObject = jsDynamicCast<JSKeyObject*>(privateKeyValue);
+    JSKeyObject* privateKeyObject = dynamicDowncast<JSKeyObject>(privateKeyValue);
     if (!privateKeyObject) {
         ERR::INVALID_ARG_VALUE(scope, globalObject, "options.privateKey"_s, privateKeyValue);
         return std::nullopt;
     }
 
-    JSKeyObject* publicKeyObject = jsDynamicCast<JSKeyObject*>(publicKeyValue);
+    JSKeyObject* publicKeyObject = dynamicDowncast<JSKeyObject>(publicKeyValue);
     if (!publicKeyObject) {
         ERR::INVALID_ARG_VALUE(scope, globalObject, "options.publicKey"_s, publicKeyValue);
         return std::nullopt;

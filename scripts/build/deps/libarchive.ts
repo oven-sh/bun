@@ -127,6 +127,9 @@ export const libarchive: Dependency = {
       LIBARCHIVE_STATIC: 1,
       // ELF-only; clang-cl doesn't support __attribute__((visibility)).
       ...(!cfg.windows && { __LIBARCHIVE_ENABLE_VISIBILITY: true }),
+      // Upstream's CMakeLists sets this on MSVC; the DirectBuild conversion
+      // missed it (97× -Wdeprecated-declarations on localtime/strncpy/etc).
+      ...(cfg.windows && { _CRT_SECURE_NO_DEPRECATE: true }),
     },
     cflags: [
       ...(cfg.windows ? [] : ["-fvisibility=hidden"]),

@@ -162,7 +162,7 @@ const JSC::ClassInfo ServerRouteList::s_info = { "ServerRouteList"_s, &Base::s_i
 template<typename Visitor>
 void ServerRouteList::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    ServerRouteList* thisCallSite = jsCast<ServerRouteList*>(cell);
+    ServerRouteList* thisCallSite = uncheckedDowncast<ServerRouteList>(cell);
     Base::visitChildren(thisCallSite, visitor);
 
     for (unsigned i = 0; i < thisCallSite->m_routes.size(); i++) {
@@ -183,7 +183,7 @@ Structure* ServerRouteList::structureForParamsObject(JSC::VM& vm, JSC::JSGlobalO
         auto* zigGlobalObject = defaultGlobalObject(globalObject);
         auto* prototype = zigGlobalObject->m_JSBunRequestParamsPrototype.get(zigGlobalObject);
         unsigned inlineCapacity = std::min(identifiers.size(), static_cast<size_t>(JSC::JSFinalObject::maxInlineCapacity));
-        auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), JSFinalObject::info(), NonArray, inlineCapacity);
+        auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(FinalObjectType, StructureFlags), JSFinalObject::info(), NonArray, inlineCapacity);
 
         if (identifiers.size() < JSC::JSFinalObject::maxInlineCapacity) {
             PropertyOffset offset;
@@ -270,7 +270,7 @@ extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRoute(
     uWS::HttpRequest* req)
 {
     JSValue routeListValue = JSValue::decode(routeListObject);
-    ServerRouteList* routeList = jsCast<ServerRouteList*>(routeListValue);
+    ServerRouteList* routeList = uncheckedDowncast<ServerRouteList>(routeListValue);
     return JSValue::encode(routeList->callRoute(globalObject, index, requestPtr, serverObject, requestObject, req));
 }
 
@@ -290,7 +290,7 @@ JSObject* createJSBunRequestParamsPrototype(JSC::VM& vm, Zig::GlobalObject* glob
 {
     auto* prototype = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     prototype->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("RequestParams"_s)), JSC::PropertyAttribute::DontEnum | 0);
-    auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, JSC::JSFinalObject::StructureFlags), JSFinalObject::info(), NonArray);
+    auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(FinalObjectType, JSC::JSFinalObject::StructureFlags), JSFinalObject::info(), NonArray);
     structure->setMayBePrototype(true);
     return JSC::constructEmptyObject(vm, structure);
 }

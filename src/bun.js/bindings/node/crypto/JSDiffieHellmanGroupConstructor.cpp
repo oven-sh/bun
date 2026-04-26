@@ -44,7 +44,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
     }
 
     // Get the appropriate structure and create the DiffieHellmanGroup object
-    auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSDiffieHellmanGroupClassStructure.get(zigGlobalObject);
     JSC::JSValue newTarget = callFrame->newTarget();
 

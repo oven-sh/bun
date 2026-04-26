@@ -773,10 +773,23 @@ pub fn reload(this: *VirtualMachine, _: ?*HotReloader.Task) void {
     // race through one registry. Defer instead; the main loop reschedules
     // via reportExceptionInHotReloadedModuleIfNeeded once the in-flight
     // promise resolves or rejects.
+    //
+    // Also defer when the previous promise has rejected but its error
+    // hasn't been printed yet: reloadEntryPoint() re-transpiles and
+    // overwrites source_mappings[path] in place, so a watcher event that
+    // slips in between the rejection microtask and the report would remap
+    // that error against the wrong sourcemap.
     if (this.pending_internal_promise) |p| {
-        if (p.status() == .pending) {
-            this.hot_reload_deferred = true;
-            return;
+        switch (p.status()) {
+            .pending => {
+                this.hot_reload_deferred = true;
+                return;
+            },
+            .rejected => if (this.pending_internal_promise_reported_at != this.hot_reload_counter) {
+                this.hot_reload_deferred = true;
+                return;
+            },
+            .fulfilled => {},
         }
     }
     this.hot_reload_deferred = false;

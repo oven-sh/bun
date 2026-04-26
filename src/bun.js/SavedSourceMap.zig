@@ -142,6 +142,21 @@ pub fn deinit(this: *SavedSourceMap) void {
 }
 
 pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings: MutableString) !void {
+    // --hot can re-read a file mid-rewrite (truncate + write) and transpile
+    // a comment-only prefix into a 0-mapping map. Overwriting a real map
+    // with that would make any still-unreported error from the previous
+    // transpile remap against nothing and leak transpiled coords. A map
+    // with no mappings can never answer a lookup, so dropping it is never
+    // worse than installing it.
+    if (mappings.list.items.len >= InternalSourceMap.header_size) {
+        const incoming: InternalSourceMap = .{ .data = mappings.list.items.ptr };
+        if (incoming.mappingCount() == 0) {
+            this.lock();
+            defer this.unlock();
+            if (this.map.contains(bun.hash(source.path.text))) return;
+        }
+    }
+
     const blob = try bun.default_allocator.dupe(u8, mappings.list.items);
     errdefer bun.default_allocator.free(blob);
     try this.putValue(source.path.text, Value.init(bun.cast(*InternalSourceMap, blob.ptr)));

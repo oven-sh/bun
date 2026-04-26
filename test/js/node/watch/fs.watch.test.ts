@@ -182,57 +182,60 @@ describe("fs.watch", () => {
   // so `is_new_subdir` never fires and `NewSubdirTask` never runs. The
   // runtime-registered-subdir behavior is Linux-only at the moment (macOS
   // bypasses this path via FSEvents, Windows via its own watcher).
-  test.skipIf(isWindows || isFreeBSD)("recursive watch reports new subdirectory contents with full relative path", async () => {
-    const root = path.join(testDir, "new-subdir-relpath");
-    try {
-      fs.rmSync(root, { recursive: true, force: true });
-    } catch {}
-    fs.mkdirSync(root, { recursive: true });
+  test.skipIf(isWindows || isFreeBSD)(
+    "recursive watch reports new subdirectory contents with full relative path",
+    async () => {
+      const root = path.join(testDir, "new-subdir-relpath");
+      try {
+        fs.rmSync(root, { recursive: true, force: true });
+      } catch {}
+      fs.mkdirSync(root, { recursive: true });
 
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    const filenames: string[] = [];
-    const watcher = fs.watch(root, { recursive: true, signal: AbortSignal.timeout(5000) });
-    watcher.on("change", (_event, filename) => {
-      const name = filename as string;
-      filenames.push(name);
-      // Resolve as soon as we've seen an event for the nested file.
-      if (name.endsWith("nested.txt")) {
-        watcher.close();
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const filenames: string[] = [];
+      const watcher = fs.watch(root, { recursive: true, signal: AbortSignal.timeout(5000) });
+      watcher.on("change", (_event, filename) => {
+        const name = filename as string;
+        filenames.push(name);
+        // Resolve as soon as we've seen an event for the nested file.
+        if (name.endsWith("nested.txt")) {
+          watcher.close();
+        }
+      });
+      watcher.on("error", reject);
+      watcher.on("close", () => resolve());
+
+      // Give the inotify watch a moment to be wired up before we start mutating.
+      await Bun.sleep(50);
+
+      const subdir = path.join(root, "subdir1");
+      fs.mkdirSync(subdir);
+
+      // The user-visible `rename: subdir1` event fires synchronously during
+      // `onFileUpdate` — seeing it only tells us the `NewSubdirTask` is
+      // *scheduled*, not that `inotify_add_watch` has actually completed on
+      // the new subdir. Only a write-poll inside `subdir1/` truly gates on
+      // registration: each write fires an event via the newly-installed
+      // watch, breaking the loop as soon as it lands. 50 iterations (~1s)
+      // gives generous headroom for the WorkPool hop + open(O_DIRECTORY) +
+      // inotify_add_watch.
+      const nested = path.join(subdir, "nested.txt");
+      for (let i = 0; i < 50; i++) {
+        fs.writeFileSync(nested, `v${i}\n`);
+        if (filenames.some(n => n.endsWith("nested.txt"))) break;
+        await Bun.sleep(20);
       }
-    });
-    watcher.on("error", reject);
-    watcher.on("close", () => resolve());
 
-    // Give the inotify watch a moment to be wired up before we start mutating.
-    await Bun.sleep(50);
+      await promise;
 
-    const subdir = path.join(root, "subdir1");
-    fs.mkdirSync(subdir);
-
-    // The user-visible `rename: subdir1` event fires synchronously during
-    // `onFileUpdate` — seeing it only tells us the `NewSubdirTask` is
-    // *scheduled*, not that `inotify_add_watch` has actually completed on
-    // the new subdir. Only a write-poll inside `subdir1/` truly gates on
-    // registration: each write fires an event via the newly-installed
-    // watch, breaking the loop as soon as it lands. 50 iterations (~1s)
-    // gives generous headroom for the WorkPool hop + open(O_DIRECTORY) +
-    // inotify_add_watch.
-    const nested = path.join(subdir, "nested.txt");
-    for (let i = 0; i < 50; i++) {
-      fs.writeFileSync(nested, `v${i}\n`);
-      if (filenames.some(n => n.endsWith("nested.txt"))) break;
-      await Bun.sleep(20);
-    }
-
-    await promise;
-
-    // The nested file MUST have been reported with the full relative path.
-    // We explicitly reject the bare basename — that was the bug.
-    const nestedEvents = filenames.filter(n => n.endsWith("nested.txt"));
-    expect(nestedEvents.length).toBeGreaterThan(0);
-    expect(nestedEvents).toContain(path.join("subdir1", "nested.txt"));
-    expect(nestedEvents).not.toContain("nested.txt");
-  });
+      // The nested file MUST have been reported with the full relative path.
+      // We explicitly reject the bare basename — that was the bug.
+      const nestedEvents = filenames.filter(n => n.endsWith("nested.txt"));
+      expect(nestedEvents.length).toBeGreaterThan(0);
+      expect(nestedEvents).toContain(path.join("subdir1", "nested.txt"));
+      expect(nestedEvents).not.toContain("nested.txt");
+    },
+  );
 
   // A recursive watcher must register inotify watches on dot-prefixed
   // subdirectories created at runtime (`.next`, `.nuxt`, `.cache`), so files
@@ -244,51 +247,54 @@ describe("fs.watch", () => {
   // inside it MUST fire.
   // See note above: Linux-only feature, FreeBSD kqueue has no directory
   // filenames and no FSEvents bypass.
-  test.skipIf(isWindows || isFreeBSD)("recursive watch registers dot-prefixed subdirectories created at runtime", async () => {
-    const root = path.join(testDir, "new-dotsubdir");
-    try {
-      fs.rmSync(root, { recursive: true, force: true });
-    } catch {}
-    fs.mkdirSync(root, { recursive: true });
+  test.skipIf(isWindows || isFreeBSD)(
+    "recursive watch registers dot-prefixed subdirectories created at runtime",
+    async () => {
+      const root = path.join(testDir, "new-dotsubdir");
+      try {
+        fs.rmSync(root, { recursive: true, force: true });
+      } catch {}
+      fs.mkdirSync(root, { recursive: true });
 
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    const filenames: string[] = [];
-    const watcher = fs.watch(root, { recursive: true, signal: AbortSignal.timeout(5000) });
-    watcher.on("change", (_event, filename) => {
-      const name = filename as string;
-      filenames.push(name);
-      if (name.endsWith("build.js")) {
-        watcher.close();
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const filenames: string[] = [];
+      const watcher = fs.watch(root, { recursive: true, signal: AbortSignal.timeout(5000) });
+      watcher.on("change", (_event, filename) => {
+        const name = filename as string;
+        filenames.push(name);
+        if (name.endsWith("build.js")) {
+          watcher.close();
+        }
+      });
+      watcher.on("error", reject);
+      watcher.on("close", () => resolve());
+
+      await Bun.sleep(50);
+
+      const dotdir = path.join(root, ".next");
+      fs.mkdirSync(dotdir);
+
+      // Unlike the sibling non-dotfile test above, no user-visible
+      // "rename: .next" event will ever fire (pre-existing dotfile
+      // suppression), so we can't poll on an intermediate event for the
+      // inotify-watch-registration step. Drive the write-poll loop long
+      // enough (~1s total) that the registration two WorkPool hops later
+      // lands before the last write; each post-registration write produces
+      // an event via the newly-registered watch and breaks the loop.
+      const nested = path.join(dotdir, "build.js");
+      for (let i = 0; i < 50; i++) {
+        fs.writeFileSync(nested, `v${i}\n`);
+        if (filenames.some(n => n.endsWith("build.js"))) break;
+        await Bun.sleep(20);
       }
-    });
-    watcher.on("error", reject);
-    watcher.on("close", () => resolve());
 
-    await Bun.sleep(50);
+      await promise;
 
-    const dotdir = path.join(root, ".next");
-    fs.mkdirSync(dotdir);
-
-    // Unlike the sibling non-dotfile test above, no user-visible
-    // "rename: .next" event will ever fire (pre-existing dotfile
-    // suppression), so we can't poll on an intermediate event for the
-    // inotify-watch-registration step. Drive the write-poll loop long
-    // enough (~1s total) that the registration two WorkPool hops later
-    // lands before the last write; each post-registration write produces
-    // an event via the newly-registered watch and breaks the loop.
-    const nested = path.join(dotdir, "build.js");
-    for (let i = 0; i < 50; i++) {
-      fs.writeFileSync(nested, `v${i}\n`);
-      if (filenames.some(n => n.endsWith("build.js"))) break;
-      await Bun.sleep(20);
-    }
-
-    await promise;
-
-    const nestedEvents = filenames.filter(n => n.endsWith("build.js"));
-    expect(nestedEvents.length).toBeGreaterThan(0);
-    expect(nestedEvents).toContain(path.join(".next", "build.js"));
-  });
+      const nestedEvents = filenames.filter(n => n.endsWith("build.js"));
+      expect(nestedEvents.length).toBeGreaterThan(0);
+      expect(nestedEvents).toContain(path.join(".next", "build.js"));
+    },
+  );
 
   test("should emit event when file is deleted", done => {
     const testsubdir = tempDirWithFiles("subdir", {

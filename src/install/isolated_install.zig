@@ -854,10 +854,25 @@ pub fn installIsolatedPackages(
     //
     // Eligibility propagates: an entry is only global-store-eligible (hash != 0)
     // when the package itself comes from an immutable cache (npm/git/tarball,
-    // unpatched, no lifecycle scripts) *and* every dependency it links to is
-    // also eligible. The second condition matters because dep symlinks live
-    // inside the global entry; baking a project-local path (workspace, folder)
-    // into a shared directory would break for every other consumer.
+    // unpatched, no lifecycle scripts, does not ship TypeScript declarations)
+    // *and* every dependency it links to is also eligible. The dep-closure
+    // condition matters because dep symlinks live inside the global entry;
+    // baking a project-local path (workspace, folder) into a shared directory
+    // would break for every other consumer.
+    //
+    // The "ships TypeScript declarations" carve-out exists because TypeScript
+    // resolves peer type references (e.g. `React.FunctionComponent` inside a
+    // package's `.d.ts` that never declares `@types/react` as a peerDep) by
+    // walking `node_modules` ancestors from the file's *realpath*. A package
+    // in `<cache>/links/<pkg>@<ver>-<hash>/` has no ancestor `node_modules`
+    // under which the project's `@types/*` devDependencies are visible, so
+    // the peer type silently resolves to `any`. Keeping type-shipping
+    // packages project-local puts their realpath back under
+    // `node_modules/.bun/<pkg>@<ver>/`, whose ancestor walk reaches the
+    // hidden hoisted layer at `node_modules/.bun/node_modules/`.
+    var pkg_ships_types_cache: std.AutoHashMapUnmanaged(PackageID, bool) = .empty;
+    defer pkg_ships_types_cache.deinit(manager.allocator);
+
     const WyhashWriter = struct {
         hasher: *std.hash.Wyhash,
         const E = error{};
@@ -974,6 +989,15 @@ pub fn installIsolatedPackages(
                             if (lockfile.hasTrustedDependency(dep_name, &pkg_res) or
                                 trusted_from_update.contains(@truncate(dep_name_hash)))
                             {
+                                break :eligible false;
+                            }
+                            if (packageShipsTypeDeclarations(manager, pkg_id, &pkg_ships_types_cache)) {
+                                // See the block comment on the eligibility DFS: a
+                                // package whose `.d.ts` references peer types it
+                                // never declared (the usual React-component pattern)
+                                // needs its realpath to sit under the project's
+                                // `node_modules/.bun/` so TypeScript's ancestor walk
+                                // can reach the hidden hoisted `@types/*` layer.
                                 break :eligible false;
                             }
                             break :eligible true;
@@ -1927,15 +1951,151 @@ pub fn installIsolatedPackages(
     }
 }
 
+/// Does the package at `pkg_id` declare TypeScript type declarations?
+///
+/// Returns true if its extracted `package.json` at
+/// `<cache>/<folder>/package.json` contains a top-level `"types"` or
+/// `"typings"` string field, or a `"types"` key inside a conditional
+/// `"exports"` entry. Either signal means the package intentionally ships
+/// `.d.ts` files that TypeScript will walk ancestor directories from —
+/// see the eligibility-DFS comment for why that rules the package out of
+/// the global virtual store.
+///
+/// Results are memoized in `cache` so each distinct package is scanned at
+/// most once per install. If the extracted `package.json` is unreadable
+/// (cache evicted, extraction deferred) we conservatively report `false`
+/// and fall back to the pre-carve-out behavior — a package whose types we
+/// couldn't inspect just stays in whichever bucket the rest of the
+/// eligibility check places it.
+fn packageShipsTypeDeclarations(
+    manager: *PackageManager,
+    pkg_id: PackageID,
+    cache: *std.AutoHashMapUnmanaged(PackageID, bool),
+) bool {
+    const gop = cache.getOrPut(manager.allocator, pkg_id) catch bun.outOfMemory();
+    if (gop.found_existing) return gop.value_ptr.*;
+    gop.value_ptr.* = false;
+
+    const pkgs = manager.lockfile.packages.slice();
+    const pkg_names = pkgs.items(.name);
+    const pkg_resolutions = pkgs.items(.resolution);
+    const string_buf = manager.lockfile.buffers.string_bytes.items;
+
+    const pkg_res: Resolution = pkg_resolutions[pkg_id];
+    var folder_buf: bun.PathBuffer = undefined;
+    const folder: [:0]const u8 = switch (pkg_res.tag) {
+        .npm => manager.cachedNPMPackageFolderNamePrint(
+            &folder_buf,
+            pkg_names[pkg_id].slice(string_buf),
+            pkg_res.value.npm.version,
+            null,
+        ),
+        .git => PackageManager.cachedGitFolderNamePrint(&folder_buf, manager.lockfile.str(&pkg_res.value.git.resolved), null),
+        .github => PackageManager.cachedGitHubFolderNamePrint(&folder_buf, manager.lockfile.str(&pkg_res.value.github.resolved), null),
+        .local_tarball => PackageManager.cachedTarballFolderNamePrint(&folder_buf, manager.lockfile.str(&pkg_res.value.local_tarball), null),
+        .remote_tarball => PackageManager.cachedTarballFolderNamePrint(&folder_buf, manager.lockfile.str(&pkg_res.value.remote_tarball), null),
+        else => return false,
+    };
+
+    const cache_dir, const cache_dir_path = manager.getCacheDirectoryAndAbsPath();
+    defer cache_dir_path.deinit();
+
+    var rel: bun.RelPath(.{ .sep = .auto }) = .from(folder);
+    defer rel.deinit();
+    rel.append("package.json");
+
+    const source_bytes = switch (bun.sys.File.readFrom(cache_dir, rel.sliceZ(), manager.allocator)) {
+        .result => |b| b,
+        .err => return false,
+    };
+    defer manager.allocator.free(source_bytes);
+
+    gop.value_ptr.* = scanForTypeDeclarationSignals(source_bytes);
+    return gop.value_ptr.*;
+}
+
+/// Scans `package.json` bytes for a top-level `"types"` / `"typings"`
+/// string field, or a nested `"types"` key inside a conditional `"exports"`
+/// entry. Uses the shared JSON parser (cheaper to maintain than a
+/// hand-rolled scanner; a typical `package.json` is a few KB, well inside
+/// what the registry manifest cache already parses routinely during
+/// install).
+fn scanForTypeDeclarationSignals(source_bytes: []const u8) bool {
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+    const arena_allocator = arena.allocator();
+
+    var log_sink: logger.Log = .init(arena_allocator);
+    defer log_sink.deinit();
+
+    const source = logger.Source.initPathString("package.json", source_bytes);
+
+    // `initializeStore()` is idempotent but cheap — it sets up the thread-
+    // local expression arena the JSON parser writes into. Every call site
+    // that uses `JSON.parsePackageJSONUTF8` is expected to call it; we
+    // mirror that here.
+    install.initializeStore();
+    const json = JSON.parsePackageJSONUTF8(&source, &log_sink, arena_allocator) catch return false;
+
+    if (json.asProperty("types")) |prop| {
+        if (prop.expr.asString(arena_allocator)) |s| {
+            if (s.len > 0) return true;
+        }
+    }
+    if (json.asProperty("typings")) |prop| {
+        if (prop.expr.asString(arena_allocator)) |s| {
+            if (s.len > 0) return true;
+        }
+    }
+    if (json.asProperty("exports")) |prop| {
+        if (exportsHasTypesCondition(prop.expr)) return true;
+    }
+    return false;
+}
+
+/// Conditional-exports entries can be:
+///
+///   "exports": { ".": { "types": "./index.d.ts", "default": "./index.js" } }
+///   "exports": { "import": { "types": "./a.d.ts", "default": "./a.js" } }
+///   "exports": { "types": "./index.d.ts", "default": "./index.js" }
+///
+/// We treat ANY `"types"` key inside the exports tree as a signal. The
+/// recursion depth is bounded by how deeply a `package.json` nests
+/// conditions (1-3 in practice), and we cap it defensively.
+fn exportsHasTypesCondition(expr: bun.js_parser.Expr) bool {
+    return exportsHasTypesConditionInner(expr, 0);
+}
+
+fn exportsHasTypesConditionInner(expr: bun.js_parser.Expr, depth: u8) bool {
+    if (depth > 8) return false;
+    if (expr.data != .e_object) return false;
+    for (expr.data.e_object.properties.slice()) |prop| {
+        const key = prop.key orelse continue;
+        const value = prop.value orelse continue;
+        if (key.data == .e_string and
+            key.data.e_string.eqlComptime("types") and
+            value.data == .e_string)
+        {
+            return true;
+        }
+        if (value.data == .e_object) {
+            if (exportsHasTypesConditionInner(value, depth + 1)) return true;
+        }
+    }
+    return false;
+}
+
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
 const Global = bun.Global;
+const JSON = bun.json;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const Progress = bun.Progress;
+const logger = bun.logger;
 const sys = bun.sys;
 const Command = bun.cli.Command;
 

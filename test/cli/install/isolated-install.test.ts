@@ -1951,4 +1951,148 @@ describe("global virtual store", () => {
     expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
     expect(await file(edited).text()).toBe("module.exports = 'USER_EDITS';\n");
   });
+
+  test("packages that ship TypeScript declarations stay project-local (#29727)", async () => {
+    // A package whose `.d.ts` references peer types it never declared (the
+    // canonical React-component-typings pattern, see `next-yak@9.4.1`) needs
+    // its realpath to sit under the project's `node_modules/.bun/` — not
+    // in `<cache>/links/` — so TypeScript's ancestor walk from the
+    // declaration file can still reach `node_modules/.bun/node_modules/`
+    // and resolve the project's hoisted `@types/*`. When the global store
+    // is enabled, a package that ships types (top-level `"types"` or
+    // `"typings"`, or a `"types"` key under `"exports"`) is materialized
+    // as a real directory under `node_modules/.bun/`; a package without
+    // any of those signals stays on the shared-store fast path as a
+    // symlink into `<cache>/links/`.
+    //
+    // Fixtures are packed with `bun pm pack` and served from an in-process
+    // HTTP registry so the test doesn't depend on the shared Verdaccio.
+    using fixtures = tempDir("ships-types-fixtures-", {
+      "top-types/package.json": JSON.stringify({
+        name: "top-types",
+        version: "1.0.0",
+        types: "./index.d.ts",
+      }),
+      "top-types/index.js": "module.exports = {};\n",
+      "top-types/index.d.ts": "export {};\n",
+
+      "top-typings/package.json": JSON.stringify({
+        name: "top-typings",
+        version: "1.0.0",
+        typings: "./index.d.ts",
+      }),
+      "top-typings/index.js": "module.exports = {};\n",
+      "top-typings/index.d.ts": "export {};\n",
+
+      "exports-types/package.json": JSON.stringify({
+        name: "exports-types",
+        version: "1.0.0",
+        exports: {
+          ".": {
+            types: "./index.d.ts",
+            default: "./index.js",
+          },
+        },
+      }),
+      "exports-types/index.js": "module.exports = {};\n",
+      "exports-types/index.d.ts": "export {};\n",
+
+      "pure-js/package.json": JSON.stringify({
+        name: "pure-js",
+        version: "1.0.0",
+      }),
+      "pure-js/index.js": "module.exports = {};\n",
+    });
+
+    async function pack(subdir: string): Promise<Buffer> {
+      await using proc = spawn({
+        cmd: [bunExe(), "pm", "pack", "--destination", String(fixtures)],
+        cwd: join(String(fixtures), subdir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(`bun pm pack failed: ${stderr}`);
+      return Buffer.from(await Bun.file(join(String(fixtures), `${subdir}-1.0.0.tgz`)).arrayBuffer());
+    }
+
+    const tarballs: Record<string, Buffer> = {
+      "top-types": await pack("top-types"),
+      "top-typings": await pack("top-typings"),
+      "exports-types": await pack("exports-types"),
+      "pure-js": await pack("pure-js"),
+    };
+
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        const tarballMatch = url.pathname.match(/^\/([^/]+)\/-\/([^/]+)\.tgz$/);
+        if (tarballMatch) {
+          const tgz = tarballs[tarballMatch[1]];
+          if (!tgz) return new Response("Not found", { status: 404 });
+          return new Response(tgz, { headers: { "Content-Type": "application/octet-stream" } });
+        }
+        const name = decodeURIComponent(url.pathname.slice(1));
+        const tgz = tarballs[name];
+        if (!tgz) return new Response("Not found", { status: 404 });
+        return new Response(
+          JSON.stringify({
+            name,
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name,
+                version: "1.0.0",
+                dist: {
+                  tarball: `http://localhost:${server.port}/${name}/-/${name}-1.0.0.tgz`,
+                },
+              },
+            },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      },
+    });
+
+    using packageDir = tempDir("ships-types-test-", {});
+    const cacheDir = join(String(packageDir), ".bun-cache");
+    await write(
+      join(String(packageDir), "bunfig.toml"),
+      `[install]\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\nregistry = "http://localhost:${server.port}/"\nlinker = "isolated"\n`,
+    );
+    await write(
+      join(String(packageDir), "package.json"),
+      JSON.stringify({
+        name: "ships-types-consumer",
+        dependencies: {
+          "top-types": "1.0.0",
+          "top-typings": "1.0.0",
+          "exports-types": "1.0.0",
+          "pure-js": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, String(packageDir));
+
+    const bunDir = join(String(packageDir), "node_modules", ".bun");
+
+    // A package without any types signal stays in the global store →
+    // symlink into `<cache>/links/<storepath>-<hash>`.
+    const pureEntry = join(bunDir, "pure-js@1.0.0");
+    expect(lstatSync(pureEntry).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(pureEntry)).toMatch(/links[/\\]pure-js@1\.0\.0-[0-9a-f]{16}$/);
+
+    // Each type-shipping signal (top-level `types`, top-level `typings`,
+    // or a `"types"` condition under `exports`) keeps the package
+    // project-local as a real directory.
+    for (const name of ["top-types", "top-typings", "exports-types"] as const) {
+      const entry = join(bunDir, `${name}@1.0.0`);
+      expect(lstatSync(entry).isSymbolicLink()).toBe(false);
+      expect(lstatSync(entry).isDirectory()).toBe(true);
+      expect(existsSync(join(entry, "node_modules", name, "package.json"))).toBe(true);
+    }
+  });
 });

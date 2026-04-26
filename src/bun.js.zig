@@ -550,11 +550,7 @@ pub const Run = struct {
                 // cycle, or `await` on a promise nothing will ever settle).
                 if (vm.pending_internal_promise) |p| {
                     if (p.status() == .pending and vm.exit_handler.exit_code == 0) {
-                        Output.prettyErrorln(
-                            "<r><yellow>warn<r><d>:<r> Detected unsettled top-level await in <b>{s}<r>",
-                            .{vm.main},
-                        );
-                        Output.flush();
+                        vm.reportUnsettledTopLevelAwait();
                         vm.exit_handler.exit_code = 13;
                     }
                 }

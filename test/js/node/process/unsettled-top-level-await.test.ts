@@ -91,6 +91,37 @@ describe("unsettled top-level await", () => {
     });
   });
 
+  test.concurrent("warning names the stalled module, not the entry", async () => {
+    const r = await run(
+      {
+        "entry.mjs": `import "./mid.mjs";\n`,
+        "mid.mjs": `import "./leaf.mjs";\n`,
+        "leaf.mjs": `await new Promise(() => {});\n`,
+      },
+      "./entry.mjs",
+    );
+    expect(r.stderr).toContain("unsettled top-level await");
+    expect(r.stderr).toContain("leaf.mjs");
+    expect(r.stderr).not.toContain("entry.mjs");
+    expect(r.stderr).not.toContain("mid.mjs");
+    expect(r.exitCode).toBe(13);
+  });
+
+  test.concurrent("warning lists every stalled sibling", async () => {
+    const r = await run(
+      {
+        "entry.mjs": `import "./sib1.mjs"; import "./sib2.mjs";\n`,
+        "sib1.mjs": `await new Promise(() => {});\n`,
+        "sib2.mjs": `await new Promise(() => {});\n`,
+      },
+      "./entry.mjs",
+    );
+    expect(r.stderr).toContain("sib1.mjs");
+    expect(r.stderr).toContain("sib2.mjs");
+    expect(r.stderr).not.toContain("entry.mjs");
+    expect(r.exitCode).toBe(13);
+  });
+
   test.concurrent("explicit process.exitCode is respected over 13", async () => {
     const r = await run(
       {

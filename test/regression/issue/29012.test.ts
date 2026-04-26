@@ -422,22 +422,43 @@ test.if(!isWindows)(
         socket.destroy();
         return;
       }
-      let headersSeen = false;
+      // Strict state machine: "headers" → "body" (consume exactly the
+      // Content-Length from the headers) → "upgraded" (echo raw bytes).
+      // This avoids any dependency on whether the kernel coalesces the
+      // request headers and the body into one `'data'` event — we never
+      // accidentally echo the pre-upgrade body.
+      let phase: "headers" | "body" | "upgraded" = "headers";
       let buffer = Buffer.alloc(0);
+      let bodyRemaining = 0;
       socket.on("data", chunk => {
-        if (!headersSeen) {
-          buffer = Buffer.concat([buffer, chunk]);
-          const headerEnd = buffer.indexOf("\r\n\r\n");
-          if (headerEnd === -1) return;
-          headersSeen = true;
-          socket.write(
-            "HTTP/1.1 101 Switching Protocols\r\n" +
-              "Upgrade: echo\r\n" +
-              "Connection: Upgrade\r\n" +
-              "\r\n",
-          );
-        } else {
-          socket.write(chunk); // echo
+        buffer = Buffer.concat([buffer, chunk]);
+        while (buffer.length > 0) {
+          if (phase === "headers") {
+            const headerEnd = buffer.indexOf("\r\n\r\n");
+            if (headerEnd === -1) return;
+            const headerBlock = buffer.subarray(0, headerEnd).toString("binary");
+            const clMatch = headerBlock.match(/^content-length:\s*(\d+)/im);
+            bodyRemaining = clMatch ? parseInt(clMatch[1], 10) : 0;
+            buffer = buffer.subarray(headerEnd + 4);
+            socket.write(
+              "HTTP/1.1 101 Switching Protocols\r\n" +
+                "Upgrade: echo\r\n" +
+                "Connection: Upgrade\r\n" +
+                "\r\n",
+            );
+            phase = bodyRemaining > 0 ? "body" : "upgraded";
+          } else if (phase === "body") {
+            const take = Math.min(bodyRemaining, buffer.length);
+            buffer = buffer.subarray(take);
+            bodyRemaining -= take;
+            if (bodyRemaining === 0) phase = "upgraded";
+            else return;
+          } else {
+            // upgraded: echo the remaining bytes as-is.
+            socket.write(buffer);
+            buffer = Buffer.alloc(0);
+            return;
+          }
         }
       });
     });
@@ -467,7 +488,11 @@ test.if(!isWindows)(
       const got = new Promise<void>(res2 => {
         socket.on("data", (c: Buffer) => {
           chunks.push(c);
-          if (Buffer.concat(chunks).toString("utf8") === "post") res2();
+          // Use endsWith — even though the server is careful not to echo
+          // the pre-upgrade body, be tolerant in case a future refactor
+          // changes that behavior. The regression being tested is
+          // connectionCount, not the echo transcript.
+          if (Buffer.concat(chunks).toString("utf8").endsWith("post")) res2();
         });
       });
       socket.write("post");

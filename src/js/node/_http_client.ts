@@ -662,7 +662,12 @@ function ClientRequest(input, options, cb) {
         // socket regardless of whether the caller ever calls `req.end()` — the
         // upload half of the connection is deliberately left open for the
         // hijacked protocol.
-        const isUpgrade = response.status === 101;
+        //
+        // Named `is101` rather than `isUpgrade` to avoid shadowing the outer
+        // `const isUpgrade = hasUpgradeHeaders(this)` in `go()` (which asks
+        // whether the *request* carried `Upgrade:` headers — a different
+        // question, and the two can diverge when the server rejects).
+        const is101 = response.status === 101;
 
         // Server rejected the upgrade (e.g. 400 Bad Request, 404, auth
         // failure) — release the upgrade-aware body generator so the
@@ -670,7 +675,7 @@ function ClientRequest(input, options, cb) {
         // parks at `yield await new Promise(...)` forever (upgradeBodyEnded
         // is only set by the hijacked socket, which never gets constructed
         // for a non-101 response).
-        if (!isUpgrade && hasUpgradeHeaders(this)) {
+        if (!is101 && hasUpgradeHeaders(this)) {
           this[kEndUpgradeBody]();
         }
 
@@ -689,7 +694,7 @@ function ClientRequest(input, options, cb) {
           res.req = this;
           res.setTimeout = clientResponseSetTimeout;
 
-          if (isUpgrade) {
+          if (is101) {
             this[kUpgradeOrConnect] = true;
             // The hijacked socket reads via the IncomingMessage `res` (the
             // single owner of the fetch response body reader); this avoids
@@ -758,7 +763,7 @@ function ClientRequest(input, options, cb) {
           );
         };
 
-        if (!keepOpen || isUpgrade) {
+        if (!keepOpen || is101) {
           handleResponse();
         }
 

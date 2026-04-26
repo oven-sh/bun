@@ -88,29 +88,132 @@ devTest("live bindings through export from", {
   },
   test: liveBindingTest.test,
 });
-// devTest("live bindings through export star", {
-//   framework: minimalFramework,
-//   files: {
-//     "state.ts": `
-//       export var value = 0;
-//       export function increment() {
-//         value++;
-//       }
-//     `,
-//     "proxy.ts": `
-//       export * from './state';
-//     `,
-//     "routes/index.ts": `
-//       import { increment } from '../state';
-//       import { live } from '../proxy';
-//       export default function(req, meta) {
-//         increment();
-//         return new Response('State: ' + live);
-//       }
-//     `,
-//   },
-//   test: liveBindingTest.test,
-// });
+devTest("live bindings through export star (issue #29747)", {
+  framework: minimalFramework,
+  files: {
+    "state.ts": `
+      export var value = 0;
+      export function increment() {
+        value++;
+      }
+    `,
+    "proxy.ts": `
+      export * from './state';
+    `,
+    "routes/index.ts": `
+      import { increment, value } from '../proxy';
+      export default function(req, meta) {
+        increment();
+        return new Response('State: ' + value);
+      }
+    `,
+  },
+  test: liveBindingTest.test,
+});
+devTest("live bindings through export star namespace read (issue #29747)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "lib.ts": `
+      export let count = 0;
+      export function increment() { count++; }
+    `,
+    "barrel.ts": `
+      export * from './lib';
+    `,
+    "index.ts": `
+      import * as barrel from './barrel';
+      barrel.increment();
+      if (barrel.count !== 1) {
+        console.log("FAIL: expected 1, got " + barrel.count);
+      } else {
+        console.log("PASS");
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export star with direct export precedence", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "lib.ts": `
+      export const x = "from-lib";
+      export const y = "lib-y";
+    `,
+    "barrel.ts": `
+      export * from './lib';
+      export const x = "from-barrel";
+    `,
+    "index.ts": `
+      import { x, y } from './barrel';
+      if (x !== "from-barrel") { console.log("FAIL x: " + x); }
+      else if (y !== "lib-y") { console.log("FAIL y: " + y); }
+      else console.log("PASS");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export star does not forward 'default'", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "lib.ts": `
+      export default "DEFAULT";
+      export const x = 1;
+    `,
+    "barrel.ts": `
+      export * from './lib';
+    `,
+    "index.ts": `
+      import * as barrel from './barrel';
+      if ("default" in barrel) { console.log("FAIL: 'default' should not be re-exported"); }
+      else if (barrel.x !== 1) { console.log("FAIL x: " + barrel.x); }
+      else console.log("PASS");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("export star chain (barrel -> barrel -> lib) preserves live bindings", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "lib.ts": `
+      export let count = 0;
+      export function increment() { count++; }
+    `,
+    "mid.ts": `
+      export * from './lib';
+    `,
+    "top.ts": `
+      export * from './mid';
+    `,
+    "index.ts": `
+      import * as barrel from './top';
+      barrel.increment();
+      barrel.increment();
+      if (barrel.count === 2) console.log("PASS");
+      else console.log("FAIL: expected 2, got " + barrel.count);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
 devTest("export { x as y }", {
   framework: minimalFramework,
   files: {

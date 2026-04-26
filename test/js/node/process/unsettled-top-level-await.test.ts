@@ -174,6 +174,23 @@ describe("unsettled top-level await", () => {
     expect(r.exitCode).toBe(13);
   });
 
+  test.concurrent("beforeExit can reject the TLA and the error is reported", async () => {
+    const r = await run(
+      {
+        "entry.mjs": `
+          let reject;
+          process.on("beforeExit", () => reject(new Error("Xyz")));
+          await new Promise((_, r) => { reject = r; });
+          console.log("DONE");
+        `,
+      },
+      "./entry.mjs",
+    );
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toContain("Xyz");
+    expect(r.exitCode).toBe(1);
+  });
+
   test.concurrent("beforeExit settles TLA which then schedules more async work", async () => {
     const r = await run(
       {

@@ -1358,9 +1358,15 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   // to verify/fetch that channel from static.rust-lang.org on every cargo
   // invocation — which fails in network-restricted sandboxes even though the
   // toolchain is already installed. Setting this pins the toolchain directly
-  // from the repo config (read once at configure time), so rustup uses the
+  // from the repo config (read once at configure time) so rustup uses the
   // local install without hitting the network.
-  if (cfg.rustToolchain !== undefined) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
+  //
+  // Skip for buildStd targets (Tier 3 cross-compiles, e.g. FreeBSD). Those
+  // need the `rust-src` component which rustup only auto-installs during
+  // its sync; RUSTUP_TOOLCHAIN bypasses sync, so the component check fails
+  // with "library/Cargo.lock does not exist". Cross-compile runs on CI
+  // machines with full network, so the normal sync path there is fine.
+  if (cfg.rustToolchain !== undefined && !spec.buildStd) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
 
   if (spec.rustflags && spec.rustflags.length > 0) {
     // The \x1f encoding is deliberate — see cargo's docs on CARGO_ENCODED_RUSTFLAGS.

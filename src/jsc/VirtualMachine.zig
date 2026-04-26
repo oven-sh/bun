@@ -2477,7 +2477,18 @@ pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) anyerror!*JSInt
         }
 
         this.eventLoop().performGC();
-        this.waitForPromise(.{ .internal = promise });
+        // Can't use `waitForPromise` here: with the spec-aligned module loader
+        // a TLA cycle (or any never-settling top-level await) leaves this
+        // promise pending forever, and `waitForPromise` would busy-spin on
+        // tickWithoutIdle. Tick while there is work that could resolve it; if
+        // the loop drains and the promise is still pending the caller reports
+        // unsettled TLA and exits 13.
+        while (promise.status() == .pending) {
+            this.eventLoop().tick();
+            if (promise.status() != .pending) break;
+            if (!this.isEventLoopAlive()) break;
+            this.eventLoop().autoTick();
+        }
     }
 
     return this.pending_internal_promise.?;

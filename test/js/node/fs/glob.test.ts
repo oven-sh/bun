@@ -342,9 +342,8 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
   });
 
   it("trailing slashes match the named directory", () => {
-    // `a/` is Node-idiomatic for "match directory `a`"; split-on-sep yields
-    // an empty trailing segment that mustn't be fed to the matcher as an
-    // empty pattern.
+    // `a/` is Node-idiomatic for "match directory `a`". `Bun.Glob`
+    // handles the trailing separator natively via `Component.trailing_sep`.
     expect(fs.globSync("a/", { cwd: root })).toStrictEqual(["a"]);
     expect(fs.globSync("a/src/", { cwd: root })).toStrictEqual(["a/src"]);
   });

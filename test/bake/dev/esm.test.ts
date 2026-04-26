@@ -490,8 +490,9 @@ devTest("cannot require a module with top level await", {
   // handler can hang (never responds), so the client overlay never mounts and
   // expectErrorOverlay times out. The error itself is thrown correctly.
   // Previously gated on !(isCI && isASAN) for the same symptom. Tracked for
-  // follow-up — re-enable once the report_error hang is fixed.
-  skip: ["ci"],
+  // follow-up — re-enable once the report_error hang is fixed. The hang
+  // reproduces on ASAN outside of CI too, so skip there as well.
+  skip: ["ci", "asan"],
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],

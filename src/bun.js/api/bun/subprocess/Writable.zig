@@ -239,23 +239,26 @@ pub const Writable = union(enum) {
             .pipe => |pipe| {
                 this.* = .{ .ignore = {} };
                 if (subprocess.process.hasExited() and !subprocess.flags.has_stdin_destructor_called) {
-                    // onAttachedProcessExit() can call deref on the
-                    // subprocess. Since we never called ref(), it would be
-                    // unbalanced to do so, leading to a use-after-free.
-                    // So, let's not do that.
-                    // https://github.com/oven-sh/bun/pull/14092
-                    bun.debugAssert(!subprocess.flags.deref_on_stdin_destroyed);
-                    const debug_ref_count = if (Environment.isDebug) subprocess.ref_count else 0;
+                    // `Writable.init()` already called `subprocess.ref()` and
+                    // set `deref_on_stdin_destroyed`. `onAttachedProcessExit()`
+                    // → `writer.close()` → `pipe.signal` → `Writable.onClose`
+                    // → `onStdinDestroyed()` balances that ref, so a ref-count
+                    // drop across this call is expected (previously these
+                    // writes were clobbered by the struct-literal reassignment
+                    // in spawnMaybeSync and this path asserted no ref change;
+                    // see https://github.com/oven-sh/bun/pull/14092).
                     pipe.onAttachedProcessExit(&subprocess.process.status);
-                    if (Environment.isDebug) {
-                        bun.debugAssert(subprocess.ref_count.get() == debug_ref_count.get());
-                    }
                     return pipe.toJS(globalThis);
                 } else {
                     subprocess.flags.has_stdin_destructor_called = false;
                     subprocess.weak_file_sink_stdin_ptr = pipe;
-                    subprocess.ref();
-                    subprocess.flags.deref_on_stdin_destroyed = true;
+                    if (!subprocess.flags.deref_on_stdin_destroyed) {
+                        // `Writable.init()` already did this for fresh pipes;
+                        // only take a new ref if `onStdinDestroyed()` has since
+                        // consumed it.
+                        subprocess.ref();
+                        subprocess.flags.deref_on_stdin_destroyed = true;
+                    }
                     if (@intFromPtr(pipe.signal.ptr) == @intFromPtr(subprocess)) {
                         pipe.signal.clear();
                     }

@@ -692,16 +692,13 @@ pub fn spawnMaybeSync(
         .globalThis = globalThis,
         .process = process,
         .pid_rusage = null,
-        .stdin = Writable.init(
-            &stdio[0],
-            event_loop,
-            subprocess,
-            spawned.stdin,
-            &promise_for_stream,
-        ) catch {
-            subprocess.deref();
-            return globalThis.throwOutOfMemory();
-        },
+        // Assigned immediately after this literal. `Writable.init()` writes
+        // to `subprocess.weak_file_sink_stdin_ptr`, `subprocess.flags`, and
+        // calls `subprocess.ref()` for `.pipe`/`.readable_stream` stdin; if
+        // called from inside this aggregate initializer those writes are
+        // clobbered by `.ref_count = .initExactRefs(2)`, `.flags = .{...}`,
+        // and the default `weak_file_sink_stdin_ptr = null` below.
+        .stdin = .{ .ignore = {} },
         .stdout = Readable.init(
             stdio[1],
             event_loop,
@@ -738,6 +735,17 @@ pub fn spawnMaybeSync(
         .stderr_maxbuf = subprocess.stderr_maxbuf,
         .stdout_maxbuf = subprocess.stdout_maxbuf,
         .terminal = existing_terminal orelse if (terminal_info) |info| info.terminal else null,
+    };
+
+    subprocess.stdin = Writable.init(
+        &stdio[0],
+        event_loop,
+        subprocess,
+        spawned.stdin,
+        &promise_for_stream,
+    ) catch {
+        subprocess.deref();
+        return globalThis.throwOutOfMemory();
     };
 
     // For inline terminal options: close parent's slave_fd so EOF is received when child exits

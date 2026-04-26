@@ -410,11 +410,20 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
     const exportsBefore = mod.exports;
     mod.imports = depsList.map(getEsmExports);
+    // Reset `stars` before re-running `load`: HMR keeps the same HMRModule
+    // instance across reloads, so every re-entry would otherwise append a
+    // new set of thunks to the stale list from the prior load.
+    mod.stars = null;
     load(mod);
     mod.imports = depsList;
     if (mod.exports === exportsBefore) mod.exports = {};
     mod.cjs = null;
     mod.state = State.Loaded;
+    // Give any importer whose `export * from` saw a null source (circular
+    // mid-load) a chance to re-run its forwarders. `loadModuleAsync` does
+    // this via `finishLoadModuleAsync`; the sync path needs it here or the
+    // dropped re-exports are permanent.
+    patchImporters(mod);
   }
 
   return mod;
@@ -536,6 +545,10 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
   try {
     const exportsBefore = mod.exports;
     mod.imports = modules.map(getEsmExports);
+    // Reset `stars` before re-running `load`: HMR keeps the same HMRModule
+    // instance across reloads, so every re-entry would otherwise append a
+    // new set of thunks to the stale list from the prior load.
+    mod.stars = null;
     const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
     const p = load(mod);
     mod.imports = modules;

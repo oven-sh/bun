@@ -248,6 +248,11 @@ export class HMRModule {
     throw new Error("TODO: implement ImportMetaHot.send");
   }
 
+  /** Thunks registered by `esmStar` so `refreshStars` can re-run them
+   *  after an import is rebound (circular-dep recovery, HMR updates that
+   *  add new keys to the source). */
+  stars: (() => any)[] | null = null;
+
   /** Forwards every non-'default' key of `get()`'s current return value
    *  through a live getter on `this.exports`, so property reads on the
    *  barrel module always resolve through the re-exported module's bindings.
@@ -257,11 +262,30 @@ export class HMRModule {
    *  reassigned by `updateImport` on HMR, reads see the fresh bindings.
    *
    *  Direct exports on `this.exports` take precedence; existing keys are
-   *  left untouched. First-wins between multiple star re-exports mirrors
-   *  ECMAScript ambiguity resolution. */
+   *  left untouched. When two star re-exports expose the same key, the
+   *  first one wins, matching the behavior of `bun build`'s `__reExport`
+   *  in `src/runtime.js`. (The ES spec instead treats such a name as
+   *  ambiguous and omits it, but HMR mirrors the production runtime.)
+   *
+   *  Each call stores `get` on `this.stars` so that `patchImporters` can
+   *  re-run it when the source module finishes loading (circular case) or
+   *  is HMR-updated with new exports. Without this, circular
+   *  `export * from` would silently drop the re-exports that happened to
+   *  run when the source's `exports` was still `null`. */
   esmStar(get: () => any) {
+    (this.stars ??= []).push(get);
+    this.#applyStar(get);
+  }
+
+  #applyStar(get: () => any) {
     const target = this.exports;
     const mod = get();
+    // Tolerate null/undefined here: under circular dependencies, a
+    // re-exported module can still be mid-load when its exports namespace is
+    // first read, at which point `mod.exports` is `null`. The previous
+    // `{ ...lib }` spread no-oped on null; preserve that. `patchImporters`
+    // will call us again once the source finishes loading.
+    if (mod == null) return;
     for (const key of Object.keys(mod)) {
       if (key === "default") continue;
       if (Object.prototype.hasOwnProperty.call(target, key)) continue;
@@ -271,6 +295,20 @@ export class HMRModule {
         configurable: true,
       });
     }
+  }
+
+  /** Called from `patchImporters` after an import is rebound, so stars
+   *  initially skipped due to a null source (circular imports) can finish
+   *  forwarding, and so HMR updates that add new keys to the source are
+   *  reflected on the barrel. Idempotent via `#applyStar`'s
+   *  `hasOwnProperty` guard. (Key removal is not reconciled: a stale
+   *  forwarding getter will just read `undefined` from the new source. A
+   *  full key-set diff could be added here if HMR drift becomes a real
+   *  concern in practice.) */
+  refreshStars() {
+    const { stars } = this;
+    if (!stars) return;
+    for (const get of stars) this.#applyStar(get);
   }
 
   declare indirectHot: any;
@@ -828,6 +866,11 @@ function patchImporters(mod: HMRModule) {
     const index = importer.imports!.indexOf(mod);
     if (index === -1) continue; // require or dynamic import
     importer.updateImport![index](exports);
+    // After the import local is rebound, re-run any `export * from`
+    // forwarders that close over it. Required for circular dependencies,
+    // where the source's `exports` was `null` at the first attempt, and
+    // safe in the steady state (idempotent via hasOwnProperty guard).
+    importer.refreshStars();
   }
 }
 

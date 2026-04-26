@@ -47,7 +47,7 @@ PerformanceObserver::PerformanceObserver(ScriptExecutionContext& scriptExecution
     //     m_performance = &workerGlobalScope.performance();
     // } else
     //     ASSERT_NOT_REACHED();
-    m_performance = jsCast<Zig::GlobalObject*>(scriptExecutionContext.globalObject())->performance();
+    m_performance = uncheckedDowncast<Zig::GlobalObject>(scriptExecutionContext.globalObject())->performance();
 }
 
 void PerformanceObserver::disassociate()

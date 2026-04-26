@@ -29,7 +29,7 @@ Local<Value> Function::GetName() const
         RELEASE_ASSERT_NOT_REACHED("v8::Function::GetName called on invalid type");
     }
 
-    auto* globalObject = jsCast<Zig::GlobalObject*>(localToObjectPointer<JSC::JSNonFinalObject>()->globalObject());
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(localToObjectPointer<JSC::JSNonFinalObject>()->globalObject());
     auto* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
     auto* jsString = JSC::jsString(globalObject->vm(), wtfString);
     return handleScope->createLocal<Value>(globalObject->vm(), jsString);

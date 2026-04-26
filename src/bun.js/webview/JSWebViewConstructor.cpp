@@ -216,7 +216,7 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
 
             JSValue argvVal = beObj->get(globalObject, Identifier::fromString(vm, "argv"_s));
             RETURN_IF_EXCEPTION(scope, {});
-            if (auto* arr = jsDynamicCast<JSArray*>(argvVal)) {
+            if (auto* arr = dynamicDowncast<JSArray>(argvVal)) {
                 unsigned len = arr->length();
                 for (unsigned i = 0; i < len; ++i) {
                     JSValue item = arr->get(globalObject, i);

@@ -79,7 +79,7 @@ public:
 
         JSC::JSObject* object = value.getObject();
         if (object->type() == JSC::JSType::GlobalProxyType)
-            object = jsCast<JSC::JSGlobalProxy*>(object)->target();
+            object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
 
         this->m_cell = JSC::Weak<JSC::JSObject>(object, getWeakRefOwner(kind), ctx);
     }

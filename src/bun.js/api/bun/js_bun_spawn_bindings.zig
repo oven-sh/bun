@@ -678,7 +678,7 @@ pub fn spawnMaybeSync(
     });
 
     const posix_ipc_fd = if (Environment.isPosix and !is_sync and maybe_ipc_mode != null)
-        spawned.extra_pipes.items[@intCast(ipc_channel)]
+        spawned.extra_pipes.items[@intCast(ipc_channel)].fd()
     else
         bun.invalid_fd;
 
@@ -795,7 +795,7 @@ pub fn spawnMaybeSync(
                 subprocess.ipc_data.?.socket = .{ .open = posix_ipc_info };
             }
             // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
-            subprocess.stdio_pipes.items[@intCast(ipc_channel)] = bun.invalid_fd;
+            subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
         } else {
             if (ipc_data.windowsConfigureServer(
                 subprocess.stdio_pipes.items[@intCast(ipc_channel)].buffer,

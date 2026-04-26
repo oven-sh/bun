@@ -665,6 +665,16 @@ pub fn runTasks(
                 if (task.status == .fail) {
                     const err = task.err orelse error.TarballFailedToExtract;
 
+                    // Extract-task failure (integrity check, libarchive error, etc.)
+                    // is symmetric with the HTTP 4xx/5xx branch above: drop the
+                    // dedupe state so a later `enqueuePackageForDownload` for this
+                    // `task_id` schedules a fresh network task instead of waiting
+                    // on this failed one forever. Runs before the callback branch
+                    // so `Store.Installer` (which `continue`s from the callback)
+                    // is covered too. `network_dedupe_map.remove` is a no-op for
+                    // `local_tarball` tasks (they never populate the map).
+                    _ = manager.network_dedupe_map.remove(task.id);
+
                     if (@TypeOf(callbacks.onPackageDownloadError) != void) {
                         const fail_url = switch (task.tag) {
                             .extract => task.request.extract.network.url_buf,
@@ -690,18 +700,28 @@ pub fn runTasks(
                                 fail_url,
                             );
                         }
-                    } else {
-                        manager.log.addErrorFmt(
-                            null,
-                            logger.Loc.Empty,
-                            manager.allocator,
-                            "{s} extracting tarball from <b>{s}<r>",
-                            .{
-                                @errorName(err),
-                                alias,
-                            },
-                        ) catch |e| bun.handleOom(e);
+                        continue;
                     }
+
+                    manager.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        manager.allocator,
+                        "{s} extracting tarball from <b>{s}<r>",
+                        .{
+                            @errorName(err),
+                            alias,
+                        },
+                    ) catch |e| bun.handleOom(e);
+
+                    // Void-callback fallback (resolve phase): drain the
+                    // `task_queue` entry too so a later install-phase
+                    // `enqueuePackageForDownload` doesn't wedge on `found_existing`.
+                    if (manager.task_queue.fetchRemove(task.id)) |removed| {
+                        var list = removed.value;
+                        list.deinit(manager.allocator);
+                    }
+
                     continue;
                 }
 

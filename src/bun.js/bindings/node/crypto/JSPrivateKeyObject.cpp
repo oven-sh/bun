@@ -22,7 +22,7 @@ void JSPrivateKeyObject::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* global
 template<typename Visitor>
 void JSPrivateKeyObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSPrivateKeyObject* thisObject = jsCast<JSPrivateKeyObject*>(cell);
+    JSPrivateKeyObject* thisObject = uncheckedDowncast<JSPrivateKeyObject>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_keyDetails);

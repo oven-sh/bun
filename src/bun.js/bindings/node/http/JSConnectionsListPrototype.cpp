@@ -34,7 +34,7 @@ JSC_DEFINE_HOST_FUNCTION(jsConnectionsList_all, (JSGlobalObject * globalObject, 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSConnectionsList* connections = jsDynamicCast<JSConnectionsList*>(callFrame->thisValue());
+    JSConnectionsList* connections = dynamicDowncast<JSConnectionsList>(callFrame->thisValue());
     if (!connections) {
         return JSValue::encode(jsUndefined());
     }
@@ -50,7 +50,7 @@ JSC_DEFINE_HOST_FUNCTION(jsConnectionsList_idle, (JSGlobalObject * globalObject,
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSConnectionsList* connections = jsDynamicCast<JSConnectionsList*>(callFrame->thisValue());
+    JSConnectionsList* connections = dynamicDowncast<JSConnectionsList>(callFrame->thisValue());
     if (!connections) {
         return JSValue::encode(jsUndefined());
     }
@@ -66,7 +66,7 @@ JSC_DEFINE_HOST_FUNCTION(jsConnectionsList_active, (JSGlobalObject * globalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSConnectionsList* connections = jsDynamicCast<JSConnectionsList*>(callFrame->thisValue());
+    JSConnectionsList* connections = dynamicDowncast<JSConnectionsList>(callFrame->thisValue());
     if (!connections) {
         return JSValue::encode(jsUndefined());
     }
@@ -82,7 +82,7 @@ JSC_DEFINE_HOST_FUNCTION(jsConnectionsList_expired, (JSGlobalObject * globalObje
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSConnectionsList* connections = jsDynamicCast<JSConnectionsList*>(callFrame->thisValue());
+    JSConnectionsList* connections = dynamicDowncast<JSConnectionsList>(callFrame->thisValue());
     if (!connections) {
         return JSValue::encode(jsUndefined());
     }

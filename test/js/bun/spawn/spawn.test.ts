@@ -826,7 +826,9 @@ describe("close handling", () => {
             stdio: ["ignore", "ignore", "ignore", fd],
           }),
         );
-        expect(procs[0].stdio[3]).toBe(null);
+        // The caller-supplied fd should be exposed on stdio[N] (not null) while
+        // still not being closed by the subprocess.
+        expect(procs[0].stdio).toEqual([null, null, null, fd]);
         await Promise.all(procs.map(p => p.exited));
       })();
 
@@ -842,6 +844,23 @@ describe("close handling", () => {
         stdio: ["ignore", "ignore", "inherit", fd],
       });
       expect(await exited).toBe(0);
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  });
+
+  it.skipIf(isWindows)("stdio[N] for non-fd extra slots is null", async () => {
+    const fd = openSync(import.meta.path, "r");
+    try {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", ""],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "ignore", "ignore", fd],
+      });
+      expect(proc.stdio).toEqual([null, null, null, null, fd]);
+      await proc.exited;
     } finally {
       try {
         closeSync(fd);

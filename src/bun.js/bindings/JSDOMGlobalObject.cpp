@@ -6,7 +6,7 @@ namespace WebCore {
 
 Zig::GlobalObject* toJSDOMGlobalObject(ScriptExecutionContext& ctx, DOMWrapperWorld& world)
 {
-    return JSC::jsCast<Zig::GlobalObject*>(ctx.jsGlobalObject());
+    return uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
 }
 
 // static JSDOMGlobalObject& callerGlobalObject(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame* callFrame, bool skipFirstFrame, bool lookUpFromVMEntryScope)
@@ -37,7 +37,7 @@ Zig::GlobalObject* toJSDOMGlobalObject(ScriptExecutionContext& ctx, DOMWrapperWo
 //                     // Figure out what to do here. We can probably get the global object
 //                     // from the top-most Wasm Instance. https://bugs.webkit.org/show_bug.cgi?id=165721
 //                     if (visitor->callee().isCell() && visitor->callee().asCell()->isObject())
-//                         m_globalObject = jsCast<JSObject*>(visitor->callee().asCell())->globalObject();
+//                         m_globalObject = uncheckedDowncast<JSObject>(visitor->callee().asCell())->globalObject();
 //                 }
 //                 return StackVisitor::Done;
 //             }
@@ -53,7 +53,7 @@ Zig::GlobalObject* toJSDOMGlobalObject(ScriptExecutionContext& ctx, DOMWrapperWo
 //         GetCallerGlobalObjectFunctor iter(skipFirstFrame);
 //         callFrame->iterate(vm, iter);
 //         if (iter.globalObject())
-//             return *jsCast<JSDOMGlobalObject*>(iter.globalObject());
+//             return *uncheckedDowncast<JSDOMGlobalObject>(iter.globalObject());
 //     }
 
 //     // In the case of legacyActiveGlobalObjectForAccessor, it is possible that vm.topCallFrame is nullptr when the script is evaluated as JSONP.
@@ -62,12 +62,12 @@ Zig::GlobalObject* toJSDOMGlobalObject(ScriptExecutionContext& ctx, DOMWrapperWo
 //     if (lookUpFromVMEntryScope) {
 //         if (vm.entryScope) {
 //             if (auto* result = vm.entryScope->globalObject())
-//                 return *jsCast<JSDOMGlobalObject*>(result);
+//                 return *uncheckedDowncast<JSDOMGlobalObject>(result);
 //         }
 //     }
 
 //     // If we cannot find JSGlobalObject in caller frames, we just return the current lexicalGlobalObject.
-//     return *jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject);
+//     return *uncheckedDowncast<JSDOMGlobalObject>(&lexicalGlobalObject);
 // }
 
 // JSDOMGlobalObject& callerGlobalObject(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame* callFrame)

@@ -151,7 +151,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncInit, (JSC::JSGlobalObject * globalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Get the JSSign object from thisValue and verify it's valid
-    JSSign* thisObject = jsDynamicCast<JSSign*>(callFrame->thisValue());
+    JSSign* thisObject = dynamicDowncast<JSSign>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Sign"_s, "init"_s);
         return {};
@@ -231,7 +231,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Get the JSSign object from thisValue and verify it's valid
-    JSSign* thisObject = jsDynamicCast<JSSign*>(callFrame->thisValue());
+    JSSign* thisObject = dynamicDowncast<JSSign>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*globalObject, scope, "Sign"_s, "update"_s);
         return {};
@@ -267,7 +267,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         JSValue buf = JSValue::decode(constructFromEncoding(globalObject, dataView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
+        auto* view = dynamicDowncast<JSC::JSArrayBufferView>(buf);
 
         updateWithBufferView(globalObject, thisObject, view);
         RETURN_IF_EXCEPTION(scope, {});
@@ -280,7 +280,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
     }
 
     // Handle ArrayBufferView input
-    if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(data)) {
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(data)) {
 
         updateWithBufferView(globalObject, thisObject, view);
         RETURN_IF_EXCEPTION(scope, {});
@@ -405,7 +405,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Get the JSSign object from thisValue and verify it's valid
-    JSSign* thisObject = jsDynamicCast<JSSign*>(callFrame->thisValue());
+    JSSign* thisObject = dynamicDowncast<JSSign>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         Bun::throwThisTypeError(*lexicalGlobalObject, scope, "Sign"_s, "sign"_s);
         return {};

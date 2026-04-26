@@ -30,7 +30,7 @@ namespace WebCore {
 using namespace JSC;
 
 JSAbortAlgorithm::JSAbortAlgorithm(VM& vm, JSObject* callback)
-    : AbortAlgorithm(jsCast<JSDOMGlobalObject*>(callback->globalObject())->scriptExecutionContext())
+    : AbortAlgorithm(uncheckedDowncast<JSDOMGlobalObject>(callback->globalObject())->scriptExecutionContext())
     , m_data(new JSCallbackData(vm, callback, this))
 {
 }
@@ -61,7 +61,7 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSAbortAlgorithm::hand
     if (!callback)
         return CallbackResultType::UnableToExecute;
 
-    auto& globalObject = *jsCast<JSDOMGlobalObject*>(callback->globalObject());
+    auto& globalObject = *uncheckedDowncast<JSDOMGlobalObject>(callback->globalObject());
     auto& vm = globalObject.vm();
 
     JSLockHolder lock(vm);

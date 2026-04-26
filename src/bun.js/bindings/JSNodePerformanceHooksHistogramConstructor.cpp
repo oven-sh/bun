@@ -44,7 +44,7 @@ static JSNodePerformanceHooksHistogram* createHistogramInternal(JSGlobalObject* 
             lowest = static_cast<int64_t>(dbl);
         }
     } else if (lowestVal.isBigInt()) {
-        auto* bigInt = jsCast<JSBigInt*>(lowestVal);
+        auto* bigInt = uncheckedDowncast<JSBigInt>(lowestVal);
         lowest = JSBigInt::toBigInt64(bigInt);
     }
 
@@ -54,7 +54,7 @@ static JSNodePerformanceHooksHistogram* createHistogramInternal(JSGlobalObject* 
             highest = static_cast<int64_t>(dbl);
         }
     } else if (highestVal.isBigInt()) {
-        auto* bigInt = jsCast<JSBigInt*>(highestVal);
+        auto* bigInt = uncheckedDowncast<JSBigInt>(highestVal);
         highest = JSBigInt::toBigInt64(bigInt);
     }
 

@@ -102,6 +102,10 @@ using namespace JSC;
     macro(flushAlgorithm) \
     macro(format) \
     macro(fulfillModuleSync) \
+    macro(esmNamespaceForCjs) \
+    macro(esmRegistryDelete) \
+    macro(esmRegistryEvaluatedKeys) \
+    macro(esmLoadSync) \
     macro(getInternalWritableStream) \
     macro(handleEvent) \
     macro(headers) \

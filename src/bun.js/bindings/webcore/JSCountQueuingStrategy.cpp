@@ -149,7 +149,7 @@ JSObject* JSCountQueuingStrategy::prototype(VM& vm, JSDOMGlobalObject& globalObj
 
 JSValue JSCountQueuingStrategy::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSCountQueuingStrategyDOMConstructor, DOMConstructorID::CountQueuingStrategy>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSCountQueuingStrategyDOMConstructor, DOMConstructorID::CountQueuingStrategy>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSCountQueuingStrategy::destroy(JSC::JSCell* cell)
@@ -162,7 +162,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCountQueuingStrategyConstructor, (JSGlobalObject * le
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSCountQueuingStrategyPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSCountQueuingStrategyPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSCountQueuingStrategy::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));

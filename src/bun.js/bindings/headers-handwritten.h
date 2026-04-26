@@ -366,7 +366,7 @@ extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier);
 
-extern "C" JSC::JSInternalPromise* Bun__transpileFile(
+extern "C" JSC::JSPromise* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
     BunString* specifier,

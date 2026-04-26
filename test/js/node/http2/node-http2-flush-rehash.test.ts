@@ -19,4 +19,4 @@ test("http2 client write callback that opens new streams during flushQueue does 
 
   // Print stderr on failure so ASAN reports are visible in CI output.
   expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "ok", exitCode: 0 });
-}, 30_000);
+});

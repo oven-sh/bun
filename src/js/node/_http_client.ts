@@ -209,44 +209,13 @@ function createUpgradeSocket(req, res) {
         callback();
         return;
       }
-      // If ClientRequest installed the upgrade-aware body terminator,
-      // close the upload half through it — this is the WebSocket/CDP
-      // (req.end() before 101) and dockerode (req.write() only) pattern.
-      // Otherwise, wait for the request to finish normally.
-      if (typeof req[kEndUpgradeBody] === "function") {
-        req[kEndUpgradeBody]();
-        callback();
-        return;
-      }
-      if (req.finished) {
-        callback();
-        return;
-      }
-      // Non-upgrade fallback (should not normally be reached on the
-      // hijacked-socket path). Wait until the underlying request body has
-      // actually finished before acknowledging `_final`. `'finish'` fires
-      // after `send()` has completed; `'error'`/`'close'` surface abnormal
-      // termination.
-      let done = false;
-      const finish = (err?: Error) => {
-        if (done) return;
-        done = true;
-        req.removeListener("finish", onFinish);
-        req.removeListener("error", onError);
-        req.removeListener("close", onClose);
-        callback(err);
-      };
-      const onFinish = () => finish();
-      const onError = (err: Error) => finish(err);
-      const onClose = () => finish();
-      req.once("finish", onFinish);
-      req.once("error", onError);
-      req.once("close", onClose);
-      try {
-        req.end();
-      } catch (err) {
-        finish(err as Error);
-      }
+      // The ClientRequest unconditionally installs the upgrade-aware body
+      // terminator, so `kEndUpgradeBody` is always present — close the
+      // upload half through it. This covers both the WebSocket/CDP pattern
+      // (req.end() before 101, req.finished already true) and the
+      // dockerode pattern (only req.write(), never req.end()).
+      req[kEndUpgradeBody]();
+      callback();
     },
     destroy(err, callback) {
       socketDestroyed = true;
@@ -445,9 +414,11 @@ function ClientRequest(input, options, cb) {
     if (!this.finished) {
       send();
       // For upgrade requests the upload half must stay open for post-101
-      // writes (WebSocket/CDP/dockerode all call `req.end()` before the
-      // 101 arrives). The generator keeps running until the hijacked
-      // socket's `_final`/`_destroy` signals via `kEndUpgradeBody`.
+      // writes. WebSocket/CDP clients call `req.end()` before the 101
+      // arrives (and reach this guard); dockerode's hijacked exec never
+      // calls `req.end()` at all (flushHeaders + write only). The
+      // generator keeps running until the hijacked socket's
+      // `_final`/`_destroy` signals via `kEndUpgradeBody`.
       if (!hasUpgradeHeaders(this)) {
         resolveNextChunk?.(true);
       }
@@ -593,18 +564,23 @@ function ClientRequest(input, options, cb) {
       // This covers the dockerode pattern (POST + req.write()) and the
       // WebSocket/CDP pattern (GET + req.end() before the 101).
       const isUpgrade = hasUpgradeHeaders(this);
+
+      // For upgrade requests always funnel the body through the generator
+      // so the write side stays live; any pre-assembled body is already in
+      // kBodyChunks (send() reads from there without clearing it). Clear
+      // it BEFORE computing isDuplex so `keepOpen` goes true — otherwise
+      // the `.finally()` below resets `fetching`, and the first
+      // post-upgrade `socket.write()` would fire a second nodeHttpClient
+      // request to the same URL.
+      if (isUpgrade && customBody !== undefined) {
+        customBody = undefined;
+      }
+
       const isDuplex = customBody === undefined && (!this.finished || isUpgrade);
 
       if (isDuplex) {
         fetchOptions.duplex = "half";
         keepOpen = true;
-      }
-
-      // For upgrade requests always funnel the body through the generator
-      // so the write side stays live; any pre-assembled body is already in
-      // kBodyChunks (send() reads from there without clearing it).
-      if (isUpgrade && customBody !== undefined) {
-        customBody = undefined;
       }
 
       // Allow body for all methods when explicitly provided via req.write()/req.end()
@@ -687,6 +663,16 @@ function ClientRequest(input, options, cb) {
         // upload half of the connection is deliberately left open for the
         // hijacked protocol.
         const isUpgrade = response.status === 101;
+
+        // Server rejected the upgrade (e.g. 400 Bad Request, 404, auth
+        // failure) — release the upgrade-aware body generator so the
+        // ResumableSink/FetchTasklet can finalize. Otherwise the generator
+        // parks at `yield await new Promise(...)` forever (upgradeBodyEnded
+        // is only set by the hijacked socket, which never gets constructed
+        // for a non-101 response).
+        if (!isUpgrade && hasUpgradeHeaders(this)) {
+          this[kEndUpgradeBody]();
+        }
 
         handleResponse = () => {
           this[kFetchRequest] = null;

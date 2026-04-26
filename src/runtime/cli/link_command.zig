@@ -79,10 +79,10 @@ fn link(ctx: Command.Context) !void {
             node_modules.deleteTree(name) catch {};
 
             // create scope if specified. Use bun.makePath so the mkdir
-            // honors the process umask the same way the surrounding dirs
-            // this PR fixed do (0o777 & ~umask vs std's hardcoded 0o755).
-            // bun.makePath handles PathAlreadyExists internally, so no
-            // special case is needed here.
+            // honors the process umask (final mode = 0o777 & ~umask) like
+            // every other install-created directory, instead of
+            // std.fs.Dir.makeDir's hardcoded 0o755. bun.makePath also
+            // handles PathAlreadyExists internally, so no catch is needed.
             if (name[0] == '@') {
                 if (strings.indexOfChar(name, '/')) |i| {
                     bun.makePath(node_modules, name[0..i]) catch |err| {

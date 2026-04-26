@@ -192,10 +192,16 @@ describe.if(isPosix)("TestReporter inspector protocol", () => {
     //    on the JS thread), write a gate file that releases A1. This guarantees A1's
     //    `end` event fires with the agent enabled rather than racing with the
     //    cross-thread dispatch of TestReporter.enable.
+    // 6. An afterAll hook polls for a second gate file that we only write after all
+    //    three `end` events have been received. Inspector events are written to the
+    //    socket from the detached debugger thread, and the test runner calls exit()
+    //    immediately after the last test without draining that queue, so without the
+    //    hold the final end(s) can be lost. The afterAll keeps the process alive
+    //    (and the JS thread yielding) until delivery is confirmed.
 
     using dir = tempDir("test-reporter-delayed-enable", {
       "delayed.test.ts": `
-import { describe, test, expect } from "bun:test";
+import { afterAll, describe, test, expect } from "bun:test";
 import { existsSync } from "node:fs";
 
 describe("suite A", () => {
@@ -214,11 +220,16 @@ describe("suite B", () => {
     expect(3).toBe(3);
   });
 });
+
+afterAll(async () => {
+  while (!existsSync("done-gate")) await Bun.sleep(10);
+});
 `,
     });
 
     const socketPath = join(String(dir), `inspector-${Math.random().toString(36).substring(2)}.sock`);
     const gatePath = join(String(dir), "a1-gate");
+    const doneGatePath = join(String(dir), "done-gate");
 
     const session = new TestReporterSession();
     const framer = new SocketFramer((message: string) => {
@@ -292,6 +303,9 @@ describe("suite B", () => {
 
     const endedTests = await session.waitForEndedTests(3, 15000);
     expect(endedTests.size).toBe(3);
+
+    // All `end` events received; release the afterAll hold so the subprocess can exit.
+    await write(doneGatePath, "go");
 
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);

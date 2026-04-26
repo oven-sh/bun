@@ -165,10 +165,7 @@ namespace uWS {
             // rule is the same for both initial sizes, so TCP segment
             // boundaries that split the terminator are handled naturally.
             if (((state & STATE_IS_CHUNKED) == 0) && hasChunkSize(state) && chunkSize(state)) {
-
-                //printf("Parsing trailer now\n");
-
-                while(data.length() && chunkSize(state)) {
+                while (data.length() && chunkSize(state)) {
                     char expected = (chunkSize(state) & 1) ? '\n' : '\r';
                     if (data[0] != expected) {
                         state = STATE_IS_ERROR;
@@ -178,11 +175,8 @@ namespace uWS {
                     decChunkSize(state, 1);
 
                     if (chunkSize(state) == 0) {
-
-                        /* This is an actual place where we need 0 as state */
+                        /* Terminator fully consumed — parsing is complete. */
                         state = 0;
-
-                        /* The parser MUST stop consuming here */
                         return std::nullopt;
                     }
                 }

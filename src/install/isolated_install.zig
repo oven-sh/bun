@@ -2057,12 +2057,15 @@ fn scanForTypeDeclarationSignals(source_bytes: []const u8) bool {
     // mirror that here.
     install.initializeStore();
     const json = JSON.parsePackageJSONUTF8(&source, &log_sink, arena_allocator) catch |err| switch (err) {
-        // Route OOM through the crash handler rather than silently
-        // misclassifying a type-shipping package as eligible for the
-        // global store. Any other parse error (malformed / corrupt
-        // package.json) gets the conservative `false` fallback.
+        // OOM aborts the process rather than being swallowed into a
+        // mis-classification. Any other parse error (truncated, garbled,
+        // or just not JSON) is treated conservatively as "unknown" and
+        // the package is kept project-local — same fallback as when the
+        // file itself isn't readable. `return false` here would quietly
+        // route a type-shipping package with a corrupted cache into the
+        // global store, resurrecting #29727 for that subset.
         error.OutOfMemory => bun.outOfMemory(),
-        else => return false,
+        else => return true,
     };
 
     if (json.asProperty("types")) |prop| {

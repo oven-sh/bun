@@ -2163,16 +2163,17 @@ describe("global virtual store", () => {
     }
 
     // CI scenario: fresh runner with a committed lockfile but no
-    // pre-warmed package cache. `--frozen-lockfile` skips the diff-time
-    // resolution phase, so the eligibility DFS inside
-    // `installIsolatedPackages` runs before extraction has populated
-    // `<cache>/<pkg>@<ver>@@@1/package.json`. A naive scan of the
-    // extracted package.json sees ENOENT and would fall through to
-    // `eligible` — resurrecting #29727 for every type-shipping package
-    // whose tarball wasn't already in this project's cache. The
-    // conservative fallback treats unreadable packages as ineligible,
-    // so types-shipping packages stay project-local even on a cold
-    // cache.
+    // pre-warmed package cache. On the no-diff / frozen-lockfile path,
+    // `installWithManager` never enqueues any download or extract
+    // tasks before handing off to `installIsolatedPackages`
+    // (`pendingTaskCount() == 0` → the wait block is skipped), so the
+    // eligibility DFS runs against an empty cache. A naive
+    // `readFrom(<cache>/<pkg>/package.json)` hits ENOENT and, without
+    // the conservative fallback, would return "no types" → eligible →
+    // the type-shipping package lands in `<cache>/links/` anyway,
+    // resurrecting #29727. The fallback treats unreadable packages
+    // as ineligible, keeping type-shipping packages project-local
+    // even on the cold-cache CI path.
     await rm(join(String(packageDir), "node_modules"), { recursive: true, force: true });
     await rm(cacheDir, { recursive: true, force: true });
     await runBunInstall(bunEnv, String(packageDir), { savesLockfile: false, frozenLockfile: true });
@@ -2182,5 +2183,22 @@ describe("global virtual store", () => {
       expect(lstatSync(entry).isDirectory()).toBe(true);
       expect(existsSync(join(entry, "node_modules", name, "package.json"))).toBe(true);
     }
+
+    // Warm-cache re-install (lockfile unchanged, per-package cache
+    // populated by the previous install). The DFS can now read every
+    // `package.json` and reaches the real decision: type-shippers stay
+    // project-local, and `pure-js` — which has no types signal of any
+    // kind — flips back to a symlink into `<cache>/links/`. This
+    // guards against a regression where the conservative fallback ends
+    // up sticky and forces every package project-local forever.
+    await rm(join(String(packageDir), "node_modules"), { recursive: true, force: true });
+    await runBunInstall(bunEnv, String(packageDir), { savesLockfile: false, frozenLockfile: true });
+    for (const name of typeShippingNames) {
+      const entry = join(bunDir, `${name}@1.0.0`);
+      expect(lstatSync(entry).isSymbolicLink()).toBe(false);
+      expect(lstatSync(entry).isDirectory()).toBe(true);
+    }
+    expect(lstatSync(join(bunDir, "pure-js@1.0.0")).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(bunDir, "pure-js@1.0.0"))).toMatch(/links[/\\]pure-js@1\.0\.0-[0-9a-f]{16}$/);
   });
 });

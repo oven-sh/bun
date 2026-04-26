@@ -23,7 +23,7 @@
 #if defined(__APPLE__)
 #include <os/lock.h>
 typedef os_unfair_lock zig_mutex_t;
-#elif defined(__linux__)
+#elif defined(__linux__) || defined(__FreeBSD__)
 typedef uint32_t zig_mutex_t;
 #elif defined(_WIN32)
 // SRWLOCK

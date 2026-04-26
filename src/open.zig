@@ -12,11 +12,13 @@ fn fallback(url: string) void {
 pub fn openURL(url: stringZ) void {
     if (comptime Environment.isWasi) return fallback(url);
 
-    var args_buf = [_]stringZ{ opener, url };
+    var am_args = [_]stringZ{ "/system/bin/am", "start", "-a", "android.intent.action.VIEW", "-d", url };
+    var two_args = [_]stringZ{ opener, url };
+    const args_buf: []const stringZ = if (comptime Environment.isAndroid) &am_args else &two_args;
 
     maybe_fallback: {
         switch (bun.spawnSync(&.{
-            .argv = &args_buf,
+            .argv = args_buf,
 
             .envp = null,
 

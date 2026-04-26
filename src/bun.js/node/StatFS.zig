@@ -47,7 +47,7 @@ pub fn StatFSType(comptime big: bool) type {
 
         pub fn init(statfs_: *const bun.StatFS) This {
             const fstype_, const bsize_, const blocks_, const bfree_, const bavail_, const files_, const ffree_ = switch (comptime Environment.os) {
-                .linux, .mac => .{
+                .linux, .mac, .freebsd => .{
                     statfs_.f_type,
                     statfs_.f_bsize,
                     statfs_.f_blocks,

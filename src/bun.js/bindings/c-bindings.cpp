@@ -205,7 +205,7 @@ extern "C" void windows_enable_stdio_inheritance()
 
 #endif
 
-#if OS(LINUX)
+#if OS(LINUX) || OS(FREEBSD)
 
 #include <sys/syscall.h>
 
@@ -213,6 +213,7 @@ extern "C" void windows_enable_stdio_inheritance()
 #define CLOSE_RANGE_CLOEXEC (1U << 2)
 #endif
 
+#if OS(LINUX)
 #ifndef __NR_close_range
 // True for architectures we support:
 // - arch/arm64/include/asm/unistd32.h
@@ -227,6 +228,15 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 {
     return syscall(__NR_close_range, start, end, flags);
 }
+#else // OS(FREEBSD)
+// FreeBSD 12.2+ libc has close_range; 14.0+ supports CLOSE_RANGE_CLOEXEC
+// (same value 1<<2 as Linux). Passing flags through means execveZ-failure
+// recovery keeps fds open (CLOEXEC) instead of closing them outright.
+extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
+{
+    return close_range(start, end, flags);
+}
+#endif
 
 static void unset_cloexec(int fd)
 {
@@ -501,7 +511,7 @@ extern "C" void bun_initialize_process()
     bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
 #endif
 
-#if OS(LINUX) || OS(DARWIN)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 
     int devNullFd_ = -1;
     bool anyTTYs = false;
@@ -625,7 +635,7 @@ extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
 static bool can_open_as_nonblocking_tty(int32_t fd)
 {
     int result;
-#if OS(LINUX) || OS(FreeBSD)
+#if OS(LINUX) || OS(FREEBSD)
     int dummy = 0;
 
     result = ioctl(fd, TIOCGPTN, &dummy) != 0;
@@ -808,7 +818,7 @@ extern "C" int ffi_fileno(FILE* file)
 
 // Handle signals in bun.spawnSync.
 // If we receive a signal, we want to forward the signal to the child process.
-#if OS(LINUX) || OS(DARWIN)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 #include <signal.h>
 #include <pthread.h>
 
@@ -843,7 +853,7 @@ static struct sigaction previous_actions[NSIG];
 
 #endif
 
-#if OS(DARWIN)
+#if OS(DARWIN) || OS(FREEBSD)
 #define FOR_EACH_SIGNAL(M) FOR_EACH_POSIX_SIGNAL(M)
 #endif
 
@@ -917,7 +927,7 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 
 #endif
 
-#if OS(LINUX) || OS(DARWIN)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 #include <paths.h>
 
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = _PATH_DEFPATH;
@@ -953,7 +963,7 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 
 #endif // OS(DARWIN) signpost code
 
-#if OS(DARWIN) || defined(__linux__)
+#if OS(DARWIN) || defined(__linux__) || defined(__FreeBSD__)
 
 #define BLOB_HEADER_ALIGNMENT 16 * 1024
 
@@ -973,7 +983,7 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
     return &BUN_COMPILED.size;
 }
 
-#else // __linux__
+#else // __linux__ / __FreeBSD__ — both ELF, same .bun section approach
 
 extern "C" BlobHeader __attribute__((section(".bun"), aligned(BLOB_HEADER_ALIGNMENT), used)) BUN_COMPILED = { 0 };
 

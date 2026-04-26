@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#if OS(LINUX) || OS(DARWIN)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 
 // These functions are called by the stubs to crash with a nice error message
 // when accessing a libuv functin which we do not support on posix

@@ -127,6 +127,52 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                 }
             }
         },
+        .freebsd => struct {
+            dir: FD,
+            buf: [8192]u8 align(@alignOf(posix.system.dirent)),
+            index: usize,
+            end_index: usize,
+
+            const Self = @This();
+            pub const Error = IteratorError;
+
+            pub fn next(self: *Self) Result {
+                start_over: while (true) {
+                    if (self.index >= self.end_index) {
+                        const rc = posix.system.getdents(self.dir.cast(), &self.buf, self.buf.len);
+                        if (Result.errnoSys(rc, .getdents64)) |err| {
+                            // FreeBSD reports ENOENT when iterating an unlinked
+                            // but still-open directory.
+                            if (err.getErrno() == .NOENT) return .{ .result = null };
+                            return err;
+                        }
+                        if (rc == 0) return .{ .result = null };
+                        self.index = 0;
+                        self.end_index = @as(usize, @intCast(rc));
+                    }
+                    const entry = @as(*align(1) posix.system.dirent, @ptrCast(&self.buf[self.index]));
+                    self.index += if (@hasDecl(posix.system.dirent, "reclen")) entry.reclen() else entry.reclen;
+
+                    const name = @as([*]u8, @ptrCast(&entry.name))[0..entry.namlen];
+                    if (strings.eqlComptime(name, ".") or strings.eqlComptime(name, "..") or entry.fileno == 0) {
+                        continue :start_over;
+                    }
+
+                    const entry_kind: Entry.Kind = switch (entry.type) {
+                        posix.DT.BLK => .block_device,
+                        posix.DT.CHR => .character_device,
+                        posix.DT.DIR => .directory,
+                        posix.DT.FIFO => .named_pipe,
+                        posix.DT.LNK => .sym_link,
+                        posix.DT.REG => .file,
+                        posix.DT.SOCK => .unix_domain_socket,
+                        posix.DT.WHT => .whiteout,
+                        else => .unknown,
+                    };
+                    return .{ .result = IteratorResult{ .name = PathString.init(name), .kind = entry_kind } };
+                }
+            }
+        },
         .linux => struct {
             dir: FD,
             // The if guard is solely there to prevent compile errors from missing `linux.dirent64`
@@ -463,7 +509,7 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                         .end_index = 0,
                         .buf = undefined,
                     },
-                    .linux => IteratorType{
+                    .linux, .freebsd => IteratorType{
                         .dir = dir,
                         .index = 0,
                         .end_index = 0,

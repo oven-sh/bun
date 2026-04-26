@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 30
+# Version: 33
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1091,6 +1091,8 @@ install_build_essentials() {
 	install_osxcross
 	install_gcc
 	install_rust
+	install_android_ndk
+	install_freebsd_sysroot
 	install_ccache
 	install_docker
 }
@@ -1249,6 +1251,99 @@ install_rust() {
 		execute_as_user "$rustup" target add x86_64-apple-darwin
 		;;
 	esac
+
+	case "$os" in
+	linux)
+		rustup="$rust_home/bin/rustup"
+		if ! [ -x "$rustup" ]; then
+			error "rustup not found at $rustup after install"
+		fi
+		execute_as_user "$rustup" target add aarch64-linux-android
+		execute_as_user "$rustup" target add x86_64-linux-android
+		# x86_64-unknown-freebsd is Tier 2 (prebuilt std). aarch64 is Tier 3
+		# (no prebuilt) — lolhtml.ts uses -Zbuild-std for that.
+		execute_as_user "$rustup" target add x86_64-unknown-freebsd
+		# rust-src for -Zbuild-std (Tier 3 targets without prebuilt std).
+		execute_as_user "$rustup" component add rust-src
+		;;
+	esac
+}
+
+android_ndk_version() {
+	print "r27c"
+}
+
+install_android_ndk() {
+	case "$os" in
+	linux) ;;
+	*) return ;;
+	esac
+
+	ndk_version="$(android_ndk_version)"
+	ndk_home="/opt/android-ndk"
+	if ! [ -d "$ndk_home" ]; then
+		ndk_zip=$(download_file "https://dl.google.com/android/repository/android-ndk-${ndk_version}-linux.zip")
+		unzip="$(require unzip)"
+		execute_sudo "$unzip" -q "$ndk_zip" -d /opt
+		execute_sudo mv "/opt/android-ndk-${ndk_version}" "$ndk_home"
+		# Trim ~1.1GB unused (NDK clang/lld, lldb, non-android runtimes).
+		ndk_prebuilt="$ndk_home/toolchains/llvm/prebuilt/linux-x86_64"
+		execute_sudo rm -rf "$ndk_prebuilt/bin" "$ndk_prebuilt/python3" "$ndk_prebuilt/lib/liblldb.so" \
+			"$ndk_home/simpleperf" "$ndk_home/shader-tools" "$ndk_home/sources"
+		append_to_profile "export ANDROID_NDK_ROOT=$ndk_home"
+	fi
+
+	# Symlink NDK compiler-rt builtins + libunwind into host clang's resource
+	# dir. clang's driver hardcodes <resource-dir>/lib/<triple>/libclang_rt.*
+	# with no -L fallback, so the file must exist there for any android link.
+	# Done here (as root) so the build user doesn't need write access to /usr.
+	clang="$(which clang-$(llvm_version) || which clang)"
+	if [ -x "$clang" ]; then
+		res_dir="$("$clang" -print-resource-dir)"
+		ndk_clang_ver="$(ls "$ndk_home/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/" | head -1)"
+		ndk_rt="$ndk_home/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/$ndk_clang_ver/lib/linux"
+		execute_sudo mkdir -p "$res_dir/lib/linux"
+		for ndk_arch in aarch64 x86_64; do
+			# Old-style flat layout (apt.llvm.org clang) AND new-style per-triple.
+			execute_sudo ln -sf "$ndk_rt/libclang_rt.builtins-${ndk_arch}-android.a" "$res_dir/lib/linux/"
+			execute_sudo mkdir -p "$res_dir/lib/linux/${ndk_arch}"
+			execute_sudo ln -sf "$ndk_rt/${ndk_arch}/libunwind.a" "$res_dir/lib/linux/${ndk_arch}/"
+			triple_dir="$res_dir/lib/${ndk_arch}-unknown-linux-android28"
+			execute_sudo mkdir -p "$triple_dir"
+			execute_sudo ln -sf "$ndk_rt/libclang_rt.builtins-${ndk_arch}-android.a" "$triple_dir/libclang_rt.builtins.a"
+			execute_sudo ln -sf "$ndk_rt/${ndk_arch}/libunwind.a" "$triple_dir/libunwind.a"
+		done
+	fi
+}
+
+freebsd_version() {
+	print "14.3"
+}
+
+install_freebsd_sysroot() {
+	case "$os" in
+	linux) ;;
+	*) return ;;
+	esac
+
+	freebsd_ver="$(freebsd_version)"
+	for fbsd_arch in amd64 arm64; do
+		case "$fbsd_arch" in
+		amd64) sysroot="/opt/freebsd-sysroot" ;;
+		arm64) sysroot="/opt/freebsd-sysroot-arm64" ;;
+		esac
+		# Same sentinel detectFreebsdSysroot() uses, plus a /lib file so a
+		# half-extracted (interrupted) sysroot isn't treated as complete.
+		if [ -f "$sysroot/usr/include/sys/param.h" ] && [ -f "$sysroot/lib/libc.so.7" ]; then
+			continue
+		fi
+		execute_sudo rm -rf "$sysroot"
+		execute_sudo mkdir -p "$sysroot"
+		base_txz=$(download_file "https://download.freebsd.org/releases/${fbsd_arch}/${freebsd_ver}-RELEASE/base.txz")
+		execute_sudo tar -C "$sysroot" -xJf "$base_txz" ./usr/include ./usr/lib ./lib
+	done
+	# No FREEBSD_SYSROOT export — detectFreebsdSysroot() picks the
+	# arch-appropriate /opt/freebsd-sysroot{,-arm64} by well-known path.
 }
 
 install_docker() {

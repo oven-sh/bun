@@ -22,6 +22,7 @@
 #include <string.h>
 #ifndef _WIN32
 #include <arpa/inet.h>
+#include <netinet/in.h>
 #endif
 #define CONCURRENT_CONNECTIONS 4
 

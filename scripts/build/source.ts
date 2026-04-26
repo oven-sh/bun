@@ -20,7 +20,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ar, cc, cxx, nasm } from "./compile.ts";
 import type { BuildType, Config } from "./config.ts";
 import { assert } from "./error.ts";
@@ -362,6 +362,13 @@ export interface CargoBuild {
    * unit-separator (\x1f) encoding so multi-word flags work.
    */
   rustflags?: string[];
+  /**
+   * Tier 3 targets (e.g. aarch64-unknown-freebsd) have no prebuilt std, so
+   * `rustup target add` (dep_cargo_cross rule) won't help. When true, passes
+   * `-Zbuild-std=std,panic_abort` so cargo builds std from source. Requires
+   * nightly cargo + `rustup component add rust-src`.
+   */
+  buildStd?: boolean;
 }
 
 /**
@@ -578,6 +585,20 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     n.rule("dep_cargo", {
       command: `${stream} --cwd=$manifestdir $env ${q(cfg.cargo)} build $args`,
       description: "cargo $name",
+      restat: true,
+      pool: "dep",
+    });
+    // Cross-compile variant: ensure the rust std for the target triple is
+    // installed before building. CI images install rustup as a different
+    // user/HOME than the build runs under, so the target may be missing
+    // even though `rustup target add` ran at image-build time. Idempotent;
+    // chained at the ninja-shell level (no nested quoting).
+    const rustup = q(join(dirname(cfg.cargo), `rustup${cfg.host.exeSuffix}`));
+    n.rule("dep_cargo_cross", {
+      command:
+        `${stream} $env ${rustup} target add $rust_target && ` +
+        `${stream} --cwd=$manifestdir $env ${q(cfg.cargo)} build $args`,
+      description: "cargo $name ($rust_target)",
       restat: true,
       pool: "dep",
     });
@@ -1322,6 +1343,7 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   const args: string[] = ["--locked", "--target-dir", targetDir];
   if (cfg.release) args.push("--release");
   if (spec.rustTarget) args.push("--target", spec.rustTarget);
+  if (spec.buildStd) args.push("-Zbuild-std=std,panic_abort");
 
   // ─── Environment ───
   // CARGO_ENCODED_RUSTFLAGS: the separator is U+001F (unit separator), not
@@ -1348,10 +1370,31 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
     env[envKey] = cfg.msvcLinker;
   }
 
+  // Cross-compile (Android): cargo's default `cc` linker can't handle the
+  // foreign ELF objects. Use our clang as the linker driver and pass
+  // --target/--sysroot through, same as the C/C++ deps do via globalFlags.
+  // The cdylib output also wants -lunwind, which lives in the NDK's
+  // bundled clang resource dir (not the sysroot), so we add that -L too.
+  if (cfg.crossTarget !== undefined && spec.rustTarget !== undefined) {
+    const envKey = `CARGO_TARGET_${spec.rustTarget.toUpperCase().replace(/-/g, "_")}_LINKER`;
+    env[envKey] = cfg.cc;
+    const linkArgs = [`-Clink-arg=--target=${cfg.crossTarget}`];
+    if (cfg.sysroot !== undefined) linkArgs.push(`-Clink-arg=--sysroot=${cfg.sysroot}`);
+    if (cfg.androidNdkRuntimeDir !== undefined) {
+      const llvmArch = cfg.arm64 ? "aarch64" : "x86_64";
+      linkArgs.push(`-Clink-arg=-L${join(cfg.androidNdkRuntimeDir, llvmArch)}`);
+    }
+    env.CARGO_ENCODED_RUSTFLAGS = [...(spec.rustflags ?? []), ...linkArgs].join("\x1f");
+  }
+
   // ─── Emit build node ───
+  // dep_cargo_cross prepends `rustup target add` for Tier 2 cross targets.
+  // Tier 3 targets (buildStd=true) have no prebuilt std, so target-add would
+  // fail — they use plain dep_cargo with -Zbuild-std instead.
+  const cross = cfg.crossTarget !== undefined && spec.rustTarget !== undefined && !spec.buildStd;
   n.build({
     outputs: [lib],
-    rule: "dep_cargo",
+    rule: cross ? "dep_cargo_cross" : "dep_cargo",
     inputs: [],
     // Rebuild if source changed or cargo binary changed. Cargo's own
     // dependency tracking handles file-level granularity below manifestDir.
@@ -1360,6 +1403,7 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
       name,
       manifestdir: manifestDir,
       args: quoteArgs(args, hostWin),
+      ...(cross ? { rust_target: spec.rustTarget! } : {}),
       // stream.ts's --env=K=V format. Values platform-quoted since ninja
       // passes the command line through the host's argv parser; stream.ts
       // receives them as proper argv entries.

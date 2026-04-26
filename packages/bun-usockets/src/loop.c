@@ -35,8 +35,6 @@
 
 #if ASSERT_ENABLED
 extern const size_t Bun__lock__size;
-extern void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
-#define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 #endif
 
 extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop);

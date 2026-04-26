@@ -952,7 +952,7 @@ pub const Platform = enum {
 
     pub const auto: Platform = switch (bun.Environment.os) {
         .windows => .windows,
-        .linux, .mac => .posix,
+        .linux, .mac, .freebsd => .posix,
         .wasm => .loose,
     };
 

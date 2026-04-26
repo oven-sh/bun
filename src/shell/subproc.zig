@@ -698,7 +698,16 @@ pub const ShellSubprocess = struct {
                     .inherit,
                 },
                 .lazy = false,
-                .PATH = event_loop.env().get("PATH") orelse "",
+                // PATH unset → fall back to _PATH_DEFPATH on POSIX (Android often
+                // has no PATH). PATH="" (explicit empty) is preserved — that's a
+                // deliberate "search nothing" and substituting a default would
+                // change argv[0] resolution on existing platforms.
+                .PATH = if (event_loop.env().get("PATH")) |p|
+                    p
+                else if (bun.Environment.isPosix)
+                    bun.sliceTo(BUN_DEFAULT_PATH_FOR_SPAWN, 0)
+                else
+                    "",
                 .detached = false,
                 .cmd_parent = cmd_parent,
                 // .ipc_mode = IPCMode.none,
@@ -1443,6 +1452,8 @@ pub inline fn assertStdioResult(result: StdioResult) void {
         }
     }
 }
+
+extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
 
 const std = @import("std");
 const util = @import("./util.zig");

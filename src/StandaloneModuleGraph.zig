@@ -901,7 +901,7 @@ pub const StandaloneModuleGraph = struct {
                 }
                 return cloned_executable_fd;
             },
-            .linux => {
+            .linux, .freebsd => {
                 // ELF section approach: find .bun section and expand it
                 const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
                 if (input_result.err) |err| {
@@ -1329,7 +1329,7 @@ pub const StandaloneModuleGraph = struct {
             return try fromBytesAlloc(allocator, @constCast(pe_bytes), offsets);
         }
 
-        if (comptime Environment.isLinux) {
+        if (comptime Environment.isLinux or Environment.isFreeBSD) {
             const elf_bytes = ELF.getData() orelse return null;
             if (elf_bytes.len < @sizeOf(Offsets) + trailer.len) {
                 Output.debugWarn("bun standalone module graph is too small to be valid", .{});

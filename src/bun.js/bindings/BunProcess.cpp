@@ -107,11 +107,17 @@ typedef int mode_t;
 #include <mach/mach_time.h>
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 #include <sys/resource.h>
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#endif
+
+#if defined(__FreeBSD__)
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#include <sys/user.h>
 #endif
 
 #if !defined(_MSC_VER)
@@ -182,8 +188,12 @@ static JSValue constructPlatform(VM& vm, JSObject* processObject)
 {
 #if defined(__APPLE__)
     return JSC::jsString(vm, makeAtomString("darwin"_s));
+#elif defined(__ANDROID__)
+    return JSC::jsString(vm, makeAtomString("android"_s));
 #elif defined(__linux__)
     return JSC::jsString(vm, makeAtomString("linux"_s));
+#elif defined(__FreeBSD__)
+    return JSC::jsString(vm, makeAtomString("freebsd"_s));
 #elif OS(WINDOWS)
     return JSC::jsString(vm, makeAtomString("win32"_s));
 #else
@@ -726,7 +736,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     JSC::JSValue resultValue = encoded == 0 ? exports : JSValue::decode(encoded);
 
     if (auto resultObject = resultValue.getObject()) {
-#if OS(DARWIN) || OS(LINUX)
+#if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
         // If this is a native bundler plugin we want to store the handle from dlopen
         // as we are going to call `dlsym()` on it later to get the plugin implementation.
         const char** pointer_to_plugin_name = (const char**)dlsym(handle, "BUN_PLUGIN_NAME");
@@ -1465,7 +1475,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
             // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own signal handler to
             // suspend and resume the JS thread which we must not override.
             if (signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume) {
-#elif OS(DARWIN)
+#elif OS(DARWIN) || OS(FREEBSD)
             // these signals cannot be handled
             if (signalNumber != SIGKILL && signalNumber != SIGSTOP) {
 #elif OS(WINDOWS)
@@ -2272,7 +2282,7 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
 #if CPU(ARM64)
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "arm_fpu"_s), JSC::jsString(vm, String("neon"_s)), 0);
 #endif
-#elif OS(LINUX)
+#elif OS(LINUX) || OS(FREEBSD)
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "control_flow_guard"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "coverage"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "dcheck_always_on"_s), JSC::jsNumber(0), 0);
@@ -3306,6 +3316,16 @@ extern "C" int getRSS(size_t* rss)
 
 err:
     return EINVAL;
+#elif defined(__FreeBSD__)
+    // ru_maxrss is the high-water mark, not current RSS. Match Node/libuv:
+    // sysctl({KERN_PROC_PID, getpid()}) → kinfo_proc.ki_rssize.
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+    struct kinfo_proc kinfo;
+    size_t len = sizeof(kinfo);
+    if (sysctl(mib, 4, &kinfo, &len, nullptr, 0) != 0)
+        return errno;
+    *rss = static_cast<size_t>(kinfo.ki_rssize) * static_cast<size_t>(getpagesize());
+    return 0;
 #elif OS(WINDOWS)
     return uv_resident_set_memory(rss);
 #else

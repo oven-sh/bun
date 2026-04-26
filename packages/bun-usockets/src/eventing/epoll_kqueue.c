@@ -45,7 +45,11 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 #define SET_READY_POLL(loop, index, poll) loop->ready_polls[index].data.ptr = (void*)poll
 #else
 #define GET_READY_POLL(loop, index) (struct us_poll_t *) loop->ready_polls[index].udata
+#if defined(__FreeBSD__)
+#define SET_READY_POLL(loop, index, poll) loop->ready_polls[index].udata = (void*)poll
+#else
 #define SET_READY_POLL(loop, index, poll) loop->ready_polls[index].udata = (uint64_t)poll
+#endif
 #endif
 
 /* Loop */
@@ -138,7 +142,7 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
             ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, &mask);
         } while (ret == -EINTR);
 
-        if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP)) {
+        if (LIKELY(ret != -ENOSYS && ret != -EPERM && ret != -EOPNOTSUPP && ret != -EACCES)) {
             return ret;
         }
 
@@ -235,7 +239,11 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
         const int16_t filter = loop->ready_polls[i].filter;
         const uint16_t flags = loop->ready_polls[i].flags;
         struct kevent_flags bits = {
+#if defined(__APPLE__)
             .readable = (filter == EVFILT_READ || filter == EVFILT_TIMER || filter == EVFILT_MACHPORT),
+#else
+            .readable = (filter == EVFILT_READ || filter == EVFILT_TIMER || filter == EVFILT_USER),
+#endif
             .writable = (filter == EVFILT_WRITE),
             .error = !!(flags & EV_ERROR),
             .eof = !!(flags & EV_EOF),
@@ -564,7 +572,7 @@ size_t us_internal_accept_poll_event(struct us_poll_t *p) {
 struct us_timer_t *us_create_timer(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
     struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_internal_callback_t) + ext_size);
     memset(p, 0, sizeof(struct us_internal_callback_t) + ext_size);
-    int timerfd = timerfd_create(CLOCK_REALTIME, TFD_NONBLOCK | TFD_CLOEXEC);
+    int timerfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     if (timerfd == -1) {
       return NULL;
     }
@@ -677,7 +685,14 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
     struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_internal_callback_t) + ext_size);
     memset(p, 0, sizeof(struct us_internal_callback_t) + ext_size);
 
-    us_poll_init(p, eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC), POLL_TYPE_CALLBACK);
+    int efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (efd == -1) {
+        // eventfd only fails on EMFILE/ENFILE — the loop is unusable without
+        // wakeup_async, and the sole caller doesn't NULL-check. Crash loudly
+        // rather than NULL-deref or store -1 as a poll fd.
+        BUN_PANIC("eventfd() failed during loop init (out of file descriptors?)");
+    }
+    us_poll_init(p, efd, POLL_TYPE_CALLBACK);
 
     struct us_internal_callback_t *cb = (struct us_internal_callback_t *) p;
     cb->loop = loop;
@@ -727,7 +742,7 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
         break;
     }
 }
-#else
+#elif defined(__APPLE__)
 
 #define MACHPORT_BUF_LEN 1024
 
@@ -861,6 +876,63 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
             break;
         }
     }
+}
+#else
+/* FreeBSD: kqueue async wakeup via EVFILT_USER + NOTE_TRIGGER. */
+struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
+    struct us_internal_callback_t *cb = us_calloc(1, sizeof(struct us_internal_callback_t) + ext_size);
+    cb->loop = loop;
+    cb->cb_expects_the_loop = 1;
+    cb->leave_poll_ready = 0;
+
+    cb->p.state.poll_type = POLL_TYPE_POLLING_IN;
+    us_internal_poll_set_type((struct us_poll_t *) cb, POLL_TYPE_CALLBACK);
+
+    if (!fallthrough) {
+        loop->num_polls++;
+    }
+
+    return (struct us_internal_async *) cb;
+}
+
+void us_internal_async_close(struct us_internal_async *a) {
+    struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) a;
+    struct kevent64_s event;
+    EV_SET64(&event, (uintptr_t)internal_cb, EVFILT_USER, EV_DELETE, 0, 0, (uint64_t)(void*)internal_cb, 0, 0);
+    int ret;
+    do {
+        ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(ret));
+
+    us_poll_free((struct us_poll_t *) a, internal_cb->loop);
+}
+
+void us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_internal_async *)) {
+    struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) a;
+    internal_cb->cb = (void (*)(struct us_internal_callback_t *)) cb;
+
+    struct kevent64_s event;
+    EV_SET64(&event, (uintptr_t)internal_cb, EVFILT_USER, EV_ADD | EV_ENABLE | EV_CLEAR, 0, 0, (uint64_t)(void*)internal_cb, 0, 0);
+    int ret;
+    do {
+        ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(ret));
+
+    if (UNLIKELY(ret == -1)) {
+        abort();
+    }
+}
+
+void us_internal_async_wakeup(struct us_internal_async *a) {
+    struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) a;
+    struct kevent64_s event;
+    EV_SET64(&event, (uintptr_t)internal_cb, EVFILT_USER, 0, NOTE_TRIGGER, 0, (uint64_t)(void*)internal_cb, 0, 0);
+    int ret;
+    do {
+        /* Submit NOTE_TRIGGER only — no eventlist, otherwise this thread can
+         * consume the wakeup it just posted instead of waking the loop thread. */
+        ret = kevent64(internal_cb->loop->fd, &event, 1, NULL, 0, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(ret));
 }
 #endif
 

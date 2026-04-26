@@ -197,6 +197,8 @@ BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     WTF::String str = value.toWTFString(globalObject);
     if (str.isNull()) [[unlikely]] {
+        if (!globalObject->vm().exceptionForInspection())
+            return { BunStringTag::Empty };
         return { BunStringTag::Dead };
     }
     if (str.length() == 0) [[unlikely]] {
@@ -227,6 +229,8 @@ BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto str = value.toWTFString(globalObject);
     if (str.isNull()) [[unlikely]] {
+        if (!globalObject->vm().exceptionForInspection())
+            return { BunStringTag::Empty };
         return { BunStringTag::Dead };
     }
     if (str.length() == 0) [[unlikely]] {

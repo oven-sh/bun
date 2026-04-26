@@ -66,7 +66,7 @@ fn link(ctx: Command.Context) !void {
 
             try manager.setupGlobalDir(ctx);
 
-            break :brk manager.global_dir.?.makeOpenPath("node_modules", .{}) catch |err| {
+            break :brk bun.MakePath.makeOpenPath(manager.global_dir.?, "node_modules", .{}) catch |err| {
                 if (manager.options.log_level != .silent)
                     Output.prettyErrorln("<r><red>error:<r> failed to create node_modules in global dir due to error {s}", .{@errorName(err)});
                 Global.crash();
@@ -81,7 +81,10 @@ fn link(ctx: Command.Context) !void {
             // create scope if specified
             if (name[0] == '@') {
                 if (strings.indexOfChar(name, '/')) |i| {
-                    node_modules.makeDir(name[0..i]) catch |err| brk: {
+                    // Use bun.makePath so the mkdir honors the process umask
+                    // the same way the surrounding dirs this PR fixed do
+                    // (0o777 & ~umask instead of std's hardcoded 0o755).
+                    bun.makePath(node_modules, name[0..i]) catch |err| brk: {
                         if (err == error.PathAlreadyExists) break :brk;
                         if (manager.options.log_level != .silent)
                             Output.prettyErrorln("<r><red>error:<r> failed to create scope in global dir due to error {s}", .{@errorName(err)});

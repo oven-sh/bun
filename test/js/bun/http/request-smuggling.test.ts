@@ -808,12 +808,23 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
 
   test("accepts zero-chunk with correct CRLF terminator split across segments", async () => {
     // Control for the fragmentation test above: a valid split must still work.
-    let receivedBody = "";
+    //
+    // Tricky bit: the parser emits the FIN chunk as soon as it sees the
+    // zero-chunk size line (`0\r\n`) — before the terminator bytes are
+    // consumed. That means the server can respond to request 1 based on just
+    // the first segment. To prove the `\n` in the second segment *does* get
+    // validated (rather than being ignored or causing an error), we pipeline
+    // a second request after it: if the drop-trailer loop rejected the `\n`
+    // as malformed, the state would go to STATE_IS_ERROR, the connection
+    // would be torn down, and the pipelined GET would never complete.
+    const seen: string[] = [];
     await using server = Bun.serve({
       port: 0,
       async fetch(req) {
-        receivedBody = await req.text();
-        return new Response("OK");
+        const path = new URL(req.url).pathname;
+        seen.push(`${req.method} ${path}`);
+        await req.text();
+        return new Response("OK " + path);
       },
     });
 
@@ -822,27 +833,35 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
 
     // Listeners first — see comment in the previous test.
     let data = "";
-    const responseReady = new Promise<string>((resolve, reject) => {
-      client.on("error", reject);
-      client.on("data", chunk => {
-        data += chunk.toString();
-        // Response is served on a keep-alive connection by default, so we
-        // need to close the client ourselves once we've seen the full headers.
-        if (data.includes("\r\n\r\nOK")) client.end();
-      });
-      client.on("close", () => resolve(data));
+    const bothResponses = Promise.withResolvers<string>();
+    client.on("error", bothResponses.reject);
+    client.on("data", chunk => {
+      data += chunk.toString();
+      // Two 200 responses means both requests reached the handler and
+      // the connection survived the fragmented terminator intact.
+      if ((data.match(/HTTP\/1\.1 200/g) ?? []).length >= 2) {
+        client.end();
+      }
     });
+    client.on("close", () => bothResponses.resolve(data));
 
     await new Promise<void>(connected => client.once("connect", connected));
     client.write(
-      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\r", // first half
+      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\r", // first half of terminator
     );
     await Bun.sleep(50);
     client.write("\n"); // valid second half in its own TCP segment
+    // Pipelined second request — only reaches the server if the parser
+    // correctly consumed the split \r\n terminator and returned to a ready
+    // state. The second request must come in its own segment too, otherwise
+    // it could coalesce with the `\n` into one recv.
+    await Bun.sleep(50);
+    client.write("GET /done HTTP/1.1\r\nHost: localhost\r\n\r\n");
 
-    const responseData = await responseReady;
+    const responseData = await bothResponses.promise;
     expect(responseData).toContain("HTTP/1.1 200");
-    expect(receivedBody).toBe("");
+    expect(responseData).not.toContain("HTTP/1.1 400");
+    expect(seen).toEqual(["POST /", "GET /done"]);
   });
 });
 

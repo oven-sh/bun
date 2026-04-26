@@ -798,12 +798,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
 
     await new Promise<void>(connected => client.once("connect", connected));
     client.write(
-      "POST / HTTP/1.1\r\n" +
-        "Host: localhost\r\n" +
-        "Transfer-Encoding: chunked\r\n" +
-        "\r\n" +
-        "0\r\n" +
-        "\r", // first half of terminator
+      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\r", // first half of terminator
     );
     await Bun.sleep(50);
     client.write("X"); // bad second byte in its own TCP segment
@@ -840,12 +835,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
 
     await new Promise<void>(connected => client.once("connect", connected));
     client.write(
-      "POST / HTTP/1.1\r\n" +
-        "Host: localhost\r\n" +
-        "Transfer-Encoding: chunked\r\n" +
-        "\r\n" +
-        "0\r\n" +
-        "\r", // first half
+      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\r", // first half
     );
     await Bun.sleep(50);
     client.write("\n"); // valid second half in its own TCP segment

@@ -145,7 +145,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
     // Get the Hash instance
     JSValue thisHash = callFrame->thisValue();
-    JSHash* hash = jsDynamicCast<JSHash*>(thisHash);
+    JSHash* hash = dynamicDowncast<JSHash>(thisHash);
     if (!hash) [[unlikely]] {
         return Bun::ERR::INVALID_THIS(scope, globalObject, "Hash"_s);
     }
@@ -182,14 +182,14 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto* convertedView = jsDynamicCast<JSC::JSArrayBufferView*>(converted);
+        auto* convertedView = dynamicDowncast<JSC::JSArrayBufferView>(converted);
 
         if (!hash->update(std::span { reinterpret_cast<const uint8_t*>(convertedView->vector()), convertedView->byteLength() })) {
             return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
         }
 
         return JSValue::encode(hashWrapper);
-    } else if (auto* view = JSC::jsDynamicCast<JSArrayBufferView*>(inputValue)) {
+    } else if (auto* view = dynamicDowncast<JSArrayBufferView>(inputValue)) {
         if (view->isDetached()) [[unlikely]] {
             return Bun::ERR::INVALID_STATE(scope, globalObject, "Cannot hash a detached buffer"_s);
         }
@@ -210,7 +210,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     // Get the Hash instance
-    JSHash* hash = jsDynamicCast<JSHash*>(callFrame->thisValue());
+    JSHash* hash = dynamicDowncast<JSHash>(callFrame->thisValue());
     if (!hash) [[unlikely]] {
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "Hash"_s);
     }
@@ -311,7 +311,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     const EVP_MD* md = nullptr;
     ExternZigHash::Hasher* zigHasher = nullptr;
     if (algorithmOrHashInstanceValue.inherits(JSHash::info())) {
-        original = jsDynamicCast<JSHash*>(algorithmOrHashInstanceValue);
+        original = dynamicDowncast<JSHash>(algorithmOrHashInstanceValue);
         if (!original || original->m_finalized) {
             return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
         }

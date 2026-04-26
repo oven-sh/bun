@@ -17,7 +17,7 @@ template<> struct WebCore::Converter<Bun::IDLBlobRef> : Bun::DefaultTryConverter
         JSC::JSValue value,
         Ctx& ctx)
     {
-        if (auto* jsBlob = JSC::jsDynamicCast<WebCore::JSBlob*>(value)) {
+        if (auto* jsBlob = dynamicDowncast<WebCore::JSBlob>(value)) {
             if (void* wrapped = jsBlob->wrapped()) {
                 return static_cast<BlobImpl*>(wrapped);
             }

@@ -13,6 +13,8 @@ namespace JSC {
 class Structure;
 class Identifier;
 class LazyClassStructure;
+class ScriptFetcher;
+class ScriptFetchParameters;
 class WebAssemblyCompileOptions;
 enum class JSPromiseRejectionOperation : unsigned;
 } // namespace JSC
@@ -193,11 +195,11 @@ public:
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
-    static JSC::JSInternalPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, JSC::JSValue parameters, const JSC::SourceOrigin&);
-    static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, JSC::JSValue origin);
-    static JSC::JSInternalPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue parameters, JSC::JSValue script);
-    static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, JSC::JSValue val);
-    static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSValue key, JSValue moduleRecordValue, JSValue scriptFetcher, JSValue sentValue, JSValue resumeMode);
+    static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters>, const JSC::SourceOrigin&);
+    static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap);
+    static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, RefPtr<JSC::ScriptFetchParameters>, RefPtr<JSC::ScriptFetcher>);
+    static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, RefPtr<JSC::ScriptFetcher>);
+    static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSValue key, JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher>, JSValue sentValue, JSValue resumeMode);
     static JSC::JSPromise* compileStreaming(JSGlobalObject*, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&&);
     static JSC::JSPromise* instantiateStreaming(JSGlobalObject*, JSC::JSValue source, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&&);
 
@@ -267,7 +269,9 @@ public:
 
     JSC::JSMap* readableStreamNativeMap() const { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
-    JSC::JSMap* esmRegistryMap() const { return m_esmRegistryMap.getInitializedOnMainThread(this); }
+    // The JSC module loader registry is no longer a JS Map. Use
+    // moduleLoader()->registryEntry(key) / moduleMap() / removeEntry(key) /
+    // clearAll() instead.
 
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 
@@ -586,7 +590,6 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_wasmStreamingConsumeStreamFunction)                 \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_lazyReadableStreamPrototypeMap)                          \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_requireMap)                                              \
-    V(private, LazyPropertyOfGlobalObject<JSMap>, m_esmRegistryMap)                                          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSArrayBufferControllerPrototype)                     \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSHTTPSResponseControllerPrototype)                   \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFetchTaskletChunkedRequestControllerPrototype)      \
@@ -770,7 +773,7 @@ private:
 class EvalGlobalObject : public GlobalObject {
 public:
     static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
-    static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue, JSC::JSValue);
+    static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue, JSC::JSValue, RefPtr<JSC::ScriptFetcher>, JSC::JSValue, JSC::JSValue);
 
     EvalGlobalObject(JSC::VM& vm, JSC::Structure* structure)
         : GlobalObject(vm, structure, &globalObjectMethodTable())
@@ -817,7 +820,7 @@ inline Zig::GlobalObject* getDefaultGlobalObject()
 
 inline Zig::GlobalObject* defaultGlobalObject(JSC::JSGlobalObject* lexicalGlobalObject)
 {
-    auto* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     if (!globalObject) {
         return ___private___::getDefaultGlobalObject();
     }
@@ -830,7 +833,7 @@ inline Zig::GlobalObject* defaultGlobalObject()
 
 inline void* bunVM(JSC::JSGlobalObject* lexicalGlobalObject)
 {
-    if (auto* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject)) {
+    if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject)) {
         return globalObject->bunVM();
     }
 

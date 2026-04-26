@@ -99,7 +99,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSCookieMapDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSCookieMapDOMConstructor>(callFrame->jsCallee());
 
     // Check arguments
     JSValue initValue = callFrame->argument(0);
@@ -114,7 +114,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
         auto* object = initValue.getObject();
 
         // Note: isArray() accepts Proxy->Array, but jsDynamicCast returns null for Proxy.
-        auto* array = jsDynamicCast<JSArray*>(object);
+        auto* array = dynamicDowncast<JSArray>(object);
         if (array) {
             Vector<Vector<String>> seqSeq;
 
@@ -123,12 +123,12 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
                 auto element = array->getIndex(lexicalGlobalObject, i);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
-                if (!element.isObject() || !jsDynamicCast<JSArray*>(element)) {
+                if (!element.isObject() || !dynamicDowncast<JSArray>(element)) {
                     throwTypeError(lexicalGlobalObject, throwScope, "Expected each element to be an array of two strings"_s);
                     return {};
                 }
 
-                auto* subArray = jsCast<JSArray*>(element);
+                auto* subArray = uncheckedDowncast<JSArray>(element);
                 if (subArray->length() != 2) {
                     throwTypeError(lexicalGlobalObject, throwScope, "Expected arrays of exactly two strings"_s);
                     return {};
@@ -254,7 +254,7 @@ JSObject* JSCookieMap::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSCookieMap::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSCookieMapDOMConstructor, DOMConstructorID::CookieMap>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSCookieMapDOMConstructor, DOMConstructorID::CookieMap>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSCookieMap::destroy(JSC::JSCell* cell)
@@ -267,7 +267,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookieMapConstructor, (JSGlobalObject * lexicalGlobal
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSCookieMapPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSCookieMapPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSCookieMap::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -277,7 +277,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookieMapPrototypeGetter_size, (JSGlobalObject * lexi
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = jsDynamicCast<JSCookieMap*>(JSValue::decode(thisValue));
+    auto* thisObject = dynamicDowncast<JSCookieMap>(JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(jsNumber(thisObject->wrapped().size()));
@@ -634,7 +634,7 @@ GCClient::IsoSubspace* JSCookieMap::subspaceForImpl(VM& vm)
 
 void JSCookieMap::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSCookieMap*>(cell);
+    auto* thisObject = uncheckedDowncast<JSCookieMap>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     Base::analyzeHeap(cell, analyzer);
 }
@@ -666,14 +666,14 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 CookieMap* JSCookieMap::toWrapped(JSC::VM& vm, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSCookieMap*>(value))
+    if (auto* wrapper = dynamicDowncast<JSCookieMap>(value))
         return &wrapper->wrapped();
     return nullptr;
 }
 
 size_t JSCookieMap::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 {
-    auto* thisObject = jsCast<JSCookieMap*>(cell);
+    auto* thisObject = uncheckedDowncast<JSCookieMap>(cell);
     auto& wrapped = thisObject->wrapped();
     return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
 }

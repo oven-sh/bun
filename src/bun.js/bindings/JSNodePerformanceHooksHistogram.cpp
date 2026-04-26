@@ -82,7 +82,7 @@ JSNodePerformanceHooksHistogram::~JSNodePerformanceHooksHistogram()
 template<typename Visitor>
 void JSNodePerformanceHooksHistogram::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSNodePerformanceHooksHistogram* thisObject = jsCast<JSNodePerformanceHooksHistogram*>(cell);
+    JSNodePerformanceHooksHistogram* thisObject = uncheckedDowncast<JSNodePerformanceHooksHistogram>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
@@ -95,7 +95,7 @@ DEFINE_VISIT_CHILDREN(JSNodePerformanceHooksHistogram);
 
 size_t JSNodePerformanceHooksHistogram::estimatedSize(JSCell* cell, VM& vm)
 {
-    JSNodePerformanceHooksHistogram* thisObject = jsCast<JSNodePerformanceHooksHistogram*>(cell);
+    JSNodePerformanceHooksHistogram* thisObject = uncheckedDowncast<JSNodePerformanceHooksHistogram>(cell);
     size_t selfSize = Base::estimatedSize(cell, vm);
     return selfSize + thisObject->m_extraMemorySizeForGC;
 }

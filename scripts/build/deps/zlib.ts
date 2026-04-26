@@ -191,7 +191,12 @@ export const zlib: Dependency = {
       defines.ARM_CRC32_INTRIN = true;
       defines.HAVE_ARM_ACLE_H = true;
       defines.WITH_ALL_FALLBACKS = true;
-      if (cfg.windows) defines.__ARM_NEON__ = true;
+      if (cfg.windows) {
+        defines.__ARM_NEON__ = true;
+        // Upstream sets this on MSVC ARM; gates the Windows SDK's ARM
+        // intrinsic headers via <winapifamily.h>.
+        defines._ARM_WINAPI_PARTITION_DESKTOP_SDK_AVAILABLE = true;
+      }
       if (cfg.linux) {
         defines.ARM_AUXV_HAS_NEON = true;
         defines.HAVE_LINUX_AUXVEC_H = true;

@@ -70,7 +70,7 @@ Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
 extern "C" JSC::EncodedJSValue JSSocketAddressDTO__create(JSGlobalObject* globalObject, EncodedJSValue address, uint16_t port, bool isIPv6)
 {
     VM& vm = globalObject->vm();
-    auto* global = jsCast<Zig::GlobalObject*>(globalObject);
+    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
 
     auto* af = isIPv6 ? global->commonStrings().IPv6String(global) : global->commonStrings().IPv4String(global);
 

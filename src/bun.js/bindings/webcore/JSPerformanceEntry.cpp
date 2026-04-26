@@ -155,7 +155,7 @@ JSObject* JSPerformanceEntry::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSPerformanceEntry::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSPerformanceEntryDOMConstructor, DOMConstructorID::PerformanceEntry>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSPerformanceEntryDOMConstructor, DOMConstructorID::PerformanceEntry>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSPerformanceEntry::destroy(JSC::JSCell* cell)
@@ -168,7 +168,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceEntryConstructor, (JSGlobalObject * lexica
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSPerformanceEntryPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSPerformanceEntryPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSPerformanceEntry::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -265,7 +265,7 @@ JSC::GCClient::IsoSubspace* JSPerformanceEntry::subspaceForImpl(JSC::VM& vm)
 
 void JSPerformanceEntry::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSPerformanceEntry*>(cell);
+    auto* thisObject = uncheckedDowncast<JSPerformanceEntry>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -289,7 +289,7 @@ void JSPerformanceEntryOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* c
 
 PerformanceEntry* JSPerformanceEntry::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSPerformanceEntry*>(value))
+    if (auto* wrapper = dynamicDowncast<JSPerformanceEntry>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

@@ -1904,6 +1904,14 @@ export function readableStreamFromAsyncIterator(target, fn) {
         try {
           const result = await asyncIteratorPromise;
           return result;
+        } catch (e) {
+          // The stream's sink already swapped its methods to the
+          // closed-throw stub; the consumer is gone, so swallow the
+          // "controller is now closed" error instead of letting it surface as
+          // an unhandled rejection. Builtin async functions used to return
+          // JSInternalPromise so this never reached the global tracker.
+          if (controller.write === $onReadableStreamDirectControllerClosed) return;
+          throw e;
         } finally {
           if (runningAsyncIteratorPromise === asyncIteratorPromise) {
             runningAsyncIteratorPromise = undefined;

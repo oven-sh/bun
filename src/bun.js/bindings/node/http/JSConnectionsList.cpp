@@ -21,7 +21,7 @@ void JSConnectionsList::finishCreation(VM& vm, JSGlobalObject* globalObject)
 template<typename Visitor>
 void JSConnectionsList::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    JSConnectionsList* thisObject = jsCast<JSConnectionsList*>(cell);
+    JSConnectionsList* thisObject = uncheckedDowncast<JSConnectionsList>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_allConnections);
@@ -62,7 +62,7 @@ JSArray* JSConnectionsList::all(JSGlobalObject* globalObject)
     JSValue item;
     size_t i = 0;
     while (iter->next(globalObject, item)) {
-        JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
+        JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
         if (!parser) {
             continue;
         }
@@ -88,7 +88,7 @@ JSArray* JSConnectionsList::idle(JSGlobalObject* globalObject)
     JSValue item;
     size_t i = 0;
     while (iter->next(globalObject, item)) {
-        JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
+        JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
         if (!parser) {
             continue;
         }
@@ -116,7 +116,7 @@ JSArray* JSConnectionsList::active(JSGlobalObject* globalObject)
     JSValue item;
     size_t i = 0;
     while (iter->next(globalObject, item)) {
-        JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
+        JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
         if (!parser) {
             continue;
         }
@@ -142,7 +142,7 @@ JSArray* JSConnectionsList::expired(JSGlobalObject* globalObject, uint64_t heade
     JSValue item = iter->next(vm);
     size_t i = 0;
     while (!item.isEmpty()) {
-        JSHTTPParser* parser = jsDynamicCast<JSHTTPParser*>(item);
+        JSHTTPParser* parser = dynamicDowncast<JSHTTPParser>(item);
         if (!parser) {
             item = iter->next(vm);
             continue;

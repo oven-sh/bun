@@ -359,7 +359,7 @@ public:
             this->debuggerThreadMessages.swap(messages);
         }
 
-        JSFunction* onMessageFn = jsCast<JSFunction*>(jsBunDebuggerOnMessageFunction.get());
+        JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(jsBunDebuggerOnMessageFunction.get());
         MarkedArgumentBuffer arguments;
         arguments.ensureCapacity(messages.size());
         auto& vm = debuggerGlobalObject->vm();
@@ -494,7 +494,7 @@ private:
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSend, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* jsConnection = jsDynamicCast<JSBunInspectorConnection*>(callFrame->thisValue());
+    auto* jsConnection = dynamicDowncast<JSBunInspectorConnection>(callFrame->thisValue());
     auto message = callFrame->uncheckedArgument(0);
 
     if (!jsConnection)
@@ -503,7 +503,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSend, (JSC::JSGlobalObject * globalObject, JS
     if (message.isString()) {
         jsConnection->connection()->sendMessageToInspectorFromDebuggerThread(message.toWTFString(globalObject).isolatedCopy());
     } else if (message.isCell()) {
-        auto* array = jsCast<JSArray*>(message.asCell());
+        auto* array = uncheckedDowncast<JSArray>(message.asCell());
         Vector<WTF::String, 12> messages;
         JSC::forEachInArrayLike(globalObject, array, [&](JSC::JSValue value) -> bool {
             messages.append(value.toWTFString(globalObject).isolatedCopy());
@@ -517,7 +517,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSend, (JSC::JSGlobalObject * globalObject, JS
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDisconnect, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* jsConnection = jsDynamicCast<JSBunInspectorConnection*>(callFrame->thisValue());
+    auto* jsConnection = dynamicDowncast<JSBunInspectorConnection>(callFrame->thisValue());
     if (!jsConnection)
         return JSValue::encode(jsUndefined());
 
@@ -590,13 +590,13 @@ extern "C" void BunDebugger__willHotReload()
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto* debuggerGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    auto* debuggerGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject);
     if (!debuggerGlobalObject)
         return JSValue::encode(jsUndefined());
 
     ScriptExecutionContext* targetContext = ScriptExecutionContext::getScriptExecutionContext(static_cast<ScriptExecutionContextIdentifier>(callFrame->argument(0).toUInt32(globalObject)));
     bool shouldRef = !callFrame->argument(1).toBoolean(globalObject);
-    JSFunction* onMessageFn = jsCast<JSFunction*>(callFrame->argument(2).toObject(globalObject));
+    JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(callFrame->argument(2).toObject(globalObject));
 
     if (!targetContext || !onMessageFn)
         return JSValue::encode(jsUndefined());
@@ -627,7 +627,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue defaultValue = debuggerGlobalObject->internalModuleRegistry()->requireId(debuggerGlobalObject, vm, InternalModuleRegistry::Field::InternalDebugger);
     scope.assertNoException();
-    JSFunction* debuggerDefaultFn = jsCast<JSFunction*>(defaultValue.asCell());
+    JSFunction* debuggerDefaultFn = uncheckedDowncast<JSFunction>(defaultValue.asCell());
 
     MarkedArgumentBuffer arguments;
 

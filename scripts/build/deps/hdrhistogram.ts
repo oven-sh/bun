@@ -2,9 +2,10 @@
  * HdrHistogram_c — high-dynamic-range latency histogram. Used by bun test's
  * per-test timing output and benchmark reporting.
  *
- * DirectBuild: 7 .c files, no config.h. The log writer (which would pull in
- * zlib) is replaced by hdr_histogram_log_no_op.c — we only need the in-memory
- * histogram API.
+ * DirectBuild: 3 .c files, no config.h. Only the in-memory histogram API is
+ * used (JSNodePerformanceHooksHistogram.cpp), so the interval-recorder/
+ * thread/time/phaser modules are omitted; the log writer (which would pull
+ * in zlib) is replaced by hdr_histogram_log_no_op.c.
  */
 
 import type { Dependency } from "../source.ts";
@@ -20,17 +21,11 @@ export const hdrhistogram: Dependency = {
     commit: HDRHISTOGRAM_COMMIT,
   }),
 
+  patches: ["patches/hdrhistogram/bitscan-type.patch"],
+
   build: cfg => ({
     kind: "direct",
-    sources: [
-      "src/hdr_encoding.c",
-      "src/hdr_histogram.c",
-      "src/hdr_histogram_log_no_op.c",
-      "src/hdr_interval_recorder.c",
-      "src/hdr_thread.c",
-      "src/hdr_time.c",
-      "src/hdr_writer_reader_phaser.c",
-    ],
+    sources: ["src/hdr_encoding.c", "src/hdr_histogram.c", "src/hdr_histogram_log_no_op.c"],
     includes: ["include"],
     defines: cfg.windows ? { _CRT_SECURE_NO_WARNINGS: true } : { _GNU_SOURCE: true },
   }),

@@ -119,14 +119,14 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_addBytesBo
     auto chunkValue = callFrame->uncheckedArgument(0);
 
     // See getWasmBufferFromValue in JSC's JSWebAssemblyHelpers.h
-    if (auto arrayBufferView = jsDynamicCast<JSArrayBufferView*>(chunkValue)) {
+    if (auto arrayBufferView = dynamicDowncast<JSArrayBufferView>(chunkValue)) {
         if (isTypedArrayType(arrayBufferView->type())) {
             validateTypedArray(lexicalGlobalObject, arrayBufferView);
             RETURN_IF_EXCEPTION(throwScope, {});
         } else {
             // DataView
             IdempotentArrayBufferByteLengthGetter<std::memory_order_relaxed> getter;
-            if (!jsCast<JSDataView*>(arrayBufferView)->viewByteLength(getter)) [[unlikely]] {
+            if (!uncheckedDowncast<JSDataView>(arrayBufferView)->viewByteLength(getter)) [[unlikely]] {
                 throwTypeError(lexicalGlobalObject, throwScope, typedArrayBufferHasBeenDetachedErrorMessage);
                 return {};
             }
@@ -134,7 +134,7 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_addBytesBo
 
         impl.addBytes(arrayBufferView->span());
         return encodedJSUndefined();
-    } else if (auto arrayBuffer = jsDynamicCast<JSArrayBuffer*>(chunkValue)) {
+    } else if (auto arrayBuffer = dynamicDowncast<JSArrayBuffer>(chunkValue)) {
         auto arrayBufferImpl = arrayBuffer->impl();
         if (arrayBufferImpl->isDetached()) {
             throwTypeError(lexicalGlobalObject, throwScope, typedArrayBufferHasBeenDetachedErrorMessage);
@@ -201,7 +201,7 @@ GCClient::IsoSubspace* JSWasmStreamingCompiler::subspaceForImpl(VM& vm)
 
 void JSWasmStreamingCompiler::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSWasmStreamingCompiler*>(cell);
+    auto* thisObject = uncheckedDowncast<JSWasmStreamingCompiler>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     Base::analyzeHeap(cell, analyzer);
 }
@@ -230,7 +230,7 @@ JSValue toJS(JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObjec
 
 Wasm::StreamingCompiler* JSWasmStreamingCompiler::toWrapped(VM& vm, JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSWasmStreamingCompiler*>(value))
+    if (auto* wrapper = dynamicDowncast<JSWasmStreamingCompiler>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

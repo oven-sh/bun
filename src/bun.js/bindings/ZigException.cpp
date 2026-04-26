@@ -477,7 +477,7 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     JSC::ErrorInstance* err, const Vector<JSC::StackFrame>* stackTrace,
     JSC::JSValue val, PopulateStackTraceFlags flags)
 {
-    JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(val);
+    JSC::JSObject* obj = dynamicDowncast<JSC::JSObject>(val);
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
@@ -711,7 +711,7 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
 
     // Fallback case for when it's a user-defined ErrorLike-object that doesn't inherit from
     // ErrorInstance
-    if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(value)) {
+    if (JSC::JSObject* obj = dynamicDowncast<JSC::JSObject>(value)) {
         auto name_value = obj->getIfPropertyExists(global, vm.propertyNames->name);
         if (scope.exception()) [[unlikely]] {
             scope.clearExceptionExceptTermination();
@@ -843,10 +843,10 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
     }
 
     if (value.classInfoOrNull() == JSC::Exception::info()) {
-        auto* jscException = jsCast<JSC::Exception*>(value);
+        auto* jscException = uncheckedDowncast<JSC::Exception>(value);
         JSValue unwrapped = jscException->value();
 
-        if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(unwrapped)) {
+        if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(unwrapped)) {
             fromErrorInstance(*exception, global, error, &jscException->stack(), unwrapped, PopulateStackTraceFlags::OnlyPosition);
             return;
         }
@@ -859,7 +859,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
         return;
     }
 
-    if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
+    if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(value)) {
         fromErrorInstance(*exception, global, error, nullptr, value, PopulateStackTraceFlags::OnlyPosition);
         return;
     }
@@ -875,7 +875,7 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
     }
 
     if (value.classInfoOrNull() == JSC::Exception::info()) {
-        auto* jscException = jsCast<JSC::Exception*>(value);
+        auto* jscException = uncheckedDowncast<JSC::Exception>(value);
         JSValue unwrapped = jscException->value();
 
         if (jscException->stack().size() > 0) {
@@ -886,7 +886,7 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
         return;
     }
 
-    if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
+    if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(value)) {
         if (error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
             populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines, FinalizerSafety::MustNotTriggerGC);
         }

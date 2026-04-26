@@ -153,7 +153,7 @@ std::optional<DhKeyPairJobCtx> DhKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
             return std::nullopt;
         }
 
-        if (JSArrayBufferView* view = jsDynamicCast<JSArrayBufferView*>(primeValue)) {
+        if (JSArrayBufferView* view = dynamicDowncast<JSArrayBufferView>(primeValue)) {
             prime = ncrypto::BignumPointer(reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength());
             if (!prime) [[unlikely]] {
                 ERR::OUT_OF_RANGE(scope, globalObject, "prime is too big"_s);
@@ -161,7 +161,7 @@ std::optional<DhKeyPairJobCtx> DhKeyPairJobCtx::fromJS(JSGlobalObject* globalObj
             }
 
             // TODO: delete this case? validateBuffer allows Buffer, TypeArray, and DataView
-        } else if (JSArrayBuffer* buffer = jsDynamicCast<JSArrayBuffer*>(primeValue)) {
+        } else if (JSArrayBuffer* buffer = dynamicDowncast<JSArrayBuffer>(primeValue)) {
             auto impl = buffer->impl();
             prime = ncrypto::BignumPointer(reinterpret_cast<const uint8_t*>(impl->data()), impl->byteLength());
             if (!prime) [[unlikely]] {

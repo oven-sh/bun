@@ -86,14 +86,14 @@ template<typename JSClass> inline JSC::Structure* JSDOMBuiltinConstructor<JSClas
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* newTargetGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* baseStructure = getDOMStructure<JSClass>(vm, *JSC::jsCast<JSDOMGlobalObject*>(newTargetGlobalObject));
+    auto* baseStructure = getDOMStructure<JSClass>(vm, *uncheckedDowncast<JSDOMGlobalObject>(newTargetGlobalObject));
     RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure));
 }
 
 template<typename JSClass> inline JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMBuiltinConstructor<JSClass>::call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     ASSERT(callFrame);
-    auto* castedThis = JSC::jsCast<JSDOMBuiltinConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSDOMBuiltinConstructor>(callFrame->jsCallee());
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (callFrame->thisValue() != castedThis) {
@@ -112,7 +112,7 @@ template<typename JSClass> inline JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES J
 template<typename JSClass> inline JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMBuiltinConstructor<JSClass>::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     ASSERT(callFrame);
-    auto* castedThis = JSC::jsCast<JSDOMBuiltinConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSDOMBuiltinConstructor>(callFrame->jsCallee());
     auto* structure = castedThis->getDOMStructureForJSObject(lexicalGlobalObject, asObject(callFrame->newTarget()));
     if (!structure) [[unlikely]]
         return {};

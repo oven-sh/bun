@@ -675,7 +675,11 @@ function ClientRequest(input, options, cb) {
         // parks at `yield await new Promise(...)` forever (upgradeBodyEnded
         // is only set by the hijacked socket, which never gets constructed
         // for a non-101 response).
-        if (!is101 && hasUpgradeHeaders(this)) {
+        //
+        // Use the captured outer `isUpgrade` (same source of truth the
+        // generator's loop condition closes over) so the guard can't
+        // diverge from the generator if the user mutates headers mid-flight.
+        if (!is101 && isUpgrade) {
           this[kEndUpgradeBody]();
         }
 

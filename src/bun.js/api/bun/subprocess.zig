@@ -228,6 +228,13 @@ pub fn onCloseIO(this: *Subprocess, kind: StdioKind) void {
             }
         },
     }
+
+    // When the process exits before its stdout/stderr pipes have finished
+    // draining, onProcessExit's deferred updateHasPendingActivity() observes
+    // the pipe as still pending and keeps `this_value` Strong. When the pipe
+    // later completes and reaches here, we must re-evaluate so the JSRef can
+    // be downgraded and the JSSubprocess + buffered output become collectable.
+    this.updateHasPendingActivity();
 }
 
 pub fn jsRef(this: *Subprocess) void {

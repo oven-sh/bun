@@ -983,10 +983,12 @@ pub const PackCommand = struct {
                     root_dir,
                     .silent,
                 );
+            } else {
+                // `files` not an array → malformed manifest. `bun pm pack`
+                // crashes here; we can't, so we mirror the no-`files` path
+                // (publish-default tree) instead of dropping everything.
+                try iterateProjectTree(allocator, &pack_queue, bins, .{ root_dir, "", 1 }, .silent);
             }
-            // `files` not an array → fall back to the whole tree. `bun pm
-            // pack` crashes here; we can't, so we mirror the no-`files`
-            // path (publish-default tree).
         } else {
             try iterateProjectTree(allocator, &pack_queue, bins, .{ root_dir, "", 1 }, .silent);
         }

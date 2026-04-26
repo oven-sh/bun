@@ -391,8 +391,9 @@ it("setTimeout does not leak a pending exception when emitting a timeout warning
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).not.toContain("boom");
   expect(stdout.trim()).toBe("survived");
   expect(exitCode).toBe(0);
 });

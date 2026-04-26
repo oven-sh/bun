@@ -334,13 +334,13 @@ describe.concurrent("Server", () => {
       },
     });
     // @ts-expect-error
-    expect(server.fetch(1n)).rejects.toThrow("fetch() expects a string, but received BigInt");
+    await expect(server.fetch(1n)).rejects.toThrow("fetch() expects a string, but received BigInt");
     // @ts-expect-error
-    expect(server.fetch(Symbol("x"))).rejects.toThrow("fetch() expects a string, but received Symbol");
+    await expect(server.fetch(Symbol("x"))).rejects.toThrow("fetch() expects a string, but received Symbol");
     // @ts-expect-error
-    expect(server.fetch(true)).rejects.toThrow("fetch() expects a string, but received Boolean");
+    await expect(server.fetch(true)).rejects.toThrow("fetch() expects a string, but received Boolean");
     // @ts-expect-error
-    expect(server.fetch(1)).rejects.toThrow("fetch() expects a string, but received Number");
+    await expect(server.fetch(1)).rejects.toThrow("fetch() expects a string, but received Number");
   });
 
   test("server should return a body for a OPTIONS Request", async () => {

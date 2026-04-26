@@ -84,9 +84,14 @@ const systemCaBundlePem: string | undefined = (() => {
 /** Detect TLS cert-verification errors so we can retry with the system CA bundle. */
 function isTlsVerifyError(err: unknown): boolean {
   const code = (err as { code?: string } | null)?.code;
+  // SELF_SIGNED_CERT_IN_CHAIN (X509_V_ERR code 19) and DEPTH_ZERO_SELF_SIGNED_CERT
+  // (code 18) are siblings: one means the self-signed cert is deeper in the
+  // chain, the other means the leaf itself is self-signed. Both resolve via
+  // the OS bundle if the admin has installed the cert there.
   return (
     code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" ||
     code === "SELF_SIGNED_CERT_IN_CHAIN" ||
+    code === "DEPTH_ZERO_SELF_SIGNED_CERT" ||
     code === "UNABLE_TO_GET_ISSUER_CERT" ||
     code === "UNABLE_TO_GET_ISSUER_CERT_LOCALLY" ||
     code === "CERT_CHAIN_TOO_LONG"

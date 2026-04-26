@@ -217,6 +217,57 @@ static napi_value try_remove_wrap(const Napi::CallbackInfo &info) {
   return result;
 }
 
+static void noop_wrap_finalizer(napi_env, void *, void *) {}
+
+// Wraps the given object, deletes the returned reference while the JS object
+// is still live (addon misuse per the N-API docs, but must not cause
+// use-after-free), and verifies that subsequent napi_unwrap / napi_remove_wrap
+// / napi_wrap calls treat the object as unwrapped instead of reading through
+// the freed NapiRef.
+static napi_value
+test_wrap_delete_ref_then_access(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value js_object = info[0];
+
+  static int first_data = 42;
+  napi_ref ref = nullptr;
+  NODE_API_CALL(env, napi_wrap(env, js_object, &first_data, noop_wrap_finalizer,
+                               nullptr, &ref));
+  NODE_API_ASSERT(env, ref != nullptr);
+
+  NODE_API_CALL(env, napi_delete_reference(env, ref));
+
+  void *out = nullptr;
+  napi_status unwrap_status = napi_unwrap(env, js_object, &out);
+  printf("after delete_reference: unwrap_status=%d\n", (int)unwrap_status);
+  NODE_API_ASSERT(env, unwrap_status == napi_invalid_arg);
+  NODE_API_ASSERT(env, out == nullptr);
+
+  out = nullptr;
+  napi_status remove_status = napi_remove_wrap(env, js_object, &out);
+  printf("after delete_reference: remove_wrap_status=%d\n",
+         (int)remove_status);
+  NODE_API_ASSERT(env, remove_status == napi_invalid_arg);
+  NODE_API_ASSERT(env, out == nullptr);
+
+  static int second_data = 99;
+  napi_status rewrap_status =
+      napi_wrap(env, js_object, &second_data, nullptr, nullptr, nullptr);
+  printf("after delete_reference: rewrap_status=%d\n", (int)rewrap_status);
+  NODE_API_ASSERT(env, rewrap_status == napi_ok);
+
+  int *unwrapped = nullptr;
+  NODE_API_CALL(env, napi_unwrap(env, js_object,
+                                 reinterpret_cast<void **>(&unwrapped)));
+  NODE_API_ASSERT(env, unwrapped == &second_data);
+
+  void *removed = nullptr;
+  NODE_API_CALL(env, napi_remove_wrap(env, js_object, &removed));
+  NODE_API_ASSERT(env, removed == &second_data);
+
+  return ok(env);
+}
+
 void register_wrap_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, create_wrap);
   REGISTER_FUNCTION(env, exports, get_wrap_data);
@@ -228,6 +279,7 @@ void register_wrap_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, try_wrap);
   REGISTER_FUNCTION(env, exports, try_unwrap);
   REGISTER_FUNCTION(env, exports, try_remove_wrap);
+  REGISTER_FUNCTION(env, exports, test_wrap_delete_ref_then_access);
 }
 
 } // namespace napitests

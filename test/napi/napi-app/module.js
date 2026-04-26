@@ -540,6 +540,17 @@ nativeTests.test_napi_wrap_prototype = () => {
   console.log("unwrap instance:", nativeTests.try_unwrap(new Foo()));
 };
 
+nativeTests.test_napi_wrap_delete_ref_then_unwrap = () => {
+  // Deleting the reference returned by napi_wrap while the JS object is
+  // still alive is discouraged by the N-API docs, but it must not leave the
+  // JS object holding a dangling NapiRef* that a later napi_unwrap would
+  // dereference. Exercise both the plain-object (private NapiExternal) path
+  // and the NapiPrototype fast-path.
+  nativeTests.test_wrap_delete_ref_then_access({});
+  nativeTests.test_wrap_delete_ref_then_access(new (nativeTests.get_class_with_constructor())());
+  console.log("pass");
+};
+
 nativeTests.test_napi_remove_wrap = () => {
   const targets = [{}, new (nativeTests.get_class_with_constructor())()];
   for (const t of targets) {

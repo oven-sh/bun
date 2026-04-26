@@ -1239,6 +1239,37 @@ extern "C" napi_status napi_delete_reference(napi_env env, napi_ref ref)
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, ref);
     NapiRef* napiRef = toJS(ref);
+
+    // If this NapiRef is the one backing a napi_wrap on a still-live JS
+    // object, clear that back-pointer before freeing it. napi_wrap stores the
+    // raw NapiRef* in NapiPrototype::napiRef (or in a NapiExternal hung off a
+    // private property for plain objects) and hands the same pointer back to
+    // the caller; deleting it here without detaching would leave the JS
+    // object holding a dangling NapiRef* that a later napi_unwrap /
+    // napi_remove_wrap / napi_wrap would dereference. The referenced value
+    // may already have been collected (napi_delete_reference is commonly
+    // called from a posted finalizer after GC), so guard the empty case.
+    JSValue wrapped = napiRef->value();
+    if (wrapped && wrapped.isObject()) {
+        JSObject* jsc_object = wrapped.getObject();
+        auto* globalObject = toJS(env);
+        auto& vm = JSC::getVM(globalObject);
+        if (auto* napi_instance = dynamicDowncast<NapiPrototype>(jsc_object)) {
+            if (napi_instance->napiRef == napiRef) {
+                napi_instance->napiRef = nullptr;
+            }
+        } else {
+            JSValue contents = jsc_object->getDirect(vm, WebCore::builtinNames(vm).napiWrappedContentsPrivateName());
+            if (!contents.isEmpty()) {
+                if (auto* external = dynamicDowncast<Bun::NapiExternal>(contents)) {
+                    if (static_cast<NapiRef*>(external->value()) == napiRef) {
+                        external->m_value = nullptr;
+                    }
+                }
+            }
+        }
+    }
+
     delete napiRef;
     NAPI_RETURN_SUCCESS(env);
 }

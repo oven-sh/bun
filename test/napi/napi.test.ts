@@ -456,6 +456,45 @@ describe.concurrent("napi", () => {
       await checkSameOutput("test_napi_remove_wrap", []);
     });
 
+    it("does not use-after-free when napi_delete_reference is called on the wrap ref", async () => {
+      // Deleting the reference returned by napi_wrap while the wrapped JS
+      // object is still alive is discouraged by the N-API docs, and Node.js
+      // itself segfaults on this sequence, so we only verify that Bun clears
+      // the dangling NapiRef* instead of dereferencing freed memory on a
+      // subsequent napi_unwrap / napi_remove_wrap / napi_wrap.
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "--expose-gc",
+          join(__dirname, "napi-app/main.js"),
+          "test_napi_wrap_delete_ref_then_unwrap",
+          "[]",
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "inherit",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => line.startsWith("after delete_reference:") || line === "pass")
+        .join("\n");
+      expect(lines).toBe(
+        [
+          "after delete_reference: unwrap_status=1",
+          "after delete_reference: remove_wrap_status=1",
+          "after delete_reference: rewrap_status=0",
+          "after delete_reference: unwrap_status=1",
+          "after delete_reference: remove_wrap_status=1",
+          "after delete_reference: rewrap_status=0",
+          "pass",
+        ].join("\n"),
+      );
+      expect(exitCode).toBe(0);
+    });
+
     it("has the right lifetime", async () => {
       await checkSameOutput("test_wrap_lifetime_without_ref", []);
       await checkSameOutput("test_wrap_lifetime_with_weak_ref", []);

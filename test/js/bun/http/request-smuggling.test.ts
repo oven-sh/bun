@@ -723,12 +723,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     const client = net.connect(server.port, "127.0.0.1");
 
     const maliciousRequest =
-      "POST / HTTP/1.1\r\n" +
-      "Host: localhost\r\n" +
-      "Transfer-Encoding: chunked\r\n" +
-      "\r\n" +
-      "0\r\n" +
-      "A\n"; // 'A' instead of '\r'
+      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "A\n"; // 'A' instead of '\r'
 
     await new Promise<void>((resolve, reject) => {
       let responseData = "";
@@ -756,12 +751,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     const client = net.connect(server.port, "127.0.0.1");
 
     const maliciousRequest =
-      "POST / HTTP/1.1\r\n" +
-      "Host: localhost\r\n" +
-      "Transfer-Encoding: chunked\r\n" +
-      "\r\n" +
-      "0\r\n" +
-      "\rA"; // '\r' followed by 'A' instead of '\n'
+      "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\rA"; // '\r' followed by 'A' instead of '\n'
 
     await new Promise<void>((resolve, reject) => {
       let responseData = "";
@@ -801,12 +791,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       });
       client.on("connect", () => {
         client.write(
-          "POST / HTTP/1.1\r\n" +
-            "Host: localhost\r\n" +
-            "Transfer-Encoding: chunked\r\n" +
-            "\r\n" +
-            "0\r\n" +
-            "\r", // first half of terminator, looks valid so far
+          "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\r", // first half of terminator, looks valid so far
         );
         // Wait a tick then send a bad second byte.
         queueMicrotask(() => client.write("X"));
@@ -837,12 +822,7 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       });
       client.on("connect", () => {
         client.write(
-          "POST / HTTP/1.1\r\n" +
-            "Host: localhost\r\n" +
-            "Transfer-Encoding: chunked\r\n" +
-            "\r\n" +
-            "0\r\n" +
-            "\r", // first half
+          "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\r", // first half
         );
         queueMicrotask(() => client.write("\n")); // valid second half
       });

@@ -2131,13 +2131,29 @@ describe("global virtual store", () => {
     // `"types"` condition with a nested-object target (the dual ESM/CJS
     // shape), or a `"types"` key nested inside an array-of-fallbacks —
     // keeps the package project-local as a real directory.
-    for (const name of [
-      "top-types",
-      "top-typings",
-      "exports-types",
-      "exports-types-dual",
-      "exports-types-array",
-    ] as const) {
+    const typeShippingNames = ["top-types", "top-typings", "exports-types", "exports-types-dual", "exports-types-array"] as const;
+    for (const name of typeShippingNames) {
+      const entry = join(bunDir, `${name}@1.0.0`);
+      expect(lstatSync(entry).isSymbolicLink()).toBe(false);
+      expect(lstatSync(entry).isDirectory()).toBe(true);
+      expect(existsSync(join(entry, "node_modules", name, "package.json"))).toBe(true);
+    }
+
+    // CI scenario: fresh runner with a committed lockfile but no
+    // pre-warmed package cache. `--frozen-lockfile` skips the diff-time
+    // resolution phase, so the eligibility DFS inside
+    // `installIsolatedPackages` runs before extraction has populated
+    // `<cache>/<pkg>@<ver>@@@1/package.json`. A naive scan of the
+    // extracted package.json sees ENOENT and would fall through to
+    // `eligible` — resurrecting #29727 for every type-shipping package
+    // whose tarball wasn't already in this project's cache. The
+    // conservative fallback treats unreadable packages as ineligible,
+    // so types-shipping packages stay project-local even on a cold
+    // cache.
+    await rm(join(String(packageDir), "node_modules"), { recursive: true, force: true });
+    await rm(cacheDir, { recursive: true, force: true });
+    await runBunInstall(bunEnv, String(packageDir), { savesLockfile: false, frozenLockfile: true });
+    for (const name of typeShippingNames) {
       const entry = join(bunDir, `${name}@1.0.0`);
       expect(lstatSync(entry).isSymbolicLink()).toBe(false);
       expect(lstatSync(entry).isDirectory()).toBe(true);

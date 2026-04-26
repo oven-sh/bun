@@ -1962,11 +1962,23 @@ pub fn installIsolatedPackages(
 /// the global virtual store.
 ///
 /// Results are memoized in `cache` so each distinct package is scanned at
-/// most once per install. If the extracted `package.json` is unreadable
-/// (cache evicted, extraction deferred) we conservatively report `false`
-/// and fall back to the pre-carve-out behavior — a package whose types we
-/// couldn't inspect just stays in whichever bucket the rest of the
-/// eligibility check places it.
+/// most once per install.
+///
+/// Cold-cache / frozen-lockfile caveat: when a valid lockfile matches the
+/// project's `package.json` and the per-package cache is empty (canonical
+/// CI scenario with a committed lockfile, fresh runner, or after
+/// `bun pm cache rm`), the `installIsolatedPackages` DFS runs before the
+/// per-entry download/extract loop has populated `<cache>/<folder>/`. We
+/// cannot consult the npm registry manifest here either — the v1
+/// "install" manifest Bun fetches strips `"types"`/`"typings"`/`"exports"`
+/// from each version. So we conservatively mark packages we can't read
+/// as ineligible for the global store: the first install after a cache
+/// wipe materializes packages project-locally (slower to write, but
+/// TypeScript resolution is correct), and subsequent installs on the
+/// same machine hit the warm cache and route eligible packages back
+/// through the shared store. The alternative — leaving packages
+/// global-store-eligible when we can't verify — silently resurrects
+/// #29727 for the whole CI fleet.
 fn packageShipsTypeDeclarations(
     manager: *PackageManager,
     pkg_id: PackageID,
@@ -2006,7 +2018,15 @@ fn packageShipsTypeDeclarations(
 
     const source_bytes = switch (bun.sys.File.readFrom(cache_dir, rel.sliceZ(), manager.allocator)) {
         .result => |b| b,
-        .err => return false,
+        .err => {
+            // Package is not yet extracted (see the cold-cache caveat
+            // above). Conservatively memoize as ineligible — the package
+            // gets materialized project-locally on this install, and the
+            // next install (on a warm cache) recomputes eligibility from
+            // scratch in a fresh DFS.
+            gop.value_ptr.* = true;
+            return true;
+        },
     };
     defer manager.allocator.free(source_bytes);
 

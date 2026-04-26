@@ -744,7 +744,19 @@ pub fn spawnMaybeSync(
         spawned.stdin,
         &promise_for_stream,
     ) catch {
+        // The aggregate above already ran: ref_count = 2 and stdout/stderr/
+        // stdio_pipes are live, but neither the JS wrapper nor the process
+        // exit handler have been wired up to own those refs yet. Tear down
+        // what `finalize()` would have and release both refs.
+        _ = subprocess.tryKill(subprocess.killSignal);
+        subprocess.finalizeStreams();
+        subprocess.process.detach();
+        subprocess.process.deref();
+        MaxBuf.removeFromSubprocess(&subprocess.stdout_maxbuf);
+        MaxBuf.removeFromSubprocess(&subprocess.stderr_maxbuf);
         subprocess.deref();
+        subprocess.deref();
+        if (globalThis.hasException()) return error.JSError;
         return globalThis.throwOutOfMemory();
     };
 

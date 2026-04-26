@@ -3,6 +3,11 @@ import { readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
+// Every workload below is time-bounded for 100ms. On Windows JSC's
+// SamplingProfiler effectively ticks at the ~15.6ms default timer quantum, and
+// the entry module evaluates via an async fetch/link/evaluate chain — so
+// shorter windows (the previous 32/50ms) can elapse before a single sample is
+// taken, leaving "No samples collected." in --cpu-prof-md output.
 describe.concurrent("--cpu-prof", () => {
   test("generates CPU profile with default name", async () => {
     using dir = tempDir("cpu-prof", {
@@ -14,7 +19,7 @@ describe.concurrent("--cpu-prof", () => {
         }
 
         const now = performance.now();
-        while (now + 50 > performance.now()) {
+        while (now + 100 > performance.now()) {
             Bun.inspect(fibonacci(20));
         }
       `,
@@ -96,7 +101,7 @@ describe.concurrent("--cpu-prof", () => {
     using dir = tempDir("cpu-prof-name", {
       "test.js": `
         function loop() {
-          const end = Date.now() + 32;
+          const end = Date.now() + 100;
           while (Date.now() < end) {}
         }
         loop();
@@ -124,7 +129,7 @@ describe.concurrent("--cpu-prof", () => {
     using dir = tempDir("cpu-prof-dir", {
       "test.js": `
         function loop() {
-          const end = Date.now() + 32;
+          const end = Date.now() + 100;
           while (Date.now() < end) {}
         }
         loop();
@@ -151,13 +156,6 @@ describe.concurrent("--cpu-prof", () => {
   });
 
   test("profile captures function names", async () => {
-    // Time-bounded (not iteration-bounded) so myFunction occupies the CPU for
-    // a contiguous 100ms and is guaranteed to span multiple sampler ticks even
-    // on Windows, where JSC's SamplingProfiler effectively ticks at the
-    // ~15.6ms default timer quantum. An iteration-bounded loop JITs to <1ms,
-    // and since the entry module evaluates via an async fetch/link/evaluate
-    // chain the first tick can land in loader internals as "(program)" with
-    // user code finishing before the second tick.
     using dir = tempDir("cpu-prof-functions", {
       "test.js": `
         function myFunction() {
@@ -207,7 +205,7 @@ describe.concurrent("--cpu-prof", () => {
 
         function main() {
           const now = performance.now();
-          while (now + 50 > performance.now()) {
+          while (now + 100 > performance.now()) {
             Bun.inspect(fibonacci(20));
           }
         }
@@ -256,7 +254,7 @@ describe.concurrent("--cpu-prof", () => {
     using dir = tempDir("cpu-prof-md-name", {
       "test.js": `
         function loop() {
-          const end = Date.now() + 32;
+          const end = Date.now() + 100;
           while (Date.now() < end) {}
         }
         loop();
@@ -300,7 +298,7 @@ describe.concurrent("--cpu-prof", () => {
         }
         function main() {
           const now = performance.now();
-          while (now + 50 > performance.now()) {
+          while (now + 100 > performance.now()) {
             workA();
             workB();
           }
@@ -341,7 +339,7 @@ describe.concurrent("--cpu-prof", () => {
     using dir = tempDir("cpu-prof-md-standalone", {
       "test.js": `
         function loop() {
-          const end = Date.now() + 32;
+          const end = Date.now() + 100;
           while (Date.now() < end) {}
         }
         loop();
@@ -375,7 +373,7 @@ describe.concurrent("--cpu-prof", () => {
     using dir = tempDir("cpu-prof-both-formats", {
       "test.js": `
         function loop() {
-          const end = Date.now() + 32;
+          const end = Date.now() + 100;
           while (Date.now() < end) {}
         }
         loop();

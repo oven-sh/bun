@@ -247,6 +247,49 @@ devTest("export star tolerates circular import when re-exported module is mid-lo
     await c.expectMessage("PASS");
   },
 });
+devTest("export * as ns from preserves live bindings across HMR", {
+  // Regression guard for the aliased star branch of ConvertESMExportsForHmr.
+  // A plain data property would snapshot the source's exports at barrel
+  // init; emitting a getter makes the namespace member re-read the
+  // reassignable local, which `patchImporters` rebinds after an HMR update
+  // replaces the source's exports wholesale.
+  framework: minimalFramework,
+  files: {
+    "state.ts": `
+      export var value = 0;
+      export function increment() {
+        value++;
+      }
+    `,
+    "proxy.ts": `
+      export * as ns from './state';
+    `,
+    "routes/index.ts": `
+      import { ns } from '../proxy';
+      export default function(req, meta) {
+        ns.increment();
+        return new Response('State: ' + ns.value);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("State: 1");
+    await dev.fetch("/").equals("State: 2");
+    await dev.write(
+      "state.ts",
+      `
+        export var value = 100;
+        export function increment() { value--; }
+      `,
+    );
+    // After source HMR replaces state.ts's exports object, proxy.ns must
+    // see the new object. value starts at 100 now, and each fetch
+    // decrements it — confirms both that the namespace rebound (not
+    // snapshotted) and that the properties on it still live-bind.
+    await dev.fetch("/").equals("State: 99");
+    await dev.fetch("/").equals("State: 98");
+  },
+});
 devTest("export star through require() (sync loader) circular", {
   // Exercises the sync path — loadModuleSync — which has its own
   // patchImporters call so `export * from` forwarders set up against a

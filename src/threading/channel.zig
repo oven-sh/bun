@@ -91,13 +91,11 @@ pub fn Channel(
         }
 
         pub fn writeAll(self: *Self, items: []const T) !void {
-            const n = try self.writeItems(items, true);
-            bun.assert(n == items.len);
+            bun.assert((try self.writeItems(items, true)) == items.len);
         }
 
         pub fn readAll(self: *Self, items: []T) !void {
-            const n = try self.readItems(items, true);
-            bun.assert(n == items.len);
+            bun.assert((try self.readItems(items, true)) == items.len);
         }
 
         fn writeItems(self: *Self, items: []const T, should_block: bool) !usize {

@@ -415,8 +415,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     bun.default_allocator.free(pooled.target_hostname);
                     pooled.target_hostname = "";
                 }
-                const put_ok = pooled.owner.pending_sockets.put(pooled);
-                assert(put_ok);
+                assert(pooled.owner.pending_sockets.put(pooled));
             }
 
             pub fn onData(
@@ -607,8 +606,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         bun.default_allocator.free(socket.target_hostname);
                         socket.target_hostname = "";
                     }
-                    const put_ok = this.pending_sockets.put(socket);
-                    assert(put_ok);
+                    assert(this.pending_sockets.put(socket));
                     log("+ Keep-Alive reuse {s}:{d}{s}", .{ hostname, port, if (tunnel != null) " (with tunnel)" else "" });
                     return .{ .socket = http_socket, .tunnel = tunnel };
                 }

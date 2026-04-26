@@ -508,8 +508,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     // Add react fast refresh if needed. This is the first file on the client side,
     // as it will be referred to by index.
     if (dev.framework.react_fast_refresh) |rfr| {
-        const idx = try dev.client_graph.insertStale(rfr.import_source, false);
-        assert(idx == IncrementalGraph(.client).react_refresh_index);
+        assert(try dev.client_graph.insertStale(rfr.import_source, false) == IncrementalGraph(.client).react_refresh_index);
     }
 
     if (!dev.frontend_only) {

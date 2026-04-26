@@ -3018,13 +3018,12 @@ pub fn debugAssert(zig_lazy ok: bool) callconv(callconv_inline) void {
 ///
 /// Please use `assertf` in new code.
 ///
-/// `ok` is `zig_lazy`: when `allow_assert` is comptime-false the argument
-/// expression is never analyzed, so expensive checks and extern calls are
-/// guaranteed to generate no code. The manual `if (comptime allow_assert)`
-/// wrapper is no longer required.
+/// `ok` is always evaluated (existing call sites pass side-effecting expressions
+/// such as `EVP_DigestUpdate(...) == 1`). Wrap expensive *pure* checks in
+/// `if (comptime bun.Environment.allow_assert)` if you need them elided.
 ///
 /// Use `releaseAssert` for assertions that should not be stripped in release builds.
-pub fn assert(zig_lazy ok: bool) callconv(callconv_inline) void {
+pub fn assert(ok: bool) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;
     }
@@ -3040,12 +3039,12 @@ pub fn assert(zig_lazy ok: bool) callconv(callconv_inline) void {
 ///
 /// Please note that messages will be shown to users in crash reports.
 ///
-/// `ok` and `args` are `zig_lazy`: when `allow_assert` is comptime-false the
-/// argument expressions are never analyzed, so expensive checks and extern
-/// calls are guaranteed to generate no code.
+/// `ok` is always evaluated (existing call sites pass side-effecting
+/// expressions). Wrap expensive *pure* checks in
+/// `if (comptime bun.Environment.allow_assert)` if you need them elided.
 ///
 /// Use `releaseAssert` for assertions that should not be stripped in release builds.
-pub fn assertf(zig_lazy ok: bool, comptime format: []const u8, zig_lazy args: anytype) callconv(callconv_inline) void {
+pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;
     }
@@ -3065,7 +3064,7 @@ pub fn releaseAssert(ok: bool, comptime msg: []const u8, args: anytype) callconv
     }
 }
 
-pub fn assertWithLocation(zig_lazy value: bool, zig_lazy src: std.builtin.SourceLocation) callconv(callconv_inline) void {
+pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;
     }

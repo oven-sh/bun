@@ -769,7 +769,12 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
 
   test("rejects zero-chunk terminator split across TCP segments with invalid byte", async () => {
     // The terminator validation must persist across TCP boundaries. Send the
-    // first (valid) '\r' and then a bad second byte in a separate write.
+    // first (valid) '\r', yield to the event loop so the server's recv() runs
+    // on just that byte, then send a bad second byte in a separate segment.
+    // `setNoDelay` disables Nagle so loopback doesn't coalesce the two writes;
+    // `Bun.sleep` yields to the uSockets poll phase (unlike `queueMicrotask`
+    // which drains synchronously in the same turn and leaves both writes in
+    // one recv).
     await using server = Bun.serve({
       port: 0,
       fetch() {
@@ -778,25 +783,32 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     });
 
     const client = net.connect(server.port, "127.0.0.1");
+    client.setNoDelay(true);
 
-    await new Promise<void>((resolve, reject) => {
-      let responseData = "";
+    // Attach the data/close listeners BEFORE any write so the response can't
+    // arrive between the write and the listener attach (which would drop it).
+    let data = "";
+    const responseReady = new Promise<string>((resolve, reject) => {
       client.on("error", reject);
-      client.on("data", data => {
-        responseData += data.toString();
+      client.on("data", chunk => {
+        data += chunk.toString();
       });
-      client.on("close", () => {
-        expect(responseData).toContain("HTTP/1.1 400");
-        resolve();
-      });
-      client.on("connect", () => {
-        client.write(
-          "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\r", // first half of terminator, looks valid so far
-        );
-        // Wait a tick then send a bad second byte.
-        queueMicrotask(() => client.write("X"));
-      });
+      client.on("close", () => resolve(data));
     });
+
+    await new Promise<void>(connected => client.once("connect", connected));
+    client.write(
+      "POST / HTTP/1.1\r\n" +
+        "Host: localhost\r\n" +
+        "Transfer-Encoding: chunked\r\n" +
+        "\r\n" +
+        "0\r\n" +
+        "\r", // first half of terminator
+    );
+    await Bun.sleep(50);
+    client.write("X"); // bad second byte in its own TCP segment
+
+    expect(await responseReady).toContain("HTTP/1.1 400");
   });
 
   test("accepts zero-chunk with correct CRLF terminator split across segments", async () => {
@@ -811,22 +823,36 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
     });
 
     const client = net.connect(server.port, "127.0.0.1");
+    client.setNoDelay(true);
 
-    await new Promise<void>((resolve, reject) => {
+    // Listeners first — see comment in the previous test.
+    let data = "";
+    const responseReady = new Promise<string>((resolve, reject) => {
       client.on("error", reject);
-      client.on("data", data => {
-        expect(data.toString()).toContain("HTTP/1.1 200");
-        expect(receivedBody).toBe("");
-        client.end();
-        resolve();
+      client.on("data", chunk => {
+        data += chunk.toString();
+        // Response is served on a keep-alive connection by default, so we
+        // need to close the client ourselves once we've seen the full headers.
+        if (data.includes("\r\n\r\nOK")) client.end();
       });
-      client.on("connect", () => {
-        client.write(
-          "POST / HTTP/1.1\r\n" + "Host: localhost\r\n" + "Transfer-Encoding: chunked\r\n" + "\r\n" + "0\r\n" + "\r", // first half
-        );
-        queueMicrotask(() => client.write("\n")); // valid second half
-      });
+      client.on("close", () => resolve(data));
     });
+
+    await new Promise<void>(connected => client.once("connect", connected));
+    client.write(
+      "POST / HTTP/1.1\r\n" +
+        "Host: localhost\r\n" +
+        "Transfer-Encoding: chunked\r\n" +
+        "\r\n" +
+        "0\r\n" +
+        "\r", // first half
+    );
+    await Bun.sleep(50);
+    client.write("\n"); // valid second half in its own TCP segment
+
+    const responseData = await responseReady;
+    expect(responseData).toContain("HTTP/1.1 200");
+    expect(receivedBody).toBe("");
   });
 });
 

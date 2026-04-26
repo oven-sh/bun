@@ -300,14 +300,13 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
   });
 
   it("literal segments after a wildcard still traverse symlinks", () => {
-    // Previously `*/link/*.txt` returned [] because the JS transform only
-    // handles *leading* literal prefixes. With the walker-level fix (literal
-    // matches may descend into symlinks even mid-pattern), this now matches
-    // Node's behavior: `*` matches `flat` (real dir), then the literal `link`
-    // descends through the symlink.
+    // `*/link/*.txt`: `*` matches `flat` (a real dir), then the literal
+    // `link` names a symlink. Literal segments cross symlinks, so this
+    // descends — matching Node.
     expect(fs.globSync("*/link/*.txt", { cwd: root })).toStrictEqual(["flat/link/inside.txt"]);
-    // But `**/link/*.txt` still returns [] — globstar is a wildcard, so it
-    // can't cross the symlink even if the next segment is literal.
+    // `**/link/*.txt` is different: once `**` is active, the walker is
+    // in wildcard mode even when the next segment is a literal, so the
+    // symlink boundary blocks descent. Node returns `[]` here too.
     expect(fs.globSync("**/link/*.txt", { cwd: root })).toStrictEqual([]);
   });
 
@@ -366,18 +365,19 @@ describe.skipIf(isWindows)("does not descend into directory symlinks (matches No
   });
 
   it("brace alternative that names a symlink still descends", () => {
-    // `{link,dir}/*.txt` should yield matches for both branches; `link` is a
-    // symlink. `validatePattern` pre-expands braces, so each alternative
-    // becomes its own scan and the literal `link` branch crosses the symlink.
+    // `{link,dir}/*.txt` should yield matches for both branches; `link` is
+    // a symlink. The walker's per-branch literal check sees `link` as a
+    // literal alternative of the brace, so descent is allowed.
     const cwd = path.join(root, "flat");
     expect(fs.globSync("{link,dir}/*.txt", { cwd }).sort()).toStrictEqual(["dir/inside.txt", "link/inside.txt"]);
   });
 
   it("mixed-wildcard brace alternative preserves the literal branch's symlink descent", () => {
-    // `{link,d*}/*.txt`: `link` is literal (descends through the symlink),
-    // `d*` is a wildcard (matches `dir` but doesn't re-cross a symlink if it
-    // hit one). Brace pre-expansion gives each alternative independent
-    // treatment — matching Node.
+    // `{link,d*}/*.txt`: `link` is a literal alt (descends through the
+    // symlink), `d*` is a wildcard alt (matches `dir` but would not re-cross
+    // a symlink it hit). The walker's `hasLiteralMatch` inspects each brace
+    // branch separately, so entry `link` is classified as a literal match
+    // regardless of the presence of `*` in the other alt.
     const cwd = path.join(root, "flat");
     expect(fs.globSync("{link,d*}/*.txt", { cwd }).sort()).toStrictEqual(["dir/inside.txt", "link/inside.txt"]);
   });

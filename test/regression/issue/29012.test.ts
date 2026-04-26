@@ -189,3 +189,107 @@ test.if(!isWindows)("http.request 'upgrade' delivers hijacked socket with writab
     close();
   }
 });
+
+// Spawns an echo-upgrade server that sends `HTTP/1.1 101` as soon as it
+// sees the request headers (no body required) and echoes raw bytes back
+// once upgraded. This mirrors the `ws` / Playwright CDP pattern: GET with
+// `Upgrade:` headers, `req.end()` before the 101, and `socket.write(…)`
+// inside the `'upgrade'` listener.
+function spawnEchoUpgradeServer(): Promise<{ socketPath: string; close: () => void }> {
+  return new Promise((resolve, reject) => {
+    const socketPath = path.join(
+      os.tmpdir(),
+      `bun-29012-echo-${process.pid}-${Math.random().toString(36).slice(2)}.sock`,
+    );
+    try {
+      fs.unlinkSync(socketPath);
+    } catch {}
+
+    const server = net.createServer(socket => {
+      let headersSeen = false;
+      let buffer = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        if (!headersSeen) {
+          buffer = Buffer.concat([buffer, chunk]);
+          const headerEnd = buffer.indexOf("\r\n\r\n");
+          if (headerEnd === -1) return;
+          headersSeen = true;
+          socket.write(
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+              "Upgrade: echo\r\n" +
+              "Connection: Upgrade\r\n" +
+              "\r\n",
+          );
+          // Anything past the blank line is hijacked-protocol data — echo it.
+          const leftover = buffer.subarray(headerEnd + 4);
+          if (leftover.length > 0) socket.write(leftover);
+        } else {
+          // Hijacked phase: echo raw bytes.
+          socket.write(chunk);
+        }
+      });
+    });
+
+    server.on("error", reject);
+    server.listen(socketPath, () => {
+      resolve({
+        socketPath,
+        close: () => {
+          server.close();
+          try {
+            fs.unlinkSync(socketPath);
+          } catch {}
+        },
+      });
+    });
+  });
+}
+
+test.if(!isWindows)("http.request 'upgrade' (GET + req.end()): socket.write reaches the server", async () => {
+  // Regression for the WebSocket / Playwright CDP / `websocket` npm package
+  // pattern (see #18945, #9911, #20547): GET with `Upgrade:` headers and
+  // `req.end()` called BEFORE the 101 response. The hijacked socket's
+  // writable side must stay live past `req.finished = true`.
+  const { socketPath, close } = await spawnEchoUpgradeServer();
+  try {
+    const req = http.request({
+      socketPath,
+      method: "GET",
+      path: "/",
+      headers: {
+        Connection: "Upgrade",
+        Upgrade: "echo",
+      },
+    });
+
+    const { promise: upgradePromise, resolve, reject } = Promise.withResolvers<{
+      res: http.IncomingMessage;
+      socket: import("node:stream").Duplex;
+      head: Buffer;
+    }>();
+    req.on("upgrade", (res, socket, head) => resolve({ res, socket, head }));
+    req.on("error", reject);
+    // Standard Node WebSocket pattern: end() synchronously BEFORE the 101.
+    req.end();
+
+    const { res, socket } = await upgradePromise;
+    expect(res.statusCode).toBe(101);
+    expect(res.headers.upgrade).toBe("echo");
+
+    const chunks: Buffer[] = [];
+    const gotEcho = new Promise<void>(res2 => {
+      socket.on("data", c => {
+        chunks.push(c);
+        if (Buffer.concat(chunks).toString("utf8") === "ping") res2();
+      });
+    });
+
+    socket.write("ping");
+    await gotEcho;
+    expect(Buffer.concat(chunks).toString("utf8")).toBe("ping");
+
+    socket.destroy();
+  } finally {
+    close();
+  }
+});

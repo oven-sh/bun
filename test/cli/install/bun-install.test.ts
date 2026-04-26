@@ -8801,18 +8801,20 @@ describe.concurrent("bun-install", () => {
               "multi-tool-pkg": "file:multi-tool-pkg-1.0.0.tgz",
             },
           }),
-          // Cache enabled so the cache directory gets created too — this is
-          // what BUN_INSTALL_CACHE_DIR points at in the bug report.
-          "bunfig.toml": `[install]\ncache = "./.umask-cache"\nlinker = "${linker}"\n`,
+          "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
         });
         const cacheDir = join(pkgDir, ".umask-cache");
 
         // Drive umask through a shell wrapper — calling process.umask() in
         // the test runner would leak into unrelated concurrent tests.
+        //
+        // BUN_INSTALL_CACHE_DIR wins over bunfig's `cache = "..."`, and the
+        // CI runner sets it to a per-test tmpdir. Point it at our own dir
+        // so the assertion below checks the cache we actually created.
         await using proc = Bun.spawn({
           cmd: ["sh", "-c", `umask 0002 && exec "$@"`, "sh", bunExe(), "install"],
           cwd: pkgDir,
-          env,
+          env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
           stderr: "pipe",
           stdout: "pipe",
           stdin: "ignore",

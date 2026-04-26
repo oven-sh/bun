@@ -151,12 +151,20 @@ describe.concurrent("--cpu-prof", () => {
   });
 
   test("profile captures function names", async () => {
+    // Time-bounded (not iteration-bounded) so myFunction occupies the CPU for
+    // a contiguous 100ms and is guaranteed to span multiple sampler ticks even
+    // on Windows, where JSC's SamplingProfiler effectively ticks at the
+    // ~15.6ms default timer quantum. An iteration-bounded loop JITs to <1ms,
+    // and since the entry module evaluates via an async fetch/link/evaluate
+    // chain the first tick can land in loader internals as "(program)" with
+    // user code finishing before the second tick.
     using dir = tempDir("cpu-prof-functions", {
       "test.js": `
         function myFunction() {
           let sum = 0;
-          for (let i = 0; i < 1000000; i++) {
-            sum += i;
+          const end = performance.now() + 100;
+          while (performance.now() < end) {
+            for (let i = 0; i < 1000; i++) sum += i;
           }
           return sum;
         }

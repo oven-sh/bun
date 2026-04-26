@@ -1997,6 +1997,29 @@ describe("global virtual store", () => {
       "exports-types/index.js": "module.exports = {};\n",
       "exports-types/index.d.ts": "export {};\n",
 
+      // Dual-package types: a `"types"` key whose value is itself a
+      // conditional object — the format TypeScript recommends for
+      // packages shipping both `.d.mts` and `.d.cts`. Must still be
+      // detected.
+      "exports-types-dual/package.json": JSON.stringify({
+        name: "exports-types-dual",
+        version: "1.0.0",
+        exports: {
+          ".": {
+            types: {
+              import: "./index.d.mts",
+              require: "./index.d.cts",
+            },
+            import: "./index.mjs",
+            require: "./index.cjs",
+          },
+        },
+      }),
+      "exports-types-dual/index.mjs": "export default {};\n",
+      "exports-types-dual/index.cjs": "module.exports = {};\n",
+      "exports-types-dual/index.d.mts": "export {};\n",
+      "exports-types-dual/index.d.cts": "export {};\n",
+
       "pure-js/package.json": JSON.stringify({
         name: "pure-js",
         version: "1.0.0",
@@ -2021,6 +2044,7 @@ describe("global virtual store", () => {
       "top-types": await pack("top-types"),
       "top-typings": await pack("top-typings"),
       "exports-types": await pack("exports-types"),
+      "exports-types-dual": await pack("exports-types-dual"),
       "pure-js": await pack("pure-js"),
     };
 
@@ -2070,6 +2094,7 @@ describe("global virtual store", () => {
           "top-types": "1.0.0",
           "top-typings": "1.0.0",
           "exports-types": "1.0.0",
+          "exports-types-dual": "1.0.0",
           "pure-js": "1.0.0",
         },
       }),
@@ -2085,10 +2110,11 @@ describe("global virtual store", () => {
     expect(lstatSync(pureEntry).isSymbolicLink()).toBe(true);
     expect(readlinkSync(pureEntry)).toMatch(/links[/\\]pure-js@1\.0\.0-[0-9a-f]{16}$/);
 
-    // Each type-shipping signal (top-level `types`, top-level `typings`,
-    // or a `"types"` condition under `exports`) keeps the package
-    // project-local as a real directory.
-    for (const name of ["top-types", "top-typings", "exports-types"] as const) {
+    // Each type-shipping signal — top-level `types`, top-level `typings`,
+    // a `"types"` condition with a string target under `exports`, or a
+    // `"types"` condition with a nested-object target (the dual ESM/CJS
+    // shape) — keeps the package project-local as a real directory.
+    for (const name of ["top-types", "top-typings", "exports-types", "exports-types-dual"] as const) {
       const entry = join(bunDir, `${name}@1.0.0`);
       expect(lstatSync(entry).isSymbolicLink()).toBe(false);
       expect(lstatSync(entry).isDirectory()).toBe(true);

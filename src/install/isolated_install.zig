@@ -2059,9 +2059,16 @@ fn scanForTypeDeclarationSignals(source_bytes: []const u8) bool {
 ///   "exports": { "import": { "types": "./a.d.ts", "default": "./a.js" } }
 ///   "exports": { "types": "./index.d.ts", "default": "./index.js" }
 ///
-/// We treat ANY `"types"` key inside the exports tree as a signal. The
-/// recursion depth is bounded by how deeply a `package.json` nests
-/// conditions (1-3 in practice), and we cap it defensively.
+/// Dual-package types nest the other way — a `"types"` key whose *value*
+/// is itself a conditional object:
+///
+///   "exports": { ".": { "types": { "import": "./a.d.mts", "require": "./a.d.cts" } } }
+///
+/// Either shape means the package ships declarations, so any `"types"` key
+/// anywhere in the tree is a hit regardless of whether its value is a
+/// string or a nested conditional object. Recursion depth is bounded by
+/// how deeply a `package.json` nests conditions (1-3 in practice); the
+/// cap is just a defensive ceiling for malformed input.
 fn exportsHasTypesCondition(expr: bun.js_parser.Expr) bool {
     return exportsHasTypesConditionInner(expr, 0);
 }
@@ -2072,10 +2079,7 @@ fn exportsHasTypesConditionInner(expr: bun.js_parser.Expr, depth: u8) bool {
     for (expr.data.e_object.properties.slice()) |prop| {
         const key = prop.key orelse continue;
         const value = prop.value orelse continue;
-        if (key.data == .e_string and
-            key.data.e_string.eqlComptime("types") and
-            value.data == .e_string)
-        {
+        if (key.data == .e_string and key.data.e_string.eqlComptime("types")) {
             return true;
         }
         if (value.data == .e_object) {

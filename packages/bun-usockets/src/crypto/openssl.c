@@ -583,6 +583,12 @@ restart:
     } else if (s->handshake_state == HANDSHAKE_RENEGOTIATION_PENDING) {
       // renegotiation ended successfully call on_handshake
       us_internal_trigger_handshake_callback(s, 1);
+      // the on_handshake callback runs user code which may close this socket
+      // (us_internal_ssl_socket_close -> ssl_on_close frees s->ssl). if that
+      // happened, bail out instead of looping back to SSL_read(NULL, ...).
+      if (us_internal_ssl_socket_is_closed(s)) {
+        return NULL;
+      }
     }
 
     read += just_read;

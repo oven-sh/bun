@@ -214,6 +214,39 @@ devTest("export star chain (barrel -> barrel -> lib) preserves live bindings", {
     await c.expectMessage("PASS");
   },
 });
+devTest("export star tolerates circular import when re-exported module is mid-load", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "a.ts": `
+      export * from './b';
+      export const aVal = "A";
+    `,
+    "b.ts": `
+      export * from './a';
+      export const bVal = "B";
+    `,
+    "index.ts": `
+      import * as a from './a';
+      import * as b from './b';
+      // Loading must not throw during the circular star-export setup, and
+      // after both modules finish, each side sees the other's direct export.
+      if (a.aVal === "A" && a.bVal === "B" && b.aVal === "A" && b.bVal === "B") {
+        console.log("PASS");
+      } else {
+        console.log("FAIL: " + JSON.stringify({
+          aVal_on_a: a.aVal, bVal_on_a: a.bVal,
+          aVal_on_b: b.aVal, bVal_on_b: b.bVal,
+        }));
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
 devTest("export { x as y }", {
   framework: minimalFramework,
   files: {

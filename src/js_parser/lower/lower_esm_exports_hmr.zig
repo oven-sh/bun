@@ -484,6 +484,29 @@ pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.P
         try ctx.last_part.declared_symbols.append(p.allocator, .{ .ref = p.module_ref, .is_top_level = true });
     }
 
+    // `hmr.reactRefreshAccept()` must run BEFORE `hmr.esmStar(...)` when
+    // both are emitted. The accept check calls `isReactRefreshBoundary` on
+    // `this.exports`, which bails with `return false` on any own accessor
+    // descriptor — and `esmStar` below installs exactly those descriptors
+    // for every non-`default` key of each star-re-exported module. If this
+    // call ran after the loop, a file that defines a React component AND
+    // bare-re-exports from another would stop being a self-accepting
+    // boundary, falling back to a full page reload on edit. Keeping it
+    // here means the check only sees the direct exports — which are the
+    // ones that decide whether THIS file is a component module.
+    if (p.options.features.react_fast_refresh and p.react_refresh.register_used) {
+        try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
+            .value = Expr.init(E.Call, .{
+                .target = Expr.init(E.Dot, .{
+                    .target = Expr.initIdentifier(p.hmr_api_ref, .Empty),
+                    .name = "reactRefreshAccept",
+                    .name_loc = .Empty,
+                }, .Empty),
+                .args = .empty,
+            }, .Empty),
+        }, .Empty));
+    }
+
     // Emit one `hmr.esmStar(() => ns)` per `export * from '...'` statement.
     // The thunk closes over the reassignable namespace local, so when the
     // re-exported module is HMR-updated and `updateImport` rebinds the local,
@@ -514,19 +537,6 @@ pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.P
         } else {
             gop.value_ptr.count_estimate += 1;
         }
-    }
-
-    if (p.options.features.react_fast_refresh and p.react_refresh.register_used) {
-        try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
-            .value = Expr.init(E.Call, .{
-                .target = Expr.init(E.Dot, .{
-                    .target = Expr.initIdentifier(p.hmr_api_ref, .Empty),
-                    .name = "reactRefreshAccept",
-                    .name_loc = .Empty,
-                }, .Empty),
-                .args = .empty,
-            }, .Empty),
-        }, .Empty));
     }
 
     // Merge all part metadata into the first part.

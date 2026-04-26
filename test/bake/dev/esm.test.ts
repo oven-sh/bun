@@ -247,6 +247,40 @@ devTest("export star tolerates circular import when re-exported module is mid-lo
     await c.expectMessage("PASS");
   },
 });
+devTest("export star through require() (sync loader) circular", {
+  // Exercises the sync path — loadModuleSync — which has its own
+  // patchImporters call so `export * from` forwarders set up against a
+  // null mid-load source get re-run once the source finishes.
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "a.ts": `
+      export * from './b';
+      export const aVal = "A";
+    `,
+    "b.ts": `
+      export * from './a';
+      export const bVal = "B";
+    `,
+    "index.ts": `
+      const a = require('./a');
+      const b = require('./b');
+      if (a.aVal === "A" && a.bVal === "B" && b.aVal === "A" && b.bVal === "B") {
+        console.log("PASS");
+      } else {
+        console.log("FAIL: " + JSON.stringify({
+          aVal_on_a: a.aVal, bVal_on_a: a.bVal,
+          aVal_on_b: b.aVal, bVal_on_b: b.bVal,
+        }));
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
 devTest("export { x as y }", {
   framework: minimalFramework,
   files: {

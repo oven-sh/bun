@@ -33,7 +33,7 @@ import { streamPath } from "./stream.ts";
  * Override via `--zig-commit=<hash>` to test a new compiler.
  * From https://github.com/oven-sh/zig releases.
  */
-export const ZIG_COMMIT = "560aed0c6508412c2177866c54ad0aa3eef41e3f";
+export const ZIG_COMMIT = "597cbfe43b5b7f2b606b8818a5598c442097290c";
 
 /**
  * Number of LLVM codegen units. >1 splits the build into N independent

@@ -772,7 +772,11 @@ function Socket(options?) {
         try {
           onread.callback(buffer.length, buffer);
         } catch (e) {
-          self.emit("error", e);
+          // Node surfaces a throw from onread.callback as 'uncaughtException'
+          // (it's invoked from onStreamRead with no try/catch). Route it the
+          // same way as pushDataToSocket — via reportError — instead of
+          // emitting on the socket's 'error' event.
+          reportError(e);
         }
       },
     };

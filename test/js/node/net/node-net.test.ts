@@ -860,7 +860,7 @@ it.skipIf(isWindows)(
 );
 
 // https://github.com/oven-sh/bun/issues/29761
-describe("uncaughtException in socket listener", () => {
+describe.concurrent("uncaughtException in socket listener", () => {
   it("surfaces a throw from a server-side 'data' listener as uncaughtException", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -959,5 +959,46 @@ describe("uncaughtException in socket listener", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("NO-HANDLER-BOOM");
     expect(exitCode).not.toBe(0);
+  });
+
+  it("surfaces a throw from onread.callback as uncaughtException", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const server = net.createServer((socket) => {
+            socket.write("hello via onread");
+          });
+          server.listen(0, () => {
+            const port = server.address().port;
+            const client = net.createConnection({
+              port,
+              onread: {
+                buffer: Buffer.alloc(64),
+                callback(nread, buffer) {
+                  console.log("ONREAD:" + buffer.toString("utf8", 0, nread));
+                  throw new Error("ONREAD-BOOM");
+                },
+              },
+            });
+            client.on("error", (err) => console.log("SOCKET_ERROR:" + err.message));
+          });
+          process.on("uncaughtException", (err) => {
+            console.log("UNCAUGHT:" + err.message);
+            process.exit(0);
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("ONREAD:hello via onread");
+    expect(stdout).toContain("UNCAUGHT:ONREAD-BOOM");
+    expect(stdout).not.toContain("SOCKET_ERROR:");
+    expect(exitCode).toBe(0);
   });
 });

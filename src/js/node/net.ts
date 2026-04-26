@@ -99,6 +99,23 @@ function destroyWhenAborted(err) {
     this.destroy(err.target.reason);
   }
 }
+// Node's `net.Socket` reads data by having the underlying handle synchronously
+// emit 'data' on the Readable stream. If a user listener throws, the throw
+// propagates back through the handle's read callback and is surfaced as
+// `uncaughtException` — the socket's own 'error' event never fires, and the
+// socket stays alive. In Bun, the Zig socket layer catches exceptions from the
+// 'data' JS callback and funnels them into the socket's onError handler, which
+// conflates user-code bugs with transport errors. Wrap `self.push(buffer)`
+// here so a user-listener throw is re-dispatched as `uncaughtException` (via
+// `reportError`) and never reaches the native error-routing path.
+function pushDataToSocket(self, buffer) {
+  try {
+    return self.push(buffer);
+  } catch (e) {
+    reportError(e);
+    return true;
+  }
+}
 // in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
 function onSocketEnd() {
   if (!this.allowHalfOpen) {
@@ -158,7 +175,7 @@ const SocketHandlers: SocketHandler = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) {
+    if (!pushDataToSocket(self, buffer)) {
       socket.pause();
     }
   },
@@ -306,7 +323,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) {
+    if (!pushDataToSocket(self, buffer)) {
       socket.pause();
     }
   },
@@ -512,7 +529,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) socket.pause();
+    if (!pushDataToSocket(self, buffer)) socket.pause();
   },
   drain(socket) {
     $debug("Bun.Socket drain");

@@ -858,3 +858,106 @@ it.skipIf(isWindows)(
   },
   60_000,
 );
+
+// https://github.com/oven-sh/bun/issues/29761
+describe("uncaughtException in socket listener", () => {
+  it("surfaces a throw from a server-side 'data' listener as uncaughtException", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const server = net.createServer((socket) => {
+            socket.on("error", (err) => console.log("SOCKET_ERROR:" + err.message));
+            socket.on("data", (data) => {
+              console.log("DATA:" + data);
+              throw new Error("BOOM from data handler");
+            });
+          });
+          server.listen(0, () => {
+            const port = server.address().port;
+            const client = net.createConnection({ port }, () => client.write("hi"));
+            client.on("error", () => {});
+          });
+          process.on("uncaughtException", (err) => {
+            console.log("UNCAUGHT:" + err.message);
+            process.exit(0);
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("DATA:hi");
+    expect(stdout).toContain("UNCAUGHT:BOOM from data handler");
+    // The socket's own 'error' event must NOT fire for a user-listener throw.
+    expect(stdout).not.toContain("SOCKET_ERROR:");
+    expect(exitCode).toBe(0);
+  });
+
+  it("surfaces a throw from a client-side 'data' listener as uncaughtException", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const server = net.createServer((socket) => {
+            socket.on("data", () => {});
+            socket.write("hello from server");
+          });
+          server.listen(0, () => {
+            const port = server.address().port;
+            const client = net.createConnection({ port });
+            client.on("error", (err) => console.log("SOCKET_ERROR:" + err.message));
+            client.on("data", (data) => {
+              console.log("DATA:" + data);
+              throw new Error("CLIENT-BOOM");
+            });
+          });
+          process.on("uncaughtException", (err) => {
+            console.log("UNCAUGHT:" + err.message);
+            process.exit(0);
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("DATA:hello from server");
+    expect(stdout).toContain("UNCAUGHT:CLIENT-BOOM");
+    expect(stdout).not.toContain("SOCKET_ERROR:");
+    expect(exitCode).toBe(0);
+  });
+
+  it("crashes with a non-zero exit when no uncaughtException handler is set", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const server = net.createServer((socket) => {
+            socket.on("data", () => { throw new Error("NO-HANDLER-BOOM"); });
+          });
+          server.listen(0, () => {
+            const port = server.address().port;
+            const client = net.createConnection({ port }, () => client.write("x"));
+            client.on("error", () => {});
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("NO-HANDLER-BOOM");
+    expect(exitCode).not.toBe(0);
+  });
+});

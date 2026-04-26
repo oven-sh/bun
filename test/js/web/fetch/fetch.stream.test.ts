@@ -1,7 +1,7 @@
 import { Socket } from "bun";
 import { describe, expect, it } from "bun:test";
 import { createReadStream, readFileSync } from "fs";
-import { gcTick, isWindows, tempDirWithFilesAnon } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDirWithFilesAnon } from "harness";
 import http from "http";
 import type { AddressInfo } from "net";
 import path, { join } from "path";
@@ -1403,4 +1403,87 @@ describe.concurrent("fetch() with streaming", () => {
     expect(new TextDecoder().decode(result.value!)).toBe("hello\n");
     server.kill("SIGTERM");
   });
+});
+
+// Runs in a subprocess so aggressive GC does not interact with concurrent tests above.
+it("stored body-stream error survives GC after Response is collected", async () => {
+  // When a fetch response body errors (e.g. connection reset after headers)
+  // while there is no pending read and no buffered consumer, ByteStream.append
+  // stores the error JSValue in `pending.result`. That value must be protected:
+  // once the Response is GC'd, the body's own Strong ref is dropped, and the
+  // stored error would otherwise become a dangling JSCell that is later handed
+  // to JS via readableStreamToText() → toBufferedValue().
+  const fixture = /* js */ `
+    let serverSocket;
+    const socketReady = Promise.withResolvers();
+    const socketClosed = Promise.withResolvers();
+
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          socket.write("HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n");
+          socket.flush();
+          serverSocket = socket;
+          socketReady.resolve();
+        },
+        open() {},
+        close() { socketClosed.resolve(); },
+        error() {},
+      },
+    });
+
+    let body;
+    {
+      let res = await fetch(\`http://127.0.0.1:\${server.port}/\`);
+      body = res.body; // creates ByteStream, no pending read, no buffer action
+      await socketReady.promise;
+
+      // Abort the connection so the body stream receives an error while
+      // pending.state is still .none (we have not called read()).
+      serverSocket.terminate();
+      await socketClosed.promise;
+      // Let the HTTP thread's error propagate to the JS-thread ByteStream.
+      for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+
+      res = undefined; // drop the Response; only 'body' is kept alive
+    }
+
+    // Collect the Response; its body.value.Error Strong (the only remaining
+    // root for the stored error JSValue) goes away with it.
+    for (let i = 0; i < 10; i++) {
+      Bun.gc(true);
+      await new Promise(r => setImmediate(r));
+      // Allocate to encourage reuse of the freed JSCell.
+      for (let j = 0; j < 64; j++) globalThis.__churn = new Error("churn " + i + ":" + j);
+    }
+    Bun.gc(true);
+
+    let caught;
+    try {
+      await Bun.readableStreamToText(body);
+    } catch (e) {
+      caught = e;
+    }
+
+    server.stop(true);
+
+    if (caught instanceof Error && typeof caught.message === "string") {
+      process.stdout.write("PASS " + (caught.code ?? caught.name) + "\\n");
+    } else {
+      process.stdout.write("FAIL " + Object.prototype.toString.call(caught) + "\\n");
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toStartWith("PASS");
+  expect(exitCode).toBe(0);
 });

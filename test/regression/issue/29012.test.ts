@@ -293,3 +293,184 @@ test.if(!isWindows)("http.request 'upgrade' (GET + req.end()): socket.write reac
     close();
   }
 });
+
+// Server that rejects every upgrade attempt with a 400 response so we can
+// exercise the "upgrade-headed request gets a non-101 reply" path.
+function spawnRejectUpgradeServer(): Promise<{ socketPath: string; close: () => void }> {
+  return new Promise((resolve, reject) => {
+    const socketPath = path.join(
+      os.tmpdir(),
+      `bun-29012-reject-${process.pid}-${Math.random().toString(36).slice(2)}.sock`,
+    );
+    try {
+      fs.unlinkSync(socketPath);
+    } catch {}
+
+    const server = net.createServer(socket => {
+      let buffer = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        buffer = Buffer.concat([buffer, chunk]);
+        if (buffer.indexOf("\r\n\r\n") === -1) return;
+        const body = "nope";
+        socket.write(
+          "HTTP/1.1 400 Bad Request\r\n" +
+            "Content-Length: " +
+            body.length +
+            "\r\n" +
+            "Connection: close\r\n" +
+            "\r\n" +
+            body,
+        );
+        queueMicrotask(() => socket.end());
+      });
+    });
+
+    server.on("error", reject);
+    server.listen(socketPath, () => {
+      resolve({
+        socketPath,
+        close: () => {
+          server.close();
+          try {
+            fs.unlinkSync(socketPath);
+          } catch {}
+        },
+      });
+    });
+  });
+}
+
+test.if(!isWindows)("http.request upgrade-headed + non-101 response: 'response' fires, no leak", async () => {
+  // Regression: an upgrade-headed request that the server REJECTS (400,
+  // 404, auth failure, etc.) must emit 'response' and release the
+  // upgrade-aware body generator. Otherwise the generator parks at
+  // `yield await new Promise(...)` forever because `upgradeBodyEnded`
+  // is only set from `createUpgradeSocket`, which is only constructed
+  // on a 101 response. If that happens the ResumableSink / FetchTasklet
+  // never finalize and memory leaks per rejected handshake.
+  const { socketPath, close } = await spawnRejectUpgradeServer();
+  try {
+    const req = http.request({
+      socketPath,
+      method: "GET",
+      path: "/",
+      headers: {
+        Connection: "Upgrade",
+        Upgrade: "websocket",
+      },
+    });
+
+    const { promise: responsePromise, resolve, reject } = Promise.withResolvers<http.IncomingMessage>();
+    req.on("response", r => resolve(r));
+    req.on("upgrade", () => reject(new Error("unexpected 'upgrade' event")));
+    req.on("error", reject);
+    req.end();
+
+    const res = await responsePromise;
+    expect(res.statusCode).toBe(400);
+
+    const body = await new Promise<string>((resolveBody, rejectBody) => {
+      const bufs: Buffer[] = [];
+      res.on("data", c => bufs.push(c));
+      res.on("end", () => resolveBody(Buffer.concat(bufs).toString("utf8")));
+      res.on("error", rejectBody);
+    });
+    expect(body).toBe("nope");
+
+    // If the body generator leaks, `req.destroy()` still returns quickly
+    // but the FetchTasklet stays alive. Assert the request is now
+    // considered finished from the caller's perspective.
+    await new Promise<void>(res2 => setImmediate(res2));
+    req.destroy();
+  } finally {
+    close();
+  }
+});
+
+test.if(!isWindows)(
+  "http.request upgrade + req.end(body) without flushHeaders: one nodeHttpClient call",
+  async () => {
+    // Regression: `customBody = undefined` used to run AFTER the isDuplex
+    // computation, so `req.end(body)` on an upgrade request left
+    // `keepOpen = false`, the `.finally()` reset `fetching = false`, and
+    // the first post-upgrade `socket.write()` fired a SECOND nodeHttpClient
+    // request to the same URL.
+    //
+    // We catch this with a server that keeps a connection count: a second
+    // connection would bump it above 1.
+    const { promise: serverReady, resolve: gotPath } = Promise.withResolvers<string>();
+    const socketPath = path.join(
+      os.tmpdir(),
+      `bun-29012-once-${process.pid}-${Math.random().toString(36).slice(2)}.sock`,
+    );
+    try {
+      fs.unlinkSync(socketPath);
+    } catch {}
+
+    let connectionCount = 0;
+    const server = net.createServer(socket => {
+      connectionCount++;
+      let headersSeen = false;
+      let buffer = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        if (!headersSeen) {
+          buffer = Buffer.concat([buffer, chunk]);
+          const headerEnd = buffer.indexOf("\r\n\r\n");
+          if (headerEnd === -1) return;
+          headersSeen = true;
+          socket.write(
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+              "Upgrade: echo\r\n" +
+              "Connection: Upgrade\r\n" +
+              "\r\n",
+          );
+        } else {
+          socket.write(chunk); // echo
+        }
+      });
+    });
+    server.listen(socketPath, () => gotPath(socketPath));
+    await serverReady;
+
+    try {
+      const req = http.request({
+        socketPath,
+        method: "POST",
+        path: "/",
+        headers: {
+          Connection: "Upgrade",
+          Upgrade: "echo",
+          "Content-Length": "4",
+        },
+      });
+
+      const { promise, resolve, reject } = Promise.withResolvers<any>();
+      req.on("upgrade", (_res, socket) => resolve(socket));
+      req.on("error", reject);
+      // Single req.end(body) path — no flushHeaders, no separate write.
+      req.end("init");
+
+      const socket = await promise;
+      const chunks: Buffer[] = [];
+      const got = new Promise<void>(res2 => {
+        socket.on("data", (c: Buffer) => {
+          chunks.push(c);
+          if (Buffer.concat(chunks).toString("utf8") === "post") res2();
+        });
+      });
+      socket.write("post");
+      await got;
+
+      // Give any runaway second-request path time to fire.
+      await new Promise<void>(res2 => setTimeout(res2, 50));
+      expect(connectionCount).toBe(1);
+
+      socket.destroy();
+    } finally {
+      server.close();
+      try {
+        fs.unlinkSync(socketPath);
+      } catch {}
+    }
+  },
+);

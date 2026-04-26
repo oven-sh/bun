@@ -185,18 +185,15 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
     var test_id_for_debugger: i32 = 0;
     if (vm.debugger) |*debugger| {
         if (debugger.test_reporter_agent.isEnabled()) {
-            const globals = struct {
-                var max_test_id_for_debugger: i32 = 0;
-            };
-            globals.max_test_id_for_debugger += 1;
+            debugger.next_test_id_for_debugger += 1;
             var name = bun.String.init(description orelse "(unnamed)");
             const parent = bunTest.collection.active_scope;
             const parent_id = if (parent.base.test_id_for_debugger != 0) parent.base.test_id_for_debugger else -1;
-            debugger.test_reporter_agent.reportTestFound(callFrame, globals.max_test_id_for_debugger, &name, switch (this.mode) {
+            debugger.test_reporter_agent.reportTestFound(callFrame, debugger.next_test_id_for_debugger, &name, switch (this.mode) {
                 .describe => .describe,
                 .@"test" => .@"test",
             }, parent_id);
-            test_id_for_debugger = globals.max_test_id_for_debugger;
+            test_id_for_debugger = debugger.next_test_id_for_debugger;
         }
     }
     const has_done_parameter = if (callback != null) callback_length >= 1 else false;

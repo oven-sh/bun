@@ -3,6 +3,7 @@
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
+#include <wtf/threads/BinarySemaphore.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 #include <JavaScriptCore/Debugger.h>
@@ -45,6 +46,10 @@ static PausedWait& pausedWait()
     static PausedWait instance;
     return instance;
 }
+
+// Messages queued for the debugger thread via sendMessageToDebuggerThread()
+// that haven't reached the JS onMessage callback yet. See Bun__debugger__drain().
+static std::atomic<uint64_t> totalPendingDebuggerMessages { 0 };
 
 static bool waitingForConnection = false;
 extern "C" void Debugger__didConnect();
@@ -359,9 +364,11 @@ public:
             this->debuggerThreadMessages.swap(messages);
         }
 
+        size_t messageCount = messages.size();
+
         JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(jsBunDebuggerOnMessageFunction.get());
         MarkedArgumentBuffer arguments;
-        arguments.ensureCapacity(messages.size());
+        arguments.ensureCapacity(messageCount);
         auto& vm = debuggerGlobalObject->vm();
 
         for (auto& message : messages) {
@@ -371,6 +378,10 @@ public:
         messages.clear();
 
         JSC::call(debuggerGlobalObject, onMessageFn, arguments, "BunInspectorConnection::receiveMessagesOnDebuggerThread - onMessageFn"_s);
+
+        // After JSC::call so socket.write() has been invoked for each message.
+        if (messageCount > 0)
+            totalPendingDebuggerMessages.fetch_sub(messageCount, std::memory_order_release);
     }
 
     void sendMessageToDebuggerThread(WTF::String&& inputMessage)
@@ -379,6 +390,8 @@ public:
             Locker<Lock> locker(debuggerThreadMessagesLock);
             debuggerThreadMessages.append(inputMessage);
         }
+
+        totalPendingDebuggerMessages.fetch_add(1, std::memory_order_release);
 
         if (this->debuggerThreadMessageScheduledCount++ == 0) {
             debuggerScriptExecutionContext->postTaskConcurrently([connection = this](ScriptExecutionContext& context) {
@@ -570,6 +583,33 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
     if (pauseOnStart) {
         waitingForConnection = true;
     }
+}
+
+// Called from the main (inspected) thread immediately before process exit.
+// Ensures any inspector protocol messages queued for the debugger thread have
+// been written to the frontend socket. Without this, exit() kills the detached
+// debugger thread while messages are still pending, and the frontend misses
+// the final events (most visibly the last TestReporter.start/end events from
+// `bun test`, which finish within the same event-loop iteration as the exit).
+extern "C" void Bun__debugger__drain()
+{
+    if (debuggerScriptExecutionContext == nullptr)
+        return;
+
+    if (totalPendingDebuggerMessages.load(std::memory_order_acquire) == 0)
+        return;
+
+    // Post a sentinel: concurrent tasks are FIFO, so once this runs every
+    // earlier receiveMessagesOnDebuggerThread has completed. Heap-allocated
+    // and intentionally leaked — on timeout the debugger thread may still
+    // dereference it, and we're about to exit() anyway.
+    auto* done = new WTF::BinarySemaphore();
+    debuggerScriptExecutionContext->postTaskConcurrently([done](ScriptExecutionContext&) {
+        done->signal();
+    });
+
+    // Cap the wait so a wedged debugger thread can't block process exit.
+    done->waitFor(WTF::Seconds::fromMilliseconds(250));
 }
 
 extern "C" void BunDebugger__willHotReload()

@@ -941,6 +941,12 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
     //        causes like 50+ tests to break
     // this.eventLoop().tick();
 
+    // Flush queued inspector messages so exit() doesn't kill the detached
+    // debugger thread mid-delivery.
+    if (this.debugger != null) {
+        jsc.Debugger.drain();
+    }
+
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
         Zig__GlobalObject__destructOnExit(this.global);

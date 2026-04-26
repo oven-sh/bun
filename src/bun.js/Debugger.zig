@@ -14,6 +14,11 @@ mode: enum {
 } = .listen,
 
 test_reporter_agent: TestReporterAgent = .{},
+/// Next ID to hand out for a `describe`/`test` reported to the TestReporter
+/// frontend. Shared between ScopeFunctions.call (live) and
+/// Bun__TestReporterAgentEnable (retroactive) so IDs don't collide when the
+/// agent is enabled mid-collection.
+next_test_id_for_debugger: i32 = 0,
 lifecycle_reporter_agent: LifecycleAgent = .{},
 frontend_dev_server_agent: BunFrontendDevServerAgent = .{},
 http_server_agent: HTTPServerAgent = .{},
@@ -179,6 +184,16 @@ pub export fn Debugger__didConnect() void {
     }
 }
 
+extern "c" fn Bun__debugger__drain() void;
+
+/// Block (briefly, with a cap) until the debugger thread has written any
+/// queued inspector protocol messages to the frontend socket. Call this from
+/// the main thread immediately before process exit so the detached debugger
+/// thread isn't killed mid-delivery.
+pub fn drain() void {
+    Bun__debugger__drain();
+}
+
 fn start(other_vm: *VirtualMachine) void {
     jsc.markBinding(@src());
 
@@ -342,13 +357,13 @@ pub const TestReporterAgent = struct {
             debugger.test_reporter_agent.handle = agent;
 
             // Retroactively report any tests that were already discovered before the debugger connected
-            retroactivelyReportDiscoveredTests(agent);
+            retroactivelyReportDiscoveredTests(debugger, agent);
         }
     }
 
     /// When TestReporter.enable is called after test collection has started/finished,
     /// we need to retroactively assign test IDs and report discovered tests.
-    fn retroactivelyReportDiscoveredTests(agent: *Handle) void {
+    fn retroactivelyReportDiscoveredTests(debugger: *Debugger, agent: *Handle) void {
         const Jest = jsc.Jest.Jest;
         const runner = Jest.runner orelse return;
         const active_file = runner.bun_test_root.active_file.get() orelse return;
@@ -363,14 +378,13 @@ pub const TestReporterAgent = struct {
         const file_path = runner.files.get(active_file.file_id).source.path.text;
         var source_url = bun.String.init(file_path);
 
-        // Track the maximum ID we assign
-        var max_id: i32 = 0;
+        const before = debugger.next_test_id_for_debugger;
 
         // Recursively report all discovered tests starting from root scope
         const root_scope = active_file.collection.root_scope;
-        retroactivelyReportScope(agent, root_scope, -1, &max_id, &source_url);
+        retroactivelyReportScope(agent, root_scope, -1, &debugger.next_test_id_for_debugger, &source_url);
 
-        debug("retroactively reported {} tests", .{max_id});
+        debug("retroactively reported {} tests", .{debugger.next_test_id_for_debugger - before});
     }
 
     fn retroactivelyReportScope(agent: *Handle, scope: *bun_test.DescribeScope, parent_id: i32, max_id: *i32, source_url: *bun.String) void {

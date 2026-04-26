@@ -1384,7 +1384,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     JSC::JSArrayBufferView* viewValue = nullptr;
     size_t viewValueLength = 0;
     uint8_t byteValue = 0;
-    enum { StringBranch, ViewBranch, ByteBranch } branch;
+    enum { StringBranch,
+        ViewBranch,
+        ByteBranch } branch;
 
     if (value.isString()) {
         branch = StringBranch;

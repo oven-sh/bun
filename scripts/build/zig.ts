@@ -20,7 +20,7 @@ import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { availableParallelism, homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Config } from "./config.ts";
-import { downloadWithRetry, extractZip } from "./download.ts";
+import { downloadWithRetry, extractZip, tryPrefetchExtracted } from "./download.ts";
 import { assert } from "./error.ts";
 import { fetchCliPath } from "./fetch-cli.ts";
 import type { Ninja } from "./ninja.ts";
@@ -212,7 +212,7 @@ function zigCacheDirs(cfg: Config): { local: string; global: string } {
  * os-abi: zig binaries are always statically linked (musl on linux, gnu
  * on windows), so the abi is fixed per-os.
  */
-function zigDownloadUrl(cfg: Config, safe: boolean): string {
+export function zigDownloadUrl(cfg: Config, safe: boolean): string {
   const arch = cfg.host.arch === "aarch64" ? "aarch64" : "x86_64";
   let osAbi: string;
   if (cfg.host.os === "darwin") {
@@ -603,6 +603,9 @@ export async function fetchZig(url: string, dest: string, commit: string): Promi
     }
     console.log(`commit changed (was ${existing}, now ${commit}), re-fetching`);
   }
+
+  // Prefetch cache: pre-extracted tree with matching commit?
+  if (await tryPrefetchExtracted(dest, ".zig-commit", commit)) return;
 
   console.log(`fetching ${url}`);
 

@@ -154,7 +154,7 @@ JSObject* JSReadableStreamDefaultReader::prototype(VM& vm, JSDOMGlobalObject& gl
 
 JSValue JSReadableStreamDefaultReader::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSReadableStreamDefaultReaderDOMConstructor, DOMConstructorID::ReadableStreamDefaultReader>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSReadableStreamDefaultReaderDOMConstructor, DOMConstructorID::ReadableStreamDefaultReader>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSReadableStreamDefaultReader::destroy(JSC::JSCell* cell)
@@ -167,7 +167,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultReaderConstructor, (JSGlobalObje
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSReadableStreamDefaultReaderPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSReadableStreamDefaultReaderPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSReadableStreamDefaultReader::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));

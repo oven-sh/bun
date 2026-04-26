@@ -218,7 +218,7 @@ JSC::GCClient::IsoSubspace* JSReadableStreamSource::subspaceForImpl(JSC::VM& vm)
 template<typename Visitor>
 void JSReadableStreamSource::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSReadableStreamSource*>(cell);
+    auto* thisObject = uncheckedDowncast<JSReadableStreamSource>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_controller);
@@ -228,7 +228,7 @@ DEFINE_VISIT_CHILDREN(JSReadableStreamSource);
 
 void JSReadableStreamSource::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSReadableStreamSource*>(cell);
+    auto* thisObject = uncheckedDowncast<JSReadableStreamSource>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -262,7 +262,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 ReadableStreamSource* JSReadableStreamSource::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSReadableStreamSource*>(value))
+    if (auto* wrapper = dynamicDowncast<JSReadableStreamSource>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

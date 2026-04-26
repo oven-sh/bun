@@ -154,7 +154,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventDOMConstructor::c
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSEventDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSEventDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
@@ -275,7 +275,7 @@ JSObject* JSEvent::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSEvent::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSEventDOMConstructor, DOMConstructorID::Event>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSEventDOMConstructor, DOMConstructorID::Event>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSEvent::destroy(JSC::JSCell* cell)
@@ -288,7 +288,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsEventConstructor, (JSGlobalObject * lexicalGlobalObje
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSEventPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSEventPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSEvent::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -600,7 +600,7 @@ JSC::GCClient::IsoSubspace* JSEvent::subspaceForImpl(JSC::VM& vm)
 
 void JSEvent::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSEvent*>(cell);
+    auto* thisObject = uncheckedDowncast<JSEvent>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -624,7 +624,7 @@ void JSEventOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 
 Event* JSEvent::toWrapped(JSC::VM& vm, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSEvent*>(value))
+    if (auto* wrapper = dynamicDowncast<JSEvent>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

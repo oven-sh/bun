@@ -46,7 +46,7 @@ Structure* FunctionTemplate::createStructure(JSC::VM& vm, JSC::JSGlobalObject* g
 template<typename Visitor>
 void FunctionTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    FunctionTemplate* fn = jsCast<FunctionTemplate*>(cell);
+    FunctionTemplate* fn = uncheckedDowncast<FunctionTemplate>(cell);
     ASSERT_GC_OBJECT_INHERITS(fn, info());
     Base::visitChildren(fn, visitor);
 
@@ -57,9 +57,9 @@ DEFINE_VISIT_CHILDREN(FunctionTemplate);
 
 JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
-    auto* callee = JSC::jsDynamicCast<Function*>(callFrame->jsCallee());
+    auto* callee = dynamicDowncast<Function>(callFrame->jsCallee());
     auto* functionTemplate = callee->functionTemplate();
-    auto* isolate = JSC::jsCast<Zig::GlobalObject*>(globalObject)->V8GlobalInternals()->isolate();
+    auto* isolate = uncheckedDowncast<Zig::GlobalObject>(globalObject)->V8GlobalInternals()->isolate();
     auto& vm = JSC::getVM(globalObject);
 
     WTF::Vector<TaggedPointer, 8> args(callFrame->argumentCount() + 1);

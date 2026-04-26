@@ -107,7 +107,7 @@ static WTF::String formatFunctionName(const WTF::String& name, const JSC::Sampli
 
     // Check if this is an async function and add prefix if needed
     if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
-        if (auto* functionExecutable = jsDynamicCast<JSC::FunctionExecutable*>(frame.executable)) {
+        if (auto* functionExecutable = dynamicDowncast<JSC::FunctionExecutable>(frame.executable)) {
             if (JSC::isAsyncFunctionParseMode(functionExecutable->parseMode())) {
                 if (!displayName.startsWith("async "_s)) {
                     return makeString("async "_s, displayName);

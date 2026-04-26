@@ -162,7 +162,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCustomEventDOMConstruc
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSCustomEventDOMConstructor*>(callFrame->jsCallee());
+    auto* castedThis = uncheckedDowncast<JSCustomEventDOMConstructor>(callFrame->jsCallee());
     ASSERT(castedThis);
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
@@ -245,14 +245,14 @@ JSObject* JSCustomEvent::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSCustomEvent::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSCustomEventDOMConstructor, DOMConstructorID::CustomEvent>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSCustomEventDOMConstructor, DOMConstructorID::CustomEvent>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsCustomEventConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSCustomEventPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSCustomEventPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSCustomEvent::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -311,7 +311,7 @@ JSC::GCClient::IsoSubspace* JSCustomEvent::subspaceForImpl(JSC::VM& vm)
 template<typename Visitor>
 void JSCustomEvent::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSCustomEvent*>(cell);
+    auto* thisObject = uncheckedDowncast<JSCustomEvent>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread(visitor);
@@ -322,7 +322,7 @@ DEFINE_VISIT_CHILDREN(JSCustomEvent);
 template<typename Visitor>
 void JSCustomEvent::visitOutputConstraints(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSCustomEvent*>(cell);
+    auto* thisObject = uncheckedDowncast<JSCustomEvent>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitOutputConstraints(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread(visitor);
@@ -332,7 +332,7 @@ template void JSCustomEvent::visitOutputConstraints(JSCell*, AbstractSlotVisitor
 template void JSCustomEvent::visitOutputConstraints(JSCell*, SlotVisitor&);
 void JSCustomEvent::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSCustomEvent*>(cell);
+    auto* thisObject = uncheckedDowncast<JSCustomEvent>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));

@@ -209,7 +209,7 @@ JSObject* JSCryptoKey::prototype(VM& vm, JSDOMGlobalObject& globalObject)
 
 JSValue JSCryptoKey::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
-    return getDOMConstructor<JSCryptoKeyDOMConstructor, DOMConstructorID::CryptoKey>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
+    return getDOMConstructor<JSCryptoKeyDOMConstructor, DOMConstructorID::CryptoKey>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
 
 void JSCryptoKey::destroy(JSC::JSCell* cell)
@@ -222,7 +222,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCryptoKeyConstructor, (JSGlobalObject * lexicalGlobal
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSCryptoKeyPrototype*>(JSValue::decode(thisValue));
+    auto* prototype = dynamicDowncast<JSCryptoKeyPrototype>(JSValue::decode(thisValue));
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSCryptoKey::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -303,7 +303,7 @@ JSC::GCClient::IsoSubspace* JSCryptoKey::subspaceForImpl(JSC::VM& vm)
 template<typename Visitor>
 void JSCryptoKey::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<JSCryptoKey*>(cell);
+    auto* thisObject = uncheckedDowncast<JSCryptoKey>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_algorithm);
@@ -314,7 +314,7 @@ DEFINE_VISIT_CHILDREN(JSCryptoKey);
 
 void JSCryptoKey::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSCryptoKey*>(cell);
+    auto* thisObject = uncheckedDowncast<JSCryptoKey>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
@@ -347,7 +347,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 CryptoKey* JSCryptoKey::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSCryptoKey*>(value))
+    if (auto* wrapper = dynamicDowncast<JSCryptoKey>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

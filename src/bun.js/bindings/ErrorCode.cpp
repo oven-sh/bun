@@ -154,7 +154,7 @@ ErrorCodeCache::ErrorCodeCache(VM& vm, Structure* structure)
 template<typename Visitor>
 void ErrorCodeCache::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<ErrorCodeCache*>(cell);
+    auto* thisObject = uncheckedDowncast<ErrorCodeCache>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 }
@@ -205,14 +205,14 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
         cache->internalField(static_cast<unsigned>(code)).set(vm, cache, structure);
     }
 
-    auto* structure = jsCast<Structure*>(cache->internalField(static_cast<unsigned>(code)).get());
+    auto* structure = uncheckedDowncast<Structure>(cache->internalField(static_cast<unsigned>(code)).get());
     auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
     if (auto* thrown_exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
         // TODO investigate what can throw here and whether it will throw non-objects
         // (this is better than before where we would have returned nullptr from createError if any
         // exception were thrown by ErrorInstance::create)
-        return jsCast<JSObject*>(thrown_exception->value());
+        return uncheckedDowncast<JSObject>(thrown_exception->value());
     }
     return created_error;
 }
@@ -234,7 +234,7 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
 
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message)
 {
-    if (auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject))
+    if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
         return createError(vm, zigGlobalObject, code, message, jsUndefined());
 
     auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code);
@@ -270,7 +270,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     auto cell = arg.asCell();
     switch (cell->type()) {
     case JSC::JSType::StringType: {
-        JSString* jsString = jsDynamicCast<JSString*>(cell);
+        JSString* jsString = dynamicDowncast<JSString>(cell);
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         auto str = jsString->view(globalObject);
@@ -310,7 +310,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
         return;
     }
     case JSC::JSType::SymbolType: {
-        auto symbol = jsCast<Symbol*>(cell);
+        auto symbol = uncheckedDowncast<Symbol>(cell);
         auto result = symbol->description();
         if (!result.isEmpty()) {
             builder.append(symbol->tryGetDescriptiveString().value_or(String()));
@@ -388,7 +388,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
     auto cell = value.asCell();
 
     if (cell->isSymbol()) {
-        auto symbol = jsCast<Symbol*>(cell);
+        auto symbol = uncheckedDowncast<Symbol>(cell);
         auto result = symbol->tryGetDescriptiveString();
         if (result.has_value()) {
             builder.append("type symbol ("_s);
@@ -409,7 +409,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         return;
     }
     if (cell->isString()) {
-        auto* jsString = jsCast<JSString*>(cell);
+        auto* jsString = uncheckedDowncast<JSString>(cell);
         auto str = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, );
 
@@ -1523,7 +1523,7 @@ JSC::EncodedJSValue DLOPEN_DISABLED(JSC::ThrowScope& scope, JSC::JSGlobalObject*
 
 static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)
 {
-    if (auto* array = jsDynamicCast<JSC::JSArray*>(arg1)) {
+    if (auto* array = dynamicDowncast<JSC::JSArray>(arg1)) {
         const WTF::String argName = arg0.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -1842,7 +1842,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         case 2: {
             JSValue arg0 = callFrame->argument(1);
             // ["foo", "bar", "baz"] -> 'The "foo" or "bar" or "baz" argument must be specified'
-            if (auto* arr = jsDynamicCast<JSC::JSArray*>(arg0)) {
+            if (auto* arr = dynamicDowncast<JSC::JSArray>(arg0)) {
                 ASSERT(arr->length() > 0);
                 WTF::StringBuilder builder;
                 builder.append("The "_s);
@@ -2019,7 +2019,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         if (arg0.isCell()) {
             auto cell = arg0.asCell();
             if (cell->inherits<JSC::Exception>()) {
-                return JSC::JSValue::encode(jsCast<JSC::Exception*>(cell)->value());
+                return JSC::JSValue::encode(uncheckedDowncast<JSC::Exception>(cell)->value());
             }
         }
 

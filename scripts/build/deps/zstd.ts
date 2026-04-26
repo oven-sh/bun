@@ -50,6 +50,15 @@ export const zstd: Dependency = {
       ZSTD_LEGACY_SUPPORT: 5,
     };
 
+    // Upstream's if(MSVC) block sets these for the static target.
+    // ZSTD_HEAPMODE=0 makes the one-shot ZSTD_decompress() (used by
+    // src/deps/zstd.zig) stack-allocate its DCtx instead of malloc/free
+    // per call; the source default is 1.
+    if (cfg.windows) {
+      defines.ZSTD_HEAPMODE = 0;
+      defines._CRT_SECURE_NO_WARNINGS = true;
+    }
+
     // huf_decompress_amd64.S is GNU-as syntax. clang assembles it on
     // posix x64; clang-cl can't, so Windows takes the C path.
     if (cfg.x64 && !cfg.windows) {

@@ -10,7 +10,8 @@ test("namespace over export-star chain has every transitive binding", async () =
   const files: Record<string, string> = { "leaf.mjs": `export const THE_END = true;\n` };
   for (let i = 0; i < 30; i++) {
     const reexports = Array.from({ length: Math.trunc(i * 0.25) }, (_, j) => `export * from "./m${j}.mjs";`).join("\n");
-    files[`m${i}.mjs`] = `${reexports}\nexport * from "./${i === 29 ? "leaf" : `m${i + 1}`}.mjs";\nexport const v${i} = ${i};\n`;
+    files[`m${i}.mjs`] =
+      `${reexports}\nexport * from "./${i === 29 ? "leaf" : `m${i + 1}`}.mjs";\nexport const v${i} = ${i};\n`;
   }
   files["entry.mjs"] = `
     const ns = await import("./m0.mjs");

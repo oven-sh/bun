@@ -751,7 +751,7 @@ fn closeIO(this: *Subprocess, comptime io: @Type(.enum_literal)) void {
     }
 }
 
-fn onPipeClose(this: *uv.Pipe) callconv(.c) void {
+pub fn onPipeClose(this: *uv.Pipe) callconv(.c) void {
     // safely free the pipes
     bun.default_allocator.destroy(this);
 }

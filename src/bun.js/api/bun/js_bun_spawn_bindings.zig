@@ -735,12 +735,19 @@ pub fn spawnMaybeSync(
         // ref_count = 2 from the aggregate above, but neither the JS
         // wrapper nor the process exit handler are wired up yet, so
         // release both. stdout/stderr are still `.ignore` — close the raw
-        // spawned pipe fds directly since `Readable.init()` will not run.
-        // `finalizeStreams()` here only closes `stdio_pipes` and the pidfd;
-        // stdin/stdout/stderr are `.ignore` so their `closeIO` is a no-op.
+        // spawned pipe handles directly since `Readable.init()` will not
+        // run. `finalizeStreams()` here only closes `stdio_pipes` and the
+        // pidfd; stdin/stdout/stderr are `.ignore` so their `closeIO` is a
+        // no-op.
         if (Environment.isPosix) {
             if (spawned.stdout) |fd| fd.close();
             if (spawned.stderr) |fd| fd.close();
+        } else {
+            inline for (.{ spawned.stdout, spawned.stderr }) |r| switch (r) {
+                .buffer => |pipe| pipe.close(Subprocess.onPipeClose),
+                .buffer_fd => |fd| fd.close(),
+                .unavailable => {},
+            };
         }
         subprocess.finalizeStreams();
         subprocess.process.detach();

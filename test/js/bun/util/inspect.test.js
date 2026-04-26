@@ -316,6 +316,24 @@ it("jsx with fragment", () => {
   expect(input).toBe(output);
 });
 
+it("jsx with circular reference in key", () => {
+  const el = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: {} };
+  el.key = el;
+  expect(Bun.inspect(el)).toContain("[Circular]");
+});
+
+it("jsx with circular reference in props", () => {
+  const el = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: {} };
+  el.props.foo = el;
+  expect(Bun.inspect(el)).toBe("<div foo=[Circular] />");
+});
+
+it("jsx with circular reference in children", () => {
+  const el = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: {} };
+  el.props.children = [el];
+  expect(Bun.inspect(el)).toBe("<div>\n  [Circular]\n</div>");
+});
+
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
   expect(Bun.inspect("hi")).toBe('"hi"');

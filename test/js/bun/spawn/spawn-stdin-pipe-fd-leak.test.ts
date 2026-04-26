@@ -10,8 +10,8 @@
 // then found no pipe to close and the fd lived until Subprocess finalization.
 
 import { expect, test } from "bun:test";
-import { readdirSync } from "node:fs";
 import { isPosix } from "harness";
+import { readdirSync } from "node:fs";
 
 function countOpenFds(): number {
   // Linux and macOS both expose per-process fd tables here.

@@ -270,7 +270,7 @@ WebKit is not cloned by default (to save time and disk space). To clone and buil
 # Clone WebKit into ./vendor/WebKit
 $ git clone https://github.com/oven-sh/WebKit vendor/WebKit
 
-# Check out the commit hash specified in WEBKIT_VERSION in scripts/build/deps/webkit.ts
+# Check out the commit hash specified in WEBKIT_VERSION in scripts/build/versions.ts
 $ git -C vendor/WebKit checkout <commit_hash>
 
 # Build bun with the local JSC build — this automatically configures and builds JSC
@@ -290,7 +290,7 @@ Note that the WebKit folder, including build artifacts, is 8GB+ in size.
 
 If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
 
-Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change `WEBKIT_VERSION` in [`scripts/build/deps/webkit.ts`](/scripts/build/deps/webkit.ts) to point to the commit hash.
+Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change `WEBKIT_VERSION` in [`scripts/build/versions.ts`](/scripts/build/versions.ts) to point to the commit hash.
 
 ## Troubleshooting
 

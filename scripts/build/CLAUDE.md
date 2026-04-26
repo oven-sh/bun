@@ -177,6 +177,7 @@ Split CI modes: `zig-only` (zstd+codegen+zig), `cpp-only` (deps+codegen+compile 
 | `build.ts` (parent dir)        | CLI entry — parse args, call configure, spawn ninja, optionally exec               |
 | `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`                                 |
 | `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`               |
+| `versions.ts`                  | `WEBKIT_VERSION` pin — leaf module to keep `config.ts` outside the dep-import SCC  |
 | `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                     |
 | `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing            |
 | `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()` |

@@ -258,10 +258,25 @@ pub fn convertStmt(ctx: *ConvertESMExportsForHmr, p: anytype, stmt: Stmt) !void 
             );
 
             if (st.alias) |alias| {
-                // 'export * as ns from' creates one named property.
+                // 'export * as ns from' emits `get ns() { return ns_local }`
+                // so the barrel's namespace member reads through the
+                // reassignable local. A plain data property would snapshot
+                // the source's exports object at init, and an HMR update to
+                // the source — which replaces its `exports` wholesale —
+                // would leave the barrel pointing at the stale object.
                 try ctx.export_props.append(p.allocator, .{
+                    .kind = .get,
                     .key = Expr.init(E.String, .{ .data = alias.original_name }, stmt.loc),
-                    .value = Expr.initIdentifier(deduped.namespace_ref, stmt.loc),
+                    .value = Expr.init(E.Function, .{ .func = .{
+                        .body = .{
+                            .stmts = try p.allocator.dupe(Stmt, &.{
+                                Stmt.alloc(S.Return, .{
+                                    .value = Expr.initIdentifier(deduped.namespace_ref, stmt.loc),
+                                }, stmt.loc),
+                            }),
+                            .loc = stmt.loc,
+                        },
+                    } }, stmt.loc),
                 });
             } else {
                 // 'export * from' forwards every non-'default' key of the

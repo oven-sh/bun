@@ -10,6 +10,16 @@ pub fn installIsolatedPackages(
 ) OOM!PackageInstall.Summary {
     bun.analytics.Features.isolated_bun_install += 1;
 
+    // Prime Bin.Linker.umask on the main thread before any bin-linking
+    // tasks are scheduled. The isolated installer runs `Bin.Linker.link()`
+    // on thread-pool workers; `ensureUmask()` isn't thread-safe (plain
+    // bool + two non-atomic `umask(2)` syscalls) so calling it from
+    // concurrent workers races and can leave the process umask at 0.
+    // Hoisted install primes it the same way on its main-thread entry.
+    if (comptime Environment.isPosix) {
+        Bin.Linker.ensureUmask();
+    }
+
     const lockfile = manager.lockfile;
 
     const store: Store = store: {
@@ -1940,6 +1950,7 @@ const sys = bun.sys;
 const Command = bun.cli.Command;
 
 const install = bun.install;
+const Bin = install.Bin;
 const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;

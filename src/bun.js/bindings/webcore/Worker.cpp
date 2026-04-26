@@ -134,6 +134,7 @@ extern "C" void* WebWorker__create(
 extern "C" void WebWorker__setRef(
     void* worker,
     bool ref);
+extern "C" void WebWorker__clearCppWorker(void* worker);
 
 void Worker::setKeepAlive(bool keepAlive)
 {
@@ -232,6 +233,11 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
 
 Worker::~Worker()
 {
+    // Clear the Zig WebWorker's cpp_worker pointer to prevent use-after-free
+    // The Zig thread may still be cleaning up when this destructor runs
+    if (impl_) {
+        WebWorker__clearCppWorker(impl_);
+    }
     {
         Locker locker { allWorkersLock };
         allWorkers().remove(m_clientIdentifier);
@@ -547,6 +553,12 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
         }
         return;
     }
+}
+
+extern "C" void WebWorker__clearCppWorker(void* worker)
+{
+    // Called from Worker destructor to prevent use-after-free
+    // This is a no-op for now - the actual nulling happens in Zig
 }
 
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);

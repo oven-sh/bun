@@ -171,6 +171,7 @@ pub fn performGC(this: *GarbageCollectionController) void {
     if (this.disabled) return;
     var vm = this.bunVM().jsc_vm;
     vm.collectAsync();
+    vm.shrinkFootprint();
     this.gc_last_heap_size = vm.blockBytesAllocated();
 }
 

@@ -142,6 +142,7 @@ KeyObject prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue ke
     if (key.isString()) {
         JSString* keyString = key.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        auto _ = JSC::EnsureStillAliveScope(keyString);
         auto keyView = keyString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 

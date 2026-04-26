@@ -233,6 +233,8 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
         JSString* dataString = data.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
+        auto _ = JSC::EnsureStillAliveScope(dataString);
+
         JSValue encodingValue = callFrame->argument(2);
         auto encoding = parseEnumeration<BufferEncodingType>(*globalObject, encodingValue).value_or(BufferEncodingType::utf8);
         RETURN_IF_EXCEPTION(scope, {});

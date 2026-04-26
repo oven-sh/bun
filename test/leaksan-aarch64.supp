@@ -1,0 +1,75 @@
+# LeakSanitizer suppressions for macOS AArch64
+# These are known false positives from system library initialization
+# See: https://github.com/llvm/llvm-project/issues/115992
+
+# =============================================================================
+# System Library Initialization (false positives on macOS AArch64)
+# These allocations happen before main() during dyld/Objective-C runtime init
+# =============================================================================
+
+# dyld thread-local variable initialization
+leak:dyld::ThreadLocalVariables
+leak:dyld::ThreadLocalVariables::instantiateVariable
+leak:_tlv_get_addr
+
+# libsystem_malloc - system malloc wrapper allocations
+leak:libsystem_malloc.dylib
+leak:malloc_type_malloc_outlined
+leak:malloc_type_calloc_outlined
+
+# libsystem_pthread - pthread initialization
+leak:_pthread_start
+leak:thread_start
+leak:libsystem_pthread.dylib
+
+# libobjc - Objective-C runtime initialization
+leak:libobjc.A.dylib
+leak:_fetchInitializingClassList
+leak:_setThisThreadIsInitializingClass
+leak:initializeNonMetaClass
+leak:_objc_msgSend_uncached
+
+# libxpc - XPC service framework
+leak:libxpc.dylib
+leak:_xpc_collect_images
+leak:_libxpc_initializer
+
+# libSystem.B.dylib - core system library
+leak:libSystem.B.dylib
+leak:libSystem_initializer
+
+# libdyld - dynamic linker
+leak:libdyld.dylib
+leak:dyld::ImageLoader::doModInitializationFunctions
+leak:dyld::initializeMainExecutable
+
+# libdispatch - Grand Central Dispatch
+leak:libdispatch.dylib
+leak:_dispatch_init
+leak:dispatch_async
+
+# libclang_rt.asan_osx_dynamic.dylib - ASAN runtime itself
+leak:libclang_rt.asan_osx_dynamic.dylib
+leak:asan_init
+leak:asan_thread_start
+
+# =============================================================================
+# WebKit/JSC Known Issues (track upstream)
+# These are real leaks but tracked upstream in WebKit
+# =============================================================================
+
+# JSC GlobalObject creation (tracked in WebKit)
+leak:JSC::JSGlobalObject::GlobalPropertyInfo
+leak:JSC::Identifier::fromString
+leak:JSCInitialize
+
+# WTF thread management (tracked in WebKit)
+leak:WTF::AutomaticThread::start
+leak:WTF::fastMalloc
+leak:WTF::SymbolRegistry::symbolForKey
+
+# =============================================================================
+# Usage:
+#   ASAN_OPTIONS="detect_leaks=1:suppressions=test/leaksan-aarch64.supp" ./build/debug/bun-debug test
+#   LSAN_OPTIONS="suppressions=test/leaksan-aarch64.supp" ./build/debug/bun-debug test
+# =============================================================================

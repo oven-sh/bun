@@ -807,6 +807,8 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     }
 
     if (vm_to_deinit) |vm| {
+        // Call mi_thread_done() to clean up mimalloc thread-local state
+        bun.mimalloc.mi_thread_done();
         vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
     }
     bun.deleteAllPoolsForThreadExit();

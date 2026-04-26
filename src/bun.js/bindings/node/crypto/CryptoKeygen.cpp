@@ -104,6 +104,7 @@ std::optional<SecretKeyJobCtx> SecretKeyJobCtx::fromJS(JSC::JSGlobalObject* glob
 
     JSString* typeString = typeValue.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
+    auto _ = JSC::EnsureStillAliveScope(typeString);
     GCOwnedDataScope<WTF::StringView> typeView = typeString->view(globalObject);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 

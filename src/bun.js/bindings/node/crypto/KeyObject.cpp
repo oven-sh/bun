@@ -371,6 +371,7 @@ JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& sc
         if (formatValue.isString()) {
             auto* formatString = formatValue.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
+            auto _ = JSC::EnsureStillAliveScope(formatString);
             auto formatView = formatString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -434,6 +435,7 @@ JSValue KeyObject::exportSecret(JSGlobalObject* lexicalGlobalObject, ThrowScope&
             if (formatValue.isString()) {
                 auto* formatString = formatValue.toString(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(scope, {});
+                auto _ = JSC::EnsureStillAliveScope(formatString);
                 auto formatView = formatString->view(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(scope, {});
 
@@ -1231,6 +1233,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         if (keyValue.isString()) {
             auto* keyString = keyValue.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
+            auto _ = JSC::EnsureStillAliveScope(keyString);
             auto keyView = keyString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -1296,6 +1299,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
 
         auto* formatString = formatValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        auto _ = JSC::EnsureStillAliveScope(formatString);
         auto formatView = formatString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -1315,6 +1319,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         if (dataValue.isString()) {
             auto* dataString = dataValue.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
+            auto _ = JSC::EnsureStillAliveScope(dataString);
             auto dataView = dataString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -1322,6 +1327,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             if (encodingValue.isString()) {
                 auto* encodingString = encodingValue.toString(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
+                auto _ = JSC::EnsureStillAliveScope(encodingString);
                 auto encodingView = encodingString->view(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
 
@@ -1436,6 +1442,7 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
     if (keyValue.isString()) {
         auto* keyString = keyValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        auto _ = JSC::EnsureStillAliveScope(keyString);
         auto keyView = keyString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 

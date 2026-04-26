@@ -132,6 +132,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         JSString* inputString = inputValue.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
+        auto _ = JSC::EnsureStillAliveScope(inputString);
+
         auto encoding = parseEnumeration<WebCore::BufferEncodingType>(*globalObject, encodingValue).value_or(WebCore::BufferEncodingType::utf8);
         RETURN_IF_EXCEPTION(scope, {});
 

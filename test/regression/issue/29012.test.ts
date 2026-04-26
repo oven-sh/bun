@@ -408,8 +408,20 @@ test.if(!isWindows)(
     } catch {}
 
     let connectionCount = 0;
+    // If the bug recurred, a second `nodeHttpClient` request would fire
+    // synchronously from `socket.write('post')` and the kernel would
+    // deliver a second `connection` event. We race that against the echo
+    // round-trip so the assertion fails immediately (instead of waiting
+    // for an arbitrary timeout that would be flaky on loaded CI).
+    const { promise: secondConn, reject: secondConnFired } = Promise.withResolvers<never>();
+    secondConn.catch(() => {}); // don't leave this unhandled if it never fires
     const server = net.createServer(socket => {
       connectionCount++;
+      if (connectionCount > 1) {
+        secondConnFired(new Error("regression: a second nodeHttpClient request was fired"));
+        socket.destroy();
+        return;
+      }
       let headersSeen = false;
       let buffer = Buffer.alloc(0);
       socket.on("data", chunk => {
@@ -459,10 +471,10 @@ test.if(!isWindows)(
         });
       });
       socket.write("post");
-      await got;
-
-      // Give any runaway second-request path time to fire.
-      await new Promise<void>(res2 => setTimeout(res2, 50));
+      // `await got` implicitly serializes past the synchronous re-entry
+      // into `startFetch()`, and `secondConn` fails fast if the 2nd
+      // request was actually issued to the kernel. No timer needed.
+      await Promise.race([got, secondConn]);
       expect(connectionCount).toBe(1);
 
       socket.destroy();

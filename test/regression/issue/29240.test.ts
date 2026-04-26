@@ -9,7 +9,12 @@ test("cpu-prof callFrame.lineNumber/columnNumber point at function definition, n
   // fibonacci is recursive so it shows up on many stacks at many different
   // sample lines — this is the exact case where the old Bun output fragmented
   // into dozens of nodes per function. Same for the busy loop body in
-  // `anotherFunction`, which gives us per-line ticks to assert on.
+  // `anotherFunction`, which gives us per-line ticks to assert on. Each
+  // function is time-bounded (not iteration-bounded) so it occupies the CPU
+  // for a contiguous 100ms and is guaranteed to span multiple sampler ticks
+  // even on Windows, where JSC's SamplingProfiler effectively ticks at the
+  // ~15.6ms default timer quantum — an iteration-bounded loop can finish in
+  // <1ms once JIT'd and never be on top of stack when sampled.
   using dir = tempDir("issue-29240", {
     "script.js": `function fibonacci(n) {
   if (n < 2) return n;
@@ -18,7 +23,7 @@ test("cpu-prof callFrame.lineNumber/columnNumber point at function definition, n
 
 function doWork() {
   let sum = 0;
-  for (let i = 0; i < 30; i++) {
+  for (const end = performance.now() + 100; performance.now() < end; ) {
     sum += fibonacci(22);
   }
   return sum;
@@ -26,17 +31,14 @@ function doWork() {
 
 function anotherFunction() {
   let x = 0;
-  for (let i = 0; i < 200000; i++) {
-    x += Math.sqrt(i);
+  for (const end = performance.now() + 100; performance.now() < end; ) {
+    for (let i = 0; i < 1000; i++) x += Math.sqrt(i);
   }
   return x;
 }
 
-const deadline = performance.now() + 200;
-while (performance.now() < deadline) {
-  doWork();
-  anotherFunction();
-}
+doWork();
+anotherFunction();
 console.log("done");
 `,
   });
@@ -124,9 +126,9 @@ console.log("done");
       expect(typeof entry.line).toBe("number");
       expect(typeof entry.ticks).toBe("number");
       // Lines are 1-indexed and must fall within the script body
-      // (27 content lines; last line is `console.log("done")`).
+      // (24 content lines; last line is `console.log("done")`).
       expect(entry.line).toBeGreaterThan(0);
-      expect(entry.line).toBeLessThanOrEqual(27);
+      expect(entry.line).toBeLessThanOrEqual(24);
       expect(entry.ticks).toBeGreaterThan(0);
       sum += entry.ticks;
     }

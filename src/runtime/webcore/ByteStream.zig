@@ -358,10 +358,12 @@ pub fn onCancel(this: *@This()) void {
     this.done = true;
     this.pending_value.deinit();
 
+    // Always release any stored error; setPendingError may have protected a
+    // JSValue that nothing else will consume once we mark ourselves done.
+    this.pending_buffer = &.{};
+    this.pending.result.deinit();
+    this.pending.result = .{ .done = {} };
     if (view != .zero) {
-        this.pending_buffer = &.{};
-        this.pending.result.deinit();
-        this.pending.result = .{ .done = {} };
         this.pending.run();
     }
 
@@ -394,6 +396,12 @@ pub fn deinit(this: *@This()) void {
         } else {
             this.pending.run();
         }
+    } else {
+        // `done` may have been set by onPull/onCancel without consuming a
+        // stored error (e.g. an error arrived after some buffered data and
+        // onPull returned the data as `into_array_and_done`). Release it.
+        this.pending.result.deinit();
+        this.pending.result = .{ .done = {} };
     }
     if (this.buffer_action) |*action| {
         action.deinit();

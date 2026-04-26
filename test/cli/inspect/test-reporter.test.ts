@@ -236,7 +236,9 @@ describe("suite B", () => {
     });
 
     proc = spawn({
-      cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "delayed.test.ts"],
+      // --timeout keeps the inner test's budget above the 15000ms outer waits
+      // so A1 cannot time out before the gate file is written under heavy load.
+      cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "--timeout", "30000", "delayed.test.ts"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",

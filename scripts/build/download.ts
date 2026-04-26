@@ -60,15 +60,18 @@ import { BuildError, assert } from "./error.ts";
  */
 const systemCaBundlePem: string | undefined = (() => {
   if (process.platform === "win32") return undefined; // Windows uses the cert store, not a file
-  const envPath = process.env.NODE_EXTRA_CA_CERTS;
-  const paths = envPath
-    ? [envPath]
-    : [
-        "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu/Alpine
-        "/etc/pki/tls/certs/ca-bundle.crt", // RHEL/CentOS/Fedora
-        "/etc/ssl/cert.pem", // macOS, BSDs
-      ];
-  for (const p of paths) {
+  // Deliberately ignore NODE_EXTRA_CA_CERTS here: Bun's fetch() merges it
+  // into the Mozilla store at process init, so those certs are already
+  // active on attempt 1. Re-reading the same path for the fallback — which
+  // REPLACES the bundle — would produce a strict subset of attempt 1's
+  // trust store and can't unstick a failure attempt 1 already had with a
+  // superset available. The fallback only helps when the OS-managed bundle
+  // has intermediates the Mozilla set is missing.
+  for (const p of [
+    "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu/Alpine
+    "/etc/pki/tls/certs/ca-bundle.crt", // RHEL/CentOS/Fedora
+    "/etc/ssl/cert.pem", // macOS, BSDs
+  ]) {
     try {
       if (existsSync(p)) return readFileSync(p, "utf8");
     } catch {

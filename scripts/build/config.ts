@@ -43,9 +43,9 @@ export interface Host {
 }
 
 /**
- * Pinned version defaults. Each lives at the top of its own file
- * (deps/webkit.ts, zig.ts, deps/nodejs-headers.ts) — look there to bump.
- * Overridable via PartialConfig for testing (e.g. trying a WebKit branch).
+ * Pinned version defaults. Defined in deps/versions.ts (a leaf module to
+ * avoid a circular-import TDZ) — look there to bump. Overridable via
+ * PartialConfig for testing (e.g. trying a WebKit branch).
  */
 const versionDefaults = {
   nodejsVersion: NODEJS_VERSION,

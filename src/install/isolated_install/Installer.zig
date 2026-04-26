@@ -555,11 +555,11 @@ pub const Installer = struct {
                                                 else => break :publishable null,
                                             }
                                         };
-                                        break :publishable bun.cli.PackCommand.collectPublishablePaths(
+                                        break :publishable bun.handleOom(bun.cli.PackCommand.collectPublishablePaths(
                                             manager.allocator,
                                             folder_dir.stdDir(),
                                             root,
-                                        ) catch null;
+                                        ));
                                     };
                                     var publishable_owned = publishable;
                                     defer if (publishable_owned) |*p| p.deinit();

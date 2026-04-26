@@ -1960,7 +1960,7 @@ describe("bun link integration", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
+    const [, stderr, exitCode] = await Promise.all([
       installProc.stdout.text(),
       installProc.stderr.text(),
       installProc.exited,
@@ -1972,9 +1972,7 @@ describe("bun link integration", () => {
     expect(existsSync(join(bodyDir, "marker.js"))).toBe(true);
     expect(await file(join(bodyDir, "marker.js")).text()).toContain("FROM_PRODUCER_MARKER");
     expect(await file(join(bodyDir, "index.js")).text()).toContain("FROM_PRODUCER");
-    // Silence unused-warnings via a harmless reference:
     void producer;
-    void stdout;
   });
 
   test("isolated: catalog-resolved dep honors active bun link", async () => {
@@ -2012,7 +2010,7 @@ describe("bun link integration", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
+    const [, stderr, exitCode] = await Promise.all([
       installProc.stdout.text(),
       installProc.stderr.text(),
       installProc.exited,
@@ -2024,7 +2022,6 @@ describe("bun link integration", () => {
     expect(existsSync(join(bodyDir, "marker.js"))).toBe(true);
     expect(await file(join(bodyDir, "marker.js")).text()).toContain("FROM_PRODUCER_MARKER");
     void producer;
-    void stdout;
   });
 
   test("isolated: producer rebuild propagates on reinstall", async () => {

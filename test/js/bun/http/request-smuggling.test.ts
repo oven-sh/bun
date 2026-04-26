@@ -658,6 +658,196 @@ describe("SPILL.TERM - invalid chunk terminators", () => {
       client.write(validRequest);
     });
   });
+
+  // TE.TE desync: the last-chunk "0\r\n" must be followed by a strict "\r\n"
+  // (end-of-body). Consuming arbitrary bytes there lets an attacker smuggle a
+  // second request while an upstream proxy parses the same bytes as a valid
+  // trailer line. See https://github.com/oven-sh/bun/issues/29732.
+  test("rejects arbitrary bytes in place of final CRLF after zero-chunk", async () => {
+    const urls: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        urls.push(new URL(req.url).pathname);
+        if (new URL(req.url).pathname === "/admin") {
+          return new Response("ADMIN-ACCESS");
+        }
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    // The bytes "X:" replace the required "\r\n" after the zero-chunk.
+    // A vulnerable server consumes "X:" as the terminator and then parses
+    // "POST /admin HTTP/1.1" as a second (smuggled) request.
+    const smuggleAttempt =
+      "POST / HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      "0\r\n" +
+      "X:POST /admin HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Content-Length: 5\r\n" +
+      "\r\n" +
+      "admin";
+
+    await new Promise<void>((resolve, reject) => {
+      let responseData = "";
+      client.on("error", reject);
+      client.on("data", data => {
+        responseData += data.toString();
+      });
+      client.on("close", () => {
+        expect(responseData).toContain("HTTP/1.1 400");
+        // The smuggled second request must never reach the handler.
+        expect(urls).not.toContain("/admin");
+        // No ADMIN-ACCESS body should have been produced.
+        expect(responseData).not.toContain("ADMIN-ACCESS");
+        resolve();
+      });
+      client.write(smuggleAttempt);
+    });
+  });
+
+  test("rejects zero-chunk terminator with wrong first byte", async () => {
+    // First byte of the terminator must be '\r'. Anything else must be rejected.
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    const maliciousRequest =
+      "POST / HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      "0\r\n" +
+      "A\n"; // 'A' instead of '\r'
+
+    await new Promise<void>((resolve, reject) => {
+      let responseData = "";
+      client.on("error", reject);
+      client.on("data", data => {
+        responseData += data.toString();
+      });
+      client.on("close", () => {
+        expect(responseData).toContain("HTTP/1.1 400");
+        resolve();
+      });
+      client.write(maliciousRequest);
+    });
+  });
+
+  test("rejects zero-chunk terminator with CR but wrong second byte", async () => {
+    // Second byte of the terminator must be '\n'. Anything else must be rejected.
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    const maliciousRequest =
+      "POST / HTTP/1.1\r\n" +
+      "Host: localhost\r\n" +
+      "Transfer-Encoding: chunked\r\n" +
+      "\r\n" +
+      "0\r\n" +
+      "\rA"; // '\r' followed by 'A' instead of '\n'
+
+    await new Promise<void>((resolve, reject) => {
+      let responseData = "";
+      client.on("error", reject);
+      client.on("data", data => {
+        responseData += data.toString();
+      });
+      client.on("close", () => {
+        expect(responseData).toContain("HTTP/1.1 400");
+        resolve();
+      });
+      client.write(maliciousRequest);
+    });
+  });
+
+  test("rejects zero-chunk terminator split across TCP segments with invalid byte", async () => {
+    // The terminator validation must persist across TCP boundaries. Send the
+    // first (valid) '\r' and then a bad second byte in a separate write.
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    await new Promise<void>((resolve, reject) => {
+      let responseData = "";
+      client.on("error", reject);
+      client.on("data", data => {
+        responseData += data.toString();
+      });
+      client.on("close", () => {
+        expect(responseData).toContain("HTTP/1.1 400");
+        resolve();
+      });
+      client.on("connect", () => {
+        client.write(
+          "POST / HTTP/1.1\r\n" +
+            "Host: localhost\r\n" +
+            "Transfer-Encoding: chunked\r\n" +
+            "\r\n" +
+            "0\r\n" +
+            "\r", // first half of terminator, looks valid so far
+        );
+        // Wait a tick then send a bad second byte.
+        queueMicrotask(() => client.write("X"));
+      });
+    });
+  });
+
+  test("accepts zero-chunk with correct CRLF terminator split across segments", async () => {
+    // Control for the fragmentation test above: a valid split must still work.
+    let receivedBody = "";
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        receivedBody = await req.text();
+        return new Response("OK");
+      },
+    });
+
+    const client = net.connect(server.port, "127.0.0.1");
+
+    await new Promise<void>((resolve, reject) => {
+      client.on("error", reject);
+      client.on("data", data => {
+        expect(data.toString()).toContain("HTTP/1.1 200");
+        expect(receivedBody).toBe("");
+        client.end();
+        resolve();
+      });
+      client.on("connect", () => {
+        client.write(
+          "POST / HTTP/1.1\r\n" +
+            "Host: localhost\r\n" +
+            "Transfer-Encoding: chunked\r\n" +
+            "\r\n" +
+            "0\r\n" +
+            "\r", // first half
+        );
+        queueMicrotask(() => client.write("\n")); // valid second half
+      });
+    });
+  });
 });
 
 describe("chunked encoding size hardening", () => {

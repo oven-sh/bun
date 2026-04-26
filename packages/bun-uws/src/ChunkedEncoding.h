@@ -153,12 +153,27 @@ namespace uWS {
     static std::optional<std::string_view> getNextChunk(std::string_view &data, uint64_t &state, bool trailer = false) {
         while (data.length()) {
 
-            // if in "drop trailer mode", just drop up to what we have as size
+            // if in "drop trailer mode", consume the terminator bytes after the
+            // zero-chunk. This is 2 bytes (\r\n) with no trailer, or 4 bytes
+            // (\r\n\r\n) with trailer=true. Upstream uWS consumed these bytes
+            // blindly, which let attackers smuggle a second request by placing
+            // arbitrary bytes (e.g. "X:POST /admin HTTP/1.1\r\n") where the
+            // final CRLF belongs. Strict validation closes that desync.
+            //
+            // chunkSize() starts at 2 or 4 and counts down as bytes arrive; its
+            // parity gives the expected byte (even -> \r, odd -> \n). The parity
+            // rule is the same for both initial sizes, so TCP segment
+            // boundaries that split the terminator are handled naturally.
             if (((state & STATE_IS_CHUNKED) == 0) && hasChunkSize(state) && chunkSize(state)) {
 
                 //printf("Parsing trailer now\n");
 
                 while(data.length() && chunkSize(state)) {
+                    char expected = (chunkSize(state) & 1) ? '\n' : '\r';
+                    if (data[0] != expected) {
+                        state = STATE_IS_ERROR;
+                        return std::nullopt;
+                    }
                     data.remove_prefix(1);
                     decChunkSize(state, 1);
 

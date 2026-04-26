@@ -257,7 +257,8 @@ pub fn onClose(s: *HmrSocket, ws: AnyWebSocket, exit_code: i32, message: []const
         s.dev.source_maps.unref(key.*);
     }
     s.referenced_source_maps.deinit(s.dev.allocator());
-    bun.debugAssert(s.dev.active_websocket_connections.remove(s));
+    const removed = s.dev.active_websocket_connections.remove(s);
+    bun.debugAssert(removed);
     s.dev.allocator().destroy(s);
 }
 

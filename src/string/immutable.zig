@@ -1648,7 +1648,8 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
         cursor.i = current_i;
         cursor.width = 0;
         const current_line_range: LineRange = brk: {
-            bun.assert(iter.next(&cursor)); // cursor points to current_i where we know there is some character
+            const has_next = iter.next(&cursor);
+            bun.assert(has_next); // cursor points to current_i where we know there is some character
             const codepoint = cursor.c;
             switch (codepoint) {
                 '\n' => {

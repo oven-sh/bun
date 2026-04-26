@@ -369,7 +369,13 @@ pub const All = struct {
             warning_type_js,
             .js_undefined,
             .js_undefined,
-        ) catch {};
+        ) catch {
+            // Emitting a warning should never interrupt execution, but the emit path calls
+            // into user-observable JS (process.nextTick, getters, etc.) which can throw.
+            // Swallowing error.JSError alone leaves the exception pending on the VM and
+            // trips assertExceptionPresenceMatches in the host-call wrapper, so clear it.
+            _ = globalThis.clearExceptionExceptTermination();
+        };
     }
 
     const CountdownOverflowBehavior = enum(u8) {

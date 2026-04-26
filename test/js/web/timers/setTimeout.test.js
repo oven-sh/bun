@@ -366,3 +366,33 @@ it("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive
 it("setTimeout canceling with unref, close, _idleTimeout, and _onTimeout", () => {
   expect([path.join(import.meta.dir, "timers-fixture-unref.js"), "setTimeout"]).toRun();
 });
+
+it("setTimeout does not leak a pending exception when emitting a timeout warning throws", async () => {
+  // The out-of-range timeout warning queues a process.nextTick, which reads process._exiting.
+  // If that read throws, the exception must not be left pending on the VM when setTimeout
+  // returns — otherwise debug builds hit releaseAssertNoException().
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.nextTick(() => {});
+        Object.defineProperty(process, "_exiting", {
+          get() { throw new TypeError("boom"); },
+          configurable: true,
+        });
+        const t = setTimeout(() => {}, 1e100);
+        clearTimeout(t);
+        console.log("survived");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("survived");
+  expect(exitCode).toBe(0);
+});

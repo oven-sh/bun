@@ -95,6 +95,7 @@ test.skipIf(!isDebug && !isASAN)(
     // stderr and never prints "done". stderr is not asserted directly because
     // sanitizer builds emit a benign startup warning even on success.
     if (exitCode !== 0) console.error(stderr);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "done", exitCode: 0 });
+    expect(stdout.trim()).toBe("done");
+    expect(exitCode).toBe(0);
   },
 );

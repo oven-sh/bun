@@ -4210,6 +4210,10 @@ pub const H2FrameParser = struct {
         var wait_for_trailers_opt: ?bool = null;
         var stream_dependency_opt: ?u32 = null;
         var weight_opt: ?u16 = null;
+        // Keep the JS AbortSignal wrapper on the stack (conservative GC root)
+        // until after handleReceivedStreamID/setContext so the underlying
+        // RefCounted<AbortSignal> cannot be collected before it is attached.
+        var signal_value: JSValue = .js_undefined;
         var signal_opt: ?*jsc.WebCore.AbortSignal = null;
         var options_error: enum { none, not_object, parent_range, weight_range } = .none;
 
@@ -4300,6 +4304,7 @@ pub const H2FrameParser = struct {
 
             if (try options.get(globalObject, "signal")) |signal_arg| {
                 if (signal_arg.as(jsc.WebCore.AbortSignal)) |signal_| {
+                    signal_value = signal_arg;
                     signal_opt = signal_;
                 } else {
                     return globalObject.throwInvalidArgumentTypeValue("options.signal", "AbortSignal", signal_arg);
@@ -4307,9 +4312,15 @@ pub const H2FrameParser = struct {
             }
         }
 
-        // All user-controlled getters have run. It is now safe to obtain a pointer
-        // into this.streams and write through it without risk of rehash from user JS.
-        const stream = this.handleReceivedStreamID(stream_id) orelse {
+        // All user-controlled getters have run. handleReceivedStreamID() may
+        // dispatch onStreamStart (internal JS) when creating a new entry; the
+        // stream normally already exists here (created by getNextStream() in
+        // JS), but re-acquire the pointer by id afterwards so any future
+        // change to that callback cannot leave us holding a stale value_ptr.
+        if (this.handleReceivedStreamID(stream_id) == null) {
+            return jsc.JSValue.jsNumber(-1);
+        }
+        const stream = this.streams.getPtr(stream_id) orelse {
             return jsc.JSValue.jsNumber(-1);
         };
         if (!stream_ctx_arg.isEmptyOrUndefinedOrNull() and stream_ctx_arg.isObject()) {
@@ -4342,6 +4353,7 @@ pub const H2FrameParser = struct {
             stream.weight = w;
         }
         if (signal_opt) |signal_| {
+            signal_value.ensureStillAlive();
             if (signal_.aborted()) {
                 stream.state = .IDLE;
                 this.abortStream(stream, Bun__wrapAbortError(globalObject, signal_.abortReason()));

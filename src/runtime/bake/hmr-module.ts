@@ -248,6 +248,31 @@ export class HMRModule {
     throw new Error("TODO: implement ImportMetaHot.send");
   }
 
+  /** Forwards every non-'default' key of `get()`'s current return value
+   *  through a live getter on `this.exports`, so property reads on the
+   *  barrel module always resolve through the re-exported module's bindings.
+   *
+   *  This is the runtime side of an `export * from '...'` statement. The
+   *  thunk closes over the caller's namespace local, so when that local is
+   *  reassigned by `updateImport` on HMR, reads see the fresh bindings.
+   *
+   *  Direct exports on `this.exports` take precedence; existing keys are
+   *  left untouched. First-wins between multiple star re-exports mirrors
+   *  ECMAScript ambiguity resolution. */
+  esmStar(get: () => any) {
+    const target = this.exports;
+    const mod = get();
+    for (const key of Object.keys(mod)) {
+      if (key === "default") continue;
+      if (Object.prototype.hasOwnProperty.call(target, key)) continue;
+      Object.defineProperty(target, key, {
+        get: () => get()[key],
+        enumerable: true,
+        configurable: true,
+      });
+    }
+  }
+
   declare indirectHot: any;
 
   /** Server-only */

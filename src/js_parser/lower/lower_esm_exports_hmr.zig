@@ -3,7 +3,11 @@ last_part: *js_ast.Part,
 // can be a bit more concise for re-exports
 is_in_node_modules: bool,
 imports_seen: bun.StringArrayHashMapUnmanaged(ImportRef) = .{},
-export_star_props: std.ArrayListUnmanaged(G.Property) = .{},
+/// Namespace refs for each `export * from '...'` statement. Each produces an
+/// `hmr.esmStar(() => ns)` call after the direct-export assignment so that
+/// property reads on the barrel module forward live into the re-exported
+/// module's bindings (including through `updateImport` on HMR updates).
+export_star_namespaces: std.ArrayListUnmanaged(Ref) = .{},
 export_props: std.ArrayListUnmanaged(G.Property) = .{},
 stmts: std.ArrayListUnmanaged(Stmt) = .{},
 
@@ -260,11 +264,13 @@ pub fn convertStmt(ctx: *ConvertESMExportsForHmr, p: anytype, stmt: Stmt) !void 
                     .value = Expr.initIdentifier(deduped.namespace_ref, stmt.loc),
                 });
             } else {
-                // 'export * from' creates a spread, hoisted at the top.
-                try ctx.export_star_props.append(p.allocator, .{
-                    .kind = .spread,
-                    .value = Expr.initIdentifier(deduped.namespace_ref, stmt.loc),
-                });
+                // 'export * from' forwards every non-'default' key of the
+                // re-exported module through a live getter. A spread here
+                // would invoke the source's getters once at init time and
+                // snapshot their values (bug #29747). Emission is deferred
+                // to finalize() so the forwarding calls follow
+                // `hmr.exports = { ... }`.
+                try ctx.export_star_namespaces.append(p.allocator, deduped.namespace_ref);
             }
             return;
         },
@@ -439,25 +445,14 @@ fn visitRefToExport(
 }
 
 pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.Part) !void {
-    if (ctx.export_star_props.items.len > 0) {
-        if (ctx.export_props.items.len == 0) {
-            ctx.export_props = ctx.export_star_props;
-        } else {
-            const export_star_len = ctx.export_star_props.items.len;
-            try ctx.export_props.ensureUnusedCapacity(p.allocator, export_star_len);
-            const len = ctx.export_props.items.len;
-            ctx.export_props.items.len += export_star_len;
-            bun.copy(G.Property, ctx.export_props.items[export_star_len..], ctx.export_props.items[0..len]);
-            @memcpy(ctx.export_props.items[0..export_star_len], ctx.export_star_props.items);
-        }
-    }
+    const has_stars = ctx.export_star_namespaces.items.len > 0;
 
-    if (ctx.export_props.items.len > 0) {
+    if (ctx.export_props.items.len > 0 or has_stars) {
         const obj = Expr.init(E.Object, .{
             .properties = G.Property.List.moveFromList(&ctx.export_props),
         }, logger.Loc.Empty);
 
-        // `hmr.exports = ...`
+        // `hmr.exports = { ...direct exports... };`
         try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
             .value = Expr.assign(
                 Expr.init(E.Dot, .{
@@ -472,6 +467,38 @@ pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.P
         // mark a dependency on module_ref so it is renamed
         try ctx.last_part.symbol_uses.put(p.allocator, p.module_ref, .{ .count_estimate = 1 });
         try ctx.last_part.declared_symbols.append(p.allocator, .{ .ref = p.module_ref, .is_top_level = true });
+    }
+
+    // Emit one `hmr.esmStar(() => ns)` per `export * from '...'` statement.
+    // The thunk closes over the reassignable namespace local, so when the
+    // re-exported module is HMR-updated and `updateImport` rebinds the local,
+    // subsequent reads on the barrel's exports see the fresh bindings.
+    for (ctx.export_star_namespaces.items) |namespace_ref| {
+        const thunk = Expr.init(E.Arrow, .{
+            .args = &.{},
+            .prefer_expr = true,
+            .body = try .initReturnExpr(p.allocator, Expr.initIdentifier(namespace_ref, logger.Loc.Empty)),
+        }, logger.Loc.Empty);
+
+        try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
+            .value = Expr.init(E.Call, .{
+                .target = Expr.init(E.Dot, .{
+                    .target = Expr.initIdentifier(p.hmr_api_ref, logger.Loc.Empty),
+                    .name = "esmStar",
+                    .name_loc = logger.Loc.Empty,
+                }, logger.Loc.Empty),
+                .args = .fromOwnedSlice(try p.allocator.dupe(Expr, &.{thunk})),
+            }, logger.Loc.Empty),
+        }, logger.Loc.Empty));
+
+        // Each reference bumps the namespace_ref's use count so it survives
+        // symbol renaming and does not get stripped.
+        const gop = try ctx.last_part.symbol_uses.getOrPut(p.allocator, namespace_ref);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = .{ .count_estimate = 1 };
+        } else {
+            gop.value_ptr.count_estimate += 1;
+        }
     }
 
     if (p.options.features.react_fast_refresh and p.react_refresh.register_used) {

@@ -45,8 +45,9 @@ pub const requires_file_descriptors = switch (Environment.os) {
 pub const watch_open_flags: i32 = if (Environment.isMac) bun.c.O_EVTONLY else bun.O.RDONLY;
 
 /// kqueue vnode fflags matching libuv (vendor/node/deps/uv/src/unix/kqueue.c)
-/// so file-watching behavior is consistent with Node.
-const macos_vnode_fflags: u32 = if (Environment.isMac)
+/// so file-watching behavior is consistent with Node. All six NOTE_* constants
+/// exist on every kqueue platform (macOS + FreeBSD).
+const kqueue_vnode_fflags: u32 = if (Environment.isKqueue)
     std.c.NOTE.WRITE | std.c.NOTE.RENAME | std.c.NOTE.DELETE |
         std.c.NOTE.ATTRIB | std.c.NOTE.EXTEND | std.c.NOTE.REVOKE
 else
@@ -358,7 +359,7 @@ pub fn addFileDescriptorToKQueueWithoutChecks(this: *Watcher, fd: bun.FD, watchl
     event.flags = std.c.EV.ADD | std.c.EV.CLEAR | std.c.EV.ENABLE;
     // we want to know about the vnode
     event.filter = std.c.EVFILT.VNODE;
-    event.fflags = macos_vnode_fflags;
+    event.fflags = kqueue_vnode_fflags;
 
     // id
     event.ident = @intCast(fd.native());

@@ -114,6 +114,8 @@ pub const Writable = union(enum) {
                         if (stdio.* == .readable_stream) {
                             const assign_result = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
                             if (assign_result.toError()) |err| {
+                                subprocess.weak_file_sink_stdin_ptr = null;
+                                subprocess.flags.deref_on_stdin_destroyed = false;
                                 pipe.deref();
                                 subprocess.deref();
                                 return event_loop.global.throwValue(err);
@@ -190,6 +192,8 @@ pub const Writable = union(enum) {
                 if (stdio.* == .readable_stream) {
                     const assign_result = pipe.assignToStream(&stdio.readable_stream, event_loop.global);
                     if (assign_result.toError()) |err| {
+                        subprocess.weak_file_sink_stdin_ptr = null;
+                        subprocess.flags.deref_on_stdin_destroyed = false;
                         pipe.deref();
                         subprocess.deref();
                         return event_loop.global.throwValue(err);

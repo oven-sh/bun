@@ -1028,7 +1028,7 @@ pub fn SkipTypescript(
                         _ = try p.parseExportClause();
                         if (p.lexer.isContextualKeyword("from")) {
                             try p.lexer.next();
-                            _ = try p.parsePath();
+                            _ = try p.parseTypeOnlyPath();
                         }
                         try p.lexer.expectOrInsertSemicolon();
                         return;
@@ -1045,7 +1045,7 @@ pub fn SkipTypescript(
                             try p.lexer.next();
                         }
                         try p.lexer.expectContextualKeyword("from");
-                        _ = try p.parsePath();
+                        _ = try p.parseTypeOnlyPath();
                         try p.lexer.expectOrInsertSemicolon();
                         return;
                     },

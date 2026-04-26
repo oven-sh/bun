@@ -3336,6 +3336,31 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         }
     }
 
+    // Validate that no unsupported import attributes are present.
+    // Only "type" is supported for dynamic imports per the TC39 import
+    // attributes proposal. Other keys (like `embed`, `bunBakeGraph`) are
+    // static-only parser attributes handled at parse time.
+    //
+    // This must run AFTER NodeVM dispatch so vm.Script/SourceTextModule
+    // with a user importModuleDynamically callback still receives all
+    // attributes (Node.js forwards them to the user hook).
+    if (parameters) {
+        const auto& attributes = parameters->attributes();
+        if (!attributes.isEmpty()) {
+            const auto* typeKey = vm.propertyNames->type.impl();
+            for (const auto& [key, value] : attributes) {
+                if (key.get() != typeKey) {
+                    auto keyString = String(key.get());
+                    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+                    promise->reject(vm, globalObject,
+                        Bun::createError(globalObject, Bun::ErrorCode::ERR_IMPORT_ATTRIBUTE_UNSUPPORTED,
+                            makeString("Import attribute \""_s, keyString, "\" with value \""_s, value, "\" is not supported"_s)));
+                    return promise;
+                }
+            }
+        }
+    }
+
     JSC::Identifier resolvedIdentifier;
 
     auto moduleName = moduleNameValue->value(globalObject);

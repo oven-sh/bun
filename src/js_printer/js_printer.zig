@@ -910,7 +910,10 @@ fn NewPrinter(
             p.options.indent.count += 1;
         }
 
-        pub fn printIndent(p: *Printer) void {
+        // Called from dozens of sites in the giant printStmt/printExpr switches.
+        // Keep it outlined so the (usually-dead under --minify) buffer-growth
+        // path doesn't get replicated into every caller and blow up icache.
+        pub noinline fn printIndent(p: *Printer) void {
             if (p.options.indent.count == 0 or p.options.minify_whitespace) {
                 return;
             }
@@ -1128,7 +1131,7 @@ fn NewPrinter(
             }
         }
 
-        pub fn printBody(p: *Printer, stmt: Stmt, tlmtlo: TopLevel) void {
+        pub noinline fn printBody(p: *Printer, stmt: Stmt, tlmtlo: TopLevel) void {
             switch (stmt.data) {
                 .s_block => |block| {
                     p.printSpace();

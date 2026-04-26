@@ -111,7 +111,13 @@ function validatePattern(pattern: string | string[]): string[] {
   return [isWindows ? pattern.replaceAll("/", sep) : pattern];
 }
 
-function mapOptions(options: GlobOptions): GlobScanOptions & { exclude: GlobOptions["exclude"] } {
+// `descendLiteralSymlinks` is an internal `Bun.Glob` scan option (see
+// `src/bun.js/api/glob.zig`) — not part of the public `GlobScanOptions`
+// type, only consumed by `node:fs.glob`. Widen the return type locally so
+// the object literal below typechecks without exposing the knob publicly.
+function mapOptions(
+  options: GlobOptions,
+): GlobScanOptions & { exclude: GlobOptions["exclude"]; descendLiteralSymlinks: boolean } {
   validateObject(options, "options");
 
   let exclude = options.exclude ?? no;

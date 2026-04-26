@@ -2699,8 +2699,6 @@ pub const Resolver = struct {
     }
 
     fn dirInfoCachedMaybeLog(r: *ThisResolver, raw_input_path: string, comptime enable_logging: bool, comptime follow_symlinks: bool) !?*DirInfo {
-        r.mutex.lock();
-        defer r.mutex.unlock();
         var input_path = raw_input_path;
 
         if (isDotSlash(input_path) or strings.eqlComptime(input_path, ".")) {
@@ -2738,6 +2736,20 @@ pub const Resolver = struct {
 
         const path_without_trailing_slash = strings.withoutTrailingSlashWindowsPath(input_path);
         assertValidCacheKey(path_without_trailing_slash);
+
+        // Fast path: most calls hit an already-resolved entry. The cache has
+        // its own fine-grained mutex, so a read-only peek is safe without the
+        // coarse `r.mutex`. Only fall through to the exclusive section when
+        // the directory hasn't been visited yet.
+        if (r.dir_cache.peek(path_without_trailing_slash)) |hit| {
+            if (hit.status != .unknown) {
+                return r.dir_cache.atIndex(hit.index);
+            }
+        }
+
+        r.mutex.lock();
+        defer r.mutex.unlock();
+
         const top_result = try r.dir_cache.getOrPut(path_without_trailing_slash);
         if (top_result.status != .unknown) {
             return r.dir_cache.atIndex(top_result.index);

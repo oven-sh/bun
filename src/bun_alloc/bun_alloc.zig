@@ -595,6 +595,26 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             return self.atIndex(index);
         }
 
+        /// Read-only lookup that never inserts. Returns the resolved status
+        /// without taking the caller's coarse lock so the common cache-hit
+        /// path can be lock-free (the map's own fine-grained mutex is enough).
+        pub fn peek(self: *Self, denormalized_key: []const u8) ?Result {
+            const key = if (comptime remove_trailing_slashes) std.mem.trimRight(u8, denormalized_key, std.fs.path.sep_str) else denormalized_key;
+            const _key = bun.hash(key);
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            const index = self.index.get(_key) orelse return null;
+            return Result{
+                .hash = _key,
+                .index = index,
+                .status = switch (index.index) {
+                    NotFound.index => .not_found,
+                    Unassigned.index => .unknown,
+                    else => .exists,
+                },
+            };
+        }
+
         pub fn markNotFound(self: *Self, result: Result) void {
             self.mutex.lock();
             defer self.mutex.unlock();

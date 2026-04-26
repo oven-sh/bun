@@ -32,8 +32,10 @@ import { streamPath } from "./stream.ts";
  * Zig compiler commit — determines compiler download + bundled stdlib.
  * Override via `--zig-commit=<hash>` to test a new compiler.
  * From https://github.com/oven-sh/zig releases.
+ *
+ * Defined in deps/versions.ts (leaf module). See the note there.
  */
-export const ZIG_COMMIT = "04e7f6ac1e009525bc00934f20199c68f04e0a24";
+export { ZIG_COMMIT } from "./deps/versions.ts";
 
 /**
  * Number of LLVM codegen units. >1 splits the build into N independent

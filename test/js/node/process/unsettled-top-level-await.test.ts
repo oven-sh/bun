@@ -91,6 +91,58 @@ describe("unsettled top-level await", () => {
     });
   });
 
+  test.concurrent("explicit process.exitCode is respected over 13", async () => {
+    const r = await run(
+      {
+        "entry.mjs": `
+          process.on("exit", code => console.log("exit", code, process.exitCode));
+          process.exitCode = 42;
+          await new Promise(() => {});
+        `,
+      },
+      "./entry.mjs",
+    );
+    expect({ stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode }).toEqual({
+      stdout: "exit 42 42\n",
+      stderr: "",
+      exitCode: 42,
+    });
+  });
+
+  test.concurrent("process exit listener sees code 13", async () => {
+    const r = await run(
+      {
+        "entry.mjs": `
+          process.on("exit", code => console.log("exit", code, process.exitCode));
+          await new Promise(() => {});
+        `,
+      },
+      "./entry.mjs",
+    );
+    expect(r.stdout).toBe("exit 13 13\n");
+    expect(r.stderr).toContain("unsettled top-level await");
+    expect(r.exitCode).toBe(13);
+  });
+
+  test.concurrent("worker process.exit() does not settle main thread's TLA", async () => {
+    const r = await run(
+      {
+        "entry.mjs": `
+          import { Worker, isMainThread } from "worker_threads";
+          if (isMainThread) {
+            new Worker(new URL(import.meta.url));
+            await new Promise(() => {});
+          } else {
+            process.exit();
+          }
+        `,
+      },
+      "./entry.mjs",
+    );
+    expect(r.stderr).toContain("unsettled top-level await");
+    expect(r.exitCode).toBe(13);
+  });
+
   test.concurrent("beforeExit settles TLA which then schedules more async work", async () => {
     const r = await run(
       {

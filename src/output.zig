@@ -733,8 +733,8 @@ pub noinline fn println(comptime fmt: string, args: anytype) void {
 
 /// Print to stdout, but only in debug builds.
 /// Text automatically buffers
-pub fn debug(comptime fmt: string, args: anytype) void {
-    if (!Environment.isDebug) return;
+pub fn debug(comptime fmt: string, zig_lazy args: anytype) callconv(bun.callconv_inline) void {
+    if (comptime !Environment.isDebug) return;
     prettyErrorln("<d>DEBUG:<r> " ++ fmt, args);
     flush();
 }
@@ -805,7 +805,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
             pub inline fn isVisible() bool {
                 return false;
             }
-            pub fn log(comptime _: string, _: anytype) callconv(bun.callconv_inline) void {}
+            pub fn log(comptime _: string, zig_lazy _: anytype) callconv(bun.callconv_inline) void {}
         };
     }
 

@@ -3009,7 +3009,7 @@ noinline fn assertionFailureWithMsg(comptime msg: []const u8, args: anytype) nor
 ///   bun.debugAssert(expensive);
 /// }
 /// ```
-pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
+pub fn debugAssert(zig_lazy cheap_value_only_plz: bool) callconv(callconv_inline) void {
     if (comptime !Environment.isDebug) {
         return;
     }
@@ -3023,20 +3023,13 @@ pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
 ///
 /// Please use `assertf` in new code.
 ///
-/// Be careful what expressions you pass to this function; if the compiler cannot
-/// determine that `ok` has no side effects, the argument expression may not be removed
-/// from the binary. This includes calls to extern functions.
-///
-/// Wrap expensive checks in an `if` statement.
-/// ```zig
-/// if (comptime bun.Environment.allow_assert) {
-///   const expensive = doExpensiveCheck();
-///   bun.assert(expensive);
-/// }
-/// ```
+/// `ok` is `zig_lazy`: when `allow_assert` is comptime-false the argument
+/// expression is never analyzed, so expensive checks and extern calls are
+/// guaranteed to generate no code. The manual `if (comptime allow_assert)`
+/// wrapper is no longer required.
 ///
 /// Use `releaseAssert` for assertions that should not be stripped in release builds.
-pub fn assert(ok: bool) callconv(callconv_inline) void {
+pub fn assert(zig_lazy ok: bool) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;
     }
@@ -3052,20 +3045,12 @@ pub fn assert(ok: bool) callconv(callconv_inline) void {
 ///
 /// Please note that messages will be shown to users in crash reports.
 ///
-/// Be careful what expressions you pass to this function; if the compiler cannot
-/// determine that `ok` has no side effects, the argument expression may not be removed
-/// from the binary. This includes calls to extern functions.
-///
-/// Wrap expensive checks in an `if` statement.
-/// ```zig
-/// if (comptime bun.Environment.allow_assert) {
-///   const expensive = doExpensiveCheck();
-///   bun.assert(expensive, "Something happened: {}", .{ expensive });
-/// }
-/// ```
+/// `ok` and `args` are `zig_lazy`: when `allow_assert` is comptime-false the
+/// argument expressions are never analyzed, so expensive checks and extern
+/// calls are guaranteed to generate no code.
 ///
 /// Use `releaseAssert` for assertions that should not be stripped in release builds.
-pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(callconv_inline) void {
+pub fn assertf(zig_lazy ok: bool, comptime format: []const u8, zig_lazy args: anytype) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;
     }
@@ -3085,7 +3070,7 @@ pub fn releaseAssert(ok: bool, comptime msg: []const u8, args: anytype) callconv
     }
 }
 
-pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv(callconv_inline) void {
+pub fn assertWithLocation(zig_lazy value: bool, zig_lazy src: std.builtin.SourceLocation) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;
     }

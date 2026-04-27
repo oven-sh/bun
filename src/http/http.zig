@@ -1075,7 +1075,13 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     // `FetchTasklet.skipChunkedFraming()` reads the user headers directly
     // and does NOT consult this flag — the two code paths deliberately ask
     // different questions (drain vs. chunk-wrap).
-    {
+    //
+    // Only upgrade requests read this flag (the consumer in
+    // `writeToStream()` short-circuits on `upgrade_state == .pending`),
+    // so skip the scan entirely for the >99% non-upgrade case.
+    // `upgrade_state` is set by the first header loop above, so it's
+    // authoritative by the time we get here.
+    if (this.flags.upgrade_state != .none) {
         var has_framing = false;
         for (request_headers_buf[0..header_count]) |h| {
             const hash = hashHeaderName(h.name);

@@ -162,9 +162,13 @@ function createUpgradeSocket(req, res) {
       // WebSocket/CDP pattern the caller has already called `req.end()`
       // before the 101, which sets `req.finished = true` synchronously.
       // The upgrade-aware body generator stays alive past that point and
-      // still accepts writes until the hijacked socket tears down.
+      // still accepts writes until the hijacked socket tears down. Since
+      // the only way into this branch is destruction, use
+      // `ERR_STREAM_DESTROYED` (matches net.Socket/Writable semantics)
+      // rather than `ERR_STREAM_WRITE_AFTER_END` (reserved for writes
+      // after `.end()` on a stream that ended normally).
       if (req.destroyed) {
-        callback($ERR_STREAM_WRITE_AFTER_END());
+        callback($ERR_STREAM_DESTROYED("write"));
         return;
       }
       armTimeout();

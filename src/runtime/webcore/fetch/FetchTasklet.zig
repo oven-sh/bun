@@ -1297,6 +1297,7 @@ pub const FetchTasklet = struct {
             if (bun.strings.containsCaseInsensitiveASCII(value, "chunked")) return false;
         }
         return this.upgraded_connection or
+            this.result.is_http2 or
             (this.request_headers.get("content-length") != null and transfer_encoding == null);
     }
 

@@ -3557,6 +3557,93 @@ it("fs.mkdirSync recursive: false should error when the directory already exists
   expect(() => mkdirSync(import.meta.path, { recursive: false })).toThrowError();
 });
 
+// `mkdir(path, { recursive: true })` must be idempotent — calling it a second
+// time on a directory that was just created by the first call must succeed.
+// Other runtimes (Node, Go, Rust, .NET) all satisfy this on Windows; Bun on
+// Windows does not when `path` is relative and contains `..`, because the
+// EEXIST recovery path's `directoryExistsAt` calls `NtQueryAttributesFile`,
+// an NT-namespace API that rejects relative names containing `..` with
+// `OBJECT_NAME_INVALID`. The original EEXIST then leaks instead of being
+// recognised as "the directory already exists, so the recursive mkdir is a
+// no-op". On POSIX, mkdir resolves `..` against the cwd before any existence
+// check, so these cases pass trivially — making this a Windows-only bug
+// worth pinning down with cross-platform regression tests anyway.
+//
+// This is the bug behind downstream `safeMkdir` workarounds (e.g. Metaplay's
+// llm-docs payload generator) where `distDir` defaults to `../server/payload`
+// and every per-file `mkdir(dirname(outputPath))` after the first one
+// surfaces EEXIST.
+describe("fs.mkdir({ recursive: true }) idempotency on '..' paths", () => {
+  // Shared helper: spawn a fresh bun process whose cwd is a subdirectory of a
+  // temp dir, so `..` references the temp dir itself. The body must produce
+  // no stdout, no stderr, and exit 0.
+  async function expectClean(body: string) {
+    using dir = tempDir("mkdir-dotdot", { sub: {} });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", body],
+      env: bunEnv,
+      cwd: join(String(dir), "sub"),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  }
+
+  // Case C — canonical regression: two back-to-back recursive mkdirs of the
+  // same `..`-prefixed path. The second call must be a no-op.
+  it("Case C (promises): mkdir('../foo') twice", () =>
+    expectClean(`
+      const { mkdir } = require("node:fs/promises");
+      await mkdir("../foo", { recursive: true });
+      await mkdir("../foo", { recursive: true });
+    `));
+
+  it("Case C (sync): mkdirSync('../foo') twice", () =>
+    expectClean(`
+      const { mkdirSync } = require("node:fs");
+      mkdirSync("../foo", { recursive: true });
+      mkdirSync("../foo", { recursive: true });
+    `));
+
+  // Case I — guards against an over-eager fix that bans all `..` segments.
+  // 'inner/..' cancels back to cwd; 'inner/../foo' is just 'foo' once
+  // resolved. Both calls must still succeed.
+  it("Case I: mkdir('inner/../foo') twice (cancelling '..')", () =>
+    expectClean(`
+      const { mkdir } = require("node:fs/promises");
+      await mkdir("inner/../foo", { recursive: true });
+      await mkdir("inner/../foo", { recursive: true });
+    `));
+
+  // Case F — diagnostic: pinpoints the bug to the exists-check side, not the
+  // create side. The first mkdir uses the absolute path (which works fine);
+  // the second uses the relative `..` form against an already-existing
+  // directory, which is exactly the path that exercises the broken
+  // `directoryExistsAt` lookup.
+  it("Case F: create absolute, second mkdir uses relative '..'", () =>
+    expectClean(`
+      const { mkdir } = require("node:fs/promises");
+      const path = require("node:path");
+      await mkdir(path.resolve("../foo"), { recursive: true });
+      await mkdir("../foo", { recursive: true });
+    `));
+
+  // Case H — Windows-style backslash separator. Ensures the fix isn't keyed
+  // on the forward-slash form of '../'. POSIX-only behaviour ('..\\foo' is a
+  // single literal filename containing a backslash there) doesn't exercise
+  // the bug, so this case is Windows-gated.
+  it.if(isWindows)("Case H: mkdir('..\\\\foo') twice (backslash separator)", () =>
+    expectClean(String.raw`
+      const { mkdir } = require("node:fs/promises");
+      await mkdir("..\\foo", { recursive: true });
+      await mkdir("..\\foo", { recursive: true });
+    `),
+  );
+});
+
 it("fs.statfsSync should work", () => {
   const stats = statfsSync(import.meta.path);
   ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {

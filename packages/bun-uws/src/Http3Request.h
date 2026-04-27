@@ -42,7 +42,7 @@ struct Http3Request {
 
     std::string_view getUrl() { return url; }
     std::string_view getFullUrl() { return fullUrl; }
-    std::string_view getQuery() { return query; }
+    std::string_view getQuery() { return query.empty() ? query : query.substr(1); }
     std::string_view getQuery(std::string_view key) {
         return getDecodedQueryValue(key, query);
     }

@@ -3693,6 +3693,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseResolve;
     } else if (handler == Bun__CronJob__onPromiseReject) {
         return GlobalObject::PromiseFunctions::Bun__CronJob__onPromiseReject;
+    } else if (handler == Bun__H3Handler__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__H3Handler__onResolve;
+    } else if (handler == Bun__H3Handler__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__H3Handler__onReject;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

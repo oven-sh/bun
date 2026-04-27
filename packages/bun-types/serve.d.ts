@@ -758,6 +758,21 @@ declare module "bun" {
       ipv6Only?: boolean;
 
       /**
+       * Also listen for HTTP/3 (QUIC) on the same port. Requires {@link tls}.
+       *
+       * Not supported on Windows.
+       * @default false
+       */
+      h3?: boolean;
+
+      /**
+       * Listen for HTTP/1.1 (and HTTP/2) over TCP. Set to `false` together
+       * with `h3: true` to serve HTTP/3 only.
+       * @default true
+       */
+      h1?: boolean;
+
+      /**
        * Sets the number of seconds to wait before timing out a connection
        * due to inactivity.
        *

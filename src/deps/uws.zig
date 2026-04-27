@@ -27,6 +27,7 @@ pub const State = @import("./uws/Response.zig").State;
 pub const Loop = @import("./uws/Loop.zig").Loop;
 pub const udp = @import("./uws/udp.zig");
 pub const BodyReaderMixin = @import("./uws/BodyReaderMixin.zig").BodyReaderMixin;
+pub const H3 = if (Environment.isWindows) struct {} else @import("./uws/h3.zig");
 
 pub const LIBUS_TIMEOUT_GRANULARITY = @as(i32, 4);
 pub const LIBUS_RECV_BUFFER_PADDING = @as(i32, 32);

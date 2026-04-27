@@ -316,12 +316,16 @@ fn doWriteStatus(_: *StaticRoute, status: u16, resp: AnyResponse) void {
     switch (resp) {
         .SSL => |r| writeStatus(true, r, status),
         .TCP => |r| writeStatus(false, r, status),
+        .H3 => |r| {
+            var b: [16]u8 = undefined;
+            r.writeStatus(std.fmt.bufPrint(&b, "{d}", .{status}) catch unreachable);
+        },
     }
 }
 
 fn doWriteHeaders(this: *StaticRoute, resp: AnyResponse) void {
     switch (resp) {
-        inline .SSL, .TCP => |s| {
+        inline else => |s| {
             const entries = this.headers.entries.slice();
             const names: []const api.StringPointer = entries.items(.name);
             const values: []const api.StringPointer = entries.items(.value);

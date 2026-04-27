@@ -330,11 +330,13 @@ pub const TLSResponse = NewResponse(1);
 pub const AnyResponse = union(enum) {
     SSL: *uws.NewApp(true).Response,
     TCP: *uws.NewApp(false).Response,
+    H3: *H3Response,
 
     pub fn assertSSL(this: AnyResponse) *uws.NewApp(true).Response {
         return switch (this) {
             .SSL => |resp| resp,
             .TCP => bun.Output.panic("Expected SSL response, got TCP response", .{}),
+            .H3 => bun.Output.panic("Expected SSL response, got H3 response", .{}),
         };
     }
 
@@ -342,6 +344,7 @@ pub const AnyResponse = union(enum) {
         return switch (this) {
             .SSL => bun.Output.panic("Expected TCP response, got SSL response", .{}),
             .TCP => |resp| resp,
+            .H3 => bun.Output.panic("Expected TCP response, got H3 response", .{}),
         };
     }
 
@@ -371,6 +374,7 @@ pub const AnyResponse = union(enum) {
 
     pub fn socket(this: AnyResponse) *c.uws_res {
         return switch (this) {
+            .H3 => bun.Output.panic("socket() is not available for HTTP/3 responses", .{}),
             inline else => |resp| resp.downcast(),
         };
     }
@@ -427,6 +431,7 @@ pub const AnyResponse = union(enum) {
         return switch (@TypeOf(response)) {
             *uws.NewApp(true).Response => .{ .SSL = response },
             *uws.NewApp(false).Response => .{ .TCP = response },
+            *H3Response => .{ .H3 = response },
             else => @compileError("unreachable"),
         };
     }
@@ -441,6 +446,11 @@ pub const AnyResponse = union(enum) {
         switch (this) {
             inline .SSL, .TCP => |resp, ssl| resp.onData(UserDataType, struct {
                 pub fn onDataCallback(user_data: UserDataType, _: *uws.NewApp(ssl == .SSL).Response, data: []const u8, last: bool) void {
+                    @call(bun.callmod_inline, handler, .{ user_data, data, last });
+                }
+            }.onDataCallback, optional_data),
+            .H3 => |resp| resp.onData(UserDataType, struct {
+                pub fn onDataCallback(user_data: UserDataType, _: *H3Response, data: []const u8, last: bool) void {
                     @call(bun.callmod_inline, handler, .{ user_data, data, last });
                 }
             }.onDataCallback, optional_data),
@@ -511,11 +521,13 @@ pub const AnyResponse = union(enum) {
         switch (this) {
             .SSL => |resp| resp.downcastSocket().close(true, .failure),
             .TCP => |resp| resp.downcastSocket().close(false, .failure),
+            .H3 => |resp| resp.forceClose(),
         }
     }
 
     pub fn getNativeHandle(this: AnyResponse) bun.FD {
         return switch (this) {
+            .H3 => bun.invalid_fd,
             inline else => |resp| resp.getNativeHandle(),
         };
     }
@@ -531,14 +543,17 @@ pub const AnyResponse = union(enum) {
             pub fn ssl_handler(user_data: UserDataType, offset: u64, resp: *uws.NewApp(true).Response) bool {
                 return handler(user_data, offset, .{ .SSL = resp });
             }
-
             pub fn tcp_handler(user_data: UserDataType, offset: u64, resp: *uws.NewApp(false).Response) bool {
                 return handler(user_data, offset, .{ .TCP = resp });
+            }
+            pub fn h3_handler(user_data: UserDataType, offset: u64, resp: *H3Response) bool {
+                return handler(user_data, offset, .{ .H3 = resp });
             }
         };
         switch (this) {
             .SSL => |resp| resp.onWritable(UserDataType, wrapper.ssl_handler, optional_data),
             .TCP => |resp| resp.onWritable(UserDataType, wrapper.tcp_handler, optional_data),
+            .H3 => |resp| resp.onWritable(UserDataType, wrapper.h3_handler, optional_data),
         }
     }
 
@@ -550,11 +565,15 @@ pub const AnyResponse = union(enum) {
             pub fn tcp_handler(user_data: UserDataType, resp: *uws.NewApp(false).Response) void {
                 handler(user_data, .{ .TCP = resp });
             }
+            pub fn h3_handler(user_data: UserDataType, resp: *H3Response) void {
+                handler(user_data, .{ .H3 = resp });
+            }
         };
 
         switch (this) {
             .SSL => |resp| resp.onTimeout(UserDataType, wrapper.ssl_handler, optional_data),
             .TCP => |resp| resp.onTimeout(UserDataType, wrapper.tcp_handler, optional_data),
+            .H3 => |resp| resp.onTimeout(UserDataType, wrapper.h3_handler, optional_data),
         }
     }
 
@@ -566,10 +585,14 @@ pub const AnyResponse = union(enum) {
             pub fn tcp_handler(user_data: UserDataType, resp: *uws.NewApp(false).Response) void {
                 handler(user_data, .{ .TCP = resp });
             }
+            pub fn h3_handler(user_data: UserDataType, resp: *H3Response) void {
+                handler(user_data, .{ .H3 = resp });
+            }
         };
         switch (this) {
             .SSL => |resp| resp.onAborted(UserDataType, wrapper.ssl_handler, optional_data),
             .TCP => |resp| resp.onAborted(UserDataType, wrapper.tcp_handler, optional_data),
+            .H3 => |resp| resp.onAborted(UserDataType, wrapper.h3_handler, optional_data),
         }
     }
 
@@ -630,10 +653,133 @@ pub const AnyResponse = union(enum) {
         ctx: ?*uws.SocketContext,
     ) *Socket {
         return switch (this) {
+            .H3 => bun.Output.panic("WebSocket upgrade over HTTP/3 is not supported", .{}),
             inline else => |resp| resp.upgrade(Data, data, sec_web_socket_key, sec_web_socket_protocol, sec_web_socket_extensions, ctx),
         };
     }
 };
+
+/// On Windows the H3 transport is unavailable; the variant stays in the union
+/// so callers compile unchanged. Every method AnyResponse reaches through
+/// `inline else` needs a stub so the Windows arm still type-checks — none of
+/// them can run because no `.H3` value is ever constructed there.
+pub const H3Response = if (bun.Environment.isWindows) opaque {
+    const T = @This();
+    pub fn end(_: *T, _: []const u8, _: bool) void {
+        unreachable;
+    }
+    pub fn tryEnd(_: *T, _: []const u8, _: usize, _: bool) bool {
+        unreachable;
+    }
+    pub fn endWithoutBody(_: *T, _: bool) void {
+        unreachable;
+    }
+    pub fn endStream(_: *T, _: bool) void {
+        unreachable;
+    }
+    pub fn endSendFile(_: *T, _: u64, _: bool) void {
+        unreachable;
+    }
+    pub fn write(_: *T, _: []const u8) WriteResult {
+        unreachable;
+    }
+    pub fn writeStatus(_: *T, _: []const u8) void {
+        unreachable;
+    }
+    pub fn writeHeader(_: *T, _: []const u8, _: []const u8) void {
+        unreachable;
+    }
+    pub fn writeHeaderInt(_: *T, _: []const u8, _: u64) void {
+        unreachable;
+    }
+    pub fn writeMark(_: *T) void {
+        unreachable;
+    }
+    pub fn markWroteContentLengthHeader(_: *T) void {
+        unreachable;
+    }
+    pub fn writeContinue(_: *T) void {
+        unreachable;
+    }
+    pub fn flushHeaders(_: *T, _: bool) void {
+        unreachable;
+    }
+    pub fn pause(_: *T) void {
+        unreachable;
+    }
+    pub fn @"resume"(_: *T) void {
+        unreachable;
+    }
+    pub fn timeout(_: *T, _: u8) void {
+        unreachable;
+    }
+    pub fn getWriteOffset(_: *T) u64 {
+        unreachable;
+    }
+    pub fn getBufferedAmount(_: *T) u64 {
+        unreachable;
+    }
+    pub fn state(_: *T) State {
+        unreachable;
+    }
+    pub fn shouldCloseConnection(_: *T) bool {
+        unreachable;
+    }
+    pub fn isCorked(_: *T) bool {
+        unreachable;
+    }
+    pub fn uncork(_: *T) void {
+        unreachable;
+    }
+    pub fn isConnectRequest(_: *T) bool {
+        unreachable;
+    }
+    pub fn prepareForSendfile(_: *T) void {
+        unreachable;
+    }
+    pub fn markNeedsMore(_: *T) void {
+        unreachable;
+    }
+    pub fn getSocketData(_: *T) ?*anyopaque {
+        unreachable;
+    }
+    pub fn getRemoteSocketInfo(_: *T) ?SocketAddress {
+        unreachable;
+    }
+    pub fn forceClose(_: *T) void {
+        unreachable;
+    }
+    pub fn clearOnWritable(_: *T) void {
+        unreachable;
+    }
+    pub fn clearAborted(_: *T) void {
+        unreachable;
+    }
+    pub fn clearTimeout(_: *T) void {
+        unreachable;
+    }
+    pub fn clearOnData(_: *T) void {
+        unreachable;
+    }
+    pub fn corked(_: *T, comptime handler: anytype, _: std.meta.ArgsTuple(@TypeOf(handler))) void {
+        unreachable;
+    }
+    pub fn runCorkedWithType(_: *T, comptime UD: type, comptime _: fn (UD) void, _: UD) void {
+        unreachable;
+    }
+    pub fn onWritable(_: *T, comptime UD: type, comptime _: fn (UD, u64, *T) bool, _: UD) void {
+        unreachable;
+    }
+    pub fn onAborted(_: *T, comptime UD: type, comptime _: fn (UD, *T) void, _: UD) void {
+        unreachable;
+    }
+    pub fn onTimeout(_: *T, comptime UD: type, comptime _: fn (UD, *T) void, _: UD) void {
+        unreachable;
+    }
+    pub fn onData(_: *T, comptime UD: type, comptime _: fn (UD, *T, []const u8, bool) void, _: UD) void {
+        unreachable;
+    }
+} else uws.H3.Response;
 
 pub const State = enum(u8) {
     HTTP_STATUS_CALLED = 1,

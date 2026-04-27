@@ -1,22 +1,105 @@
-extern "C" {
+#ifndef UWS_H3REQUEST_H
+#define UWS_H3REQUEST_H
+
 #include "quic.h"
-}
+#include "QueryParser.h"
+
+#include <cctype>
+#include <string_view>
+#include <utility>
 
 namespace uWS {
 
-    struct Http3Request {
+/* Mirrors uWS::HttpRequest's surface so the same router/handler shape works.
+ * Backed by a us_quic_stream_t whose header set is already parsed; pseudo
+ * headers (:method, :path, :authority) become method/url/host. */
+struct Http3Request {
 
-        std::string_view getHeader(std::string_view key) {
-            for (int i = 0, more = 1; more; i++) {
-                char *name, *value;
-                int name_length, value_length;
-                if ((more = us_quic_socket_context_get_header(nullptr, i, &name, &name_length, &value, &value_length))) {
-                    if (name_length == (int) key.length() && !memcmp(name, key.data(), key.length())) {
-                        return {value, (size_t) value_length};
-                    }
-                }
+    Http3Request(us_quic_stream_t *s) : stream(s) {
+        unsigned int n = us_quic_stream_header_count(s);
+        for (unsigned int i = 0; i < n; i++) {
+            const us_quic_header_t *h = us_quic_stream_header(s, i);
+            std::string_view name{h->name, h->name_len};
+            std::string_view value{h->value, h->value_len};
+            if (name == ":method") {
+                method = value;
+            } else if (name == ":path") {
+                fullUrl = value;
+                size_t q = value.find('?');
+                url = q == std::string_view::npos ? value : value.substr(0, q);
+                query = q == std::string_view::npos ? std::string_view{} : value.substr(q + 1);
+            } else if (name == ":authority") {
+                authority = value;
             }
-            return {nullptr, 0};
         }
-    };
+    }
+
+    bool isAncient() { return false; }
+    bool getYield() { return yield; }
+    void setYield(bool y) { yield = y; }
+
+    std::string_view getUrl() { return url; }
+    std::string_view getFullUrl() { return fullUrl; }
+    std::string_view getQuery() { return query; }
+    std::string_view getQuery(std::string_view key) {
+        return getDecodedQueryValue(key, query);
+    }
+    std::string_view getCaseSensitiveMethod() { return method; }
+
+    /* HttpRequest::getMethod() lowercases in place; we own no writable
+     * buffer, so write into a per-request scratch instead. */
+    std::string_view getMethod() {
+        size_t n = method.size() < sizeof(methodLower) ? method.size() : sizeof(methodLower);
+        for (size_t i = 0; i < n; i++) {
+            methodLower[i] = (char) (method[i] | 0x20);
+        }
+        return {methodLower, n};
+    }
+
+    std::string_view getHeader(std::string_view lowerCasedHeader) {
+        if (lowerCasedHeader == "host") lowerCasedHeader = ":authority";
+        unsigned int n = us_quic_stream_header_count(stream);
+        for (unsigned int i = 0; i < n; i++) {
+            const us_quic_header_t *h = us_quic_stream_header(stream, i);
+            if (h->name_len == lowerCasedHeader.size() &&
+                equalsIgnoreCase({h->name, h->name_len}, lowerCasedHeader)) {
+                return {h->value, h->value_len};
+            }
+        }
+        return {};
+    }
+
+    template <typename Fn> void forEachHeader(Fn &&fn) {
+        unsigned int n = us_quic_stream_header_count(stream);
+        for (unsigned int i = 0; i < n; i++) {
+            const us_quic_header_t *h = us_quic_stream_header(stream, i);
+            if (h->name_len && h->name[0] == ':') continue;
+            fn(std::string_view{h->name, h->name_len}, std::string_view{h->value, h->value_len});
+        }
+        if (!authority.empty()) fn(std::string_view{"host"}, authority);
+    }
+
+    void setParameters(std::pair<int, std::string_view *> p) { params = p; }
+    std::string_view getParameter(unsigned short index) {
+        return index < params.first ? params.second[index] : std::string_view{};
+    }
+
+private:
+    static bool equalsIgnoreCase(std::string_view a, std::string_view b) {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); i++) {
+            if ((a[i] | 0x20) != (b[i] | 0x20)) return false;
+        }
+        return true;
+    }
+
+    us_quic_stream_t *stream;
+    std::string_view method, url, fullUrl, query, authority;
+    std::pair<int, std::string_view *> params{0, nullptr};
+    char methodLower[16];
+    bool yield = false;
+};
+
 }
+
+#endif

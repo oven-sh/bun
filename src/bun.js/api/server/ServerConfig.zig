@@ -52,6 +52,8 @@ reuse_port: bool = false,
 id: []const u8 = "",
 allow_hot: bool = true,
 ipv6_only: bool = false,
+h3: bool = false,
+h1: bool = true,
 
 is_node_http: bool = false,
 had_routes_object: bool = false,
@@ -840,6 +842,16 @@ pub fn fromJS(
         }
         if (global.hasException()) return error.JSError;
 
+        if (try arg.get(global, "h3")) |v| {
+            args.h3 = v.toBoolean();
+        }
+        if (global.hasException()) return error.JSError;
+
+        if (try arg.get(global, "h1")) |v| {
+            args.h1 = v.toBoolean();
+        }
+        if (global.hasException()) return error.JSError;
+
         if (try arg.getTruthy(global, "maxRequestBodySize")) |max_request_body_size| {
             if (max_request_body_size.isNumber()) {
                 args.max_request_body_size = @as(u64, @intCast(@max(0, max_request_body_size.toInt64())));
@@ -949,6 +961,17 @@ pub fn fromJS(
             if (global.hasException()) {
                 return error.JSError;
             }
+        }
+
+        if (args.h3) {
+            if (comptime bun.Environment.isWindows) {
+                return global.throwInvalidArguments("HTTP/3 is not supported on Windows yet", .{});
+            }
+            if (args.ssl_config == null) {
+                return global.throwInvalidArguments("HTTP/3 requires 'tls' to be set", .{});
+            }
+        } else if (!args.h1) {
+            return global.throwInvalidArguments("Cannot disable h1 without enabling h3", .{});
         }
     } else {
         return global.throwInvalidArguments("Bun.serve expects an object", .{});

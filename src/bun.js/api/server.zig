@@ -534,6 +534,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub const App = uws.NewApp(ssl_enabled);
         app: ?*App = null,
         listener: ?*App.ListenSocket = null,
+        h3_app: if (bun.Environment.isWindows) void else ?*uws.H3.App = if (bun.Environment.isWindows) {} else null,
+        h3_listener: if (bun.Environment.isWindows) void else ?*uws.H3.ListenSocket = if (bun.Environment.isWindows) {} else null,
         js_value: jsc.JSRef = jsc.JSRef.empty(),
         /// Potentially null before listen() is called, and once .destroy() is called.
         vm: *jsc.VirtualMachine,
@@ -1316,8 +1318,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 else => {},
             }
 
-            var listener = this.listener orelse return jsc.JSValue.jsNumber(this.config.address.tcp.port);
-            return jsc.JSValue.jsNumber(listener.getLocalPort());
+            if (this.listener) |listener| return jsc.JSValue.jsNumber(listener.getLocalPort());
+            if (comptime !bun.Environment.isWindows) {
+                if (this.h3_listener) |h3l| return jsc.JSValue.jsNumber(h3l.getLocalPort());
+            }
+            return jsc.JSValue.jsNumber(this.config.address.tcp.port);
         }
 
         pub fn getId(this: *ThisServer, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
@@ -1543,7 +1548,18 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         pub fn stopListening(this: *ThisServer, abrupt: bool) void {
             httplog("stopListening", .{});
-            var listener = this.listener orelse return;
+            if (comptime !bun.Environment.isWindows) {
+                if (this.h3_listener) |h3l| {
+                    this.h3_listener = null;
+                    h3l.close();
+                }
+            }
+            var listener = this.listener orelse {
+                if (comptime !bun.Environment.isWindows) {
+                    if (this.h3_app != null) this.unref();
+                }
+                return;
+            };
             this.listener = null;
             this.unref();
 
@@ -1636,6 +1652,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.config.deinit();
 
             this.on_clienterror.deinit();
+            if (comptime !bun.Environment.isWindows) {
+                if (this.h3_app) |h3a| {
+                    this.h3_app = null;
+                    h3a.destroy();
+                }
+            }
             if (this.app) |app| {
                 this.app = null;
                 app.destroy();
@@ -1813,6 +1835,29 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.vm.event_loop_handle = Async.Loop.get();
             if (!ssl_enabled)
                 this.vm.addListeningSocketForWatchMode(socket.?.socket().fd());
+        }
+
+        pub fn onH3Listen(this: *ThisServer, socket: ?*uws.H3.ListenSocket) void {
+            if (comptime bun.Environment.isWindows) unreachable;
+            this.h3_listener = socket;
+        }
+
+        pub fn onH3Request(this: *ThisServer, req: *uws.H3.Request, resp: *uws.H3.Response) void {
+            if (comptime bun.Environment.isWindows) unreachable;
+            if (this.config.onRequest == .zero) {
+                resp.writeStatus("404 Not Found");
+                resp.end("", false);
+                return;
+            }
+            H3Handler.onRequest(
+                this.globalThis,
+                this.vm,
+                this.base_url_string_for_joining,
+                this.config.onRequest,
+                this.jsValueAssertAlive(),
+                req,
+                resp,
+            );
         }
 
         pub fn ref(this: *ThisServer) void {
@@ -2849,11 +2894,39 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         }
                     }
 
-                    app.listenWithConfig(*ThisServer, this, onListen, .{
-                        .port = tcp.port,
-                        .host = host,
-                        .options = this.config.getUsocketsOptions(),
-                    });
+                    if (this.config.h1) {
+                        app.listenWithConfig(*ThisServer, this, onListen, .{
+                            .port = tcp.port,
+                            .host = host,
+                            .options = this.config.getUsocketsOptions(),
+                        });
+                    }
+
+                    if (comptime ssl_enabled and !bun.Environment.isWindows) {
+                        if (this.config.h3) {
+                            const ssl_config = this.config.ssl_config.?;
+                            const h3_app = uws.H3.App.create(ssl_config.asUSockets()) orelse {
+                                if (!globalThis.hasException()) {
+                                    globalThis.throw("Failed to create HTTP/3 server", .{}) catch {};
+                                }
+                                this.deinit();
+                                return .zero;
+                            };
+                            this.h3_app = h3_app;
+                            h3_app.any("/*", *ThisServer, this, onH3Request);
+                            // Same UDP port as the TCP listener so Alt-Svc works.
+                            const h3_port: u16 = if (this.listener) |ls| @intCast(ls.getLocalPort()) else tcp.port;
+                            h3_app.listenWithConfig(*ThisServer, this, onH3Listen, .{ .port = h3_port, .host = host });
+                            if (this.h3_listener == null) {
+                                if (!globalThis.hasException()) {
+                                    globalThis.throw("Failed to listen on UDP port {d} for HTTP/3", .{h3_port}) catch {};
+                                }
+                                this.deinit();
+                                return .zero;
+                            }
+                            if (!this.config.h1) this.vm.event_loop_handle = Async.Loop.get();
+                        }
+                    }
                 },
 
                 .unix => |unix| {
@@ -2905,6 +2978,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
 pub const AnyRequestContext = @import("./server/AnyRequestContext.zig");
 pub const NewRequestContext = @import("./server/RequestContext.zig").NewRequestContext;
+const H3Handler = if (bun.Environment.isWindows) struct {} else @import("./server/H3Handler.zig");
 
 pub const SavedRequest = struct {
     js_request: jsc.Strong.Optional,

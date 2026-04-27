@@ -9,11 +9,27 @@ import zlib from "node:zlib";
 // allowHTTP1: false forces the server to reject anything that didn't
 // negotiate "h2" via ALPN, so these tests only pass when fetch actually
 // speaks HTTP/2 on the wire.
+//
+// Subprocesses pool their h2 connection and are then SIGKILLed at exit, so
+// the server-side TLS socket sees ECONNRESET. http2's tlsClientError handler
+// forwards that to socket.destroy(err) when there's no clientError listener,
+// which surfaces as an unhandled 'error' event in the test process — swallow
+// those on every test server.
+function makeH2Server(
+  opts: http2.SecureServerOptions = {},
+  handler?: (req: http2.Http2ServerRequest, res: http2.Http2ServerResponse) => void,
+) {
+  const server = http2.createSecureServer({ ...tls, allowHTTP1: false, ...opts }, handler);
+  server.on("clientError", () => {});
+  server.on("secureConnection", s => s.on("error", () => {}));
+  return server;
+}
+
 async function withH2Server(
   handler: (req: http2.Http2ServerRequest, res: http2.Http2ServerResponse) => void,
   fn: (url: string, server: http2.Http2SecureServer) => Promise<void>,
 ) {
-  const server = http2.createSecureServer({ ...tls, allowHTTP1: false }, handler);
+  const server = makeH2Server({}, handler);
   server.listen(0);
   await once(server, "listening");
   const { port } = server.address() as import("node:net").AddressInfo;
@@ -245,7 +261,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     let sessions = 0;
     let maxOpen = 0;
     let open = 0;
-    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    const server = makeH2Server();
     server.on("session", () => sessions++);
     server.on("stream", (stream, headers) => {
       open++;
@@ -362,7 +378,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
 
   test("cold-start: parallel requests coalesce onto one TLS connect", async () => {
     let sessions = 0;
-    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    const server = makeH2Server();
     server.on("session", () => sessions++);
     server.on("stream", (stream, headers) => {
       stream.respond({ ":status": 200 });
@@ -394,7 +410,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   test("abort sends RST_STREAM; siblings on the session survive", async () => {
     let sessions = 0;
     const { promise: slowClosed, resolve: resolveSlowClosed } = Promise.withResolvers<number>();
-    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    const server = makeH2Server();
     server.on("session", () => sessions++);
     server.on("stream", (stream, headers) => {
       if (headers[":path"] === "/slow") {
@@ -439,7 +455,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
 
   test("server SETTINGS_MAX_CONCURRENT_STREAMS=1 is honoured per session", async () => {
     const perSessionMax: number[] = [];
-    const server = http2.createSecureServer({ ...tls, allowHTTP1: false, settings: { maxConcurrentStreams: 1 } });
+    const server = makeH2Server({ settings: { maxConcurrentStreams: 1 } });
     server.on("session", s => {
       const idx = perSessionMax.push(0) - 1;
       let open = 0;
@@ -482,7 +498,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   test("keep-alive: sequential requests reuse one h2 session", async () => {
     let sessions = 0;
     const seen: number[] = [];
-    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    const server = makeH2Server();
     server.on("session", () => sessions++);
     server.on("stream", (stream, headers) => {
       seen.push(stream.id);
@@ -515,7 +531,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
 
   test("GOAWAY after a request: next request reconnects", async () => {
     let sessions = 0;
-    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    const server = makeH2Server();
     server.on("session", () => sessions++);
     server.on("stream", (stream, headers) => {
       const session = stream.session!;
@@ -571,7 +587,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   });
 
   test("response trailers are consumed without breaking the body", async () => {
-    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    const server = makeH2Server();
     server.on("stream", stream => {
       stream.respond({ ":status": 200, "content-type": "text/plain" }, { waitForTrailers: true });
       stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "hello" }));
@@ -599,7 +615,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   // RFC 9113 §8.1 "DATA before HEADERS" stream-error case.
   test("server-reset stream fails that request; sibling on the session survives", async () => {
     let sessions = 0;
-    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    const server = makeH2Server();
     server.on("session", () => sessions++);
     server.on("stream", (stream, headers) => {
       stream.on("error", () => {});
@@ -637,7 +653,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
 
   test("connection-specific request headers are stripped before HPACK", async () => {
     let seen: string[] = [];
-    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    const server = makeH2Server();
     server.on("stream", (stream, headers) => {
       seen = Object.keys(headers).filter(k => !k.startsWith(":"));
       stream.respond({ ":status": 200 });
@@ -674,7 +690,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   });
 
   test("multiple Set-Cookie response headers survive HPACK decode", async () => {
-    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    const server = makeH2Server();
     server.on("stream", stream => {
       stream.respond({ ":status": 200, "set-cookie": ["a=b", "c=d", "e=f"] });
       stream.end();
@@ -1547,7 +1563,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     // size-update opcode. nghttp2 (which backs node:http2) enforces this and
     // closes the connection with COMPRESSION_ERROR if the opcode is missing,
     // so requests after the first hang/fail without the fix.
-    const server = http2.createSecureServer({ ...tls, settings: { headerTableSize: 0 } }, (_req, res) => {
+    const server = makeH2Server({ settings: { headerTableSize: 0 } }, (_req, res) => {
       res.writeHead(200);
       res.end("ok");
     });

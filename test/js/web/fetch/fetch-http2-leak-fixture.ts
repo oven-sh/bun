@@ -74,12 +74,28 @@ async function one(i: number): Promise<number> {
   return (await r.arrayBuffer()).byteLength;
 }
 
+// Watchdog: if a batch wedges (CI darwin has shown a hard hang here), abort
+// the process with whatever we've observed so far instead of waiting for the
+// outer test's 90s timeout.
+let lastProgress = Date.now();
+let at = "init";
+const watchdog = setInterval(() => {
+  if (Date.now() - lastProgress > 30_000) {
+    console.error(`[watchdog] stuck at ${at} for >30s, ${JSON.stringify(liveCounts())}`);
+    process.exit(1);
+  }
+}, 5_000);
+
 let bytes = 0;
 for (let i = 0; i < COUNT; i += BATCH) {
+  at = `batch ${i}/${COUNT}`;
   const n = Math.min(BATCH, COUNT - i);
   const results = await Promise.all(Array.from({ length: n }, (_, j) => one(i + j)));
   for (const b of results) bytes += b;
+  lastProgress = Date.now();
 }
+at = "drain";
+clearInterval(watchdog);
 
 if (SCENARIO !== "abort" && bytes === 0) {
   throw new Error("no bytes received");

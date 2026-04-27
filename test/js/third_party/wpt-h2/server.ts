@@ -69,6 +69,15 @@ export async function startServer(): Promise<{ origin: string; close: () => Prom
     sessions.add(s);
     s.on("close", () => sessions.delete(s));
   });
+  // Track raw TCP sockets too: a client connection that handshook but never
+  // became an h2 session (ALPN miss / mid-handshake reset) is invisible to
+  // `sessions`, and net.Server.close() will block on it.
+  const sockets = new Set<import("node:net").Socket>();
+  server.on("connection", s => {
+    sockets.add(s);
+    s.on("close", () => sockets.delete(s));
+  });
+  server.on("clientError", () => {});
 
   server.listen(0);
   await once(server, "listening");
@@ -78,7 +87,9 @@ export async function startServer(): Promise<{ origin: string; close: () => Prom
     origin: `https://localhost:${port}`,
     close: () =>
       new Promise(resolve => {
+        if (process.env.CI) console.error(`[wpt-h2 close] sessions=${sessions.size} sockets=${sockets.size}`);
         for (const s of sessions) s.destroy();
+        for (const s of sockets) s.destroy();
         server.close(() => resolve());
       }),
   };

@@ -70,6 +70,11 @@ export function getGlobalDispatcher() {
   return globalDispatcher;
 }
 
+// CI sees a deterministic 90s hang on the first test that doesn't reproduce
+// off-CI; until that's root-caused, log each fetch boundary so the BuildKite
+// log shows whether the hang is connect, headers, body, or cleanup.
+const trace = process.env.CI ? (m, ...a) => console.error(`[undici-h2 ${m}]`, ...a) : () => {};
+
 export function fetch(input, init = {}) {
   const { dispatcher, ...rest } = init;
   void dispatcher;
@@ -80,7 +85,17 @@ export function fetch(input, init = {}) {
     rest.protocol = "http2";
     rest.tls = { rejectUnauthorized: false, ...(rest.tls || {}) };
   }
-  return globalThis.fetch(input, rest);
+  trace("fetch start", rest.method ?? "GET", url);
+  return globalThis.fetch(input, rest).then(
+    r => {
+      trace("fetch resolved", r.status, url);
+      return r;
+    },
+    e => {
+      trace("fetch rejected", e?.code ?? e?.name, url);
+      throw e;
+    },
+  );
 }
 
 export const Response = globalThis.Response;
@@ -97,7 +112,9 @@ export const pem = {
 // Stand-in for undici's test/utils/node-http.js helper.
 export function closeClientAndServerAsPromise(client, server) {
   return async () => {
+    trace("server close start");
     await client.close();
     await new Promise(resolve => server.close(resolve));
+    trace("server close done");
   };
 }

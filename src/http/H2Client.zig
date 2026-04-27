@@ -734,6 +734,7 @@ pub const ClientSession = struct {
         this.drainSendBodies();
         _ = this.flush() catch |err| return this.failAll(err);
         this.reapAborted();
+        this.rearmTimeout();
         this.maybeRelease();
     }
 
@@ -784,6 +785,7 @@ pub const ClientSession = struct {
             if (client.async_http_id == async_http_id) {
                 _ = this.pending_attach.swapRemove(i);
                 client.failFromH2(error.Aborted);
+                this.rearmTimeout();
                 this.maybeRelease();
                 return;
             }
@@ -797,6 +799,7 @@ pub const ClientSession = struct {
                 break;
             }
         }
+        this.rearmTimeout();
         this.maybeRelease();
     }
 

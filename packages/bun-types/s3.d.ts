@@ -270,6 +270,35 @@ declare module "bun" {
     retry?: number;
 
     /**
+     * Upload ID from a previous multipart upload to resume.
+     * When provided, skips CreateMultipartUpload and reuses the existing upload session.
+     *
+     * @example
+     *    const writer = s3file.writer({
+     *       uploadId: "previous-upload-id",
+     *       partNumber: 3,
+     *       previousParts: [
+     *         { partNumber: 1, etag: '"abc"' },
+     *         { partNumber: 2, etag: '"def"' },
+     *       ],
+     *    });
+     */
+    uploadId?: string;
+
+    /**
+     * Starting part number for resumed uploads (1-based).
+     * Must be provided with `uploadId`. Range: 1–10001 (10001 for completion-only).
+     */
+    partNumber?: number;
+
+    /**
+     * Previously uploaded parts to include in CompleteMultipartUpload.
+     * Each entry must have a `partNumber` (less than the starting `partNumber`) and an `etag`.
+     * Requires `uploadId`.
+     */
+    previousParts?: Array<{ partNumber: number; etag: string }>;
+
+    /**
      * The Content-Type of the file.
      * Automatically set based on file extension when possible.
      *

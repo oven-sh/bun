@@ -274,6 +274,103 @@ pub const S3Credentials = struct {
                 if (try opts.getBooleanStrict(globalObject, "requestPayer")) |request_payer| {
                     new_credentials.request_payer = request_payer;
                 }
+
+                if (try opts.getTruthyComptime(globalObject, "uploadId")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = try bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._uploadIdSlice = str.toUTF8(bun.default_allocator);
+                                const slice = new_credentials._uploadIdSlice.?.slice();
+                                if (containsNewlineOrCR(slice)) {
+                                    return globalObject.throwInvalidArguments("uploadId must not contain newline characters (CR/LF)", .{});
+                                }
+                                if (slice.len > 1024) {
+                                    return globalObject.throwInvalidArguments("uploadId must not exceed 1024 characters", .{});
+                                }
+                                new_credentials.upload_id = slice;
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("uploadId", "string", js_value);
+                        }
+                    }
+                }
+
+                if (try opts.getOptional(globalObject, "partNumber", i32)) |partNumber| {
+                    // Allow up to 10001 for completion-only (all 10000 parts already uploaded)
+                    if (partNumber < 1 or partNumber > 10001) {
+                        return globalObject.throwRangeError(partNumber, .{
+                            .min = 1,
+                            .max = 10001,
+                            .field_name = "partNumber",
+                        });
+                    }
+                    new_credentials.part_number = @intCast(partNumber);
+                }
+
+                if (try opts.getTruthyComptime(globalObject, "previousParts")) |js_array| {
+                    if (!js_array.isEmptyOrUndefinedOrNull()) {
+                        // Validate previousParts requires uploadId before parsing entries
+                        if (new_credentials.upload_id == null) {
+                            return globalObject.throwInvalidArguments("previousParts requires uploadId to resume an existing multipart upload", .{});
+                        }
+                        var iter = try jsc.JSArrayIterator.init(js_array, globalObject);
+                        while (try iter.next()) |item| {
+                            if (!item.isObject()) {
+                                return globalObject.throwInvalidArguments("each element in previousParts must be an object with partNumber and etag", .{});
+                            }
+                            const pn = try item.getOptional(globalObject, "partNumber", i32) orelse {
+                                return globalObject.throwInvalidArguments("each element in previousParts must have a partNumber", .{});
+                            };
+                            if (pn < 1 or pn > 10000) {
+                                return globalObject.throwRangeError(pn, .{
+                                    .min = 1,
+                                    .max = 10000,
+                                    .field_name = "previousParts[].partNumber",
+                                });
+                            }
+                            if (pn >= new_credentials.part_number) {
+                                return globalObject.throwInvalidArguments("each previousParts entry must have a partNumber less than partNumber", .{});
+                            }
+                            // Check for duplicate partNumber
+                            for (new_credentials.previous_parts.items) |existing| {
+                                if (existing.number == @as(u16, @intCast(pn))) {
+                                    return globalObject.throwInvalidArguments("previousParts contains duplicate partNumber", .{});
+                                }
+                            }
+                            const etag_js = (try item.getTruthyComptime(globalObject, "etag")) orelse {
+                                return globalObject.throwInvalidArguments("each element in previousParts must have an etag", .{});
+                            };
+                            if (!etag_js.isString()) {
+                                return globalObject.throwInvalidArgumentTypeValue("previousParts[].etag", "string", etag_js);
+                            }
+                            const etag_str = try bun.String.fromJS(etag_js, globalObject);
+                            defer etag_str.deref();
+                            const etag_utf8 = etag_str.toUTF8(bun.default_allocator);
+                            const etag_slice = etag_utf8.slice();
+                            if (strings.indexOfAny(etag_slice, "<>&") != null) {
+                                etag_utf8.deinit();
+                                return globalObject.throwInvalidArguments("previousParts[].etag must not contain XML special characters (<, >, &)", .{});
+                            }
+                            const etag_duped = bun.handleOom(bun.default_allocator.dupe(u8, etag_slice));
+                            etag_utf8.deinit();
+                            new_credentials.previous_parts.append(bun.default_allocator, .{
+                                .number = @intCast(pn),
+                                .etag = etag_duped,
+                            }) catch |err| bun.handleOom(err);
+                        }
+                    }
+                }
+
+                // Validation: partNumber > 1 requires uploadId
+                if (new_credentials.part_number > 1 and new_credentials.upload_id == null) {
+                    return globalObject.throwInvalidArguments("partNumber > 1 requires uploadId to resume an existing multipart upload", .{});
+                }
+                // Validation: partNumber > 1 requires previousParts so CompleteMultipartUpload includes earlier parts
+                if (new_credentials.part_number > 1 and new_credentials.previous_parts.items.len == 0) {
+                    return globalObject.throwInvalidArguments("partNumber > 1 requires previousParts so CompleteMultipartUpload includes the already uploaded parts", .{});
+                }
             }
         }
         return new_credentials;
@@ -1002,6 +1099,12 @@ pub const S3Credentials = struct {
 };
 
 pub const S3CredentialsWithOptions = struct {
+    pub const PreviousPart = struct {
+        number: u16,
+        /// heap-allocated via bun.default_allocator, owned by S3CredentialsWithOptions
+        etag: []const u8,
+    };
+
     credentials: S3Credentials,
     options: MultiPartUploadOptions = .{},
     acl: ?ACL = null,
@@ -1015,6 +1118,14 @@ pub const S3CredentialsWithOptions = struct {
     changed_credentials: bool = false,
     /// indicates if the virtual hosted style is used
     virtual_hosted_style: bool = false,
+
+    /// upload ID from a previous multipart upload to resume
+    upload_id: ?[]const u8 = null,
+    /// starting part number (for resuming uploads, 1-based)
+    part_number: u16 = 1,
+    /// previously uploaded parts to include in CompleteMultipartUpload
+    previous_parts: std.ArrayListUnmanaged(PreviousPart) = .{},
+
     _accessKeyIdSlice: ?jsc.ZigString.Slice = null,
     _secretAccessKeySlice: ?jsc.ZigString.Slice = null,
     _regionSlice: ?jsc.ZigString.Slice = null,
@@ -1024,6 +1135,7 @@ pub const S3CredentialsWithOptions = struct {
     _contentDispositionSlice: ?jsc.ZigString.Slice = null,
     _contentTypeSlice: ?jsc.ZigString.Slice = null,
     _contentEncodingSlice: ?jsc.ZigString.Slice = null,
+    _uploadIdSlice: ?jsc.ZigString.Slice = null,
 
     pub fn deinit(this: *@This()) void {
         if (this._accessKeyIdSlice) |slice| slice.deinit();
@@ -1035,6 +1147,13 @@ pub const S3CredentialsWithOptions = struct {
         if (this._contentDispositionSlice) |slice| slice.deinit();
         if (this._contentTypeSlice) |slice| slice.deinit();
         if (this._contentEncodingSlice) |slice| slice.deinit();
+        if (this._uploadIdSlice) |slice| slice.deinit();
+        for (this.previous_parts.items) |part| {
+            bun.default_allocator.free(part.etag);
+        }
+        if (this.previous_parts.capacity > 0) {
+            this.previous_parts.deinit(bun.default_allocator);
+        }
     }
 };
 

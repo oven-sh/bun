@@ -116,6 +116,7 @@ export const lsquic: Dependency = {
     "patches/lsquic/versions-to-string.patch",
     "patches/lsquic/allow-no-sni.patch",
     "patches/lsquic/skip-priority-walk.patch",
+    "patches/lsquic/webtransport-settings.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],
@@ -151,7 +152,7 @@ export const lsquic: Dependency = {
         LSQUIC_DEBUG_NEXT_ADV_TICK: 0,
         LSQUIC_CONN_STATS: 0,
         LSQUIC_QIR: 0,
-        LSQUIC_WEBTRANSPORT_SERVER_SUPPORT: 0,
+        LSQUIC_WEBTRANSPORT_SERVER_SUPPORT: 1,
       },
       // -w: lsquic emits a lot of -Wsign-compare and -Wunused under -Wall;
       // upstream builds with -Werror disabled. Treat as a third-party lib.

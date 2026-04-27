@@ -7,20 +7,21 @@ const ServerWebSocket = @This();
 
 // We pack the per-socket data into this struct below
 const Flags = packed struct(u64) {
-    ssl: bool = false,
+    kind: Kind = .tcp,
     closed: bool = false,
     opened: bool = false,
     binary_type: jsc.ArrayBuffer.BinaryType = .Buffer,
-    packed_websocket_ptr: u57 = 0,
+    packed_websocket_ptr: u56 = 0,
+
+    const Kind = enum(u2) { tcp, ssl, h3_wt, _ };
 
     inline fn websocket(this: Flags) uws.AnyWebSocket {
         // Ensure those other bits are zeroed out
         const that = Flags{ .packed_websocket_ptr = this.packed_websocket_ptr };
-
-        return if (this.ssl) .{
-            .ssl = @ptrFromInt(@as(usize, that.packed_websocket_ptr)),
-        } else .{
-            .tcp = @ptrFromInt(@as(usize, that.packed_websocket_ptr)),
+        return switch (this.kind) {
+            .ssl => .{ .ssl = @ptrFromInt(@as(usize, that.packed_websocket_ptr)) },
+            .h3_wt => .{ .h3_wt = @ptrFromInt(@as(usize, that.packed_websocket_ptr)) },
+            else => .{ .tcp = @ptrFromInt(@as(usize, that.packed_websocket_ptr)) },
         };
     }
 };
@@ -65,7 +66,11 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
 
     this.#flags.packed_websocket_ptr = @truncate(@intFromPtr(ws.raw()));
     this.#flags.closed = false;
-    this.#flags.ssl = ws == .ssl;
+    this.#flags.kind = switch (ws) {
+        .ssl => .ssl,
+        .tcp => .tcp,
+        .h3_wt => .h3_wt,
+    };
 
     var handler = this.#handler;
     const vm = this.#handler.vm;
@@ -352,6 +357,10 @@ pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: 
 
 pub fn behavior(comptime ServerType: type, comptime ssl: bool, opts: uws.WebSocketBehavior) uws.WebSocketBehavior {
     return uws.WebSocketBehavior.Wrap(ServerType, @This(), ssl).apply(opts);
+}
+
+pub fn behaviorH3(comptime ServerType: type, opts: uws.WebSocketBehavior) uws.WebSocketBehavior {
+    return uws.WebSocketBehavior.Wrap(ServerType, @This(), true).applyH3(opts);
 }
 
 pub fn constructor(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*ServerWebSocket {

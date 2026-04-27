@@ -2517,6 +2517,32 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
 
+        /// Extended-CONNECT with `:protocol = webtransport` reached a route
+        /// that has a `websocket:` handler. Unlike RFC 6455 there is no
+        /// Sec-WebSocket-Key handshake and no `server.upgrade()` round-trip:
+        /// accepting is just a 2xx HEADERS, so do it inline. A handler that
+        /// wants to reject can `ws.close()` from `open`.
+        pub fn onWebTransportUpgrade(this: *ThisServer, resp: *uws.H3.Response, req: *uws.H3.Request, _: *uws.SocketContext, _: usize) void {
+            jsc.markBinding(@src());
+            _ = req;
+            const websocket = &(this.config.websocket orelse {
+                resp.writeStatus("404 Not Found");
+                resp.endWithoutBody(false);
+                return;
+            });
+            if (websocket.handler.onOpen == .zero and websocket.handler.onMessage == .zero) {
+                resp.writeStatus("403 Forbidden");
+                resp.endWithoutBody(false);
+                return;
+            }
+            websocket.handler.globalObject = this.globalThis;
+            const ws = ServerWebSocket.init(&websocket.handler, .js_undefined, null);
+            if (resp.upgradeWebTransport(ws) == null) {
+                resp.writeStatus("500 Internal Server Error");
+                resp.endWithoutBody(false);
+            }
+        }
+
         pub fn onWebSocketUpgrade(this: *ThisServer, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.SocketContext, id: usize) void {
             jsc.markBinding(@src());
             if (id == 1) {
@@ -2753,6 +2779,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                                 1, // id 1 means is a user route
                                 ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
                             );
+                            if (comptime has_h3) if (this.h3_app) |h3_app| h3_app.ws(
+                                user_route.route.path,
+                                this,
+                                1,
+                                ServerWebSocket.behaviorH3(ThisServer, websocket.toBehavior()),
+                            );
                         }
                     },
                     .specific => |method_val| { // method_val is HTTP.Method here
@@ -2880,6 +2912,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         this,
                         0, // id 0 means is a fallback route and ctx is the server
                         ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
+                    );
+                    if (comptime has_h3) if (this.h3_app) |h3_app| h3_app.ws(
+                        "/*",
+                        this,
+                        0,
+                        ServerWebSocket.behaviorH3(ThisServer, websocket.toBehavior()),
                     );
                 }
             }

@@ -6,6 +6,7 @@
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "wtf/text/WTFString.h"
 #include <bun-uws/src/App.h>
+#include <bun-uws/src/Http3ContextData.h>
 #include <span>
 #include <string_view>
 
@@ -44,4 +45,17 @@ extern "C" JSC::EncodedJSValue uws_ws_get_topics_as_js_array(int ssl, uws_websoc
   } else {
     return uws_ws_get_topics_as_js_array_impl<false>(ws, globalObject);
   }
+}
+
+extern "C" JSC::EncodedJSValue uws_h3_wt_get_topics_as_js_array(uws_websocket_t *ws, void* globalObject) {
+  JSC::JSGlobalObject* global = reinterpret_cast<JSC::JSGlobalObject*>(globalObject);
+  JSC::VM& vm = global->vm();
+  JSC::MarkedArgumentBuffer args;
+  reinterpret_cast<uWS::WebTransportSession*>(ws)->iterateTopics([&](std::string_view topic) {
+    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span {
+      reinterpret_cast<const unsigned char*>(topic.data()), topic.length()
+    });
+    args.append(JSC::jsString(vm, str));
+  });
+  return JSC::JSValue::encode(JSC::constructArray(global, static_cast<JSC::ArrayAllocationProfile*>(nullptr), args));
 }

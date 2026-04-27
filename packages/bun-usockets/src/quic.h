@@ -84,6 +84,24 @@ void us_quic_socket_context_on_stream_writable(us_quic_socket_context_t *ctx,
 void us_quic_socket_context_on_stream_close(us_quic_socket_context_t *ctx,
     void (*on_close)(us_quic_stream_t *));
 
+/* WebTransport (draft-ietf-webtrans-http3). es_webtransport_server /
+ * es_datagrams are flipped unconditionally in us_create_quic_socket_context
+ * (lsquic snapshots settings at engine_new), so these registrations only
+ * arm the callbacks. on_wt_stream_data fires for client-initiated bidi
+ * streams that opened with the 0x41 signal value; `session` is the CONNECT
+ * stream (looked up via Session ID), or NULL if the session arrived later /
+ * was already closed. on_datagram fires for raw QUIC DATAGRAM payloads with
+ * the Quarter Stream ID prefix already stripped. */
+void us_quic_socket_context_on_wt_stream_data(us_quic_socket_context_t *ctx,
+    void (*on_wt_data)(us_quic_stream_t *, us_quic_stream_t *session,
+        const char *, unsigned int, int fin));
+/* Fires once for each 0x41 bidi stream when it closes (FIN or RESET).
+ * `session` is resolved at close time (NULL if already gone). */
+void us_quic_socket_context_on_wt_stream_close(us_quic_socket_context_t *ctx,
+    void (*on_wt_close)(us_quic_stream_t *, us_quic_stream_t *session));
+void us_quic_socket_context_on_datagram(us_quic_socket_context_t *ctx,
+    void (*on_datagram)(us_quic_stream_t *session, const char *, unsigned int));
+
 /* Stream I/O. Read happens via on_stream_data; write returns bytes accepted
  * (may be < len under flow-control backpressure). */
 int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len);
@@ -102,6 +120,23 @@ int us_quic_stream_has_unacked(us_quic_stream_t *s);
 void *us_quic_stream_ext(us_quic_stream_t *s);
 us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s);
 us_quic_socket_context_t *us_quic_stream_context(us_quic_stream_t *s);
+unsigned long long us_quic_stream_id(us_quic_stream_t *s);
+
+/* Promote a CONNECT stream to a WebTransport session: links it into the
+ * connection's session list so incoming WT bidi streams and datagrams can
+ * be routed by Session ID. Call once, after sending the 2xx HEADERS. */
+void us_quic_stream_set_webtransport_session(us_quic_stream_t *s);
+/* Queue a QUIC DATAGRAM with the session's Quarter Stream ID prefix. The
+ * payload is copied; total (prefix + len) must fit in one frame, i.e. ~1200
+ * bytes after QUIC packet overhead. Returns -1 if the session is closed, the
+ * queue is full (max_queued reached), or len exceeds MTU; otherwise returns
+ * the per-session queued byte count *before* this enqueue (0 ⇒ first in
+ * queue, caller may report SUCCESS rather than BACKPRESSURE). */
+int us_quic_stream_send_datagram(us_quic_stream_t *session,
+    const char *data, unsigned int len, unsigned int max_queued);
+/* Outstanding queued bytes (for getBufferedAmount); 0 once on_dg_write
+ * has consumed everything we queued. */
+unsigned int us_quic_stream_datagram_buffered(us_quic_stream_t *session);
 
 /* Drive every QUIC engine on `loop` and re-arm the per-loop fallthrough
  * timer to the soonest earliest_adv_tick. Called from us_internal_loop_post

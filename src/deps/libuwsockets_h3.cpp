@@ -20,6 +20,7 @@ using uWS::H3App;
 using uWS::Http3Request;
 using uWS::Http3Response;
 using uWS::Http3ResponseData;
+using uWS::WebTransportSession;
 
 static inline std::string_view sv(const char* p, size_t n) { return p ? std::string_view { p, n } : std::string_view {}; }
 
@@ -295,6 +296,128 @@ size_t uws_h3_req_get_query(uws_h3_req_t* req, const char* key, size_t key_len, 
 size_t uws_h3_req_get_parameter(uws_h3_req_t* req, unsigned short index, const char** dest)
 {
     return ffi_sv(((Http3Request*)req)->getParameter(index), dest);
+}
+
+/* ───── WebTransport ─────
+ *
+ * Mirrors uws_ws / uws_ws_* so the Zig AnyWebSocket union can carry an
+ * .h3_wt arm with the same method shapes. Same uws_socket_behavior_t struct;
+ * compression/idleTimeout/ping/pong fields are ignored (WT has no
+ * permessage-deflate and QUIC owns keepalive). */
+
+void uws_h3_ws(uws_h3_app_t* app, void* upgradeCtx, const char* pattern,
+    size_t pattern_len, size_t id, const uws_socket_behavior_t* behavior_)
+{
+    uws_socket_behavior_t behavior = *behavior_;
+    H3App::WebTransportBehavior b;
+    b.maxPayloadLength = behavior.maxPayloadLength;
+    b.maxBackpressure = behavior.maxBackpressure;
+    b.closeOnBackpressureLimit = behavior.closeOnBackpressureLimit;
+    if (behavior.upgrade)
+        b.upgrade = [behavior, upgradeCtx, id](Http3Response* res, Http3Request* req) {
+            behavior.upgrade(upgradeCtx, (uws_res_t*)res, (uws_req_t*)req,
+                (uws_socket_context_t*)us_quic_stream_context((us_quic_stream_t*)res), id);
+        };
+    if (behavior.open)
+        b.open = [behavior](WebTransportSession* ws) { behavior.open((uws_websocket_t*)ws); };
+    if (behavior.message)
+        b.message = [behavior](WebTransportSession* ws, std::string_view m, uWS::OpCode op) {
+            behavior.message((uws_websocket_t*)ws, m.data(), m.length(), (uws_opcode_t)op);
+        };
+    if (behavior.drain)
+        b.drain = [behavior](WebTransportSession* ws) { behavior.drain((uws_websocket_t*)ws); };
+    if (behavior.close)
+        b.close = [behavior](WebTransportSession* ws, int code, std::string_view m) {
+            behavior.close((uws_websocket_t*)ws, code, m.data(), m.length());
+        };
+    ((H3App*)app)->wt(sv(pattern, pattern_len), std::move(b));
+}
+
+/* Accept the CONNECT and fire open. Mirrors uws_res_upgrade except there's
+ * no Sec-WebSocket-* handshake — the 2xx HEADERS is the whole acceptance. */
+void* uws_h3_res_upgrade(uws_h3_res_t* res, void* userData)
+{
+    Http3Response* r = (Http3Response*)res;
+    WebTransportSession* ws = r->upgradeWebTransport(userData);
+    if (!ws) return nullptr;
+    auto* cd = ws->getContextData();
+    if (cd->openHandler) cd->openHandler(ws);
+    return ws;
+}
+
+void* uws_h3_wt_get_user_data(uws_websocket_t* ws)
+{
+    auto* d = ((WebTransportSession*)ws)->getSessionData();
+    return d ? d->userData : nullptr;
+}
+
+void uws_h3_wt_close(uws_websocket_t* ws) { ((WebTransportSession*)ws)->close(); }
+
+int uws_h3_wt_send(uws_websocket_t* ws, const char* msg, size_t len,
+    uws_opcode_t op, bool /*compress*/, bool /*fin*/)
+{
+    return (int)((WebTransportSession*)ws)->send(sv(msg, len), (uWS::OpCode)op);
+}
+
+void uws_h3_wt_end(uws_websocket_t* ws, int code, const char* msg, size_t len)
+{
+    ((WebTransportSession*)ws)->end(code, sv(msg, len));
+}
+
+void uws_h3_wt_cork(uws_websocket_t* ws, void (*cb)(void*), void* user_data)
+{
+    ((WebTransportSession*)ws)->cork([cb, user_data]() { cb(user_data); });
+}
+
+bool uws_h3_wt_subscribe(uws_websocket_t* ws, const char* topic, size_t len)
+{
+    return ((WebTransportSession*)ws)->subscribe(sv(topic, len));
+}
+bool uws_h3_wt_unsubscribe(uws_websocket_t* ws, const char* topic, size_t len)
+{
+    return ((WebTransportSession*)ws)->unsubscribe(sv(topic, len));
+}
+bool uws_h3_wt_is_subscribed(uws_websocket_t* ws, const char* topic, size_t len)
+{
+    return ((WebTransportSession*)ws)->isSubscribed(sv(topic, len));
+}
+bool uws_h3_wt_publish(uws_websocket_t* ws, const char* topic, size_t topic_len,
+    const char* msg, size_t msg_len, uws_opcode_t op, bool /*compress*/)
+{
+    return ((WebTransportSession*)ws)->publish(sv(topic, topic_len), sv(msg, msg_len), (uWS::OpCode)op);
+}
+bool uws_h3_publish(uws_h3_app_t* app, const char* topic, size_t topic_len,
+    const char* msg, size_t msg_len, uws_opcode_t op, bool /*compress*/)
+{
+    return ((H3App*)app)->publish(sv(topic, topic_len), sv(msg, msg_len), (uWS::OpCode)op);
+}
+
+size_t uws_h3_wt_get_buffered_amount(uws_websocket_t* ws)
+{
+    return ((WebTransportSession*)ws)->getBufferedAmount();
+}
+size_t uws_h3_wt_memory_cost(uws_websocket_t* ws)
+{
+    return ((WebTransportSession*)ws)->memoryCost();
+}
+
+size_t uws_h3_wt_get_remote_address(uws_websocket_t* ws, const char** dest)
+{
+    static thread_local char b[64];
+    int len = 0, port = 0, ipv6 = 0;
+    us_quic_socket_t* qs = us_quic_stream_socket((us_quic_stream_t*)ws);
+    if (!qs) { *dest = b; return 0; }
+    us_quic_socket_remote_address(qs, b, &len, &port, &ipv6);
+    *dest = b;
+    return (size_t)len;
+}
+
+void uws_h3_wt_iterate_topics(uws_websocket_t* ws,
+    void (*cb)(const char*, size_t, void*), void* user_data)
+{
+    ((WebTransportSession*)ws)->iterateTopics([cb, user_data](std::string_view t) {
+        cb(t.data(), t.length(), user_data);
+    });
 }
 
 } // extern "C"

@@ -164,6 +164,9 @@ pub const Response = opaque {
     pub fn forceClose(this: *Response) void {
         c.uws_h3_res_force_close(this);
     }
+    pub fn upgradeWebTransport(this: *Response, user_data: *anyopaque) ?*WebTransportSession {
+        return c.uws_h3_res_upgrade(this, user_data);
+    }
 
     pub fn onWritable(
         this: *Response,
@@ -335,6 +338,18 @@ pub const App = opaque {
         }
     }
 
+    /// Register a WebTransport route. Same WebSocketBehavior shape as
+    /// `App.ws()`; ping/pong/compression are accepted but ignored. The
+    /// upgrade callback receives an H3 Response/Request, and on accept calls
+    /// `Response.upgradeWebTransport(*ServerWebSocket)`.
+    pub fn ws(this: *App, pattern: []const u8, ctx: *anyopaque, id: usize, behavior: uws.WebSocketBehavior) void {
+        var b = behavior;
+        c.uws_h3_ws(this, ctx, pattern.ptr, pattern.len, id, &b);
+    }
+    pub fn publishWithOptions(this: *App, topic: []const u8, message: []const u8, opcode: uws.Opcode, compress: bool) bool {
+        return c.uws_h3_publish(this, topic.ptr, topic.len, message.ptr, message.len, opcode, compress);
+    }
+
     pub fn listenWithConfig(
         this: *App,
         comptime UD: type,
@@ -355,6 +370,66 @@ pub const ListenConfig = extern struct {
     port: u16,
     host: ?[*:0]const u8 = null,
     options: i32 = 0,
+};
+
+/// WebTransport session — overlays the CONNECT us_quic_stream_t. API mirrors
+/// `NewApp(ssl).WebSocket` so AnyWebSocket can carry it as a third arm.
+pub const WebTransportSession = opaque {
+    pub fn raw(this: *WebTransportSession) *uws.RawWebSocket {
+        return @ptrCast(this);
+    }
+    pub fn as(this: *WebTransportSession, comptime T: type) ?*T {
+        return @ptrCast(@alignCast(c.uws_h3_wt_get_user_data(@ptrCast(this))));
+    }
+    pub fn close(this: *WebTransportSession) void {
+        c.uws_h3_wt_close(@ptrCast(this));
+    }
+    pub fn send(this: *WebTransportSession, message: []const u8, opcode: uws.Opcode) uws.SendStatus {
+        return c.uws_h3_wt_send(@ptrCast(this), message.ptr, message.len, opcode, false, true);
+    }
+    pub fn sendWithOptions(this: *WebTransportSession, message: []const u8, opcode: uws.Opcode, compress: bool, fin: bool) uws.SendStatus {
+        return c.uws_h3_wt_send(@ptrCast(this), message.ptr, message.len, opcode, compress, fin);
+    }
+    pub fn sendLastFragment(this: *WebTransportSession, message: []const u8, _: bool) uws.SendStatus {
+        return c.uws_h3_wt_send(@ptrCast(this), message.ptr, message.len, .binary, false, true);
+    }
+    pub fn end(this: *WebTransportSession, code: i32, message: []const u8) void {
+        c.uws_h3_wt_end(@ptrCast(this), code, message.ptr, message.len);
+    }
+    pub fn cork(this: *WebTransportSession, ctx: anytype, comptime callback: anytype) void {
+        const ContextType = @TypeOf(ctx);
+        const W = struct {
+            fn wrap(ud: ?*anyopaque) callconv(.c) void {
+                @call(bun.callmod_inline, callback, .{bun.cast(ContextType, ud.?)});
+            }
+        };
+        c.uws_h3_wt_cork(@ptrCast(this), W.wrap, ctx);
+    }
+    pub fn subscribe(this: *WebTransportSession, topic: []const u8) bool {
+        return c.uws_h3_wt_subscribe(@ptrCast(this), topic.ptr, topic.len);
+    }
+    pub fn unsubscribe(this: *WebTransportSession, topic: []const u8) bool {
+        return c.uws_h3_wt_unsubscribe(@ptrCast(this), topic.ptr, topic.len);
+    }
+    pub fn isSubscribed(this: *WebTransportSession, topic: []const u8) bool {
+        return c.uws_h3_wt_is_subscribed(@ptrCast(this), topic.ptr, topic.len);
+    }
+    pub fn publishWithOptions(this: *WebTransportSession, topic: []const u8, message: []const u8, opcode: uws.Opcode, compress: bool) bool {
+        return c.uws_h3_wt_publish(@ptrCast(this), topic.ptr, topic.len, message.ptr, message.len, opcode, compress);
+    }
+    pub fn getBufferedAmount(this: *WebTransportSession) usize {
+        return c.uws_h3_wt_get_buffered_amount(@ptrCast(this));
+    }
+    pub fn memoryCost(this: *WebTransportSession) usize {
+        return c.uws_h3_wt_memory_cost(@ptrCast(this));
+    }
+    pub fn getRemoteAddress(this: *WebTransportSession, buf: []u8) []u8 {
+        var ptr: [*]const u8 = undefined;
+        const len = c.uws_h3_wt_get_remote_address(@ptrCast(this), &ptr);
+        const n = @min(len, buf.len);
+        @memcpy(buf[0..n], ptr[0..n]);
+        return buf[0..n];
+    }
 };
 
 const c = struct {
@@ -422,6 +497,22 @@ const c = struct {
     extern fn uws_h3_req_get_query(*Request, [*c]const u8, usize, *[*]const u8) usize;
     extern fn uws_h3_req_get_parameter(*Request, u16, *[*]const u8) usize;
     extern fn uws_h3_req_for_each_header(*Request, HeaderCb, ?*anyopaque) void;
+
+    extern fn uws_h3_ws(*App, ?*anyopaque, [*]const u8, usize, usize, *const uws.WebSocketBehavior) void;
+    extern fn uws_h3_publish(*App, [*]const u8, usize, [*]const u8, usize, uws.Opcode, bool) bool;
+    extern fn uws_h3_res_upgrade(*Response, *anyopaque) ?*WebTransportSession;
+    extern fn uws_h3_wt_get_user_data(*uws.RawWebSocket) ?*anyopaque;
+    extern fn uws_h3_wt_close(*uws.RawWebSocket) void;
+    extern fn uws_h3_wt_send(*uws.RawWebSocket, [*]const u8, usize, uws.Opcode, bool, bool) uws.SendStatus;
+    extern fn uws_h3_wt_end(*uws.RawWebSocket, i32, [*]const u8, usize) void;
+    extern fn uws_h3_wt_cork(*uws.RawWebSocket, *const fn (?*anyopaque) callconv(.c) void, ?*anyopaque) void;
+    extern fn uws_h3_wt_subscribe(*uws.RawWebSocket, [*]const u8, usize) bool;
+    extern fn uws_h3_wt_unsubscribe(*uws.RawWebSocket, [*]const u8, usize) bool;
+    extern fn uws_h3_wt_is_subscribed(*uws.RawWebSocket, [*]const u8, usize) bool;
+    extern fn uws_h3_wt_publish(*uws.RawWebSocket, [*]const u8, usize, [*]const u8, usize, uws.Opcode, bool) bool;
+    extern fn uws_h3_wt_get_buffered_amount(*uws.RawWebSocket) usize;
+    extern fn uws_h3_wt_memory_cost(*uws.RawWebSocket) usize;
+    extern fn uws_h3_wt_get_remote_address(*uws.RawWebSocket, *[*]const u8) usize;
 };
 
 const bun = @import("bun");

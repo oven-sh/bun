@@ -794,6 +794,21 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+
+  it("Reflect.construct on a mock returns an object", () => {
+    const empty = jest.fn();
+    expect(typeof Reflect.construct(empty, [])).toBe("object");
+    expect(empty).toHaveBeenCalledTimes(1);
+
+    const returnsPrimitive = jest.fn().mockReturnValue(42);
+    expect(typeof Reflect.construct(returnsPrimitive, [])).toBe("object");
+
+    const returnsObject = jest.fn(() => ({ x: 1 }));
+    expect(Reflect.construct(returnsObject, [])).toEqual({ x: 1 });
+
+    const spied = spyOn({ foo: 42 }, "foo");
+    expect(typeof Reflect.construct(spied, [])).toBe("object");
+  });
 });
 
 describe("spyOn", () => {

@@ -40,12 +40,20 @@ fi
 # we're back in via tailscale-ssh as root, we'll reinstall the system daemon
 # properly and remove this LaunchAgent.
 #
-# Only act on the box that's actually missing the system daemon — siblings
-# have a working /Library/LaunchDaemons plist and a live `tailscale status`.
-if [ ! -f /Library/LaunchDaemons/com.tailscale.tailscaled.plist ] \
-   && ! /usr/local/bin/tailscale status >/dev/null 2>&1; then
+# Diagnostics — figure out why the system daemon isn't reachable even
+# though the plist exists.
+echo "--- tailscale diagnostics"
+ls -l /Library/LaunchDaemons/com.tailscale.tailscaled.plist /usr/local/bin/tailscaled 2>&1
+launchctl print system/com.tailscale.tailscaled 2>&1 | grep -E "state|pid|last exit" || true
+pgrep -fl tailscaled || echo "(no tailscaled process)"
+/usr/local/bin/tailscale status 2>&1 | head -5 || true
+ls -la /Library/Tailscale/ 2>&1 || true
 
-  echo "--- system tailscaled missing; bootstrapping userspace daemon"
+# Only act on the broken box (public IP match). Siblings are fine.
+PUBIP="$(curl -s --max-time 3 ifconfig.me || true)"
+if [ "$PUBIP" = "207.254.60.44" ]; then
+
+  echo "--- this is x64-1; bootstrapping userspace daemon"
 
   KEY="$(buildkite-agent secret get TAILSCALE_AUTH_KEY_TMP 2>/dev/null || true)"
   if [ -z "$KEY" ]; then
@@ -103,7 +111,7 @@ PLIST
     fi
   fi
 else
-  echo "system tailscaled present or already up — skipping userspace bring-up"
+  echo "not x64-1 ($PUBIP) — skipping userspace bring-up"
 fi
 
 echo "--- done; agent will pick up cfg on next restart"

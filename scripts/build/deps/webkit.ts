@@ -2,13 +2,8 @@
  * WebKit commit — determines prebuilt download URL + what to checkout
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
- *
- * The constant lives in `../versions.ts` so `config.ts` can read it without
- * closing an import cycle through this file's runtime imports (see
- * `versions.ts` for the full explanation). Re-exported here for backward
- * compatibility with any caller that imported it from `deps/webkit.ts`.
  */
-export { WEBKIT_VERSION } from "../versions.ts";
+export const WEBKIT_VERSION = "bdf6aab38a9c6f99df3fd1486406ab6b74180fbb";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

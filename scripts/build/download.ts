@@ -39,65 +39,6 @@ import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadable } from "node:stream/web";
 import { BuildError, assert } from "./error.ts";
 
-/**
- * PEM contents of the system CA bundle, loaded once at module init.
- *
- * On systems where Bun's bundled Mozilla store lacks intermediates the CDN
- * we're talking to uses (corporate TLS inspection proxies; stale bundles
- * in minimal container images; cross-signed chains where the anchor isn't
- * in Mozilla's set yet), `fetch()` raises UNABLE_TO_VERIFY_LEAF_SIGNATURE
- * even though `curl` and `openssl s_client` handle the same URL fine.
- *
- * Used as a fallback ONLY after a TLS verify error on the default fetch —
- * Bun's `tls.ca` option REPLACES the Mozilla bundle (it doesn't merge), so
- * passing it unconditionally would break systems where the Mozilla roots
- * are the only ones that work. Retrying with the OS-managed bundle catches
- * the inverse case: the Mozilla bundle is missing the intermediate and the
- * OS bundle has it.
- *
- * Paths match `apt-get install ca-certificates` (Debian/Ubuntu/Alpine),
- * `update-ca-trust` (RHEL/Fedora), and macOS/BSD. First hit wins.
- */
-const systemCaBundlePem: string | undefined = (() => {
-  if (process.platform === "win32") return undefined; // Windows uses the cert store, not a file
-  // Deliberately ignore NODE_EXTRA_CA_CERTS here: Bun's fetch() merges it
-  // into the Mozilla store at process init, so those certs are already
-  // active on attempt 1. Re-reading the same path for the fallback — which
-  // REPLACES the bundle — would produce a strict subset of attempt 1's
-  // trust store and can't unstick a failure attempt 1 already had with a
-  // superset available. The fallback only helps when the OS-managed bundle
-  // has intermediates the Mozilla set is missing.
-  for (const p of [
-    "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu/Alpine
-    "/etc/pki/tls/certs/ca-bundle.crt", // RHEL/CentOS/Fedora
-    "/etc/ssl/cert.pem", // macOS, BSDs
-  ]) {
-    try {
-      if (existsSync(p)) return readFileSync(p, "utf8");
-    } catch {
-      // Unreadable path (permissions, etc.) — fall through to next candidate.
-    }
-  }
-  return undefined;
-})();
-
-/** Detect TLS cert-verification errors so we can retry with the system CA bundle. */
-function isTlsVerifyError(err: unknown): boolean {
-  const code = (err as { code?: string } | null)?.code;
-  // SELF_SIGNED_CERT_IN_CHAIN (X509_V_ERR code 19) and DEPTH_ZERO_SELF_SIGNED_CERT
-  // (code 18) are siblings: one means the self-signed cert is deeper in the
-  // chain, the other means the leaf itself is self-signed. Both resolve via
-  // the OS bundle if the admin has installed the cert there.
-  return (
-    code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" ||
-    code === "SELF_SIGNED_CERT_IN_CHAIN" ||
-    code === "DEPTH_ZERO_SELF_SIGNED_CERT" ||
-    code === "UNABLE_TO_GET_ISSUER_CERT" ||
-    code === "UNABLE_TO_GET_ISSUER_CERT_LOCALLY" ||
-    code === "CERT_CHAIN_TOO_LONG"
-  );
-}
-
 // On Windows, prefer the OS-shipped bsdtar. Git-for-Windows / MSYS put GNU tar
 // earlier in PATH, and GNU tar parses `C:\...` as an rsh `host:path` spec
 // ("Cannot connect to C: resolve failed"). System32 always has bsdtar on
@@ -225,20 +166,7 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
 
     const tmpPath = `${dest}.${process.pid}.partial`;
     try {
-      const baseInit: RequestInit = { headers: { "User-Agent": "bun-build-system" } };
-      let res: Response;
-      try {
-        res = await fetch(url, baseInit);
-      } catch (tlsErr) {
-        // TLS verify errors are actionable: the default Mozilla bundle may be
-        // missing an intermediate present on the OS CA bundle. Retry once
-        // with the system bundle before giving up and counting this as a
-        // normal retry attempt. `tls.ca` is Bun-specific; on Node the
-        // init extension is silently ignored, so this is a no-op there.
-        if (!isTlsVerifyError(tlsErr) || systemCaBundlePem === undefined) throw tlsErr;
-        const initWithCa = { ...baseInit, tls: { ca: systemCaBundlePem } } as RequestInit;
-        res = await fetch(url, initWithCa);
-      }
+      const res = await fetch(url, { headers: { "User-Agent": "bun-build-system" } });
       if (!res.ok || res.body === null) {
         lastError = new BuildError(`HTTP ${res.status} ${res.statusText} for ${url}`);
         // 4xx is deterministic — a bad URL/missing artifact won't succeed on

@@ -406,7 +406,10 @@ size_t uws_h3_wt_get_remote_address(uws_websocket_t* ws, const char** dest)
     static thread_local char b[64];
     int len = 0, port = 0, ipv6 = 0;
     us_quic_socket_t* qs = us_quic_stream_socket((us_quic_stream_t*)ws);
-    if (!qs) { *dest = b; return 0; }
+    if (!qs) {
+        *dest = b;
+        return 0;
+    }
     us_quic_socket_remote_address(qs, b, &len, &port, &ipv6);
     *dest = b;
     return (size_t)len;

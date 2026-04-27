@@ -22,6 +22,10 @@ pub const Handler = struct {
     onPong: jsc.JSValue = .zero,
 
     app: ?*anyopaque = null,
+    /// The H3App when `h3: true`; used by ServerWebSocket.publish*'s
+    /// app-level fallback so WebTransport subscribers receive messages even
+    /// when publish_to_self is set or the session is already closed.
+    h3_app: ?*anyopaque = null,
 
     // Always set manually.
     vm: *jsc.VirtualMachine = undefined,

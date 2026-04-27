@@ -195,8 +195,14 @@ static struct lsxpack_header *hsi_prepare(void *h, struct lsxpack_header *xh, si
 static int hsi_process(void *h, struct lsxpack_header *xh) {
     if (!xh) return 0;
     struct hset *hs = h;
-    if (xh->name_len == 7 && memcmp(xh->buf + xh->name_offset, ":status", 7) == 0)
-        hs->status = atoi(xh->buf + xh->val_offset);
+    if (xh->name_len == 7 && memcmp(xh->buf + xh->name_offset, ":status", 7) == 0) {
+        hs->status = 0;
+        for (unsigned i = 0; i < xh->val_len; i++) {
+            unsigned char c = (unsigned char) xh->buf[xh->val_offset + i];
+            if (c < '0' || c > '9') break;
+            hs->status = hs->status * 10 + (c - '0');
+        }
+    }
     return 0;
 }
 static void hsi_discard(void *h) { free(h); }
@@ -231,6 +237,7 @@ static void send_connect_headers(lsquic_stream_t *s) {
     struct lsxpack_header xh[7];
     for (unsigned i = 0; i < 7; i++) {
         size_t nl = strlen(H[i].n), vl = strlen(H[i].v);
+        if (off + nl + vl > sizeof(flat)) die("headers-too-large");
         memcpy(flat + off, H[i].n, nl);
         memcpy(flat + off + nl, H[i].v, vl);
         lsxpack_header_set_offset2(&xh[i], flat, off, nl, off + nl, vl);

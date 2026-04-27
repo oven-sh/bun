@@ -285,7 +285,7 @@ describe("WebTransport over HTTP/3", () => {
     const c = spawnClient(server.port);
     try {
       await c.expectEvent("open");
-      for (const msg of ["a", "bb", "ccc", "x".repeat(500)]) {
+      for (const msg of ["a", "bb", "ccc", Buffer.alloc(500, "x").toString()]) {
         c.sendDatagram(msg);
         const e = await c.expectEvent("dgram");
         expect(fromB64u(e[1]).toString()).toBe(msg);
@@ -382,20 +382,74 @@ describe("WebTransport over HTTP/3", () => {
     }
   });
 
-  itWT("non-WT CONNECT does not hit websocket handler", async () => {
-    // The H3 wt() route gates on :protocol; a CONNECT without it should fall
-    // through to the next router match (404 here, since fetch only handles
-    // GET via server.upgrade falling back to "ok").
-    await using server = await spawnServer(`open(ws) { console.log("BUG"); }, message() {}, close() {}`);
-    // wtclient always sends :protocol=webtransport, so for the negative case
-    // hit the H3 listener with curl-h3 if available; otherwise just assert
-    // the WT path still works (the gate is exercised by the C++ unit path).
-    const c = spawnClient(server.port);
-    try {
-      await c.expectEvent("open");
-    } finally {
-      c.kill();
-    }
+  // wtclient always sends :protocol=webtransport, so the negative branch in
+  // H3App::wt() (yield to the next route on a non-WT CONNECT) isn't reachable
+  // from this fixture. Covered once wtclient grows a configurable :protocol.
+  test.todo("non-WT CONNECT does not hit websocket handler");
+
+  itWT("rejected upgrade returns the fetch response", async () => {
+    // The CONNECT routes through fetch; if fetch declines to call
+    // server.upgrade() the websocket handlers must not fire and the client
+    // must see the non-2xx status.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { tls } = require("harness");
+        const server = Bun.serve({
+          tls, port: 0, h3: true,
+          fetch(req, server) {
+            if (!new URL(req.url).pathname.startsWith("/deny"))
+              if (server.upgrade(req, { data: { tag: "ok" } })) return;
+            return new Response("denied", { status: 403 });
+          },
+          websocket: {
+            open(ws) { console.log("opened " + ws.data.tag); },
+            message() {}, close() {},
+          },
+        });
+        console.log(JSON.stringify({ port: server.port }));
+        process.stdin.on("end", () => server.stop(true));
+        process.stdin.resume();
+        `,
+      ],
+      cwd: import.meta.dir,
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = proc.stdout.getReader();
+    let buf = "";
+    const readLine = async () => {
+      while (true) {
+        const nl = buf.indexOf("\n");
+        if (nl >= 0) {
+          const l = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          return l;
+        }
+        const { value, done } = await reader.read();
+        if (done) throw new Error("server exited");
+        buf += Buffer.from(value).toString();
+      }
+    };
+    const port = JSON.parse(await readLine()).port;
+
+    // Allowed path: open() fires with the per-request data attached.
+    const a = spawnClient(port, "/allow");
+    await a.expectEvent("open");
+    expect(await readLine()).toBe("opened ok");
+    a.kill();
+
+    // Denied path: client sees 403, server never logs "opened".
+    const d = spawnClient(port, "/deny");
+    const e = await d.expectEvent("error");
+    expect(e[1]).toBe("status-403");
+    d.kill();
+
+    proc.stdin.end();
   });
 
   itWT("many sequential datagrams survive reordering", async () => {

@@ -95,6 +95,8 @@ export async function fetchH3(input: string | URL, init: Init = {}): Promise<Res
 
   args.push(url);
 
+  if (init.signal?.aborted) throw new DOMException("aborted", "AbortError");
+
   const proc = Bun.spawn({
     cmd: [bin, ...args],
     stdin,

@@ -5,20 +5,22 @@ to stress `Bun.serve({ h3: true })` without going through curl or a Node QUIC
 shim — same lsquic, same BoringSSL, same packet path as the server side.
 
 ```
-  ┌──────────────────────────────────────────────────────────────┐
-  │ h3blast · HTTP/3                    4t · 8c · 64m · 10s each │
-  └──────────────────────────────────────────────────────────────┘
+  h3blast · HTTP/3          8 threads × 8 connections × 32 streams
+  ────────────────────────────────────────────────────────────────
 
-  bun                                                148,402 req/s
-  ████████████████████████████████████████████████████████████████
-  GET 127.0.0.1:3000/                     13.00 B/req · p99 2.65ms
+  static                                             406,114 req/s
+  GET localhost:3001/hi
+  4,061,140 requests in 10.00s            66.12 B/req · p99 1.10ms
 
-  node                                                72,104 req/s
-  ███████████████████████████████                            2.06x
-  GET 127.0.0.1:3001/                     13.00 B/req · p99 5.33ms
+
+  js                                                 172,600 req/s
+  GET localhost:3001/
+  1,726,000 requests in 10.00s            46.06 B/req · p99 2.44ms
 ```
 
-Pass `-v` for the full latency-percentile and status-code charts.
+The bytes/req figure is wire bytes received (QUIC payload — headers + body +
+framing). Pass `-v` for per-target request totals, body-only bytes, total
+transfer, and the full latency-percentile / status-code charts.
 
 ## Design
 

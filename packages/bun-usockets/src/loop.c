@@ -25,6 +25,7 @@
 #include <sys/ioctl.h>
 #endif
 #ifdef __linux__
+#include <netinet/in.h>
 #include <linux/errqueue.h>
 #endif
 

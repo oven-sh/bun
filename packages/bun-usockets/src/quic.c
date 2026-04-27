@@ -211,6 +211,11 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
 #endif
 
     if (sent < n) {
+        /* lsquic only treats EAGAIN/EWOULDBLOCK as backpressure; map any
+         * other transient send error (ENOBUFS, EMSGSIZE on a stray jumbo
+         * batch, EPERM from a firewall) to EAGAIN so the engine pauses and
+         * retries via on_drain → send_unsent_packets instead of dropping
+         * the connection. */
         if (errno != EAGAIN && errno != EWOULDBLOCK) errno = EAGAIN;
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
         if (ls->udp) {

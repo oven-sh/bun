@@ -738,17 +738,11 @@ static int vislen(const char *s) {
 }
 
 static void boxed_header(FILE *f, int w, const char *left, const char *right) {
-    int lw = vislen(left), rw = vislen(right);
-    int pad = w - 4 - lw - rw;
+    int pad = w - vislen(left) - vislen(right);
     if (pad < 1) pad = 1;
-    fprintf(f, "  %s┌", GRY);
-    for (int i = 0; i < w - 2; i++) fputs("─", f);
-    fprintf(f, "┐%s\n", RST);
-    fprintf(f, "  %s│%s %s%s%s%*s%s%s%s %s│%s\n",
-            GRY, RST, BLD, left, RST, pad, "", DIM, right, RST, GRY, RST);
-    fprintf(f, "  %s└", GRY);
-    for (int i = 0; i < w - 2; i++) fputs("─", f);
-    fprintf(f, "┘%s\n\n", RST);
+    fprintf(f, "  %s%s%s%*s%s%s%s\n  ", BLD, left, RST, pad, "", DIM, right, RST);
+    hr(f, w);
+    fputc('\n', f);
 }
 
 struct snapshot {
@@ -890,12 +884,11 @@ static void render_final(const struct config *cfg, const struct result *results)
 
     if (cfg->json) { fputc('[', f); }
     else {
-        char rcfg[96];
-        int n = snprintf(rcfg, sizeof(rcfg), "%dt · %dc · %dm",
-                         cfg->threads, cfg->connections, cfg->streams);
-        if (cfg->duration_s > 0)
-            snprintf(rcfg + n, sizeof(rcfg) - (size_t)n, " · %.0fs%s",
-                     cfg->duration_s, nt > 1 ? " each" : "");
+        char rcfg[128];
+        snprintf(rcfg, sizeof(rcfg), "%d thread%s × %d connection%s × %d stream%s",
+                 cfg->threads, cfg->threads == 1 ? "" : "s",
+                 cfg->connections, cfg->connections == 1 ? "" : "s",
+                 cfg->streams, cfg->streams == 1 ? "" : "s");
         boxed_header(f, hrw, "h3blast · HTTP/3", rcfg);
     }
 
@@ -939,11 +932,13 @@ static void render_final(const struct config *cfg, const struct result *results)
             continue;
         }
 
-        char rps_full[32], b_rxps[32], b_bpr[32], p99[32];
+        char rps_full[32], b_bpr[32], p99[32], b_total[32];
         fmt_thousands((uint64_t)rps, rps_full, sizeof(rps_full));
-        human_bytes(rxps, b_rxps, sizeof(b_rxps));
+        fmt_thousands(s->done, b_total, sizeof(b_total));
         human_bytes(bpr, b_bpr, sizeof(b_bpr));
         human_latency(s->done ? (double)hdr_value_at_percentile(agg, 99.0) : 0, p99, sizeof(p99));
+
+        if (t > 0) fputs("\n\n", f);
 
         char rhs[64];
         snprintf(rhs, sizeof(rhs), "%s req/s", rps_full);
@@ -953,18 +948,17 @@ static void render_final(const struct config *cfg, const struct result *results)
                 BLD, tgt->label, RST, pad, "",
                 BLD, GRN, rps_full, RST, DIM, RST);
 
-        char detail[128];
-        snprintf(detail, sizeof(detail), "%s/s · %s/req · p99 %s", b_rxps, b_bpr, p99);
         char url[400];
         snprintf(url, sizeof(url), "%s %s:%s%s", cfg->method, tgt->host, tgt->port, tgt->path);
-        int dpad = hrw - vislen(url) - vislen(detail);
-        if (dpad < 2) {
-            int room = hrw - vislen(detail) - 3;
-            if (room > 8 && vislen(url) > room) { url[room - 1] = 0; strcat(url, "…"); }
-            dpad = hrw - vislen(url) - vislen(detail);
-            if (dpad < 1) dpad = 1;
-        }
-        fprintf(f, "  %s%s%*s%s%s\n", DIM, url, dpad, "", detail, RST);
+        if (vislen(url) > hrw) { url[hrw - 1] = 0; strcat(url, "…"); }
+        fprintf(f, "  %s%s%s\n", DIM, url, RST);
+
+        char lhs[96], detail[128];
+        snprintf(lhs, sizeof(lhs), "%s requests in %.2fs", b_total, elapsed);
+        snprintf(detail, sizeof(detail), "%s/req · p99 %s", b_bpr, p99);
+        int dpad = hrw - vislen(lhs) - vislen(detail);
+        if (dpad < 1) dpad = 1;
+        fprintf(f, "  %s%s%*s%s%s\n", DIM, lhs, dpad, "", detail, RST);
 
         uint64_t bad = s->s3 + s->s4 + s->s5 + s->so + s->err;
         if (bad || s->hsk_fail) {
@@ -976,15 +970,11 @@ static void render_final(const struct config *cfg, const struct result *results)
         }
 
         if (cfg->verbose) {
-            char b_rx[32], b_tx[32], b_body[32], b_total[32], p50[32];
-            fmt_thousands(s->done, b_total, sizeof(b_total));
+            char b_rx[32], b_tx[32], b_body[32];
             human_bytes((double)s->rx_wire, b_rx, sizeof(b_rx));
             human_bytes((double)s->tx, b_tx, sizeof(b_tx));
             human_bytes(avgb, b_body, sizeof(b_body));
-            human_latency(s->done ? (double)hdr_value_at_percentile(agg, 50.0) : 0, p50, sizeof(p50));
-            fprintf(f, "  %s%-10s%s %s in %.2fs\n", DIM, "requests", RST, b_total, elapsed);
             fprintf(f, "  %s%-10s%s ↓ %s  ↑ %s  body %s/req\n", DIM, "transfer", RST, b_rx, b_tx, b_body);
-            fprintf(f, "  %s%-10s%s p50 %s  p99 %s\n", DIM, "latency", RST, p50, p99);
             fprintf(f, "\n  %sLatency%s\n  ", BLD, RST);
             hr(f, hrw);
             struct { const char *label; double pct; } rows[] = {
@@ -1030,11 +1020,10 @@ static void render_final(const struct config *cfg, const struct result *results)
             if (s->hsk_fail)
                 fprintf(f, "  %s%-7s%s %" PRIu64 "\n", RED, "hsk-fail", RST, s->hsk_fail);
         }
-
-        fputc('\n', f);
     }
 
     if (cfg->json) fputs("]\n", f);
+    else fputc('\n', f);
 }
 
 // ───────────────────────── CLI ─────────────────────────

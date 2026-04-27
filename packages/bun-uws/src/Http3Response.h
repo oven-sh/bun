@@ -206,35 +206,19 @@ struct Http3Response {
 
 private:
     void appendHeader(Http3ResponseData *d, std::string_view name, std::string_view value) {
-        /* RFC 9114 §4.2: field names MUST be lowercase. Callers hand us
-         * canonical-cased names (Content-Type), so fold here once where the
-         * protocol invariant lives. */
-        size_t no = d->headerBuf.size();
-        d->headerBuf.resize(no + name.size() + value.size());
-        char *p = d->headerBuf.data() + no;
-        for (size_t i = 0; i < name.size(); i++) {
-            char c = name[i];
-            p[i] = (char)(c | ((unsigned char)(c - 'A') < 26 ? 0x20 : 0));
-        }
-        memcpy(p + name.size(), value.data(), value.size());
-        d->headerNames.push_back({(unsigned) no, (unsigned) name.size()});
-        d->headerValues.push_back({(unsigned)(no + name.size()), (unsigned) value.size()});
+        d->appendHeader(name.data(), (unsigned) name.size(), value.data(), (unsigned) value.size());
     }
 
     void sendBufferedHeaders(Http3ResponseData *d, bool endStream) {
-        size_t n = d->headerNames.size();
-        us_quic_header_t stackHs[16];
-        us_quic_header_t *hs = n <= 16 ? stackHs : (us_quic_header_t *) alloca(n * sizeof(us_quic_header_t));
-        for (size_t i = 0; i < n; i++) {
-            hs[i].name = d->headerBuf.data() + d->headerNames[i].first;
-            hs[i].name_len = d->headerNames[i].second;
-            hs[i].value = d->headerBuf.data() + d->headerValues[i].first;
-            hs[i].value_len = d->headerValues[i].second;
+        const char *base = d->hdrBuf.span().data();
+        for (auto &h : d->hdrs) {
+            h.name = base + (uintptr_t) h.name;
+            h.value = base + (uintptr_t) h.value;
         }
-        us_quic_stream_send_headers((us_quic_stream_t *) this, hs, (unsigned) n, endStream);
-        d->headerBuf.clear();
-        d->headerNames.clear();
-        d->headerValues.clear();
+        us_quic_stream_send_headers((us_quic_stream_t *) this,
+            d->hdrs.mutableSpan().data(), (unsigned) d->hdrs.size(), endStream);
+        d->hdrBuf.shrink(0);
+        d->hdrs.shrink(0);
     }
 
     bool internalEnd(std::string_view data, uint64_t totalSize, bool optional,

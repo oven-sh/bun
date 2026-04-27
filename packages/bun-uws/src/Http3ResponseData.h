@@ -2,10 +2,11 @@
 #define UWS_H3RESPONSEDATA_H
 
 #include "AsyncSocketData.h"
+#include "quic.h"
 
+#include <wtf/Vector.h>
 #include <cstdint>
-#include <string>
-#include <vector>
+#include <cstring>
 
 namespace uWS {
 
@@ -46,10 +47,13 @@ struct Http3ResponseData {
     OnTimeoutCallback onTimeout = nullptr;
 
     /* Outgoing headers buffered until the first body write/end so they go
-     * out as one HEADERS frame. names/values point into headerBuf. */
-    std::string headerBuf;
-    std::vector<std::pair<unsigned, unsigned>> headerNames;  /* offset, len */
-    std::vector<std::pair<unsigned, unsigned>> headerValues; /* offset, len */
+     * out as one HEADERS frame. WTF::Vector's inline capacity keeps the
+     * common case (status + content-type + content-length + date ≈ 100
+     * bytes, ≤ 6 headers) entirely off the heap. hdrs stores byte offsets
+     * (cast through name/value pointers) so hdrBuf can grow; resolved
+     * against hdrBuf.data() once at send time. */
+    WTF::Vector<char, 256> hdrBuf;
+    WTF::Vector<us_quic_header_t, 16> hdrs;
 
     /* Body bytes the QUIC stream couldn't accept yet. */
     BackPressure backpressure;
@@ -59,6 +63,19 @@ struct Http3ResponseData {
     uint64_t totalSize = 0;
     uint8_t state = 0;
 
+    void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {
+        size_t off = hdrBuf.size();
+        hdrBuf.grow(off + nlen + vlen);
+        char *dst = hdrBuf.mutableSpan().data() + off;
+        for (unsigned i = 0; i < nlen; i++) {
+            char c = name[i];
+            dst[i] = (char)(c | ((unsigned char)(c - 'A') < 26 ? 0x20 : 0));
+        }
+        memcpy(dst + nlen, value, vlen);
+        hdrs.append({(const char *)(uintptr_t) off, nlen,
+                     (const char *)(uintptr_t)(off + nlen), vlen});
+    }
+
     void reset() {
         userData = nullptr;
         writableUserData = nullptr;
@@ -66,9 +83,8 @@ struct Http3ResponseData {
         onAborted = nullptr;
         inStream = nullptr;
         onTimeout = nullptr;
-        headerBuf.clear();
-        headerNames.clear();
-        headerValues.clear();
+        hdrBuf.shrink(0);
+        hdrs.shrink(0);
         backpressure.clear();
         endAfterDrain = false;
         offset = 0;

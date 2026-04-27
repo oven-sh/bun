@@ -137,6 +137,7 @@ static unsigned vint_write(unsigned char *p, uint64_t v) {
 static struct buf *buf_new(const unsigned char *prefix, size_t plen,
                            const unsigned char *data, size_t dlen) {
     struct buf *b = malloc(sizeof(*b) + plen + dlen);
+    if (!b) die("oom");
     b->next = NULL;
     b->len = plen + dlen;
     memcpy(b->data, prefix, plen);
@@ -318,15 +319,19 @@ static void on_read(lsquic_stream_t *s, lsquic_stream_ctx_t *h) {
 static void on_close(lsquic_stream_t *s, lsquic_stream_ctx_t *h) {}
 
 static ssize_t on_dg_write(lsquic_conn_t *c, void *buf, size_t sz) {
-    struct buf *b = g_dg_head;
-    if (!b) { lsquic_conn_want_datagram_write(c, 0); return -1; }
-    if (b->len > sz) { g_dg_head = b->next; free(b); return 0; }
-    memcpy(buf, b->data, b->len);
-    ssize_t r = (ssize_t) b->len;
-    g_dg_head = b->next;
-    if (!g_dg_head) g_dg_tail = NULL;
-    free(b);
-    return r;
+    for (;;) {
+        struct buf *b = g_dg_head;
+        if (!b) { g_dg_tail = NULL; lsquic_conn_want_datagram_write(c, 0); return -1; }
+        g_dg_head = b->next;
+        if (b->len <= sz) {
+            memcpy(buf, b->data, b->len);
+            ssize_t r = (ssize_t) b->len;
+            if (!g_dg_head) g_dg_tail = NULL;
+            free(b);
+            return r;
+        }
+        free(b);
+    }
 }
 
 static void on_datagram(lsquic_conn_t *c, const void *buf, size_t sz) {

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync, unlinkSync } from "fs";
 import { bunEnv, bunExe, isLinux } from "harness";
 import path from "path";
 
@@ -27,17 +28,16 @@ beforeAll(async () => {
   const deps = ["lsquic", "lsqpack", "lshpack", "boringssl", "zlib"];
   const libdeps = path.join(fixtureDir, "libwtdeps.a");
 
-  const fs = await import("fs");
-  if (!fs.existsSync(path.join(objRoot, "lsquic")) || !fs.existsSync(path.join(vendor, "lsquic/include/lsquic.h"))) {
+  if (!existsSync(path.join(objRoot, "lsquic")) || !existsSync(path.join(vendor, "lsquic/include/lsquic.h"))) {
     console.warn("serve-webtransport: skipping (no debug-profile dep objects under build/debug/obj/vendor)");
     return;
   }
 
   // The dep .o files are built with -gz=zstd; system ld may not understand
   // that, so use the same llvm-ar/clang the build used.
-  const llvm = (t: string) => (fs.existsSync(`/opt/llvm-21/bin/${t}`) ? `/opt/llvm-21/bin/${t}` : t);
+  const llvm = (t: string) => (existsSync(`/opt/llvm-21/bin/${t}`) ? `/opt/llvm-21/bin/${t}` : t);
 
-  if (!fs.existsSync(libdeps)) {
+  if (!existsSync(libdeps)) {
     const objs: string[] = [];
     for (const d of deps) {
       for await (const f of new Bun.Glob("**/*.o").scan({ cwd: path.join(objRoot, d), absolute: true })) {
@@ -86,22 +86,18 @@ afterAll(() => {
   // Leave the .a for subsequent test runs (it's content-stable); drop the
   // executable so a stale debug build doesn't mask a regression.
   try {
-    require("fs").unlinkSync(wtclientBin);
+    unlinkSync(wtclientBin);
   } catch {}
 });
 
-const itWT: typeof test = ((name: string, fn: any, timeout?: number) =>
-  test(
-    name,
-    async () => {
-      if (!canRunClient) {
-        console.warn("skipping (no wtclient; needs Linux + debug build deps)");
-        return;
-      }
-      return fn();
-    },
-    timeout,
-  )) as any;
+const itWT: typeof test = ((name: string, fn: any) =>
+  test(name, async () => {
+    if (!canRunClient) {
+      console.warn("skipping (no wtclient; needs Linux + debug build deps)");
+      return;
+    }
+    return fn();
+  })) as any;
 
 const b64u = (s: string | Uint8Array) =>
   Buffer.from(s).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -402,34 +398,29 @@ describe("WebTransport over HTTP/3", () => {
     }
   });
 
-  itWT(
-    "many sequential datagrams survive reordering",
-    async () => {
-      await using server = await spawnServer(`
+  itWT("many sequential datagrams survive reordering", async () => {
+    await using server = await spawnServer(`
       open() {},
       message(ws, m) { ws.send(m); },
       close() {},
     `);
-      const c = spawnClient(server.port);
-      try {
-        await c.expectEvent("open");
-        const N = 50;
-        for (let i = 0; i < N; i++) c.sendDatagram(String(i));
-        const seen = new Set<string>();
-        // Datagrams may drop; require ≥80% delivery on loopback.
-        const deadline = Date.now() + 5000;
-        while (seen.size < N && Date.now() < deadline) {
-          const e = await Promise.race([c.next(), Bun.sleep(200).then(() => null)]);
-          if (!e) break;
-          if (e[0] === "dgram") seen.add(fromB64u(e[1]).toString());
-        }
-        expect(seen.size).toBeGreaterThanOrEqual(Math.floor(N * 0.8));
-      } finally {
-        c.kill();
+    const c = spawnClient(server.port);
+    try {
+      await c.expectEvent("open");
+      const N = 50;
+      for (let i = 0; i < N; i++) c.sendDatagram(String(i));
+      const seen = new Set<string>();
+      // Datagrams may drop; require ≥80% delivery on loopback.
+      while (seen.size < N) {
+        const e = await Promise.race([c.next(), Bun.sleep(500).then(() => null)]);
+        if (!e) break;
+        if (e[0] === "dgram") seen.add(fromB64u(e[1]).toString());
       }
-    },
-    20000,
-  );
+      expect(seen.size).toBeGreaterThanOrEqual(Math.floor(N * 0.8));
+    } finally {
+      c.kill();
+    }
+  });
 
   itWT("first ws.send() returns SUCCESS (byte count), not backpressure", async () => {
     await using server = await spawnServer(`
@@ -535,7 +526,8 @@ test("server with h3+websocket exits when stopped", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [_, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("panic");
+  const [stdout, stderr, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("");
   expect(code).toBe(0);
 });

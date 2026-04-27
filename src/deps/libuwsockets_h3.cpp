@@ -322,13 +322,13 @@ void uws_h3_ws(uws_h3_app_t* app, void* upgradeCtx, const char* pattern,
         b.open = [behavior](WebTransportSession* ws) { behavior.open((uws_websocket_t*)ws); };
     if (behavior.message)
         b.message = [behavior](WebTransportSession* ws, std::string_view m, uWS::OpCode op) {
-            behavior.message((uws_websocket_t*)ws, m.data(), m.length(), (uws_opcode_t)op);
+            behavior.message((uws_websocket_t*)ws, m.empty() ? "" : m.data(), m.length(), (uws_opcode_t)op);
         };
     if (behavior.drain)
         b.drain = [behavior](WebTransportSession* ws) { behavior.drain((uws_websocket_t*)ws); };
     if (behavior.close)
         b.close = [behavior](WebTransportSession* ws, int code, std::string_view m) {
-            behavior.close((uws_websocket_t*)ws, code, m.data(), m.length());
+            behavior.close((uws_websocket_t*)ws, code, m.empty() ? "" : m.data(), m.length());
         };
     ((H3App*)app)->wt(sv(pattern, pattern_len), std::move(b));
 }

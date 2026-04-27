@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlink
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { NODEJS_ABI_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
+import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
 import { clangTargetArch } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
@@ -44,19 +45,8 @@ export interface Host {
 }
 
 /**
- * WebKit commit — determines prebuilt download URL + what to checkout
- * for local mode. Override via `--webkit-version=<hash>` to test a branch.
- * From https://github.com/oven-sh/WebKit releases.
- *
- * Kept here (and re-exported from deps/webkit.ts) to break the
- * config → deps/webkit → flags → config import cycle that the post-#29393
- * module loader surfaces as a TDZ error when scripts/build.ts is loaded.
- */
-export const WEBKIT_VERSION = "bdf6aab38a9c6f99df3fd1486406ab6b74180fbb";
-
-/**
  * Pinned version defaults. Each lives at the top of its own file
- * (zig.ts, deps/nodejs-headers.ts) — look there to bump.
+ * (deps/webkit.ts, zig.ts, deps/nodejs-headers.ts) — look there to bump.
  * Overridable via PartialConfig for testing (e.g. trying a WebKit branch).
  */
 const versionDefaults = {

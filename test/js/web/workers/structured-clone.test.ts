@@ -330,7 +330,7 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
     ["growable SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })"],
     ["Uint8Array", "new Uint8Array(2 ** 31)"],
   ] as const) {
-    test.concurrent(label, async () => {
+    test(label, async () => {
       const script = `
         let buf;
         try {
@@ -350,7 +350,7 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
         cmd: [bunExe(), "-e", script],
         env: bunEnv,
         stdout: "pipe",
-        stderr: "pipe",
+        stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(["DataCloneError", "SKIP"]).toContain(stdout.trim());

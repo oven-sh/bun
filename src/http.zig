@@ -602,11 +602,9 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
         tunnel.detachAndDeref();
     }
-    if (this.h2) |stream| {
-        // Normally cleared by the session before the terminal callback;
-        // reaching here means the client is being torn down mid-flight.
-        stream.session.detachWithFailure(stream, error.Aborted);
-    }
+    // The session detaches `h2` before any terminal callback, so this should
+    // be null by the time the result callback's deinit path runs.
+    bun.debugAssert(this.h2 == null);
     // Release our strong ref on the interned SSLConfig
     if (this.tls_props) |*tls| tls.deinit();
     this.tls_props = null;

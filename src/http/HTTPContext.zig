@@ -109,6 +109,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         pub fn registerH2(this: *@This(), session: *H2.ClientSession) void {
             if (comptime !ssl) return;
             if (session.registry_index != std.math.maxInt(u32)) return;
+            session.ref();
             session.registry_index = @intCast(this.active_h2_sessions.items.len);
             bun.handleOom(this.active_h2_sessions.append(bun.default_allocator, session));
         }
@@ -122,6 +123,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             bun.debugAssert(idx < list.items.len and list.items[idx] == session);
             _ = list.swapRemove(idx);
             if (idx < list.items.len) list.items[idx].registry_index = idx;
+            session.deref();
         }
 
         pub fn tagAsH2(socket: HTTPSocket, session: *H2.ClientSession) void {
@@ -171,7 +173,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                         bun.default_allocator.free(pooled.target_hostname);
                         pooled.target_hostname = "";
                     }
-                    if (pooled.h2_session) |s| s.deinit();
+                    if (pooled.h2_session) |s| s.deref();
                     pooled.h2_session = null;
                     pooled.http_socket.close(.failure);
                 }
@@ -338,7 +340,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                 t.shutdown();
                 t.detachAndDeref();
             }
-            if (h2_session) |s| s.deinit();
+            if (h2_session) |s| s.deref();
             closeSocket(socket);
         }
 
@@ -456,7 +458,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     bun.default_allocator.free(pooled.target_hostname);
                     pooled.target_hostname = "";
                 }
-                if (pooled.h2_session) |s| s.deinit();
+                if (pooled.h2_session) |s| s.deref();
                 pooled.h2_session = null;
                 assert(pooled.owner.pending_sockets.put(pooled));
             }

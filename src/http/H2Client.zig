@@ -46,7 +46,17 @@ pub const Stream = struct {
 pub const ClientSession = struct {
     pub const new = bun.TrivialNew(@This());
 
+    /// Ref holders: the socket-ext tag while the session is the ActiveSocket
+    /// (1), the context's active_h2_sessions registry while listed (1), and
+    /// the keep-alive pool while parked (1). Hand-offs between socket and
+    /// pool transfer a ref rather than touching the count.
+    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    pub const ref = RefCount.ref;
+    pub const deref = RefCount.deref;
+
     pub const Socket = NewHTTPContext(true).HTTPSocket;
+
+    ref_count: RefCount,
 
     hpack: *lshpack.HPACK,
     socket: Socket,
@@ -94,6 +104,7 @@ pub const ClientSession = struct {
 
     pub fn create(ctx: *NewHTTPContext(true), socket: Socket, client: *const HTTPClient) *ClientSession {
         const this = ClientSession.new(.{
+            .ref_count = .init(),
             .hpack = lshpack.HPACK.init(4096),
             .socket = socket,
             .ctx = ctx,
@@ -106,8 +117,8 @@ pub const ClientSession = struct {
         return this;
     }
 
-    pub fn deinit(this: *ClientSession) void {
-        this.ctx.unregisterH2(this);
+    fn deinit(this: *ClientSession) void {
+        bun.debugAssert(this.registry_index == std.math.maxInt(u32));
         this.hpack.deinit();
         this.write_buffer.deinit();
         this.read_buffer.deinit(bun.default_allocator);
@@ -430,6 +441,8 @@ pub const ClientSession = struct {
     /// Socket onClose / onTimeout entry point. The socket is already gone, so
     /// streams just fail and the session is destroyed.
     pub fn onClose(this: *ClientSession, err: anyerror) void {
+        this.ref();
+        defer this.deref();
         this.ctx.unregisterH2(this);
         var it = this.streams.iterator();
         while (it.next()) |e| {
@@ -441,14 +454,15 @@ pub const ClientSession = struct {
             if (client) |c| c.failFromH2(err);
         }
         this.streams.clearRetainingCapacity();
-        this.deinit();
+        this.deref();
     }
 
     fn failAll(this: *ClientSession, err: anyerror) void {
         this.fatal_error = this.fatal_error orelse err;
         const sock = this.socket;
+        NewHTTPContext(true).markSocketAsDead(sock);
         this.onClose(err);
-        NewHTTPContext(true).terminateSocket(sock);
+        sock.close(.failure);
     }
 
     /// Called from the HTTP thread's shutdown queue when a fetch on this
@@ -499,9 +513,8 @@ pub const ClientSession = struct {
                 this,
             );
         } else {
-            const sock = this.socket;
-            this.deinit();
-            NewHTTPContext(true).closeSocket(sock);
+            NewHTTPContext(true).closeSocket(this.socket);
+            this.deref();
         }
     }
 

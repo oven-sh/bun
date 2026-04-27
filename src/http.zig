@@ -262,9 +262,6 @@ pub fn firstCall(
     }
 }
 
-/// Called by the HTTP/2 session for stream-level termination (RST_STREAM,
-/// GOAWAY, abort, decode error). The socket stays up for sibling streams, so
-/// only the request fails.
 /// Re-enter the connect path for a request that was coalesced onto an h2
 /// session but couldn't be attached (cap reached, or ALPN chose h1).
 pub fn retryAfterH2Coalesce(this: *HTTPClient) void {
@@ -287,10 +284,12 @@ pub fn retryFromH2(this: *HTTPClient) void {
     this.start(body, body_out);
 }
 
+/// Called by the HTTP/2 session for stream-level termination (RST_STREAM,
+/// GOAWAY, abort, decode error). The socket stays up for sibling streams, so
+/// only the request fails.
 pub fn failFromH2(this: *HTTPClient, err: anyerror) void {
     bun.debugAssert(this.h2 == null);
     this.unregisterAbortTracker();
-    this.flags.protocol = .http1_1;
     if (this.state.stage != .done and this.state.stage != .fail) {
         this.state.request_stage = .fail;
         this.state.response_stage = .fail;
@@ -1061,7 +1060,11 @@ pub fn doRedirect(
         tunnel.shutdown();
         tunnel.detachAndDeref();
         NewHTTPContext(is_ssl).closeSocket(socket);
-    } else if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
+    } else if (this.state.request_stage == .done and this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
+        // request_stage == .done: a 303 to a streaming POST can arrive before
+        // the chunked upload's terminating 0\r\n\r\n is written. Pooling that
+        // socket would let the next request's bytes land inside what the
+        // server is still parsing as the previous chunked body.
         log("Keep-Alive release in redirect", .{});
         assert(this.connected_url.hostname.len > 0);
         ctx.releaseSocket(

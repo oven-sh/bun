@@ -1539,6 +1539,60 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     }
   });
 
+  test("303 to a streaming POST over HTTP/1.1 closes the socket instead of pooling it mid-chunked-body", async () => {
+    // Regression for the doRedirect change in this PR: dropping the
+    // closeAndFail(UnexpectedRedirect) guard let a 303 with a streaming
+    // body fall through to the keep-alive pool even though the chunked
+    // upload's terminating 0\r\n\r\n was never written. The follow-up GET
+    // must open a fresh connection.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-warnings",
+        "-e",
+        `import net from "node:net";
+         let conns = 0;
+         const server = net.createServer(sock => {
+           const idx = conns++;
+           let buf = "";
+           sock.on("data", c => {
+             buf += c;
+             if (idx === 0 && buf.includes("\\r\\n\\r\\n") && !sock.replied) {
+               sock.replied = true;
+               sock.write("HTTP/1.1 303 See Other\\r\\nLocation: /target\\r\\nConnection: keep-alive\\r\\nContent-Length: 0\\r\\n\\r\\n");
+             }
+             if (buf.includes("GET /target")) {
+               sock.end("HTTP/1.1 200 OK\\r\\nConnection: close\\r\\nContent-Length: 6\\r\\n\\r\\nconn=" + idx);
+             }
+           });
+           sock.on("error", () => {});
+         });
+         server.listen(0, "127.0.0.1");
+         await new Promise(r => server.on("listening", r));
+         const url = "http://127.0.0.1:" + server.address().port;
+         const body = new ReadableStream({
+           async start(ctrl) {
+             ctrl.enqueue(new Uint8Array([1, 2, 3, 4]));
+             // Never close — the 303 cancels the upload.
+             await new Promise(r => setTimeout(r, 60_000));
+           },
+         });
+         const res = await fetch(url + "/upload", { method: "POST", body, duplex: "half" });
+         console.log(res.status, await res.text(), "conns=" + conns);
+         process.exit(0);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // conn=1 (zero-indexed) and conns=2 prove the follow-up GET opened a
+    // fresh socket; the bug would show conn=0 or hang.
+    expect(stdout.trim()).toBe("200 conn=1 conns=2");
+    expect(exitCode).toBe(0);
+  });
+
   test("leader abort does not fail a coalesced force_http2 waiter with HTTP2Unsupported", async () => {
     // Regression for resolvePendingH2 conflating "ALPN chose h1" with
     // "leader failed pre-handshake". Server never speaks TLS, so the leader

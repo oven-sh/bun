@@ -875,6 +875,46 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       );
     });
 
+    test("1xx HEADERS with END_STREAM is a stream PROTOCOL_ERROR (RFC 9113 §8.1)", async () => {
+      await withRawH2Server(
+        (conn, id) => conn.headers(id, hpackStatus(100), { endStream: true }),
+        async url => {
+          await using proc = spawnFetch(`
+            try {
+              await fetch("${url}", { tls: { rejectUnauthorized: false } });
+              console.log("resolved");
+            } catch (e) { console.log("rejected", e?.code ?? e?.name); }
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe("rejected HTTP2ProtocolError");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("DATA after only a 1xx HEADERS is a stream PROTOCOL_ERROR (RFC 9113 §8.1)", async () => {
+      await withRawH2Server(
+        (conn, id) => {
+          conn.socket.write(
+            Buffer.concat([frame(1, 4, id, hpackStatus(100)), frame(0, 1, id, Buffer.from("body"))]),
+          );
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try {
+              await fetch("${url}", { tls: { rejectUnauthorized: false } });
+              console.log("resolved");
+            } catch (e) { console.log("rejected", e?.code ?? e?.name); }
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe("rejected HTTP2ProtocolError");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
     test("response + trailers in a single packet keep HPACK in sync", async () => {
       await withRawH2Server(
         (conn, id) => {

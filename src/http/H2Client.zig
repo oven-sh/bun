@@ -683,6 +683,9 @@ pub const ClientSession = struct {
         if (this.fatal_error) |err| return this.failAll(err);
 
         this.drainPending();
+        // attach()'s flush() can failAll() from inside the loop above; if so the
+        // session has already torn down — bail before maybeRelease() double-derefs.
+        if (this.fatal_error != null) return;
         this.drainSendBodies();
         _ = this.flush() catch |err| return this.failAll(err);
 
@@ -720,6 +723,7 @@ pub const ClientSession = struct {
         // is finished.
         if (this.pending_attach.items.len > 0) {
             this.drainPending();
+            if (this.fatal_error != null) return;
             _ = this.flush() catch |err| return this.failAll(err);
         }
 
@@ -1189,7 +1193,9 @@ pub const ClientSession = struct {
                     }
                     return;
                 };
-                if (!stream.seen_headers) {
+                // §8.1.1: DATA before the *final* response HEADERS is malformed —
+                // a 1xx alone (status_code still 0) doesn't satisfy this.
+                if (stream.status_code == 0) {
                     stream.fatal_error = error.HTTP2ProtocolError;
                     return;
                 }
@@ -1326,6 +1332,10 @@ pub const ClientSession = struct {
         if (status >= 100 and status < 200) {
             stream.decoded_bytes.items.len = start_len;
             stream.awaiting_continue = false;
+            // RFC 9113 §8.1: a 1xx HEADERS that ends the stream is malformed.
+            // Without this the stream sits at {end_stream_received, !headers_ready}
+            // and deliverStream() returns false forever.
+            if (stream.end_stream_received) stream.fatal_error = error.HTTP2ProtocolError;
             return;
         }
 

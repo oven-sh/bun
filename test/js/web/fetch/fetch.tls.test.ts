@@ -537,8 +537,9 @@ describe.concurrent("fetch-tls", () => {
     expect(extensions).not.toBeNull();
     // 0xfe0d = encrypted_client_hello (ECH). Must be absent.
     expect(extensions).not.toContain(0xfe0d);
-    // Sanity: the ClientHello is well-formed (ALPN = 16, SNI = 0 should be
-    // present) so we know the parser actually walked the extensions list.
+    // Sanity: ALPN (16) should be present so we know the parser actually
+    // walked the extensions list. SNI (0) is intentionally omitted because
+    // the request targets an IP literal — see RFC 6066 §3.
     expect(extensions).toContain(16); // application_layer_protocol_negotiation
   });
 });

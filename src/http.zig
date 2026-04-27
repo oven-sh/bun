@@ -1998,6 +1998,11 @@ fn resolvePendingH2(this: *HTTPClient, session: ?*H2.ClientSession) void {
             waiter.fail(error.HTTP2Unsupported);
             continue;
         }
+        // Pin this waiter to h1 so its `start_` doesn't register a fresh
+        // PendingConnect that the rest of this loop would re-coalesce onto
+        // (which would serialise N cold fetches into N sequential
+        // handshakes). The origin already chose h1 once.
+        waiter.flags.force_http1 = true;
         waiter.start_(true);
     }
 }

@@ -1197,6 +1197,43 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     }
   });
 
+  test("ALPN h1 result re-dispatches coalesced waiters in parallel, not serial", async () => {
+    // h1-only TLS server: leader's ALPN resolves to http/1.1, so waiters
+    // re-dispatch. Each must open its own connection on the same loop turn
+    // rather than re-coalescing onto the first waiter's new PendingConnect.
+    let active = 0;
+    let peak = 0;
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const server = https.createServer({ ...tls }, (req, res) => {
+      active++;
+      peak = Math.max(peak, active);
+      if (active === 5) resolve();
+      promise.then(() => {
+        res.end("ok");
+        active--;
+      });
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = spawnFetch(`
+        const url = "https://localhost:${port}/";
+        const tls = { rejectUnauthorized: false };
+        const rs = await Promise.all(Array.from({ length: 5 }, () => fetch(url, { tls }).then(r => r.text())));
+        console.log(rs.join(","));
+      `);
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("ok,ok,ok,ok,ok");
+      expect(exitCode).toBe(0);
+      // If waiters re-coalesced, peak would be 1 (sequential); 5 means all
+      // five connections were open before any response was written.
+      expect(peak).toBe(5);
+    } finally {
+      server.close();
+    }
+  });
+
   test('protocol: "http1.1" overrides the env flag and pins ALPN to http/1.1', async () => {
     // Server is h2-only: the unpinned fetch (env flag on) negotiates h2, while
     // the pinned fetch advertises only http/1.1 and is rejected at ALPN —

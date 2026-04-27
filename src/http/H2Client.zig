@@ -709,6 +709,7 @@ pub const ClientSession = struct {
             if (client.async_http_id == async_http_id) {
                 _ = this.pending_attach.swapRemove(i);
                 client.failFromH2(error.Aborted);
+                this.maybeRelease();
                 return;
             }
         }

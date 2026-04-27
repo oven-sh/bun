@@ -33,11 +33,19 @@ typedef void* zig_mutex_t;
 #endif
 
 // IMPORTANT: When changing this, don't forget to update the zig version in uws.zig as well!
+struct us_quic_socket_context_s;
+
 struct us_internal_loop_data_t {
     struct us_timer_t *sweep_timer;
     int sweep_timer_count;
     struct us_internal_async *wakeup_async;
     struct us_socket_context_t *head;
+    /* QUIC engines on this loop. us_quic_loop_process walks the list from
+     * loop_post / drainMicrotasks; the lazy fallthrough timer only wakes the
+     * loop for lsquic's time-driven state (RTO, ACK delay) — its callback
+     * just calls us_quic_loop_process. */
+    struct us_quic_socket_context_s *quic_head;
+    struct us_timer_t *quic_timer;
     struct us_socket_context_t *iterator;
     struct us_socket_context_t *closed_context_head;
     char *recv_buf;

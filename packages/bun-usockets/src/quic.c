@@ -43,9 +43,9 @@ struct us_quic_socket_context_s {
     SSL_CTX *ssl_ctx;
     struct us_quic_sni *sni;
     unsigned int sni_count, sni_cap;
-    struct us_timer_t *timer;
     int processing;
     int closing;
+    struct us_quic_socket_context_s *next; /* loop->data.quic_head list */
     unsigned int stream_ext_size;
     /* Listen sockets stay reachable as lsquic peer_ctx after the UDP fd
      * closes; defer freeing until the engine itself is torn down. `listeners`
@@ -87,30 +87,62 @@ struct us_quic_stream_s {
     /* ext follows */
 };
 
-/* ───── timer / process driver ───── */
+/* ───── process driver ─────
+ *
+ * lsquic_engine_process_conns is the only call that turns queued stream
+ * writes into UDP packets and runs the protocol state machine. It is driven
+ * from three places, none of them per-write:
+ *
+ *   1. us_internal_loop_post (loop.c) — once per epoll iteration, after all
+ *      readable/writable polls have been dispatched. Covers the reactive
+ *      path: packets arrived, JS handler ran, response was written.
+ *   2. drainMicrotasks (event_loop.zig) — after JS microtasks, so an async
+ *      handler that resolves and calls resp.end() has its bytes packetized
+ *      before the loop blocks in epoll again.
+ *   3. A single lazy fallthrough timer per loop, re-armed to the minimum
+ *      earliest_adv_tick across engines. lsquic needs this for time-driven
+ *      state (RTO retransmit, delayed ACK, idle timeout) when nothing else
+ *      would wake the loop. The callback just re-enters this function.
+ *
+ * There is no per-write kick. Http3Response writes call lsquic_stream_write
+ * and return; the bytes go out at the next driver tick. Because process_conns
+ * never runs from inside an Http3Response method, on_close cannot fire and
+ * free the stream while a method is still touching it.
+ */
 
-static void us_quic_rearm(us_quic_socket_context_t *ctx);
+static void us_quic_loop_timer_cb(struct us_timer_t *t);
 
+void us_quic_loop_process(struct us_loop_t *loop) {
+    int min_diff = 0, have_tick = 0;
+    for (us_quic_socket_context_t *ctx = loop->data.quic_head; ctx; ctx = ctx->next) {
+        if (ctx->processing || !ctx->engine) continue;
+        ctx->processing = 1;
+        lsquic_engine_process_conns(ctx->engine);
+        ctx->processing = 0;
+        int diff;
+        if (lsquic_engine_earliest_adv_tick(ctx->engine, &diff)) {
+            if (!have_tick || diff < min_diff) min_diff = diff;
+            have_tick = 1;
+        }
+    }
+    if (have_tick && loop->data.quic_timer) {
+        int ms = min_diff <= 0 ? 1 : (min_diff / 1000) + 1;
+        us_timer_set(loop->data.quic_timer, us_quic_loop_timer_cb, ms, 0);
+    }
+}
+
+static void us_quic_loop_timer_cb(struct us_timer_t *t) {
+    us_quic_loop_process(*(struct us_loop_t **) us_timer_ext(t));
+}
+
+/* on_data still processes its own context immediately so a recv burst that
+ * fills lsquic's incoming queue gets drained before more packets arrive;
+ * loop_post then handles the rearm. */
 static void us_quic_process(us_quic_socket_context_t *ctx) {
     if (ctx->processing || !ctx->engine) return;
     ctx->processing = 1;
     lsquic_engine_process_conns(ctx->engine);
     ctx->processing = 0;
-    us_quic_rearm(ctx);
-}
-
-static void us_quic_timer_cb(struct us_timer_t *t) {
-    us_quic_socket_context_t *ctx = *(us_quic_socket_context_t **) us_timer_ext(t);
-    us_quic_process(ctx);
-}
-
-static void us_quic_rearm(us_quic_socket_context_t *ctx) {
-    if (!ctx->engine || !ctx->timer) return;
-    int diff;
-    if (lsquic_engine_earliest_adv_tick(ctx->engine, &diff)) {
-        int ms = diff <= 0 ? 1 : (diff / 1000) + 1;
-        us_timer_set(ctx->timer, us_quic_timer_cb, ms, 0);
-    }
 }
 
 /* ───── packets out ───── */
@@ -200,10 +232,7 @@ static void us_quic_udp_on_data(struct us_udp_socket_t *u, void *recvbuf, int np
 
 static void us_quic_udp_on_drain(struct us_udp_socket_t *u) {
     us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) us_udp_socket_user(u);
-    if (ls->ctx->engine) {
-        lsquic_engine_send_unsent_packets(ls->ctx->engine);
-        us_quic_rearm(ls->ctx);
-    }
+    if (ls->ctx->engine) lsquic_engine_send_unsent_packets(ls->ctx->engine);
 }
 
 static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
@@ -529,14 +558,14 @@ us_quic_socket_context_t *us_create_quic_socket_context(
         return NULL;
     }
 
-    ctx->timer = us_create_timer(loop, 1, sizeof(us_quic_socket_context_t *));
-    if (!ctx->timer) {
-        lsquic_engine_destroy(ctx->engine);
-        SSL_CTX_free(ssl);
-        free(ctx);
-        return NULL;
+    /* Lazy per-loop fallthrough timer (see us_quic_loop_process). */
+    if (!loop->data.quic_timer) {
+        loop->data.quic_timer = us_create_timer(loop, 1, sizeof(struct us_loop_t *));
+        if (loop->data.quic_timer)
+            *(struct us_loop_t **) us_timer_ext(loop->data.quic_timer) = loop;
     }
-    *(us_quic_socket_context_t **) us_timer_ext(ctx->timer) = ctx;
+    ctx->next = loop->data.quic_head;
+    loop->data.quic_head = ctx;
 
     return ctx;
 }
@@ -565,7 +594,7 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
 void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx) {
     if (!ctx || ctx->closing || !ctx->engine) return;
     ctx->closing = 1;
-    /* GOAWAY every conn and flush; the timer keeps ticking so in-flight
+    /* GOAWAY every conn and flush; loop_post keeps ticking so in-flight
      * streams drain. New conns are rejected in on_new_conn while closing. */
     lsquic_engine_cooldown(ctx->engine);
     lsquic_engine_send_unsent_packets(ctx->engine);
@@ -575,10 +604,17 @@ void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx) {
 void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     if (!ctx) return;
     ctx->closing = 1;
+    struct us_loop_t *loop = ctx->loop;
+    for (us_quic_socket_context_t **pp = &loop->data.quic_head; *pp; pp = &(*pp)->next) {
+        if (*pp == ctx) { *pp = ctx->next; break; }
+    }
+    if (!loop->data.quic_head && loop->data.quic_timer) {
+        us_timer_close(loop->data.quic_timer, 1);
+        loop->data.quic_timer = NULL;
+    }
     /* Close any UDP fds the caller never closed (graceful drain leaves them
      * open); on_close moves each into closed_listeners for the loop below. */
     while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
-    if (ctx->timer) { us_timer_close(ctx->timer, 1); ctx->timer = NULL; }
     if (ctx->engine) { lsquic_engine_destroy(ctx->engine); ctx->engine = NULL; }
     if (ctx->ssl_ctx) { SSL_CTX_free(ctx->ssl_ctx); ctx->ssl_ctx = NULL; }
     for (unsigned i = 0; i < ctx->sni_count; i++) {
@@ -619,7 +655,6 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
 
     ls->next = ctx->listeners;
     ctx->listeners = ls;
-    us_quic_rearm(ctx);
     return ls;
 }
 
@@ -745,7 +780,6 @@ us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s) {
 
 us_quic_socket_context_t *us_quic_stream_context(us_quic_stream_t *s) { return s->ctx; }
 
-void us_quic_stream_kick(us_quic_stream_t *s) { us_quic_process(s->ctx); }
 
 unsigned int us_quic_stream_header_count(us_quic_stream_t *s) {
     return s->hset ? s->hset->count : 0;
@@ -778,5 +812,9 @@ void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int
 }
 
 void us_quic_socket_close(us_quic_socket_t *s) { if (s->conn) lsquic_conn_close(s->conn); }
+
+#else /* !LIBUS_USE_QUIC */
+
+void us_quic_loop_process(struct us_loop_t *loop) { (void) loop; }
 
 #endif /* LIBUS_USE_QUIC */

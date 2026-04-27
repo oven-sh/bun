@@ -33,12 +33,7 @@ struct Http3Context {
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {
                 res->writeStatus("404 Not Found")->end();
-                return;
             }
-            req.setParameters(cd->router.getParameters());
-            /* If the handler responded synchronously without arming onAborted
-             * or onData, we're done; otherwise the stream stays open and the
-             * stream callbacks below take over. */
         });
 
         us_quic_socket_context_on_stream_data(ctx, [](us_quic_stream_t *s, const char *data, unsigned len, int fin) {

@@ -2334,7 +2334,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             // header field is malformed.
             if (comptime Ctx.is_h3) if (req.header("transfer-encoding") != null) {
                 resp.writeStatus("400 Bad Request");
-                resp.endWithoutBody(true);
+                resp.endWithoutBody(false);
                 return null;
             };
 
@@ -2348,10 +2348,12 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         break :brk 0;
                     };
 
-                    // Abort the request very early.
+                    // Abort the request very early. For H3 a per-request error
+                    // is a stream error (RFC 9114 §4.1.2); close_connection
+                    // would CONNECTION_CLOSE every sibling stream on the conn.
                     if (len > this.config.max_request_body_size) {
                         resp.writeStatus("413 Request Entity Too Large");
-                        resp.endWithoutBody(true);
+                        resp.endWithoutBody(comptime !Ctx.is_h3);
                         return null;
                     }
 
@@ -2415,7 +2417,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 if (path.len > 0 and path[0] == '/') {
                     if (req.header("host")) |host| {
                         const fmt = bun.fmt.HostFormatter{ .is_https = true, .host = host };
-                        request_object.url = bun.String.createFormat("https://{f}{s}", .{ fmt, path }) catch bun.outOfMemory();
+                        request_object.url = bun.handleOom(bun.String.createFormat("https://{f}{s}", .{ fmt, path }));
                     } else {
                         request_object.url = bun.String.cloneUTF8(path);
                     }

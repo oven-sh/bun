@@ -17,6 +17,7 @@
 // clang-format off
 #include "libusockets.h"
 #include "internal/internal.h"
+#include "quic.h"
 #include <stdlib.h>
 #include <stdio.h>
 #ifndef WIN32
@@ -312,6 +313,9 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
 
 void us_internal_loop_post(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
+#ifdef LIBUS_USE_QUIC
+    if (loop->data.quic_head) us_quic_loop_process(loop);
+#endif
     /* A poll callback may re-enter the loop (e.g. expect().toThrow() →
      * waitForPromise → us_loop_run_bun_tick). The inner tick must not free
      * closed sockets/contexts: the outer tick's dispatch is mid-iteration

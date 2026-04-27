@@ -82,10 +82,8 @@ struct Http3Response {
         if ((size_t) w < data.length()) {
             d->backpressure.append(data.data() + w, data.length() - (size_t) w);
             us_quic_stream_want_write((us_quic_stream_t *) this, 1);
-            us_quic_stream_kick((us_quic_stream_t *) this);
             return false;
         }
-        us_quic_stream_kick((us_quic_stream_t *) this);
         return true;
     }
 
@@ -95,10 +93,6 @@ struct Http3Response {
 
     std::pair<bool, bool> tryEnd(std::string_view data, uint64_t totalSize = 0, bool closeConnection = false) {
         bool ok = internalEnd(data, totalSize, true, true, closeConnection);
-        /* When ok==true, internalEnd → markDone → us_quic_stream_kick can run
-         * lsquic_engine_process_conns synchronously, which may call on_close
-         * and free `this`. hasResponded() is definitionally true in that case
-         * (markDone cleared HTTP_RESPONSE_PENDING), so short-circuit. */
         return {ok, ok || hasResponded()};
     }
 
@@ -280,7 +274,6 @@ private:
             d->backpressure.append(data.data() + w, data.length() - (size_t) w);
             d->endAfterDrain = true;
             us_quic_stream_want_write((us_quic_stream_t *) this, 1);
-            us_quic_stream_kick((us_quic_stream_t *) this);
             return false;
         }
 
@@ -305,7 +298,6 @@ private:
             us_quic_socket_t *qs = us_quic_stream_socket((us_quic_stream_t *) this);
             if (qs) us_quic_socket_close(qs);
         }
-        us_quic_stream_kick((us_quic_stream_t *) this);
     }
 };
 

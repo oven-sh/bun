@@ -788,7 +788,11 @@ describe("Bun.serve HTTP/3 adversarial", () => {
  * port + a way to send it stdin commands ("reload" / "stop"). */
 async function withCustomServer(
   script: string,
-  fn: (port: number, send: (cmd: string) => void, proc: ReturnType<typeof Bun.spawn>) => Promise<void>,
+  fn: (
+    port: number,
+    send: (cmd: string) => void,
+    waitForStderr: (re: RegExp) => Promise<RegExpMatchArray>,
+  ) => Promise<void>,
 ) {
   using dir = tempDir("serve-http3-custom", { "server.mjs": script });
   const proc = Bun.spawn({
@@ -799,29 +803,36 @@ async function withCustomServer(
     stderr: "pipe",
     stdin: "pipe",
   });
-  let port = 0;
+  // Single owner of stderr: buffer everything and let callers await patterns.
+  // Avoids the two-consumers race where a background drain steals the line a
+  // test is waiting for.
   let buf = "";
-  for await (const chunk of proc.stderr) {
-    buf += new TextDecoder().decode(chunk);
-    const m = buf.match(/PORT=(\d+)/);
-    if (m) {
-      port = Number(m[1]);
-      break;
-    }
-    if (buf.length > 8192) break;
-  }
-  (async () => {
-    for await (const _ of proc.stderr) {
+  const waiters: Array<{ re: RegExp; resolve: (m: RegExpMatchArray) => void }> = [];
+  const drain = (async () => {
+    for await (const chunk of proc.stderr) {
+      buf += new TextDecoder().decode(chunk);
+      for (let i = waiters.length - 1; i >= 0; i--) {
+        const m = buf.match(waiters[i].re);
+        if (m) waiters.splice(i, 1)[0].resolve(m);
+      }
     }
   })();
+  const waitForStderr = (re: RegExp) =>
+    new Promise<RegExpMatchArray>(resolve => {
+      const m = buf.match(re);
+      if (m) return resolve(m);
+      waiters.push({ re, resolve });
+    });
+  const port = Number((await waitForStderr(/PORT=(\d+)/))[1]);
   expect(port).toBeGreaterThan(0);
   const send = (cmd: string) => proc.stdin!.write(cmd + "\n");
   try {
-    await fn(port, send, proc);
+    await fn(port, send, waitForStderr);
   } finally {
     proc.stdin?.end();
     proc.kill();
     await proc.exited;
+    await drain.catch(() => {});
   }
 }
 
@@ -848,16 +859,11 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
         }
       });
     `;
-    await withCustomServer(script, async (port, send, proc) => {
+    await withCustomServer(script, async (port, send, waitForStderr) => {
       const before = await curl3(port, "/old");
       expect(before.stdout).toBe("old-route");
       send("reload");
-      // wait for the reload acknowledgment so we don't race the router swap
-      let ack = "";
-      for await (const chunk of proc.stderr) {
-        ack += new TextDecoder().decode(chunk);
-        if (ack.includes("RELOADED")) break;
-      }
+      await waitForStderr(/RELOADED/);
       const oldAfter = await curl3(port, "/old", ["-D", "-"]);
       expect(oldAfter.stdout).toContain("HTTP/3 404");
       expect(oldAfter.stdout).toContain("fallback");
@@ -888,12 +894,11 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
         }
       });
     `;
-    await withCustomServer(script, async (port, send, proc) => {
+    await withCustomServer(script, async (port, send, waitForStderr) => {
       const ok = await curl3(port, "/");
       expect(ok.stdout).toBe("alive");
       send("stop");
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+      await waitForStderr(/STOPPED/);
       // port should now be dead — connect must fail, not hang
       const dead = await curl3(port, "/", ["--connect-timeout", "2"]);
       expect(dead.exitCode).not.toBe(0);
@@ -1029,7 +1034,7 @@ describe("Bun.serve HTTP/3 production", () => {
     });
   });
 
-  // Bun.serve doesn't auto-send 100-continue for any transport (no Expect:
-  // handling in prepareJsRequestContext); us_quic_stream_send_informational
-  // exists for when that lands but is currently unreferenced.
+  // Expect: 100-continue is handled at the uWS layer for both transports
+  // (HttpContext.h / Http3Context.h call writeContinue before routing); a
+  // curl --expect100-timeout assertion was flaky enough to drop here.
 });

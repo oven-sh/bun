@@ -105,9 +105,11 @@ int us_quic_stream_has_unacked(us_quic_stream_t *s);
 void *us_quic_stream_ext(us_quic_stream_t *s);
 us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s);
 us_quic_socket_context_t *us_quic_stream_context(us_quic_stream_t *s);
-/* Drive the engine after writing from outside a callback. No-op if already
- * inside process_conns. */
-void us_quic_stream_kick(us_quic_stream_t *s);
+
+/* Drive every QUIC engine on `loop` and re-arm the per-loop fallthrough
+ * timer to the soonest earliest_adv_tick. Called from us_internal_loop_post
+ * and from drainMicrotasks; cheap when quic_head is NULL. */
+void us_quic_loop_process(struct us_loop_t *loop);
 
 /* Incoming headers — valid from on_stream_headers until on_stream_close. */
 unsigned int us_quic_stream_header_count(us_quic_stream_t *s);

@@ -26,7 +26,7 @@ const max_request_headers = 256;
 var shared_request_headers_buf: [max_request_headers]picohttp.Header = undefined;
 
 // this doesn't need to be stack memory because it is immediately cloned after use
-pub var shared_response_headers_buf: [256]picohttp.Header = undefined;
+var shared_response_headers_buf: [256]picohttp.Header = undefined;
 
 pub const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 

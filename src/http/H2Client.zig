@@ -25,6 +25,7 @@ pub const Stream = struct {
     body_buffer: std.ArrayListUnmanaged(u8) = .{},
 
     end_stream_received: bool = false,
+    seen_headers: bool = false,
     headers_ready: bool = false,
     headers_end_stream: bool = false,
     /// Set once the END_STREAM flag has been written on the request side.
@@ -812,6 +813,7 @@ pub const ClientSession = struct {
             },
             .HTTP_FRAME_HEADERS => {
                 const stream = this.streams.get(@intCast(header.streamIdentifier)) orelse return;
+                stream.seen_headers = true;
                 var fragment = payload;
                 if (header.flags & @intFromEnum(wire.HeadersFrameFlags.PADDED) != 0) {
                     fragment = stripPadding(fragment) orelse {
@@ -855,6 +857,10 @@ pub const ClientSession = struct {
             .HTTP_FRAME_DATA => {
                 this.conn_unacked_bytes +|= header.length;
                 const stream = this.streams.get(@intCast(header.streamIdentifier)) orelse return;
+                if (!stream.seen_headers) {
+                    stream.fatal_error = error.HTTP2ProtocolError;
+                    return;
+                }
                 stream.unacked_bytes +|= header.length;
                 var fragment = payload;
                 if (header.flags & @intFromEnum(wire.DataFrameFlags.PADDED) != 0) {

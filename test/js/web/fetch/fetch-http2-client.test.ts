@@ -479,6 +479,132 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
     );
   }, 30_000);
 
+  test("response trailers are consumed without breaking the body", async () => {
+    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200, "content-type": "text/plain" }, { waitForTrailers: true });
+      stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "hello" }));
+      stream.end("body-text");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = spawnFetch(`
+        const r = await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } });
+        console.log(r.status, await r.text());
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("200 body-text");
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
+  // Bun's node:http2 server currently emits an empty DATA+END_STREAM for
+  // stream.close(code) rather than RST_STREAM, so this also covers the
+  // RFC 9113 §8.1 "DATA before HEADERS" stream-error case.
+  test("server-reset stream fails that request; sibling on the session survives", async () => {
+    let sessions = 0;
+    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    server.on("session", () => sessions++);
+    server.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      if (headers[":path"] === "/bad") {
+        stream.close(http2.constants.NGHTTP2_PROTOCOL_ERROR);
+        return;
+      }
+      setTimeout(() => {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      }, 50);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = spawnFetch(`
+        const url = "https://localhost:${port}";
+        const opts = { tls: { rejectUnauthorized: false } };
+        const [good, bad] = await Promise.allSettled([
+          fetch(url + "/good", opts).then(r => r.text()),
+          fetch(url + "/bad", opts).then(r => r.text()),
+        ]);
+        console.log(good.status, good.value, bad.status);
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("fulfilled ok rejected");
+      expect(exitCode).toBe(0);
+      expect(sessions).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("connection-specific request headers are stripped before HPACK", async () => {
+    let seen: string[] = [];
+    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    server.on("stream", (stream, headers) => {
+      seen = Object.keys(headers).filter(k => !k.startsWith(":"));
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = spawnFetch(`
+        const r = await fetch("https://localhost:${port}", {
+          headers: {
+            "x-keep": "me",
+            "Connection": "keep-alive",
+            "Keep-Alive": "timeout=5",
+            "Proxy-Connection": "x",
+            "Transfer-Encoding": "chunked",
+            "Upgrade": "ws",
+          },
+          tls: { rejectUnauthorized: false },
+        });
+        console.log(r.status);
+      `);
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("200");
+      expect(exitCode).toBe(0);
+      expect(seen).toContain("x-keep");
+      for (const bad of ["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade"]) {
+        expect(seen).not.toContain(bad);
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  test("multiple Set-Cookie response headers survive HPACK decode", async () => {
+    const server = http2.createSecureServer({ ...tls, allowHTTP1: false });
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200, "set-cookie": ["a=b", "c=d", "e=f"] });
+      stream.end();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = spawnFetch(`
+        const r = await fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } });
+        console.log(JSON.stringify(r.headers.getSetCookie()));
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe(`["a=b","c=d","e=f"]`);
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
   test("flag off: ALPN does not offer h2", async () => {
     let sawH2 = false;
     const server = http2.createSecureServer({ ...tls, allowHTTP1: true }, (req, res) => {

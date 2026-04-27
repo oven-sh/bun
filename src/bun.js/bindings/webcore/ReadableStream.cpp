@@ -334,6 +334,27 @@ extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStrea
     WebCore::ReadableStream::cancel(*globalObject, readableStream, exception);
 }
 
+// Like ReadableStream__cancel but forwards an arbitrary JS reason verbatim to
+// the stream's cancel algorithm instead of synthesizing a DOMException. Used
+// by fetch() to honor AbortSignal.reason when cancelling a request body.
+extern "C" void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedReason)
+{
+    auto* readableStream = dynamicDowncast<WebCore::JSReadableStream>(JSC::JSValue::decode(possibleReadableStream));
+    if (!readableStream) [[unlikely]]
+        return;
+
+    auto& vm = globalObject->vm();
+    auto* clientData = static_cast<JSVMClientData*>(vm.clientData);
+    auto& privateName = clientData->builtinFunctions().readableStreamInternalsBuiltins().readableStreamCancelPrivateName();
+
+    JSC::JSLockHolder lock(vm);
+    MarkedArgumentBuffer arguments;
+    arguments.append(readableStream);
+    arguments.append(JSC::JSValue::decode(encodedReason));
+    ASSERT(!arguments.hasOverflowed());
+    invokeReadableStreamFunction(*globalObject, privateName, JSC::jsUndefined(), arguments);
+}
+
 extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     auto value = JSC::JSValue::decode(possibleReadableStream);

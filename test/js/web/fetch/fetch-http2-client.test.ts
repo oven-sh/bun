@@ -2,6 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { bunEnv, bunExe, tls } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
+import https from "node:https";
 import nodetls from "node:tls";
 import zlib from "node:zlib";
 
@@ -125,7 +126,7 @@ function spawnFetch(script: string) {
   });
 }
 
-describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () => {
+describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () => {
   test("GET: status, headers and body round-trip", async () => {
     await withH2Server(
       (req, res) => {
@@ -199,7 +200,7 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
   });
 
   test("response body larger than one DATA frame", async () => {
-    const big = "a".repeat(70_000);
+    const big = Buffer.alloc(70_000, "a").toString();
     await withH2Server(
       (_req, res) => {
         res.writeHead(200);
@@ -967,7 +968,7 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
             const r = await fetch("${url}", {
               method: "POST",
               headers: { Expect: "100-continue" },
-              body: "x".repeat(50000),
+              body: Buffer.alloc(50000, "x").toString(),
               tls: { rejectUnauthorized: false },
             });
             console.log(r.status);
@@ -1014,6 +1015,76 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
           `);
           const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(stdout.trim()).toBe("rejected");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("Content-Length satisfied before END_STREAM doesn't dereference a freed client", async () => {
+      // Server sends body in one DATA frame without END_STREAM, then a
+      // separate empty DATA(END_STREAM). The first frame fully satisfies
+      // Content-Length, so progressUpdate fires and the JS callback frees
+      // the AsyncHTTP; the second frame must not touch a stale client ptr.
+      await withRawH2Server(
+        (conn, id) => {
+          conn.headers(id, Buffer.concat([hpackStatus(200), hpackLit("content-length", "5")]));
+          conn.data(id, "hello", false);
+          // brief gap so the two frames hit separate onData calls
+          setTimeout(() => conn.data(id, "", true), 30);
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
+            console.log(r.status, await r.text());
+            await Bun.sleep(80);
+            console.log("survived");
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).not.toContain("panic");
+          expect(stdout.trim()).toBe("200 hello\nsurvived");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("SETTINGS_MAX_FRAME_SIZE below 16384 is rejected as a connection error", async () => {
+      // RFC 9113 §6.5.2: values outside [16384, 2^24-1] are PROTOCOL_ERROR.
+      // Without the lower bound a MAX_FRAME_SIZE of 0 made writeHeaderBlock
+      // loop forever emitting zero-length frames; with it the connection
+      // should fail promptly.
+      await withRawH2Server(
+        (conn, id) => {
+          conn.socket.write(frame(4, 0, 0, Buffer.concat([Buffer.from([0, 5]), u32be(0)])));
+          conn.headers(id, hpackStatus(200), { endStream: true });
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try {
+              const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
+              console.log("status", r.status);
+            } catch (e) { console.log("rejected", e.code); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected HTTP2ProtocolError");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("RST_STREAM(NO_ERROR) before final HEADERS fails the request instead of hanging", async () => {
+      await withRawH2Server(
+        (conn, id) => {
+          conn.rst(id, 0);
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try {
+              await fetch("${url}", { tls: { rejectUnauthorized: false } });
+              console.log("ok");
+            } catch (e) { console.log("rejected", e.code); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected HTTP2StreamReset");
           expect(exitCode).toBe(0);
         },
       );
@@ -1078,7 +1149,6 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
   });
 
   test("protocol:'http2' against an h1-only server fails with HTTP2Unsupported", async () => {
-    const https = await import("node:https");
     const server = https.createServer({ ...tls }, (_req, res) => res.end("h1"));
     server.listen(0);
     await once(server, "listening");

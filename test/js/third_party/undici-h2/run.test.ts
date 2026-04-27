@@ -5,7 +5,8 @@
 // Update by re-copying from a fresh undici checkout and re-applying the
 // import rewrite at the top of http2.js (see undici-shim.mjs).
 
+// The shim forces protocol:"http2" per request, so the env feature-flag is
+// not needed (and process.env writes don't reach the C environ anyway).
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-process.env.BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT = "1";
 
 await import("./http2.js");

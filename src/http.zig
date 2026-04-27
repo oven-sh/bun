@@ -1020,10 +1020,12 @@ pub fn doRedirect(
 ) void {
     log("doRedirect", .{});
     if (this.state.original_request_body == .stream) {
-        // we cannot follow redirect from a stream right now
-        // NOTE: we can use .tee(), reset the readable stream and cancel/wait pending write requests before redirecting. node.js just errors here so we just closeAndFail too.
-        this.closeAndFail(error.UnexpectedRedirect, is_ssl, socket);
-        return;
+        // handleResponseMetadata already rejected every non-303 status with a
+        // stream body (RequestBodyNotReusable). Reaching here means the
+        // redirect downgraded to GET with a null body; drop the streaming
+        // flag so the follow-up request goes out without Transfer-Encoding,
+        // and let state.reset() release the ThreadSafeStreamBuffer ref.
+        this.flags.is_streaming_request_body = false;
     }
 
     this.unix_socket_path.deinit();
@@ -1976,6 +1978,13 @@ fn resolvePendingH2(this: *HTTPClient, session: ?*H2.ClientSession) void {
             s.enqueue(waiter);
             continue;
         }
+        // ALPN selected http/1.1 on the leader's handshake; a force_http2
+        // waiter would just open a fresh TLS connection and fail the same
+        // way, so fail it here instead of burning another handshake.
+        if (waiter.flags.force_http2) {
+            waiter.fail(error.HTTP2Unsupported);
+            continue;
+        }
         waiter.start_(true);
     }
 }
@@ -2710,6 +2719,15 @@ pub fn handleResponseMetadata(
         if (this.redirect_type == FetchRedirect.follow and location.len > 0 and this.remaining_redirect_count > 0) {
             switch (status_code) {
                 302, 301, 307, 308, 303 => {
+                    // https://fetch.spec.whatwg.org/#http-redirect-fetch step 11:
+                    // "If internalResponse's status is not 303, request's body
+                    // is non-null, and request's body's source is null, then
+                    // return a network error." A ReadableStream body has no
+                    // source to replay from, so only 303 (which drops the body
+                    // and switches to GET) may be followed.
+                    if (status_code != 303 and this.state.original_request_body == .stream) {
+                        return error.RequestBodyNotReusable;
+                    }
                     var is_same_origin = true;
 
                     {

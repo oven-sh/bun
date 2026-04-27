@@ -749,6 +749,16 @@ pub const FetchTasklet = struct {
             return .{ .AbortReason = reason };
         }
 
+        // Fetch-spec "network error" cases that callers feature-detect via
+        // `instanceof TypeError`. Keep this list narrow; the catch-all
+        // SystemError below is still a plain Error for backwards compat.
+        switch (this.result.fail.?) {
+            error.RequestBodyNotReusable => return .{
+                .TypeError = bun.String.static("Request body is a ReadableStream and cannot be replayed for this redirect"),
+            },
+            else => {},
+        }
+
         // some times we don't have metadata so we also check http.url
         const path = if (this.metadata) |metadata|
             bun.String.cloneUTF8(metadata.url)
@@ -1209,6 +1219,16 @@ pub const FetchTasklet = struct {
         if (this.sink) |sink| {
             sink.cancel(reason);
             return;
+        }
+        // Abort fired before the HTTP thread asked for the body, so the
+        // ReadableStream was never wired into a sink. Cancel it directly so
+        // the underlying source's cancel(reason) callback still observes the
+        // signal's reason (https://fetch.spec.whatwg.org/#abort-fetch step 5).
+        if (this.is_waiting_request_stream_start and this.request_body == .ReadableStream) {
+            this.is_waiting_request_stream_start = false;
+            if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
+                stream.cancelWithReason(this.global_this, reason);
+            }
         }
     }
 

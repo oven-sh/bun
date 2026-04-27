@@ -8,6 +8,11 @@ import { once } from "node:events";
 import { tls } from "harness";
 
 export async function startServer(): Promise<{ origin: string; close: () => Promise<void> }> {
+  // Per-uuid request counter for the network-partition-key.py route, so the
+  // 421 no-retry assertion observes the actual request count instead of a
+  // hardcoded "1".
+  const partitionHits = new Map<string, number>();
+
   const server = createSecureServer({ key: tls.key, cert: tls.cert }, (req, res) => {
     const url = new URL(req.url, "https://localhost");
     const path = url.pathname;
@@ -41,8 +46,11 @@ export async function startServer(): Promise<{ origin: string; close: () => Prom
 
     if (path.includes("/network-partition-key.py")) {
       const status = Number(url.searchParams.get("status") ?? 200);
+      const uuid = url.searchParams.get("uuid") ?? "";
+      const n = (partitionHits.get(uuid) ?? 0) + 1;
+      partitionHits.set(uuid, n);
       res.writeHead(status, { "content-type": "text/plain" });
-      res.end("ok. Request was sent 1 times. 1 connections were created.");
+      res.end(`ok. Request was sent ${n} times. 1 connections were created.`);
       return;
     }
 

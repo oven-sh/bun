@@ -16,16 +16,6 @@ export const knownFailures = new Set<string>([
   // Spec requires TypeError on a 401 challenge with a non-replayable body;
   // Bun returns the 401 response instead.
   "Streaming upload should fail on a 401 response",
-  // Bun's fetch doesn't propagate the abort reason into ReadableStream.cancel.
-  "ReadbleStream should be closed on signal.abort",
-  // Bun forces redirect:"error" for streaming bodies, so every redirect
-  // (including 303, which the spec says should drop the body and follow)
-  // surfaces as a non-TypeError "UnexpectedRedirect". Same on the h1 path.
-  "Fetch upload streaming should be accepted on 303",
-  "Fetch upload streaming should fail on 301",
-  "Fetch upload streaming should fail on 302",
-  "Fetch upload streaming should fail on 307",
-  "Fetch upload streaming should fail on 308",
 ]);
 
 function register(name: string, body: () => unknown | Promise<unknown>) {

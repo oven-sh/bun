@@ -112,8 +112,23 @@ pub const ClientSession = struct {
     preface_sent: bool = false,
     settings_received: bool = false,
     goaway_received: bool = false,
+    /// Set when the HPACK encoder's dynamic table has diverged from the
+    /// server's view (writeRequest failed mid-encode). Existing siblings whose
+    /// HEADERS already went out are unaffected, but no new stream may be
+    /// opened on this connection.
+    encoder_poisoned: bool = false,
+    /// True while onData's deliver loop is running. retryFromH2/doRedirect
+    /// re-dispatch may try to adopt back onto this same session; blocking
+    /// that during delivery prevents `streams` mutation under iteration and
+    /// the failAll → onClose → double-free path.
+    delivering: bool = false,
     goaway_last_stream_id: u31 = 0,
     fatal_error: ?anyerror = null,
+    /// HEADERS/CONTINUATION fragments for a stream we no longer track (e.g.
+    /// in flight when we RST'd it). RFC 9113 §4.3 still requires the block be
+    /// fed to the HPACK decoder so the connection-level dynamic table stays
+    /// in sync.
+    orphan_header_block: std.ArrayListUnmanaged(u8) = .{},
 
     remote_max_frame_size: u24 = wire.DEFAULT_MAX_FRAME_SIZE,
     remote_max_concurrent_streams: u32 = 100,
@@ -153,6 +168,7 @@ pub const ClientSession = struct {
         while (it.next()) |e| e.value_ptr.*.deinit();
         this.streams.deinit(bun.default_allocator);
         this.pending_attach.deinit(bun.default_allocator);
+        this.orphan_header_block.deinit(bun.default_allocator);
         bun.default_allocator.free(this.hostname);
         if (this.ssl_config) |*s| s.deinit();
         bun.destroy(this);
@@ -160,6 +176,7 @@ pub const ClientSession = struct {
 
     pub fn hasHeadroom(this: *const ClientSession) bool {
         return !this.goaway_received and
+            !this.encoder_poisoned and
             this.fatal_error == null and
             this.streams.count() < this.remote_max_concurrent_streams and
             this.next_stream_id < wire.MAX_STREAM_ID;
@@ -171,6 +188,14 @@ pub const ClientSession = struct {
 
     pub fn adopt(this: *ClientSession, client: *HTTPClient) void {
         client.registerAbortTracker(true, this.socket);
+        if (this.delivering) {
+            // Re-dispatch (retryFromH2/doRedirect) reached us from inside our
+            // own onData deliver loop. Park until the loop finishes so
+            // attach() doesn't mutate `streams` under iteration or trigger
+            // failAll while a stream is mid-delivery.
+            bun.handleOom(this.pending_attach.append(bun.default_allocator, client));
+            return;
+        }
         this.attach(client);
     }
 
@@ -205,6 +230,7 @@ pub const ClientSession = struct {
     pub fn canPool(this: *const ClientSession) bool {
         return this.streams.count() == 0 and
             !this.goaway_received and
+            !this.encoder_poisoned and
             this.fatal_error == null and
             this.expecting_continuation == 0 and
             this.read_buffer.items.len == 0 and
@@ -281,7 +307,17 @@ pub const ClientSession = struct {
         client.setTimeout(this.socket, 5);
         const request = client.buildRequest(client.state.original_request_body.len());
         this.writeRequest(client, stream, request) catch |err| {
-            this.detachWithFailure(stream, err);
+            // encodeHeader pushes into the HPACK encoder's dynamic table per
+            // call, so a mid-encode failure leaves entries the server will
+            // never see. Mark the session unusable for future streams and
+            // remove without RST — from the server's view this stream id was
+            // never opened (RST on an idle stream is a connection error per
+            // RFC 9113 §5.1).
+            this.encoder_poisoned = true;
+            _ = this.streams.swapRemove(stream.id);
+            stream.deinit();
+            client.h2 = null;
+            client.failFromH2(err);
             return;
         };
         if (client.verbose != .none) {
@@ -318,6 +354,8 @@ pub const ClientSession = struct {
         defer encoded.deinit(bun.default_allocator);
 
         var lower_buf: [256]u8 = undefined;
+        var lower_heap: std.ArrayListUnmanaged(u8) = .{};
+        defer lower_heap.deinit(bun.default_allocator);
 
         try this.encodeHeader(&encoded, ":method", request.method, false);
         try this.encodeHeader(&encoded, ":scheme", "https", false);
@@ -341,7 +379,14 @@ pub const ClientSession = struct {
             const lowered = if (header.name.len <= lower_buf.len) brk: {
                 for (header.name, 0..) |c, i| lower_buf[i] = std.ascii.toLower(c);
                 break :brk lower_buf[0..header.name.len];
-            } else header.name;
+            } else brk: {
+                // Pathologically long name; lowercase via a heap scratch so
+                // mixed-case bytes never reach the wire (RFC 9113 §8.2.1).
+                lower_heap.clearRetainingCapacity();
+                bun.handleOom(lower_heap.ensureTotalCapacity(bun.default_allocator, header.name.len));
+                for (header.name) |c| lower_heap.appendAssumeCapacity(std.ascii.toLower(c));
+                break :brk lower_heap.items;
+            };
             try this.encodeHeader(&encoded, lowered, header.value, never_index);
         }
 
@@ -569,7 +614,10 @@ pub const ClientSession = struct {
 
         // Deliver per-stream. Iterate by index because delivery may remove
         // entries (swapRemove keeps earlier indices stable; revisiting the
-        // current index after a removal is intentional).
+        // current index after a removal is intentional). `delivering` blocks
+        // hasHeadroom() so retryFromH2/doRedirect re-dispatch can't adopt
+        // back onto this session while we're iterating it.
+        this.delivering = true;
         var i: usize = 0;
         while (i < this.streams.count()) {
             const stream = this.streams.values()[i];
@@ -579,6 +627,15 @@ pub const ClientSession = struct {
             } else {
                 i += 1;
             }
+        }
+        this.delivering = false;
+
+        // Retries/redirects that re-dispatched onto this session during the
+        // loop are parked in pending_attach; attach them now that iteration
+        // is finished.
+        if (this.pending_attach.items.len > 0) {
+            this.drainPending();
+            _ = this.flush() catch |err| return this.failAll(err);
         }
 
         this.maybeRelease();
@@ -771,7 +828,20 @@ pub const ClientSession = struct {
             };
             stream.body_buffer.clearRetainingCapacity();
             if (terminal) return this.finishStream(client);
-            if (report) client.progressUpdate(true, this.ctx, this.socket);
+            if (report) {
+                // handleResponseBody may report completion before END_STREAM
+                // (Content-Length satisfied). The terminal progressUpdate
+                // path frees the AsyncHTTP that owns `client`, so detach
+                // first; the trailing END_STREAM/trailers land on a stream
+                // we no longer track and are discarded.
+                if (client.state.isDone()) {
+                    stream.client = null;
+                    client.h2 = null;
+                    client.progressUpdate(true, this.ctx, this.socket);
+                    return true;
+                }
+                client.progressUpdate(true, this.ctx, this.socket);
+            }
             return false;
         }
 
@@ -814,7 +884,18 @@ pub const ClientSession = struct {
                     var unit: wire.SettingsPayloadUnit = undefined;
                     wire.SettingsPayloadUnit.from(&unit, payload[i .. i + wire.SettingsPayloadUnit.byteSize], 0, true);
                     switch (@as(wire.SettingsType, @enumFromInt(unit.type))) {
-                        .SETTINGS_MAX_FRAME_SIZE => this.remote_max_frame_size = @truncate(@min(unit.value, wire.MAX_FRAME_SIZE)),
+                        .SETTINGS_MAX_FRAME_SIZE => {
+                            // RFC 9113 §6.5.2: values outside [16384, 2^24-1]
+                            // are a connection PROTOCOL_ERROR. Without the
+                            // lower bound, a 0 here makes writeHeaderBlock /
+                            // writeDataWindowed spin forever emitting empty
+                            // frames.
+                            if (unit.value < wire.DEFAULT_MAX_FRAME_SIZE or unit.value > wire.MAX_FRAME_SIZE) {
+                                this.fatal_error = error.HTTP2ProtocolError;
+                                return;
+                            }
+                            this.remote_max_frame_size = @truncate(unit.value);
+                        },
                         .SETTINGS_MAX_CONCURRENT_STREAMS => this.remote_max_concurrent_streams = unit.value,
                         .SETTINGS_INITIAL_WINDOW_SIZE => {
                             const next = @min(unit.value, @as(u32, wire.MAX_WINDOW_SIZE));
@@ -845,9 +926,40 @@ pub const ClientSession = struct {
                 }
             },
             .HTTP_FRAME_HEADERS => {
-                const stream = this.streams.get(@intCast(header.streamIdentifier)) orelse return;
-                stream.seen_headers = true;
                 var fragment = payload;
+                const stream_id: u31 = @intCast(header.streamIdentifier);
+                const maybe_stream = this.streams.get(stream_id);
+                if (maybe_stream == null) {
+                    // Stream we no longer track (RST_STREAM crossed an
+                    // in-flight HEADERS). The block must still be HPACK-
+                    // decoded so the connection-level dynamic table stays in
+                    // sync with the server's encoder, and CONTINUATION must
+                    // be tracked so a follow-up frame doesn't fatal the whole
+                    // connection.
+                    if (header.flags & @intFromEnum(wire.HeadersFrameFlags.PADDED) != 0) {
+                        fragment = stripPadding(fragment) orelse {
+                            this.fatal_error = error.HTTP2ProtocolError;
+                            return;
+                        };
+                    }
+                    if (header.flags & @intFromEnum(wire.HeadersFrameFlags.PRIORITY) != 0) {
+                        if (fragment.len < wire.StreamPriority.byteSize) {
+                            this.fatal_error = error.HTTP2ProtocolError;
+                            return;
+                        }
+                        fragment = fragment[wire.StreamPriority.byteSize..];
+                    }
+                    this.orphan_header_block.clearRetainingCapacity();
+                    bun.handleOom(this.orphan_header_block.appendSlice(bun.default_allocator, fragment));
+                    if (header.flags & @intFromEnum(wire.HeadersFrameFlags.END_HEADERS) != 0) {
+                        this.decodeDiscardOrphan();
+                    } else {
+                        this.expecting_continuation = stream_id;
+                    }
+                    return;
+                }
+                const stream = maybe_stream.?;
+                stream.seen_headers = true;
                 if (header.flags & @intFromEnum(wire.HeadersFrameFlags.PADDED) != 0) {
                     fragment = stripPadding(fragment) orelse {
                         this.fatal_error = error.HTTP2ProtocolError;
@@ -876,15 +988,19 @@ pub const ClientSession = struct {
                     this.fatal_error = error.HTTP2ProtocolError;
                     return;
                 }
-                const stream = this.streams.get(this.expecting_continuation) orelse {
-                    this.fatal_error = error.HTTP2ProtocolError;
-                    return;
-                };
-                bun.handleOom(stream.header_block.appendSlice(bun.default_allocator, payload));
-                if (header.flags & @intFromEnum(wire.HeadersFrameFlags.END_HEADERS) != 0) {
-                    this.expecting_continuation = 0;
-                    stream.end_stream_received = stream.end_stream_received or stream.headers_end_stream;
-                    this.decodeHeaderBlock(stream);
+                if (this.streams.get(this.expecting_continuation)) |stream| {
+                    bun.handleOom(stream.header_block.appendSlice(bun.default_allocator, payload));
+                    if (header.flags & @intFromEnum(wire.HeadersFrameFlags.END_HEADERS) != 0) {
+                        this.expecting_continuation = 0;
+                        stream.end_stream_received = stream.end_stream_received or stream.headers_end_stream;
+                        this.decodeHeaderBlock(stream);
+                    }
+                } else {
+                    bun.handleOom(this.orphan_header_block.appendSlice(bun.default_allocator, payload));
+                    if (header.flags & @intFromEnum(wire.HeadersFrameFlags.END_HEADERS) != 0) {
+                        this.expecting_continuation = 0;
+                        this.decodeDiscardOrphan();
+                    }
                 }
             },
             .HTTP_FRAME_DATA => {
@@ -915,7 +1031,10 @@ pub const ClientSession = struct {
                 stream.fatal_error = switch (code) {
                     @intFromEnum(wire.ErrorCode.NO_ERROR) => blk: {
                         stream.end_stream_received = true;
-                        break :blk null;
+                        // RST(NO_ERROR) before final HEADERS still means the
+                        // server closed without responding; surface it so the
+                        // request fails instead of parking forever.
+                        break :blk if (stream.status_code == 0) error.HTTP2StreamReset else null;
                     },
                     @intFromEnum(wire.ErrorCode.REFUSED_STREAM) => error.HTTP2RefusedStream,
                     else => error.HTTP2StreamReset,
@@ -941,6 +1060,20 @@ pub const ClientSession = struct {
         }
     }
 
+    /// Feed an orphaned (untracked-stream) header block through the HPACK
+    /// decoder purely to keep the dynamic table in sync, then discard.
+    fn decodeDiscardOrphan(this: *ClientSession) void {
+        defer this.orphan_header_block.clearRetainingCapacity();
+        var offset: usize = 0;
+        while (offset < this.orphan_header_block.items.len) {
+            const result = this.hpack.decode(this.orphan_header_block.items[offset..]) catch {
+                this.fatal_error = error.HTTP2CompressionError;
+                return;
+            };
+            offset += result.next;
+        }
+    }
+
     /// HPACK-decode the buffered header block at parse time. Runs for every
     /// END_HEADERS so the dynamic table stays in sync regardless of how many
     /// HEADERS frames arrive in one read. 1xx and trailers are decoded then
@@ -956,7 +1089,12 @@ pub const ClientSession = struct {
         var offset: usize = 0;
         while (offset < stream.header_block.items.len) {
             const result = this.hpack.decode(stream.header_block.items[offset..]) catch {
-                stream.fatal_error = error.HTTP2CompressionError;
+                // The decoder has already committed earlier fields from this
+                // block to the connection-level dynamic table; the table is
+                // now out of sync with the server's encoder. RFC 9113 §4.3:
+                // a decoding error MUST be treated as a connection error of
+                // type COMPRESSION_ERROR.
+                this.fatal_error = error.HTTP2CompressionError;
                 return;
             };
             offset += result.next;

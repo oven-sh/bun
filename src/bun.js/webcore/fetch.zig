@@ -518,7 +518,7 @@ fn fetchImpl(
     }
 
     // protocol: "http2" | undefined — Bun extension to force ALPN h2.
-    {
+    extract_protocol: {
         const objects_to_try = [_]JSValue{
             options_object orelse .zero,
             request_init_object orelse .zero,
@@ -535,6 +535,7 @@ fn fetchImpl(
                             is_error = true;
                             return globalThis.throwInvalidArguments("fetch: 'protocol' must be \"http2\" or \"http1.1\"", .{});
                         }
+                        break :extract_protocol;
                     }
                 }
                 if (globalThis.hasException()) {

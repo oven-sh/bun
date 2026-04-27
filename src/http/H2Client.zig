@@ -24,10 +24,23 @@ pub const Stream = struct {
     /// DATA payload accumulated across one onData() pass.
     body_buffer: std.ArrayListUnmanaged(u8) = .{},
 
+    /// HPACK is decoded eagerly at parse time so the dynamic table stays
+    /// consistent across multiple HEADERS in one read; the resulting strings
+    /// land here until `deliverStream` hands them to handleResponseMetadata.
+    decoded_bytes: std.ArrayListUnmanaged(u8) = .{},
+    decoded_headers: std.ArrayListUnmanaged(picohttp.Header) = .{},
+    /// Final (non-1xx) status code; 0 until the response HEADERS arrive.
+    status_code: u32 = 0,
+
     end_stream_received: bool = false,
     seen_headers: bool = false,
+    /// Set once a non-1xx HEADERS block has been decoded and is awaiting
+    /// delivery. Subsequent HEADERS are trailers and decoded-then-dropped.
     headers_ready: bool = false,
     headers_end_stream: bool = false,
+    /// Expect: 100-continue is in effect: hold the request body until a 1xx
+    /// or final status arrives.
+    awaiting_continue: bool = false,
     /// Set once the END_STREAM flag has been written on the request side.
     request_body_done: bool = false,
     fatal_error: ?anyerror = null,
@@ -43,6 +56,8 @@ pub const Stream = struct {
     pub fn deinit(this: *Stream) void {
         this.header_block.deinit(bun.default_allocator);
         this.body_buffer.deinit(bun.default_allocator);
+        this.decoded_bytes.deinit(bun.default_allocator);
+        this.decoded_headers.deinit(bun.default_allocator);
         bun.destroy(this);
     }
 
@@ -84,12 +99,6 @@ pub const ClientSession = struct {
     /// Inbound bytes until a full 9-byte header + declared payload is
     /// available, so frame handlers always see complete frames.
     read_buffer: std.ArrayListUnmanaged(u8) = .{},
-
-    /// Backing storage for decoded header strings. lshpack returns
-    /// thread-local slices clobbered on the next decode call, so we copy
-    /// here and point `shared_response_headers_buf` into this buffer until
-    /// `cloneMetadata` makes its own copy.
-    decoded_header_bytes: std.ArrayListUnmanaged(u8) = .{},
 
     streams: std.AutoArrayHashMapUnmanaged(u31, *Stream) = .{},
     next_stream_id: u31 = 1,
@@ -140,7 +149,6 @@ pub const ClientSession = struct {
         this.hpack.deinit();
         this.write_buffer.deinit();
         this.read_buffer.deinit(bun.default_allocator);
-        this.decoded_header_bytes.deinit(bun.default_allocator);
         var it = this.streams.iterator();
         while (it.next()) |e| e.value_ptr.*.deinit();
         this.streams.deinit(bun.default_allocator);
@@ -341,6 +349,17 @@ pub const ClientSession = struct {
         const has_inline_body = client.state.original_request_body == .bytes and body.len > 0;
         const is_streaming = client.state.original_request_body == .stream;
 
+        if (has_inline_body or is_streaming) {
+            for (request.headers) |h| {
+                if (strings.eqlCaseInsensitiveASCIIICheckLength(h.name, "expect") and
+                    strings.eqlCaseInsensitiveASCIIICheckLength(h.value, "100-continue"))
+                {
+                    stream.awaiting_continue = true;
+                    break;
+                }
+            }
+        }
+
         this.writeHeaderBlock(stream.id, encoded.items, !has_inline_body and !is_streaming);
         if (has_inline_body) {
             stream.pending_body = body;
@@ -392,7 +411,7 @@ pub const ClientSession = struct {
     /// Push as much of `stream`'s request body as the send windows allow.
     /// Buffers into `write_buffer`; caller flushes.
     fn drainSendBody(this: *ClientSession, stream: *Stream) void {
-        if (stream.request_body_done) return;
+        if (stream.request_body_done or stream.awaiting_continue) return;
         const client = stream.client orelse return;
         switch (client.state.original_request_body) {
             .bytes => {
@@ -710,31 +729,26 @@ pub const ClientSession = struct {
 
         if (stream.headers_ready) {
             stream.headers_ready = false;
-            if (client.state.response_stage == .body) {
-                this.decodeAndDiscard(stream);
-            } else {
-                const result = this.decodeHeaders(stream, client) catch |err| {
-                    stream.client = null;
-                    client.h2 = null;
-                    client.failFromH2(err);
-                    return true;
-                };
-                if (result == .informational) return false;
-                if (result == .finished or (stream.end_stream_received and stream.body_buffer.items.len == 0)) {
-                    stream.client = null;
-                    client.h2 = null;
-                    if (client.state.flags.is_redirect_pending) {
-                        client.doRedirect(true, this.ctx, this.socket);
-                        return true;
-                    }
-                    client.cloneMetadata();
-                    client.state.flags.received_last_chunk = true;
-                    client.state.content_length = 0;
-                    client.progressUpdate(true, this.ctx, this.socket);
+            const result = this.applyHeaders(stream, client) catch |err| {
+                stream.client = null;
+                client.h2 = null;
+                client.failFromH2(err);
+                return true;
+            };
+            if (result == .finished or (stream.end_stream_received and stream.body_buffer.items.len == 0)) {
+                stream.client = null;
+                client.h2 = null;
+                if (client.state.flags.is_redirect_pending) {
+                    client.doRedirect(true, this.ctx, this.socket);
                     return true;
                 }
                 client.cloneMetadata();
+                client.state.flags.received_last_chunk = true;
+                client.state.content_length = 0;
+                client.progressUpdate(true, this.ctx, this.socket);
+                return true;
             }
+            client.cloneMetadata();
         }
 
         if (client.state.response_stage != .body) return false;
@@ -832,10 +846,6 @@ pub const ClientSession = struct {
             },
             .HTTP_FRAME_HEADERS => {
                 const stream = this.streams.get(@intCast(header.streamIdentifier)) orelse return;
-                // TODO: if a 1xx HEADERS and the final HEADERS (or final +
-                // trailers) arrive in the same onData pass, the first block
-                // is overwritten before decode and HPACK dynamic-table state
-                // can desync. Decode eagerly here instead of in deliverStream.
                 stream.seen_headers = true;
                 var fragment = payload;
                 if (header.flags & @intFromEnum(wire.HeadersFrameFlags.PADDED) != 0) {
@@ -856,7 +866,7 @@ pub const ClientSession = struct {
                 stream.headers_end_stream = header.flags & @intFromEnum(wire.HeadersFrameFlags.END_STREAM) != 0;
                 if (header.flags & @intFromEnum(wire.HeadersFrameFlags.END_HEADERS) != 0) {
                     stream.end_stream_received = stream.end_stream_received or stream.headers_end_stream;
-                    stream.headers_ready = true;
+                    this.decodeHeaderBlock(stream);
                 } else {
                     this.expecting_continuation = stream.id;
                 }
@@ -874,7 +884,7 @@ pub const ClientSession = struct {
                 if (header.flags & @intFromEnum(wire.HeadersFrameFlags.END_HEADERS) != 0) {
                     this.expecting_continuation = 0;
                     stream.end_stream_received = stream.end_stream_received or stream.headers_end_stream;
-                    stream.headers_ready = true;
+                    this.decodeHeaderBlock(stream);
                 }
             },
             .HTTP_FRAME_DATA => {
@@ -931,66 +941,79 @@ pub const ClientSession = struct {
         }
     }
 
-    fn decodeAndDiscard(this: *ClientSession, stream: *Stream) void {
-        var offset: usize = 0;
-        while (offset < stream.header_block.items.len) {
-            const result = this.hpack.decode(stream.header_block.items[offset..]) catch break;
-            offset += result.next;
-        }
-        stream.header_block.clearRetainingCapacity();
-    }
+    /// HPACK-decode the buffered header block at parse time. Runs for every
+    /// END_HEADERS so the dynamic table stays in sync regardless of how many
+    /// HEADERS frames arrive in one read. 1xx and trailers are decoded then
+    /// dropped; the final response is stored on the stream for delivery.
+    fn decodeHeaderBlock(this: *ClientSession, stream: *Stream) void {
+        defer stream.header_block.clearRetainingCapacity();
 
-    /// HPACK-decode `stream`'s header block into `state.pending_response`
-    /// (reusing the shared HTTP/1.1 header buffer) and run
-    /// `handleResponseMetadata`.
-    const HeaderResult = enum { informational, has_body, finished };
-
-    fn decodeHeaders(this: *ClientSession, stream: *Stream, client: *HTTPClient) !HeaderResult {
-        this.decoded_header_bytes.clearRetainingCapacity();
-
-        var status_code: u32 = 0;
-        const headers_buf = &HTTPClient.shared_response_headers_buf;
-        var bounds: [headers_buf.len][3]u32 = undefined;
-        var header_count: usize = 0;
+        var status: u32 = 0;
+        var bounds: std.ArrayListUnmanaged([3]u32) = .{};
+        defer bounds.deinit(bun.default_allocator);
+        const start_len = stream.decoded_bytes.items.len;
 
         var offset: usize = 0;
         while (offset < stream.header_block.items.len) {
             const result = this.hpack.decode(stream.header_block.items[offset..]) catch {
-                return error.HTTP2CompressionError;
+                stream.fatal_error = error.HTTP2CompressionError;
+                return;
             };
             offset += result.next;
-
             if (result.name.len > 0 and result.name[0] == ':') {
                 if (strings.eqlComptime(result.name, ":status")) {
-                    status_code = std.fmt.parseInt(u32, result.value, 10) catch 0;
+                    status = std.fmt.parseInt(u32, result.value, 10) catch 0;
                 }
                 continue;
             }
-            if (header_count >= headers_buf.len) continue;
-
-            const name_start: u32 = @intCast(this.decoded_header_bytes.items.len);
-            bun.handleOom(this.decoded_header_bytes.appendSlice(bun.default_allocator, result.name));
-            const value_start: u32 = @intCast(this.decoded_header_bytes.items.len);
-            bun.handleOom(this.decoded_header_bytes.appendSlice(bun.default_allocator, result.value));
-            const value_end: u32 = @intCast(this.decoded_header_bytes.items.len);
-            bounds[header_count] = .{ name_start, value_start, value_end };
-            header_count += 1;
-        }
-        stream.header_block.clearRetainingCapacity();
-
-        if (status_code == 0) return error.HTTP2ProtocolError;
-        if (status_code >= 100 and status_code < 200) return .informational;
-
-        const bytes = this.decoded_header_bytes.items;
-        for (bounds[0..header_count], 0..) |b, i| {
-            headers_buf[i] = .{ .name = bytes[b[0]..b[1]], .value = bytes[b[1]..b[2]] };
+            if (stream.status_code != 0) continue;
+            const name_start: u32 = @intCast(stream.decoded_bytes.items.len);
+            bun.handleOom(stream.decoded_bytes.appendSlice(bun.default_allocator, result.name));
+            const value_start: u32 = @intCast(stream.decoded_bytes.items.len);
+            bun.handleOom(stream.decoded_bytes.appendSlice(bun.default_allocator, result.value));
+            bun.handleOom(bounds.append(bun.default_allocator, .{ name_start, value_start, @intCast(stream.decoded_bytes.items.len) }));
         }
 
+        if (stream.status_code != 0) return;
+
+        if (status == 0) {
+            stream.decoded_bytes.items.len = start_len;
+            stream.fatal_error = error.HTTP2ProtocolError;
+            return;
+        }
+        if (status >= 100 and status < 200) {
+            stream.decoded_bytes.items.len = start_len;
+            stream.awaiting_continue = false;
+            return;
+        }
+
+        stream.status_code = status;
+        stream.headers_ready = true;
+        if (stream.awaiting_continue) {
+            // Final status without a preceding 100: server has decided
+            // without seeing the body, so half-close our side instead of
+            // uploading it.
+            stream.awaiting_continue = false;
+            stream.request_body_done = true;
+            this.writeFrame(.HTTP_FRAME_DATA, @intFromEnum(wire.DataFrameFlags.END_STREAM), stream.id, &.{});
+        }
+        const bytes = stream.decoded_bytes.items;
+        bun.handleOom(stream.decoded_headers.ensureTotalCapacityPrecise(bun.default_allocator, bounds.items.len));
+        for (bounds.items) |b| {
+            stream.decoded_headers.appendAssumeCapacity(.{ .name = bytes[b[0]..b[1]], .value = bytes[b[1]..b[2]] });
+        }
+    }
+
+    const HeaderResult = enum { has_body, finished };
+
+    /// Hand the pre-decoded response headers to the existing HTTP/1.1
+    /// metadata pipeline (`handleResponseMetadata` + `cloneMetadata`).
+    fn applyHeaders(_: *ClientSession, stream: *Stream, client: *HTTPClient) !HeaderResult {
         var response = picohttp.Response{
             .minor_version = 0,
-            .status_code = status_code,
+            .status_code = stream.status_code,
             .status = "",
-            .headers = .{ .list = headers_buf[0..header_count] },
+            .headers = .{ .list = stream.decoded_headers.items },
             .bytes_read = 0,
         };
         client.state.pending_response = response;

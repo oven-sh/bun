@@ -835,12 +835,15 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
     test("1xx informational HEADERS are skipped, final response delivered", async () => {
       await withRawH2Server(
         (conn, id) => {
-          conn.headers(id, hpackStatus(100));
-          // separate write so 100 and 200 arrive in distinct onData passes
-          setTimeout(() => {
-            conn.headers(id, Buffer.concat([hpackStatus(200), hpackLit("x-after", "100")]));
-            conn.data(id, "final", true);
-          }, 10);
+          // Single write so 100 and 200 land in the same onData pass; HPACK
+          // must decode both in order.
+          conn.socket.write(
+            Buffer.concat([
+              frame(1, 4, id, hpackStatus(100)),
+              frame(1, 4, id, Buffer.concat([hpackStatus(200), hpackLit("x-after", "100")])),
+              frame(0, 1, id, Buffer.from("final")),
+            ]),
+          );
         },
         async url => {
           await using proc = spawnFetch(`
@@ -851,6 +854,129 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
           expect(stderr).toBe("");
           expect(stdout.trim()).toBe("200 100 final");
           expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("response + trailers in a single packet keep HPACK in sync", async () => {
+      await withRawH2Server(
+        (conn, id) => {
+          conn.socket.write(
+            Buffer.concat([
+              frame(1, 4, id, Buffer.concat([hpackStatus(200), hpackLit("x-real", "yes")])),
+              frame(0, 0, id, Buffer.from("body")),
+              frame(1, 4 | 1, id, hpackLit("x-trailer", "ignored")),
+            ]),
+          );
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
+            console.log(r.status, r.headers.get("x-real"), await r.text());
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe("200 yes body");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("Expect: 100-continue withholds the body until 100 arrives", async () => {
+      const seen: { id: number; type: number; len: number }[] = [];
+      const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2"] }, socket => {
+        let buf = Buffer.alloc(0);
+        let prefaceSeen = false;
+        let sent100 = false;
+        socket.on("data", chunk => {
+          buf = Buffer.concat([buf, chunk]);
+          if (!prefaceSeen) {
+            if (buf.length < 24) return;
+            buf = buf.subarray(24);
+            prefaceSeen = true;
+            socket.write(frame(4, 0, 0));
+          }
+          while (buf.length >= 9) {
+            const len = buf.readUIntBE(0, 3);
+            if (buf.length < 9 + len) return;
+            const type = buf[3],
+              flags = buf[4],
+              id = buf.readUInt32BE(5) & 0x7fffffff;
+            buf = buf.subarray(9 + len);
+            if (id !== 0) seen.push({ id, type, len });
+            if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0));
+            if (type === 1 && !sent100) {
+              sent100 = true;
+              // Prove no DATA preceded the 100 by responding only after a tick.
+              setTimeout(() => socket.write(frame(1, 4, id, hpackStatus(100))), 20);
+            }
+            if (type === 0 && flags & 1) {
+              socket.write(frame(1, 4, id, hpackStatus(200)));
+              socket.write(frame(0, 1, id, Buffer.from("got-body")));
+            }
+          }
+        });
+        socket.on("error", () => {});
+      });
+      server.listen(0);
+      await once(server, "listening");
+      const { port } = server.address() as import("node:net").AddressInfo;
+      try {
+        await using proc = spawnFetch(`
+          const r = await fetch("https://localhost:${port}", {
+            method: "POST",
+            headers: { Expect: "100-continue" },
+            body: "twenty-chars-body!!!",
+            tls: { rejectUnauthorized: false },
+          });
+          console.log(r.status, await r.text());
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe("200 got-body");
+        expect(exitCode).toBe(0);
+        // First per-stream frame must be HEADERS; no DATA until after the 100.
+        expect(seen[0].type).toBe(1);
+        const firstData = seen.findIndex(f => f.type === 0);
+        expect(firstData).toBeGreaterThan(0);
+        expect(seen[firstData].len).toBe(20);
+      } finally {
+        server.close();
+      }
+    });
+
+    test("Expect: 100-continue with final status before 100 skips body upload", async () => {
+      let dataBytes = 0;
+      await withRawH2Server(
+        (conn, id) => {
+          // Reject immediately without 100; client should half-close with
+          // an empty DATA+END_STREAM rather than uploading the body.
+          conn.headers(id, hpackStatus(404), { endStream: true });
+          conn.socket.on("data", chunk => {
+            // crude: count any DATA frame payloads on this socket after reject
+            let b = chunk;
+            while (b.length >= 9) {
+              const len = b.readUIntBE(0, 3);
+              if (b[3] === 0 && (b.readUInt32BE(5) & 0x7fffffff) === id) dataBytes += len;
+              b = b.subarray(9 + len);
+            }
+          });
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            const r = await fetch("${url}", {
+              method: "POST",
+              headers: { Expect: "100-continue" },
+              body: "x".repeat(50000),
+              tls: { rejectUnauthorized: false },
+            });
+            console.log(r.status);
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("404");
+          expect(exitCode).toBe(0);
+          // Body was withheld; only the empty END_STREAM DATA frame allowed.
+          expect(dataBytes).toBe(0);
         },
       );
     });

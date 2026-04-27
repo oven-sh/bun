@@ -2658,7 +2658,14 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
       headers[HTTP2_HEADER_STATUS] = 200;
     }
-    const statusCode = headers[HTTP2_HEADER_STATUS];
+    const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
+    // This is intentionally stricter than the HTTP/1 implementation, which
+    // allows values between 100 and 999 (inclusive) in order to allow for
+    // backwards compatibility with non-spec compliant code. With HTTP/2,
+    // we have the opportunity to start fresh with stricter spec compliance.
+    if (statusCode < 200 || statusCode > 599) {
+      throw $ERR_HTTP2_STATUS_INVALID(headers[HTTP2_HEADER_STATUS]);
+    }
     let endStream = !!options?.endStream;
     if (
       endStream ||

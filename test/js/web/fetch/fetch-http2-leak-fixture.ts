@@ -74,14 +74,18 @@ async function one(i: number): Promise<number> {
   return (await r.arrayBuffer()).byteLength;
 }
 
-// Watchdog: if a batch wedges (CI darwin has shown a hard hang here), abort
-// the process with whatever we've observed so far instead of waiting for the
-// outer test's 90s timeout.
+// Watchdog: if a batch wedges, abort with whatever we've observed instead of
+// waiting for the outer test's 90s timeout. Prints which indices in the batch
+// haven't resolved so a recurrence shows whether the stuck set is contiguous
+// (write-buffer cutoff) or scattered (per-stream race).
 let lastProgress = Date.now();
 let at = "init";
+let pending = new Set<number>();
 const watchdog = setInterval(() => {
   if (Date.now() - lastProgress > 30_000) {
-    console.error(`[watchdog] stuck at ${at} for >30s, ${JSON.stringify(liveCounts())}`);
+    console.error(
+      `[watchdog] stuck at ${at} for >30s, ${JSON.stringify(liveCounts())}, pending=[${[...pending].sort((a, b) => a - b)}]`,
+    );
     process.exit(1);
   }
 }, 5_000);
@@ -90,7 +94,15 @@ let bytes = 0;
 for (let i = 0; i < COUNT; i += BATCH) {
   at = `batch ${i}/${COUNT}`;
   const n = Math.min(BATCH, COUNT - i);
-  const results = await Promise.all(Array.from({ length: n }, (_, j) => one(i + j)));
+  pending = new Set(Array.from({ length: n }, (_, j) => i + j));
+  const results = await Promise.all(
+    Array.from({ length: n }, (_, j) =>
+      one(i + j).then(b => {
+        pending.delete(i + j);
+        return b;
+      }),
+    ),
+  );
   for (const b of results) bytes += b;
   lastProgress = Date.now();
 }

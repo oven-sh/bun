@@ -1,69 +1,39 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls } from "harness";
-import { once } from "node:events";
-import http2 from "node:http2";
+import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
-import zlib from "node:zlib";
 
-let server: http2.Http2SecureServer;
+// The server runs in its own subprocess: when node:http2's event loop shares a
+// process with the test's Bun.spawn() pipe-reading, the server intermittently
+// leaves a few streams unanswered under load (macOS 14 / aarch64 Linux). That's
+// a node:http2-server-side issue unrelated to the H2 client lifetimes this test
+// is measuring; isolating the server removes it.
+let serverProc: ReturnType<typeof Bun.spawn>;
 let url: string;
-const sessions = new Set<http2.ServerHttp2Session>();
 
 beforeAll(async () => {
-  const body = Buffer.alloc(64 * 1024, "x");
-  const gzBody = zlib.gzipSync(body);
-  server = http2.createSecureServer({ ...tls, allowHTTP1: false }, (req, res) => {
-    if (req.url === "/__destroy_sessions") {
-      for (const s of sessions) s.destroy();
-      sessions.clear();
-      // The session carrying this request was just destroyed; no response.
-      return;
-    }
-    if (req.url === "/redirect") {
-      res.writeHead(307, { location: "/" });
-      res.end();
-      return;
-    }
-    if (req.url === "/gzip") {
-      res.writeHead(200, { "content-encoding": "gzip" });
-      res.end(gzBody);
-      return;
-    }
-    if (req.method === "POST") {
-      let n = 0;
-      req.on("data", c => (n += c.length));
-      req.on("end", () => res.end(Buffer.alloc(n)));
-      return;
-    }
-    res.end(body);
+  serverProc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fetch-http2-leak-server.ts")],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
   });
-  server.on("session", s => {
-    sessions.add(s);
-    s.on("close", () => sessions.delete(s));
-    s.on("error", () => {});
-  });
-  server.on("stream", s => s.on("error", () => {}));
-  // The abort scenario tears connections down mid-handshake; the server
-  // surfaces those as ECONNRESET. They're expected, not test failures.
-  server.on("error", () => {});
-  server.on("sessionError", () => {});
-  server.on("clientError", () => {});
-  server.on("secureConnection", sock => sock.on("error", () => {}));
-  server.listen(0);
-  await once(server, "listening");
-  url = `https://localhost:${(server.address() as import("node:net").AddressInfo).port}`;
+  const reader = serverProc.stdout.getReader();
+  let line = "";
+  while (!line.includes("\n")) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error("server exited before printing URL");
+    line += Buffer.from(value).toString();
+  }
+  reader.releaseLock();
+  url = line.trim();
 });
 
 afterAll(() => {
-  for (const s of sessions) s.destroy();
-  server.close();
+  serverProc.kill();
 });
 
 async function runFixture(scenario: string) {
-  // BATCH is kept low: at 20 concurrent streams the macOS runner wedges with
-  // a handful of streams stuck mid-response (server-side node:http2 under
-  // load, not the client path being measured). The leak assertion only needs
-  // many sequential request lifetimes, not high parallelism.
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--smol", join(import.meta.dir, "fetch-http2-leak-fixture.ts")],
     env: { ...bunEnv, SERVER: url, SCENARIO: scenario, COUNT: "200", BATCH: "8" },

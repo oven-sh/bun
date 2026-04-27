@@ -1083,6 +1083,9 @@ static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::H
 extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0, int kind, void* arg2)
 {
     switch (kind) {
+    case 0:
+        writeFetchHeadersToUWSResponse<false>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
+        break;
     case 1:
         writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
         break;
@@ -1092,7 +1095,7 @@ extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0
         break;
 #endif
     default:
-        writeFetchHeadersToUWSResponse<false>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
+        ASSERT_NOT_REACHED();
         break;
     }
 }

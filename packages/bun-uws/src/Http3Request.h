@@ -67,7 +67,7 @@ struct Http3Request {
     }
 
     std::string_view getHeader(std::string_view lowerCasedHeader) {
-        if (lowerCasedHeader == "host") lowerCasedHeader = ":authority";
+        if (lowerCasedHeader == "host") return authority;
         unsigned int n = us_quic_stream_header_count(stream);
         for (unsigned int i = 0; i < n; i++) {
             const us_quic_header_t *h = us_quic_stream_header(stream, i);

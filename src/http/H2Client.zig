@@ -695,7 +695,14 @@ pub const ClientSession = struct {
         if (stream.fatal_error) |err| {
             stream.client = null;
             client.h2 = null;
-            client.failFromH2(err);
+            if (err == error.HTTP2RefusedStream and
+                client.h2_retries < HTTPClient.max_h2_retries and
+                client.state.original_request_body == .bytes)
+            {
+                client.retryFromH2();
+            } else {
+                client.failFromH2(err);
+            }
             return true;
         }
 
@@ -879,20 +886,26 @@ pub const ClientSession = struct {
             .HTTP_FRAME_RST_STREAM => {
                 const stream = this.streams.get(@intCast(header.streamIdentifier)) orelse return;
                 const code: u32 = if (payload.len >= 4) wire.u32FromBytes(payload[0..4]) else 0;
-                if (code == @intFromEnum(wire.ErrorCode.NO_ERROR)) {
-                    stream.end_stream_received = true;
-                } else {
-                    stream.fatal_error = error.HTTP2StreamReset;
-                }
+                stream.fatal_error = switch (code) {
+                    @intFromEnum(wire.ErrorCode.NO_ERROR) => blk: {
+                        stream.end_stream_received = true;
+                        break :blk null;
+                    },
+                    @intFromEnum(wire.ErrorCode.REFUSED_STREAM) => error.HTTP2RefusedStream,
+                    else => error.HTTP2StreamReset,
+                };
             },
             .HTTP_FRAME_GOAWAY => {
                 this.goaway_received = true;
                 this.goaway_last_stream_id = if (payload.len >= 4) wire.UInt31WithReserved.fromBytes(payload[0..4]).uint31 else 0;
                 const code: u32 = if (payload.len >= 8) wire.u32FromBytes(payload[4..8]) else 0;
+                const graceful = code == @intFromEnum(wire.ErrorCode.NO_ERROR);
                 var it = this.streams.iterator();
                 while (it.next()) |e| {
                     const s = e.value_ptr.*;
-                    if (code != @intFromEnum(wire.ErrorCode.NO_ERROR) or s.id > this.goaway_last_stream_id) {
+                    if (s.id > this.goaway_last_stream_id) {
+                        s.fatal_error = if (graceful) error.HTTP2RefusedStream else error.HTTP2GoAway;
+                    } else if (!graceful) {
                         s.fatal_error = error.HTTP2GoAway;
                     }
                 }
@@ -946,6 +959,8 @@ pub const ClientSession = struct {
             header_count += 1;
         }
         stream.header_block.clearRetainingCapacity();
+
+        if (status_code == 0) return error.HTTP2ProtocolError;
 
         const bytes = this.decoded_header_bytes.items;
         for (bounds[0..header_count], 0..) |b, i| {

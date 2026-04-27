@@ -270,6 +270,22 @@ pub fn retryAfterH2Coalesce(this: *HTTPClient) void {
     this.start_(true);
 }
 
+/// REFUSED_STREAM or graceful GOAWAY past our id: the server promises it
+/// did not process the request, so re-dispatch from the top. Only reached
+/// for `.bytes` bodies (replayable).
+pub const max_h2_retries: u8 = 5;
+pub fn retryFromH2(this: *HTTPClient) void {
+    bun.debugAssert(this.h2 == null);
+    this.unregisterAbortTracker();
+    this.flags.protocol = .http1_1;
+    this.h2_retries += 1;
+    const body = this.state.original_request_body;
+    const body_out = this.state.body_out_str.?;
+    this.state.original_request_body = .{ .bytes = "" };
+    this.state.reset(this.allocator);
+    this.start(body, body_out);
+}
+
 pub fn failFromH2(this: *HTTPClient, err: anyerror) void {
     bun.debugAssert(this.h2 == null);
     this.unregisterAbortTracker();
@@ -575,6 +591,10 @@ allocator: std.mem.Allocator,
 verbose: HTTPVerboseLevel = .none,
 remaining_redirect_count: i8 = default_redirect_count,
 allow_retry: bool = false,
+/// Transparent re-dispatch count for REFUSED_STREAM / graceful-GOAWAY,
+/// where the server promises the request was not processed. Capped by
+/// `max_h2_retries`.
+h2_retries: u8 = 0,
 redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: []u8 = &.{},
 progress_node: ?*Progress.Node = null,

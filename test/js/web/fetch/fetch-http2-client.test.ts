@@ -2,6 +2,7 @@ import { test, expect, describe } from "bun:test";
 import { bunEnv, bunExe, tls } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
+import nodetls from "node:tls";
 import zlib from "node:zlib";
 
 // allowHTTP1: false forces the server to reject anything that didn't
@@ -17,6 +18,92 @@ async function withH2Server(
   const { port } = server.address() as import("node:net").AddressInfo;
   try {
     await fn(`https://localhost:${port}`, server);
+  } finally {
+    server.close();
+  }
+}
+
+// --- Raw HTTP/2 frame server -------------------------------------------------
+// Minimal TLS+ALPN(h2) server that speaks the wire format directly so tests
+// can inject frames that a conforming server (nghttp2) would never emit.
+
+function frame(type: number, flags: number, streamId: number, payload: Uint8Array | Buffer = Buffer.alloc(0)) {
+  const buf = Buffer.alloc(9 + payload.length);
+  buf.writeUIntBE(payload.length, 0, 3);
+  buf[3] = type;
+  buf[4] = flags;
+  buf.writeUInt32BE(streamId & 0x7fffffff, 5);
+  Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength).copy(buf, 9);
+  return buf;
+}
+const u32be = (n: number) => {
+  const b = Buffer.alloc(4);
+  b.writeUInt32BE(n >>> 0);
+  return b;
+};
+
+// HPACK static-table indices we need: :status 200 = 8, 204 = 9, 404 = 13.
+const hpackStatus = (code: 200 | 204 | 404) => Buffer.from([0x80 | { 200: 8, 204: 9, 404: 13 }[code]]);
+// Literal field never-indexed, new name (4-bit prefix 0001 0000): len(name) name len(value) value.
+const hpackLit = (name: string, value: string) =>
+  Buffer.concat([Buffer.from([0x10, name.length]), Buffer.from(name), Buffer.from([value.length]), Buffer.from(value)]);
+
+type RawConn = {
+  socket: nodetls.TLSSocket;
+  settings(): void;
+  headers(streamId: number, block: Buffer, opts?: { endStream?: boolean; endHeaders?: boolean }): void;
+  data(streamId: number, chunk: string | Buffer, endStream?: boolean): void;
+  rst(streamId: number, code: number): void;
+  goaway(lastId: number, code: number): void;
+};
+
+async function withRawH2Server(
+  onStream: (conn: RawConn, streamId: number, connIndex: number) => void,
+  fn: (url: string, state: { connections: number }) => Promise<void>,
+) {
+  const state = { connections: 0 };
+  const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2"] }, socket => {
+    const connIndex = state.connections++;
+    const conn: RawConn = {
+      socket,
+      settings: () => socket.write(frame(4, 0, 0)),
+      headers: (id, block, o = {}) =>
+        socket.write(frame(1, (o.endHeaders === false ? 0 : 4) | (o.endStream ? 1 : 0), id, block)),
+      data: (id, chunk, end = false) =>
+        socket.write(frame(0, end ? 1 : 0, id, typeof chunk === "string" ? Buffer.from(chunk) : chunk)),
+      rst: (id, code) => socket.write(frame(3, 0, id, u32be(code))),
+      goaway: (lastId, code) => socket.write(frame(7, 0, 0, Buffer.concat([u32be(lastId), u32be(code)]))),
+    };
+    let buf = Buffer.alloc(0);
+    let prefaceSeen = false;
+    socket.on("data", chunk => {
+      buf = Buffer.concat([buf, chunk]);
+      if (!prefaceSeen) {
+        if (buf.length < 24) return;
+        buf = buf.subarray(24);
+        prefaceSeen = true;
+        conn.settings();
+      }
+      while (buf.length >= 9) {
+        const len = buf.readUIntBE(0, 3);
+        if (buf.length < 9 + len) return;
+        const type = buf[3],
+          flags = buf[4],
+          id = buf.readUInt32BE(5) & 0x7fffffff;
+        const payload = buf.subarray(9, 9 + len);
+        buf = buf.subarray(9 + len);
+        if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0)); // ack their SETTINGS
+        if (type === 1) onStream(conn, id, connIndex); // HEADERS opens a stream
+        void payload;
+      }
+    });
+    socket.on("error", () => {});
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const { port } = server.address() as import("node:net").AddressInfo;
+  try {
+    await fn(`https://localhost:${port}`, state);
   } finally {
     server.close();
   }
@@ -603,6 +690,161 @@ describe("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT)", () 
     } finally {
       server.close();
     }
+  });
+
+  describe("raw frame server", () => {
+    test("REFUSED_STREAM is transparently retried on the same connection", async () => {
+      let attempts = 0;
+      await withRawH2Server(
+        (conn, id) => {
+          attempts++;
+          if (attempts === 1) return conn.rst(id, http2.constants.NGHTTP2_REFUSED_STREAM);
+          conn.headers(id, hpackStatus(204), { endStream: true });
+        },
+        async (url, state) => {
+          await using proc = spawnFetch(`
+            const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
+            console.log(r.status);
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe("204");
+          expect(exitCode).toBe(0);
+          expect(attempts).toBe(2);
+          expect(state.connections).toBe(1);
+        },
+      );
+    });
+
+    test("REFUSED_STREAM gives up after max retries", async () => {
+      let attempts = 0;
+      await withRawH2Server(
+        (conn, id) => {
+          attempts++;
+          conn.rst(id, http2.constants.NGHTTP2_REFUSED_STREAM);
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
+            catch (e) { console.log("rejected", String(e).includes("Refused")); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected true");
+          expect(exitCode).toBe(0);
+          // initial + 5 retries
+          expect(attempts).toBe(6);
+        },
+      );
+    });
+
+    test("RST_STREAM PROTOCOL_ERROR is not retried", async () => {
+      let attempts = 0;
+      await withRawH2Server(
+        (conn, id) => {
+          attempts++;
+          conn.rst(id, http2.constants.NGHTTP2_PROTOCOL_ERROR);
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
+            catch (e) { console.log("rejected"); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected");
+          expect(exitCode).toBe(0);
+          expect(attempts).toBe(1);
+        },
+      );
+    });
+
+    test("graceful GOAWAY past our id retries on a fresh connection", async () => {
+      await withRawH2Server(
+        (conn, id, connIndex) => {
+          if (connIndex === 0) {
+            // First connection: refuse via GOAWAY(NO_ERROR, lastId=0).
+            conn.goaway(0, 0);
+            conn.socket.end();
+            return;
+          }
+          conn.headers(id, hpackStatus(200), { endStream: false });
+          conn.data(id, "second-conn", true);
+        },
+        async (url, state) => {
+          await using proc = spawnFetch(`
+            const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
+            console.log(r.status, await r.text());
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe("200 second-conn");
+          expect(exitCode).toBe(0);
+          expect(state.connections).toBe(2);
+        },
+      );
+    });
+
+    test("REFUSED_STREAM with a streaming body errors instead of retrying", async () => {
+      let attempts = 0;
+      await withRawH2Server(
+        (conn, id) => {
+          attempts++;
+          conn.rst(id, http2.constants.NGHTTP2_REFUSED_STREAM);
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            const body = new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1,2,3])); c.close(); } });
+            try {
+              await fetch("${url}", { method: "POST", body, duplex: "half", tls: { rejectUnauthorized: false } });
+              console.log("ok");
+            } catch (e) { console.log("rejected"); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected");
+          expect(exitCode).toBe(0);
+          expect(attempts).toBe(1);
+        },
+      );
+    });
+
+    test("padded DATA: pad bytes are stripped and credited against flow control", async () => {
+      await withRawH2Server(
+        (conn, id) => {
+          conn.headers(id, hpackStatus(200));
+          // PADDED flag = 0x8; payload = padLen(1) + body + pad zeros.
+          const body = Buffer.from("padded-body");
+          const padLen = 200;
+          const payload = Buffer.concat([Buffer.from([padLen]), body, Buffer.alloc(padLen)]);
+          conn.socket.write(frame(0, 0x8 | 0x1, id, payload));
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
+            console.log(r.status, await r.text());
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe("200 padded-body");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test("response missing :status pseudo-header rejects cleanly", async () => {
+      await withRawH2Server(
+        (conn, id) => {
+          conn.headers(id, hpackLit("content-type", "text/plain"), { endStream: true });
+        },
+        async url => {
+          await using proc = spawnFetch(`
+            try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
+            catch (e) { console.log("rejected"); }
+          `);
+          const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stdout.trim()).toBe("rejected");
+          expect(exitCode).toBe(0);
+        },
+      );
+    });
   });
 
   test("flag off: ALPN does not offer h2", async () => {

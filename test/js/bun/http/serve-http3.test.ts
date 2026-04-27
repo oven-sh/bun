@@ -1135,11 +1135,14 @@ describe("Bun.serve HTTP/3 production", () => {
   // E: H1 responses advertise the H3 endpoint so browsers can discover it.
   itH3("Alt-Svc emitted on HTTP/1.1 responses when h3 is enabled", async () => {
     await withServer(async port => {
-      const res = await fetch(`https://127.0.0.1:${port}/hello`, { tls: { rejectUnauthorized: false } });
-      expect(res.status).toBe(200);
-      const alt = res.headers.get("alt-svc") ?? "";
-      expect(alt).toContain('h3=":');
-      expect(alt).toContain(String(port));
+      // The fetch()/static-route/file-route response paths each write
+      // headers from a different place; all three must advertise h3.
+      for (const path of ["/hello", "/static", "/file-route"]) {
+        const res = await fetch(`https://127.0.0.1:${port}${path}`, { tls: { rejectUnauthorized: false } });
+        expect(res.status).toBe(200);
+        const alt = res.headers.get("alt-svc") ?? "";
+        expect(alt).toContain('h3=":' + port + '"');
+      }
     });
   });
 

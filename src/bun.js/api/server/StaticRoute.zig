@@ -325,7 +325,7 @@ fn doWriteStatus(_: *StaticRoute, status: u16, resp: AnyResponse) void {
 
 fn doWriteHeaders(this: *StaticRoute, resp: AnyResponse) void {
     switch (resp) {
-        inline else => |s| {
+        inline else => |s, tag| {
             const entries = this.headers.entries.slice();
             const names: []const api.StringPointer = entries.items(.name);
             const values: []const api.StringPointer = entries.items(.value);
@@ -334,6 +334,8 @@ fn doWriteHeaders(this: *StaticRoute, resp: AnyResponse) void {
             for (names, values) |name, value| {
                 s.writeHeader(name.slice(buf), value.slice(buf));
             }
+            if (comptime tag != .H3) if (this.server) |srv| if (srv.h3AltSvc()) |alt|
+                s.writeHeader("alt-svc", alt);
         },
     }
 }

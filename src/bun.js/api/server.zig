@@ -3291,6 +3291,17 @@ pub const AnyServer = struct {
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }
+    /// Cached `h3=":<port>"; ma=86400` for Alt-Svc on H1/H2 responses, or
+    /// null when the server has no H3 listener. Static/file/HTML routes
+    /// emit it via this so browsers discover the QUIC endpoint regardless
+    /// of which response path produced the body.
+    pub fn h3AltSvc(this: AnyServer) ?[]const u8 {
+        return switch (this.ptr.tag()) {
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).h3AltSvc(),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).h3AltSvc(),
+            else => null,
+        };
+    }
     pub fn setInspectorServerID(this: AnyServer, id: jsc.Debugger.DebuggerId) void {
         switch (this.ptr.tag()) {
             Ptr.case(HTTPServer) => {

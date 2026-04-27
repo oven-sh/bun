@@ -93,6 +93,7 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
     free(loop->data.send_buf);
 
     us_timer_close(loop->data.sweep_timer, 0);
+    if (loop->data.quic_timer) us_timer_close(loop->data.quic_timer, 0);
     us_internal_async_close(loop->data.wakeup_async);
 }
 

@@ -58,20 +58,20 @@ make                   # → ./h3blast
 ./h3blast --json -d 5 https://host/ | jq .req_per_sec
 ```
 
-| flag | meaning |
-|---|---|
-| `-t, --threads N` | worker threads |
-| `-c, --connections N` | total QUIC connections (split across threads) |
-| `-m, --streams N` | concurrent request streams per connection |
-| `-d, --duration SEC` | run length (default 10) |
-| `-n, --requests N` | stop after N total responses |
-| `-X, --method M` | HTTP method |
-| `-H 'k: v'` | extra request header (repeatable) |
-| `-b STR` / `--body-file P` | request body |
-| `--warmup SEC` | ignore stats from the first SEC seconds |
-| `--json` | machine-readable single-line summary |
-| `--no-color`, `-q` | disable color / live UI |
-| `H3BLAST_DEBUG=debug` | turn on lsquic's internal logger |
+| flag                       | meaning                                       |
+| -------------------------- | --------------------------------------------- |
+| `-t, --threads N`          | worker threads                                |
+| `-c, --connections N`      | total QUIC connections (split across threads) |
+| `-m, --streams N`          | concurrent request streams per connection     |
+| `-d, --duration SEC`       | run length (default 10)                       |
+| `-n, --requests N`         | stop after N total responses                  |
+| `-X, --method M`           | HTTP method                                   |
+| `-H 'k: v'`                | extra request header (repeatable)             |
+| `-b STR` / `--body-file P` | request body                                  |
+| `--warmup SEC`             | ignore stats from the first SEC seconds       |
+| `--json`                   | machine-readable single-line summary          |
+| `--no-color`, `-q`         | disable color / live UI                       |
+| `H3BLAST_DEBUG=debug`      | turn on lsquic's internal logger              |
 
 ## Against a local Bun H3 server
 

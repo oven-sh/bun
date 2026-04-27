@@ -8,6 +8,11 @@ pub var http_thread: HTTPThread = undefined;
 //TODO: this needs to be freed when Worker Threads are implemented
 pub var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.AnySocket).init(bun.default_allocator);
 pub var async_http_id_monotonic: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
+/// Set once at startup from `--experimental-http2-fetch` (before the HTTP
+/// thread spawns) and then only read on that thread, so no atomics needed.
+pub var experimental_http2_client_from_cli: bool = false;
+
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 
 pub var max_http_header_size: usize = 16 * 1024;
@@ -204,15 +209,18 @@ pub fn onOpen(
 
 /// Whether to advertise "h2" in the TLS ALPN list. Restricted to request
 /// shapes the HTTP/2 path currently handles end-to-end (no proxy/Upgrade,
-/// no sendfile). Either the experimental env-var or `protocol: "http2"` on
-/// the fetch options enables it.
+/// no sendfile). Enabled by `--experimental-http2-fetch`, the
+/// `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` env var, or
+/// `protocol: "http2"` on the fetch options.
 pub fn canOfferH2(client: *const HTTPClient) bool {
     if (client.flags.force_http1) return false;
     if (client.http_proxy != null) return false;
     if (client.flags.is_preconnect_only) return false;
     if (client.unix_socket_path.length() > 0) return false;
     if (client.state.original_request_body == .sendfile) return false;
-    return client.flags.force_http2 or bun.feature_flag.BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT.get();
+    return client.flags.force_http2 or
+        experimental_http2_client_from_cli or
+        bun.feature_flag.BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT.get();
 }
 
 pub fn alpnOffer(client: *const HTTPClient) BoringSSL.SSL.AlpnOffer {

@@ -1417,6 +1417,36 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     }
   });
 
+  test("--experimental-http2-fetch enables h2 without the env flag", async () => {
+    await withH2Server(
+      (req, res) => {
+        res.writeHead(200);
+        res.end(req.httpVersion);
+      },
+      async url => {
+        // No BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT in env; the CLI flag
+        // alone should make ALPN offer h2.
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "--no-warnings",
+            "--experimental-http2-fetch",
+            "-e",
+            `const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
+             console.log(r.status, await r.text());`,
+          ],
+          env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim()).toBe("200 2.0");
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
+
   test("protocol:'http2' forces h2 without the env flag", async () => {
     await withH2Server(
       (req, res) => {

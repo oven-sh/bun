@@ -297,6 +297,7 @@ pub fn retryFromH2(this: *HTTPClient) void {
 /// only the request fails.
 pub fn failFromH2(this: *HTTPClient, err: anyerror) void {
     bun.debugAssert(this.h2 == null);
+    bun.debugAssert(this.h3 == null);
     this.unregisterAbortTracker();
     if (this.state.stage != .done and this.state.stage != .fail) {
         this.state.request_stage = .fail;
@@ -563,12 +564,13 @@ const HTTPUpgradeState = enum(u2) {
     upgraded = 2,
 };
 
-pub const Protocol = enum(u1) {
+pub const Protocol = enum(u2) {
     http1_1 = 0,
     http2 = 1,
+    http3 = 2,
 };
 
-pub const Flags = packed struct(u16) {
+pub const Flags = packed struct(u32) {
     disable_timeout: bool = false,
     disable_keepalive: bool = false,
     disable_decompression: bool = false,
@@ -588,6 +590,10 @@ pub const Flags = packed struct(u16) {
     /// Set by `fetch(url, { protocol: "http1.1" })`: opt out of h2 even when
     /// the experimental env flag would otherwise advertise it.
     force_http1: bool = false,
+    /// Set by `fetch(url, { protocol: "http3" })`: skip TCP entirely and open
+    /// a QUIC connection. HTTPS-only; no proxy/unix-socket support.
+    force_http3: bool = false,
+    _: u14 = 0,
 };
 
 // TODO: reduce the size of this struct
@@ -630,6 +636,9 @@ proxy_tunnel: ?*ProxyTunnel = null,
 /// Set when this request is bound to a stream on an HTTP/2 session.
 /// Owned by the session; cleared by the session when the stream completes.
 h2: ?*H2.Stream = null,
+/// Set when this request is bound to an HTTP/3 stream. Owned by the H3
+/// session; cleared by the session when the stream completes.
+h3: ?*H3.Stream = null,
 /// Set while this request is the leader of a fresh TLS connect that other
 /// h2-capable requests have coalesced onto. Resolved (and freed) once ALPN
 /// is known or the connect fails.
@@ -1059,7 +1068,7 @@ pub fn doRedirect(
     // store it under the WRONG target hostname — a follow-up request to the
     // redirect destination could then reuse a TLS session negotiated with the
     // original host. Close the tunnel on redirect; only pool the raw socket.
-    if (this.flags.protocol == .http2) {
+    if (this.flags.protocol != .http1_1) {
         // The session owns the socket; the stream was detached by the caller
         // and the session will pool or close once its other streams drain.
     } else if (this.proxy_tunnel) |tunnel| {
@@ -1168,6 +1177,25 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
             this.fail(error.HTTP2Unsupported);
             return;
         }
+    }
+
+    if (this.flags.force_http3) {
+        if (comptime !is_ssl) {
+            this.fail(error.HTTP3Unsupported);
+            return;
+        }
+        if (this.http_proxy != null or this.unix_socket_path.length() > 0) {
+            this.fail(error.HTTP3Unsupported);
+            return;
+        }
+        const ctx = H3.ClientContext.getOrCreate(http_thread.loop.loop) orelse {
+            this.fail(error.HTTP3Unsupported);
+            return;
+        };
+        if (!ctx.connect(this, this.url.hostname, this.url.getPortAuto())) {
+            this.fail(error.ConnectionRefused);
+        }
+        return;
     }
 
     var socket = (http_thread.connect(this, is_ssl) catch |err| {
@@ -2165,7 +2193,7 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
         else
             true;
 
-        if (this.flags.protocol == .http2) {
+        if (this.flags.protocol != .http1_1) {
             // The HTTP/2 session owns the socket; it decides whether to pool
             // or close once all of its streams have drained.
             this.unregisterAbortTracker();
@@ -2220,6 +2248,19 @@ fn sendProgressUpdateWithoutStageCheck(this: *HTTPClient, comptime is_ssl: bool,
             print_every_i = 0;
         }
     }
+}
+
+/// HTTP/3 has no per-request socket; the QUIC session owns its UDP endpoint.
+/// `sendProgressUpdateWithoutStageCheck` already skips socket release/close
+/// for any non-HTTP/1.1 protocol, so the dummy here is never dereferenced.
+pub fn progressUpdateH3(this: *HTTPClient) void {
+    bun.debugAssert(this.flags.protocol == .http3);
+    this.progressUpdate(true, undefined, undefined);
+}
+
+pub fn doRedirectH3(this: *HTTPClient) void {
+    bun.debugAssert(this.flags.protocol == .http3);
+    this.doRedirect(true, undefined, undefined);
 }
 
 pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
@@ -2340,7 +2381,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
             .body_size = body_size,
             .certificate_info = null,
             .can_stream = (this.state.request_stage == .body or this.state.request_stage == .proxy_body) and this.flags.is_streaming_request_body,
-            .is_http2 = this.flags.protocol == .http2,
+            .is_http2 = this.flags.protocol != .http1_1,
         };
     }
     return HTTPClientResult{
@@ -2354,7 +2395,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
         .certificate_info = certificate_info,
         // we can stream the request_body at this stage
         .can_stream = (this.state.request_stage == .body or this.state.request_stage == .proxy_body) and this.flags.is_streaming_request_body,
-        .is_http2 = this.flags.protocol == .http2,
+        .is_http2 = this.flags.protocol != .http1_1,
     };
 }
 
@@ -3047,6 +3088,7 @@ pub const SendFile = @import("./http/SendFile.zig");
 pub const HeaderValueIterator = @import("./http/HeaderValueIterator.zig");
 pub const H2 = @import("./http/H2Client.zig");
 pub const H2Wire = @import("./http/H2FrameParser.zig");
+pub const H3 = @import("./http/H3Client.zig");
 
 const string = []const u8;
 

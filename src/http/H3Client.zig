@@ -71,8 +71,13 @@ pub const ClientSession = struct {
 
     pub fn hasHeadroom(this: *const ClientSession) bool {
         if (this.closed) return false;
-        const qs = this.qsocket orelse return true;
-        return c.us_quic_socket_streams_avail(qs) > @as(c_uint, @intCast(this.pending.items.len));
+        const qs = this.qsocket orelse return this.pending.items.len < 64;
+        // After handshake every pending entry has had make_stream called, so
+        // lsquic's n_avail_streams already accounts for them — comparing
+        // against pending.len would double-subtract. Before handshake nothing
+        // is counted yet, so cap optimistically at the default MAX_STREAMS.
+        if (!this.handshake_done) return this.pending.items.len < 64;
+        return c.us_quic_socket_streams_avail(qs) > 0;
     }
 
     /// Queue `client` for a stream on this connection. The lsquic stream is

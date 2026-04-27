@@ -2373,6 +2373,32 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.request_body != null) {
                 var body = this.request_body.?;
 
+                // The up-front maxRequestBodySize check in server.zig only
+                // sees Content-Length. HTTP/3 (and H1 chunked) bodies may
+                // omit it, so cap accumulated bytes here too — otherwise a
+                // single CL-less stream can grow request_body_buf without
+                // bound.
+                if (this.request_body_buf.items.len +| chunk.len > this.server.?.config.max_request_body_size) {
+                    this.request_body_buf.clearAndFree(this.allocator);
+                    resp.clearOnData();
+                    this.flags.is_waiting_for_request_body = false;
+
+                    if (!resp.hasResponded()) {
+                        resp.writeStatus("413 Payload Too Large");
+                        resp.endWithoutBody(comptime !http3);
+                    }
+
+                    var old = body.value;
+                    body.value.toError(error.RequestBodyTooLarge, globalThis) catch {};
+                    if (old == .Locked) {
+                        var loop = vm.eventLoop();
+                        loop.enter();
+                        defer loop.exit();
+                        old.resolve(&body.value, globalThis, null) catch {};
+                    }
+                    return;
+                }
+
                 if (last) {
                     var bytes = &this.request_body_buf;
 

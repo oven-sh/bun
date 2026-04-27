@@ -9,6 +9,11 @@ pub const ListenSocket = opaque {
     pub fn getLocalPort(this: *ListenSocket) i32 {
         return c.uws_h3_listen_socket_port(this);
     }
+    pub fn getLocalAddress(this: *ListenSocket, buf: []u8) ?[]const u8 {
+        const n = c.uws_h3_listen_socket_local_address(this, buf.ptr, @intCast(buf.len));
+        if (n <= 0) return null;
+        return buf[0..@intCast(n)];
+    }
 };
 
 pub const Request = opaque {
@@ -375,6 +380,7 @@ const c = struct {
     extern fn uws_h3_app_any(*App, [*]const u8, usize, Handler, ?*anyopaque) void;
     extern fn uws_h3_app_listen_with_config(*App, ?[*:0]const u8, u16, i32, ListenHandler, ?*anyopaque) void;
     extern fn uws_h3_listen_socket_port(*ListenSocket) i32;
+    extern fn uws_h3_listen_socket_local_address(*ListenSocket, [*]u8, c_int) c_int;
     extern fn uws_h3_listen_socket_close(*ListenSocket) void;
 
     extern fn uws_h3_res_state(*Response) State;

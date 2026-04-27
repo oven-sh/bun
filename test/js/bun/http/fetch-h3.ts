@@ -29,7 +29,7 @@ function findCurlH3(): string | null {
 }
 
 export function hasFetchH3(): boolean {
-  return process.platform !== "win32" && findCurlH3() !== null;
+  return findCurlH3() !== null;
 }
 
 type Init = {

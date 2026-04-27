@@ -1296,7 +1296,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn stopFromJS(this: *ThisServer, abruptly: ?JSValue) jsc.JSValue {
             const rc = this.getAllClosedPromise(this.globalThis);
 
-            if (this.listener != null) {
+            if (this.hasListener()) {
                 const abrupt = brk: {
                     if (abruptly) |val| {
                         if (val.isBoolean() and val.toBoolean()) {
@@ -1313,7 +1313,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         pub fn disposeFromJS(this: *ThisServer) jsc.JSValue {
-            if (this.listener != null) {
+            if (this.hasListener()) {
                 this.stop(true);
             }
 
@@ -1366,6 +1366,16 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         };
                         return addr.intoDTO(this.globalThis);
                     }
+                    if (comptime has_h3) if (this.h3_listener) |h3l| {
+                        port = @intCast(h3l.getLocalPort());
+                        var buf: [64]u8 = [_]u8{0} ** 64;
+                        const address_bytes = h3l.getLocalAddress(&buf) orelse return JSValue.jsNull();
+                        var addr = SocketAddress.init(address_bytes, port) catch {
+                            @branchHint(.unlikely);
+                            return JSValue.jsNull();
+                        };
+                        return addr.intoDTO(this.globalThis);
+                    };
                     return JSValue.jsNull();
                 },
             }
@@ -1391,7 +1401,9 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     var port: u16 = tcp.port;
                     if (this.listener) |listener| {
                         port = @intCast(listener.getLocalPort());
-                    }
+                    } else if (comptime has_h3) if (this.h3_listener) |h3l| {
+                        port = @intCast(h3l.getLocalPort());
+                    };
                     break :blk bun.fmt.URLFormatter{
                         .proto = if (comptime ssl_enabled) .https else .http,
                         .hostname = if (tcp.hostname) |hostname| bun.sliceTo(@constCast(hostname), 0) else null,
@@ -1480,8 +1492,18 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return this.activeSocketsCount() > 0;
         }
 
+        /// True while either the TCP listen socket or (h1: false) the QUIC
+        /// listen socket is bound. The lifecycle code uses this rather than
+        /// `this.listener != null` so an h3-only server is still treated as
+        /// running.
+        pub fn hasListener(this: *const ThisServer) bool {
+            if (this.listener != null) return true;
+            if (comptime has_h3) if (this.h3_listener != null) return true;
+            return false;
+        }
+
         pub fn getAllClosedPromise(this: *ThisServer, globalThis: *jsc.JSGlobalObject) jsc.JSValue {
-            if (this.listener == null and this.pending_requests == 0) {
+            if (!this.hasListener() and this.pending_requests == 0) {
                 return jsc.JSPromise.resolvedPromise(globalThis, .js_undefined).toJS();
             }
             const prom = &this.all_closed_promise;
@@ -1506,7 +1528,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             const vm = this.globalThis.bunVM();
 
             if (this.pending_requests == 0 and
-                this.listener == null and
+                !this.hasListener() and
                 !this.hasActiveWebSockets() and
                 !this.flags.has_handled_all_closed_promise and
                 this.all_closed_promise.strong.has())
@@ -1527,7 +1549,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }, vm);
             }
             if (this.pending_requests == 0 and
-                this.listener == null and
+                !this.hasListener() and
                 !this.hasActiveWebSockets())
             {
                 if (this.config.websocket) |*ws| {

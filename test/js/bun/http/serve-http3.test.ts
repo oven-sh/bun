@@ -27,7 +27,6 @@ beforeAll(async () => {
 
 const itH3: typeof test = ((name: string, fn: any) =>
   test(name, async () => {
-    if (process.platform === "win32") return; // QUIC server is POSIX-only
     if (!curlH3) {
       console.warn("skipping (no HTTP/3-capable curl in PATH; set CURL_HTTP3=/path/to/curl)");
       return;
@@ -351,6 +350,81 @@ describe("Bun.serve HTTP/3", () => {
     );
   });
 
+  // With h1:false the TCP listen socket is never created, so server.url /
+  // server.address / server.stop() must consult the QUIC listener.
+  itH3("h1: false — url/address/stop see the QUIC listener", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const server = Bun.serve({
+        port: 0, tls, h3: true, h1: false,
+        fetch: () => new Response("ok"),
+      });
+      console.error("PORT=" + server.port);
+      const url = new URL(server.url);
+      console.error("URLPORT=" + url.port);
+      console.error("ADDR=" + JSON.stringify(server.address));
+      process.stdin.on("data", async () => {
+        await server.stop();
+        console.error("STOPPED");
+      });
+    `;
+    await withCustomServer(script, async (port, send, waitForStderr) => {
+      const urlPort = (await waitForStderr(/URLPORT=(\d+)/))[1];
+      expect(Number(urlPort)).toBe(port);
+      const addr = JSON.parse((await waitForStderr(/ADDR=(.+)/))[1]);
+      expect(addr.port).toBe(port);
+      // Prove the server actually serves before stop()
+      const ok = await curl3(port, "/");
+      expect(ok.stdout).toBe("ok");
+      send("stop");
+      await waitForStderr(/STOPPED/);
+      // After stop(), the UDP socket should be closed; a new request fails.
+      const after = await curl3(port, "/", ["--connect-timeout", "2"]);
+      expect(after.exitCode).not.toBe(0);
+    });
+  });
+
+  // RFC 9114 §4.2.2: Content-Length is optional on H3. The up-front 413
+  // check only sees CL, so without it the per-chunk cap in
+  // onBufferedBodyChunk is what enforces maxRequestBodySize.
+  itH3("maxRequestBodySize is enforced for H3 bodies without Content-Length", async () => {
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const server = Bun.serve({
+        port: 0, tls, h3: true,
+        maxRequestBodySize: 64 * 1024,
+        async fetch(req) {
+          try { await req.arrayBuffer(); return new Response("read"); }
+          catch (e) { return new Response("rejected:" + e.message, { status: 500 }); }
+        },
+      });
+      console.error("PORT=" + server.port);
+      process.stdin.on("data", () => {});
+    `;
+    await withCustomServer(script, async port => {
+      // 256 KB body, no Content-Length header (curl sends raw DATA + FIN over H3).
+      const body = Buffer.alloc(256 * 1024, "A");
+      const r = await curl3(
+        port,
+        "/",
+        [
+          "-X",
+          "POST",
+          "--data-binary",
+          "@-",
+          "-H",
+          "Content-Length:",
+          "-H",
+          "Content-Type: application/octet-stream",
+          "-D",
+          "-",
+        ],
+        { stdin: body },
+      );
+      expect(r.stdout).toContain("HTTP/3 413");
+    });
+  });
+
   itH3("unknown route returns 404", async () => {
     await withServer(async port => {
       const { stdout, exitCode } = await curl3(port, "/nope", ["-D", "-"]);
@@ -422,7 +496,6 @@ describe("Bun.serve HTTP/3", () => {
   });
 
   test("validation: h3 without tls throws", async () => {
-    if (process.platform === "win32") return;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", "Bun.serve({ port: 0, h3: true, fetch: () => new Response('x') })"],
       env: bunEnv,
@@ -461,7 +534,6 @@ describe("Bun.serve HTTP/3", () => {
   });
 
   test("validation: h1:false without h3 throws", async () => {
-    if (process.platform === "win32") return;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", "Bun.serve({ port: 0, h1: false, fetch: () => new Response('x') })"],
       env: bunEnv,

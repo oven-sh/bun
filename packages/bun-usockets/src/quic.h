@@ -64,6 +64,7 @@ us_quic_listen_socket_t *us_quic_socket_context_listen(
 
 void us_quic_listen_socket_close(us_quic_listen_socket_t *ls);
 int us_quic_listen_socket_port(us_quic_listen_socket_t *ls);
+int us_quic_listen_socket_local_address(us_quic_listen_socket_t *ls, char *buf, int len);
 
 /* Connection-level callbacks */
 void us_quic_socket_context_on_open(us_quic_socket_context_t *ctx,

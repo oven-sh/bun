@@ -761,6 +761,17 @@ int us_quic_listen_socket_port(us_quic_listen_socket_t *ls) {
     return us_udp_socket_bound_port(ls->udp);
 }
 
+int us_quic_listen_socket_local_address(us_quic_listen_socket_t *ls, char *buf, int len) {
+    if (ls->local.ss_family == AF_INET6) {
+        if (len < 16) return 0;
+        memcpy(buf, &((struct sockaddr_in6 *) &ls->local)->sin6_addr, 16);
+        return 16;
+    }
+    if (len < 4) return 0;
+    memcpy(buf, &((struct sockaddr_in *) &ls->local)->sin_addr, 4);
+    return 4;
+}
+
 #define DEF_CB(name, sig) \
     void us_quic_socket_context_##name(us_quic_socket_context_t *ctx, sig) { ctx->name = cb; }
 DEF_CB(on_open, void (*cb)(us_quic_socket_t *))

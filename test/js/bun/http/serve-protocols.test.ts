@@ -23,7 +23,7 @@ const cases: Array<{
 
 if (hasFetchH3()) {
   cases.push({ protocol: "http/3", fetch: fetchH3, scheme: "https", serve: { tls, h3: true } });
-} else if (process.platform !== "win32") {
+} else {
   console.warn("[serve-protocols] no HTTP/3-capable curl; H3 cases will be skipped");
 }
 
